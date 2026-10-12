@@ -1,0 +1,23 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Core tests
+        run: ./tests/run_tests.sh
+      - name: End to end pipeline test
+        run: ./tests/run_pipeline.sh
+      - name: Build APK with the SDK build tools
+        run: ./build_apk.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenRing-apk
+          path: build/OpenRing.apk

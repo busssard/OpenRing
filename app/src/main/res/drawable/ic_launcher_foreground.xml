@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- a ring seen at a slight angle, with a soft inner glow -->
+    <path android:pathData="M54,30a24,24 0,1 1,0 48a24,24 0,1 1,0 -48zM54,38a16,16 0,1 0,0 32a16,16 0,1 0,0 -32z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="32" android:startY="76" android:endX="76" android:endY="32">
+                <item android:offset="0" android:color="#FF5D79F2" />
+                <item android:offset="0.55" android:color="#FF8E9BFF" />
+                <item android:offset="1" android:color="#FF6BD3B4" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:fillColor="#FFEEF1F6" android:pathData="M54,27.5m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" />
+</vector>

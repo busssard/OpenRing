@@ -1,0 +1,708 @@
+package app.openring.ui;
+
+import android.content.Context;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.Iterator;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+import app.openring.core.analysis.Scores;
+import app.openring.core.analysis.Stats;
+import app.openring.core.analysis.TS;
+import app.openring.data.Json;
+import app.openring.data.Prefs;
+
+/** The five main screens, built from a {@link DayData}. */
+public final class Pages {
+    private Pages() {}
+
+    public interface Nav {
+        void go(int tab);
+
+        void live();
+
+        void sync();
+    }
+
+    public static final int TODAY = 0, SLEEP = 1, READINESS = 2, ACTIVITY = 3, BODY = 4;
+
+    // ======================================================================== TODAY
+
+    public static View today(final Context c, DayData d, final Nav nav, String syncLine) {
+        LinearLayout root = Ui.vbox(c);
+        LinearLayout rings = Ui.card(c);
+        LinearLayout row = Ui.hbox(c);
+        row.setGravity(Gravity.CENTER);
+        row.addView(ringButton(c, d.score("readiness"), "Readiness", Ui.READY, nav, READINESS), Ui.weight(1));
+        row.addView(ringButton(c, d.score("sleep"), "Sleep", Ui.SLEEP, nav, SLEEP), Ui.weight(1));
+        row.addView(ringButton(c, d.score("activity_score"), "Activity", Ui.ACTIVE, nav, ACTIVITY), Ui.weight(1));
+        rings.addView(row);
+        root.addView(rings);
+
+        if (d.empty()) {
+            LinearLayout e = Ui.card(c);
+            e.addView(Ui.h2(c, "No data for this day yet"));
+            e.addView(Ui.gap(c, 6));
+            e.addView(Ui.body(c, "Wear your ring and sync. Sleep appears after your first night, readiness after the morning sync, "
+                    + "and baselines become personal after about two weeks. If you synced and still see nothing, the data check "
+                    + "shows where it stops."));
+            e.addView(Ui.gap(c, 12));
+            TextView check = Ui.button(c, "Open data check", Ui.TEXT_2, false);
+            check.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    c.startActivity(new android.content.Intent(c, LogActivity.class));
+                }
+            });
+            e.addView(check, Ui.matchWrap());
+            e.addView(Ui.gap(c, 12));
+            TextView b = Ui.button(c, "Sync now", Ui.SLEEP, true);
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    nav.sync();
+                }
+            });
+            e.addView(b, Ui.matchWrap());
+            root.addView(e);
+        } else {
+            LinearLayout digest = Ui.card(c);
+            digest.addView(Ui.caption(c, "Your day"));
+            digest.addView(Ui.gap(c, 6));
+            digest.addView(Ui.text(c, headline(d), 20, Ui.TEXT, Ui.LIGHT));
+            digest.addView(Ui.gap(c, 6));
+            digest.addView(Ui.body(c, digest(d)));
+            root.addView(digest);
+
+            LinearLayout stats = Ui.card(c);
+            stats.addView(Ui.caption(c, "Key metrics"));
+            JSONObject n = d.night;
+            stats.addView(Ui.statRow(c,
+                    Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP),
+                    Ui.stat(c, "Resting HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", Ui.HEART)));
+            stats.addView(Ui.statRow(c,
+                    Ui.stat(c, "HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", Ui.READY),
+                    Ui.stat(c, "Temperature", signed(Json.d(d.day, "temp_dev")), "°C", Ui.TEMP)));
+            stats.addView(Ui.statRow(c,
+                    Ui.stat(c, "Steps", Ui.fmt(Json.d(d.day, "steps"), 0), "est.", Ui.ACTIVE),
+                    Ui.stat(c, "Active burn", Ui.fmt(Json.d(d.day, "active_kcal"), 0), "kcal", Ui.ACTIVE)));
+            root.addView(stats);
+
+            JSONObject radar = d.day == null ? null : d.day.optJSONObject("radar");
+            if (radar != null && radar.optBoolean("available")) {
+                LinearLayout r = Ui.card(c);
+                r.addView(Ui.caption(c, "Symptom radar"));
+                r.addView(Ui.gap(c, 4));
+                int dec = radar.optInt("decision");
+                r.addView(Ui.text(c, radar.optString("status"), 18, dec == 0 ? Ui.GOOD : Ui.WARN, Ui.REGULAR));
+                r.addView(Ui.body(c, dec == 0 ? "Your temperature, heart rate, HRV and breathing look like your normal."
+                        : "Some of your body signals moved away from your normal. Take it easy and see Body for details."));
+                root.addView(r);
+            }
+        }
+
+        LinearLayout live = Ui.card(c);
+        LinearLayout lr = Ui.hbox(c);
+        LinearLayout lt = Ui.vbox(c);
+        lt.addView(Ui.h2(c, "Live heart rate"));
+        lt.addView(Ui.body(c, "Measure right now with your ring"));
+        lr.addView(lt, Ui.weight(1));
+        TextView lb = Ui.button(c, "Start", Ui.HEART, false);
+        lb.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                nav.live();
+            }
+        });
+        lr.addView(lb);
+        live.addView(lr);
+        root.addView(live);
+
+        TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
+        foot.setGravity(Gravity.CENTER);
+        foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
+        root.addView(foot);
+        return root;
+    }
+
+    static View ringButton(Context c, double v, String label, int color, final Nav nav, final int tab) {
+        Charts.ScoreRing r = new Charts.ScoreRing(c, v, label, color, false);
+        r.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(c, 104), Ui.dp(c, 104)));
+        LinearLayout box = Ui.vbox(c);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.addView(r, new LinearLayout.LayoutParams(Ui.dp(c, 104), Ui.dp(c, 104)));
+        TextView verdict = Ui.text(c, Double.isNaN(v) ? " " : Scores.verdict((int) v), 12, Ui.TEXT_2, Ui.REGULAR);
+        box.addView(verdict);
+        box.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                nav.go(tab);
+            }
+        });
+        return box;
+    }
+
+    static String headline(DayData d) {
+        double r = d.score("readiness");
+        if (!Double.isNaN(r)) {
+            if (r >= 85) return "You're well recovered. A good day to push a little.";
+            if (r >= 70) return "You're in good shape. Keep a steady pace today.";
+            return "Your body is asking for rest. Take it easy today.";
+        }
+        double s = d.score("sleep");
+        if (!Double.isNaN(s)) return s >= 85 ? "You slept really well." : s >= 70 ? "You slept reasonably well." : "Last night's sleep was short or restless.";
+        return "Keep wearing your ring to build your picture.";
+    }
+
+    static String digest(DayData d) {
+        StringBuilder sb = new StringBuilder();
+        JSONObject rd = d.scoreObj("readiness");
+        if (rd != null) {
+            JSONArray cs = rd.optJSONArray("contributors");
+            JSONObject worst = null, best = null;
+            for (int i = 0; cs != null && i < cs.length(); i++) {
+                JSONObject o = cs.optJSONObject(i);
+                if (worst == null || o.optDouble("score") < worst.optDouble("score")) worst = o;
+                if (best == null || o.optDouble("score") > best.optDouble("score")) best = o;
+            }
+            if (best != null) sb.append(best.optString("label")).append(" is your strongest contributor");
+            if (worst != null && worst.optDouble("score") < 75) {
+                sb.append(", while ").append(worst.optString("label").toLowerCase(Locale.getDefault())).append(" needs attention");
+            }
+            sb.append(". ");
+            if (rd.optBoolean("provisional")) sb.append("Your baselines are still forming, so scores will become more personal over the next two weeks. ");
+        }
+        JSONObject debt = d.day == null ? null : d.day.optJSONObject("sleep_debt");
+        if (debt != null && debt.optBoolean("valid")) {
+            double m = debt.optDouble("debt_min", 0);
+            if (m >= 180) sb.append("You carry about ").append(Ui.hm(m)).append(" of sleep debt. ");
+        }
+        if (sb.length() == 0) sb.append("Synced and analysed on this phone. Nothing left the device.");
+        return sb.toString().trim();
+    }
+
+    /** The night as a list of moments: bedtime, falling asleep, longer wake ups, lowest HR, waking. */
+    static View timeline(Context c, JSONObject n) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Night timeline"));
+        card.addView(Ui.gap(c, 6));
+        int[] st = Json.stages(n);
+        double s = Json.d(n, "start"), e = Json.d(n, "end");
+        double ep = st.length == 0 ? 30 : (e - s) / st.length;
+        List<String[]> rows = new ArrayList<String[]>();
+        rows.add(new String[] {Charts.clock(s), "Start of the sleep window"});
+        int first = -1, last = -1;
+        for (int i = 0; i < st.length; i++) if (st[i] >= 1 && st[i] <= 3) {
+            if (first < 0) first = i;
+            last = i;
+        }
+        double low = Json.d(n, "lowest_hr_time");
+        boolean lowDone = Double.isNaN(low);
+        if (first >= 0) {
+            rows.add(new String[] {Charts.clock(s + first * ep), "Fell asleep" + (first > 0 ? " after " + Math.round(first * ep / 60) + " min" : "")});
+            int i = first;
+            while (i <= last) {
+                if (st[i] != 4) { i++; continue; }
+                int j = i;
+                while (j <= last && st[j] == 4) j++;
+                double a = s + i * ep, b = s + j * ep;
+                if (!lowDone && low < a) {
+                    rows.add(new String[] {Charts.clock(low), "Lowest heart rate, " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm"});
+                    lowDone = true;
+                }
+                // short stirrings are normal; list wake ups of 5 minutes or more
+                if (b - a >= 300) rows.add(new String[] {Charts.clock(a), "Awake for " + Math.round((b - a) / 60) + " min, back asleep " + Charts.clock(b)});
+                i = j;
+            }
+            if (!lowDone) rows.add(new String[] {Charts.clock(low), "Lowest heart rate, " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm"});
+            rows.add(new String[] {Charts.clock(s + (last + 1) * ep), "Woke up"});
+        }
+        rows.add(new String[] {Charts.clock(e), "End of the sleep window"});
+        for (String[] r : rows) {
+            LinearLayout row = Ui.hbox(c);
+            row.setPadding(0, Ui.dp(c, 3), 0, Ui.dp(c, 3));
+            TextView t = Ui.text(c, r[0], 14, Ui.SLEEP, Ui.MEDIUM);
+            row.addView(t, new LinearLayout.LayoutParams(Ui.dp(c, 58), -2));
+            row.addView(Ui.text(c, r[1], 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
+            card.addView(row);
+        }
+        return card;
+    }
+
+    static String signed(double v) {
+        if (Double.isNaN(v)) return "--";
+        return String.format(Locale.getDefault(), "%+.1f", v);
+    }
+
+    // ======================================================================== SLEEP
+
+    public static View sleep(Context c, DayData d) {
+        LinearLayout root = Ui.vbox(c);
+        JSONObject n = d.night;
+        root.addView(hero(c, d.score("sleep"), "Sleep", Ui.SLEEP,
+                n == null ? "No main sleep recorded for this day" : "Total sleep " + Ui.hm(Json.d(n, "asleep_min"))
+                        + "  ·  " + Charts.clock(Json.d(n, "start")) + " to " + Charts.clock(Json.d(n, "end"))));
+        if (n == null) {
+            root.addView(infoCard(c, "About sleep", Explain.SLEEP));
+            LinearLayout how = Ui.card(c);
+            how.addView(Ui.caption(c, "How to see your sleep"));
+            how.addView(Ui.gap(c, 4));
+            how.addView(Ui.body(c, "Wear the ring overnight (not on the charger) and sync in the morning. You will see your sleep depth "
+                    + "through the night, sleep stages, heart rate, HRV, blood oxygen and breathing."));
+            root.addView(how);
+            addNaps(c, root, d);
+            return root;
+        }
+
+        LinearLayout hyp = Ui.card(c);
+        hyp.addView(Ui.caption(c, "Sleep depth through the night"));
+        hyp.addView(Ui.gap(c, 10));
+        hyp.addView(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")), Ui.sized(c, -1, 170));
+        JSONArray mv = n.optJSONArray("motion_series");
+        if (mv != null && mv.length() > 0) {
+            hyp.addView(Ui.gap(c, 6));
+            hyp.addView(Ui.text(c, "Movement", 11, Ui.TEXT_3, Ui.MEDIUM));
+            hyp.addView(new Charts.Strip(c, Json.series(mv), Json.d(n, "start"), Json.d(n, "end"), Ui.ACTIVE), Ui.sized(c, -1, 26));
+        }
+        hyp.addView(Ui.gap(c, 4));
+        hyp.addView(Ui.text(c, "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        hyp.addView(Ui.gap(c, 8));
+        hyp.addView(Ui.text(c, Explain.STAGES, 12, Ui.TEXT_2, Ui.REGULAR));
+        hyp.addView(Ui.gap(c, 10));
+        double inBed = Math.max(1, Json.d(n, "in_bed_min"));
+        hyp.addView(stageRow(c, "Awake", Json.d(n, "awake_min"), inBed, Ui.STAGE_AWAKE));
+        hyp.addView(stageRow(c, "REM", Json.d(n, "rem_min"), inBed, Ui.STAGE_REM));
+        hyp.addView(stageRow(c, "Light", Json.d(n, "light_min"), inBed, Ui.STAGE_LIGHT));
+        hyp.addView(stageRow(c, "Deep", Json.d(n, "deep_min"), inBed, Ui.STAGE_DEEP));
+        String src = n.optString("source");
+        hyp.addView(Ui.gap(c, 6));
+        hyp.addView(Ui.text(c, "ring".equals(src) ? "Stages from your ring's own analysis"
+                : "signals".equals(src) ? "Stages estimated on this phone from heart rate, HRV and movement"
+                : "Only sleep and wake could be told apart this night", 11, Ui.TEXT_3, Ui.REGULAR));
+        root.addView(hyp);
+
+        root.addView(timeline(c, n));
+        root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors"));
+        root.addView(infoCard(c, "About the sleep score", Explain.SLEEP));
+
+        LinearLayout stats = Ui.card(c);
+        stats.addView(Ui.caption(c, "Details"));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(Json.d(n, "in_bed_min")), "", 0),
+                Ui.stat(c, "Efficiency", Ui.fmt(Json.d(n, "efficiency"), 0), "%", 0)));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0),
+                Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0)));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0),
+                Ui.stat(c, "Average HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", 0)));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0),
+                Ui.stat(c, "Blood oxygen", Ui.fmt(Json.d(n, "spo2"), 0), "%", 0)));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Cycles", String.valueOf(n.optInt("cycles")), "", 0),
+                Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0)));
+        root.addView(stats);
+
+        double s = Json.d(n, "start"), e = Json.d(n, "end");
+        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm"),
+                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : Charts.clock(Json.d(n, "lowest_hr_time")))));
+        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms"),
+                "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
+        JSONArray sp = n.optJSONArray("spo2_series");
+        if (sp != null && sp.length() > 0) {
+            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%"),
+                    "Average " + Ui.fmt(Json.d(n, "spo2"), 1) + "%"));
+        }
+
+        JSONObject debt = d.day == null ? null : d.day.optJSONObject("sleep_debt");
+        if (debt != null) {
+            LinearLayout dc = Ui.card(c);
+            dc.addView(Ui.caption(c, "Sleep debt"));
+            dc.addView(Ui.gap(c, 4));
+            double m = debt.optDouble("debt_min", 0);
+            boolean valid = debt.optBoolean("valid");
+            dc.addView(Ui.text(c, !valid ? "Building" : m < 180 ? "None" : m < 360 ? "Low" : m < 540 ? "Moderate" : "High", 20, Ui.TEXT, Ui.LIGHT));
+            dc.addView(Ui.body(c, (valid ? Ui.hm(m) + " over the last two weeks. " : "Needs five nights of data. ")
+                    + "Your sleep need is " + Ui.fmt(debt.optDouble("need_h", 8), 1) + " h."));
+            root.addView(dc);
+        }
+
+        LinearLayout week = Ui.card(c);
+        week.addView(Ui.caption(c, "Total sleep, last 7 days"));
+        week.addView(Ui.gap(c, 8));
+        double[] asleep = d.series("asleep_min", 7);
+        for (int i = 0; i < asleep.length; i++) asleep[i] /= 60.0;
+        week.addView(new Charts.BarChart(c, asleep, d.weekdayLabels(7), Ui.SLEEP).valueFormat("%.1f h").target(8), Ui.sized(c, -1, 130));
+        root.addView(week);
+        addNaps(c, root, d);
+        return root;
+    }
+
+    static void addNaps(Context c, LinearLayout root, DayData d) {
+        if (d.naps.isEmpty()) return;
+        LinearLayout nc = Ui.card(c);
+        nc.addView(Ui.caption(c, "Naps and other sleep"));
+        for (JSONObject o : d.naps) {
+            nc.addView(Ui.gap(c, 6));
+            nc.addView(Ui.text(c, Charts.clock(Json.d(o, "start")) + " to " + Charts.clock(Json.d(o, "end")) + "   " + Ui.hm(Json.d(o, "asleep_min")) + " asleep", 15, Ui.TEXT, Ui.REGULAR));
+        }
+        root.addView(nc);
+    }
+
+    static View stageRow(Context c, String name, double min, double total, int color) {
+        LinearLayout row = Ui.hbox(c);
+        row.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 4));
+        View dot = new View(c);
+        dot.setBackground(Ui.rounded(color, Ui.dp(c, 5)));
+        row.addView(dot, new LinearLayout.LayoutParams(Ui.dp(c, 10), Ui.dp(c, 10)));
+        TextView t = Ui.text(c, "  " + name, 14, Ui.TEXT, Ui.REGULAR);
+        row.addView(t, Ui.weight(1));
+        row.addView(Ui.text(c, Ui.hm(min) + "   ", 14, Ui.TEXT, Ui.REGULAR));
+        row.addView(Ui.text(c, Ui.fmt(100 * min / total, 0) + "%", 13, Ui.TEXT_3, Ui.REGULAR));
+        return row;
+    }
+
+    // ===================================================================== READINESS
+
+    public static View readiness(Context c, DayData d) {
+        LinearLayout root = Ui.vbox(c);
+        JSONObject sc = d.scoreObj("readiness");
+        root.addView(hero(c, d.score("readiness"), "Readiness", Ui.READY,
+                sc == null ? "Readiness appears the morning after a night with the ring on" : headline(d)));
+        root.addView(infoCard(c, "What is readiness?", Explain.READINESS));
+        if (sc == null) {
+            LinearLayout how = Ui.card(c);
+            how.addView(Ui.caption(c, "How to get your first score"));
+            how.addView(Ui.gap(c, 4));
+            how.addView(Ui.body(c, "1. Wear the ring tonight, snug on the finger, not on the charger.\n"
+                    + "2. In the morning open the app and sync.\n"
+                    + "3. Readiness shows right away, and becomes personal after about two weeks of nights, once your normal "
+                    + "resting heart rate, HRV and temperature are known."));
+            root.addView(how);
+            return root;
+        }
+        if (sc.optBoolean("provisional")) {
+            LinearLayout note = Ui.card(c);
+            note.addView(Ui.body(c, "Your baselines are still forming. Readiness compares each night with your personal normal, which takes about two weeks of nights to settle, so early scores move more."));
+            root.addView(note);
+        }
+        root.addView(signals(c, d));
+        root.addView(contributors(c, sc, Ui.READY, "Contributors"));
+
+        LinearLayout t = Ui.card(c);
+        t.addView(Ui.caption(c, "Body temperature"));
+        t.addView(Ui.text(c, signed(Json.d(d.day, "temp_dev")) + " \u00b0C", 26, Ui.TEXT, Ui.LIGHT));
+        t.addView(Ui.body(c, "Deviation from your usual nightly skin temperature. Within about half a degree is normal."));
+        t.addView(Ui.gap(c, 8));
+        t.addView(new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill(), Ui.sized(c, -1, 120));
+        root.addView(t);
+
+        root.addView(chartCard(c, "HRV, last 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"),
+                "Average " + Ui.fmt(Stats.mean(d.series("hrv", 30)), 0) + " ms. Compare with yourself, not with others: HRV differs a lot between people."));
+        root.addView(chartCard(c, "Resting heart rate, last 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.date, 30).unit(" bpm"),
+                "Average " + Ui.fmt(Stats.mean(d.series("rhr", 30)), 0) + " bpm. A downward trend usually means improving fitness and recovery."));
+        LinearLayout week = Ui.card(c);
+        week.addView(Ui.caption(c, "Readiness, last 7 days"));
+        week.addView(Ui.gap(c, 8));
+        week.addView(new Charts.BarChart(c, d.scoreSeries("readiness", 7), d.weekdayLabels(7), Ui.READY), Ui.sized(c, -1, 130));
+        root.addView(week);
+        return root;
+    }
+
+    /** Last night's body signals next to your usual values (two weeks before). */
+    static View signals(Context c, DayData d) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Last night's body signals"));
+        card.addView(Ui.gap(c, 4));
+        card.addView(signalRow(c, "Resting heart rate", Json.d(d.day, "rhr"), usual(d, "rhr"), "bpm", 0, true));
+        card.addView(signalRow(c, "Heart rate variability", Json.d(d.day, "hrv"), usual(d, "hrv"), "ms", 0, false));
+        card.addView(signalRow(c, "Breathing rate", Json.d(d.day, "breath"), usual(d, "breath"), "/min", 1, true));
+        card.addView(signalRow(c, "Blood oxygen", Json.d(d.day, "spo2"), usual(d, "spo2"), "%", 0, false));
+        double low = Json.d(d.night, "lowest_hr_time"), s0 = Json.d(d.night, "sleep_start"), s1 = Json.d(d.night, "sleep_end");
+        if (!Double.isNaN(low)) {
+            String when = Charts.clock(low);
+            String rel = (s1 > s0) ? ((low - s0) / (s1 - s0) <= 0.5 ? ", in the first half of the night (good)" : ", late in the night") : "";
+            card.addView(Ui.gap(c, 6));
+            card.addView(Ui.body(c, "Lowest heart rate reached at " + when + rel + "."));
+        }
+        return card;
+    }
+
+    static double usual(DayData d, String field) {
+        double[] v = d.series(field, 15);
+        double[] prior = java.util.Arrays.copyOf(v, 14);
+        return Stats.countFinite(prior) >= 3 ? Stats.mean(prior) : Double.NaN;
+    }
+
+    static View signalRow(Context c, String name, double value, double usual, String unit, int dp, boolean lowerIsBetter) {
+        LinearLayout row = Ui.hbox(c);
+        row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
+        row.addView(Ui.text(c, name, 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
+        LinearLayout right = Ui.vbox(c);
+        right.setGravity(Gravity.END);
+        right.addView(Ui.text(c, Ui.fmt(value, dp) + " " + unit, 15, Double.isNaN(value) ? Ui.TEXT_3 : Ui.TEXT, Ui.MEDIUM));
+        String u;
+        int col = Ui.TEXT_3;
+        if (Double.isNaN(usual) || Double.isNaN(value)) {
+            u = "usual value after a few nights";
+        } else {
+            double diff = value - usual;
+            boolean better = lowerIsBetter ? diff < 0 : diff > 0;
+            u = "usual " + Ui.fmt(usual, dp) + (Math.abs(diff) < Math.pow(10, -dp) ? "" : (diff > 0 ? ", higher" : ", lower"));
+            if (Math.abs(diff) >= Math.max(Math.abs(usual) * 0.05, Math.pow(10, -dp))) col = better ? Ui.GOOD : Ui.WARN;
+        }
+        right.addView(Ui.text(c, u, 11, col, Ui.REGULAR));
+        row.addView(right);
+        return row;
+    }
+
+    static View infoCard(Context c, String title, String text) {
+        LinearLayout card = Ui.card(c);
+        card.setBackground(Ui.rounded(Ui.CARD_HI, Ui.dp(c, 18)));
+        card.addView(Ui.caption(c, title));
+        card.addView(Ui.gap(c, 4));
+        card.addView(Ui.body(c, text));
+        return card;
+    }
+
+    // ====================================================================== ACTIVITY
+
+    public static View activity(Context c, DayData d) {
+        LinearLayout root = Ui.vbox(c);
+        JSONObject day = d.day;
+        double active = Json.d(day, "active_kcal"), target = Json.d(day, "target_kcal");
+        root.addView(hero(c, d.score("activity_score"), "Activity", Ui.ACTIVE,
+                day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal"));
+        if (day == null) return root;
+
+        LinearLayout goal = Ui.card(c);
+        goal.addView(Ui.caption(c, "Goal progress"));
+        goal.addView(Ui.gap(c, 8));
+        goal.addView(new Ui.Bar(c, target > 0 ? active / target : 0, Ui.ACTIVE), Ui.sized(c, -1, 8));
+        goal.addView(Ui.statRow(c, Ui.stat(c, "Active burn", Ui.fmt(active, 0), "kcal", 0), Ui.stat(c, "Total burn", Ui.fmt(Json.d(day, "total_kcal"), 0), "kcal", 0)));
+        goal.addView(Ui.statRow(c, Ui.stat(c, "Steps", Ui.fmt(Json.d(day, "steps"), 0), "est.", 0),
+                Ui.stat(c, "Distance", Ui.fmt(Json.d(day, "distance_m") / 1000.0, 1), "km", 0)));
+        root.addView(goal);
+
+        LinearLayout intensity = Ui.card(c);
+        intensity.addView(Ui.caption(c, "Daily movement"));
+        intensity.addView(Ui.gap(c, 6));
+        double high = Json.d(day, "high_min"), med = Json.d(day, "medium_min"), low = Json.d(day, "low_min"), inact = Json.d(day, "inactive_min"), rest = Json.d(day, "rest_min");
+        double tot = Math.max(1, high + med + low + inact + rest);
+        intensity.addView(stageRow(c, "High", high, tot, 0xFFFF8A5B));
+        intensity.addView(stageRow(c, "Medium", med, tot, Ui.ACTIVE));
+        intensity.addView(stageRow(c, "Low", low, tot, 0xFFFFDDA8));
+        intensity.addView(stageRow(c, "Inactive", inact, tot, Ui.TEXT_3));
+        intensity.addView(stageRow(c, "Rest", rest, tot, Ui.STAGE_LIGHT));
+        root.addView(intensity);
+
+        JSONArray prof = day.optJSONArray("met_profile");
+        if (prof != null) {
+            double[] hourly = new double[24];
+            String[] labels = new String[24];
+            for (int h = 0; h < 24; h++) {
+                double s = 0;
+                int n = 0;
+                for (int q = 0; q < 4; q++) {
+                    double v = prof.isNull(h * 4 + q) ? Double.NaN : prof.optDouble(h * 4 + q);
+                    if (!Double.isNaN(v)) {
+                        s += v;
+                        n++;
+                    }
+                }
+                hourly[h] = n == 0 ? Double.NaN : s / n;
+                labels[h] = h % 6 == 0 ? String.valueOf(h) : "";
+            }
+            LinearLayout pc = Ui.card(c);
+            pc.addView(Ui.caption(c, "Intensity through the day (MET)"));
+            pc.addView(Ui.gap(c, 8));
+            int peak = 0;
+            for (int h = 0; h < 24; h++) if (!Double.isNaN(hourly[h]) && (Double.isNaN(hourly[peak]) || hourly[h] > hourly[peak])) peak = h;
+            pc.addView(new Charts.BarChart(c, hourly, labels, Ui.ACTIVE).valueFormat("%.1f").highlight(peak), Ui.sized(c, -1, 120));
+            root.addView(pc);
+        }
+
+        JSONObject as = day.optJSONObject("activity_score");
+        if (as != null) {
+            root.addView(contributors(c, as, Ui.ACTIVE, "Contributors"));
+            root.addView(infoCard(c, "About the activity score", Explain.ACTIVITY));
+        }
+        else {
+            LinearLayout n = Ui.card(c);
+            n.addView(Ui.body(c, "The activity score needs at least an hour of wear time today."));
+            root.addView(n);
+        }
+
+        LinearLayout week = Ui.card(c);
+        week.addView(Ui.caption(c, "Active burn, last 7 days"));
+        week.addView(Ui.gap(c, 8));
+        week.addView(new Charts.BarChart(c, d.series("active_kcal", 7), d.weekdayLabels(7), Ui.ACTIVE).target(target), Ui.sized(c, -1, 130));
+        root.addView(week);
+        return root;
+    }
+
+    // ========================================================================== BODY
+
+    public static View body(final Context c, DayData d, final Nav nav) {
+        LinearLayout root = Ui.vbox(c);
+        JSONObject day = d.day;
+        root.addView(rightNow(c, d.now));
+        LinearLayout hr = Ui.card(c);
+        hr.addView(Ui.caption(c, "Heart rate today"));
+        hr.addView(Ui.statRow(c, Ui.stat(c, "Lowest", Ui.fmt(Json.d(day, "hr_day_low"), 0), "bpm", 0),
+                Ui.stat(c, "Average", Ui.fmt(Json.d(day, "hr_day_avg"), 0), "bpm", 0),
+                Ui.stat(c, "Highest", Ui.fmt(Json.d(day, "hr_day_high"), 0), "bpm", 0)));
+        double ds = d.date.atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond();
+        hr.addView(new Charts.LineChart(c, Json.series(day == null ? null : day.optJSONArray("hr_day")), ds, ds + 86400, Ui.HEART), Ui.sized(c, -1, 140));
+        hr.addView(Ui.gap(c, 10));
+        TextView live = Ui.button(c, "Measure live heart rate and HRV", Ui.HEART, false);
+        live.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                nav.live();
+            }
+        });
+        hr.addView(live, Ui.matchWrap());
+        hr.addView(Ui.gap(c, 8));
+        TextView ox = Ui.button(c, "Measure blood oxygen now", Ui.OXY, false);
+        ox.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                c.startActivity(new android.content.Intent(c, LiveActivity.class).putExtra("spo2", true));
+            }
+        });
+        hr.addView(ox, Ui.matchWrap());
+        root.addView(hr);
+
+        JSONObject radar = day == null ? null : day.optJSONObject("radar");
+        LinearLayout rc = Ui.card(c);
+        rc.addView(Ui.caption(c, "Symptom radar"));
+        if (radar == null || !radar.optBoolean("available")) {
+            rc.addView(Ui.body(c, "Needs seven nights of history. It watches skin temperature, resting heart rate, HRV and breathing for changes from your normal."));
+        } else {
+            int dec = radar.optInt("decision");
+            rc.addView(Ui.text(c, radar.optString("status"), 20, dec == 0 ? Ui.GOOD : Ui.WARN, Ui.LIGHT));
+            JSONObject mk = radar.optJSONObject("markers");
+            Iterator<String> it = mk == null ? null : mk.keys();
+            while (it != null && it.hasNext()) {
+                String k = it.next();
+                JSONArray a = mk.optJSONArray(k);
+                if (a == null || a.length() < 4) continue;
+                rc.addView(Ui.gap(c, 8));
+                LinearLayout top = Ui.hbox(c);
+                top.addView(Ui.text(c, k, 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
+                boolean flagged = a.optDouble(3) > 0;
+                top.addView(Ui.text(c, Ui.fmt(a.optDouble(0), k.startsWith("Skin") ? 2 : 1) + (flagged ? "  unusual" : ""), 13, flagged ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR));
+                rc.addView(top);
+                rc.addView(new Charts.RangeGauge(c, a.optDouble(0), a.optDouble(1), a.optDouble(2), flagged), Ui.sized(c, -1, 18));
+            }
+            rc.addView(Ui.gap(c, 6));
+            rc.addView(Ui.text(c, "A wellness signal compared with your own recent nights, not a diagnosis.", 11, Ui.TEXT_3, Ui.REGULAR));
+        }
+        root.addView(rc);
+
+        LinearLayout vo = Ui.card(c);
+        vo.addView(Ui.caption(c, "Cardio capacity (estimate)"));
+        double v = Json.d(day, "vo2max");
+        if (Double.isNaN(v)) {
+            Prefs p = Prefs.of(c);
+            v = app.openring.core.analysis.Wellness.vo2maxJackson(p.age(), p.sex() == 1, p.weightKg());
+        }
+        vo.addView(Ui.text(c, Ui.fmt(v, 0) + " ml/kg/min", 24, Ui.TEXT, Ui.LIGHT));
+        vo.addView(Ui.body(c, "Estimated VO2 max from your age and lowest night time heart rate (Uth method). A rough guide, not a lab test."));
+        root.addView(vo);
+
+        root.addView(infoCard(c, "Night time measurements", Explain.NIGHT_SIGNALS));
+        root.addView(chartCard(c, "Resting heart rate, 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.date, 30).unit(" bpm"), null));
+        root.addView(chartCard(c, "HRV, 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"), null));
+        root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).unit("/min"), null));
+        root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).range(88, 100).unit("%"), null));
+        root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill(), null));
+        return root;
+    }
+
+    // ======================================================================= shared
+
+    /** The newest readings from the last sync, and whether the ring looks worn. */
+    static View rightNow(Context c, app.openring.data.RightNow now) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Latest readings from the ring"));
+        if (now == null) return card;
+        String wear = now.worn == 1 ? "On your finger" : now.worn == 0 ? "Not on a finger" : "Unknown, sync to check";
+        card.addView(Ui.gap(c, 4));
+        card.addView(Ui.text(c, wear, 18, now.worn == 0 ? Ui.WARN : now.worn == 1 ? Ui.GOOD : Ui.TEXT_2, Ui.LIGHT));
+        if (now.worn == 0) {
+            card.addView(Ui.body(c, String.format(java.util.Locale.getDefault(),
+                    "The ring's sensor read %.1f \u00b0C at %s, room temperature. It only measures heart rate, temperature and blood oxygen "
+                            + "while worn snugly, not on the charger or a table.", now.skinTemp, Charts.clock(now.skinTempAt))));
+        }
+        card.addView(Ui.statRow(c,
+                Ui.stat(c, "Heart rate", Ui.fmt(now.hr, 0), "bpm", Ui.HEART),
+                Ui.stat(c, "Sensor temp", Ui.fmt(now.skinTemp, 1), "\u00b0C", Ui.TEMP),
+                Ui.stat(c, "SpO2", Ui.fmt(now.spo2, 0), "%", Ui.OXY)));
+        StringBuilder when = new StringBuilder();
+        if (!Double.isNaN(now.hrAt)) when.append("Heart rate at ").append(Charts.clock(now.hrAt)).append(". ");
+        if (!Double.isNaN(now.skinTempAt)) when.append("Temperature at ").append(Charts.clock(now.skinTempAt)).append(". ");
+        if (!Double.isNaN(now.spo2At)) when.append("SpO2 at ").append(Charts.clock(now.spo2At)).append(". ");
+        when.append("The ring measures on its own schedule, every few minutes when you are still. Sync to update.");
+        card.addView(Ui.text(c, when.toString(), 12, Ui.TEXT_3, Ui.REGULAR));
+        return card;
+    }
+
+    static TS daysSeries(DayData d, String field, int n) {
+        TS ts = new TS();
+        double[] v = d.series(field, n);
+        for (int i = 0; i < n; i++) {
+            if (Double.isNaN(v[i])) continue;
+            double t = d.date.minusDays(n - 1 - i).atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond() + 43200;
+            ts.add(t, v[i]);
+        }
+        return ts;
+    }
+
+    static View hero(Context c, double score, String label, int color, String sub) {
+        LinearLayout card = Ui.card(c);
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        Charts.ScoreRing ring = new Charts.ScoreRing(c, score, label, color, true);
+        card.addView(ring, new LinearLayout.LayoutParams(Ui.dp(c, 190), Ui.dp(c, 190)));
+        TextView v = Ui.text(c, Double.isNaN(score) ? "" : Scores.verdict((int) score), 18, Ui.scoreColor(score, color), Ui.MEDIUM);
+        v.setGravity(Gravity.CENTER);
+        card.addView(v);
+        TextView s = Ui.body(c, sub);
+        s.setGravity(Gravity.CENTER);
+        s.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
+        card.addView(s);
+        return card;
+    }
+
+    static View contributors(Context c, JSONObject score, int color, String title) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, title));
+        JSONArray cs = score == null ? null : score.optJSONArray("contributors");
+        if (cs == null || cs.length() == 0) {
+            card.addView(Ui.body(c, "Not enough data yet"));
+            return card;
+        }
+        for (int i = 0; i < cs.length(); i++) {
+            JSONObject o = cs.optJSONObject(i);
+            card.addView(Ui.contributor(c, o.optString("label"), o.optString("detail"), o.optDouble("score"), color, Explain.of(o.optString("key"))));
+        }
+        return card;
+    }
+
+    static View chartCard(Context c, String title, View chart, String foot) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, title));
+        card.addView(Ui.gap(c, 8));
+        card.addView(chart, Ui.sized(c, -1, 140));
+        if (foot != null) {
+            card.addView(Ui.gap(c, 6));
+            card.addView(Ui.text(c, foot, 12, Ui.TEXT_2, Ui.REGULAR));
+        }
+        return card;
+    }
+}
