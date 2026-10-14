@@ -1,0 +1,31 @@
+# Open Ring: notes for Claude sessions
+
+Local first Android app for the Oura Ring (mainly Ring 4). Plain Java, no third party libraries,
+UI built in code. See README.md for what the app does and how the pieces fit.
+
+## Build and test
+* `./tests/run_tests.sh`: protocol and analysis unit tests (any JDK).
+* `./tests/run_pipeline.sh`: storage, dating, analysis and backup on the JVM with SQLite shims
+  (fetches sqlite-jdbc and org.json into tests/.deps on first run).
+* `./build_apk.sh`: builds and signs build/OpenRing.apk without Gradle. Needs aapt2, d8 or dx,
+  zipalign, apksigner and an android.jar (`ANDROID_JAR=...`). Gradle files exist for Android Studio.
+* Run both test suites before every commit. CI runs them too and builds an APK per push.
+
+## Versions and releases
+* Bump `VERSION_CODE` and `VERSION_NAME` in build_apk.sh, `versionCode`/`versionName` in
+  app/build.gradle and the version in the About text (ui/SettingsActivity.java) together.
+* Add a section to CHANGELOG.md. Pushing a tag `vX.Y` that matches VERSION_NAME makes CI publish
+  a signed GitHub Release using the `KEYSTORE_B64` and `KEYSTORE_PASS` repository secrets.
+
+## Rules
+* Never commit a keystore or a ring key. The release key signs updates; whoever holds it can
+  replace the installed app. `.gitignore` excludes `*.keystore`.
+* Never commit real health data (raw events, databases, screenshots of someone's night).
+* `core/` must stay free of Android imports so it runs in the JVM tests.
+* Work on a branch and open a pull request; main is what users install from.
+* User facing text: plain language, no dashes as punctuation (use commas or brackets).
+
+## Ring facts worth knowing (Ring 4, fw 2.6.7, ORE_07)
+* No live HR stream on 98ed0003; live values come from draining stored history every few seconds.
+* SpO2 live mode is refused, "requested" mode works. Feature latest returns zeros.
+* Accelerometer streaming (games) is unconfirmed on this firmware.
