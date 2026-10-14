@@ -20,7 +20,7 @@ public final class Explain {
             + "and comes mostly early in the night, REM sleep (dreaming) grows towards the morning, short wake ups are normal.";
 
     public static final String NIGHT_SIGNALS = "Skin temperature, blood oxygen and breathing rate are measured while you sleep, "
-            + "the same way the official app does it. They appear after the first night you wear the ring and sync in the morning.";
+            + "the same way the official app does it. Every night you wear the ring adds a point to the trends below after the morning sync.";
 
     public static String of(String key) {
         if (key == null) return null;

@@ -121,6 +121,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             root.addView(demo);
             LinearLayout about = Ui.card(this);
             about.addView(Ui.caption(this, "About"));
+            addUpdateRow(about);
             about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
             root.addView(about);
             return;
@@ -354,13 +355,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
         root.addView(danger);
 
         LinearLayout about = Ui.card(this);
-        about.addView(Ui.caption(this, "About"));
+        about.addView(Ui.caption(this, "About and updates"));
+        addUpdateRow(about);
         about.addView(Ui.body(this, "Open Ring " + version() + ". A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Ring", "Measurements", "Profile", "Key and backup", "Export", "Help", "Careful"};
-        View[] targets = {ring, feat, prof, key, data, help, danger};
+        String[] sections = {"Ring", "Measurements", "Profile", "Key and backup", "Export", "Help", "Careful", "Updates"};
+        View[] targets = {ring, feat, prof, key, data, help, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -378,6 +380,36 @@ public final class SettingsActivity extends Activity implements RingManager.List
             chips.addView(chip, lp);
         }
     }
+
+    /** Version line and a button that opens the releases page in the browser (issue #7). */
+    void addUpdateRow(LinearLayout parent) {
+        LinearLayout row = Ui.hbox(this);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout t = Ui.vbox(this);
+        t.addView(Ui.text(this, "Installed version", 12, Ui.TEXT_3, Ui.REGULAR));
+        t.addView(Ui.text(this, "Open Ring " + version(), 18, Ui.TEXT, Ui.MEDIUM));
+        row.addView(t, Ui.weight(1));
+        TextView check = Ui.button(this, "Check for updates", Ui.SLEEP, false);
+        check.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES)));
+                } catch (android.content.ActivityNotFoundException e) {
+                    toast("No browser found. The releases are at " + RELEASES);
+                }
+            }
+        });
+        row.addView(check);
+        parent.addView(row);
+        parent.addView(Ui.gap(this, 6));
+        parent.addView(Ui.text(this, "This app has no internet access, so it cannot look for updates itself. The button opens "
+                + "the releases page in your browser: a version number higher than yours means there is an update. Install it "
+                + "over this one, your data stays.", 12, Ui.TEXT_3, Ui.REGULAR));
+        parent.addView(Ui.gap(this, 10));
+    }
+
+    static final String RELEASES = "https://github.com/busssard/OpenRing/releases/latest";
 
     String version() {
         try {

@@ -72,8 +72,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         header.addView(iconButton(R.drawable.ic_chevron_left, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                autoDate = false;
-                setDate(date.minusDays(1));
+                stepDay(date.minusDays(1));
             }
         }));
         dateLabel = Ui.text(this, "", 18, Ui.TEXT, Ui.MEDIUM);
@@ -90,8 +89,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
             @Override
             public void onClick(View v) {
                 if (!date.isBefore(LocalDate.now())) return;
-                autoDate = false;
-                setDate(date.plusDays(1));
+                stepDay(date.plusDays(1));
             }
         }));
         header.addView(iconButton(R.drawable.ic_sync, new View.OnClickListener() {
@@ -135,6 +133,14 @@ public final class MainActivity extends Activity implements RingManager.Listener
     }
 
     private boolean preparingDemo;
+    /** Scroll position to return to while stepping through days, -1 when none is pending. */
+    private int wantedY = -1;
+
+    void stepDay(LocalDate d) {
+        if (wantedY < 0) wantedY = scroll.getScrollY();
+        autoDate = false;
+        setDate(d);
+    }
 
     /**
      * Extras used by the setup screen and by the emulator screenshot test:
@@ -313,10 +319,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         int p = Ui.dp(this, 16);
         content.setPadding(p, Ui.dp(this, 4), p, p);
-        int y = scroll.getScrollY();
+        // keep the reading position when stepping through days (issue #6); the new content has no
+        // height yet, so scroll after layout. A short day (no data) does not lose the position.
+        final int y = wantedY >= 0 ? wantedY : scroll.getScrollY();
         scroll.removeAllViews();
         scroll.addView(content);
-        scroll.scrollTo(0, y);
+        scroll.post(new Runnable() {
+            @Override
+            public void run() {
+                scroll.scrollTo(0, y);
+                if (scroll.getScrollY() >= y) wantedY = -1;
+            }
+        });
         for (int i = 0; i < nav.getChildCount(); i++) {
             LinearLayout item = (LinearLayout) nav.getChildAt(i);
             int col = i == tab ? COLORS[i] : Ui.TEXT_3;
@@ -405,15 +419,15 @@ public final class MainActivity extends Activity implements RingManager.Listener
     @Override
     public void go(int t) {
         tab = t;
+        wantedY = -1;
         scroll.scrollTo(0, 0);
         render();
     }
 
     @Override
     public void showDay(LocalDate day) {
-        autoDate = false;
         if (day.isAfter(LocalDate.now())) day = LocalDate.now();
-        setDate(day);
+        stepDay(day);
     }
 
     @Override

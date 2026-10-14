@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10
+* Stepping through days with the arrows keeps your scroll position, so you can compare a chart day by day (#6)
+* Settings shows the installed version with a Check for updates button that opens the releases page (#7)
+* Body: clearer note on how the night time trends fill up
+
 ## 1.9
 * Demo mode: explore every screen with five weeks of made up data, no ring needed (setup screen, or leave it in Settings).
   It uses its own database, your real data stays untouched
