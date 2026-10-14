@@ -54,5 +54,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -q -m "Screenshots from ${GITHUB_SHA::7} (demo data)"
+          src="${{ github.event.pull_request.head.sha || github.sha }}"
+          git commit -q -m "Screenshots from ${src::7} (demo data)"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
