@@ -8,8 +8,8 @@ Code on the owner's laptop). Read all of it before changing anything.
 ## Who it is for
 * The owner is GitHub `busssard`. The main tester wears a **Ring 4 (ORE_07, fw 2.6.7)** on an
   Android 13 phone, is not technical and reads everything on the phone.
-* **The main tester really does wake up often at night.** Never "clean up" wake detection or filter awakenings
-  away to make charts look nicer; make detail adjustable instead (see issue #9).
+* **The main tester really does wake up often at night.** Never "clean up" wake detection or
+  filter awakenings away to make charts look nicer; make detail adjustable instead (see issue #9).
 * Repo visitors read the README on phones; keep it short and plain, no marketing tone.
 * Real health data is private: never commit, print in PRs or post anything derived from real
   data. Screenshots only ever come from demo mode.
@@ -17,8 +17,11 @@ Code on the owner's laptop). Read all of it before changing anything.
 ## How a change should go (the process that worked)
 1. **Understand before building.** Read the code involved, find the real cause, and say honestly
    what a change can and cannot do (example: a stage filter changes detail, not accuracy).
-2. **Design first for anything not trivial:** post the plan as an issue comment (cause, proposal,
-   presets or numbers, tests, what is out of scope) and wait for the owner's approval.
+2. **Write the design down before coding** for anything not trivial: post it as an issue comment
+   (cause with file names, proposal with concrete numbers and texts, what it cannot do, planned
+   tests). Then build it in the same run; nobody approves in between. The owner reviews at the
+   pull request, so the design comment and the PR body must let him judge it quickly. If an
+   earlier design comment exists, follow it, including changes the owner asked for.
 3. **Build** on a branch, in the existing style, with tests for the logic (`core/` and `data/`
    are testable on the JVM; add cases to tests/java/CoreTest.java or tests/pipeline/PipelineTest.java).
 4. **Look at the result.** After pushing, the emulator workflow publishes screenshots of every
