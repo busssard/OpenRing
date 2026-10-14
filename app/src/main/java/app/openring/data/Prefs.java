@@ -66,6 +66,10 @@ public final class Prefs {
     public void setLastSyncError(String e) { sp.edit().putString("last_sync_error", e).apply(); }
     public boolean backgroundSync() { return sp.getBoolean("bg_sync", true); }
     public void setBackgroundSync(boolean b) { sp.edit().putBoolean("bg_sync", b).apply(); }
+    /** Demo mode: the app shows a made up history from its own database file. */
+    public boolean demo() { return sp.getBoolean("demo", false); }
+    public void setDemo(boolean b) { sp.edit().putBoolean("demo", b).commit(); }
+
     public boolean setupDone() { return sp.getBoolean("setup_done", false); }
     public void setSetupDone(boolean b) { sp.edit().putBoolean("setup_done", b).apply(); }
 

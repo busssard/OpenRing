@@ -119,11 +119,13 @@ public final class Backup {
                 r.message = "The history inside this backup is damaged.";
                 return r;
             }
+            Prefs.of(c).setDemo(false);
             Db.replaceWith(c, dbTmp);
             dbTmp.delete();
             r.history = true;
         }
         Prefs p = Prefs.of(c);
+        p.setDemo(false);
         p.saveKey(key);
         if (o != null) {
             if (!o.isNull("address") && o.optString("address").length() > 0) p.setAddress(o.optString("address"));

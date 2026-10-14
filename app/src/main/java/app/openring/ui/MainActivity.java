@@ -57,6 +57,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
             if (d != null) date = LocalDate.parse(d);
             autoDate = b.getBoolean("auto", true);
         }
+        handleExtras(getIntent());
         Window w = getWindow();
         w.setStatusBarColor(Ui.BG);
         w.setNavigationBarColor(Ui.CARD);
@@ -133,6 +134,74 @@ public final class MainActivity extends Activity implements RingManager.Listener
         setContentView(root);
     }
 
+    private boolean preparingDemo;
+
+    /**
+     * Extras used by the setup screen and by the emulator screenshot test:
+     * demo (boolean) starts demo mode, tab (int) opens a tab, analysis (boolean) unfolds
+     * Further analysis on the Sleep page, period (int) picks its range, day (yyyy-mm-dd) a date.
+     */
+    void handleExtras(Intent i) {
+        if (i == null) return;
+        if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
+        if (i.getBooleanExtra("analysis", false)) Pages.analysisOpen = true;
+        if (i.hasExtra("period")) Pages.analysisPeriod = i.getIntExtra("period", 1);
+        String day = i.getStringExtra("day");
+        if (day != null) {
+            try {
+                date = LocalDate.parse(day);
+                autoDate = false;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        if (i.getBooleanExtra("demo", false)) startDemo();
+    }
+
+    @Override
+    protected void onNewIntent(Intent i) {
+        super.onNewIntent(i);
+        setIntent(i);
+        handleExtras(i);
+        if (scroll != null) {
+            scroll.scrollTo(0, 0);
+            load();
+        }
+    }
+
+    void startDemo() {
+        preparingDemo = true;
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setMessage("Preparing demo data");
+        pd.setCancelable(false);
+        pd.show();
+        new AsyncTask<Void, String, Void>() {
+            @Override
+            protected Void doInBackground(Void... v) {
+                app.openring.data.Demo.enter(MainActivity.this, new app.openring.data.Demo.Progress() {
+                    @Override
+                    public void step(String what) {
+                        publishProgress(what);
+                    }
+                });
+                return null;
+            }
+
+            @Override
+            protected void onProgressUpdate(String... s) {
+                pd.setMessage(s[0]);
+            }
+
+            @Override
+            protected void onPostExecute(Void r) {
+                preparingDemo = false;
+                if (!isFinishing()) pd.dismiss();
+                autoDate = true;
+                date = LocalDate.now();
+                load();
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
     @Override
     protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out);
@@ -145,11 +214,12 @@ public final class MainActivity extends Activity implements RingManager.Listener
     protected void onResume() {
         super.onResume();
         Prefs prefs = Prefs.of(this);
-        if (!prefs.setupDone() || !prefs.hasKey()) {
+        if (preparingDemo) return;
+        if (!prefs.demo() && (!prefs.setupDone() || !prefs.hasKey())) {
             startActivity(new Intent(this, SetupActivity.class));
             return;
         }
-        if (!Permissions.granted(this) && !askedPermissions) {
+        if (!prefs.demo() && !Permissions.granted(this) && !askedPermissions) {
             askedPermissions = true;
             Permissions.request(this);
         }
@@ -159,7 +229,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         updateStatus();
         load();
         long since = System.currentTimeMillis() / 1000 - Math.max(prefs.lastSync(), prefs.lastAttempt());
-        if (since > 30 * 60 && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
+        if (!prefs.demo() && since > 30 * 60 && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
     }
 
     @Override
@@ -233,6 +303,13 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 break;
             default:
                 content = Pages.today(this, data, this, syncLine());
+        }
+        if (Prefs.of(this).demo() && content instanceof LinearLayout) {
+            LinearLayout banner = Ui.card(this);
+            banner.setBackground(Ui.rounded(Ui.alpha(Ui.OXY, 0.14f), Ui.dp(this, 14)));
+            banner.addView(Ui.text(this, "Demo: a made up person's data", 14, Ui.TEXT, Ui.MEDIUM));
+            banner.addView(Ui.text(this, "Everything works like with a real ring. Leave the demo in Settings.", 12, Ui.TEXT_2, Ui.REGULAR));
+            ((LinearLayout) content).addView(banner, 0);
         }
         int p = Ui.dp(this, 16);
         content.setPadding(p, Ui.dp(this, 4), p, p);
@@ -341,11 +418,19 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
     @Override
     public void live() {
+        if (Prefs.of(this).demo()) {
+            android.widget.Toast.makeText(this, "Live measurements need a real ring. Leave the demo in Settings to connect yours.", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
         startActivity(new Intent(this, LiveActivity.class));
     }
 
     @Override
     public void sync() {
+        if (Prefs.of(this).demo()) {
+            android.widget.Toast.makeText(this, "Demo mode shows made up data. Leave the demo in Settings to use your ring.", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
         if (!Permissions.granted(this)) {
             Permissions.request(this);
             return;

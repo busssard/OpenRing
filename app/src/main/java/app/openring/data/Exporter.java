@@ -50,7 +50,7 @@ public final class Exporter {
         Cursor cur = db.getWritableDatabase().rawQuery("PRAGMA wal_checkpoint(FULL)", null);
         cur.moveToFirst();
         cur.close();
-        File f = c.getDatabasePath("openring.db");
+        File f = c.getDatabasePath(db.fileName);
         InputStream in = new FileInputStream(f);
         try {
             byte[] buf = new byte[64 * 1024];
