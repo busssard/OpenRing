@@ -774,7 +774,7 @@ public final class RingManager {
                             log("live: on demand measurement reply " + r);
                             packets.addAll(r);
                         }
-                        // blood oxygen: the ring's latest SpO2 reading, every 3 s (open_oura: data[3] SpO2, data[4] HR)
+                        // blood oxygen: the ring's latest SpO2 reading, every 10 s (open_oura: data[3] SpO2, data[4] HR)
                         if (spo2 && nowMs - lastSpo2Poll > 10000) {
                             lastSpo2Poll = nowMs;
                             List<app.openring.core.Packet> r = s.client.request(Protocol.featureLatest(Protocol.FEATURE_SPO2), latestDone, 1500, false);

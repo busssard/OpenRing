@@ -31,8 +31,8 @@ Nothing leaves the phone: the app has no internet permission.
   arrive on `98ed0003`. Ring 4 also offers notify channels `98ed0004` to `98ed0006` (subscribed and
   logged, purpose unknown). MTU must be at least 100.
 * Framing: `tag | length | payload`, little endian. Extended operations sit under tag `0x2f`.
-* Authentication: the ring sends a 15 byte nonce (`2f 01 2b`); the app answers with it encrypted by
-  the 16 byte key (AES/ECB/PKCS5, `2f 11 2d`). Pairing a reset ring writes a new key (`24 10 <key>`).
+* Authentication: the app asks for a nonce (`2f 01 2b`), the ring replies with 15 bytes, and the app
+  answers with the nonce padded to 16 bytes and encrypted with the 16 byte key (AES/ECB, `2f 11 2d`). Pairing a reset ring writes a new key (`24 10 <key>`).
   The key is stored encrypted with an Android Keystore key (`Prefs`).
 * History: the ring keeps events (tag `0x41` and up) with a per boot decisecond counter. `RingClient`
   drains them in batches (extended `2f 0c 41`, or legacy GetEvent `0x10` on firmware that lacks it,
@@ -41,8 +41,8 @@ Nothing leaves the phone: the app has no internet permission.
 * Time: the counter becomes a date through time records: the ring's `time_sync` (`0x42`) and
   `rtc_beacon` (`0x85`) events plus a phone anchor written at the end of each drain. `Db.rebuildTime`
   maps every boot segment from scratch after each sync, which also repairs interrupted syncs.
-* Measurements on the ring (daytime heart rate `0x02`, SpO2 `0x04`) have modes off, automatic,
-  requested and live. A ring paired outside the official app starts with them off.
+* Measurements on the ring (daytime heart rate `0x02`, SpO2 `0x04`, resting heart rate `0x08`) have
+  modes off, automatic, requested and live. A ring paired outside the official app starts with them off.
 
 ### Ring 4 firmware 2.6.7 (ORE_07) facts
 
@@ -50,14 +50,15 @@ Nothing leaves the phone: the app has no internet permission.
   history every 4 seconds while the measurements are re armed every 30 seconds.
 * SpO2 "live" mode is refused, "requested" works. "Feature latest" returns zeros.
 * The ring falls back from live to automatic after about 48 seconds.
-* Accelerometer streaming (games) is unconfirmed; the game releases the ring after 15 seconds without motion.
+* Accelerometer streaming (games) is unconfirmed; if no motion frame arrives within the first 15 seconds,
+  the game ends its ring session and falls back to touch steering.
 
 ## Storage (`Db`, SQLite)
 
 | Table | Content |
 | --- | --- |
 | `events` | Every raw ring event: `tag`, `ds` (ring counter), `body`, `epoch`, `seg` (boot segment), `unix` (date once known) |
-| `anchors` | Time records used for dating |
+| `anchors` | Unused (kept from an early schema). Time records are `time_sync` and `rtc_beacon` rows in `events`; the phone anchor is stored as a `time_sync` row |
 | `nights` | One row per sleep period, the full analysis as JSON (stages as a digit string per 30 seconds: 1 deep, 2 light, 3 REM, 4 awake, 0 unknown) |
 | `days` | One row per day: scores, activity, vitals, trends as JSON |
 | `battery`, `kv` | Battery history; small key value state (cursor, analysis progress, errors) |
@@ -67,8 +68,8 @@ Demo mode uses a separate file (`openring-demo.db`), so demo and real data never
 ## Analysis
 
 1. `NightFinder` finds sleep periods from the ring's bedtime markers, its per 30 second sleep state and
-   nocturnal events. A period is never stretched into time the ring marks as awake. Periods that read
-   room temperature or an implausible heart rate (ring on a table) are dropped.
+   nocturnal events. A period is never stretched into time the ring marks as awake. `Analyzer` then
+   drops periods that read room temperature or an implausible heart rate (ring lying on a table).
 2. `Stager` estimates stages per 30 seconds from heart rate, HRV and movement (open_health's model free
    stager). Ring 4 does not stage sleep itself. Sleep versus wake is reliable; deep and REM are estimates.
 3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
@@ -82,8 +83,9 @@ Demo mode uses a separate file (`openring-demo.db`), so demo and real data never
 ## Threading
 
 `RingManager` runs every ring task on one worker thread and guards the ring with one lock (`op`).
-Anything that holds the ring (live, games) must release it when its screen pauses; other tasks wait on
-the lock for a few seconds instead of failing. Analysis and database reads in the UI run in AsyncTasks.
+Anything that holds the ring (live, games) must release it when its screen pauses. Sync waits up to
+15 seconds for the lock, live 10 seconds and games up to 3 minutes; Settings actions on the ring
+(read or switch measurements, factory reset) fail at once with "The ring is busy". Analysis and database reads in the UI run in AsyncTasks.
 
 ## Known limits
 

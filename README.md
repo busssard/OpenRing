@@ -15,7 +15,7 @@ Not affiliated with Oura, not a medical device.
 <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/today.png" width="45%" alt="Today">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/sleep.png" width="45%" alt="Sleep">
 <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/sleep-analysis.png" width="45%" alt="Average night">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/body-trends.png" width="45%" alt="Body trends">
 </p>
-<sub>Demo data on an Android emulator, captured automatically for every release.</sub>
+<sub>Demo data on an Android emulator, updated automatically from the main branch.</sub>
 
 ## What it does
 
@@ -60,30 +60,40 @@ developer options. This page will explain the steps if it comes to that.
 
 ## Getting started
 
+Works with Oura Ring Gen 3, Ring 4 and Ring 5 (tested mostly on Ring 4). Or tap
+**Just looking? Explore with demo data** on the first screen to look around without a ring.
+
 1. Allow Bluetooth access.
 2. Enter age, sex, weight and height (used for calories, goals and age adjusted sleep targets).
-3. Connect the ring. It only talks to apps that know its 16 byte pairing key. Two ways:
-   * **Use the key from the official app** (the official app keeps working too).
-     iPhone: make an unencrypted local backup and read `assa.sqlite` (table `ringconfiguration`, column `auth_key`).
-     Rooted Android: `tools/android_oura_key_extract.py` from the [open_oura](https://github.com/Th0rgal/open_oura) project.
-     Or paste a key you backed up from this app (tick "Install this key" if the ring was reset since).
-   * **Restore from an Open Ring backup** (new phone or reinstall): Settings, Key and backup saves a zip with
-     the key and settings, optionally with all history; the setup screen restores it. A text file holding only
-     the key works too. The backup contains the key in readable form, keep it private.
-   * **Pair a factory reset ring.** The app creates a new key. The official app then stops working until the
-     ring is reset again. Reset on the Gen 3 or Ring 4 dock without a button: put the ring on the dock and wait
-     2 seconds, flip the dock upside down until blue, upright until red, upside down until purple, upright until
-     yellow (reset started); blinking blue means done.
+3. Connect the ring. It only talks to apps that know its pairing key (32 characters). Three ways:
+   * **Use my existing key**: the key the official Oura app uses; the official app keeps working too.
+     Paste it with the **Paste** button. Tick *Install this key on a factory reset ring* only if the
+     ring was reset since.
+   * **Restore from a backup**: a backup file saved in Open Ring (Settings, Key and backup) brings back
+     the key and settings, a full backup also all history. A text file holding only the key works too.
+   * **Pair and create a new key**: for a factory reset ring. The official app then stops working until
+     the ring is reset again. To reset a Gen 3 or Ring 4 on its dock: take the ring off, put it back and
+     wait 2 seconds, then flip the dock upside down until it glows blue, upright until red, upside down
+     until purple, upright until yellow. Yellow means the reset started; blinking blue means done.
 4. Back up the key the app shows you. It cannot be read back from the ring.
 
+<details>
+<summary>Where do I find the key of the official app?</summary>
+
+* iPhone: make an unencrypted local backup and read `assa.sqlite` (table `ringconfiguration`, column `auth_key`).
+* Rooted Android: `tools/android_oura_key_extract.py` from the [open_oura](https://github.com/Th0rgal/open_oura) project.
+</details>
+
 Keep the ring on its charger near the phone for the first sync, which copies the ring's whole history and can
-take a while. Close the official Oura app during syncs, the ring accepts a single Bluetooth link.
-Afterwards the app syncs when you open it and about every three hours in the background.
+take a while. Close the official Oura app during syncs; the ring accepts only one Bluetooth link.
+Afterwards the app syncs when you open it (at most every half hour) and about every three hours in the
+background (can be switched off in Settings).
 
 ## If something does not show up
 
 Open Settings, Help, **Data check and log**. It follows your data from the ring to the screen and
-shows the step where it stops, with a hint what to do. *Repair* re analyses everything already stored.
+shows the step where it stops, with a hint what to do. *Repair* dates and analyses everything already
+stored again, without a new sync.
 The data check contains no health values, so you can paste it into a
 [bug report](https://github.com/busssard/OpenRing/issues/new/choose).
 
