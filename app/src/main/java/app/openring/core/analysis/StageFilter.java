@@ -42,7 +42,8 @@ public final class StageFilter {
      * {@code minStageEpochs} for deep, light and REM) into the neighbour closest in depth
      * (deep, light, REM, awake); a tie goes to the longer neighbour, then to the earlier one.
      * Runs next to unknown epochs or the night's edges only merge into a known neighbour; a run with
-     * none stays. The result has the same length as the input.
+     * none stays. Awake runs merge only between two known runs, so the night never grows into time
+     * marked awake. The result has the same length as the input.
      */
     public static int[] filter(int[] stages, int minStageEpochs, int minWakeEpochs) {
         int[] out = stages.clone();
@@ -59,6 +60,9 @@ public final class StageFilter {
                 if (len >= min || len >= pickLen) continue;
                 int t = neighbour(runs, i);
                 if (t < 0) continue;
+                // awake at the start or end of the night (or next to missing data) stays: merging it
+                // would move falling asleep or waking up into time the stager marked as awake
+                if (r[0] == Stager.WAKE && !bothKnown(runs, i)) continue;
                 pick = i;
                 pickLen = len;
                 target = t;
@@ -71,6 +75,10 @@ public final class StageFilter {
             runs = join(runs);
         }
         return out;
+    }
+
+    static boolean bothKnown(List<int[]> runs, int i) {
+        return i > 0 && runs.get(i - 1)[0] != 0 && i + 1 < runs.size() && runs.get(i + 1)[0] != 0;
     }
 
     /** Index of the run that run {@code i} should merge into, or -1 when it has no known neighbour. */

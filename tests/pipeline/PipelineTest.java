@@ -310,7 +310,12 @@ public class PipelineTest {
         check("demo nights look like real nights", dh.asleepMin > 330 && dh.asleepMin < 560 && dh.awakeMin > 10 && dh.deepMin > 20 && dh.remMin > 20,
                 String.format(java.util.Locale.US, "asleep %.0f, awake %.0f, deep %.0f, rem %.0f, score %.0f", dh.asleepMin, dh.awakeMin, dh.deepMin, dh.remMin, dh.score));
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
-        check("demo today exists", java.time.LocalDate.now().toString().equals(demo.latestDay()), demo.latestDay());
+        // right after midnight the made up person has not slept long enough yet for today to have a night,
+        // so until 04:00 the newest demo day may still be yesterday
+        java.time.LocalDateTime clock = java.time.LocalDateTime.now();
+        boolean demoCurrent = clock.toLocalDate().toString().equals(demo.latestDay())
+                || clock.getHour() < 4 && clock.toLocalDate().minusDays(1).toString().equals(demo.latestDay());
+        check("demo today exists", demoCurrent, demo.latestDay());
         app.openring.data.Demo.leave(phone2);
         check("leaving the demo restores the real data", Db.get(phone2).fileName.equals(Db.REAL)
                 && Db.get(phone2).count("SELECT COUNT(*) FROM events") == realEvents, "");

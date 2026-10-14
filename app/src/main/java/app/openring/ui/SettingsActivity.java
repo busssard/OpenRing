@@ -420,7 +420,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.removeAllViews();
         card.addView(Ui.caption(this, "Sleep stage detail"));
         card.addView(Ui.body(this, "How much detail the sleep depth chart keeps. This changes how finely the night is drawn and counted, "
-                + "not how accurate the stages are: the ring does not measure stages, the phone estimates them."));
+                + "not how accurate the stages are."));
         card.addView(Ui.gap(this, 10));
         LinearLayout row = Ui.hbox(this);
         for (int i = 0; i < StageFilter.NAMES.length; i++) {
@@ -459,7 +459,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     + "Awake: separate times awake between falling asleep and waking up, of any length.", 11, Ui.TEXT_3, Ui.REGULAR));
         }
         final boolean changed = detailChoice != p.stageDetail();
-        action(card, changed ? "Save and re analyse all nights" : "Saved: " + StageFilter.NAMES[p.stageDetail()],
+        action(card, changed ? "Save and update all nights" : "Saved: " + StageFilter.NAMES[p.stageDetail()],
                 changed ? Ui.SLEEP : Ui.TEXT_3, new Runnable() {
             @Override
             public void run() {
@@ -472,7 +472,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     static final String[] DETAIL_TEXTS = {
-        "Detailed: every change the ring data shows, even 30 seconds long. Many thin lines.",
+        "Detailed: every stage change the estimate finds, even short ones. Many thin lines.",
         "Balanced (recommended): stages shorter than 3 minutes join the stage next to them. "
             + "Being awake for 1 minute or more always stays on the chart.",
         "Calm: stages shorter than 5 minutes join the stage next to them, being awake needs 2 minutes to stay. "

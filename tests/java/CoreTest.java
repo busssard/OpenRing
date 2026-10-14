@@ -94,6 +94,11 @@ public class CoreTest {
         eq("unknown epochs stay", Arrays.toString(fu), Arrays.toString(runs(0, 5, L, 32, 0, 3, L, 30)));
         int[] lonely = runs(0, 5, R, 2, 0, 5);
         eq("run between unknowns stays", Arrays.toString(StageFilter.filter(lonely, C)), Arrays.toString(lonely));
+        // awake at the edges of the night stays, so falling asleep and waking up do not move
+        int[] edges = runs(W, 3, L, 18, W, 3);
+        eq("awake at the night's edges stays under Calm", Arrays.toString(StageFilter.filter(edges, C)), Arrays.toString(edges));
+        int[] edgeUnknown = runs(0, 2, W, 1, L, 30, W, 1, 0, 2);
+        eq("awake next to missing data stays", Arrays.toString(StageFilter.filter(edgeUnknown, B)), Arrays.toString(edgeUnknown));
         // Detailed returns the input unchanged, every level keeps the length
         int[] busy = new int[960];
         Random rnd = new Random(3);
@@ -112,7 +117,8 @@ public class CoreTest {
             int j = i;
             while (j < f.length && f[j] == f[i]) j++;
             int min = f[i] == W ? 4 : 10;
-            boolean boxed = (i == 0 || f[i - 1] == 0) && (j == f.length || f[j] == 0);
+            boolean boxed = (i == 0 || f[i - 1] == 0) && (j == f.length || f[j] == 0)
+                    || f[i] == W && (i == 0 || f[i - 1] == 0 || j == f.length || f[j] == 0);
             if (f[i] != 0 && j - i < min && !boxed) ok = false;
             i = j;
         }
