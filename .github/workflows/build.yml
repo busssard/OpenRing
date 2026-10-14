@@ -1,7 +1,14 @@
 name: Build APK
+# Every push and pull request: run the tests and build an APK you can download from the run.
+# A version tag (v1.8, v1.9, ...): build with the private signing key and publish a GitHub Release.
 on:
   push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -15,9 +22,42 @@ jobs:
         run: ./tests/run_tests.sh
       - name: End to end pipeline test
         run: ./tests/run_pipeline.sh
-      - name: Build APK with the SDK build tools
+      - name: Signing key from the repository secret
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            echo "signing with the release key"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "::error::KEYSTORE_B64 secret missing: a release must be signed with the release key"
+            exit 1
+          else
+            echo "no KEYSTORE_B64 secret (pull request from a fork?): building with a throwaway key"
+          fi
+      - name: Build APK
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASS }}
         run: ./build_apk.sh
+      - name: Name the APK after its version
+        run: |
+          v=$(sed -n 's/^VERSION_NAME=//p' build_apk.sh)
+          cp build/OpenRing.apk "build/OpenRing-$v.apk"
+          echo "APK=build/OpenRing-$v.apk" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
           name: OpenRing-apk
-          path: build/OpenRing.apk
+          path: ${{ env.APK }}
+      - name: Check the tag matches the app version
+        if: github.ref_type == 'tag'
+        run: |
+          v=$(sed -n 's/^VERSION_NAME=//p' build_apk.sh)
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but app version $v"; exit 1; }
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$APK" --title "Open Ring ${GITHUB_REF_NAME#v}" \
+            --notes-file <(sed -n "/^## ${GITHUB_REF_NAME#v}/,/^## /p" CHANGELOG.md | sed '$d')

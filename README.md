@@ -8,9 +8,11 @@ No account, no cloud, no subscription, no third party libraries.
 
 > Not affiliated with Oura Health. Not a medical device. Use at your own risk.
 
+**Download:** the newest APK is on the [Releases page](https://github.com/busssard/OpenRing/releases).
+
 ## Install
 
-**Option A, ready made APK:** copy `OpenRing.apk` to your phone and open it (allow "install unknown apps"
+**Option A, ready made APK:** download it from the [Releases page](https://github.com/busssard/OpenRing/releases) on your phone and open it (allow "install unknown apps"
 for your file manager or browser when Android asks). Android 8.0 or newer.
 
 **Option B, build it yourself**
