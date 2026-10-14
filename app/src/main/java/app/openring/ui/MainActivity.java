@@ -217,7 +217,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         View content;
         switch (tab) {
             case Pages.SLEEP:
-                content = Pages.sleep(this, data);
+                content = Pages.sleep(this, data, this);
                 break;
             case Pages.READINESS:
                 content = Pages.readiness(this, data);
@@ -330,6 +330,13 @@ public final class MainActivity extends Activity implements RingManager.Listener
         tab = t;
         scroll.scrollTo(0, 0);
         render();
+    }
+
+    @Override
+    public void showDay(LocalDate day) {
+        autoDate = false;
+        if (day.isAfter(LocalDate.now())) day = LocalDate.now();
+        setDate(day);
     }
 
     @Override

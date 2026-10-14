@@ -53,6 +53,27 @@ public class CoreTest {
         }
     }
 
+    static void pattern() {
+        app.openring.core.analysis.SleepPattern p = new app.openring.core.analysis.SleepPattern();
+        // night 1: 23:00 to 07:00 all light; night 2: 00:00 to 06:00 all deep
+        int[] a = new int[8 * 120];
+        java.util.Arrays.fill(a, 2);
+        int[] b = new int[6 * 120];
+        java.util.Arrays.fill(b, 1);
+        p.add(23 * 60, a, 30);
+        p.add(0, b, 30);
+        int bin2am = (26 * 60 - app.openring.core.analysis.SleepPattern.ANCHOR_MIN) / app.openring.core.analysis.SleepPattern.BIN_MIN;
+        int bin2330 = (23 * 60 + 30 - app.openring.core.analysis.SleepPattern.ANCHOR_MIN) / app.openring.core.analysis.SleepPattern.BIN_MIN;
+        check("pattern: both nights in bed at 02:00", Math.abs(p.inBed(bin2am) - 1.0) < 1e-6);
+        check("pattern: half deep, half light at 02:00", Math.abs(p.share(bin2am, 1) - 0.5) < 1e-6 && Math.abs(p.share(bin2am, 2) - 0.5) < 1e-6);
+        check("pattern: one of two nights in bed at 23:30", Math.abs(p.inBed(bin2330) - 0.5) < 1e-6);
+        int[] r = p.range(0.05);
+        check("pattern: range from 22:00 to 08:00", app.openring.core.analysis.SleepPattern.clockMin(r[0]) == 22 * 60
+                && app.openring.core.analysis.SleepPattern.clockMin(r[1]) == 8 * 60);
+        p.add(13 * 60, a, 30); // an afternoon start lands after 12:00 and is ignored by the bins, but counts as a night
+        check("pattern: counts nights", p.nights() == 3);
+    }
+
     public static void main(String[] args) throws Exception {
         protocol();
         history();
@@ -61,6 +82,7 @@ public class CoreTest {
         timeline();
         live();
         motion();
+        pattern();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }

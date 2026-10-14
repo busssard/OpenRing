@@ -335,7 +335,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
         LinearLayout about = Ui.card(this);
         about.addView(Ui.caption(this, "About"));
-        about.addView(Ui.body(this, "Open Ring 1.7. A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
+        about.addView(Ui.body(this, "Open Ring 1.8. A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);

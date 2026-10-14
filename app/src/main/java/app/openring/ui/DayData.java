@@ -23,6 +23,8 @@ public final class DayData {
     public final Map<String, JSONObject> history = new HashMap<String, JSONObject>();
     /** Newest readings from the last sync (for the Body page). */
     public app.openring.data.RightNow now;
+    /** Main nights from 30 days before the selected date up to today, oldest first. */
+    public final List<JSONObject> recent = new ArrayList<JSONObject>();
 
     public static DayData load(Context c, LocalDate date) {
         Db db = Db.get(c);
@@ -35,6 +37,10 @@ public final class DayData {
             if (o == null) continue;
             if (o.optBoolean("main")) d.night = o;
             else d.naps.add(o);
+        }
+        for (String s : db.nightsJson(date.minusDays(30).toString(), LocalDate.now().plusDays(1).toString(), true)) {
+            JSONObject o = Json.parse(s);
+            if (o != null) d.recent.add(o);
         }
         try {
             d.now = app.openring.data.RightNow.load(c);
