@@ -100,6 +100,10 @@ public final class Json {
         StringBuilder st = new StringBuilder(n.stages.length);
         for (int s : n.stages) st.append((char) ('0' + s));
         put(o, "stages", st.toString());
+        StringBuilder raw = new StringBuilder(n.stagesRaw.length);
+        for (int s : n.stagesRaw) raw.append((char) ('0' + s));
+        put(o, "stages_raw", raw.toString());
+        put(o, "stage_detail", n.stageDetail);
         put(o, "in_bed_min", n.inBedMin);
         put(o, "asleep_min", n.asleepMin);
         put(o, "deep_min", n.deepMin);
@@ -137,7 +141,16 @@ public final class Json {
     }
 
     public static int[] stages(JSONObject night) {
-        String s = night.optString("stages", "");
+        return digits(night.optString("stages", ""));
+    }
+
+    /** Stages before the detail filter; nights analysed before version 1.11 only have the filtered ones. */
+    public static int[] stagesRaw(JSONObject night) {
+        String raw = night.optString("stages_raw", "");
+        return raw.isEmpty() ? stages(night) : digits(raw);
+    }
+
+    static int[] digits(String s) {
         int[] out = new int[s.length()];
         for (int i = 0; i < out.length; i++) out[i] = s.charAt(i) - '0';
         return out;

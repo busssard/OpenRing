@@ -161,6 +161,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
             }
         }
         if (i.getBooleanExtra("demo", false)) startDemo();
+        // screen test: open Settings at a card ("stages")
+        String section = i.getStringExtra("settings");
+        if (section != null) startActivity(new Intent(this, SettingsActivity.class).putExtra("section", section));
     }
 
     @Override

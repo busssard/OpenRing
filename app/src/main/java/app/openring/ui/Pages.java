@@ -292,6 +292,10 @@ public final class Pages {
         hyp.addView(Ui.text(c, "ring".equals(src) ? "Stages from your ring's own analysis"
                 : "signals".equals(src) ? "Stages estimated on this phone from heart rate, HRV and movement"
                 : "Only sleep and wake could be told apart this night", 11, Ui.TEXT_3, Ui.REGULAR));
+        if (n.has("stage_detail")) {
+            String level = app.openring.core.analysis.StageFilter.NAMES[app.openring.core.analysis.StageFilter.clampLevel(n.optInt("stage_detail"))];
+            hyp.addView(Ui.text(c, "Stage detail: " + level + " (Settings, Sleep stage detail)", 11, Ui.TEXT_3, Ui.REGULAR));
+        }
         root.addView(hyp);
 
         root.addView(timeline(c, n));

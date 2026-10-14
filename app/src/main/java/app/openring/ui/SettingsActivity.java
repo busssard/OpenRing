@@ -26,9 +26,13 @@ import java.util.Locale;
 import app.openring.ble.RingManager;
 import app.openring.core.Hex;
 import app.openring.core.Protocol;
+import org.json.JSONObject;
+
+import app.openring.core.analysis.StageFilter;
 import app.openring.data.Analyzer;
 import app.openring.data.Db;
 import app.openring.data.Exporter;
+import app.openring.data.Json;
 import app.openring.data.Prefs;
 import app.openring.sync.SyncJob;
 import app.openring.sync.SyncService;
@@ -41,6 +45,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
     private LinearLayout root;
     private TextView status;
     private final int[] featureModes = {-1, -1, -1};
+    /** Detail level picked in the Sleep stage detail card, saved only with its button. */
+    private int detailChoice = -1;
+    private LinearLayout stagesCard;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -119,11 +126,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
             });
             root.addView(demo);
+            stagesCard = stageDetailCard(p);
+            root.addView(stagesCard);
             LinearLayout about = Ui.card(this);
             about.addView(Ui.caption(this, "About"));
             addUpdateRow(about);
             about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
             root.addView(about);
+            scrollToSection();
             return;
         }
 
@@ -232,6 +242,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
             }
         });
         root.addView(prof);
+        stagesCard = stageDetailCard(p);
+        root.addView(stagesCard);
 
         // ---- key ----
         LinearLayout key = Ui.card(this);
@@ -361,8 +373,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Ring", "Measurements", "Profile", "Key and backup", "Export", "Help", "Careful", "Updates"};
-        View[] targets = {ring, feat, prof, key, data, help, danger, about};
+        String[] sections = {"Ring", "Measurements", "Profile", "Sleep stages", "Key and backup", "Export", "Help", "Careful", "Updates"};
+        View[] targets = {ring, feat, prof, stagesCard, key, data, help, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -379,6 +391,105 @@ public final class SettingsActivity extends Activity implements RingManager.List
             lp.setMargins(0, 0, Ui.dp(this, 8), 0);
             chips.addView(chip, lp);
         }
+        scrollToSection();
+    }
+
+    /** Opens at a card when started with the extra {@code section} ("stages"), used by the screen test. */
+    void scrollToSection() {
+        if (!"stages".equals(getIntent().getStringExtra("section")) || stagesCard == null) return;
+        scroll.post(new Runnable() {
+            @Override
+            public void run() {
+                scroll.scrollTo(0, stagesCard.getTop() - Ui.dp(SettingsActivity.this, 8));
+            }
+        });
+    }
+
+    /**
+     * Sleep stage detail (issue #9): three levels, a preview of the last night with the picked level
+     * (from the unfiltered stages kept with each night) and a button that saves and re analyses.
+     */
+    LinearLayout stageDetailCard(final Prefs p) {
+        LinearLayout card = Ui.card(this);
+        if (detailChoice < 0) detailChoice = p.stageDetail();
+        fillStageDetail(card, p);
+        return card;
+    }
+
+    void fillStageDetail(LinearLayout card, final Prefs p) {
+        card.removeAllViews();
+        card.addView(Ui.caption(this, "Sleep stage detail"));
+        card.addView(Ui.body(this, "How much detail the sleep depth chart keeps. This changes how finely the night is drawn and counted, "
+                + "not how accurate the stages are: the ring does not measure stages, the phone estimates them."));
+        card.addView(Ui.gap(this, 10));
+        LinearLayout row = Ui.hbox(this);
+        for (int i = 0; i < StageFilter.NAMES.length; i++) {
+            final int k = i;
+            TextView chip = Ui.button(this, StageFilter.NAMES[i], i == detailChoice ? Ui.SLEEP : Ui.TEXT_3, false);
+            chip.setTextSize(13);
+            int ph = Ui.dp(this, 6), pv = Ui.dp(this, 7);
+            chip.setPadding(ph, pv, ph, pv);
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    detailChoice = k;
+                    refreshStageDetail(p);
+                }
+            });
+            LinearLayout.LayoutParams lp = Ui.weight(1);
+            lp.setMargins(Ui.dp(this, 2), 0, Ui.dp(this, 2), 0);
+            row.addView(chip, lp);
+        }
+        card.addView(row);
+        card.addView(Ui.gap(this, 8));
+        card.addView(Ui.body(this, DETAIL_TEXTS[detailChoice]));
+        JSONObject night = lastNight();
+        card.addView(Ui.gap(this, 12));
+        if (night == null) {
+            card.addView(Ui.text(this, "A preview of your last night appears here after the first night with the ring.", 12, Ui.TEXT_3, Ui.REGULAR));
+        } else {
+            int[] st = StageFilter.filter(Json.stagesRaw(night), detailChoice);
+            card.addView(Ui.text(this, "Your last night with this setting", 11, Ui.TEXT_3, Ui.MEDIUM));
+            card.addView(Ui.gap(this, 6));
+            card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")), Ui.sized(this, -1, 150));
+            card.addView(Ui.gap(this, 4));
+            card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, awake %d times on this chart.",
+                    StageFilter.changes(st), StageFilter.wakeRuns(st)), 13, Ui.TEXT, Ui.MEDIUM));
+            card.addView(Ui.text(this, "Stage changes: how often the chart switches between deep, light, REM and awake. "
+                    + "Awake: separate times awake between falling asleep and waking up, of any length.", 11, Ui.TEXT_3, Ui.REGULAR));
+        }
+        final boolean changed = detailChoice != p.stageDetail();
+        action(card, changed ? "Save and re analyse all nights" : "Saved: " + StageFilter.NAMES[p.stageDetail()],
+                changed ? Ui.SLEEP : Ui.TEXT_3, new Runnable() {
+            @Override
+            public void run() {
+                if (detailChoice == p.stageDetail()) return;
+                p.setStageDetail(detailChoice);
+                refreshStageDetail(p);
+                reanalyse();
+            }
+        });
+    }
+
+    static final String[] DETAIL_TEXTS = {
+        "Detailed: every change the ring data shows, even 30 seconds long. Many thin lines.",
+        "Balanced (recommended): stages shorter than 3 minutes join the stage next to them. "
+            + "Being awake for 1 minute or more always stays on the chart.",
+        "Calm: stages shorter than 5 minutes join the stage next to them, being awake needs 2 minutes to stay. "
+            + "Long, calm blocks, similar in style to the official app. Wake ups shorter than 2 minutes are no longer shown or counted."
+    };
+
+    void refreshStageDetail(Prefs p) {
+        if (stagesCard != null) fillStageDetail(stagesCard, p);
+    }
+
+    /** The newest main night, or null. */
+    JSONObject lastNight() {
+        Db db = Db.get(this);
+        String day = db.latestDay();
+        if (day == null) return null;
+        java.util.List<String> n = db.nightsJson(java.time.LocalDate.parse(day).minusDays(2).toString(), day, true);
+        return n.isEmpty() ? null : Json.parse(n.get(n.size() - 1));
     }
 
     /** Version line and a button that opens the releases page in the browser (issue #7). */

@@ -20,6 +20,7 @@ public final class NightAnalyzer {
         public TS breath = new TS();    // breaths per minute from asleep windows
         public TS sleepState = new TS();// ring sleep_state (0 awake, 1 or 2 asleep)
         public int[] ringStages;        // optional ring hypnogram aligned to start, 30 s epochs
+        public int stageDetail = StageFilter.DETAILED; // how much stage detail to keep (issue #9)
     }
 
     public static Night analyze(Input in) {
@@ -61,6 +62,11 @@ public final class NightAnalyzer {
             java.util.Arrays.fill(stages, Stager.LIGHT);
             n.stageSource = "window";
         }
+        // detail filter: metrics and the score use the filtered stages; the stager's output is kept
+        // so Settings can preview other levels without re analysing
+        n.stagesRaw = stages;
+        n.stageDetail = StageFilter.clampLevel(in.stageDetail);
+        stages = StageFilter.filter(stages, n.stageDetail);
         n.stages = stages;
         metrics(n, stages, in);
 

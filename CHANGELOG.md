@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.11
+* Sleep stage detail (Settings): choose how finely the sleep depth chart is drawn. Detailed shows every change,
+  Balanced (new default) joins stages shorter than 3 minutes with the stage next to them, Calm draws long blocks
+  similar in style to the official app. Being awake for 1 minute or more always stays in Balanced. A preview shows your last night
+  with each choice. This changes the detail, not how accurate the stages are (#9)
+* After updating, all nights are analysed again once with the new default
+
 ## 1.10
 * Stepping through days with the arrows keeps your scroll position, so you can compare a chart day by day (#6)
 * Settings shows the installed version with a Check for updates button that opens the releases page (#7)

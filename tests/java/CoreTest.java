@@ -53,6 +53,95 @@ public class CoreTest {
         }
     }
 
+    /** Builds a stage array from (code, epochs) pairs. */
+    static int[] runs(int... pairs) {
+        int n = 0;
+        for (int i = 1; i < pairs.length; i += 2) n += pairs[i];
+        int[] out = new int[n];
+        int k = 0;
+        for (int i = 0; i < pairs.length; i += 2) for (int j = 0; j < pairs[i + 1]; j++) out[k++] = pairs[i];
+        return out;
+    }
+
+    static void stageFilter() {
+        int D = Stager.DEEP, L = Stager.LIGHT, R = Stager.REM, W = Stager.WAKE;
+        int B = StageFilter.BALANCED, C = StageFilter.CALM;
+        // short REM blips inside light merge into light
+        int[] remBlips = runs(L, 40, R, 3, L, 40, R, 4, L, 40);
+        eq("REM blips merge into light", Arrays.toString(StageFilter.filter(remBlips, B)), Arrays.toString(runs(L, 127)));
+        // a 2 minute awakening survives Balanced and Calm; 90 seconds survives Balanced only
+        int[] wake2 = runs(L, 40, W, 4, L, 40);
+        eq("2 minute awakening survives Balanced", Arrays.toString(StageFilter.filter(wake2, B)), Arrays.toString(wake2));
+        eq("2 minute awakening survives Calm", Arrays.toString(StageFilter.filter(wake2, C)), Arrays.toString(wake2));
+        int[] wake90 = runs(L, 40, W, 3, L, 40);
+        eq("90 s awakening survives Balanced", Arrays.toString(StageFilter.filter(wake90, B)), Arrays.toString(wake90));
+        eq("90 s awakening merges under Calm", Arrays.toString(StageFilter.filter(wake90, C)), Arrays.toString(runs(L, 83)));
+        // a 30 s awakening merges under Balanced, into the neighbour closest in depth (REM before light)
+        int[] wake30 = runs(L, 40, W, 1, R, 40);
+        eq("30 s awakening merges under Balanced", Arrays.toString(StageFilter.filter(wake30, B)), Arrays.toString(runs(L, 40, R, 41)));
+        // a short awake run is kept even though it is shorter than the stage minimum
+        int[] wake1min = runs(D, 30, W, 2, D, 30);
+        eq("1 minute awakening kept under Balanced", Arrays.toString(StageFilter.filter(wake1min, B)), Arrays.toString(wake1min));
+        // short deep between light and REM: light is closer in depth
+        int[] deepBlip = runs(L, 20, D, 2, R, 20);
+        eq("short deep joins light", Arrays.toString(StageFilter.filter(deepBlip, B)), Arrays.toString(runs(L, 22, R, 20)));
+        // tie in depth goes to the longer neighbour
+        int[] tie = runs(D, 10, L, 3, D, 30);
+        eq("tie goes to the longer neighbour", Arrays.toString(StageFilter.filter(tie, B)), Arrays.toString(runs(D, 43)));
+        // unknown epochs are never changed and never absorb anything
+        int[] unk = runs(0, 5, R, 2, L, 30, 0, 3, L, 30);
+        int[] fu = StageFilter.filter(unk, C);
+        eq("unknown epochs stay", Arrays.toString(fu), Arrays.toString(runs(0, 5, L, 32, 0, 3, L, 30)));
+        int[] lonely = runs(0, 5, R, 2, 0, 5);
+        eq("run between unknowns stays", Arrays.toString(StageFilter.filter(lonely, C)), Arrays.toString(lonely));
+        // Detailed returns the input unchanged, every level keeps the length
+        int[] busy = new int[960];
+        Random rnd = new Random(3);
+        for (int i = 0; i < busy.length; i++) busy[i] = rnd.nextInt(10) == 0 ? 0 : 1 + rnd.nextInt(4);
+        eq("Detailed is unchanged", Arrays.toString(StageFilter.filter(busy, StageFilter.DETAILED)), Arrays.toString(busy));
+        for (int lv = 0; lv < 3; lv++) {
+            int[] f = StageFilter.filter(busy, lv);
+            boolean sameUnknown = f.length == busy.length;
+            for (int i = 0; i < busy.length && sameUnknown; i++) sameUnknown = (busy[i] == 0) == (f[i] == 0);
+            check("level " + lv + " keeps length and unknown epochs", sameUnknown);
+        }
+        // after filtering no run of known stages is shorter than its minimum (unless boxed in by unknowns)
+        int[] f = StageFilter.filter(Stager.smooth(busy, 5), C);
+        boolean ok = true;
+        for (int i = 0; i < f.length; ) {
+            int j = i;
+            while (j < f.length && f[j] == f[i]) j++;
+            int min = f[i] == W ? 4 : 10;
+            boolean boxed = (i == 0 || f[i - 1] == 0) && (j == f.length || f[j] == 0);
+            if (f[i] != 0 && j - i < min && !boxed) ok = false;
+            i = j;
+        }
+        check("Calm leaves no short runs", ok);
+        check("filter reduces stage changes", StageFilter.changes(f) < StageFilter.changes(busy));
+        eq("stage changes count", StageFilter.changes(runs(L, 5, D, 5, 0, 2, D, 3, W, 2)), 2);
+        eq("awake runs inside the night", StageFilter.wakeRuns(runs(W, 10, L, 5, W, 1, L, 5, W, 3, R, 2, W, 20)), 2);
+
+        // NightAnalyzer: metrics and score come from the filtered stages, the raw ones are kept
+        int[] remFlicker = new int[8 * 120];
+        Arrays.fill(remFlicker, L);
+        for (int i = 100; i < 900; i += 40) remFlicker[i] = R; // 30 s REM blips
+        remFlicker[500] = W;
+        Night raw = metricsOnly(remFlicker, StageFilter.DETAILED);
+        Night bal = metricsOnly(remFlicker, B);
+        eq("raw stages kept", Arrays.toString(bal.stagesRaw), Arrays.toString(remFlicker));
+        check("REM minutes come from filtered stages", raw.remMin > 0 && bal.remMin == 0);
+        eq("detail level recorded", bal.stageDetail, B);
+    }
+
+    static Night metricsOnly(int[] stages, int level) {
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        in.start = 1_700_000_000;
+        in.end = in.start + stages.length * 30;
+        in.ringStages = stages; // taken as the ring's own hypnogram, so the stager does not run
+        in.stageDetail = level;
+        return NightAnalyzer.analyze(in);
+    }
+
     static void pattern() {
         app.openring.core.analysis.SleepPattern p = new app.openring.core.analysis.SleepPattern();
         // night 1: 23:00 to 07:00 all light; night 2: 00:00 to 06:00 all deep
@@ -83,6 +172,7 @@ public class CoreTest {
         live();
         motion();
         pattern();
+        stageFilter();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }

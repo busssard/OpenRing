@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
@@ -185,6 +186,24 @@ public class PipelineTest {
                     dayJ.optJSONObject("activity_score") == null ? "-" : dayJ.optJSONObject("activity_score").opt("value"),
                     dayJ.opt("steps"), dayJ.opt("active_kcal"));
             check(key + " readiness", rd != null && rd.optInt("value", -1) > 0, rd == null ? null : rd.opt("value"));
+        }
+
+        // ---- sleep stage detail (issue #9): Balanced by default, raw stages kept, a change re analyses ----
+        {
+            String key = day0.plusDays(1).toString();
+            JSONObject n = Json.parse(db.nightsJson(key, key, true).get(0));
+            check("night stored with Balanced detail", n.optInt("stage_detail", -1) == 1, n.opt("stage_detail"));
+            int[] raw = Json.stagesRaw(n), st = Json.stages(n);
+            check("raw stages stored next to the filtered ones", raw.length == st.length && raw.length > 0, raw.length + "/" + st.length);
+            check("stored stages are the filtered raw ones", Arrays.equals(st, app.openring.core.analysis.StageFilter.filter(raw, 1)), null);
+            app.openring.data.Prefs.of(ctx).setStageDetail(2);
+            Analyzer.run(ctx, null);
+            JSONObject calm = Json.parse(db.nightsJson(key, key, true).get(0));
+            check("changing the detail re analyses older nights", calm.optInt("stage_detail", -1) == 2, calm.opt("stage_detail"));
+            check("Calm has no more stage changes than Balanced",
+                    app.openring.core.analysis.StageFilter.changes(Json.stages(calm)) <= app.openring.core.analysis.StageFilter.changes(st), null);
+            app.openring.data.Prefs.of(ctx).setStageDetail(1);
+            Analyzer.run(ctx, null);
         }
 
         // ---- a ring reboot: counter restarts, the official app had synced time once ----
