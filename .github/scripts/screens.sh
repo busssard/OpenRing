@@ -22,7 +22,7 @@ adb shell am broadcast -a com.android.systemui.demo -e command network -e wifi s
 adb logcat -c
 
 shot() { sleep "${2:-3}"; adb exec-out screencap -p > "$OUT/$1.png"; log "shot $1 ($(stat -c %s "$OUT/$1.png") bytes)"; }
-swipe_up() { adb shell input swipe 540 1700 540 500 400; sleep 1; }
+swipe_up() { adb shell input swipe 30 1700 30 500 300; sleep 1; }  # along the left margin, never a tap on a night
 launch() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
 
 log "first start: setup"
