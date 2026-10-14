@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8
+* Recent nights on the Sleep page: the last 30 nights as small stage bars with their score; tap one to open it
+* Further analysis (fold out at the end of the Sleep page): your average night for the last week, month, year or all time,
+  showing for each time of night how often you are in deep, light, REM or awake, plus typical bedtime, wake time,
+  stage minutes, efficiency, wake ups, lowest heart rate, HRV and how regular your bedtime is
+
 ## 1.7
 * Clear key field with a Paste button on the setup screen
 * Backup and restore: key and settings, optionally with all history; a text file holding just the key works too

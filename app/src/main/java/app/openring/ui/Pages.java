@@ -30,6 +30,9 @@ public final class Pages {
         void live();
 
         void sync();
+
+        /** Show another day (e.g. a night picked from the recent nights strip). */
+        void showDay(java.time.LocalDate day);
     }
 
     public static final int TODAY = 0, SLEEP = 1, READINESS = 2, ACTIVITY = 3, BODY = 4;
@@ -244,12 +247,13 @@ public final class Pages {
 
     // ======================================================================== SLEEP
 
-    public static View sleep(Context c, DayData d) {
+    public static View sleep(Context c, DayData d, Nav nav) {
         LinearLayout root = Ui.vbox(c);
         JSONObject n = d.night;
         root.addView(hero(c, d.score("sleep"), "Sleep", Ui.SLEEP,
                 n == null ? "No main sleep recorded for this day" : "Total sleep " + Ui.hm(Json.d(n, "asleep_min"))
                         + "  ·  " + Charts.clock(Json.d(n, "start")) + " to " + Charts.clock(Json.d(n, "end"))));
+        if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         if (n == null) {
             root.addView(infoCard(c, "About sleep", Explain.SLEEP));
             LinearLayout how = Ui.card(c);
@@ -259,6 +263,7 @@ public final class Pages {
                     + "through the night, sleep stages, heart rate, HRV, blood oxygen and breathing."));
             root.addView(how);
             addNaps(c, root, d);
+            if (!d.recent.isEmpty()) root.addView(furtherAnalysis(c, d));
             return root;
         }
 
@@ -339,7 +344,187 @@ public final class Pages {
         week.addView(new Charts.BarChart(c, asleep, d.weekdayLabels(7), Ui.SLEEP).valueFormat("%.1f h").target(8), Ui.sized(c, -1, 130));
         root.addView(week);
         addNaps(c, root, d);
+        root.addView(furtherAnalysis(c, d));
         return root;
+    }
+
+    // ---- recent nights: tap one to open it ----
+    static View recentNights(Context c, DayData d, final Nav nav) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Recent nights"));
+        card.addView(Ui.gap(c, 2));
+        card.addView(Ui.text(c, "Tap a night to open it. Height is time asleep.", 11, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.gap(c, 8));
+        double max = 8 * 60;
+        for (JSONObject o : d.recent) max = Math.max(max, Json.d(o, "asleep_min") + Math.max(0, Json.d(o, "awake_min")));
+        final android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(c);
+        hs.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = Ui.hbox(c);
+        int selIndex = -1;
+        String sel = d.date.toString();
+        for (int i = 0; i < d.recent.size(); i++) {
+            JSONObject o = d.recent.get(i);
+            final String day = o.optString("day");
+            boolean selected = day.equals(sel);
+            if (selected) selIndex = i;
+            LinearLayout col = Ui.vbox(c);
+            col.setGravity(Gravity.CENTER_HORIZONTAL);
+            JSONObject sc = o.optJSONObject("score");
+            String score = sc != null && sc.has("value") ? String.valueOf(sc.optInt("value")) : "--";
+            col.addView(Ui.text(c, score, 12, selected ? Ui.TEXT : Ui.TEXT_2, Ui.MEDIUM));
+            col.addView(new Charts.NightBar(c, Json.d(o, "deep_min"), Json.d(o, "light_min"), Json.d(o, "rem_min"), Json.d(o, "awake_min"), max, selected),
+                    new LinearLayout.LayoutParams(Ui.dp(c, 40), Ui.dp(c, 84)));
+            java.time.LocalDate ld = java.time.LocalDate.parse(day);
+            col.addView(Ui.text(c, ld.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault()), 11,
+                    selected ? Ui.SLEEP : Ui.TEXT_3, Ui.MEDIUM));
+            col.addView(Ui.text(c, ld.getDayOfMonth() + "." + ld.getMonthValue() + ".", 10, Ui.TEXT_3, Ui.REGULAR));
+            col.setClickable(true);
+            col.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    nav.showDay(java.time.LocalDate.parse(day));
+                }
+            });
+            row.addView(col, new LinearLayout.LayoutParams(Ui.dp(c, 44), -2));
+        }
+        hs.addView(row);
+        card.addView(hs);
+        // keep the selected night in view (newest at the right)
+        final int target = selIndex < 0 ? d.recent.size() - 1 : selIndex;
+        hs.post(new Runnable() {
+            @Override
+            public void run() {
+                int x = Ui.dp(hs.getContext(), 44) * target - hs.getWidth() / 2 + Ui.dp(hs.getContext(), 22);
+                hs.scrollTo(Math.max(0, x), 0);
+            }
+        });
+        return card;
+    }
+
+    // ---- further analysis: averages over a period, folded away by default ----
+    static boolean analysisOpen;
+    static int analysisPeriod = 1; // 0 week, 1 month, 2 year, 3 all time
+
+    static View furtherAnalysis(final Context c, final DayData d) {
+        final LinearLayout card = Ui.card(c);
+        LinearLayout head = Ui.hbox(c);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout ht = Ui.vbox(c);
+        ht.addView(Ui.h2(c, "Further analysis"));
+        ht.addView(Ui.text(c, "Your average night and typical values over a week, month, year or all time", 12, Ui.TEXT_3, Ui.REGULAR));
+        head.addView(ht, Ui.weight(1));
+        final TextView arrow = Ui.text(c, analysisOpen ? "\u25B4" : "\u25BE", 20, Ui.TEXT_2, Ui.REGULAR);
+        head.addView(arrow);
+        card.addView(head);
+        final LinearLayout body = Ui.vbox(c);
+        card.addView(body);
+        head.setClickable(true);
+        head.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                analysisOpen = !analysisOpen;
+                arrow.setText(analysisOpen ? "\u25B4" : "\u25BE");
+                fillAnalysis(c, d, body);
+            }
+        });
+        fillAnalysis(c, d, body);
+        return card;
+    }
+
+    static void fillAnalysis(final Context c, final DayData d, final LinearLayout body) {
+        body.removeAllViews();
+        if (!analysisOpen) return;
+        body.addView(Ui.gap(c, 12));
+        LinearLayout chips = Ui.hbox(c);
+        final String[] names = {"Week", "Month", "Year", "All time"};
+        for (int i = 0; i < names.length; i++) {
+            final int k = i;
+            TextView chip = Ui.button(c, names[i], i == analysisPeriod ? Ui.SLEEP : Ui.TEXT_3, false);
+            chip.setTextSize(13);
+            int ph = Ui.dp(c, 6), pv = Ui.dp(c, 7);
+            chip.setPadding(ph, pv, ph, pv);
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    analysisPeriod = k;
+                    fillAnalysis(c, d, body);
+                }
+            });
+            LinearLayout.LayoutParams lp = Ui.weight(1);
+            lp.setMargins(Ui.dp(c, 2), 0, Ui.dp(c, 2), 0);
+            chips.addView(chip, lp);
+        }
+        body.addView(chips);
+        final LinearLayout result = Ui.vbox(c);
+        result.addView(Ui.gap(c, 10));
+        result.addView(Ui.text(c, "Calculating", 13, Ui.TEXT_3, Ui.REGULAR));
+        body.addView(result);
+        final java.time.LocalDate to = d.date;
+        final java.time.LocalDate from = analysisPeriod == 0 ? to.minusDays(6) : analysisPeriod == 1 ? to.minusDays(29)
+                : analysisPeriod == 2 ? to.minusDays(364) : java.time.LocalDate.of(2000, 1, 1);
+        final int period = analysisPeriod;
+        new android.os.AsyncTask<Void, Void, app.openring.data.SleepHistory>() {
+            @Override
+            protected app.openring.data.SleepHistory doInBackground(Void... v) {
+                return app.openring.data.SleepHistory.load(app.openring.data.Db.get(c), from.toString(), to.toString(),
+                        java.time.ZoneId.systemDefault());
+            }
+
+            @Override
+            protected void onPostExecute(app.openring.data.SleepHistory h) {
+                if (period != analysisPeriod || !analysisOpen) return;
+                showAnalysis(c, h, result, period);
+            }
+        }.executeOnExecutor(android.os.AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    static String clockOf(double min) {
+        if (Double.isNaN(min)) return "--";
+        int m = (int) Math.round(min) % 1440;
+        return String.format(Locale.getDefault(), "%02d:%02d", m / 60, m % 60);
+    }
+
+    static void showAnalysis(Context c, app.openring.data.SleepHistory h, LinearLayout out, int period) {
+        out.removeAllViews();
+        out.addView(Ui.gap(c, 10));
+        if (h.nights == 0) {
+            out.addView(Ui.body(c, "No nights in this period yet."));
+            return;
+        }
+        String span = h.nights == 1 ? "1 night" : h.nights + " nights";
+        if (h.firstDay != null && !h.firstDay.equals(h.lastDay)) span += ", " + h.firstDay + " to " + h.lastDay;
+        out.addView(Ui.caption(c, "Average night"));
+        out.addView(Ui.text(c, span, 12, Ui.TEXT_3, Ui.REGULAR));
+        out.addView(Ui.gap(c, 6));
+        out.addView(new Charts.Pattern(c, h.pattern), Ui.sized(c, -1, 210));
+        out.addView(Ui.gap(c, 6));
+        out.addView(Ui.text(c, "For each time of night, the share of nights spent in each stage. The outline shows how often you "
+                + "are in bed at that time, so its rise and fall show your usual bedtime and wake time. Touch the chart to read a time.",
+                12, Ui.TEXT_2, Ui.REGULAR));
+        out.addView(Ui.gap(c, 12));
+        out.addView(Ui.caption(c, "Typical values"));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Asleep", Ui.hm(h.asleepMin), "", Ui.SLEEP),
+                Ui.stat(c, "Sleep score", Ui.fmt(h.score, 0), "", Ui.SLEEP)));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Falls asleep", clockOf(h.bedtimeMin), "", 0),
+                Ui.stat(c, "Wakes up", clockOf(h.wakeMin), "", 0)));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(h.deepMin), "", Ui.STAGE_DEEP),
+                Ui.stat(c, "REM", Ui.hm(h.remMin), "", Ui.STAGE_REM)));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(h.lightMin), "", Ui.STAGE_LIGHT),
+                Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", 0)));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(h.efficiency, 0), "%", 0),
+                Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0)));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(h.lowestHr, 0), "bpm", Ui.HEART),
+                Ui.stat(c, "Average HRV", Ui.fmt(h.hrv, 0), "ms", Ui.READY)));
+        if (!Double.isNaN(h.bedtimeSdMin)) {
+            out.addView(Ui.gap(c, 6));
+            String reg = h.bedtimeSdMin < 30 ? "very regular" : h.bedtimeSdMin < 60 ? "fairly regular" : "irregular";
+            out.addView(Ui.text(c, "Falling asleep varies by about " + Math.round(h.bedtimeSdMin) + " min from night to night ("
+                    + reg + "). Regular sleep times help sleep quality.", 12, Ui.TEXT_2, Ui.REGULAR));
+        }
+        if (h.nights < 7) {
+            out.addView(Ui.gap(c, 6));
+            out.addView(Ui.text(c, "Averages settle after about a week of nights.", 11, Ui.TEXT_3, Ui.REGULAR));
+        }
     }
 
     static void addNaps(Context c, LinearLayout root, DayData d) {

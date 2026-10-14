@@ -641,4 +641,151 @@ public final class Charts {
             cv.drawCircle(Math.max(6, Math.min(w - 6, xv)), y, Ui.dp(getContext(), 5), p);
         }
     }
+
+    // ------------------------------------------------------------- recent nights bar
+
+    /**
+     * One night as a small column: height is time asleep (scaled to {@code maxMin}), split into
+     * deep at the bottom, then light, REM and awake on top. Highlighted when selected.
+     */
+    public static final class NightBar extends View {
+        private final double deep, light, rem, awake, maxMin;
+        private final boolean selected;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+
+        public NightBar(Context c, double deep, double light, double rem, double awake, double maxMin, boolean selected) {
+            super(c);
+            this.deep = nz(deep);
+            this.light = nz(light);
+            this.rem = nz(rem);
+            this.awake = nz(awake);
+            this.maxMin = Math.max(60, maxMin);
+            this.selected = selected;
+        }
+
+        static double nz(double v) {
+            return Double.isNaN(v) ? 0 : Math.max(0, v);
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth(), h = getHeight();
+            float bw = Math.min(w * 0.55f, Ui.dp(getContext(), 18));
+            float x0 = (w - bw) / 2, x1 = x0 + bw;
+            if (selected) {
+                p.setColor(Ui.alpha(Ui.SLEEP, 0.16f));
+                r.set(0, 0, w, h);
+                cv.drawRoundRect(r, Ui.dp(getContext(), 8), Ui.dp(getContext(), 8), p);
+            }
+            double[] parts = {deep, light, rem, awake};
+            int[] colors = {Ui.STAGE_DEEP, Ui.STAGE_LIGHT, Ui.STAGE_REM, Ui.STAGE_AWAKE};
+            float y = h - Ui.dp(getContext(), 4);
+            float scale = (float) ((h - Ui.dp(getContext(), 8)) / maxMin);
+            for (int i = 0; i < 4; i++) {
+                float ph = (float) (parts[i] * scale);
+                if (ph <= 0) continue;
+                p.setColor(i == 3 ? Ui.alpha(colors[i], 0.55f) : colors[i]);
+                cv.drawRect(x0, y - ph, x1, y, p);
+                y -= ph;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------- average night chart
+
+    /**
+     * The average night: for each clock time, the share of nights in deep, light, REM and awake,
+     * stacked from the bottom. The top edge is the share of nights in bed at that time.
+     */
+    public static final class Pattern extends Scrub {
+        private final app.openring.core.analysis.SleepPattern sp;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint();
+        private final int a, b;
+
+        public Pattern(Context c, app.openring.core.analysis.SleepPattern sp) {
+            super(c);
+            this.sp = sp;
+            int[] rg = sp.range(0.05);
+            a = rg[0];
+            b = rg[1];
+            txt.setColor(Ui.TEXT_3);
+            txt.setTextSize(Ui.dp(c, 10));
+            grid.setColor(Ui.LINE);
+            grid.setStrokeWidth(1);
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth(), h = getHeight();
+            float left = Ui.dp(getContext(), 30), top = Ui.dp(getContext(), 24);
+            float legendH = Ui.dp(getContext(), 18), axisH = Ui.dp(getContext(), 16);
+            float bottom = h - legendH - axisH;
+            if (sp.nights() == 0 || b <= a) {
+                txt.setTextAlign(Paint.Align.CENTER);
+                cv.drawText("No nights in this period", w / 2, h / 2, txt);
+                return;
+            }
+            txt.setTextAlign(Paint.Align.LEFT);
+            for (int k = 0; k <= 2; k++) {
+                float y = bottom - (bottom - top) * k / 2f;
+                cv.drawLine(left, y, w, y, grid);
+                cv.drawText((k * 50) + "%", 0, y + Ui.dp(getContext(), 3), txt);
+            }
+            int n = b - a;
+            float bw = (w - left) / n;
+            int[] order = {1, 2, 3, 4};
+            int[] colors = {Ui.STAGE_DEEP, Ui.STAGE_LIGHT, Ui.STAGE_REM, Ui.STAGE_AWAKE};
+            for (int i = 0; i < n; i++) {
+                int bin = a + i;
+                float y = bottom;
+                for (int k = 0; k < 4; k++) {
+                    float hh = (float) (sp.share(bin, order[k]) * (bottom - top));
+                    if (hh <= 0) continue;
+                    p.setColor(k == 3 ? Ui.alpha(colors[k], 0.6f) : colors[k]);
+                    cv.drawRect(left + i * bw, y - hh, left + (i + 1) * bw + 0.5f, y, p);
+                    y -= hh;
+                }
+            }
+            // hour labels, every 2 hours (every 4 when the range is long)
+            int perHour = 60 / app.openring.core.analysis.SleepPattern.BIN_MIN;
+            int hours = n / perHour;
+            int every = hours > 10 ? 4 : 2;
+            txt.setTextAlign(Paint.Align.CENTER);
+            for (int i = 0; i <= n; i += perHour) {
+                int clock = app.openring.core.analysis.SleepPattern.clockMin(a + i) / 60;
+                if (clock % every != 0) continue;
+                float x = Math.max(left + Ui.dp(getContext(), 12), Math.min(w - Ui.dp(getContext(), 12), left + i * bw));
+                cv.drawText(String.format(Locale.getDefault(), "%02d:00", clock), x, bottom + axisH - Ui.dp(getContext(), 3), txt);
+            }
+            // legend, or the readout at the touched time
+            float ly = h - Ui.dp(getContext(), 4);
+            String[] names = {"Deep", "Light", "REM", "Awake"};
+            if (!Float.isNaN(scrubX)) {
+                int i = (int) Math.max(0, Math.min(n - 1, Math.floor((scrubX - left) / bw)));
+                int bin = a + i;
+                int cm = app.openring.core.analysis.SleepPattern.clockMin(bin);
+                StringBuilder sb = new StringBuilder();
+                for (int k = 0; k < 4; k++) {
+                    if (k > 0) sb.append(", ");
+                    sb.append(names[k]).append(' ').append(Math.round(sp.share(bin, order[k]) * 100)).append('%');
+                }
+                drawTip(cv, left + (i + 0.5f) * bw, top, bottom, String.format(Locale.getDefault(), "%02d:%02d  in bed %d%%",
+                        cm / 60, cm % 60, Math.round(sp.inBed(bin) * 100)));
+                txt.setTextAlign(Paint.Align.LEFT);
+                txt.setColor(Ui.TEXT_2);
+                cv.drawText(sb.toString(), left, ly, txt);
+                txt.setColor(Ui.TEXT_3);
+                return;
+            }
+            float x = left;
+            txt.setTextAlign(Paint.Align.LEFT);
+            for (int k = 0; k < 4; k++) {
+                p.setColor(colors[k]);
+                cv.drawCircle(x + Ui.dp(getContext(), 4), ly - Ui.dp(getContext(), 3.5f), Ui.dp(getContext(), 4), p);
+                cv.drawText(names[k], x + Ui.dp(getContext(), 11), ly, txt);
+                x += Ui.dp(getContext(), 18) + txt.measureText(names[k]);
+            }
+        }
+    }
 }

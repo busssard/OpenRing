@@ -244,6 +244,15 @@ public class PipelineTest {
         app.openring.data.RightNow now3 = app.openring.data.RightNow.load(ctx);
         check("worn ring recognised", now3.worn == 1, now3.skinTemp + " C, worn " + now3.worn);
 
+        // ---- sleep history: average night over all analysed nights ----
+        app.openring.data.SleepHistory sh = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", java.time.ZoneId.of("Europe/Zurich"));
+        check("history finds the nights", sh.nights >= 1, sh.nights + " nights");
+        double peak = 0;
+        for (int i = 0; i < app.openring.core.analysis.SleepPattern.BINS; i++) peak = Math.max(peak, sh.pattern.inBed(i));
+        check("average night has an in bed peak", peak > 0.5 && peak <= 1.0001, peak);
+        check("typical asleep minutes", sh.asleepMin > 120 && sh.asleepMin < 720, sh.asleepMin);
+        check("typical wake time in the morning", sh.wakeMin > 4 * 60 && sh.wakeMin < 11 * 60, sh.wakeMin);
+
         // ---- backup: save everything, wipe, restore on a "new phone" ----
         app.openring.data.Prefs pr = app.openring.data.Prefs.of(ctx);
         byte[] keyBytes = app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a");
