@@ -279,6 +279,23 @@ public class PipelineTest {
         app.openring.data.Backup.Result bad = app.openring.data.Backup.read(phone2, new java.io.ByteArrayInputStream("hello".getBytes("UTF-8")));
         check("random file rejected", !bad.ok, bad.message);
 
+        // ---- demo mode: made up history in its own file, real data untouched ----
+        long realEvents = Db.get(phone2).count("SELECT COUNT(*) FROM events");
+        long t = System.currentTimeMillis();
+        app.openring.data.Demo.enter(phone2, null);
+        Db demo = Db.get(phone2);
+        check("demo uses its own database", demo.fileName.equals(Db.DEMO), demo.fileName);
+        long demoNights = demo.count("SELECT COUNT(*) FROM nights WHERE main = 1");
+        check("demo has about five weeks of nights", demoNights >= 28 && demoNights <= 36, demoNights + " nights in " + (System.currentTimeMillis() - t) + " ms");
+        app.openring.data.SleepHistory dh = app.openring.data.SleepHistory.load(demo, "2000-01-01", "2100-01-01", java.time.ZoneId.systemDefault());
+        check("demo nights look like real nights", dh.asleepMin > 330 && dh.asleepMin < 560 && dh.awakeMin > 10 && dh.deepMin > 20 && dh.remMin > 20,
+                String.format(java.util.Locale.US, "asleep %.0f, awake %.0f, deep %.0f, rem %.0f, score %.0f", dh.asleepMin, dh.awakeMin, dh.deepMin, dh.remMin, dh.score));
+        check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
+        check("demo today exists", java.time.LocalDate.now().toString().equals(demo.latestDay()), demo.latestDay());
+        app.openring.data.Demo.leave(phone2);
+        check("leaving the demo restores the real data", Db.get(phone2).fileName.equals(Db.REAL)
+                && Db.get(phone2).count("SELECT COUNT(*) FROM events") == realEvents, "");
+
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }

@@ -203,6 +203,15 @@ public final class SetupActivity extends Activity {
                 show();
             }
         });
+        secondary(l, "Just looking? Explore with demo data", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(SetupActivity.this, MainActivity.class).putExtra("demo", true)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                finish();
+            }
+        });
+        l.addView(Ui.text(this, "The demo shows a made up person's five weeks, so you can see every screen without a ring.", 12, Ui.TEXT_3, Ui.REGULAR));
     }
 
     void permissions() {

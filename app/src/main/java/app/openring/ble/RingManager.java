@@ -243,6 +243,10 @@ public final class RingManager {
     public SyncResult syncBlocking() {
         SyncResult res = new SyncResult();
         Prefs prefs = Prefs.of(ctx);
+        if (prefs.demo()) {
+            res.message = "Demo mode: syncing is off";
+            return res;
+        }
         byte[] key = prefs.loadKey();
         if (key == null) {
             res.message = "No ring key saved. Finish setup first.";

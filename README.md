@@ -1,34 +1,87 @@
+<div align="center">
+
 # Open Ring
 
-A local first Android companion for the Oura Ring (built for Ring 4, also speaks to Gen 3 Horizon and Ring 5).
-It talks to the ring directly over Bluetooth, stores the raw data in a database on your phone and computes
-everything on the phone: sleep stages, Sleep, Readiness and Activity scores, heart rate, HRV, skin temperature,
-blood oxygen, breathing rate, sleep debt, a symptom radar and a cardio capacity estimate.
-No account, no cloud, no subscription, no third party libraries.
+**Your Oura Ring, your phone, your data.**
 
-> Not affiliated with Oura Health. Not a medical device. Use at your own risk.
+A free Android app that reads your Oura Ring directly and works out your sleep, readiness,
+activity and body signals right on your phone. No account, no subscription, no cloud.
 
-**Download:** the newest APK is on the [Releases page](https://github.com/busssard/OpenRing/releases).
+[![Latest release](https://img.shields.io/github/v/release/busssard/OpenRing?label=download&color=7c8cff)](https://github.com/busssard/OpenRing/releases/latest)
+[![Tests and build](https://github.com/busssard/OpenRing/actions/workflows/build.yml/badge.svg)](https://github.com/busssard/OpenRing/actions/workflows/build.yml)
+[![Android emulator test](https://github.com/busssard/OpenRing/actions/workflows/emulator.yml/badge.svg)](https://github.com/busssard/OpenRing/actions/workflows/emulator.yml)
+[![CodeQL](https://github.com/busssard/OpenRing/actions/workflows/codeql.yml/badge.svg)](https://github.com/busssard/OpenRing/actions/workflows/codeql.yml)
+![No internet permission](https://img.shields.io/badge/internet%20access-none-3fb950)
+![Android 8+](https://img.shields.io/badge/Android-8.0%2B-3ddc84)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/today.png" width="19%" alt="Today"> <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/sleep.png" width="19%" alt="Sleep">
+<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/sleep-analysis.png" width="19%" alt="Your average night"> <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/readiness.png" width="19%" alt="Readiness">
+<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/body-trends.png" width="19%" alt="Body trends">
+
+<sub>Screenshots are taken automatically on an Android emulator with the app's demo data (a made up person).</sub>
+
+</div>
+
+## Why Open Ring
+
+* **Private by design.** The app has no internet access at all, Android itself blocks it. Your nights,
+  heart rate and temperature never leave your phone unless you export them yourself.
+* **Everything the ring measures, explained.** Sleep stages through the night, a timeline of when you fell
+  asleep and woke up, readiness with plain language reasons, heart rate, HRV, skin temperature, blood
+  oxygen, breathing, activity and calories.
+* **See your patterns.** Browse your last nights at a glance, and see your average night over a week,
+  month, year or all time: when you usually fall asleep, when deep sleep happens, how regular you are.
+* **Live on demand.** Heart rate, HRV and blood oxygen right now, with a breath hold timer for
+  freediving practice.
+* **Just curious?** The app has a demo with five weeks of made up data. Install it and tap
+  *Explore with demo data*, no ring needed.
+* **Free and open.** Every line of code is here to read. No ads, no tracking, no subscription.
+
+> Not affiliated with Oura Health. Not a medical device. Scores are close to Oura's but not identical.
 
 ## Install
 
-**Option A, ready made APK:** download it from the [Releases page](https://github.com/busssard/OpenRing/releases) on your phone and open it (allow "install unknown apps"
-for your file manager or browser when Android asks). Android 8.0 or newer.
+You need an Android phone with Android 8.0 or newer.
 
-**Option B, build it yourself**
+1. On your phone, open the [latest release](https://github.com/busssard/OpenRing/releases/latest) and tap
+   **OpenRing-x.y.apk** to download it.
+2. Open the downloaded file. Android asks whether your browser may install apps: tap **Settings**, switch on
+   **Allow from this source**, then go back and tap **Install**.
+3. **Google Play Protect may warn you** because the app does not come from the Play Store. That warning is
+   about where the app comes from, not about anything found in it. Tap **More details**, then
+   **Install anyway** (on some phones the button reads *Install without scanning*).
+4. Open Open Ring. Updates install the same way, over the old version, keeping your data.
 
-* *Android Studio:* open this folder, let it sync, then *Build > Build APK(s)*.
-* *Command line with Gradle:* `gradle assembleRelease` (or create a wrapper first with `gradle wrapper`).
-  The APK lands in `app/build/outputs/apk/release/`.
-* *No Gradle at all:* `./build_apk.sh` builds and signs `build/OpenRing.apk` with just the Android build
-  tools (aapt2, d8 or dx, zipalign, apksigner) and an `android.jar`. On Ubuntu:
-  `sudo apt install aapt apksigner zipalign dalvik-exchange` and point `ANDROID_JAR` at an API 34 `android.jar`.
-* *GitHub:* push the folder to a repository; the included workflow (`.github/workflows/build.yml`) runs the
-  tests and attaches the APK to the run.
+<details>
+<summary><b>Why can I trust this download?</b></summary>
 
-Run the protocol and analysis tests on any JDK: `./tests/run_tests.sh`.
+* **It cannot send your data anywhere.** The app does not ask for internet access, so Android does not let it
+  connect to anything. Every build checks this automatically and fails if it ever changes
+  ([tests/check_privacy.sh](tests/check_privacy.sh)).
+* **Built in public.** Every APK on the release page is built by GitHub from the code you see here, after the
+  tests passed. The release notes link the exact build, the file's SHA-256 checksum and the signing
+  certificate, and the build carries a signed [provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
+  you can check with `gh attestation verify OpenRing-x.y.apk -R busssard/OpenRing`.
+* **Tested on Android.** Each change is installed on an Android 14 emulator that opens every screen and fails
+  on any crash; the screenshots above come from that test.
+* **Scanned.** GitHub's CodeQL security scanner checks the code on every change.
+* **Same signature for every update.** Android only installs an update over Open Ring if it carries the same
+  signing key, so nobody else can push a fake update to your phone.
 
-## First start
+More in [SECURITY.md](SECURITY.md).
+</details>
+
+<details>
+<summary><b>Coming changes to installing apps outside the Play Store</b></summary>
+
+Google is introducing developer verification for Android apps. It starts in a few countries from
+September 2026 and is planned worldwide for 2027. Apps from developers that are not verified will then need a
+one time setting (an "advanced flow" in the developer options, with a waiting time) before they can be
+installed. If this affects you, this page will explain the steps.
+</details>
+
+## Getting started
 
 1. Allow Bluetooth access.
 2. Enter age, sex, weight and height (used for calories, goals and age adjusted sleep targets).
@@ -50,18 +103,43 @@ Keep the ring on its charger near the phone for the first sync, which copies the
 take a while. Close the official Oura app during syncs, the ring accepts a single Bluetooth link.
 Afterwards the app syncs when you open it and about every three hours in the background.
 
+
 ## What you get
 
-| Screen | Contents |
+| Tab | What you see |
 | --- | --- |
-| Today | Readiness, Sleep and Activity rings, a plain language summary, key metrics, symptom radar, live heart rate |
-| Sleep | Score and contributors, hypnogram (awake, REM, light, deep), time in bed, efficiency, latency, wake ups, cycles, night heart rate and HRV curves, blood oxygen, sleep debt, naps, 7 day chart |
-| Readiness | Score and contributors, temperature deviation, 30 day HRV and resting heart rate |
-| Activity | Score and contributors, goal progress, estimated steps and distance, active and total calories, intensity minutes, hourly intensity, 7 day chart |
-| Body | Daytime heart rate, live heart rate, symptom radar, cardio capacity estimate, 30 day trends |
-| Live | Heart rate and HRV from live beats, blood oxygen on demand (experimental), sensor temperature, breath hold timer with holds marked on the charts |
-| Play | A tab like the others; each game opens full screen and back returns to the tab. Game mode: the ring's accelerometer turns hand tilt into a joystick. Asteroid Dodge, Orb Catcher and a motion check; add a game by writing one `Game` subclass (`ui/games`) |
-| Settings | Ring info and battery, measurement switches (daytime HR, SpO2), profile and goals, key backup, CSV and database export, diagnostics, factory reset |
+| Today | Readiness, Sleep and Activity scores, a one line summary of your day, key numbers, live heart rate |
+| Sleep | Sleep depth through the night (touch it to see times), night timeline, your last 30 nights, heart rate, HRV and blood oxygen through the night, sleep debt, and *Further analysis*: your average night for a week, month, year or all time |
+| Readiness | Score with the reasons behind it, temperature deviation, HRV and resting heart rate trends |
+| Activity | Score, goal progress, estimated steps and distance, calories, intensity through the day |
+| Body | Latest readings, daytime heart rate, symptom radar, cardio capacity estimate, 30 day trends |
+| Live | Heart rate, HRV, blood oxygen and temperature right now, breath hold timer |
+| Play | Small games steered by tilting your hand (where the ring firmware streams motion), touch steering otherwise |
+| Settings | Ring and battery, measurements on the ring, profile and goals, key and backup, export, data check |
+
+---
+
+# For developers
+
+## Build it yourself
+
+**Option B, build it yourself**
+
+* *Android Studio:* open this folder, let it sync, then *Build > Build APK(s)*.
+* *Command line with Gradle:* `gradle assembleRelease` (or create a wrapper first with `gradle wrapper`).
+  The APK lands in `app/build/outputs/apk/release/`.
+* *No Gradle at all:* `./build_apk.sh` builds and signs `build/OpenRing.apk` with just the Android build
+  tools (aapt2, d8 or dx, zipalign, apksigner) and an `android.jar`. On Ubuntu:
+  `sudo apt install aapt apksigner zipalign dalvik-exchange` and point `ANDROID_JAR` at an API 34 `android.jar`.
+* *GitHub:* push the folder to a repository; the included workflow (`.github/workflows/build.yml`) runs the
+  tests and attaches the APK to the run.
+
+Run the protocol and analysis tests on any JDK: `./tests/run_tests.sh`.
+
+
+Tests that run on any JDK: `./tests/run_tests.sh` (protocol and algorithms), `./tests/run_pipeline.sh`
+(storage, dating, analysis, backup and demo data on the JVM) and `./tests/check_privacy.sh`.
+Contributing with Claude or by hand: see [CLAUDE.md](CLAUDE.md) for the rules of the repository.
 
 ## Troubleshooting: synced, but nothing shows
 

@@ -1,0 +1,173 @@
+package app.openring.data;
+
+import android.content.Context;
+
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Random;
+
+import app.openring.core.EventCodec;
+import app.openring.core.Protocol;
+import app.openring.core.RingEvent;
+
+/**
+ * Demo mode: a made up person's ring history, encoded exactly the way a ring stores it, so the
+ * whole real pipeline (dating, sleep detection, staging, scores) runs on it. It lives in its own
+ * database file; switching demo off brings back the real data untouched.
+ */
+public final class Demo {
+    private Demo() {}
+
+    public interface Progress {
+        void step(String what);
+    }
+
+    static final long DS0 = 3L * 86400 * 10; // the made up ring booted 3 days before the history starts
+
+    /** Switch to the demo database and fill it if it is empty. Blocks; call from a background thread. */
+    public static void enter(Context c, Progress p) {
+        Prefs.of(c).setDemo(true);
+        Db db = Db.get(c);
+        if (db.eventCount() > 0 && db.latestDay() != null && db.latestDay().equals(LocalDate.now().toString())) return;
+        if (p != null) p.step("Making up 5 weeks of nights and days");
+        db.resetAll();
+        long now = System.currentTimeMillis() / 1000;
+        ZoneId zone = ZoneId.systemDefault();
+        int days = 35;
+        long t0 = LocalDate.now().minusDays(days).atStartOfDay(zone).toEpochSecond();
+        List<RingEvent> ev = history(t0, days, now, zone, new Random(7));
+        long lastDs = ev.get(ev.size() - 1).ds;
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
+        if (p != null) p.step("Analysing the demo nights on this phone");
+        Analyzer.runAll(c, null);
+    }
+
+    public static void leave(Context c) {
+        Prefs.of(c).setDemo(false);
+        Db.get(c); // reopens the real database
+    }
+
+    static long ds(long t0, double unix) {
+        return DS0 + Math.round((unix - t0) * 10);
+    }
+
+    static byte[] le16(int... v) {
+        byte[] b = new byte[v.length * 2];
+        for (int i = 0; i < v.length; i++) {
+            b[2 * i] = (byte) v[i];
+            b[2 * i + 1] = (byte) (v[i] >> 8);
+        }
+        return b;
+    }
+
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r) {
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        for (int d = 1; d <= days; d++) {
+            double midnight = t0 + d * 86400.0;
+            int dow = LocalDate.now().minusDays(days - d).getDayOfWeek().getValue(); // 6, 7 weekend mornings
+            boolean weekend = dow >= 6;
+            boolean late = r.nextDouble() < 0.12;
+            double bed = midnight - (1.4 - (late ? 1.6 : 0) - (weekend ? 0.4 : 0)) * 3600 + r.nextGaussian() * 1500;
+            double wake = midnight + (weekend ? 8.0 : 6.7) * 3600 + r.nextGaussian() * 1200;
+            if (wake > now - 1200) wake = now - 1200;
+            if (wake - bed < 3 * 3600) continue;
+            double tempOffset = r.nextGaussian() * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0); // a warm spell lately
+            double fitness = d * 0.06; // resting HR slowly improves
+            // a few wake ups per night, longer on restless nights
+            int bouts = r.nextInt(3) + (r.nextDouble() < 0.25 ? 2 : 0);
+            double[][] wakeBouts = new double[bouts][2];
+            for (int k = 0; k < bouts; k++) {
+                double at = bed + (0.15 + 0.75 * r.nextDouble()) * (wake - bed);
+                wakeBouts[k][0] = at;
+                wakeBouts[k][1] = at + (3 + r.nextInt(14)) * 60;
+            }
+            double onset = 8 * 60 + r.nextInt(20 * 60);
+            // ---- night streams ----
+            for (double t = bed; t < wake; t += 30) {
+                double f = (t - bed) / (wake - bed);
+                boolean awake = t < bed + onset || t > wake - 300 || inside(wakeBouts, t);
+                double cyc = Math.sin(2 * Math.PI * (t - bed - onset) / (92 * 60));
+                if (((long) (t - bed) / 30) % 10 == 0) {
+                    int hr = (int) Math.round(58 - fitness - 8 * Math.sin(Math.PI * Math.min(1, f * 1.5)) + (awake ? 9 : 0)
+                            + 2 * cyc + r.nextGaussian());
+                    byte[] spi = new byte[10];
+                    spi[0] = (byte) (hr * 2);
+                    spi[4] = (byte) Math.round((13.8 + r.nextGaussian() * 0.5 + (awake ? 1.5 : 0)) * 8);
+                    spi[6] = (byte) (awake ? 15 + r.nextInt(10) : (r.nextDouble() < 0.06 ? 4 : 0));
+                    spi[7] = (byte) (awake ? 0 : 1);
+                    spi[9] = 0x10;
+                    ev.add(new RingEvent(EventCodec.SLEEP_PERIOD_INFO_2, ds(t0, t), spi));
+                }
+                if (((long) (t - bed) / 30) % 2 == 0) {
+                    int ms = awake ? 10 + r.nextInt(15) : (r.nextDouble() < (cyc > 0.6 ? 0.08 : 0.02) ? 3 + r.nextInt(4) : 0);
+                    ev.add(new RingEvent(EventCodec.MOTION_EVENT, ds(t0, t), new byte[] {(byte) ms, 1, 2, 3}));
+                    ev.add(new RingEvent(EventCodec.SLEEP_TEMP_EVENT, ds(t0, t),
+                            le16((int) Math.round((35.25 + tempOffset + 0.2 * Math.sin(Math.PI * f) + r.nextGaussian() * 0.03) * 100))));
+                }
+                if (((long) (t - bed) / 30) % 4 == 0 && !awake) {
+                    byte[] sp = new byte[6];
+                    for (int k = 1; k < 6; k++) sp[k] = (byte) Math.max(90, Math.min(99, Math.round(96.5 + r.nextGaussian() * 0.9)));
+                    ev.add(new RingEvent(EventCodec.SPO2_EVENT, ds(t0, t), sp));
+                }
+            }
+            for (double t = bed; t < wake; t += 1800) {
+                byte[] hrv = new byte[12];
+                for (int k = 0; k < 6; k++) {
+                    double tt = t + k * 300, f = (tt - bed) / (wake - bed);
+                    boolean awake = tt < bed + onset || inside(wakeBouts, tt);
+                    hrv[2 * k] = (byte) Math.round(58 - fitness - 8 * Math.sin(Math.PI * Math.min(1, f * 1.5)) + (awake ? 9 : 0));
+                    hrv[2 * k + 1] = (byte) Math.max(15, Math.round(42 + 22 * f + fitness * 3 - (awake ? 12 : 0) + r.nextGaussian() * 6));
+                }
+                ev.add(new RingEvent(EventCodec.HRV_EVENT, ds(t0, t), hrv));
+            }
+            byte[] bt = new byte[8];
+            Protocol.Le.putU32(bt, 0, ds(t0, bed));
+            Protocol.Le.putU32(bt, 4, ds(t0, wake));
+            ev.add(new RingEvent(EventCodec.BEDTIME_PERIOD, ds(t0, wake + 600), bt));
+
+            // ---- daytime: activity per minute in 10 minute events, a heart beat now and then ----
+            boolean workout = r.nextDouble() < 0.45;
+            double workoutAt = 17 + r.nextDouble() * 2;
+            double dayEnd = Math.min(now - 60, midnight + 22.3 * 3600);
+            for (double t = wake + 600; t < dayEnd; t += 600) {
+                double hour = (t - midnight) / 3600;
+                byte[] met = new byte[11];
+                met[0] = 1;
+                for (int k = 1; k <= 10; k++) {
+                    double m = 1.2 + r.nextDouble() * 0.5;
+                    if (hour > 7.8 && hour < 8.3 && !weekend) m = 3.3; // walk to work
+                    if (hour > 12.2 && hour < 12.6) m = 3.0;
+                    if (workout && hour > workoutAt && hour < workoutAt + 0.75) m = 7 + r.nextDouble();
+                    if (weekend && hour > 10 && hour < 12) m = 2.5 + r.nextDouble();
+                    met[k] = (byte) Math.round(m * 10);
+                }
+                ev.add(new RingEvent(EventCodec.ACTIVITY_INFO, ds(t0, t), met));
+                byte[] ibi = new byte[4];
+                int i1 = (int) (workout && hour > workoutAt && hour < workoutAt + 0.75 ? 450 + r.nextInt(60) : 760 + r.nextInt(120));
+                ibi[0] = (byte) (i1 >> 3);
+                ibi[1] = (byte) ((i1 & 7) | (1 << 3));
+                ibi[2] = (byte) (i1 >> 3);
+                ibi[3] = (byte) ((i1 & 7) | (1 << 3));
+                ev.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, ds(t0, t), ibi));
+                if (t > now - 3600) ev.add(new RingEvent(EventCodec.TEMP_EVENT, ds(t0, t), le16(3312, 3300, 2900)));
+            }
+        }
+        Collections.sort(ev, new Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        return ev;
+    }
+
+    static boolean inside(double[][] bouts, double t) {
+        for (double[] b : bouts) if (t >= b[0] && t < b[1]) return true;
+        return false;
+    }
+}

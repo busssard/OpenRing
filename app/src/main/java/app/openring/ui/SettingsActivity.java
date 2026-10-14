@@ -105,6 +105,26 @@ public final class SettingsActivity extends Activity implements RingManager.List
         status = Ui.text(this, RingManager.get(this).status(), 12, Ui.TEXT_2, Ui.REGULAR);
         root.addView(status);
         root.addView(Ui.gap(this, 8));
+        if (p.demo()) {
+            hs.setVisibility(View.GONE);
+            LinearLayout demo = Ui.card(this);
+            demo.addView(Ui.caption(this, "Demo mode"));
+            demo.addView(Ui.body(this, "You are looking at a made up person's data. Your own data (if any) is kept separately and untouched."));
+            action(demo, p.hasKey() ? "Leave the demo, back to my ring" : "Leave the demo and connect a ring", Ui.SLEEP, new Runnable() {
+                @Override
+                public void run() {
+                    app.openring.data.Demo.leave(SettingsActivity.this);
+                    startActivity(new Intent(SettingsActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                    finish();
+                }
+            });
+            root.addView(demo);
+            LinearLayout about = Ui.card(this);
+            about.addView(Ui.caption(this, "About"));
+            about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
+            root.addView(about);
+            return;
+        }
 
         // ---- ring ----
         LinearLayout ring = Ui.card(this);
@@ -335,7 +355,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
         LinearLayout about = Ui.card(this);
         about.addView(Ui.caption(this, "About"));
-        about.addView(Ui.body(this, "Open Ring 1.8. A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
+        about.addView(Ui.body(this, "Open Ring " + version() + ". A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
@@ -356,6 +376,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
             lp.setMargins(0, 0, Ui.dp(this, 8), 0);
             chips.addView(chip, lp);
+        }
+    }
+
+    String version() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "";
         }
     }
 

@@ -9,11 +9,14 @@ UI built in code. See README.md for what the app does and how the pieces fit.
   (fetches sqlite-jdbc and org.json into tests/.deps on first run).
 * `./build_apk.sh`: builds and signs build/OpenRing.apk without Gradle. Needs aapt2, d8 or dx,
   zipalign, apksigner and an android.jar (`ANDROID_JAR=...`). Gradle files exist for Android Studio.
-* Run both test suites before every commit. CI runs them too and builds an APK per push.
+* `./tests/check_privacy.sh`: the app must never get the INTERNET permission or networking/tracking code.
+* Run all three before every commit. CI runs them too, builds an APK per push, and the emulator
+  workflow opens every screen with demo data (`.github/scripts/screens.sh`) and fails on crashes.
+* Demo mode (`data/Demo.java`, own database file) is what screenshots and visitors see; keep it realistic.
 
 ## Versions and releases
-* Bump `VERSION_CODE` and `VERSION_NAME` in build_apk.sh, `versionCode`/`versionName` in
-  app/build.gradle and the version in the About text (ui/SettingsActivity.java) together.
+* Bump `VERSION_CODE` and `VERSION_NAME` in build_apk.sh and `versionCode`/`versionName` in
+  app/build.gradle together (the About text reads the installed version).
 * Add a `## X.Y` section to CHANGELOG.md. When the bump reaches main, CI publishes the signed
   GitHub Release vX.Y by itself (secrets `KEYSTORE_B64`, `KEYSTORE_PASS`). Claude sessions cannot
   push tags or create releases; they do not need to.

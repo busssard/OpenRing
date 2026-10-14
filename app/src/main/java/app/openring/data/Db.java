@@ -22,14 +22,23 @@ import app.openring.core.TimeLine;
 public final class Db extends SQLiteOpenHelper {
     private static final int VERSION = 2;
     private static Db instance;
+    public static final String REAL = "openring.db", DEMO = "openring-demo.db";
+    /** The database file in use: the real history, or the demo history in demo mode. */
+    public final String fileName;
 
     public static synchronized Db get(Context c) {
-        if (instance == null) instance = new Db(c.getApplicationContext());
+        String name = Prefs.of(c).demo() ? DEMO : REAL;
+        if (instance != null && !instance.fileName.equals(name)) {
+            instance.close();
+            instance = null;
+        }
+        if (instance == null) instance = new Db(c.getApplicationContext(), name);
         return instance;
     }
 
-    private Db(Context c) {
-        super(c, "openring.db", null, VERSION);
+    private Db(Context c, String name) {
+        super(c, name, null, VERSION);
+        fileName = name;
         setWriteAheadLoggingEnabled(true);
     }
 
@@ -402,7 +411,7 @@ public final class Db extends SQLiteOpenHelper {
             instance.close();
             instance = null;
         }
-        java.io.File dst = c.getDatabasePath("openring.db");
+        java.io.File dst = c.getDatabasePath(REAL);
         dst.getParentFile().mkdirs();
         new java.io.File(dst.getPath() + "-wal").delete();
         new java.io.File(dst.getPath() + "-shm").delete();

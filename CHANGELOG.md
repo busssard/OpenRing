@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.9
+* Demo mode: explore every screen with five weeks of made up data, no ring needed (setup screen, or leave it in Settings).
+  It uses its own database, your real data stays untouched
+* Every change is now installed on an Android 14 emulator that opens all screens and fails on any crash;
+  the README screenshots come from that run
+* Releases list their SHA-256, signing certificate and build provenance, and every build checks that the app
+  has no internet permission and no tracking code
+* New README for everyone, with install help for the Play Protect warning
+
 ## 1.8
 * Recent nights on the Sleep page: the last 30 nights as small stage bars with their score; tap one to open it
 * Further analysis (fold out at the end of the Sleep page): your average night for the last week, month, year or all time,
