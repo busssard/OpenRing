@@ -1,6 +1,8 @@
 name: Build APK
 # Every push and pull request: run the tests and build an APK you can download from the run.
-# A version tag (v1.8, v1.9, ...): build with the private signing key and publish a GitHub Release.
+# Push to main with a version that has no release yet: build with the private signing key and
+# publish the GitHub Release vX.Y automatically (so merging a version bump is all it takes).
+# A tag vX.Y made by hand (or by "Draft a new release" on GitHub) gets the signed APK attached.
 on:
   push:
     branches: ['**']
@@ -30,8 +32,8 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
             echo "KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
             echo "signing with the release key"
-          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "::error::KEYSTORE_B64 secret missing: a release must be signed with the release key"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ] || [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "::error::KEYSTORE_B64 secret missing: releases must be signed with the release key"
             exit 1
           else
             echo "no KEYSTORE_B64 secret (pull request from a fork?): building with a throwaway key"
@@ -49,15 +51,25 @@ jobs:
         with:
           name: OpenRing-apk
           path: ${{ env.APK }}
-      - name: Check the tag matches the app version
-        if: github.ref_type == 'tag'
-        run: |
-          v=$(sed -n 's/^VERSION_NAME=//p' build_apk.sh)
-          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but app version $v"; exit 1; }
       - name: Publish the release
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "$APK" --title "Open Ring ${GITHUB_REF_NAME#v}" \
-            --notes-file <(sed -n "/^## ${GITHUB_REF_NAME#v}/,/^## /p" CHANGELOG.md | sed '$d')
+          v=$(sed -n 's/^VERSION_NAME=//p' build_apk.sh)
+          tag="v$v"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME but app version $v"; exit 1
+          fi
+          # release notes: this version's section of the changelog
+          awk -v h="## $v" '$0==h{on=1;next} /^## /{on=0} on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Open Ring $v" > notes.md
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              gh release upload "$tag" "$APK" --clobber
+            else
+              echo "release $tag already exists; bump the version to publish a new one"
+            fi
+          else
+            gh release create "$tag" "$APK" --target "$GITHUB_SHA" --title "Open Ring $v" --notes-file notes.md
+          fi

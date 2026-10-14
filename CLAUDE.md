@@ -14,8 +14,9 @@ UI built in code. See README.md for what the app does and how the pieces fit.
 ## Versions and releases
 * Bump `VERSION_CODE` and `VERSION_NAME` in build_apk.sh, `versionCode`/`versionName` in
   app/build.gradle and the version in the About text (ui/SettingsActivity.java) together.
-* Add a section to CHANGELOG.md. Pushing a tag `vX.Y` that matches VERSION_NAME makes CI publish
-  a signed GitHub Release using the `KEYSTORE_B64` and `KEYSTORE_PASS` repository secrets.
+* Add a `## X.Y` section to CHANGELOG.md. When the bump reaches main, CI publishes the signed
+  GitHub Release vX.Y by itself (secrets `KEYSTORE_B64`, `KEYSTORE_PASS`). Claude sessions cannot
+  push tags or create releases; they do not need to.
 
 ## Rules
 * Never commit a keystore or a ring key. The release key signs updates; whoever holds it can
