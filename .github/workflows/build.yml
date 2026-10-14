@@ -26,6 +26,8 @@ jobs:
         run: ./tests/run_tests.sh
       - name: End to end pipeline test
         run: ./tests/run_pipeline.sh
+      - name: Version check
+        run: ./tests/check_version.sh
       - name: Signing key from the repository secret
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}

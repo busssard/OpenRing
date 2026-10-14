@@ -362,7 +362,7 @@ public final class SetupActivity extends Activity {
         LinearLayout rcard = Ui.card(this);
         rcard.addView(Ui.h2(this, "Restore from a backup"));
         rcard.addView(Ui.gap(this, 4));
-        rcard.addView(Ui.body(this, "Moving to a new phone or reinstalling? Pick an Open Ring backup file (saved from Settings, Backup). "
+        rcard.addView(Ui.body(this, "Moving to a new phone or reinstalling? Pick an Open Ring backup file (saved in Settings, Key and backup). "
                 + "It restores the key and your settings, and a full backup also brings back all your history. A text file that "
                 + "only holds the key works too."));
         restoreStatus = Ui.text(this, "", 13, Ui.TEXT_2, Ui.REGULAR);

@@ -28,7 +28,7 @@ import app.openring.data.Prefs;
 import app.openring.sync.SyncJob;
 import app.openring.sync.SyncService;
 
-/** Home: date navigation, the five tabs and the sync status strip. */
+/** Home: date navigation, the six tabs and the sync status strip. */
 public final class MainActivity extends Activity implements RingManager.Listener, Pages.Nav {
     private LocalDate date = LocalDate.now();
     private int tab = Pages.TODAY;
