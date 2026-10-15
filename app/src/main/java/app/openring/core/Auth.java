@@ -25,6 +25,10 @@ public final class Auth {
         byte pad = (byte) (16 - n);
         for (int i = n; i < 16; i++) block[i] = pad;
         try {
+            // Security scanners flag ECB. Here it is required and harmless: the ring's firmware
+            // checks exactly one AES block (no mode can be chosen by the app), the block is a fresh
+            // random nonce from the ring for every connection (no pattern to leak, no replay), and
+            // the key never leaves the phone. See SECURITY.md, "Scanner findings".
             Cipher c = Cipher.getInstance("AES/ECB/NoPadding");
             c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key16, "AES"));
             return c.doFinal(block);

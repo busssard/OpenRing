@@ -23,6 +23,21 @@ gh attestation verify OpenRing-X.Y.apk -R busssard/OpenRing
 All releases are signed with the same key. Android refuses to install an update over the app if it
 was signed by anyone else.
 
+## Scanner findings
+
+GitHub's CodeQL scan reports "Use of a broken or risky cryptographic algorithm" for AES in ECB mode
+in `core/Auth.java` (and its test). This is reviewed and dismissed on purpose:
+
+* The mode is not ours to choose. The ring's firmware authenticates an app by asking it to encrypt
+  a nonce as one AES block; any other mode (GCM, CBC) would simply be rejected by the ring.
+* ECB is weak when it encrypts several blocks (equal blocks give equal output) or repeated
+  messages. Here it encrypts exactly one block, and that block is a fresh random nonce the ring
+  sends for every connection, so there is no pattern to leak and an old answer cannot be replayed.
+* The key itself never leaves the phone; it is stored encrypted with an Android Keystore key
+  (AES/GCM).
+
+If a future scan reports something else, it gets its own review.
+
 ## Reporting a problem
 Please open a [private security advisory](https://github.com/busssard/OpenRing/security/advisories/new)
 rather than a public issue for anything that could put users at risk.
