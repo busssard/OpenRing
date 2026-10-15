@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
@@ -15,8 +14,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Screen time (issue #13): read when the screen was on. Granted by the person in Android's
-         settings (usage access); it gives no network access. -->
-    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+         settings (usage access); it gives no network access. Android Studio's lint calls it
+         a protected permission: that is expected for usage access. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
     <application
         android:allowBackup="false"
