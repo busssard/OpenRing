@@ -200,7 +200,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         prof.addView(Ui.caption(this, "Profile and goals"));
         prof.addView(Ui.text(this, "Used for calories, goals and the sleep you need at your age.", 12, Ui.TEXT_3, Ui.REGULAR));
         LinearLayout body = Ui.hbox(this);
-        body.setGravity(android.view.Gravity.TOP);
+        body.setGravity(android.view.Gravity.BOTTOM); // inputs stay level when a label wraps
         final EditText age = num(column(body, 0), "Age", p.age());
         final EditText weight = num(column(body, 1), "Weight (kg)", p.weightKg());
         final EditText height = num(column(body, 2), "Height (cm)", p.heightCm());
@@ -235,7 +235,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout feat = Ui.card(this);
         feat.addView(Ui.caption(this, "Measurements on the ring"));
         feat.addView(Ui.body(this, "A ring paired outside the official app starts with daytime heart rate and blood oxygen switched off. "
-                + "Read the current state, then tap a switch to change it."));
+                + "The button shows whether each one is on now; tap it to switch. ? means not read yet: tap it, or Read from ring."));
         final String[] names = {"Daytime heart rate", "Blood oxygen (SpO2) at night", "Resting heart rate"};
         for (int i = 0; i < 3; i++) {
             final int k = i;
@@ -248,6 +248,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
             t.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
+                    if (featureModes[k] < 0) {
+                        readFromRing(); // state unknown: read it first instead of guessing
+                        return;
+                    }
                     final int mode = featureModes[k] > 0 ? Protocol.MODE_OFF : Protocol.MODE_AUTOMATIC;
                     RingManager.get(SettingsActivity.this).setFeature(RingManager.FEATURES[k], mode, new RingManager.Callback() {
                         @Override
@@ -264,25 +268,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
             row.addView(t);
             feat.addView(row, Ui.matchWrap());
         }
-        feat.addView(Ui.text(this, "? means not read yet.", 11, Ui.TEXT_3, Ui.REGULAR));
         small(feat, "Read from ring", Ui.READY, new Runnable() {
             @Override
             public void run() {
-                RingManager.get(SettingsActivity.this).readFeatures(new RingManager.Callback() {
-                    @Override
-                    public void done(boolean ok, String message) {
-                        if (!ok) {
-                            toast(message);
-                            return;
-                        }
-                        for (String part : message.split(",")) {
-                            String[] kv = part.split(":");
-                            int f = Integer.parseInt(kv[0]), m = Integer.parseInt(kv[1]);
-                            for (int i = 0; i < 3; i++) if (RingManager.FEATURES[i] == f) featureModes[i] = m;
-                        }
-                        build();
-                    }
-                });
+                readFromRing();
             }
         });
         root.addView(feat);
@@ -293,7 +282,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         key.addView(Ui.body(this, "Keep a copy of the key. Without it you would have to factory reset the ring to connect again. "
                 + "A backup file restores the app on a new phone from the setup screen (Restore from a backup)."));
         key.addView(Ui.gap(this, 6));
-        final TextView kt = Ui.text(this, "•••• tap Show ••••", 15, Ui.TEXT, android.graphics.Typeface.MONOSPACE);
+        final TextView kt = Ui.text(this, "•••• tap Show key ••••", 15, Ui.TEXT, android.graphics.Typeface.MONOSPACE);
         kt.setTextIsSelectable(true);
         key.addView(kt);
         pair(key, "Show key", Ui.TEXT_2, new Runnable() {
@@ -311,12 +300,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
         });
         key.addView(Ui.gap(this, 10));
         key.addView(Ui.text(this, "Save a backup file", 12, Ui.TEXT_3, Ui.REGULAR));
-        pair(key, "Key and settings", Ui.SLEEP, new Runnable() {
+        pair(key, "Key and settings only", Ui.SLEEP, new Runnable() {
             @Override
             public void run() {
                 create("open-ring-backup.zip", "application/zip", BACKUP_KEY);
             }
-        }, "With all history", Ui.SLEEP, new Runnable() {
+        }, "Everything, with history", Ui.SLEEP, new Runnable() {
             @Override
             public void run() {
                 create("open-ring-full-backup.zip", "application/zip", BACKUP_FULL);
@@ -502,6 +491,25 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
+    /** Reads which measurements are switched on and shows them. */
+    void readFromRing() {
+        RingManager.get(this).readFeatures(new RingManager.Callback() {
+            @Override
+            public void done(boolean ok, String message) {
+                if (!ok) {
+                    toast(message);
+                    return;
+                }
+                for (String part : message.split(",")) {
+                    String[] kv = part.split(":");
+                    int f = Integer.parseInt(kv[0]), m = Integer.parseInt(kv[1]);
+                    for (int i = 0; i < 3; i++) if (RingManager.FEATURES[i] == f) featureModes[i] = m;
+                }
+                build();
+            }
+        });
+    }
+
     /** Sex picked in the profile card (0 male, 1 female, 2 not set), saved with its button. */
     private int sexChoice = -1;
     static final String[] SEXES = {"Male", "Female", "Not set"};
@@ -511,6 +519,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         for (int i = 0; i < SEXES.length; i++) {
             final int k = i;
             TextView chip = Ui.smallButton(this, SEXES[i], i == sexChoice ? Ui.ACTIVE : Ui.TEXT_3);
+            if (i == sexChoice) chip.setBackground(Ui.rounded(Ui.alpha(Ui.ACTIVE, 0.18f), Ui.dp(this, 24))); // filled, not only colored
             chip.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -518,7 +527,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     fillSex(row);
                 }
             });
-            LinearLayout.LayoutParams lp = Ui.weight(1);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
             lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), i == SEXES.length - 1 ? 0 : Ui.dp(this, 4), 0);
             row.addView(chip, lp);
         }
@@ -586,7 +595,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     refreshStageDetail(p);
                 }
             });
-            LinearLayout.LayoutParams lp = Ui.weight(1);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
             lp.setMargins(Ui.dp(this, 2), 0, Ui.dp(this, 2), 0);
             row.addView(chip, lp);
         }
@@ -653,7 +662,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams tl = Ui.weight(1);
         tl.setMargins(0, 0, Ui.dp(this, 8), 0);
         row.addView(t, tl);
-        TextView check = Ui.button(this, "Check for updates", Ui.SLEEP, false);
+        TextView check = Ui.smallButton(this, "Check for updates", Ui.SLEEP);
         check.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {

@@ -13,7 +13,7 @@
   actions at the end (#14)
 * Smaller buttons in Settings, pairs side by side; long labels wrap instead of overlapping
 * Profile: age, weight and height in one row, sex picked with a tap instead of typing a number
-* Measurements on the ring: one row each with an On or Off switch
+* Measurements on the ring: one row each, with a button that shows On or Off and switches it
 
 ## 1.11
 * Sleep stage detail (Settings): choose how finely the sleep depth chart is drawn. Detailed shows every change,
