@@ -158,7 +158,6 @@ public final class Ui {
         return new LinearLayout.LayoutParams(wDp < 0 ? ViewGroup.LayoutParams.MATCH_PARENT : dp(c, wDp), dp(c, hDp));
     }
 
-    /** Pill shaped button. */
     /** Background for text inputs: darker than the card with a visible outline (brighter when focused). */
     public static android.graphics.drawable.Drawable input(Context c) {
         GradientDrawable idle = rounded(BG, dp(c, 12));
@@ -171,6 +170,7 @@ public final class Ui {
         return s;
     }
 
+    /** Pill shaped button. */
     public static TextView button(Context c, String label, int color, boolean filled) {
         TextView b = text(c, label, 15, filled ? 0xFF0A0E17 : color, MEDIUM);
         b.setGravity(Gravity.CENTER);
@@ -181,6 +181,16 @@ public final class Ui {
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(color, 0.25f)), bg, null));
         b.setClickable(true);
         b.setFocusable(true);
+        return b;
+    }
+
+    /** A smaller outlined pill for secondary actions (13 sp); wraps to more lines instead of overlapping. */
+    public static TextView smallButton(Context c, String label, int color) {
+        TextView b = button(c, label, color, false);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        int ph = dp(c, 14), pv = dp(c, 8);
+        b.setPadding(ph, pv, ph, pv);
+        b.setMinHeight(dp(c, 40));
         return b;
     }
 

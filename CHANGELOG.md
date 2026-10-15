@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.12
+* Settings in a new order: updates at the top, then ring, profile and sleep stage detail; rarely used and risky
+  actions at the end (#14)
+* Smaller buttons in Settings, pairs side by side; long labels wrap instead of overlapping
+* Profile: age, weight and height in one row, sex picked with a tap instead of typing a number
+* Measurements on the ring: one row each with an On or Off switch
+
 ## 1.11
 * Sleep stage detail (Settings): choose how finely the sleep depth chart is drawn. Detailed shows every change,
   Balanced (new default) joins stages shorter than 3 minutes with the stage next to them, Calm draws long blocks
