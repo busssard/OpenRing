@@ -225,7 +225,7 @@ public class PipelineTest {
             JSONObject after = Json.parse(db.nightsJson(key, key, true).get(0));
             check("night starts when the phone is put away", Math.abs(after.optDouble("start") - (s0 + 900)) < 1, (after.optDouble("start") - s0) + " s later");
             check("night end unchanged", Math.abs(after.optDouble("end") - e0) < 1, null);
-            check("phone minutes stored", Math.abs(after.optDouble("phone_min") - (5 + 10 / 60.0)) < 0.05, after.opt("phone_min"));
+            check("phone minutes stored (the 30 second steps counted as awake)", Math.abs(after.optDouble("phone_min") - 5) <= 0.5, after.opt("phone_min"));
             int[] raw = Json.stagesRaw(after);
             double a0 = after.optDouble("start"), step = (after.optDouble("end") - a0) / raw.length;
             boolean awake = true;
@@ -237,6 +237,13 @@ public class PipelineTest {
             int glance = (int) ((s0 + 5 * 3600 - a0) / step);
             check("a 10 second glance alone is not awake", raw[glance] != 4 && raw[glance + 1] != 4, raw[glance] + " " + raw[glance + 1]);
             check("phone check is a wake up", after.optInt("awakenings") >= 1, after.opt("awakenings"));
+            int[] shown = Json.stages(after);
+            boolean shownAwake = true;
+            for (int i = 0; i < shown.length; i++) {
+                double t0 = a0 + i * step;
+                if (t0 >= s0 + 4 * 3600 && t0 + step <= s0 + 4 * 3600 + 300) shownAwake &= shown[i] == 4;
+            }
+            check("the detail filter keeps phone use awake", shownAwake, null);
 
             // a session read while the screen was still on gets its real end later
             List<double[]> longer = new ArrayList<double[]>();
@@ -272,14 +279,22 @@ public class PipelineTest {
             // the couch: phone in use for the whole of a short window, it is not a night
             String key0 = day0.toString();
             JSONObject n0 = Json.parse(db.nightsJson(key0, key0, true).get(0));
+            double c0 = n0.optDouble("start"), c1 = n0.optDouble("end");
+            List<double[]> lost = new ArrayList<double[]>();
+            lost.add(new double[] {c0 - 60, c1 + 60}); // one session all night: a lost "off", not used for sleep
+            db.putScreen(lost);
+            db.reanalyseFrom(c0 - 60);
+            Analyzer.run(ctx, null);
+            check("a session of many hours does not delete a night", db.nightsJson(key0, key0, true).size() == 1, null);
+            db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {c0 - 60});
             List<double[]> couch = new ArrayList<double[]>();
-            couch.add(new double[] {n0.optDouble("start") - 60, n0.optDouble("end") + 60});
+            for (double t = c0 - 60; t < c1; t += 3 * 3600) couch.add(new double[] {t, Math.min(t + 3 * 3600 - 120, c1 + 60)});
             db.putScreen(couch);
-            db.reanalyseFrom(couch.get(0)[0]);
+            db.reanalyseFrom(c0 - 60);
             Analyzer.run(ctx, null);
             check("phone in use the whole time: no night", db.nightsJson(key0, key0, true).isEmpty(), db.nightsJson(key0, key0, true).size());
-            db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {couch.get(0)[0]});
-            db.reanalyseFrom(couch.get(0)[0]);
+            for (double[] x : couch) db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {x[0]});
+            db.reanalyseFrom(c0 - 60);
             Analyzer.run(ctx, null);
             check("night back once that phone use is gone", db.nightsJson(key0, key0, true).size() == 1, null);
         }

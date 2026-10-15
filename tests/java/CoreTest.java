@@ -349,6 +349,14 @@ public class CoreTest {
         check("screen: still on ends now", open.size() == 1 && near(open.get(0)[1], 900));
         List<double[]> lead = ScreenTime.sessions(new double[] {50, 70, 80}, new int[] {OFF, ON, OFF}, 10, 900);
         check("screen: log starting with off was on since the start", lead.size() == 2 && near(lead.get(0)[0], 10) && near(lead.get(0)[1], 50));
+        List<double[]> late = ScreenTime.sessions(new double[] {10 + 3 * 3600, 20000, 20100}, new int[] {OFF, ON, OFF}, 10, 30000);
+        check("screen: a first off long after the start is not a made up day long session", late.size() == 1 && near(late.get(0)[0], 20000));
+        final int AL = ScreenTime.ALIVE, UP = ScreenTime.STARTUP;
+        List<double[]> died = ScreenTime.sessions(new double[] {1000, 1200, 1300, 30000, 30100, 30400}, new int[] {ON, AL, AL, UP, ON, OFF}, 0, 40000);
+        check("screen: phone died with the screen on, session ends at its last use", died.size() == 2 && near(died.get(0)[1], 1300)
+                && near(died.get(1)[0], 30100));
+        List<double[]> idle = ScreenTime.sessions(new double[] {500, 600, 700}, new int[] {AL, ON, OFF}, 0, 1000);
+        check("screen: use while off does not open a session", idle.size() == 1 && near(idle.get(0)[0], 600));
         List<double[]> stray = ScreenTime.sessions(new double[] {50, 60}, new int[] {ON, OFF}, 10, 900);
         eq("screen: no made up session before a normal start", stray.size(), 1);
         eq("screen: empty log", ScreenTime.sessions(new double[0], new int[0], 0, 100).size(), 0);
@@ -398,7 +406,9 @@ public class CoreTest {
         eq("screen: awake marking", Arrays.toString(st), "[2, 2, 4, 2, 1, 1, 4, 4, 2, 2]");
         eq("screen: marked count", changed, 3);
         int[] already = {4, 4};
-        eq("screen: awake stays awake, not counted", ScreenTime.markAwake(already, 0, 60, m), 0);
+        eq("screen: no phone use in range, nothing counted", ScreenTime.markAwake(already, 0, 60, m), 0);
+        int[] awakeAlready = {4, 2, 2};
+        eq("screen: phone use while already awake still counts", ScreenTime.markAwake(awakeAlready, 60, 150, m), 1);
     }
 
     static void protocol() {

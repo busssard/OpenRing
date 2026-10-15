@@ -175,7 +175,11 @@ public final class Analyzer {
         List<NightFinder.RingRun> runs = NightFinder.ringRuns(pageTimes, pages);
         List<NightFinder.Period> periods = NightFinder.find(bedtimes, runs, state, support);
         // phone use (issue #13): someone using the phone is awake, whatever the ring thinks
-        List<double[]> screen = prefs.screenAwake() ? db.screen(from - 36 * 3600, to + 3600) : new ArrayList<double[]>();
+        List<double[]> screen = new ArrayList<double[]>();
+        if (prefs.screenAwake()) {
+            // a session of many hours is most likely a lost "off" (or a video left playing): not used for sleep
+            for (double[] s : db.screen(from - 36 * 3600, to + 3600)) if (s[1] - s[0] <= ScreenTime.MAX_NIGHT_SESSION_S) screen.add(s);
+        }
 
         List<Night> nights = new ArrayList<Night>();
         for (NightFinder.Period p : periods) {

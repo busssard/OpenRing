@@ -300,7 +300,7 @@ public final class Pages {
         double phone = Json.d(n, "phone_min");
         if (phone >= 1) {
             hyp.addView(Ui.gap(c, 4));
-            hyp.addView(Ui.text(c, "Phone in use for " + Ui.fmt(phone, 0) + " min during this night, counted as awake (Settings, Screen time).",
+            hyp.addView(Ui.text(c, "Phone in use for " + Ui.fmt(phone, 0) + " min during this night, shown as awake (Settings, Screen time).",
                     12, Ui.OXY, Ui.REGULAR));
         }
         root.addView(hyp);
@@ -758,7 +758,8 @@ public final class Pages {
         }
         if (!demo && !app.openring.data.ScreenUse.allowed(c)) {
             card.addView(Ui.body(c, "See how long and when this phone's screen was on each day, next to your activity. "
-                    + "Open Ring needs Android's usage access for this. Like everything else it stays on this phone."));
+                    + "For this, switch on Open Ring in Android's usage access settings (the button takes you there). "
+                    + "Like everything else it stays on this phone."));
             TextView allow = Ui.smallButton(c, "Allow usage access", Ui.OXY);
             allow.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -773,8 +774,7 @@ public final class Pages {
         }
         ScreenTime.Day s = d.screen;
         if (s == null) {
-            card.addView(Ui.body(c, "No screen time known for this day. Android keeps about one week of it; from the day you allowed access, "
-                    + "Open Ring keeps it for good."));
+            card.addView(Ui.body(c, "No screen time known for this day. Open Ring has screen time from about a week before you allowed access."));
             return card;
         }
         int goal = app.openring.data.Prefs.of(c).screenGoalMin();
@@ -800,7 +800,7 @@ public final class Pages {
         card.addView(Ui.text(c, "Turned on: how often the screen was switched on. Longest: the longest time it stayed on in one go.",
                 12, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(c, 12));
-        card.addView(Ui.text(c, "When: minutes on per hour", 11, Ui.TEXT_3, Ui.MEDIUM));
+        card.addView(Ui.text(c, "Minutes the screen was on, per hour of the day", 11, Ui.TEXT_3, Ui.MEDIUM));
         String[] labels = new String[s.hourly.length];
         int peak = 0;
         for (int i = 0; i < s.hourly.length; i++) {
@@ -812,7 +812,7 @@ public final class Pages {
         card.addView(new Charts.BarChart(c, s.hourly, labels, Ui.OXY).valueFormat("%.0f min").highlight(s.totalMin > 0 ? peak : -1),
                 Ui.sized(c, -1, 110));
         card.addView(Ui.gap(c, 12));
-        card.addView(Ui.text(c, "Last 7 days, hours", 11, Ui.TEXT_3, Ui.MEDIUM));
+        card.addView(Ui.text(c, "Screen time in hours, last 7 days", 11, Ui.TEXT_3, Ui.MEDIUM));
         double[] week = d.screenWeek.clone();
         for (int i = 0; i < week.length; i++) week[i] /= 60.0;
         Charts.BarChart wc = new Charts.BarChart(c, week, d.weekdayLabels(week.length), Ui.OXY).valueFormat("%.1f h");

@@ -68,14 +68,16 @@ public final class NightAnalyzer {
         // awake time, it never removes any.
         if (!in.screen.isEmpty()) {
             stages = stages.clone();
-            ScreenTime.markAwake(stages, in.start, in.end, in.screen);
-            n.phoneMin = ScreenTime.minutes(in.screen, in.start, in.end);
+            int steps = ScreenTime.markAwake(stages, in.start, in.end, in.screen);
+            n.phoneMin = steps * (in.end - in.start) / stages.length / 60.0;
         }
         // detail filter: metrics and the score use the filtered stages; the stager's output is kept
         // so Settings can preview other levels without re analysing
         n.stagesRaw = stages;
         n.stageDetail = StageFilter.clampLevel(in.stageDetail);
         stages = StageFilter.filter(stages, n.stageDetail);
+        // the detail filter must not hide phone use again: it was counted as awake, so it stays awake
+        if (!in.screen.isEmpty()) ScreenTime.markAwake(stages, in.start, in.end, in.screen);
         n.stages = stages;
         metrics(n, stages, in);
 

@@ -262,7 +262,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
             @Override
             protected DayData doInBackground(Void... v) {
                 try {
-                    app.openring.data.ScreenUse.collect(MainActivity.this); // screen time is read on this phone (issue #13)
+                    // screen time is read on this phone (issue #13); the very first read also updates the
+                    // nights of the week it brings in
+                    boolean first = !app.openring.data.ScreenDays.any(app.openring.data.Db.get(MainActivity.this));
+                    if (app.openring.data.ScreenUse.collect(MainActivity.this) > 0 && first) app.openring.data.Analyzer.run(MainActivity.this, null);
                 } catch (RuntimeException ignored) {
                 }
                 latest = app.openring.data.Db.get(MainActivity.this).latestDay();

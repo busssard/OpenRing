@@ -101,12 +101,18 @@ public final class ScreenUse {
         return sessions.size();
     }
 
-    /** Android usage event types: 15 screen interactive, 16 screen non interactive, 26 device shutdown. */
+    /**
+     * Android usage event types: 15 screen interactive, 16 screen non interactive, 26 device shutdown,
+     * 27 device startup; 1 (an app came to the front), 7 (user interaction) and 18 (unlocked) show the
+     * phone was in use.
+     */
     static int kind(int type) {
         switch (type) {
             case 15: return ScreenTime.ON;
             case 16: return ScreenTime.OFF;
             case 26: return ScreenTime.SHUTDOWN;
+            case 27: return ScreenTime.STARTUP;
+            case 1: case 7: case 18: return ScreenTime.ALIVE;
             default: return 0;
         }
     }

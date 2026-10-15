@@ -73,8 +73,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         RingManager.get(this).addListener(this);
         // back from Android's usage access page: show the new state, and read the screen log the first time
         Prefs p = Prefs.of(this);
-        if (screenCard != null) fillScreenCard(p);
-        if (!screenRead && !p.demo() && ScreenUse.supported() && ScreenUse.allowed(this) && !ScreenDays.any(Db.get(this))) {
+        boolean allowedNow = ScreenUse.allowed(this);
+        if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // keeps a goal being typed otherwise
+        if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !ScreenDays.any(Db.get(this))) {
             screenRead = true;
             updateNights("Reading screen time");
         }
@@ -417,6 +418,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     private LinearLayout screenCard;
+    /** Usage access as shown in the Screen time card, to refresh it only when it changed. */
+    private boolean screenAllowedShown;
     /** The first read of the screen log was started (once per app run, even if the log was empty). */
     private static boolean screenRead;
 
@@ -429,8 +432,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (card == null) return;
         card.removeAllViews();
         card.addView(Ui.caption(this, "Screen time"));
-        card.addView(Ui.body(this, "When this phone's screen was on, read from Android's usage log. It shows on the Activity page "
-                + "and helps the sleep analysis. It stays on this phone like everything else."));
+        card.addView(Ui.body(this, "When this phone's screen was on. It shows on the Activity page and helps the sleep analysis. "
+                + "Android only shares this after you switch on Open Ring under usage access in Android's settings. "
+                + "It stays on this phone like everything else."));
         if (!p.demo() && !ScreenUse.supported()) {
             card.addView(Ui.gap(this, 6));
             card.addView(Ui.text(this, "Needs Android 9 or newer.", 13, Ui.WARN, Ui.REGULAR));
@@ -440,6 +444,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             card.addView(line("Usage access", "demo data"));
         } else {
             boolean ok = ScreenUse.allowed(this);
+            screenAllowedShown = ok;
             card.addView(line("Usage access", ok ? "allowed" : "not allowed yet"));
             small(card, ok ? "Change usage access" : "Allow usage access", Ui.OXY, new Runnable() {
                 @Override

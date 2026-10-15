@@ -13,6 +13,14 @@ public final class ScreenTime {
 
     /** Kinds of log entries, mapped from Android's usage events by the reader. */
     public static final int ON = 1, OFF = 2, SHUTDOWN = 3;
+    /** The phone was in use (an app came to the front, the person unlocked or touched it): the screen was on. */
+    public static final int ALIVE = 4;
+    /** The phone started: a session still open ended before it (the phone died or restarted with the screen on). */
+    public static final int STARTUP = 5;
+    /** A log that starts with "off" counts as on since the start of the read only when the "off" follows within this time. */
+    public static final double LEAD_MAX_S = 2 * 3600;
+    /** Longer sessions are most likely a missing "off" (or a video left playing) and are not used for sleep. */
+    public static final double MAX_NIGHT_SESSION_S = 4 * 3600;
 
     /** Phone use that overlaps the first or last 10 minutes of a sleep window moves its edge. */
     public static final double EDGE_S = 10 * 60;
@@ -26,18 +34,34 @@ public final class ScreenTime {
     /**
      * Sessions from log entries sorted by time. A second "on" while on is ignored (the screen was
      * already on), "off" or "shutdown" closes the session, a session still open ends at
-     * {@code now}. When the log starts with "off", the screen was on since {@code from}.
+     * {@code now}. "Startup" closes a session left open at the last sign of use before it (the
+     * phone died or restarted with the screen on). When the log starts with "off" within
+     * {@link #LEAD_MAX_S} of {@code from}, the screen was on since {@code from}; a later first
+     * "off" is ignored, because the log does not tell how long the screen had been on.
      */
     public static List<double[]> sessions(double[] times, int[] kinds, double from, double now) {
         List<double[]> out = new ArrayList<double[]>();
-        double open = Double.NaN;
+        double open = Double.NaN, lastUse = Double.NaN;
         boolean seen = false;
         for (int i = 0; i < times.length; i++) {
             int k = kinds[i];
+            if (k == ALIVE) {
+                if (!Double.isNaN(open)) lastUse = times[i];
+                continue;
+            }
+            if (k == STARTUP) {
+                if (!Double.isNaN(open) && !Double.isNaN(lastUse) && lastUse > open) out.add(new double[] {open, lastUse});
+                open = Double.NaN;
+                seen = true;
+                continue;
+            }
             if (k == ON) {
-                if (Double.isNaN(open)) open = times[i];
+                if (Double.isNaN(open)) {
+                    open = times[i];
+                    lastUse = times[i];
+                }
             } else if (k == OFF || k == SHUTDOWN) {
-                if (Double.isNaN(open) && !seen && k == OFF && times[i] > from) open = from;
+                if (Double.isNaN(open) && !seen && k == OFF && times[i] > from && times[i] - from <= LEAD_MAX_S) open = from;
                 if (!Double.isNaN(open)) {
                     if (times[i] > open) out.add(new double[] {open, times[i]});
                     open = Double.NaN;
@@ -130,7 +154,8 @@ public final class ScreenTime {
     /**
      * Marks every step of {@code stages} (equal steps over [start, end)) as awake (4) when the
      * screen was on for at least {@link #AWAKE_MIN_S} seconds of a 30 second step (half of a step of
-     * another length). Returns how many steps were changed; stages are changed in place.
+     * another length). Returns how many steps had phone use (also those already awake); stages are
+     * changed in place.
      */
     public static int markAwake(int[] stages, double start, double end, List<double[]> sessions) {
         if (stages.length == 0 || end <= start || sessions.isEmpty()) return 0;
@@ -140,7 +165,7 @@ public final class ScreenTime {
         for (int i = 0; i < stages.length; i++) {
             double a = start + i * step, b = a + step, on = 0;
             for (double[] x : sessions) on += overlap(x[0], x[1], a, b);
-            if (on >= need && stages[i] != 4) {
+            if (on >= need) {
                 stages[i] = 4;
                 changed++;
             }
