@@ -20,8 +20,31 @@ adb shell am broadcast -a com.android.systemui.demo -e command battery -e level 
 adb shell am broadcast -a com.android.systemui.demo -e command notifications -e visible false >/dev/null
 adb shell am broadcast -a com.android.systemui.demo -e command network -e wifi show -e level 4 >/dev/null
 adb logcat -c
+sleep 20   # let the launcher and Play services finish their start up work first
 
-shot() { sleep "${2:-3}"; adb exec-out screencap -p > "$OUT/$1.png"; log "shot $1 ($(stat -c %s "$OUT/$1.png") bytes)"; }
+# A slow emulator sometimes shows "<app> isn't responding" for a system app (the launcher, Play
+# services). It is not about Open Ring, but it would cover every screenshot: tap "Wait" until it is gone.
+system_dialog() { adb shell dumpsys window 2>/dev/null | grep -q "Application Not Responding"; }
+clear_dialogs() {
+  for i in 1 2 3 4 5; do
+    system_dialog || return 0
+    log "system dialog on screen, tapping Wait"
+    adb shell uiautomator dump /sdcard/dlg.xml >/dev/null 2>&1
+    b=$(adb shell cat /sdcard/dlg.xml 2>/dev/null | grep -o 'text="Wait"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+    set -- $b
+    if [ $# -eq 4 ]; then adb shell input tap $(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 )); else adb shell input keyevent KEYCODE_BACK; fi
+    sleep 2
+  done
+  system_dialog && { echo "::error::a system dialog stays on screen"; DIRTY=1; }
+  return 0
+}
+DIRTY=0
+shot() {
+  sleep "${2:-3}"
+  clear_dialogs
+  adb exec-out screencap -p > "$OUT/$1.png"
+  log "shot $1 ($(stat -c %s "$OUT/$1.png") bytes)"
+}
 swipe_up() { adb shell input swipe 30 1700 30 500 300; sleep 1; }  # along the left margin, never a tap on a night
 launch() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
 
@@ -57,3 +80,7 @@ if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$O
   exit 1
 fi
 log "no crashes"
+if [ "$DIRTY" = 1 ]; then
+  echo "::error::some screenshots show a system dialog; not publishing them as README pictures"
+  exit 1
+fi

@@ -55,7 +55,10 @@ fixed list of `data/` files; when you add a file there that the pipeline needs, 
 Android 14 emulator, opens every screen with demo data and fails on any crash. Its screenshots are pushed
 to the branch `screenshots` (from `main`, used by the README) or `screenshots-preview` (from pull
 requests in this repository; shared by all of them, the commit message names the PR head commit). Pull
-requests from forks get them as the `screenshots` artifact of the run. Look at them before asking for a
+requests from forks get them as the `screenshots` artifact of the run. The emulator uses the plain
+Android image (no Google apps) with 4 GB of memory; if a system "isn't responding" dialog appears,
+the script taps *Wait*, and it fails if the dialog stays, so the README pictures are never replaced
+by spoiled ones. Look at them before asking for a
 review. When you add a screen or a state worth seeing, add it to
 `.github/scripts/screens.sh`. The main screen accepts these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Play), `analysis`
