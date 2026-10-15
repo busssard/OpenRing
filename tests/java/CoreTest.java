@@ -169,6 +169,151 @@ public class CoreTest {
         check("pattern: counts nights", p.nights() == 3);
     }
 
+    static byte[] b(int... v) {
+        byte[] out = new byte[v.length];
+        for (int i = 0; i < v.length; i++) out[i] = (byte) v[i];
+        return out;
+    }
+
+    /** Event decoders, byte for byte, including the ways bad input is rejected. */
+    static void decoders() {
+        int[][] h = EventCodec.hrv(b(58, 42, 61, 39));
+        check("hrv: two 5 minute pairs", h != null && h[0][0] == 58 && h[1][0] == 42 && h[0][1] == 61 && h[1][1] == 39);
+        check("hrv: odd length rejected", EventCodec.hrv(b(58, 42, 61)) == null);
+        check("hrv: empty rejected", EventCodec.hrv(new byte[0]) == null);
+
+        // ibi 1000 ms = 125 << 3, quality 1 in bits 3..4 of the second byte
+        int[][] g = EventCodec.greenIbi(b(125, 1 << 3, 100, (2 << 3) | 5));
+        check("green ibi: value and quality", g != null && g[0][0] == 1000 && g[1][0] == 1 && g[0][1] == 805 && g[1][1] == 2);
+        check("green ibi: too short", EventCodec.greenIbi(b(1)) == null);
+
+        int[] ia = EventCodec.ibiAmplitude(b(100, 101, 102, 103, 104, 105, 1, 0, 1, 0, 1, 0, 0, 0));
+        check("ibi amplitude: 6 packed values", ia != null && ia.length == 6 && ia[0] == 801 && ia[1] == 808 && ia[2] == 817);
+        check("ibi amplitude: wrong size", EventCodec.ibiAmplitude(new byte[13]) == null);
+
+        double[] t = EventCodec.temps(b(0xca, 0x0d, 0x10, 0x0b));  // 3530, 2832 centi degrees
+        check("temps: centi degrees", t != null && Math.abs(t[0] - 35.30) < 1e-9 && Math.abs(t[1] - 28.32) < 1e-9);
+        check("temps: impossible value rejected", EventCodec.temps(b(0xff, 0x7f)) == null);
+        check("temps: odd length rejected", EventCodec.temps(b(1, 2, 3)) == null);
+
+        double[] met = EventCodec.activityMet(b(1, 13, 70, 0x80, 0x85));
+        check("activity: MET per minute", met != null && met.length == 4 && Math.abs(met[0] - 1.3) < 1e-9
+                && Math.abs(met[1] - 7.0) < 1e-9 && Math.abs(met[2] - 12.8) < 1e-9 && Math.abs(met[3] - 13.8) < 1e-9);
+        check("activity: header only", EventCodec.activityMet(b(1)) == null);
+
+        int[] sp = EventCodec.spo2(b(0, 97, 96, 0xff));
+        check("spo2: samples, sentinel dropped", sp != null && sp.length == 2 && sp[0] == 97 && sp[1] == 96);
+        check("spo2: only header and sentinel", EventCodec.spo2(b(0, 0xff)) == null);
+
+        double[] r = EventCodec.spo2R(b(0, 0x20, 0x00, 5, 0x40, 0x00, 6));
+        check("spo2 R: two samples", r != null && Math.abs(r[0] - 0.5) < 1e-9 && Math.abs(r[1] - 1.0) < 1e-9);
+        check("spo2 R: bad length", EventCodec.spo2R(b(0, 1, 2)) == null);
+        check("spo2 from R: typical value", Math.abs(EventCodec.spo2FromR(0.5) - (105.2 - 2.55 - 3.35)) < 1e-9);
+        check("spo2 from R: clamped to 85..100", EventCodec.spo2FromR(5) == 85 && EventCodec.spo2FromR(0) == 100);
+
+        int[] ph = EventCodec.sleepPhases(b(7, 0b00011011));
+        check("sleep phases: 2 bit codes, MSB first", ph != null && Arrays.equals(ph, new int[] {1, 2, 3, 4}));
+        check("sleep phases: header only", EventCodec.sleepPhases(b(7)) == null);
+
+        eq("motion: seconds in the window", EventCodec.motionSeconds(b(0x35, 0, 0, 0)), 0x15);
+        eq("motion: invalid flag", EventCodec.motionSeconds(b(5, 0, 0, 0, 0x40)), -1);
+        eq("motion: too short", EventCodec.motionSeconds(b(5, 0)), -1);
+
+        long[] bt = EventCodec.bedtime(b(0x10, 0, 0, 0, 0x20, 0, 0, 0));
+        check("bedtime: start and end", bt != null && bt[0] == 16 && bt[1] == 32);
+        check("bedtime: too short", EventCodec.bedtime(b(1, 2, 3)) == null);
+
+        EventCodec.SleepPeriod s = EventCodec.sleepPeriod(b(116, 16, 0, 0, 112, 8, 3, 1, 0, 0x80));
+        check("sleep period: HR, breath, state", s != null && Math.abs(s.avgHr - 58) < 1e-9 && Math.abs(s.hrTrend - 1) < 1e-9
+                && Math.abs(s.breath - 14) < 1e-9 && s.motionCount == 3 && s.sleepState == 1 && Math.abs(s.cv - 0.5) < 1e-9);
+        check("sleep period: impossible state rejected", EventCodec.sleepPeriod(b(116, 0, 0, 0, 112, 8, 3, 5, 0, 0)) == null);
+        check("sleep period: impossible motion rejected", EventCodec.sleepPeriod(b(116, 0, 0, 0, 112, 8, 130, 1, 0, 0)) == null);
+
+        int[][] a = EventCodec.aohr(b(0, 0, 2, 61, 1, 62, 0));
+        check("always on HR: bpm and quality", a != null && a[0][0] == 61 && a[1][0] == 1 && a[0][1] == 62 && a[1][1] == 0);
+        check("always on HR: count mismatch", EventCodec.aohr(b(0, 0, 3, 61, 1)) == null);
+
+        byte[] anchor = TimeLine.phoneAnchorBody(1791781944L);
+        eq("anchor: phone anchor unix", EventCodec.anchorUnix(EventCodec.TIME_SYNC, anchor), 1791781944L);
+        check("anchor: recognised as phone", EventCodec.isPhoneAnchor(anchor));
+        check("anchor: ring time sync is not a phone anchor", !EventCodec.isPhoneAnchor(b(1, 2, 3, 4)));
+        eq("anchor: rtc beacon too short", EventCodec.anchorUnix(EventCodec.RTC_BEACON, b(1, 2, 3, 4)), -1L);
+        eq("anchor: other tags", EventCodec.anchorUnix(EventCodec.SPO2_EVENT, anchor), -1L);
+
+        int[] bat = EventCodec.debugBattery(b(0x24, 93, 0x10, 0x0f));
+        check("battery: percent and millivolts", bat != null && bat[0] == 93 && bat[1] == 3856);
+        check("battery: text is not battery", EventCodec.debugBattery("$abc".getBytes()) == null);
+        int[] ui = EventCodec.userInfo(b(35, 63, 1, 168));
+        check("user info: four fields", ui != null && ui[0] == 35 && ui[3] == 168);
+
+        // every known tag has a name, and describe never throws on garbage
+        int named = 0;
+        for (int tag = 0x41; tag <= 0x8f; tag++) {
+            if (!EventCodec.name(tag).startsWith("0x") && !EventCodec.name(tag).startsWith("tag")) named++;
+            for (byte[] junk : new byte[][] {new byte[0], b(1), b(0x24, 1, 2, 3), new byte[20]}) {
+                String d = EventCodec.describe(tag, junk);
+                if (d == null) { check("describe returns text for 0x" + Integer.toHexString(tag), false); break; }
+            }
+        }
+        check("names for the known tags", named >= 30);
+        eq("name: hrv", EventCodec.name(EventCodec.HRV_EVENT), "hrv_event");
+    }
+
+    static String hex(byte[] v) {
+        return Hex.encode(v);
+    }
+
+    /** Request bytes sent to the ring (a wrong byte here means the ring ignores or misreads us). */
+    static void requests() {
+        eq("firmware request", hex(Protocol.firmware()), "0803000000");
+        eq("battery request", hex(Protocol.battery()), "0c00");
+        eq("auth nonce request", hex(Protocol.authNonce()), "2f012b");
+        byte[] enc = new byte[16];
+        Arrays.fill(enc, (byte) 0xab);
+        eq("authenticate frame", hex(Protocol.authenticate(enc)), "2f112d" + "abababababababababababababababab");
+        byte[] key = new byte[16];
+        for (int i = 0; i < 16; i++) key[i] = (byte) i;
+        eq("set key frame", hex(Protocol.setAuthKey(key)), "2410000102030405060708090a0b0c0d0e0f");
+        eq("time sync", hex(Protocol.syncTime(0x0102030405L, 4)), "1209" + "0504030201000000" + "04");
+        eq("forced time sync", hex(Protocol.syncTimeForced(0x0102030405L, 4)), "120a" + "0504030201000000" + "0401");
+        eq("legacy get event", hex(Protocol.getEvent(0x01020304L, 50, -1)), "1009" + "04030201" + "32" + "ffffffff");
+        eq("extended get event", hex(Protocol.extGetEvent(0x0102L, 300, 0)), "2f0c" + "41" + "00" + "0201000000000000" + "2c01");
+        eq("data flush", hex(Protocol.dataFlush()), "280100");
+        eq("check sleep analysis", hex(Protocol.checkSleepAnalysis(true)), "280101");
+        eq("feature status", hex(Protocol.featureStatus(4)), "2f022004");
+        eq("feature latest", hex(Protocol.featureLatest(2)), "2f022402");
+        eq("set feature mode", hex(Protocol.setFeatureMode(2, Protocol.MODE_CONNECTED_LIVE)), "2f03220203");
+        eq("feature subscription", hex(Protocol.setFeatureSubscription(2, 1)), "2f03260201");
+        eq("realtime on demand", hex(Protocol.realtime(Protocol.REALTIME_ON_DEMAND, 2)), "0607" + "00020000" + "0200" + "00");
+        eq("realtime off", hex(Protocol.realtimeOff()), "060400000000");
+        eq("notification flags", hex(Protocol.setNotification(0x3f)), "1c013f");
+        eq("capabilities", hex(Protocol.capabilities(1)), "2f020101");
+        eq("factory reset", hex(Protocol.factoryReset()), "1a00");
+        check("auth required reply recognised", Protocol.isAuthRequired(new Packet(0x2f, b(0x2f, 0x01))));
+        check("other reply is not auth required", !Protocol.isAuthRequired(new Packet(0x2f, b(0x2f, 0x00))));
+    }
+
+    /** Nonce encryption must be AES with the nonce padded to one block, as the ring expects. */
+    static void auth() {
+        try {
+            byte[] key = Hex.parseKey("4431967d8bacc2659743142b68391d9a");
+            byte[] nonce = new byte[15];
+            for (int i = 0; i < 15; i++) nonce[i] = (byte) (i * 7);
+            byte[] enc = Auth.encryptNonce(key, nonce);
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/ECB/NoPadding");
+            c.init(javax.crypto.Cipher.DECRYPT_MODE, new javax.crypto.spec.SecretKeySpec(key, "AES"));
+            byte[] plain = c.doFinal(enc);
+            check("auth: one AES block", enc.length == 16);
+            check("auth: decrypts to the nonce", Arrays.equals(Arrays.copyOf(plain, 15), nonce));
+            check("auth: PKCS5 style padding byte", plain[15] == 1);
+            byte[] k1 = Auth.newKey(), k2 = Auth.newKey();
+            check("auth: new keys are random", k1.length == 16 && !Arrays.equals(k1, k2));
+            check("auth: states explained", Auth.describe(Auth.WRONG_KEY).contains("rejected") && Auth.describe(0x7f).contains("0x7f"));
+        } catch (Exception e) {
+            check("auth: " + e, false);
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         protocol();
         history();
@@ -179,6 +324,9 @@ public class CoreTest {
         motion();
         pattern();
         stageFilter();
+        decoders();
+        requests();
+        auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }

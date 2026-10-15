@@ -18,6 +18,11 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Screenshots badge, generating
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/badge.sh screenshots screenshots generating yellow
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -60,3 +65,13 @@ jobs:
           src="${{ github.event.pull_request.head.sha || github.sha }}"
           git commit -q -m "Screenshots from ${src::7} (demo data)"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+      - name: Screenshots badge, result
+        if: always() && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            .github/scripts/badge.sh screenshots screenshots "up to date (${GITHUB_SHA::7})" brightgreen
+          else
+            .github/scripts/badge.sh screenshots screenshots "failed, showing older" red
+          fi
