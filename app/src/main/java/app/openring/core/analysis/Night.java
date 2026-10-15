@@ -9,6 +9,9 @@ public final class Night {
     /** 30 second stage codes over [start, end): 1 deep, 2 light, 3 REM, 4 awake, 0 unknown. */
     public int[] stages = new int[0];
     public String stageSource = "none";
+    /** Stages before the detail filter ({@link StageFilter}), and the level that was applied. */
+    public int[] stagesRaw = new int[0];
+    public int stageDetail;
 
     public double inBedMin, asleepMin, deepMin, lightMin, remMin, awakeMin;
     public double efficiency = Double.NaN, latencyMin = Double.NaN, wasoMin = Double.NaN;

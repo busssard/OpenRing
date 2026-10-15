@@ -48,6 +48,7 @@ launch --ei tab 3;                          shot activity
 launch --ei tab 4;                          shot body
 swipe_up; swipe_up;                       shot body-trends 1
 launch --ei tab 5;                          shot play
+launch --es settings stages;                shot settings-stage-detail
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then

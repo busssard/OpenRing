@@ -43,6 +43,10 @@ public final class Prefs {
         sp.edit().putInt("age", age).putInt("sex", sex).putInt("weight", weight).putInt("height", height).putInt("target_kcal", target).apply();
     }
 
+    /** Sleep stage detail level, see {@code StageFilter} (0 detailed, 1 balanced, 2 calm). */
+    public int stageDetail() { return sp.getInt("stage_detail", app.openring.core.analysis.StageFilter.BALANCED); }
+    public void setStageDetail(int level) { sp.edit().putInt("stage_detail", level).apply(); }
+
     public boolean profileSet() { return sp.getBoolean("profile_set", false); }
     public void setProfileSet() { sp.edit().putBoolean("profile_set", true).apply(); }
 

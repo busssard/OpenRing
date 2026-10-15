@@ -67,6 +67,10 @@ public final class Analyzer {
         long lastDated = db.kvLong("dated_count", -1), lastTotal = db.kvLong("event_count", -1);
         // older events gained (or lost) a date: their days must be analysed again
         if (lastDated < 0 || t.datedAfter > lastDated + (t.total - lastTotal) || t.datedAfter < lastDated) db.put("analyzed_until", 0);
+        // the nights were staged with another detail level (changed in Settings, maybe while in demo
+        // mode, or analysed by a version before 1.11): analyse everything again
+        int detail = prefs.stageDetail();
+        if (db.kvLong("stage_detail", -1) != detail) db.put("analyzed_until", 0);
         db.put("dated_count", t.datedAfter);
         db.put("event_count", t.total);
         double[] range = db.datedRange();
@@ -79,6 +83,7 @@ public final class Analyzer {
         from = Math.max(from, range[1] - 400 * 86400.0);
         analyze(from, range[1]);
         db.put("analyzed_until", (long) range[1]);
+        db.put("stage_detail", detail);
         db.put("last_analysis", now);
     }
 
@@ -276,6 +281,7 @@ public final class Analyzer {
         if (p.staged && p.codes != null) {
             in.ringStages = NightFinder.align(new NightFinder.RingRun(p.end - p.codes.length * 30.0, p.end, p.codes), p.start, p.end);
         }
+        in.stageDetail = prefs.stageDetail();
         return NightAnalyzer.analyze(in);
     }
 
