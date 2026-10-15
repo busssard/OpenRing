@@ -509,8 +509,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             card.addView(Ui.gap(this, 6));
             card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")), Ui.sized(this, -1, 150));
             card.addView(Ui.gap(this, 4));
-            card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, awake %d times on this chart.",
-                    StageFilter.changes(st), StageFilter.wakeRuns(st)), 13, Ui.TEXT, Ui.MEDIUM));
+            int wakes = StageFilter.wakeRuns(st);
+            card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, awake %d %s on this chart.",
+                    StageFilter.changes(st), wakes, wakes == 1 ? "time" : "times"), 13, Ui.TEXT, Ui.MEDIUM));
             card.addView(Ui.text(this, "Stage changes: how often the chart switches between deep, light, REM and awake. "
                     + "Awake: separate times awake between falling asleep and waking up, of any length.", 11, Ui.TEXT_3, Ui.REGULAR));
         }
