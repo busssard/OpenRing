@@ -12,6 +12,9 @@ Thanks for helping. Open Ring is a small hobby project; issues and pull requests
 * Security issues: please use a [private advisory](https://github.com/busssard/OpenRing/security/advisories/new),
   see [SECURITY.md](SECURITY.md).
 
+Issues titled `[EXP] ...` (label `experiment`) come from an automated daily experiment run. They wait
+for the owner's review; removing `[EXP]` from the title marks one as ready to be built.
+
 ## Changing code
 
 Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) (build, test, release, common tasks) and
