@@ -8,7 +8,9 @@ Hobby project, built on the reverse engineering work of [open_oura and open_heal
 Not affiliated with Oura, not a medical device.
 
 [![Download](https://img.shields.io/github/v/release/busssard/OpenRing?label=download&color=7c8cff)](https://github.com/busssard/OpenRing/releases/latest)
-[![Build](https://github.com/busssard/OpenRing/actions/workflows/build.yml/badge.svg)](https://github.com/busssard/OpenRing/actions/workflows/build.yml)
+[![Tests](https://img.shields.io/endpoint?cacheSeconds=300&url=https%3A%2F%2Fraw.githubusercontent.com%2Fbusssard%2FOpenRing%2Fbadges%2Ftests.json)](https://github.com/busssard/OpenRing/blob/badges/summary.md)
+[![Coverage](https://img.shields.io/endpoint?cacheSeconds=300&url=https%3A%2F%2Fraw.githubusercontent.com%2Fbusssard%2FOpenRing%2Fbadges%2Fcoverage.json)](https://github.com/busssard/OpenRing/blob/badges/summary.md)
+[![Screenshots](https://img.shields.io/endpoint?cacheSeconds=300&url=https%3A%2F%2Fraw.githubusercontent.com%2Fbusssard%2FOpenRing%2Fbadges%2Fscreenshots.json)](https://github.com/busssard/OpenRing/actions/workflows/emulator.yml)
 ![Internet access: none](https://img.shields.io/badge/internet%20access-none-3fb950)
 
 <p>
@@ -43,7 +45,8 @@ Updates install over the old version and keep your data.
   its checksum, signing certificate and a link to the build, and it has a
   [provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
   (`gh attestation verify OpenRing-x.y.apk -R busssard/OpenRing`).
-* Each change is tested on an Android 14 emulator ([results](https://github.com/busssard/OpenRing/actions/workflows/emulator.yml))
+* Each change runs about 200 automated tests ([results and coverage](https://github.com/busssard/OpenRing/blob/badges/summary.md)),
+  is tested on an Android 14 emulator ([runs](https://github.com/busssard/OpenRing/actions/workflows/emulator.yml))
   and scanned by [CodeQL](https://github.com/busssard/OpenRing/actions/workflows/codeql.yml).
 * All releases share one signing key, so nobody else can push an update to your phone.
 

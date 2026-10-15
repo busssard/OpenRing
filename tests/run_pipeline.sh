@@ -7,7 +7,8 @@ DEPS=tests/.deps
 mkdir -p "$DEPS"
 [ -f "$DEPS/sqlite-jdbc.jar" ] || curl -sL -o "$DEPS/sqlite-jdbc.jar" https://github.com/xerial/sqlite-jdbc/releases/download/3.41.2.2/sqlite-jdbc-3.41.2.2.jar
 [ -d "$DEPS/json" ] || git clone -q --depth 1 https://github.com/stleary/JSON-java "$DEPS/json"
-OUT=$(mktemp -d)
+OUT=${TEST_OUT:-$(mktemp -d)}
+mkdir -p "$OUT"
 javac -nowarn -source 8 -target 8 -Xlint:-options -d "$OUT" \
   $(find tests/pipeline/shim -name '*.java') $(find "$DEPS/json/src/main/java/org/json" -name '*.java') \
   $(find app/src/main/java/app/openring/core -name '*.java') \
@@ -15,4 +16,4 @@ javac -nowarn -source 8 -target 8 -Xlint:-options -d "$OUT" \
   app/src/main/java/app/openring/data/Json.java app/src/main/java/app/openring/data/Analyzer.java \
   app/src/main/java/app/openring/data/DataCheck.java app/src/main/java/app/openring/data/RightNow.java app/src/main/java/app/openring/data/Backup.java app/src/main/java/app/openring/data/SleepHistory.java app/src/main/java/app/openring/data/Demo.java \
   app/src/main/java/app/openring/data/Exporter.java tests/pipeline/PipelineTest.java
-TZ=Europe/Zurich java -cp "$OUT:$DEPS/sqlite-jdbc.jar" PipelineTest
+TZ=Europe/Zurich java $JAVA_OPTS -cp "$OUT:$DEPS/sqlite-jdbc.jar" PipelineTest

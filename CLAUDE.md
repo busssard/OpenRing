@@ -25,7 +25,8 @@ completely, then read the two guides it points to before changing anything:
    tests). Then build it in the same run; nobody approves in between. The owner reviews at the
    pull request, so the design comment and the PR body must let him judge it quickly. If an
    earlier design comment exists, follow it, including changes the owner asked for.
-3. **Build** on a branch in the existing style, with tests for the logic (see DEVELOPMENT.md).
+3. **Build** on a branch in the existing style, with tests for the logic (see DEVELOPMENT.md). New
+   logic gets tests so the coverage of its package does not drop (`./tests/coverage.sh` shows it).
 4. **Pull request** with what changed, why, how it was tested, what to try on the phone, and
    `Fixes #N` (the template has the checklist). Bump the version for user visible changes; merging
    then publishes the release. Never merge yourself, never push to `main`.

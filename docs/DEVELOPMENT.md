@@ -12,11 +12,12 @@ Everything you need to build, test, change and release Open Ring. Read
 | `app/src/main/AndroidManifest.xml` | Permissions, activities, services. Must never request `INTERNET` |
 | `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh` |
 | `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh` |
-| `tests/check_privacy.sh` | Fails if the app gains network access or tracking code |
+| `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if version numbers and changelog disagree |
+| `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
 | `build_apk.sh` | Builds and signs the APK without Gradle (used by CI) |
 | `build.gradle`, `settings.gradle`, `app/build.gradle`, `gradle.properties`, `gradle/` | Gradle files for Android Studio (no wrapper script committed; CI does not use Gradle) |
 | `.github/workflows/` | CI: `build.yml` (tests, APK, releases), `emulator.yml` (Android 14 screen test and screenshots), `codeql.yml` (security scan) |
-| `.github/scripts/screens.sh` | The emulator script that opens every screen with demo data |
+| `.github/scripts/screens.sh`, `.github/scripts/badge.sh` | The emulator script that opens every screen with demo data; the README badge publisher |
 | `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` | Templates for issues (bug, idea) and pull requests |
 | `docs/` | This guide and the architecture notes |
 | `CHANGELOG.md` | User facing changes per version; the release notes come from here |
@@ -46,9 +47,23 @@ Run all of them before every commit; CI runs them too.
 ./tests/run_pipeline.sh    # storage, dating, interrupted sync, analysis, backup, sleep history, demo data
 ./tests/check_privacy.sh   # no INTERNET permission, no networking, analytics, ads or crash reporting code
 ./tests/check_version.sh   # version numbers agree and the changelog has a section for this version
+./tests/coverage.sh        # the two JVM suites again, with a coverage report (optional locally)
 ```
 
-`run_pipeline.sh` downloads sqlite-jdbc and org.json into `tests/.deps/` on its first run. It compiles a
+**Coverage:** `./tests/coverage.sh` runs both JVM suites with JaCoCo and writes
+`build/coverage/summary.md` (table per package), `build/coverage/html/` (line by line) and the badge
+files. It measures the code the JVM tests can run (`core/`, `data/`); `ui/`, `ble/` and `sync/` need
+Android and are covered by the emulator test and real rings, the summary says how much that is. CI runs
+the tests through this script, shows the table in the run summary and keeps the HTML report as the
+`coverage-report` artifact. When you add logic, add tests until its package stays at or above its
+current coverage.
+
+**Badges:** on `main`, CI writes small status files to the branch `badges` (`tests.json`,
+`coverage.json`, `screenshots.json`, `summary.md`) that the README badges read through shields.io
+(`.github/scripts/badge.sh`). The screenshots badge shows *generating* while the emulator runs.
+
+`run_pipeline.sh` downloads sqlite-jdbc and org.json into `tests/.deps/` on its first run (JaCoCo too,
+for the coverage script). It compiles a
 fixed list of `data/` files; when you add a file there that the pipeline needs, add it to the list.
 
 **On Android:** `emulator.yml` runs for pull requests and pushes to `main`. It installs the APK on an

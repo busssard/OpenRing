@@ -22,10 +22,34 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Core tests
-        run: ./tests/run_tests.sh
-      - name: End to end pipeline test
-        run: ./tests/run_pipeline.sh
+      - name: Tests with coverage (unit and pipeline)
+        run: |
+          ./tests/coverage.sh
+          cat build/coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: build/coverage/html
+      - name: Test and coverage badges
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          t=build/coverage/badges
+          if [ -f "$t/tests.json" ]; then
+            m=$(python3 -c "import json;print(json.load(open('$t/tests.json'))['message'])")
+            c=$(python3 -c "import json;print(json.load(open('$t/coverage.json'))['message'])")
+            cc=$(python3 -c "import json;print(json.load(open('$t/coverage.json'))['color'])")
+            .github/scripts/badge.sh tests tests "$m" brightgreen build/coverage/summary.md
+            .github/scripts/badge.sh coverage "coverage (logic)" "$c" "$cc"
+          fi
+      - name: Failing tests badge
+        if: failure() && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/badge.sh tests tests failing red
       - name: Version check
         run: ./tests/check_version.sh
       - name: Signing key from the repository secret
