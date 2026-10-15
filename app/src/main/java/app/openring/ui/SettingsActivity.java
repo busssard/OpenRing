@@ -34,6 +34,8 @@ import app.openring.data.Db;
 import app.openring.data.Exporter;
 import app.openring.data.Json;
 import app.openring.data.Prefs;
+import app.openring.data.ScreenDays;
+import app.openring.data.ScreenUse;
 import app.openring.sync.SyncJob;
 import app.openring.sync.SyncService;
 
@@ -69,6 +71,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
     protected void onResume() {
         super.onResume();
         RingManager.get(this).addListener(this);
+        // back from Android's usage access page: show the new state, and read the screen log the first time
+        Prefs p = Prefs.of(this);
+        if (screenCard != null) fillScreenCard(p);
+        if (!screenRead && !p.demo() && ScreenUse.supported() && ScreenUse.allowed(this) && !ScreenDays.any(Db.get(this))) {
+            screenRead = true;
+            updateNights("Reading screen time");
+        }
     }
 
     @Override
@@ -133,6 +142,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             root.addView(updatesCard());
             stagesCard = stageDetailCard(p);
             root.addView(stagesCard);
+            screenCard = Ui.card(this);
+            fillScreenCard(p);
+            root.addView(screenCard);
             LinearLayout about = Ui.card(this);
             about.addView(Ui.caption(this, "About"));
             about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
@@ -213,6 +225,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // ---- sleep stage detail ----
         stagesCard = stageDetailCard(p);
         root.addView(stagesCard);
+
+        // ---- screen time ----
+        screenCard = Ui.card(this);
+        fillScreenCard(p);
+        root.addView(screenCard);
 
         // ---- measurements ----
         LinearLayout feat = Ui.card(this);
@@ -389,8 +406,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Measurements", "Key and backup", "Export", "Help", "Careful", "About"};
-        View[] targets = {updates, ring, prof, stagesCard, feat, key, data, help, danger, about};
+        String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Screen time", "Measurements", "Key and backup", "Export", "Help", "Careful", "About"};
+        View[] targets = {updates, ring, prof, stagesCard, screenCard, feat, key, data, help, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -408,6 +425,81 @@ public final class SettingsActivity extends Activity implements RingManager.List
             chips.addView(chip, lp);
         }
         scrollToSection();
+    }
+
+    private LinearLayout screenCard;
+    /** The first read of the screen log was started (once per app run, even if the log was empty). */
+    private static boolean screenRead;
+
+    /**
+     * Screen time (issue #13): usage access, the daily goal and whether phone use counts as awake
+     * in the sleep analysis. Filled again when coming back from Android's usage access page.
+     */
+    void fillScreenCard(final Prefs p) {
+        final LinearLayout card = screenCard;
+        if (card == null) return;
+        card.removeAllViews();
+        card.addView(Ui.caption(this, "Screen time"));
+        card.addView(Ui.body(this, "When this phone's screen was on, read from Android's usage log. It shows on the Activity page "
+                + "and helps the sleep analysis. It stays on this phone like everything else."));
+        if (!p.demo() && !ScreenUse.supported()) {
+            card.addView(Ui.gap(this, 6));
+            card.addView(Ui.text(this, "Needs Android 9 or newer.", 13, Ui.WARN, Ui.REGULAR));
+            return;
+        }
+        if (p.demo()) {
+            card.addView(line("Usage access", "demo data"));
+        } else {
+            boolean ok = ScreenUse.allowed(this);
+            card.addView(line("Usage access", ok ? "allowed" : "not allowed yet"));
+            small(card, ok ? "Change usage access" : "Allow usage access", Ui.OXY, new Runnable() {
+                @Override
+                public void run() {
+                    ScreenUse.openAccessSettings(SettingsActivity.this);
+                }
+            });
+        }
+        final EditText goal = num(card, "Daily goal in minutes (0 for no goal)", p.screenGoalMin());
+        small(card, "Save goal", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                p.setScreenGoalMin(SetupActivity.num(goal, 180, 0, 1440));
+                toast("Goal saved");
+            }
+        });
+        Switch sw = new Switch(this);
+        sw.setText("Count phone use as awake");
+        sw.setTextColor(Ui.TEXT);
+        sw.setChecked(p.screenAwake());
+        sw.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                p.setScreenAwake(on);
+                updateNights("Updating the nights with phone use");
+            }
+        });
+        LinearLayout.LayoutParams swl = Ui.matchWrap();
+        swl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        card.addView(sw, swl);
+        card.addView(Ui.text(this, "When the screen is on during a night, that time counts as awake, and a night does not start while "
+                + "you use the phone. Switch it off if you often fall asleep with a video playing.", 12, Ui.TEXT_3, Ui.REGULAR));
+    }
+
+    /** Reads new screen time and analyses the nights it touches, in the background. */
+    void updateNights(final String message) {
+        if (message != null) toast(message);
+        new AsyncTask<Void, Void, Void>() {
+            @Override
+            protected Void doInBackground(Void... v) {
+                try {
+                    ScreenUse.collect(SettingsActivity.this, true);
+                    Analyzer.run(SettingsActivity.this, null);
+                } catch (RuntimeException ignored) {
+                    // the analysis stores its own error for the data check
+                }
+                return null;
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /** Sex picked in the profile card (0 male, 1 female, 2 not set), saved with its button. */
@@ -450,13 +542,15 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return card;
     }
 
-    /** Opens at a card when started with the extra {@code section} ("stages"), used by the screen test. */
+    /** Opens at a card when started with the extra {@code section} ("stages" or "screen"), used by the screen test. */
     void scrollToSection() {
-        if (!"stages".equals(getIntent().getStringExtra("section")) || stagesCard == null) return;
+        String section = getIntent().getStringExtra("section");
+        final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : null;
+        if (card == null) return;
         scroll.post(new Runnable() {
             @Override
             public void run() {
-                scroll.scrollTo(0, stagesCard.getTop() - Ui.dp(SettingsActivity.this, 8));
+                scroll.scrollTo(0, card.getTop() - Ui.dp(SettingsActivity.this, 8));
             }
         });
     }

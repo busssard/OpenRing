@@ -56,6 +56,8 @@ public final class Backup {
         Json.put(prof, "target_kcal", p.targetKcal());
         Json.put(o, "profile", prof);
         Json.put(o, "background_sync", p.backgroundSync());
+        Json.put(o, "screen_goal", p.screenGoalMin());
+        Json.put(o, "screen_awake", p.screenAwake());
         ZipOutputStream z = new ZipOutputStream(os);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
@@ -139,6 +141,8 @@ public final class Backup {
                 p.setProfileSet();
             }
             if (o.has("background_sync")) p.setBackgroundSync(o.optBoolean("background_sync", true));
+            if (o.has("screen_goal")) p.setScreenGoalMin(o.optInt("screen_goal", p.screenGoalMin()));
+            if (o.has("screen_awake")) p.setScreenAwake(o.optBoolean("screen_awake", true));
         }
         r.ok = true;
         r.message = r.history ? "Restored your key, settings and history" : "Restored your key and settings";

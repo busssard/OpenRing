@@ -25,6 +25,11 @@ public final class DayData {
     public app.openring.data.RightNow now;
     /** Main nights from 30 days before the selected date up to today, oldest first. */
     public final List<JSONObject> recent = new ArrayList<JSONObject>();
+    /** Screen time of the selected date, null when nothing is known for it (issue #13). */
+    public app.openring.core.analysis.ScreenTime.Day screen;
+    /** Screen minutes of the 7 days ending at the selected date (NaN when unknown) and the local hour of each hourly bar. */
+    public double[] screenWeek = new double[0];
+    public int[] screenHours = new int[0];
 
     public static DayData load(Context c, LocalDate date) {
         Db db = Db.get(c);
@@ -44,6 +49,13 @@ public final class DayData {
         }
         try {
             d.now = app.openring.data.RightNow.load(c);
+        } catch (RuntimeException ignored) {
+        }
+        try {
+            java.time.ZoneId z = java.time.ZoneId.systemDefault();
+            d.screen = app.openring.data.ScreenDays.day(db, date, z);
+            d.screenWeek = app.openring.data.ScreenDays.lastDays(db, date, 7, z);
+            d.screenHours = app.openring.data.ScreenDays.hours(app.openring.data.ScreenDays.hourEdges(date, z), z);
         } catch (RuntimeException ignored) {
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {

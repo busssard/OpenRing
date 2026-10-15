@@ -21,6 +21,8 @@ public final class NightAnalyzer {
         public TS sleepState = new TS();// ring sleep_state (0 awake, 1 or 2 asleep)
         public int[] ringStages;        // optional ring hypnogram aligned to start, 30 s epochs
         public int stageDetail = StageFilter.DETAILED; // how much stage detail to keep (issue #9)
+        /** Phone screen sessions {start, end} near the window; time with the screen on counts as awake (issue #13). */
+        public java.util.List<double[]> screen = new java.util.ArrayList<double[]>();
     }
 
     public static Night analyze(Input in) {
@@ -61,6 +63,13 @@ public final class NightAnalyzer {
             stages = new int[epochs];
             java.util.Arrays.fill(stages, Stager.LIGHT);
             n.stageSource = "window";
+        }
+        // phone use: someone using the phone is awake, whatever the ring says (issue #13). Only adds
+        // awake time, it never removes any.
+        if (!in.screen.isEmpty()) {
+            stages = stages.clone();
+            ScreenTime.markAwake(stages, in.start, in.end, in.screen);
+            n.phoneMin = ScreenTime.minutes(in.screen, in.start, in.end);
         }
         // detail filter: metrics and the score use the filtered stages; the stager's output is kept
         // so Settings can preview other levels without re analysing

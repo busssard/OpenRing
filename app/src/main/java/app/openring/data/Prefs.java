@@ -47,6 +47,13 @@ public final class Prefs {
     public int stageDetail() { return sp.getInt("stage_detail", app.openring.core.analysis.StageFilter.BALANCED); }
     public void setStageDetail(int level) { sp.edit().putInt("stage_detail", level).apply(); }
 
+    /** Daily screen time goal in minutes, 0 for none (issue #13). */
+    public int screenGoalMin() { return sp.getInt("screen_goal", 180); }
+    public void setScreenGoalMin(int m) { sp.edit().putInt("screen_goal", m).apply(); }
+    /** Whether time with the phone screen on counts as awake in the sleep analysis (issue #13). */
+    public boolean screenAwake() { return sp.getBoolean("screen_awake", true); }
+    public void setScreenAwake(boolean b) { sp.edit().putBoolean("screen_awake", b).apply(); }
+
     public boolean profileSet() { return sp.getBoolean("profile_set", false); }
     public void setProfileSet() { sp.edit().putBoolean("profile_set", true).apply(); }
 

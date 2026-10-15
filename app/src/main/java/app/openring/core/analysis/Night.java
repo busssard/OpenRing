@@ -25,6 +25,8 @@ public final class Night {
     public double breath = Double.NaN, temp = Double.NaN, spo2 = Double.NaN;
     public double spo2Low = Double.NaN;
     public double hrvDeep = Double.NaN, hrvRem = Double.NaN;
+    /** Minutes the phone screen was on within the window, counted as awake; NaN without screen data (issue #13). */
+    public double phoneMin = Double.NaN;
 
     /** Chart series, unix seconds. */
     public TS hr = new TS(), hrv = new TS(), motion = new TS(), spo2Series = new TS(), tempSeries = new TS();
