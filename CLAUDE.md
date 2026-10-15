@@ -70,6 +70,9 @@ completely, then read the two guides it points to before changing anything:
 * Charts with one value per day need dots and a time axis that fits the data.
 * Demo mode lives in its own database file; never mix demo and real data.
 * Inputs need `Ui.input()` (visible outline); same colored backgrounds made the key field invisible.
+* Emulator screenshots can be spoiled by system dialogs ("Pixel Launcher isn't responding") on a
+  slow runner. `screens.sh` taps them away and fails if one stays; the README pictures are only
+  replaced by a clean run. Always look at the pictures, a green check alone is not enough.
 
 ## Messages to the owner
 Start with the current date and time in Europe/Zurich, use no dashes as punctuation (commas or
