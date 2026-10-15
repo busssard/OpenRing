@@ -70,7 +70,7 @@ launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
 launch --ei tab 3;                          shot activity
-swipe_up; swipe_up;                       shot activity-screen 1
+swipe_up;                                 shot activity-screen 1
 launch --ei tab 4;                          shot body
 swipe_up; swipe_up;                       shot body-trends 1
 launch --ei tab 5;                          shot play
