@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Locale;
 
 import app.openring.core.analysis.Scores;
+import app.openring.core.analysis.ScreenTime;
 import app.openring.core.analysis.Stats;
 import app.openring.core.analysis.TS;
 import app.openring.data.Json;
@@ -295,6 +296,12 @@ public final class Pages {
         if (n.has("stage_detail")) {
             String level = app.openring.core.analysis.StageFilter.NAMES[app.openring.core.analysis.StageFilter.clampLevel(n.optInt("stage_detail"))];
             hyp.addView(Ui.text(c, "Stage detail: " + level + " (Settings, Sleep stage detail)", 11, Ui.TEXT_3, Ui.REGULAR));
+        }
+        double phone = Json.d(n, "phone_min");
+        if (phone >= 1) {
+            hyp.addView(Ui.gap(c, 4));
+            hyp.addView(Ui.text(c, "Phone in use for " + Ui.fmt(phone, 0) + " min during this night, shown as awake (Settings, Screen time).",
+                    12, Ui.OXY, Ui.REGULAR));
         }
         root.addView(hyp);
 
@@ -666,7 +673,10 @@ public final class Pages {
         double active = Json.d(day, "active_kcal"), target = Json.d(day, "target_kcal");
         root.addView(hero(c, d.score("activity_score"), "Activity", Ui.ACTIVE,
                 day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal"));
-        if (day == null) return root;
+        if (day == null) {
+            root.addView(screenCard(c, d));
+            return root;
+        }
 
         LinearLayout goal = Ui.card(c);
         goal.addView(Ui.caption(c, "Goal progress"));
@@ -715,6 +725,8 @@ public final class Pages {
             root.addView(pc);
         }
 
+        root.addView(screenCard(c, d));
+
         JSONObject as = day.optJSONObject("activity_score");
         if (as != null) {
             root.addView(contributors(c, as, Ui.ACTIVE, "Contributors"));
@@ -732,6 +744,89 @@ public final class Pages {
         week.addView(new Charts.BarChart(c, d.series("active_kcal", 7), d.weekdayLabels(7), Ui.ACTIVE).target(target), Ui.sized(c, -1, 130));
         root.addView(week);
         return root;
+    }
+
+    /** Screen time of this phone for the day (issue #13): total against the goal, per hour, last 7 days. */
+    static View screenCard(final Context c, DayData d) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Screen time"));
+        card.addView(Ui.gap(c, 4));
+        boolean demo = app.openring.data.Prefs.of(c).demo();
+        if (!demo && !app.openring.data.ScreenUse.supported()) {
+            card.addView(Ui.body(c, "Screen time needs Android 9 or newer."));
+            return card;
+        }
+        if (!demo && !app.openring.data.ScreenUse.allowed(c)) {
+            card.addView(Ui.body(c, "See how long and when this phone's screen was on each day, next to your activity. "
+                    + "For this, switch on Open Ring in Android's usage access settings (the button takes you there). "
+                    + "Like everything else it stays on this phone."));
+            TextView allow = Ui.smallButton(c, "Allow usage access", Ui.OXY);
+            allow.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    app.openring.data.ScreenUse.openAccessSettings(c);
+                }
+            });
+            LinearLayout.LayoutParams lp = Ui.matchWrap();
+            lp.setMargins(0, Ui.dp(c, 10), 0, 0);
+            card.addView(allow, lp);
+            return card;
+        }
+        ScreenTime.Day s = d.screen;
+        if (s == null) {
+            card.addView(Ui.body(c, "No screen time known for this day. Open Ring has screen time from about a week before you allowed access."));
+            return card;
+        }
+        int goal = app.openring.data.Prefs.of(c).screenGoalMin();
+        boolean today = d.date.equals(java.time.LocalDate.now());
+        LinearLayout row = Ui.hbox(c);
+        row.setGravity(android.view.Gravity.BOTTOM);
+        row.addView(Ui.text(c, Ui.hm(s.totalMin), 28, Ui.TEXT, Ui.LIGHT));
+        if (goal > 0) {
+            TextView g = Ui.text(c, "  of " + hours(goal) + " goal", 14, Ui.TEXT_2, Ui.REGULAR);
+            g.setPadding(0, 0, 0, Ui.dp(c, 5));
+            row.addView(g);
+        }
+        card.addView(row);
+        if (goal > 0) {
+            LinearLayout.LayoutParams bl = Ui.sized(c, -1, 8);
+            bl.setMargins(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
+            card.addView(new Ui.Bar(c, s.totalMin / goal, s.totalMin > goal ? Ui.WARN : Ui.OXY), bl);
+        }
+        card.addView(Ui.text(c, "Time this phone's screen was on " + (today ? "today so far" : "on this day") + ", lock screen included."
+                + (goal > 0 ? " The goal is set in Settings, Screen time." : ""), 12, Ui.TEXT_2, Ui.REGULAR));
+        card.addView(Ui.statRow(c, Ui.stat(c, "Turned on", String.valueOf(s.turnedOn), "times", 0),
+                Ui.stat(c, "Longest", Ui.fmt(s.longestMin, 0), "min", 0)));
+        card.addView(Ui.text(c, "Turned on: how often the screen was switched on. Longest: the longest time it stayed on in one go.",
+                12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.gap(c, 12));
+        card.addView(Ui.text(c, "Minutes the screen was on, per hour of the day", 11, Ui.TEXT_3, Ui.MEDIUM));
+        String[] labels = new String[s.hourly.length];
+        int peak = 0;
+        for (int i = 0; i < s.hourly.length; i++) {
+            int h = i < d.screenHours.length ? d.screenHours[i] : i;
+            labels[i] = h % 6 == 0 && (i == 0 || i >= d.screenHours.length || d.screenHours[i - 1] != h) ? String.valueOf(h) : "";
+            if (s.hourly[i] > s.hourly[peak]) peak = i;
+        }
+        card.addView(Ui.gap(c, 6));
+        card.addView(new Charts.BarChart(c, s.hourly, labels, Ui.OXY).valueFormat("%.0f min").highlight(s.totalMin > 0 ? peak : -1),
+                Ui.sized(c, -1, 110));
+        card.addView(Ui.gap(c, 12));
+        card.addView(Ui.text(c, "Screen time in hours, last 7 days", 11, Ui.TEXT_3, Ui.MEDIUM));
+        double[] week = d.screenWeek.clone();
+        for (int i = 0; i < week.length; i++) week[i] /= 60.0;
+        Charts.BarChart wc = new Charts.BarChart(c, week, d.weekdayLabels(week.length), Ui.OXY).valueFormat("%.1f h");
+        if (goal > 0) wc.target(goal / 60.0);
+        card.addView(Ui.gap(c, 6));
+        card.addView(wc, Ui.sized(c, -1, 120));
+        if (goal > 0) card.addView(Ui.text(c, "The dashed line is your goal.", 11, Ui.TEXT_3, Ui.REGULAR));
+        return card;
+    }
+
+    /** "3h", "2h 30m" or "45m" for a goal in minutes. */
+    static String hours(int min) {
+        if (min < 60) return min + "m";
+        return min % 60 == 0 ? (min / 60) + "h" : (min / 60) + "h " + (min % 60) + "m";
     }
 
     // ========================================================================== BODY

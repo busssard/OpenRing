@@ -324,11 +324,91 @@ public class CoreTest {
         motion();
         pattern();
         stageFilter();
+        screenTime();
         decoders();
         requests();
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    static boolean near(double a, double b) {
+        return Math.abs(a - b) < 1e-6;
+    }
+
+    /** Screen time (issue #13): sessions from the on and off log, totals, and phone use in a sleep window. */
+    static void screenTime() {
+        final int ON = ScreenTime.ON, OFF = ScreenTime.OFF, SD = ScreenTime.SHUTDOWN;
+        // on, off; a second "on" while on is ignored; shutdown closes; still on at the end runs to now
+        List<double[]> s = ScreenTime.sessions(new double[] {100, 160, 200, 230, 260, 300, 400}, new int[] {ON, OFF, ON, ON, OFF, ON, SD}, 0, 1000);
+        eq("screen: sessions", s.size(), 3);
+        check("screen: plain session", near(s.get(0)[0], 100) && near(s.get(0)[1], 160));
+        check("screen: double on keeps one session", near(s.get(1)[0], 200) && near(s.get(1)[1], 260));
+        check("screen: shutdown closes", near(s.get(2)[1], 400));
+        List<double[]> open = ScreenTime.sessions(new double[] {500}, new int[] {ON}, 0, 900);
+        check("screen: still on ends now", open.size() == 1 && near(open.get(0)[1], 900));
+        List<double[]> lead = ScreenTime.sessions(new double[] {50, 70, 80}, new int[] {OFF, ON, OFF}, 10, 900);
+        check("screen: log starting with off was on since the start", lead.size() == 2 && near(lead.get(0)[0], 10) && near(lead.get(0)[1], 50));
+        List<double[]> late = ScreenTime.sessions(new double[] {10 + 3 * 3600, 20000, 20100}, new int[] {OFF, ON, OFF}, 10, 30000);
+        check("screen: a first off long after the start is not a made up day long session", late.size() == 1 && near(late.get(0)[0], 20000));
+        final int AL = ScreenTime.ALIVE, UP = ScreenTime.STARTUP;
+        List<double[]> died = ScreenTime.sessions(new double[] {1000, 1200, 1300, 30000, 30100, 30400}, new int[] {ON, AL, AL, UP, ON, OFF}, 0, 40000);
+        check("screen: phone died with the screen on, session ends at its last use", died.size() == 2 && near(died.get(0)[1], 1300)
+                && near(died.get(1)[0], 30100));
+        List<double[]> idle = ScreenTime.sessions(new double[] {500, 600, 700}, new int[] {AL, ON, OFF}, 0, 1000);
+        check("screen: use while off does not open a session", idle.size() == 1 && near(idle.get(0)[0], 600));
+        List<double[]> stray = ScreenTime.sessions(new double[] {50, 60}, new int[] {ON, OFF}, 10, 900);
+        eq("screen: no made up session before a normal start", stray.size(), 1);
+        eq("screen: empty log", ScreenTime.sessions(new double[0], new int[0], 0, 100).size(), 0);
+
+        // totals: one session across a border is split, longest is cut at the borders
+        List<double[]> d = new ArrayList<double[]>();
+        d.add(new double[] {3000, 4200});    // 20 min across the 3600 border
+        d.add(new double[] {5000, 5060});    // 1 min
+        d.add(new double[] {7000, 9400});    // 40 min across 7200
+        check("screen: minutes in range", near(ScreenTime.minutes(d, 3600, 7200), 10 + 1 + 3.3333333333));
+        double[] bins = ScreenTime.perBin(d, new double[] {0, 3600, 7200, 10800});
+        check("screen: per hour", near(bins[0], 10) && near(bins[1], 10 + 1 + 200 / 60.0) && near(bins[2], 2200 / 60.0));
+        eq("screen: turned on counts starts in range", ScreenTime.turnedOn(d, 3600, 7200), 2);
+        check("screen: longest cut at the border", near(ScreenTime.longest(d, 3600, 7200), 10));
+        ScreenTime.Day day = ScreenTime.day(d, new double[] {0, 3600, 7200, 10800});
+        check("screen: day", near(day.totalMin, 61) && day.turnedOn == 3 && near(day.longestMin, 40) && day.hourly.length == 3);
+
+        // trimming a sleep window [10000, 40000)
+        List<double[]> t = new ArrayList<double[]>();
+        t.add(new double[] {9000, 10900});   // phone in hand when the "night" starts
+        t.add(new double[] {11200, 11500});  // more within 10 minutes: start moves again
+        t.add(new double[] {20000, 20300});  // a phone check in the middle: not an edge
+        double[] w = ScreenTime.trim(10000, 40000, t);
+        check("screen: start moves past phone use, repeated", near(w[0], 11500) && near(w[1], 40000));
+        List<double[]> tail = new ArrayList<double[]>();
+        tail.add(new double[] {39500, 41000});
+        double[] w2 = ScreenTime.trim(10000, 40000, tail);
+        check("screen: end moves before phone use", near(w2[0], 10000) && near(w2[1], 39500));
+        List<double[]> shortLook = new ArrayList<double[]>();
+        shortLook.add(new double[] {10100, 10130}); // 30 s look at the clock does not move the edge
+        check("screen: short look keeps the edge", near(ScreenTime.trim(10000, 40000, shortLook)[0], 10000));
+        List<double[]> couch = new ArrayList<double[]>();
+        couch.add(new double[] {9000, 11000});
+        couch.add(new double[] {11300, 13000});
+        double[] w3 = ScreenTime.trim(10000, 13200, couch);
+        check("screen: window used up by the phone", w3[1] - w3[0] < ScreenTime.MIN_WINDOW_S);
+        double[] same = ScreenTime.trim(10000, 40000, new ArrayList<double[]>());
+        check("screen: no phone use, no change", near(same[0], 10000) && near(same[1], 40000));
+
+        // awake marking: 30 s steps from 0; on for 20 s of step 2, 10 s of step 4, all of 6 and 7
+        int[] st = {2, 2, 2, 2, 1, 1, 3, 3, 2, 2};
+        List<double[]> m = new ArrayList<double[]>();
+        m.add(new double[] {65, 85});
+        m.add(new double[] {130, 140});
+        m.add(new double[] {180, 240});
+        int changed = ScreenTime.markAwake(st, 0, 300, m);
+        eq("screen: awake marking", Arrays.toString(st), "[2, 2, 4, 2, 1, 1, 4, 4, 2, 2]");
+        eq("screen: marked count", changed, 3);
+        int[] already = {4, 4};
+        eq("screen: no phone use in range, nothing counted", ScreenTime.markAwake(already, 0, 60, m), 0);
+        int[] awakeAlready = {4, 2, 2};
+        eq("screen: phone use while already awake still counts", ScreenTime.markAwake(awakeAlready, 60, 150, m), 1);
     }
 
     static void protocol() {

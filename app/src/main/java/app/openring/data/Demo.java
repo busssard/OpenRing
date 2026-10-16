@@ -39,10 +39,12 @@ public final class Demo {
         ZoneId zone = ZoneId.systemDefault();
         int days = 35;
         long t0 = LocalDate.now().minusDays(days).atStartOfDay(zone).toEpochSecond();
-        List<RingEvent> ev = history(t0, days, now, zone, new Random(7));
+        List<double[]> screen = new ArrayList<double[]>();
+        List<RingEvent> ev = history(t0, days, now, zone, new Random(7), screen);
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
+        db.putScreen(screen);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
     }
@@ -66,6 +68,11 @@ public final class Demo {
     }
 
     static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r) {
+        return history(t0, days, now, zone, r, null);
+    }
+
+    /** As above; when {@code screen} is not null it also gets made up phone screen sessions (issue #13). */
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         for (int d = 1; d <= days; d++) {
             double midnight = t0 + d * 86400.0;
@@ -125,6 +132,7 @@ public final class Demo {
                 }
                 ev.add(new RingEvent(EventCodec.HRV_EVENT, ds(t0, t), hrv));
             }
+            if (screen != null) screenDay(screen, new Random(1000 + d), midnight, bed, wake, wakeBouts, now, d == days);
             byte[] bt = new byte[8];
             Protocol.Le.putU32(bt, 0, ds(t0, bed));
             Protocol.Le.putU32(bt, 4, ds(t0, wake));
@@ -164,6 +172,44 @@ public final class Demo {
             }
         });
         return ev;
+    }
+
+    /**
+     * Made up phone use around one night and the day after it: scrolling that ends 5 to 20 minutes
+     * before bed, now and then a phone check during a longer wake up (always in the newest night), a look in the morning and
+     * about 35 short to long uses during the day (about 3 hours in all). Its own random numbers, so
+     * the nights stay the same as without screen time.
+     */
+    static void screenDay(List<double[]> out, Random r, double midnight, double bed, double wake, double[][] wakeBouts, long now, boolean newest) {
+        List<double[]> day = new ArrayList<double[]>();
+        double eveEnd = bed - (5 + r.nextInt(16)) * 60;
+        day.add(new double[] {eveEnd - (10 + r.nextInt(26)) * 60, eveEnd});
+        boolean check = false;
+        for (double[] b : wakeBouts) {
+            if (b[1] - b[0] >= 6 * 60 && r.nextDouble() < 0.5) {
+                day.add(new double[] {b[0] + 60, b[0] + 60 + (2 + r.nextInt(3)) * 60});
+                check = true;
+            }
+        }
+        // the newest night always has one, so the screenshots show how phone use counts as awake
+        if (newest && !check) {
+            double at = bed + 0.55 * (wake - bed);
+            day.add(new double[] {at, at + 3 * 60});
+        }
+        double morning = wake + (3 + r.nextInt(6)) * 60;
+        day.add(new double[] {morning, morning + (4 + r.nextInt(7)) * 60});
+        double from = wake + 20 * 60, to = midnight + 21 * 3600;
+        int n = 30 + r.nextInt(12);
+        double[] starts = new double[n];
+        for (int i = 0; i < n; i++) starts[i] = from + r.nextDouble() * (to - from);
+        java.util.Arrays.sort(starts);
+        for (int i = 0; i < n; i++) {
+            double k = r.nextDouble();
+            double len = k < 0.7 ? 30 + r.nextDouble() * 150 : k < 0.95 ? 180 + r.nextDouble() * 540 : 900 + r.nextDouble() * 1500;
+            double end = Math.min(starts[i] + len, i + 1 < n ? starts[i + 1] - 30 : to);
+            if (end > starts[i] + 10) day.add(new double[] {starts[i], end});
+        }
+        for (double[] x : day) if (x[1] < now - 60) out.add(x);
     }
 
     static boolean inside(double[][] bouts, double t) {

@@ -19,8 +19,8 @@ Nothing leaves the phone: the app has no internet permission.
 | Package | Responsibility |
 | --- | --- |
 | `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `Hex` |
-| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `NightAnalyzer` (night metrics), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `LiveHrv`, `Stats`, `TS` (time series) |
-| `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter` |
+| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions and their effect on a night), `NightAnalyzer` (night metrics), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `LiveHrv`, `Stats`, `TS` (time series) |
+| `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log), `ScreenDays` (screen time per day) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
 | `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours) |
 | `ui/` | `MainActivity` (tabs, date, follows the newest day), `Pages` (content of every tab), `Charts` (hand drawn views; `Scrub` adds touch readout), `Ui` (colors, cards, buttons, inputs), `Explain` (texts), `DayData`, `SetupActivity`, `SettingsActivity`, `LiveActivity`, `LogActivity`, `Permissions`, `games/` |
@@ -61,6 +61,7 @@ Nothing leaves the phone: the app has no internet permission.
 | `anchors` | Unused (kept from an early schema). Time records are `time_sync` and `rtc_beacon` rows in `events`; the phone anchor is stored as a `time_sync` row |
 | `nights` | One row per sleep period, the full analysis as JSON (stages as a digit string per 30 seconds: 1 deep, 2 light, 3 REM, 4 awake, 0 unknown) |
 | `days` | One row per day: scores, activity, vitals, trends as JSON |
+| `screen` | The phone's screen sessions (start, end), copied from Android's usage log, which keeps only about a week (version 3) |
 | `battery`, `kv` | Battery history; small key value state (cursor, analysis progress, errors) |
 
 Demo mode uses a separate file (`openring-demo.db`), so demo and real data never mix.
@@ -70,8 +71,11 @@ Demo mode uses a separate file (`openring-demo.db`), so demo and real data never
 1. `NightFinder` finds sleep periods from the ring's bedtime markers, its per 30 second sleep state and
    nocturnal events. A period is never stretched into time the ring marks as awake. `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
+   When "Count phone use as awake" is on (default), phone use of a minute or more that overlaps the first or
+   last 10 minutes of a period moves its edge past it, and a period of under 15 minutes left is dropped.
 2. `Stager` estimates stages per 30 seconds from heart rate, HRV and movement (open_health's model free
    stager). Ring 4 does not stage sleep itself. Sleep versus wake is reliable; deep and REM are estimates.
+   Every 30 seconds with the phone screen on for at least 15 seconds becomes awake (`ScreenTime.markAwake`).
 3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep

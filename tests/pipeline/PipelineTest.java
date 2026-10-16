@@ -14,6 +14,7 @@ import java.util.Random;
 import app.openring.core.EventCodec;
 import app.openring.core.Protocol;
 import app.openring.core.RingEvent;
+import app.openring.core.analysis.ScreenTime;
 import app.openring.data.Analyzer;
 import app.openring.data.DataCheck;
 import app.openring.data.Db;
@@ -206,6 +207,98 @@ public class PipelineTest {
             Analyzer.run(ctx, null);
         }
 
+        // ---- screen time (issue #13): phone use moves the start of a night and counts as awake ----
+        {
+            String key = day0.plusDays(1).toString();
+            app.openring.data.Prefs sp = app.openring.data.Prefs.of(ctx);
+            JSONObject before = Json.parse(db.nightsJson(key, key, true).get(0));
+            double s0 = before.optDouble("start"), e0 = before.optDouble("end");
+            check("no phone minutes without screen data", !before.has("phone_min"), before.opt("phone_min"));
+            check("screen time unknown before any data", app.openring.data.ScreenDays.day(db, day0.plusDays(1), ZONE) == null, null);
+            List<double[]> sc = new ArrayList<double[]>();
+            sc.add(new double[] {s0 - 1200, s0 + 900});            // phone in hand when the ring thinks the night starts
+            sc.add(new double[] {s0 + 4 * 3600, s0 + 4 * 3600 + 300}); // a 5 minute phone check at night
+            sc.add(new double[] {s0 + 5 * 3600, s0 + 5 * 3600 + 10});  // a 10 second glance
+            db.putScreen(sc);
+            db.reanalyseFrom(sc.get(0)[0]);
+            Analyzer.run(ctx, null);
+            JSONObject after = Json.parse(db.nightsJson(key, key, true).get(0));
+            check("night starts when the phone is put away", Math.abs(after.optDouble("start") - (s0 + 900)) < 1, (after.optDouble("start") - s0) + " s later");
+            check("night end unchanged", Math.abs(after.optDouble("end") - e0) < 1, null);
+            check("phone minutes stored (the 30 second steps counted as awake)", Math.abs(after.optDouble("phone_min") - 5) <= 0.5, after.opt("phone_min"));
+            int[] raw = Json.stagesRaw(after);
+            double a0 = after.optDouble("start"), step = (after.optDouble("end") - a0) / raw.length;
+            boolean awake = true;
+            for (int i = 0; i < raw.length; i++) {
+                double t0 = a0 + i * step;
+                if (t0 >= s0 + 4 * 3600 && t0 + step <= s0 + 4 * 3600 + 300) awake &= raw[i] == 4;
+            }
+            check("phone check counted as awake", awake, null);
+            int glance = (int) ((s0 + 5 * 3600 - a0) / step);
+            check("a 10 second glance alone is not awake", raw[glance] != 4 && raw[glance + 1] != 4, raw[glance] + " " + raw[glance + 1]);
+            check("phone check is a wake up", after.optInt("awakenings") >= 1, after.opt("awakenings"));
+            int[] shown = Json.stages(after);
+            boolean shownAwake = true;
+            for (int i = 0; i < shown.length; i++) {
+                double t0 = a0 + i * step;
+                if (t0 >= s0 + 4 * 3600 && t0 + step <= s0 + 4 * 3600 + 300) shownAwake &= shown[i] == 4;
+            }
+            check("the detail filter keeps phone use awake", shownAwake, null);
+
+            // a session read while the screen was still on gets its real end later
+            List<double[]> longer = new ArrayList<double[]>();
+            longer.add(new double[] {s0 + 4 * 3600, s0 + 4 * 3600 + 420});
+            db.putScreen(longer);
+            List<double[]> stored = db.screen(s0 - 7200, e0);
+            check("running session updated, not doubled", stored.size() == 3 && Math.abs(stored.get(1)[1] - (s0 + 4 * 3600 + 420)) < 1e-6, stored.size());
+
+            // the Activity page numbers
+            ScreenTime.Day sd = app.openring.data.ScreenDays.day(db, day0.plusDays(1), ZONE);
+            check("screen day total", sd != null && Math.abs(sd.totalMin - (7 + 10 / 60.0)) < 0.01, sd == null ? null : sd.totalMin);
+            check("screen day turned on and longest", sd != null && sd.turnedOn == 2 && Math.abs(sd.longestMin - 7) < 0.01, sd == null ? null : sd.turnedOn);
+            check("screen day has 24 hours", sd != null && sd.hourly.length == 24, sd == null ? null : sd.hourly.length);
+            double[] week = app.openring.data.ScreenDays.lastDays(db, day0.plusDays(1), 7, ZONE);
+            check("days before the first screen data are unknown", Double.isNaN(week[0]) && Double.isNaN(week[4]), Arrays.toString(week));
+            check("evening phone use counts for its day", Math.abs(week[5] - 35) < 0.01, week[5]);
+            check("clock change days have 23 and 25 hours",
+                    app.openring.data.ScreenDays.hourEdges(LocalDate.of(2026, 3, 29), ZONE).length == 24
+                    && app.openring.data.ScreenDays.hourEdges(LocalDate.of(2026, 10, 25), ZONE).length == 26, null);
+            int[] hrs = app.openring.data.ScreenDays.hours(app.openring.data.ScreenDays.hourEdges(LocalDate.of(2026, 10, 25), ZONE), ZONE);
+            check("the repeated hour is labelled twice", hrs[2] == 2 && hrs[3] == 2 && hrs[24] == 23, Arrays.toString(hrs));
+
+            // switched off: the night is as before
+            sp.setScreenAwake(false);
+            Analyzer.run(ctx, null);
+            JSONObject off = Json.parse(db.nightsJson(key, key, true).get(0));
+            check("switch off: night as without screen data", Math.abs(off.optDouble("start") - s0) < 1 && !off.has("phone_min"), off.opt("phone_min"));
+            sp.setScreenAwake(true);
+            Analyzer.run(ctx, null);
+            JSONObject on = Json.parse(db.nightsJson(key, key, true).get(0));
+            check("switch on again: phone use counts again", Math.abs(on.optDouble("start") - (s0 + 900)) < 1, null);
+
+            // the couch: phone in use for the whole of a short window, it is not a night
+            String key0 = day0.toString();
+            JSONObject n0 = Json.parse(db.nightsJson(key0, key0, true).get(0));
+            double c0 = n0.optDouble("start"), c1 = n0.optDouble("end");
+            List<double[]> lost = new ArrayList<double[]>();
+            lost.add(new double[] {c0 - 60, c1 + 60}); // one session all night: a lost "off", not used for sleep
+            db.putScreen(lost);
+            db.reanalyseFrom(c0 - 60);
+            Analyzer.run(ctx, null);
+            check("a session of many hours does not delete a night", db.nightsJson(key0, key0, true).size() == 1, null);
+            db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {c0 - 60});
+            List<double[]> couch = new ArrayList<double[]>();
+            for (double t = c0 - 60; t < c1; t += 3 * 3600) couch.add(new double[] {t, Math.min(t + 3 * 3600 - 120, c1 + 60)});
+            db.putScreen(couch);
+            db.reanalyseFrom(c0 - 60);
+            Analyzer.run(ctx, null);
+            check("phone in use the whole time: no night", db.nightsJson(key0, key0, true).isEmpty(), db.nightsJson(key0, key0, true).size());
+            for (double[] x : couch) db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {x[0]});
+            db.reanalyseFrom(c0 - 60);
+            Analyzer.run(ctx, null);
+            check("night back once that phone use is gone", db.nightsJson(key0, key0, true).size() == 1, null);
+        }
+
         // ---- a ring reboot: counter restarts, the official app had synced time once ----
         long epoch2Base = 2000;
         List<RingEvent> boot2 = new ArrayList<RingEvent>();
@@ -277,6 +370,7 @@ public class PipelineTest {
         byte[] keyBytes = app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a");
         pr.saveKey(keyBytes);
         pr.setProfile(41, 1, 63, 168, 0);
+        pr.setScreenGoalMin(120);
         long eventsBefore = Db.get(ctx).count("SELECT COUNT(*) FROM events");
         java.io.ByteArrayOutputStream full = new java.io.ByteArrayOutputStream();
         app.openring.data.Backup.write(ctx, full, true);
@@ -288,6 +382,8 @@ public class PipelineTest {
         check("full backup restores", br.ok && br.history, br.message);
         check("restored key matches", java.util.Arrays.equals(app.openring.data.Prefs.of(phone2).loadKey(), keyBytes), "");
         check("restored profile", app.openring.data.Prefs.of(phone2).age() == 41 && app.openring.data.Prefs.of(phone2).sex() == 1, "");
+        check("restored screen time goal", app.openring.data.Prefs.of(phone2).screenGoalMin() == 120, app.openring.data.Prefs.of(phone2).screenGoalMin());
+        check("restored history keeps screen time", Db.get(phone2).count("SELECT COUNT(*) FROM screen") == 3, Db.get(phone2).count("SELECT COUNT(*) FROM screen"));
         long eventsAfter = Db.get(phone2).count("SELECT COUNT(*) FROM events");
         check("restored history", eventsAfter == eventsBefore, eventsBefore + " -> " + eventsAfter);
         app.openring.data.Backup.Result bs = app.openring.data.Backup.read(phone2, new java.io.ByteArrayInputStream(small.toByteArray()));
@@ -310,6 +406,14 @@ public class PipelineTest {
         check("demo nights look like real nights", dh.asleepMin > 330 && dh.asleepMin < 560 && dh.awakeMin > 10 && dh.deepMin > 20 && dh.remMin > 20,
                 String.format(java.util.Locale.US, "asleep %.0f, awake %.0f, deep %.0f, rem %.0f, score %.0f", dh.asleepMin, dh.awakeMin, dh.deepMin, dh.remMin, dh.score));
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
+        ScreenTime.Day demoScreen = app.openring.data.ScreenDays.day(demo, LocalDate.now().minusDays(2), java.time.ZoneId.systemDefault());
+        check("demo has screen time", demoScreen != null && demoScreen.totalMin > 90 && demoScreen.totalMin < 300 && demoScreen.turnedOn > 20,
+                demoScreen == null ? null : Math.round(demoScreen.totalMin) + " min, turned on " + demoScreen.turnedOn);
+        int phoneNights = 0;
+        for (String js : demo.nightsJson("2000-01-01", "2100-01-01", true)) if (Json.d(Json.parse(js), "phone_min") >= 1) phoneNights++;
+        check("demo nights show phone checks", phoneNights >= 3, phoneNights + " nights");
+        List<String> demoMain = demo.nightsJson("2000-01-01", "2100-01-01", true);
+        check("newest demo night has a phone check (for the screenshots)", Json.d(Json.parse(demoMain.get(demoMain.size() - 1)), "phone_min") >= 1, null);
         // right after midnight the made up person has not slept long enough yet for today to have a night,
         // so until 04:00 the newest demo day may still be yesterday
         java.time.LocalDateTime clock = java.time.LocalDateTime.now();

@@ -19,6 +19,7 @@ import app.openring.core.analysis.Night;
 import app.openring.core.analysis.NightAnalyzer;
 import app.openring.core.analysis.NightFinder;
 import app.openring.core.analysis.Scores;
+import app.openring.core.analysis.ScreenTime;
 import app.openring.core.analysis.Stats;
 import app.openring.core.analysis.TS;
 import app.openring.core.analysis.Wellness;
@@ -71,6 +72,10 @@ public final class Analyzer {
         // mode, or analysed by a version before 1.11): analyse everything again
         int detail = prefs.stageDetail();
         if (db.kvLong("stage_detail", -1) != detail) db.put("analyzed_until", 0);
+        // "count phone use as awake" switched (issue #13): only nights since the first screen data change
+        long screenAwake = prefs.screenAwake() ? 1 : 0;
+        double firstScreen = db.screenStart(true);
+        if (db.kvLong("screen_awake", screenAwake) != screenAwake && firstScreen >= 0) db.reanalyseFrom(firstScreen);
         db.put("dated_count", t.datedAfter);
         db.put("event_count", t.total);
         double[] range = db.datedRange();
@@ -84,6 +89,7 @@ public final class Analyzer {
         analyze(from, range[1]);
         db.put("analyzed_until", (long) range[1]);
         db.put("stage_detail", detail);
+        db.put("screen_awake", screenAwake);
         db.put("last_analysis", now);
     }
 
@@ -168,11 +174,27 @@ public final class Analyzer {
         }
         List<NightFinder.RingRun> runs = NightFinder.ringRuns(pageTimes, pages);
         List<NightFinder.Period> periods = NightFinder.find(bedtimes, runs, state, support);
+        // phone use (issue #13): someone using the phone is awake, whatever the ring thinks
+        List<double[]> screen = new ArrayList<double[]>();
+        if (prefs.screenAwake()) {
+            // a session of many hours is most likely a lost "off" (or a video left playing): not used for sleep
+            for (double[] s : db.screen(from - 36 * 3600, to + 3600)) if (s[1] - s[0] <= ScreenTime.MAX_NIGHT_SESSION_S) screen.add(s);
+        }
 
         List<Night> nights = new ArrayList<Night>();
         for (NightFinder.Period p : periods) {
             if (p.end < from) continue;
-            Night n = analyzeNight(p);
+            double start = p.start, end = p.end;
+            if (!screen.isEmpty()) {
+                double[] w = ScreenTime.trim(p.start, p.end, screen);
+                if (w[1] - w[0] < ScreenTime.MIN_WINDOW_S) {
+                    log.log("skipped a sleep window " + clock(p.start) + " to " + clock(p.end) + ": the phone was in use");
+                    continue;
+                }
+                start = w[0];
+                end = w[1];
+            }
+            Night n = analyzeNight(p, start, end, screen);
             if (n == null) continue;
             // a ring lying on a table or charger can report "asleep": skip windows that read
             // room temperature or a heart rate no sleeping person has
@@ -206,13 +228,15 @@ public final class Analyzer {
         log.log(nights.size() + " sleep periods");
     }
 
-    Night analyzeNight(NightFinder.Period p) {
+    /** Analyses the sleep window [start, end) of period {@code p} (its edges may have moved past phone use). */
+    Night analyzeNight(NightFinder.Period p, double start, double end, List<double[]> screen) {
         int[] tags = {EventCodec.HRV_EVENT, EventCodec.MOTION_EVENT, EventCodec.SLEEP_PERIOD_INFO_2, EventCodec.GREEN_IBI_QUALITY,
             EventCodec.SLEEP_TEMP_EVENT, EventCodec.SPO2_EVENT, EventCodec.SPO2_R_PI, EventCodec.AOHR_EVENT};
-        List<Db.Row> rows = db.events(tags, p.start - 900, p.end + 900);
+        List<Db.Row> rows = db.events(tags, start - 900, end + 900);
         NightAnalyzer.Input in = new NightAnalyzer.Input();
-        in.start = p.start;
-        in.end = p.end;
+        in.start = start;
+        in.end = end;
+        for (double[] s : screen) if (s[1] > start && s[0] < end) in.screen.add(s);
         TS spHr = new TS();
         TS motionFromSp = new TS();
         for (Db.Row r : rows) {
@@ -276,10 +300,11 @@ public final class Analyzer {
                     break;
             }
         }
-        if (in.hr5.isEmpty() && !spHr.isEmpty()) in.hr5 = NightAnalyzer.bin(spHr, p.start, p.end, 300);
+        if (in.hr5.isEmpty() && !spHr.isEmpty()) in.hr5 = NightAnalyzer.bin(spHr, start, end, 300);
         if (in.motion.isEmpty()) in.motion = motionFromSp;
         if (p.staged && p.codes != null) {
-            in.ringStages = NightFinder.align(new NightFinder.RingRun(p.end - p.codes.length * 30.0, p.end, p.codes), p.start, p.end);
+            // the ring's hypnogram ends at the period's own end, even when the window was shortened
+            in.ringStages = NightFinder.align(new NightFinder.RingRun(p.end - p.codes.length * 30.0, p.end, p.codes), start, end);
         }
         in.stageDetail = prefs.stageDetail();
         return NightAnalyzer.analyze(in);

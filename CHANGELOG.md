@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.13
+* Screen time (#13): how long and when this phone's screen was on, with a daily goal, on the Activity page.
+  It needs Android's usage access (Settings, Screen time) and Android 9 or newer; it stays on the phone
+* Phone use counts as awake in the sleep analysis: a night no longer starts while you use the phone, and
+  checking the phone at night shows as a wake up. Can be switched off (Settings, Screen time), for example
+  if you fall asleep with a video playing
+* Android keeps about one week of screen history, so screen time starts about a week before you allow access
+
+## 1.12
+* Settings in a new order: updates at the top, then ring, profile and sleep stage detail; rarely used and risky
+  actions at the end (#14)
+* Smaller buttons in Settings, pairs side by side; long labels wrap instead of overlapping
+* Profile: age, weight and height in one row, sex picked with a tap instead of typing a number
+* Measurements on the ring: one row each, with a button that shows On or Off and switches it
+
 ## 1.11
 * Sleep stage detail (Settings): choose how finely the sleep depth chart is drawn. Detailed shows every change,
   Balanced (new default) joins stages shorter than 3 minutes with the stage next to them, Calm draws long blocks

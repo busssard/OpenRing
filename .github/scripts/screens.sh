@@ -63,15 +63,21 @@ done
 shot today 2
 
 launch --ei tab 1;                          shot sleep
+swipe_up;                                 shot sleep-phone 1
+launch --ei tab 1; sleep 3
 swipe_up; swipe_up;                       shot sleep-details 1
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
 launch --ei tab 3;                          shot activity
+swipe_up;                                 shot activity-screen 1
+adb shell input swipe 30 1700 30 900 1500; shot activity-screen-charts 1   # slow, no fling: the charts below
 launch --ei tab 4;                          shot body
 swipe_up; swipe_up;                       shot body-trends 1
 launch --ei tab 5;                          shot play
+launch --es settings top;                   shot settings
 launch --es settings stages;                shot settings-stage-detail
+launch --es settings screen;                shot settings-screen-time
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then

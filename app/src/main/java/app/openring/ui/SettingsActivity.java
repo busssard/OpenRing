@@ -34,6 +34,8 @@ import app.openring.data.Db;
 import app.openring.data.Exporter;
 import app.openring.data.Json;
 import app.openring.data.Prefs;
+import app.openring.data.ScreenDays;
+import app.openring.data.ScreenUse;
 import app.openring.sync.SyncJob;
 import app.openring.sync.SyncService;
 
@@ -69,6 +71,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
     protected void onResume() {
         super.onResume();
         RingManager.get(this).addListener(this);
+        // back from Android's usage access page: show the new state, and read the screen log the first time
+        Prefs p = Prefs.of(this);
+        boolean allowedNow = ScreenUse.allowed(this);
+        if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // keeps a goal being typed otherwise
+        if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !ScreenDays.any(Db.get(this))) {
+            screenRead = true;
+            updateNights("Reading screen time");
+        }
     }
 
     @Override
@@ -82,6 +92,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (status != null) status.setText(RingManager.get(this).status());
     }
 
+    /**
+     * Cards in the order people use them (issue #14): updates and the ring first, things set once in
+     * the middle, rare and risky actions last. Each card's main action is a big button, the rest small.
+     */
     void build() {
         root.removeAllViews();
         final Prefs p = Prefs.of(this);
@@ -126,16 +140,23 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
             });
             root.addView(demo);
+            root.addView(updatesCard());
             stagesCard = stageDetailCard(p);
             root.addView(stagesCard);
+            screenCard = Ui.card(this);
+            fillScreenCard(p);
+            root.addView(screenCard);
             LinearLayout about = Ui.card(this);
             about.addView(Ui.caption(this, "About"));
-            addUpdateRow(about);
             about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
             root.addView(about);
             scrollToSection();
             return;
         }
+
+        // ---- updates ----
+        LinearLayout updates = updatesCard();
+        root.addView(updates);
 
         // ---- ring ----
         LinearLayout ring = Ui.card(this);
@@ -170,22 +191,68 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 SyncJob.schedule(SettingsActivity.this);
             }
         });
-        ring.addView(sw);
-
+        LinearLayout.LayoutParams swl = Ui.matchWrap();
+        swl.setMargins(0, Ui.dp(this, 10), 0, 0);
+        ring.addView(sw, swl);
         root.addView(ring);
+
+        // ---- profile ----
+        LinearLayout prof = Ui.card(this);
+        prof.addView(Ui.caption(this, "Profile and goals"));
+        prof.addView(Ui.text(this, "Used for calories, goals and the sleep you need at your age.", 12, Ui.TEXT_3, Ui.REGULAR));
+        LinearLayout body = Ui.hbox(this);
+        body.setGravity(android.view.Gravity.BOTTOM); // inputs stay level when a label wraps
+        final EditText age = num(column(body, 0), "Age", p.age());
+        final EditText weight = num(column(body, 1), "Weight (kg)", p.weightKg());
+        final EditText height = num(column(body, 2), "Height (cm)", p.heightCm());
+        prof.addView(body, Ui.matchWrap());
+        if (sexChoice < 0) sexChoice = p.sex();
+        prof.addView(Ui.gap(this, 8));
+        prof.addView(Ui.text(this, "Sex", 12, Ui.TEXT_3, Ui.REGULAR));
+        final LinearLayout sexRow = Ui.hbox(this);
+        fillSex(sexRow);
+        prof.addView(sexRow, Ui.matchWrap());
+        final EditText target = num(prof, "Daily active calorie goal (0 = automatic)", p.targetKcal());
+        action(prof, "Save and re analyse", Ui.ACTIVE, new Runnable() {
+            @Override
+            public void run() {
+                p.setProfile(SetupActivity.num(age, 35, 10, 100), sexChoice, SetupActivity.num(weight, 72, 30, 250),
+                        SetupActivity.num(height, 175, 100, 230), SetupActivity.num(target, 0, 0, 3000));
+                reanalyse();
+            }
+        });
+        root.addView(prof);
+
+        // ---- sleep stage detail ----
+        stagesCard = stageDetailCard(p);
+        root.addView(stagesCard);
+
+        // ---- screen time ----
+        screenCard = Ui.card(this);
+        fillScreenCard(p);
+        root.addView(screenCard);
 
         // ---- measurements ----
         LinearLayout feat = Ui.card(this);
         feat.addView(Ui.caption(this, "Measurements on the ring"));
-        feat.addView(Ui.body(this, "A ring paired outside the official app starts with daytime heart rate and blood oxygen switched off. Read the current state, then tap to switch."));
+        feat.addView(Ui.body(this, "A ring paired outside the official app starts with daytime heart rate and blood oxygen switched off. "
+                + "The button shows whether each one is on now; tap it to switch. ? means not read yet: tap it, or Read from ring."));
         final String[] names = {"Daytime heart rate", "Blood oxygen (SpO2) at night", "Resting heart rate"};
         for (int i = 0; i < 3; i++) {
             final int k = i;
-            String state = featureModes[i] < 0 ? "unknown" : featureModes[i] == 0 ? "off" : "on";
-            TextView t = Ui.button(this, names[i] + ": " + state, featureModes[i] > 0 ? Ui.READY : Ui.TEXT_2, false);
+            LinearLayout row = Ui.hbox(this);
+            row.setPadding(0, Ui.dp(this, 8), 0, 0);
+            row.addView(Ui.text(this, names[i], 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
+            String state = featureModes[i] < 0 ? "?" : featureModes[i] == 0 ? "Off" : "On";
+            TextView t = Ui.smallButton(this, state, featureModes[i] > 0 ? Ui.READY : Ui.TEXT_2);
+            t.setMinWidth(Ui.dp(this, 64));
             t.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
+                    if (featureModes[k] < 0) {
+                        readFromRing(); // state unknown: read it first instead of guessing
+                        return;
+                    }
                     final int mode = featureModes[k] > 0 ? Protocol.MODE_OFF : Protocol.MODE_AUTOMATIC;
                     RingManager.get(SettingsActivity.this).setFeature(RingManager.FEATURES[k], mode, new RingManager.Callback() {
                         @Override
@@ -199,96 +266,53 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     });
                 }
             });
-            LinearLayout.LayoutParams lp = Ui.matchWrap();
-            lp.setMargins(0, Ui.dp(this, 6), 0, 0);
-            feat.addView(t, lp);
+            row.addView(t);
+            feat.addView(row, Ui.matchWrap());
         }
-        action(feat, "Read from ring", Ui.READY, new Runnable() {
+        small(feat, "Read from ring", Ui.READY, new Runnable() {
             @Override
             public void run() {
-                RingManager.get(SettingsActivity.this).readFeatures(new RingManager.Callback() {
-                    @Override
-                    public void done(boolean ok, String message) {
-                        if (!ok) {
-                            toast(message);
-                            return;
-                        }
-                        for (String part : message.split(",")) {
-                            String[] kv = part.split(":");
-                            int f = Integer.parseInt(kv[0]), m = Integer.parseInt(kv[1]);
-                            for (int i = 0; i < 3; i++) if (RingManager.FEATURES[i] == f) featureModes[i] = m;
-                        }
-                        build();
-                    }
-                });
+                readFromRing();
             }
         });
         root.addView(feat);
-
-        // ---- profile ----
-        LinearLayout prof = Ui.card(this);
-        prof.addView(Ui.caption(this, "Profile and goals"));
-        final EditText age = num(prof, "Age", p.age());
-        final EditText weight = num(prof, "Weight (kg)", p.weightKg());
-        final EditText height = num(prof, "Height (cm)", p.heightCm());
-        final EditText sex = num(prof, "Sex (0 male, 1 female, 2 unspecified)", p.sex());
-        final EditText target = num(prof, "Daily active calorie goal (0 = automatic)", p.targetKcal());
-        action(prof, "Save and re analyse", Ui.ACTIVE, new Runnable() {
-            @Override
-            public void run() {
-                p.setProfile(SetupActivity.num(age, 35, 10, 100), SetupActivity.num(sex, 2, 0, 2), SetupActivity.num(weight, 72, 30, 250),
-                        SetupActivity.num(height, 175, 100, 230), SetupActivity.num(target, 0, 0, 3000));
-                reanalyse();
-            }
-        });
-        root.addView(prof);
-        stagesCard = stageDetailCard(p);
-        root.addView(stagesCard);
 
         // ---- key ----
         LinearLayout key = Ui.card(this);
         key.addView(Ui.caption(this, "Key and backup"));
         key.addView(Ui.body(this, "Keep a copy of the key. Without it you would have to factory reset the ring to connect again. "
                 + "A backup file restores the app on a new phone from the setup screen (Restore from a backup)."));
-        final TextView kt = Ui.text(this, "•••• tap Show ••••", 15, Ui.TEXT, android.graphics.Typeface.MONOSPACE);
+        key.addView(Ui.gap(this, 6));
+        final TextView kt = Ui.text(this, "•••• tap Show key ••••", 15, Ui.TEXT, android.graphics.Typeface.MONOSPACE);
         kt.setTextIsSelectable(true);
         key.addView(kt);
-        LinearLayout kr = Ui.hbox(this);
-        TextView show = Ui.button(this, "Show", Ui.TEXT_2, false);
-        show.setOnClickListener(new View.OnClickListener() {
+        pair(key, "Show key", Ui.TEXT_2, new Runnable() {
             @Override
-            public void onClick(View v) {
+            public void run() {
                 kt.setText(Hex.encode(p.loadKey()));
             }
-        });
-        TextView copy = Ui.button(this, "Copy", Ui.TEXT_2, false);
-        copy.setOnClickListener(new View.OnClickListener() {
+        }, "Copy key", Ui.TEXT_2, new Runnable() {
             @Override
-            public void onClick(View v) {
+            public void run() {
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                 cm.setPrimaryClip(ClipData.newPlainText("Ring key", Hex.encode(p.loadKey())));
                 toast("Copied");
             }
         });
-        LinearLayout.LayoutParams w1 = Ui.weight(1);
-        w1.setMargins(0, Ui.dp(this, 8), Ui.dp(this, 6), 0);
-        kr.addView(show, w1);
-        LinearLayout.LayoutParams w2 = Ui.weight(1);
-        w2.setMargins(Ui.dp(this, 6), Ui.dp(this, 8), 0, 0);
-        kr.addView(copy, w2);
-        key.addView(kr);
-        action(key, "Save backup: key and settings", Ui.SLEEP, new Runnable() {
+        key.addView(Ui.gap(this, 10));
+        key.addView(Ui.text(this, "Save a backup file", 12, Ui.TEXT_3, Ui.REGULAR));
+        pair(key, "Key and settings only", Ui.SLEEP, new Runnable() {
             @Override
             public void run() {
                 create("open-ring-backup.zip", "application/zip", BACKUP_KEY);
             }
-        });
-        action(key, "Save full backup with all history", Ui.SLEEP, new Runnable() {
+        }, "Everything, with history", Ui.SLEEP, new Runnable() {
             @Override
             public void run() {
                 create("open-ring-full-backup.zip", "application/zip", BACKUP_FULL);
             }
         });
+        key.addView(Ui.gap(this, 6));
         key.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(key);
 
@@ -296,13 +320,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout data = Ui.card(this);
         data.addView(Ui.caption(this, "Export"));
         data.addView(Ui.body(this, "For spreadsheets or your own analysis. These files hold no key."));
-        action(data, "Export daily summaries (CSV)", Ui.TEXT_2, new Runnable() {
+        pair(data, "Daily summaries (CSV)", Ui.TEXT_2, new Runnable() {
             @Override
             public void run() {
                 create("open-ring-daily.csv", "text/csv", EXPORT_CSV);
             }
-        });
-        action(data, "Export full database", Ui.TEXT_2, new Runnable() {
+        }, "Full database", Ui.TEXT_2, new Runnable() {
             @Override
             public void run() {
                 create("open-ring.db", "application/octet-stream", EXPORT_DB);
@@ -313,14 +336,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // ---- help ----
         LinearLayout help = Ui.card(this);
         help.addView(Ui.caption(this, "Help and diagnostics"));
-        help.addView(Ui.body(this, "Data check follows your data from the ring to the screens and shows where it stops. Safe to share."));
-        action(help, "Data check and log", Ui.READY, new Runnable() {
+        help.addView(Ui.body(this, "Data check follows your data from the ring to the screens and shows where it stops. Safe to share. "
+                + "Re analyse works out all nights and days again from the stored ring data."));
+        pair(help, "Data check and log", Ui.READY, new Runnable() {
             @Override
             public void run() {
                 startActivity(new Intent(SettingsActivity.this, LogActivity.class));
             }
-        });
-        action(help, "Re analyse all history", Ui.TEXT_2, new Runnable() {
+        }, "Re analyse all", Ui.TEXT_2, new Runnable() {
             @Override
             public void run() {
                 reanalyse();
@@ -331,7 +354,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // ---- danger ----
         LinearLayout danger = Ui.card(this);
         danger.addView(Ui.caption(this, "Careful"));
-        action(danger, "Use a different key or ring", Ui.WARN, new Runnable() {
+        danger.addView(Ui.text(this, "Each of these asks before it does anything.", 12, Ui.TEXT_3, Ui.REGULAR));
+        small(danger, "Use a different key or ring", Ui.WARN, new Runnable() {
             @Override
             public void run() {
                 confirm("Forget this ring?", "The saved key is removed from this phone. Your synced history stays.", new Runnable() {
@@ -345,13 +369,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 });
             }
         });
-        action(danger, "Factory reset the ring", Ui.WARN, new Runnable() {
+        small(danger, "Factory reset the ring", Ui.WARN, new Runnable() {
             @Override
             public void run() {
                 factoryReset();
             }
         });
-        action(danger, "Delete all local data", Ui.WARN, new Runnable() {
+        small(danger, "Delete all local data", Ui.WARN, new Runnable() {
             @Override
             public void run() {
                 confirm("Delete everything?", "All synced events and results on this phone are erased. The ring keeps its key.", new Runnable() {
@@ -367,14 +391,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
         root.addView(danger);
 
         LinearLayout about = Ui.card(this);
-        about.addView(Ui.caption(this, "About and updates"));
-        addUpdateRow(about);
+        about.addView(Ui.caption(this, "About"));
         about.addView(Ui.body(this, "Open Ring " + version() + ". A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Ring", "Measurements", "Profile", "Sleep stages", "Key and backup", "Export", "Help", "Careful", "Updates"};
-        View[] targets = {ring, feat, prof, stagesCard, key, data, help, danger, about};
+        String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Screen time", "Measurements", "Key and backup", "Export", "Help", "Careful", "About"};
+        View[] targets = {updates, ring, prof, stagesCard, screenCard, feat, key, data, help, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -394,13 +417,154 @@ public final class SettingsActivity extends Activity implements RingManager.List
         scrollToSection();
     }
 
-    /** Opens at a card when started with the extra {@code section} ("stages"), used by the screen test. */
+    private LinearLayout screenCard;
+    /** Usage access as shown in the Screen time card, to refresh it only when it changed. */
+    private boolean screenAllowedShown;
+    /** The first read of the screen log was started (once per app run, even if the log was empty). */
+    private static boolean screenRead;
+
+    /**
+     * Screen time (issue #13): usage access, the daily goal and whether phone use counts as awake
+     * in the sleep analysis. Filled again when coming back from Android's usage access page.
+     */
+    void fillScreenCard(final Prefs p) {
+        final LinearLayout card = screenCard;
+        if (card == null) return;
+        card.removeAllViews();
+        card.addView(Ui.caption(this, "Screen time"));
+        card.addView(Ui.body(this, "When this phone's screen was on. It shows on the Activity page and helps the sleep analysis. "
+                + "Android only shares this after you switch on Open Ring under usage access in Android's settings. "
+                + "It stays on this phone like everything else."));
+        if (!p.demo() && !ScreenUse.supported()) {
+            card.addView(Ui.gap(this, 6));
+            card.addView(Ui.text(this, "Needs Android 9 or newer.", 13, Ui.WARN, Ui.REGULAR));
+            return;
+        }
+        if (p.demo()) {
+            card.addView(line("Usage access", "demo data"));
+        } else {
+            boolean ok = ScreenUse.allowed(this);
+            screenAllowedShown = ok;
+            card.addView(line("Usage access", ok ? "allowed" : "not allowed yet"));
+            small(card, ok ? "Change usage access" : "Allow usage access", Ui.OXY, new Runnable() {
+                @Override
+                public void run() {
+                    ScreenUse.openAccessSettings(SettingsActivity.this);
+                }
+            });
+        }
+        final EditText goal = num(card, "Daily goal in minutes (0 for no goal)", p.screenGoalMin());
+        small(card, "Save goal", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                p.setScreenGoalMin(SetupActivity.num(goal, 180, 0, 1440));
+                toast("Goal saved");
+            }
+        });
+        Switch sw = new Switch(this);
+        sw.setText("Count phone use as awake");
+        sw.setTextColor(Ui.TEXT);
+        sw.setChecked(p.screenAwake());
+        sw.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                p.setScreenAwake(on);
+                updateNights("Updating the nights with phone use");
+            }
+        });
+        LinearLayout.LayoutParams swl = Ui.matchWrap();
+        swl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        card.addView(sw, swl);
+        card.addView(Ui.text(this, "When the screen is on during a night, that time counts as awake, and a night does not start while "
+                + "you use the phone. Switch it off if you often fall asleep with a video playing.", 12, Ui.TEXT_3, Ui.REGULAR));
+    }
+
+    /** Reads new screen time and analyses the nights it touches, in the background. */
+    void updateNights(final String message) {
+        if (message != null) toast(message);
+        new AsyncTask<Void, Void, Void>() {
+            @Override
+            protected Void doInBackground(Void... v) {
+                try {
+                    ScreenUse.collect(SettingsActivity.this, true);
+                    Analyzer.run(SettingsActivity.this, null);
+                } catch (RuntimeException ignored) {
+                    // the analysis stores its own error for the data check
+                }
+                return null;
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** Reads which measurements are switched on and shows them. */
+    void readFromRing() {
+        RingManager.get(this).readFeatures(new RingManager.Callback() {
+            @Override
+            public void done(boolean ok, String message) {
+                if (!ok) {
+                    toast(message);
+                    return;
+                }
+                for (String part : message.split(",")) {
+                    String[] kv = part.split(":");
+                    int f = Integer.parseInt(kv[0]), m = Integer.parseInt(kv[1]);
+                    for (int i = 0; i < 3; i++) if (RingManager.FEATURES[i] == f) featureModes[i] = m;
+                }
+                build();
+            }
+        });
+    }
+
+    /** Sex picked in the profile card (0 male, 1 female, 2 not set), saved with its button. */
+    private int sexChoice = -1;
+    static final String[] SEXES = {"Male", "Female", "Not set"};
+
+    void fillSex(final LinearLayout row) {
+        row.removeAllViews();
+        for (int i = 0; i < SEXES.length; i++) {
+            final int k = i;
+            TextView chip = Ui.smallButton(this, SEXES[i], i == sexChoice ? Ui.ACTIVE : Ui.TEXT_3);
+            if (i == sexChoice) chip.setBackground(Ui.rounded(Ui.alpha(Ui.ACTIVE, 0.18f), Ui.dp(this, 24))); // filled, not only colored
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    sexChoice = k;
+                    fillSex(row);
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
+            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), i == SEXES.length - 1 ? 0 : Ui.dp(this, 4), 0);
+            row.addView(chip, lp);
+        }
+    }
+
+    /** One of three equal columns in a row of inputs. */
+    LinearLayout column(LinearLayout row, int index) {
+        LinearLayout col = Ui.vbox(this);
+        LinearLayout.LayoutParams lp = Ui.weight(1);
+        lp.setMargins(index == 0 ? 0 : Ui.dp(this, 4), 0, index == 2 ? 0 : Ui.dp(this, 4), 0);
+        row.addView(col, lp);
+        return col;
+    }
+
+    /** Small card at the top: installed version and a button that opens the releases page (issues #7, #14). */
+    LinearLayout updatesCard() {
+        LinearLayout card = Ui.card(this);
+        card.addView(Ui.caption(this, "Updates"));
+        card.addView(Ui.gap(this, 4));
+        addUpdateRow(card);
+        return card;
+    }
+
+    /** Opens at a card when started with the extra {@code section} ("stages" or "screen"), used by the screen test. */
     void scrollToSection() {
-        if (!"stages".equals(getIntent().getStringExtra("section")) || stagesCard == null) return;
+        String section = getIntent().getStringExtra("section");
+        final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : null;
+        if (card == null) return;
         scroll.post(new Runnable() {
             @Override
             public void run() {
-                scroll.scrollTo(0, stagesCard.getTop() - Ui.dp(SettingsActivity.this, 8));
+                scroll.scrollTo(0, card.getTop() - Ui.dp(SettingsActivity.this, 8));
             }
         });
     }
@@ -427,7 +591,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             final int k = i;
             TextView chip = Ui.button(this, StageFilter.NAMES[i], i == detailChoice ? Ui.SLEEP : Ui.TEXT_3, false);
             chip.setTextSize(13);
-            int ph = Ui.dp(this, 6), pv = Ui.dp(this, 7);
+            int ph = Ui.dp(this, 10), pv = Ui.dp(this, 7);
             chip.setPadding(ph, pv, ph, pv);
             chip.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -436,7 +600,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     refreshStageDetail(p);
                 }
             });
-            LinearLayout.LayoutParams lp = Ui.weight(1);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
             lp.setMargins(Ui.dp(this, 2), 0, Ui.dp(this, 2), 0);
             row.addView(chip, lp);
         }
@@ -453,8 +617,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             card.addView(Ui.gap(this, 6));
             card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")), Ui.sized(this, -1, 150));
             card.addView(Ui.gap(this, 4));
-            card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, awake %d times on this chart.",
-                    StageFilter.changes(st), StageFilter.wakeRuns(st)), 13, Ui.TEXT, Ui.MEDIUM));
+            int wakes = StageFilter.wakeRuns(st);
+            card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, awake %d %s on this chart.",
+                    StageFilter.changes(st), wakes, wakes == 1 ? "time" : "times"), 13, Ui.TEXT, Ui.MEDIUM));
             card.addView(Ui.text(this, "Stage changes: how often the chart switches between deep, light, REM and awake. "
                     + "Awake: separate times awake between falling asleep and waking up, of any length.", 11, Ui.TEXT_3, Ui.REGULAR));
         }
@@ -499,8 +664,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout t = Ui.vbox(this);
         t.addView(Ui.text(this, "Installed version", 12, Ui.TEXT_3, Ui.REGULAR));
         t.addView(Ui.text(this, "Open Ring " + version(), 18, Ui.TEXT, Ui.MEDIUM));
-        row.addView(t, Ui.weight(1));
-        TextView check = Ui.button(this, "Check for updates", Ui.SLEEP, false);
+        LinearLayout.LayoutParams tl = Ui.weight(1);
+        tl.setMargins(0, 0, Ui.dp(this, 8), 0);
+        row.addView(t, tl);
+        TextView check = Ui.smallButton(this, "Check for updates", Ui.SLEEP);
         check.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -514,10 +681,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         row.addView(check);
         parent.addView(row);
         parent.addView(Ui.gap(this, 6));
-        parent.addView(Ui.text(this, "This app has no internet access, so it cannot look for updates itself. The button opens "
-                + "the releases page in your browser: a version number higher than yours means there is an update. Install it "
-                + "over this one, your data stays.", 12, Ui.TEXT_3, Ui.REGULAR));
-        parent.addView(Ui.gap(this, 10));
+        parent.addView(Ui.text(this, "Opens the releases page in your browser, because this app has no internet access. "
+                + "A higher version number there means an update; installing it keeps your data.", 12, Ui.TEXT_3, Ui.REGULAR));
     }
 
     static final String RELEASES = "https://github.com/busssard/OpenRing/releases/latest";
@@ -563,6 +728,48 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams lp = Ui.matchWrap();
         lp.setMargins(0, Ui.dp(this, 10), 0, 0);
         parent.addView(b, lp);
+    }
+
+    /** A small full width button for secondary actions. */
+    void small(LinearLayout parent, String label, int color, final Runnable r) {
+        TextView b = Ui.smallButton(this, label, color);
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                r.run();
+            }
+        });
+        LinearLayout.LayoutParams lp = Ui.matchWrap();
+        lp.setMargins(0, Ui.dp(this, 8), 0, 0);
+        parent.addView(b, lp);
+    }
+
+    /** Two small buttons side by side with equal widths; long labels wrap instead of overlapping. */
+    void pair(LinearLayout parent, String l1, int c1, final Runnable r1, String l2, int c2, final Runnable r2) {
+        LinearLayout row = Ui.hbox(this);
+        row.setGravity(android.view.Gravity.TOP);
+        TextView a = Ui.smallButton(this, l1, c1), b = Ui.smallButton(this, l2, c2);
+        a.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                r1.run();
+            }
+        });
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                r2.run();
+            }
+        });
+        LinearLayout.LayoutParams la = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
+        la.setMargins(0, 0, Ui.dp(this, 4), 0);
+        LinearLayout.LayoutParams lb = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
+        lb.setMargins(Ui.dp(this, 4), 0, 0, 0);
+        row.addView(a, la);
+        row.addView(b, lb);
+        LinearLayout.LayoutParams lp = Ui.matchWrap();
+        lp.setMargins(0, Ui.dp(this, 8), 0, 0);
+        parent.addView(row, lp);
     }
 
     static String nz(String s) {

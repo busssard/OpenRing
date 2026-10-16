@@ -20,7 +20,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -57,11 +57,18 @@ public final class Db extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE battery (unix INTEGER PRIMARY KEY, pct INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)");
         upgradeTo2(db);
+        upgradeTo3(db);
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldV, int newV) {
         if (oldV < 2) upgradeTo2(db);
+        if (oldV < 3) upgradeTo3(db);
+    }
+
+    /** v3: the phone's screen sessions (issue #13), unix seconds; a session still running is updated later. */
+    private static void upgradeTo3(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS screen (start REAL PRIMARY KEY, stop REAL NOT NULL)");
     }
 
     /** v2: boot segments, so each reboot of the ring is dated on its own. */
@@ -394,6 +401,58 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    // --------------------------------------------------------------------------- screen
+
+    /** Store screen sessions {start, end}; a session with a known start replaces the stored one. */
+    public int putScreen(List<double[]> sessions) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (double[] s : sessions) {
+                ContentValues cv = new ContentValues();
+                cv.put("start", s[0]);
+                cv.put("stop", s[1]);
+                db.insertWithOnConflict("screen", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+        return sessions.size();
+    }
+
+    /** Screen sessions that overlap [from, to), oldest first. */
+    public List<double[]> screen(double from, double to) {
+        List<double[]> out = new ArrayList<double[]>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT start, stop FROM screen WHERE stop > ? AND start < ? ORDER BY start",
+                new String[] {String.valueOf(from), String.valueOf(to)});
+        try {
+            while (c.moveToNext()) out.add(new double[] {c.getDouble(0), c.getDouble(1)});
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** Start of the newest (first = false) or oldest (first = true) stored screen session, or -1. */
+    public double screenStart(boolean first) {
+        Cursor c = getReadableDatabase().rawQuery("SELECT " + (first ? "MIN" : "MAX") + "(start) FROM screen", null);
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getDouble(0) : -1;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
+     * New input for time already analysed (screen use, issue #13): the next analysis starts again two
+     * days before {@code unix} instead of only redoing the last two days.
+     */
+    public void reanalyseFrom(double unix) {
+        long until = kvLong("analyzed_until", 0);
+        if (until > 0 && unix < until) put("analyzed_until", Math.max(1, (long) unix));
+    }
+
     public void addBattery(long unix, int pct) {
         ContentValues cv = new ContentValues();
         cv.put("unix", unix);
@@ -430,7 +489,7 @@ public final class Db extends SQLiteOpenHelper {
 
     public void resetAll() {
         SQLiteDatabase db = getWritableDatabase();
-        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv"}) db.execSQL("DELETE FROM " + t);
+        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen"}) db.execSQL("DELETE FROM " + t);
     }
 
     /** Forget computed results so the next analysis rebuilds everything from raw events. */

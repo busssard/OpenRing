@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Screen time (issue #13): read when the screen was on. Granted by the person in Android's
+         settings (usage access); it gives no network access. Android Studio's lint calls it
+         a protected permission: that is expected for usage access. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
     <application
         android:allowBackup="false"

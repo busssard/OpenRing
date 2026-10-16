@@ -315,6 +315,12 @@ public final class RingManager {
             if (res.ok) prefs.setLastSync(System.currentTimeMillis() / 1000);
         }
         try {
+            // screen time (issue #13): copy the phone's screen log before the nights are analysed
+            app.openring.data.ScreenUse.collect(ctx, true);
+        } catch (RuntimeException e) {
+            log("screen time not read: " + e);
+        }
+        try {
             if (Db.get(ctx).eventCount() > 0 && !cancelRequested) {
                 setStatus("Analysing");
                 notifyListeners();

@@ -131,6 +131,7 @@ public final class Json {
         put(o, "temp", n.temp);
         put(o, "spo2", n.spo2);
         put(o, "spo2_low", n.spo2Low);
+        put(o, "phone_min", n.phoneMin);
         put(o, "hr_series", series(n.hr, 160));
         put(o, "motion_series", series(app.openring.core.analysis.NightAnalyzer.bin(n.motion, n.start, n.end, 300), 200));
         put(o, "hrv_series", series(n.hrv, 160));
