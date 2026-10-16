@@ -98,7 +98,12 @@ public final class Analyzer {
     /** Rebuild everything from the raw events. */
     public static synchronized void runAll(Context c, Log log) {
         Analyzer a = new Analyzer(c, log);
-        a.db.resetAnalysis();
+        try {
+            a.db.resetAnalysis();
+        } catch (RuntimeException e) {
+            a.db.put("analysis_error", e.toString());
+            throw e;
+        }
         run(c, log);
     }
 
