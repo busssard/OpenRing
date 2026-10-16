@@ -53,6 +53,28 @@ public final class Prefs {
     /** Whether time with the phone screen on counts as awake in the sleep analysis (issue #13). */
     public boolean screenAwake() { return sp.getBoolean("screen_awake", true); }
     public void setScreenAwake(boolean b) { sp.edit().putBoolean("screen_awake", b).apply(); }
+    /**
+     * Apps whose time in front does not count as screen time (package names). The demo keeps its own
+     * list, with its made up maps app left out, so demo and real settings never mix.
+     */
+    public java.util.Set<String> screenExcluded() {
+        String v = demo() ? sp.getString("screen_exclude_demo", Demo.MAPS) : sp.getString("screen_exclude", "");
+        java.util.Set<String> out = new java.util.TreeSet<String>();
+        for (String x : v.split(",")) if (!x.trim().isEmpty()) out.add(x.trim());
+        return out;
+    }
+    public void setScreenExcluded(java.util.Collection<String> pkgs) {
+        StringBuilder b = new StringBuilder();
+        for (String x : new java.util.TreeSet<String>(pkgs)) {
+            if (x == null || x.trim().isEmpty()) continue;
+            if (b.length() > 0) b.append(',');
+            b.append(x.trim());
+        }
+        sp.edit().putString(demo() ? "screen_exclude_demo" : "screen_exclude", b.toString()).apply();
+    }
+    /** Ring games show in Settings (issue #15); the motion test is always there. */
+    public boolean gamesOn() { return sp.getBoolean("games_on", false); }
+    public void setGamesOn(boolean b) { sp.edit().putBoolean("games_on", b).apply(); }
 
     public boolean profileSet() { return sp.getBoolean("profile_set", false); }
     public void setProfileSet() { sp.edit().putBoolean("profile_set", true).apply(); }

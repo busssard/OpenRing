@@ -788,4 +788,221 @@ public final class Charts {
             }
         }
     }
+
+    // ------------------------------------------------------------------ screen time
+
+    /** Where on a 24 hour circle (midnight at the top) a moment of the day lies, in degrees for drawArc. */
+    static float dialAngle(double t, double from, double to) {
+        return (float) (-90 + 360 * (t - from) / (to - from));
+    }
+
+    /**
+     * The day as a clock dial: a short line for every 5 minutes the screen was on (brighter the
+     * longer), the nights as a purple band inside, the total in the middle.
+     */
+    public static final class ScreenDial extends View {
+        private final double[] fill;
+        private final java.util.List<double[]> nights;
+        private final double from, to, now;
+        private final String total, sub;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), t = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF oval = new RectF();
+
+        public ScreenDial(Context c, double[] fill, java.util.List<double[]> nights, double from, double to, double now, String total, String sub) {
+            super(c);
+            this.fill = fill;
+            this.nights = nights;
+            this.from = from;
+            this.to = to;
+            this.now = now;
+            this.total = total;
+            this.sub = sub;
+            t.setTextAlign(Paint.Align.CENTER);
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth(), h = getHeight(), cx = w / 2, cy = h / 2;
+            float label = Ui.dp(getContext(), 18);
+            float r = Math.min(w, h) / 2 - label;
+            float r0 = r * 0.70f, r1 = r;
+            // the hour ring under the lines
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(Ui.dp(getContext(), 1));
+            p.setColor(Ui.LINE);
+            cv.drawCircle(cx, cy, r0, p);
+            for (int hgt = 0; hgt < 24; hgt++) {
+                double a = Math.toRadians(-90 + 15 * hgt);
+                float l = hgt % 6 == 0 ? r * 0.08f : r * 0.04f;
+                cv.drawLine(cx + (float) Math.cos(a) * (r0 - l), cy + (float) Math.sin(a) * (r0 - l),
+                        cx + (float) Math.cos(a) * r0, cy + (float) Math.sin(a) * r0, p);
+            }
+            // nights: a band inside the hour ring
+            float band = r * 0.06f, rb = r0 - r * 0.15f;
+            p.setStrokeWidth(band);
+            p.setStrokeCap(Paint.Cap.BUTT);
+            p.setColor(Ui.alpha(Ui.SLEEP, 0.55f));
+            oval.set(cx - rb, cy - rb, cx + rb, cy + rb);
+            for (double[] n : nights) {
+                double a = Math.max(n[0], from), b = Math.min(n[1], to);
+                if (b <= a) continue;
+                float s = dialAngle(a, from, to);
+                cv.drawArc(oval, s, dialAngle(b, from, to) - s, false, p);
+            }
+            // screen use: one line per step
+            int n = fill.length;
+            p.setStrokeCap(Paint.Cap.ROUND);
+            p.setStrokeWidth(Math.max(1.5f, (float) (2 * Math.PI * r1 / n) * 0.55f));
+            for (int i = 0; i < n; i++) {
+                if (fill[i] <= 0) continue;
+                double a = Math.toRadians(-90 + 360.0 * (i + 0.5) / n);
+                p.setColor(Ui.alpha(Ui.OXY, (float) (0.30 + 0.70 * fill[i])));
+                float ra = r0 + r * 0.05f;
+                cv.drawLine(cx + (float) Math.cos(a) * ra, cy + (float) Math.sin(a) * ra, cx + (float) Math.cos(a) * r1, cy + (float) Math.sin(a) * r1, p);
+            }
+            // now, on today's dial
+            if (now > from && now < to) {
+                double a = Math.toRadians(dialAngle(now, from, to));
+                p.setStyle(Paint.Style.FILL);
+                p.setColor(Ui.TEXT);
+                cv.drawCircle(cx + (float) Math.cos(a) * (r1 + label * 0.35f), cy + (float) Math.sin(a) * (r1 + label * 0.35f), Ui.dp(getContext(), 3), p);
+            }
+            // hour labels
+            t.setColor(Ui.TEXT_3);
+            t.setTypeface(Ui.MEDIUM);
+            t.setTextSize(Ui.dp(getContext(), 11));
+            float off = t.getTextSize() * 0.35f;
+            cv.drawText("0", cx, cy - r - label * 0.35f + off, t);
+            cv.drawText("12", cx, cy + r + label * 0.55f + off, t);
+            cv.drawText("6", cx + r + label * 0.5f, cy + off, t);
+            cv.drawText("18", cx - r - label * 0.55f, cy + off, t);
+            // the total in the middle
+            t.setColor(Ui.TEXT);
+            t.setTypeface(Ui.LIGHT);
+            t.setTextSize(r * 0.22f);
+            cv.drawText(total, cx, cy + t.getTextSize() * 0.15f, t);
+            t.setColor(Ui.TEXT_2);
+            t.setTypeface(Ui.REGULAR);
+            t.setTextSize(Math.min(Ui.dp(getContext(), 13), r * 0.09f));
+            cv.drawText(sub, cx, cy + r * 0.22f, t);
+        }
+    }
+
+    /**
+     * Several days as rows, midnight to midnight: blue where the screen was on, the nights shaded
+     * purple, a green dot at the first look after waking, the total on the right. A tap on a row
+     * picks that day.
+     */
+    public static final class ScreenRows extends View {
+        public interface Pick {
+            void day(java.time.LocalDate d);
+        }
+
+        private final app.openring.data.ScreenDays.Row[] rows;
+        private final java.time.LocalDate selected;
+        private final Pick pick;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), t = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+        private float downX, downY;
+
+        public ScreenRows(Context c, app.openring.data.ScreenDays.Row[] rows, java.time.LocalDate selected, Pick pick) {
+            super(c);
+            this.rows = rows;
+            this.selected = selected;
+            this.pick = pick;
+        }
+
+        float header() {
+            return Ui.dp(getContext(), 18);
+        }
+
+        float rowH() {
+            return Ui.dp(getContext(), 26);
+        }
+
+        /** Height in dp for all rows and the hour labels. */
+        public static int heightDp(int n) {
+            return 18 + n * 26;
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth();
+            float left = Ui.dp(getContext(), 46), right = Ui.dp(getContext(), 52);
+            float x0 = left, x1 = w - right, bw = x1 - x0;
+            float hh = header(), rh = rowH(), track = Ui.dp(getContext(), 12);
+            t.setTextSize(Ui.dp(getContext(), 11));
+            t.setTypeface(Ui.MEDIUM);
+            t.setColor(Ui.TEXT_3);
+            t.setTextAlign(Paint.Align.CENTER);
+            for (int hgt = 0; hgt <= 24; hgt += 6) cv.drawText(String.valueOf(hgt), x0 + bw * hgt / 24f, hh - Ui.dp(getContext(), 6), t);
+            java.time.format.DateTimeFormatter f = java.time.format.DateTimeFormatter.ofPattern("EEE d", java.util.Locale.getDefault());
+            // newest day at the top, like a diary
+            for (int k = 0; k < rows.length; k++) {
+                app.openring.data.ScreenDays.Row row = rows[rows.length - 1 - k];
+                float top = hh + k * rh, cy = top + rh / 2;
+                boolean sel = row.date.equals(selected);
+                if (sel) {
+                    p.setColor(Ui.alpha(Ui.OXY, 0.12f));
+                    r.set(0, top + 1, w, top + rh - 1);
+                    cv.drawRoundRect(r, Ui.dp(getContext(), 8), Ui.dp(getContext(), 8), p);
+                }
+                boolean known = !Double.isNaN(row.totalMin);
+                t.setTextAlign(Paint.Align.LEFT);
+                t.setTypeface(sel ? Ui.MEDIUM : Ui.REGULAR);
+                t.setColor(sel ? Ui.TEXT : known ? Ui.TEXT_2 : Ui.TEXT_3);
+                cv.drawText(row.date.format(f), Ui.dp(getContext(), 4), cy + t.getTextSize() * 0.35f, t);
+                r.set(x0, cy - track / 2, x1, cy + track / 2);
+                p.setColor(Ui.alpha(Ui.LINE, 0.6f));
+                cv.drawRoundRect(r, track / 2, track / 2, p);
+                p.setColor(Ui.alpha(Ui.SLEEP, 0.35f));
+                for (double[] n : row.nights) {
+                    double a = Math.max(n[0], row.from), b = Math.min(n[1], row.to);
+                    if (b <= a) continue;
+                    cv.drawRect(x0 + (float) (bw * (a - row.from) / (row.to - row.from)), cy - track / 2,
+                            x0 + (float) (bw * (b - row.from) / (row.to - row.from)), cy + track / 2, p);
+                }
+                int n = row.fill.length;
+                float step = bw / n;
+                for (int i = 0; i < n; i++) {
+                    if (row.fill[i] <= 0) continue;
+                    p.setColor(Ui.alpha(Ui.OXY, (float) (0.35 + 0.65 * row.fill[i])));
+                    cv.drawRect(x0 + i * step, cy - track / 2, x0 + (i + 1) * step + 0.5f, cy + track / 2, p);
+                }
+                if (!Double.isNaN(row.firstLook)) {
+                    p.setColor(Ui.GOOD);
+                    cv.drawCircle(x0 + (float) (bw * (row.firstLook - row.from) / (row.to - row.from)), cy, Ui.dp(getContext(), 3.5f), p);
+                }
+                t.setTextAlign(Paint.Align.RIGHT);
+                t.setColor(known ? (sel ? Ui.TEXT : Ui.TEXT_2) : Ui.TEXT_3);
+                cv.drawText(known ? Ui.hm(row.totalMin) : "--", w - Ui.dp(getContext(), 4), cy + t.getTextSize() * 0.35f, t);
+            }
+        }
+
+        @Override
+        public boolean onTouchEvent(android.view.MotionEvent e) {
+            if (pick == null) return false;
+            if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) {
+                downX = e.getX();
+                downY = e.getY();
+                return true;
+            }
+            if (e.getAction() == android.view.MotionEvent.ACTION_UP) {
+                float slop = Ui.dp(getContext(), 10);
+                if (Math.abs(e.getX() - downX) > slop || Math.abs(e.getY() - downY) > slop) return true;
+                int k = (int) ((e.getY() - header()) / rowH());
+                if (k >= 0 && k < rows.length) {
+                    performClick();
+                    pick.day(rows[rows.length - 1 - k].date);
+                }
+                return true;
+            }
+            return true;
+        }
+
+        @Override
+        public boolean performClick() {
+            return super.performClick();
+        }
+    }
 }

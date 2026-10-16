@@ -25,11 +25,8 @@ public final class DayData {
     public app.openring.data.RightNow now;
     /** Main nights from 30 days before the selected date up to today, oldest first. */
     public final List<JSONObject> recent = new ArrayList<JSONObject>();
-    /** Screen time of the selected date, null when nothing is known for it (issue #13). */
-    public app.openring.core.analysis.ScreenTime.Day screen;
-    /** Screen minutes of the 7 days ending at the selected date (NaN when unknown) and the local hour of each hourly bar. */
-    public double[] screenWeek = new double[0];
-    public int[] screenHours = new int[0];
+    /** Screen time of the selected date and the days before (Screen tab, Today ring); null if it could not be read. */
+    public app.openring.data.ScreenDays.Info screen;
 
     public static DayData load(Context c, LocalDate date) {
         Db db = Db.get(c);
@@ -52,10 +49,8 @@ public final class DayData {
         } catch (RuntimeException ignored) {
         }
         try {
-            java.time.ZoneId z = java.time.ZoneId.systemDefault();
-            d.screen = app.openring.data.ScreenDays.day(db, date, z);
-            d.screenWeek = app.openring.data.ScreenDays.lastDays(db, date, 7, z);
-            d.screenHours = app.openring.data.ScreenDays.hours(app.openring.data.ScreenDays.hourEdges(date, z), z);
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            d.screen = app.openring.data.ScreenDays.info(db, date, java.time.ZoneId.systemDefault(), p.screenGoalMin(), p.screenExcluded());
         } catch (RuntimeException ignored) {
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
@@ -96,6 +91,7 @@ public final class DayData {
     }
 
     public double score(String key) {
+        if ("screen".equals(key)) return screen == null || screen.score == null ? Double.NaN : screen.score.value;
         if ("sleep".equals(key)) {
             JSONObject s = night == null ? null : night.optJSONObject("score");
             return s == null || !s.has("value") ? Double.NaN : s.optDouble("value");

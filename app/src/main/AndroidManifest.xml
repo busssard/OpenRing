@@ -18,6 +18,15 @@
          a protected permission: that is expected for usage access. -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
+    <!-- App names for the list of apps not counted as screen time: Android 11 and newer only show
+         an app the names of apps it declares interest in. Apps with a launcher icon are enough. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

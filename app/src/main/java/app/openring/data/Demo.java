@@ -26,6 +26,12 @@ public final class Demo {
         void step(String what);
     }
 
+    /** The made up navigation app, left out of the demo's screen time to show how that works. */
+    public static final String MAPS = "demo.maps";
+    static final String[] APPS = {"demo.messages", "demo.browser", "demo.social", "demo.mail", "demo.music", MAPS, "demo.video"};
+    /** How often each of {@link #APPS} is picked for a daytime session. */
+    static final double[] SHARE = {0.30, 0.18, 0.22, 0.12, 0.07, 0.06, 0.05};
+
     static final long DS0 = 3L * 86400 * 10; // the made up ring booted 3 days before the history starts
 
     /** Switch to the demo database and fill it if it is empty. Blocks; call from a background thread. */
@@ -40,11 +46,13 @@ public final class Demo {
         int days = 35;
         long t0 = LocalDate.now().minusDays(days).atStartOfDay(zone).toEpochSecond();
         List<double[]> screen = new ArrayList<double[]>();
-        List<RingEvent> ev = history(t0, days, now, zone, new Random(7), screen);
+        java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
+        List<RingEvent> ev = history(t0, days, now, zone, new Random(7), screen, apps);
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
         db.putScreen(screen);
+        db.putApps(apps);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
     }
@@ -68,11 +76,16 @@ public final class Demo {
     }
 
     static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r) {
-        return history(t0, days, now, zone, r, null);
+        return history(t0, days, now, zone, r, null, null);
+    }
+
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen) {
+        return history(t0, days, now, zone, r, screen, null);
     }
 
     /** As above; when {@code screen} is not null it also gets made up phone screen sessions (issue #13). */
-    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen) {
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
+            java.util.Map<String, List<double[]>> apps) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         for (int d = 1; d <= days; d++) {
             double midnight = t0 + d * 86400.0;
@@ -132,7 +145,11 @@ public final class Demo {
                 }
                 ev.add(new RingEvent(EventCodec.HRV_EVENT, ds(t0, t), hrv));
             }
-            if (screen != null) screenDay(screen, new Random(1000 + d), midnight, bed, wake, wakeBouts, now, d == days);
+            if (screen != null) {
+                int before = screen.size();
+                screenDay(screen, new Random(1000 + d), midnight, bed, wake, wakeBouts, now, d == days);
+                if (apps != null) appsFor(screen.subList(before, screen.size()), new Random(2000 + d), bed, wake, apps);
+            }
             byte[] bt = new byte[8];
             Protocol.Le.putU32(bt, 0, ds(t0, bed));
             Protocol.Le.putU32(bt, 4, ds(t0, wake));
@@ -210,6 +227,44 @@ public final class Demo {
             if (end > starts[i] + 10) day.add(new double[] {starts[i], end});
         }
         for (double[] x : day) if (x[1] < now - 60) out.add(x);
+    }
+
+    /**
+     * Made up apps for one day's sessions: social or video before bed, messages at night, mail or
+     * messages in the morning, a mix during the day, and every few days a long trip with the maps
+     * app. A session sometimes switches app part way. Its own random numbers, so the sessions stay
+     * the same.
+     */
+    static void appsFor(List<double[]> sessions, Random r, double bed, double wake, java.util.Map<String, List<double[]>> apps) {
+        double[] longest = null;
+        for (double[] s : sessions) if (s[0] > wake + 3600 && (longest == null || s[1] - s[0] > longest[1] - longest[0])) longest = s;
+        boolean trip = r.nextDouble() < 0.4;
+        for (double[] s : sessions) {
+            String a;
+            if (s[1] <= bed) a = r.nextDouble() < 0.6 ? "demo.social" : "demo.video";
+            else if (s[0] < wake) a = "demo.messages";
+            else if (s[0] < wake + 3600) a = r.nextDouble() < 0.5 ? "demo.mail" : "demo.messages";
+            else if (trip && s == longest) a = MAPS;
+            else a = pick(r);
+            double split = r.nextDouble() < 0.3 && s[1] - s[0] > 120 ? s[0] + (0.4 + 0.4 * r.nextDouble()) * (s[1] - s[0]) : s[1];
+            put(apps, a, s[0], split);
+            if (split < s[1]) put(apps, pick(r), split, s[1]);
+        }
+    }
+
+    static String pick(Random r) {
+        double x = r.nextDouble();
+        for (int i = 0; i < APPS.length; i++) {
+            x -= SHARE[i];
+            if (x < 0) return APPS[i];
+        }
+        return APPS[0];
+    }
+
+    static void put(java.util.Map<String, List<double[]>> m, String a, double from, double to) {
+        List<double[]> l = m.get(a);
+        if (l == null) m.put(a, l = new ArrayList<double[]>());
+        l.add(new double[] {from, to});
     }
 
     static boolean inside(double[][] bouts, double t) {

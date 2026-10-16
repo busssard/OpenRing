@@ -43,7 +43,7 @@ public final class GamesActivity extends Activity implements RingManager.MotionL
     private GameView view;
     private SharedPreferences sp;
 
-    /** Opens one game full screen; back returns to the Play tab. */
+    /** Opens one game full screen; back returns to Settings. */
     public static void start(Context c, int game) {
         c.startActivity(new android.content.Intent(c, GamesActivity.class).putExtra("game", game));
     }
@@ -76,67 +76,103 @@ public final class GamesActivity extends Activity implements RingManager.MotionL
         RingManager.get(this).stopMotion(this);
     }
 
-    // ---------------------------------------------------------------- Play tab
+    // ---------------------------------------------------------------- Settings card
 
-    /** The Play tab content shown inside the main screen (with the normal bottom bar). */
-    public static View menu(final Activity a) {
+    /**
+     * The Ring games card in Settings (issue #15): a test of the ring's motion, always there, and
+     * a switch that shows the games and their controls. Back from a game returns to Settings.
+     */
+    public static LinearLayout settingsCard(final Activity a) {
+        final LinearLayout card = Ui.card(a);
+        fill(a, card);
+        return card;
+    }
+
+    /** Builds the card again (after the switch, or back from a game with a new best score). */
+    public static void fill(final Activity a, final LinearLayout card) {
+        card.removeAllViews();
         final SharedPreferences sp = a.getSharedPreferences("games", Context.MODE_PRIVATE);
-        LinearLayout l = Ui.vbox(a);
-        l.addView(Ui.h1(a, "Games"));
-        l.addView(Ui.body(a, "Your ring becomes a controller: tilt your hand to steer. Each round starts with 3 seconds of holding "
-                + "your hand still in a comfortable pose, which becomes the centre. No ring nearby? Drag on the screen instead. "
-                + "Press back to return here."));
-        l.addView(Ui.gap(a, 12));
-        for (int i = 0; i < COUNT; i++) {
+        final app.openring.data.Prefs p = app.openring.data.Prefs.of(a);
+        card.addView(Ui.caption(a, "Ring games"));
+        card.addView(Ui.body(a, "Your ring as a game controller: tilt your hand to steer. Not every ring firmware sends its "
+                + "movement live, so test it first."));
+        TextView test = Ui.smallButton(a, "Test the ring's motion", Ui.OXY);
+        test.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                start(a, 2);
+            }
+        });
+        LinearLayout.LayoutParams tl = Ui.matchWrap();
+        tl.setMargins(0, Ui.dp(a, 10), 0, 0);
+        card.addView(test, tl);
+        card.addView(Ui.text(a, "Shows a dot that follows your hand and says at the bottom whether the ring sends its movement "
+                + "(\"Ring motion streaming\") or only touch steering works.", 12, Ui.TEXT_3, Ui.REGULAR));
+        Switch on = new Switch(a);
+        on.setText("Show ring games");
+        on.setTextColor(Ui.TEXT);
+        on.setChecked(p.gamesOn());
+        on.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean v) {
+                p.setGamesOn(v);
+                fill(a, card);
+            }
+        });
+        LinearLayout.LayoutParams ol = Ui.matchWrap();
+        ol.setMargins(0, Ui.dp(a, 12), 0, 0);
+        card.addView(on, ol);
+        if (!p.gamesOn()) return;
+        card.addView(Ui.text(a, "Each round starts with 3 seconds of holding your hand still, which becomes the centre. "
+                + "No ring nearby? Drag on the screen instead. Press back to return here.", 12, Ui.TEXT_3, Ui.REGULAR));
+        for (int i = 0; i < COUNT - 1; i++) {
             final int k = i;
             Game g = create(i);
-            LinearLayout card = Ui.card(a);
-            LinearLayout top = Ui.hbox(a);
-            top.addView(Ui.h2(a, g.name()), Ui.weight(1));
+            LinearLayout row = Ui.hbox(a);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(0, Ui.dp(a, 10), 0, 0);
+            LinearLayout txt = Ui.vbox(a);
+            txt.addView(Ui.text(a, g.name(), 15, Ui.TEXT, Ui.MEDIUM));
             int best = sp.getInt("best_" + i, 0);
-            if (best > 0) top.addView(Ui.text(a, "Best " + best, 13, Ui.ACTIVE, Ui.MEDIUM));
-            card.addView(top);
-            card.addView(Ui.gap(a, 4));
-            card.addView(Ui.body(a, g.description()));
-            card.addView(Ui.gap(a, 10));
-            TextView play = Ui.button(a, "Play", Ui.OXY, true);
+            txt.addView(Ui.text(a, g.description() + (best > 0 ? " Best " + best + "." : ""), 12, Ui.TEXT_2, Ui.REGULAR));
+            row.addView(txt, Ui.weight(1));
+            TextView play = Ui.smallButton(a, "Play", Ui.OXY);
             play.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     start(a, k);
                 }
             });
-            card.addView(play, Ui.matchWrap());
-            l.addView(card);
+            LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(-2, -2);
+            pl.setMargins(Ui.dp(a, 10), 0, 0, 0);
+            row.addView(play, pl);
+            card.addView(row);
         }
-        LinearLayout set = Ui.card(a);
-        set.addView(Ui.caption(a, "Controls"));
         final Switch fx = new Switch(a);
         fx.setText("Flip left and right");
         fx.setTextColor(Ui.TEXT);
         fx.setChecked(sp.getBoolean("flip_x", false));
         fx.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
             @Override
-            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
-                sp.edit().putBoolean("flip_x", on).apply();
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean v) {
+                sp.edit().putBoolean("flip_x", v).apply();
             }
         });
-        set.addView(fx);
+        LinearLayout.LayoutParams fl = Ui.matchWrap();
+        fl.setMargins(0, Ui.dp(a, 12), 0, 0);
+        card.addView(fx, fl);
         Switch fy = new Switch(a);
         fy.setText("Flip up and down");
         fy.setTextColor(Ui.TEXT);
         fy.setChecked(sp.getBoolean("flip_y", false));
         fy.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
             @Override
-            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
-                sp.edit().putBoolean("flip_y", on).apply();
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean v) {
+                sp.edit().putBoolean("flip_y", v).apply();
             }
         });
-        set.addView(fy);
-        set.addView(Ui.text(a, "The ring connects when a game starts and is released when you leave it. Motion streaming "
-                + "may not be supported by every ring firmware; touch steering always works.", 12, Ui.TEXT_3, Ui.REGULAR));
-        l.addView(set);
-        return l;
+        card.addView(fy);
+        card.addView(Ui.text(a, "The ring connects when a game starts and is released when you leave it.", 12, Ui.TEXT_3, Ui.REGULAR));
     }
 
     // ---------------------------------------------------------------- ring motion
