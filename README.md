@@ -123,4 +123,6 @@ Built on the reverse engineering work of [open_oura](https://github.com/Th0rgal/
 [open_health](https://github.com/Th0rgal/open_health) by Thomas Marchand, cross checked with
 [ringverse](https://github.com/ringverse/protocol/blob/main/oura/BLE.md),
 [OpenStrap](https://github.com/OpenStrap/protocol), [BrightOura](https://github.com/gi-os/BrightOura)
-and Gadgetbridge. MIT license, see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+and Gadgetbridge. The Screen tab's clock and day rows follow the idea of
+[ScreenTime](https://github.com/markusfisch/ScreenTime) by Markus Fisch (no code copied).
+MIT license, see [LICENSE](LICENSE) and [NOTICE](NOTICE).
