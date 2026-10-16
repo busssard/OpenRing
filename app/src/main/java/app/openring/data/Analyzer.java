@@ -228,6 +228,8 @@ public final class Analyzer {
             if (cc != null) {
                 Json.put(js, "clock_change_at", cc.at);
                 Json.put(js, "clock_change_min", cc.minutes);
+                Json.put(js, "clock_change_from", cc.from);
+                Json.put(js, "clock_change_to", cc.to);
             }
             out.add(new Object[] {n.start, n.end, d, n.main ? 1 : 0, n.score.value, js.toString()});
             log.log(String.format(java.util.Locale.US, "sleep for %s%s: %s to %s, %.0f min asleep, score %d, stages from %s",

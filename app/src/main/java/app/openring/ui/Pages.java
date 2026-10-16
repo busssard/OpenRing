@@ -317,10 +317,10 @@ public final class Pages {
         }
         int clockMin = n.optInt("clock_change_min", 0);
         if (!Double.isNaN(clockAt) && clockMin != 0) {
-            // daylight saving during the night (issue #22)
-            java.time.LocalTime after = java.time.Instant.ofEpochSecond((long) clockAt).atZone(java.time.ZoneId.systemDefault()).toLocalTime();
+            // daylight saving during the night (issue #22); the clock times were stored in the zone of the analysis
             hyp.addView(Ui.gap(c, 4));
-            hyp.addView(Ui.text(c, app.openring.core.analysis.ClockChange.text(clockMin, after), 12, Ui.ACTIVE, Ui.REGULAR));
+            hyp.addView(Ui.text(c, app.openring.core.analysis.ClockChange.text(clockMin, n.optString("clock_change_from", ""),
+                    n.optString("clock_change_to", "")), 12, Ui.ACTIVE, Ui.REGULAR));
         }
         root.addView(hyp);
 
