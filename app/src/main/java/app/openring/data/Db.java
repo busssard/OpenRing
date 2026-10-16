@@ -150,64 +150,156 @@ public final class Db extends SQLiteOpenHelper {
     public static final class TimeReport {
         public int segments, anchoredSegments;
         public long datedBefore, datedAfter, total;
+        /** Rows whose segment or date was written (all other rows already held the result). */
+        public long changed;
         public List<TimeLine.Segment> segs;
     }
 
+    /** Rows read per query by {@link #rebuildTime}; small pages keep Android's cursor window cheap. */
+    static final int PAGE = 20000;
+
     /**
-     * Rebuild boot segments and the wall clock time of every event from scratch. Cheap enough to
-     * run after every sync, and it repairs history that an interrupted sync left undated.
+     * Work out the boot segment and wall clock time of every event from scratch, then write only
+     * the rows whose stored values differ (issue #21). Runs after every sync and repairs history
+     * that an interrupted sync left undated. The result is the same, row for row and bit for bit,
+     * as the earlier full rewrite (all rows undated, then each segment dated in turn with
+     * {@code unix = anchorUnix + (ds - anchorDs) / 10.0}); the pipeline test checks that.
      */
     public synchronized TimeReport rebuildTime(long nowUnix) {
         SQLiteDatabase db = getWritableDatabase();
         TimeReport rep = new TimeReport();
-        rep.datedBefore = count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
-        Cursor c = db.rawQuery("SELECT id, epoch, tag, ds, CASE WHEN tag IN (66, 133) THEN body END FROM events ORDER BY id", null);
-        int n = c.getCount();
-        long[] id = new long[n], epoch = new long[n], ds = new long[n], anchor = new long[n];
-        boolean[] phone = new boolean[n];
-        try {
-            int i = 0;
-            while (c.moveToNext()) {
-                id[i] = c.getLong(0);
-                epoch[i] = c.getLong(1);
-                int tag = c.getInt(2);
-                ds[i] = c.getLong(3);
-                anchor[i] = -1;
-                if (!c.isNull(4)) {
-                    byte[] body = c.getBlob(4);
-                    anchor[i] = EventCodec.anchorUnix(tag, body);
-                    phone[i] = tag == EventCodec.TIME_SYNC && EventCodec.isPhoneAnchor(body);
-                }
-                i++;
-            }
-        } finally {
-            c.close();
-        }
-        rep.total = n;
-        List<TimeLine.Segment> segs = TimeLine.build(id, epoch, ds, anchor, phone, nowUnix);
-        rep.segs = segs;
-        rep.segments = segs.size();
+        // read and write in one transaction, so an insert from another thread waits instead of
+        // landing between the scan and the writes
         db.beginTransaction();
         try {
-            db.execSQL("UPDATE events SET unix = NULL, seg = NULL");
+            int n = (int) countOf(db, "SELECT COUNT(*) FROM events");
+            long[] id = new long[n], epoch = new long[n], ds = new long[n], anchor = new long[n];
+            boolean[] phone = new boolean[n];
+            int[] oldSeg = new int[n];
+            double[] oldUnix = new double[n];
+            int i = 0;
+            long last = -1;
+            while (i < n) {
+                // pages by id: one cursor over the whole table makes Android step over all rows
+                // before it again each time it refills its window
+                Cursor c = db.rawQuery("SELECT id, epoch, tag, ds, CASE WHEN tag IN (66, 133) THEN body END, seg, unix FROM events"
+                        + " WHERE id > ? ORDER BY id LIMIT " + PAGE, new String[] {String.valueOf(last)});
+                int got = 0;
+                try {
+                    while (i < n && c.moveToNext()) {
+                        id[i] = c.getLong(0);
+                        epoch[i] = c.getLong(1);
+                        int tag = c.getInt(2);
+                        ds[i] = c.getLong(3);
+                        anchor[i] = -1;
+                        if (!c.isNull(4)) {
+                            byte[] body = c.getBlob(4);
+                            anchor[i] = EventCodec.anchorUnix(tag, body);
+                            phone[i] = tag == EventCodec.TIME_SYNC && EventCodec.isPhoneAnchor(body);
+                        }
+                        oldSeg[i] = c.isNull(5) ? -1 : c.getInt(5);
+                        oldUnix[i] = c.isNull(6) ? Double.NaN : c.getDouble(6);
+                        if (!c.isNull(6)) rep.datedBefore++;
+                        last = id[i];
+                        i++;
+                        got++;
+                    }
+                } finally {
+                    c.close();
+                }
+                if (got == 0) break;
+            }
+            n = i;
+            rep.total = n;
+            List<TimeLine.Segment> segs = TimeLine.build(trim(id, n), trim(epoch, n), trim(ds, n), trim(anchor, n), trim(phone, n), nowUnix);
+            epoch = null;
+            anchor = null;
+            phone = null;
+            rep.segs = segs;
+            rep.segments = segs.size();
+            // replay the full rewrite in memory, in its order: everything undated, then per segment
+            // its rows and stray phone anchors get the segment, then the dates of its regions
+            int[] seg = new int[n];
+            double[] unix = new double[n];
+            java.util.Arrays.fill(seg, -1);
+            java.util.Arrays.fill(unix, Double.NaN);
             for (TimeLine.Segment sg : segs) {
-                db.execSQL("UPDATE events SET seg = ? WHERE id BETWEEN ? AND ?", new Object[] {sg.no, sg.firstId, sg.lastId});
-                for (Long stray : sg.strayIds) db.execSQL("UPDATE events SET seg = ? WHERE id = ?", new Object[] {sg.no, stray});
+                int lo = java.util.Arrays.binarySearch(id, 0, n, sg.firstId), hi = java.util.Arrays.binarySearch(id, 0, n, sg.lastId);
+                for (int k = lo; k <= hi; k++) seg[k] = sg.no;
+                int[] stray = new int[sg.strayIds.size()];
+                for (int s = 0; s < stray.length; s++) {
+                    stray[s] = java.util.Arrays.binarySearch(id, 0, n, sg.strayIds.get(s));
+                    seg[stray[s]] = sg.no;
+                }
                 if (sg.anchors.isEmpty()) continue;
                 rep.anchoredSegments++;
-                for (long[] r : TimeLine.regions(sg)) {
-                    db.execSQL("UPDATE events SET unix = ? + (ds - ?) / 10.0 WHERE seg = ? AND ds >= ? AND ds < ?",
-                            new Object[] {r[3], r[2], sg.no, r[0], r[1]});
-                }
+                List<long[]> regions = TimeLine.regions(sg);
+                for (int k = lo; k <= hi; k++) unix[k] = dateIn(regions, ds[k], unix[k]);
+                for (int k : stray) unix[k] = dateIn(regions, ds[k], unix[k]);
             }
             // an event cannot happen well after it was downloaded, nor before 2015
-            db.execSQL("UPDATE events SET unix = NULL WHERE unix > ? OR unix < 1420000000", new Object[] {nowUnix + 6 * 3600});
+            long ceiling = nowUnix + 6 * 3600;
+            SQLiteStatement up = db.compileStatement("UPDATE events SET seg = ?, unix = ? WHERE id = ?");
+            try {
+                for (int k = 0; k < n; k++) {
+                    if (unix[k] > ceiling || unix[k] < 1420000000) unix[k] = Double.NaN;
+                    if (!Double.isNaN(unix[k])) rep.datedAfter++;
+                    // exact: SQLite and Java do the same double steps, and a stored REAL reads back
+                    // unchanged; a value off by a bit is only written again, never kept wrong
+                    if (seg[k] == oldSeg[k] && Double.doubleToLongBits(unix[k]) == Double.doubleToLongBits(oldUnix[k])) continue;
+                    if (seg[k] < 0) up.bindNull(1);
+                    else up.bindLong(1, seg[k]);
+                    if (Double.isNaN(unix[k])) up.bindNull(2);
+                    else up.bindDouble(2, unix[k]);
+                    up.bindLong(3, id[k]);
+                    up.executeUpdateDelete();
+                    rep.changed++;
+                }
+            } finally {
+                up.close();
+            }
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
         }
-        rep.datedAfter = count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
         return rep;
+    }
+
+    /**
+     * Date of {@code ds} from the region that holds it ({lo, hi, anchorDs, anchorUnix}, sorted,
+     * hi exclusive), computed as the SQL did; {@code keep} when no region holds it.
+     */
+    static double dateIn(List<long[]> regions, long ds, double keep) {
+        int lo = 0, hi = regions.size() - 1, best = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (regions.get(mid)[0] <= ds) {
+                best = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        if (best < 0) return keep;
+        long[] r = regions.get(best);
+        return ds < r[1] ? r[3] + (ds - r[2]) / 10.0 : keep;
+    }
+
+    private static long[] trim(long[] a, int n) {
+        return a.length == n ? a : java.util.Arrays.copyOf(a, n);
+    }
+
+    private static boolean[] trim(boolean[] a, int n) {
+        return a.length == n ? a : java.util.Arrays.copyOf(a, n);
+    }
+
+    private static long countOf(SQLiteDatabase db, String sql) {
+        Cursor c = db.rawQuery(sql, null);
+        try {
+            return c.moveToFirst() ? c.getLong(0) : 0;
+        } finally {
+            c.close();
+        }
     }
 
     public long count(String sql) {

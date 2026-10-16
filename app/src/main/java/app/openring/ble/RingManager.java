@@ -89,6 +89,8 @@ public final class RingManager {
     private final LinkedList<String> logLines = new LinkedList<String>();
     private volatile String status = "";
     private volatile boolean busy;
+    /** Syncs whose analysis still runs; they no longer hold the ring (issue #21). */
+    private final java.util.concurrent.atomic.AtomicInteger analysing = new java.util.concurrent.atomic.AtomicInteger();
     private volatile double progress = -1;
     private volatile boolean liveRunning;
     private volatile RingClient current;
@@ -117,8 +119,9 @@ public final class RingManager {
         return status;
     }
 
+    /** A ring task runs, or a sync is still analysing what it downloaded (the ring is free then). */
     public boolean busy() {
-        return busy;
+        return busy || analysing.get() > 0;
     }
 
     /** Sync progress 0..1, or -1 when unknown. */
@@ -311,16 +314,26 @@ public final class RingManager {
             res.message = "Unexpected error: " + e;
             log(android.util.Log.getStackTraceString(e));
         } finally {
-            prefs.setLastSyncError(res.ok ? null : res.message);
-            if (res.ok) prefs.setLastSync(System.currentTimeMillis() / 1000);
+            try {
+                prefs.setLastSyncError(res.ok ? null : res.message);
+                if (res.ok) prefs.setLastSync(System.currentTimeMillis() / 1000);
+            } finally {
+                // the download is over and the link closed: free the ring for Live, games and
+                // Settings while the screen log is read and the nights are analysed (issue #21).
+                // busy() stays true until the analysis ends, so screens reload only then.
+                analysing.incrementAndGet();
+                progress = -1;
+                busy = false;
+                op.unlock();
+            }
         }
         try {
-            // screen time (issue #13): copy the phone's screen log before the nights are analysed
-            app.openring.data.ScreenUse.collect(ctx, true);
-        } catch (RuntimeException e) {
-            log("screen time not read: " + e);
-        }
-        try {
+            try {
+                // screen time (issue #13): copy the phone's screen log before the nights are analysed
+                app.openring.data.ScreenUse.collect(ctx, true);
+            } catch (RuntimeException e) {
+                log("screen time not read: " + e);
+            }
             if (Db.get(ctx).eventCount() > 0 && !cancelRequested) {
                 setStatus("Analysing");
                 notifyListeners();
@@ -334,9 +347,7 @@ public final class RingManager {
         } catch (RuntimeException e) {
             log("analysis failed: " + android.util.Log.getStackTraceString(e));
         } finally {
-            busy = false;
-            progress = -1;
-            op.unlock();
+            analysing.decrementAndGet();
             setStatus(res.ok ? "Up to date" : ("Sync failed: " + res.message));
         }
         return res;
@@ -493,8 +504,11 @@ public final class RingManager {
                     prefs.saveKey(key);
                     prefs.setAddress(s.link.device().getAddress());
                     if (prefs.serial() != null && !prefs.serial().equals(serial)) {
-                        // a different ring: start a fresh history
-                        Db.get(ctx).resetAll();
+                        // a different ring: start a fresh history, after an analysis that may
+                        // still run since the sync released the ring (issue #21)
+                        synchronized (Analyzer.class) {
+                            Db.get(ctx).resetAll();
+                        }
                     }
                     prefs.setSerial(serial);
                     try {

@@ -180,7 +180,11 @@ public final class Backup {
             if (p.db != null && replaceHistory) {
                 Prefs.of(c).setDemo(false);
                 try {
-                    Db.replaceWith(c, p.db);
+                    // wait for an analysis that may still run after a sync (it no longer holds the
+                    // ring, issue #21): closing its database under it would break it
+                    synchronized (Analyzer.class) {
+                        Db.replaceWith(c, p.db);
+                    }
                 } catch (IOException e) {
                     r.message = NOT_OPENED;
                     return r;

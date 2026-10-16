@@ -64,8 +64,8 @@ public final class Analyzer {
     void runInner() {
         long now = System.currentTimeMillis() / 1000;
         Db.TimeReport t = db.rebuildTime(now);
-        log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor)",
-                t.datedAfter, t.total, t.segments, t.anchoredSegments));
+        log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written",
+                t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed));
         long lastDated = db.kvLong("dated_count", -1), lastTotal = db.kvLong("event_count", -1);
         // older events gained (or lost) a date: their days must be analysed again
         if (lastDated < 0 || t.datedAfter > lastDated + (t.total - lastTotal) || t.datedAfter < lastDated) db.put("analyzed_until", 0);
