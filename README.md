@@ -1,3 +1,5 @@
+<img src="docs/images/icon.png" width="96" align="right" alt="Open Ring icon: a ring carrying an infinity sign">
+
 # Open Ring
 
 An Android app for the Oura Ring that works without the Oura app, account or subscription.
