@@ -58,6 +58,8 @@ public final class Backup {
         Json.put(o, "background_sync", p.backgroundSync());
         Json.put(o, "screen_goal", p.screenGoalMin());
         Json.put(o, "screen_awake", p.screenAwake());
+        Json.put(o, "screen_exclude", new org.json.JSONArray(p.screenExcluded()));
+        Json.put(o, "games_on", p.gamesOn());
         ZipOutputStream z = new ZipOutputStream(os);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
@@ -143,6 +145,13 @@ public final class Backup {
             if (o.has("background_sync")) p.setBackgroundSync(o.optBoolean("background_sync", true));
             if (o.has("screen_goal")) p.setScreenGoalMin(o.optInt("screen_goal", p.screenGoalMin()));
             if (o.has("screen_awake")) p.setScreenAwake(o.optBoolean("screen_awake", true));
+            org.json.JSONArray ex = o.optJSONArray("screen_exclude");
+            if (ex != null) {
+                java.util.List<String> l = new java.util.ArrayList<String>();
+                for (int i = 0; i < ex.length(); i++) l.add(ex.optString(i, ""));
+                p.setScreenExcluded(l);
+            }
+            if (o.has("games_on")) p.setGamesOn(o.optBoolean("games_on", false));
         }
         r.ok = true;
         r.message = r.history ? "Restored your key, settings and history" : "Restored your key and settings";

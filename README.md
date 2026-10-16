@@ -25,7 +25,8 @@ Not affiliated with Oura, not a medical device.
 
 * Sleep stages, night timeline, your last nights and your average night
 * Readiness, activity, heart rate, HRV, temperature, blood oxygen
-* Your phone's screen time, which also helps tell sleep from lying still with the phone
+* Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be left out.
+  It also helps tell sleep from lying still with the phone
 * Live heart rate and blood oxygen on demand
 * A demo mode, so you can look around without a ring
 

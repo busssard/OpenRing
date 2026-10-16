@@ -20,7 +20,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    private static final int VERSION = 3;
+    private static final int VERSION = 4;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -58,12 +58,20 @@ public final class Db extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)");
         upgradeTo2(db);
         upgradeTo3(db);
+        upgradeTo4(db);
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldV, int newV) {
         if (oldV < 2) upgradeTo2(db);
         if (oldV < 3) upgradeTo3(db);
+        if (oldV < 4) upgradeTo4(db);
+    }
+
+    /** v4: when each app was in front (package name, unix seconds), to leave chosen apps out of screen time. */
+    private static void upgradeTo4(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS apps (pkg TEXT NOT NULL, start REAL NOT NULL, stop REAL NOT NULL, PRIMARY KEY (pkg, start))");
+        db.execSQL("CREATE INDEX IF NOT EXISTS apps_stop ON apps(stop)");
     }
 
     /** v3: the phone's screen sessions (issue #13), unix seconds; a session still running is updated later. */
@@ -434,6 +442,53 @@ public final class Db extends SQLiteOpenHelper {
         return out;
     }
 
+    /** Store the ranges each app was in front; a range with a known start replaces the stored one. */
+    public void putApps(java.util.Map<String, List<double[]>> apps) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (java.util.Map.Entry<String, List<double[]>> e : apps.entrySet()) {
+                for (double[] s : e.getValue()) {
+                    ContentValues cv = new ContentValues();
+                    cv.put("pkg", e.getKey());
+                    cv.put("start", s[0]);
+                    cv.put("stop", s[1]);
+                    db.insertWithOnConflict("apps", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+                }
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** Ranges of apps in front that overlap [from, to), per package name, oldest first. */
+    public java.util.Map<String, List<double[]>> apps(double from, double to) {
+        java.util.Map<String, List<double[]>> out = new java.util.LinkedHashMap<String, List<double[]>>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT pkg, start, stop FROM apps WHERE stop > ? AND start < ? ORDER BY start",
+                new String[] {String.valueOf(from), String.valueOf(to)});
+        try {
+            while (c.moveToNext()) {
+                List<double[]> l = out.get(c.getString(0));
+                if (l == null) out.put(c.getString(0), l = new ArrayList<double[]>());
+                l.add(new double[] {c.getDouble(1), c.getDouble(2)});
+            }
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** Start of the oldest stored app range, or -1 (days before it have screen time but no app split). */
+    public double appsStart() {
+        Cursor c = getReadableDatabase().rawQuery("SELECT MIN(start) FROM apps", null);
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getDouble(0) : -1;
+        } finally {
+            c.close();
+        }
+    }
+
     /** Start of the newest (first = false) or oldest (first = true) stored screen session, or -1. */
     public double screenStart(boolean first) {
         Cursor c = getReadableDatabase().rawQuery("SELECT " + (first ? "MIN" : "MAX") + "(start) FROM screen", null);
@@ -489,7 +544,7 @@ public final class Db extends SQLiteOpenHelper {
 
     public void resetAll() {
         SQLiteDatabase db = getWritableDatabase();
-        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen"}) db.execSQL("DELETE FROM " + t);
+        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps"}) db.execSQL("DELETE FROM " + t);
     }
 
     /** Forget computed results so the next analysis rebuilds everything from raw events. */

@@ -76,8 +76,9 @@ the script taps *Wait*, and it fails if the dialog stays, so the README pictures
 by spoiled ones. Look at them before asking for a
 review. When you add a screen or a state worth seeing, add it to
 `.github/scripts/screens.sh`. The main screen accepts these extras for automation:
-`demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Play), `analysis`
-(boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd).
+`demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
+(boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd),
+`settings` (opens Settings at a card: `top`, `stages`, `screen` or `games`).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.
@@ -102,7 +103,7 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
 * **New decoder for a ring event:** add the tag constant and decoder to `core/EventCodec.java`, a unit
   test with real bytes in `CoreTest`, then use it in `data/Analyzer.java`.
 * **New chart:** add a view to `ui/Charts.java`; extend `Charts.Scrub` for touch readout.
-* **New game:** subclass `ui/games/Game.java`, add it to `GamesActivity.create` and raise `COUNT`.
+* **New game:** subclass `ui/games/Game.java`, add it to `GamesActivity.create` before the motion check (which stays last) and raise `COUNT`. Games live in Settings, card *Ring games* (issue #15).
 * **Demo data:** `data/Demo.java` generates five weeks in the ring's own format; keep it realistic,
   it is what screenshots and visitors see.
 

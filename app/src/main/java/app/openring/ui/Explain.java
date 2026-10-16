@@ -16,6 +16,11 @@ public final class Explain {
     public static final String ACTIVITY = "The activity score looks at how much you moved, how long you sat still, whether you "
             + "reached your daily goal and your training over the last week. Balance matters: both too little and too much lower it.";
 
+    public static final String SCREEN = "The screen score looks at your phone use: how long the screen was on compared with your "
+            + "daily goal (half), phone use in the hour before you fell asleep (about a third) and during the night (the rest). "
+            + "Days without a known night only count the screen time, so the same screen time scores lower there. It is a simple rule of thumb made for Open Ring, not a medical measure. "
+            + "85 or more: calm phone use. Below 70: the phone took a lot of your day or night.";
+
     public static final String STAGES = "Your sleep moves in cycles of about 90 minutes. Deep sleep (bottom) restores the body "
             + "and comes mostly early in the night, REM sleep (dreaming) grows towards the morning, short wake ups are normal.";
 

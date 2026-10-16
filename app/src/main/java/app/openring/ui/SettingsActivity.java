@@ -75,6 +75,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         Prefs p = Prefs.of(this);
         boolean allowedNow = ScreenUse.allowed(this);
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // keeps a goal being typed otherwise
+        if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
         if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !ScreenDays.any(Db.get(this))) {
             screenRead = true;
             updateNights("Reading screen time");
@@ -146,6 +147,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
             screenCard = Ui.card(this);
             fillScreenCard(p);
             root.addView(screenCard);
+            gamesCard = app.openring.ui.games.GamesActivity.settingsCard(this);
+            root.addView(gamesCard);
             LinearLayout about = Ui.card(this);
             about.addView(Ui.caption(this, "About"));
             about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
@@ -231,6 +234,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
         screenCard = Ui.card(this);
         fillScreenCard(p);
         root.addView(screenCard);
+
+        // ---- ring games (issue #15) ----
+        gamesCard = app.openring.ui.games.GamesActivity.settingsCard(this);
+        root.addView(gamesCard);
 
         // ---- measurements ----
         LinearLayout feat = Ui.card(this);
@@ -396,8 +403,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Screen time", "Measurements", "Key and backup", "Export", "Help", "Careful", "About"};
-        View[] targets = {updates, ring, prof, stagesCard, screenCard, feat, key, data, help, danger, about};
+        String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Export", "Help", "Careful", "About"};
+        View[] targets = {updates, ring, prof, stagesCard, screenCard, gamesCard, feat, key, data, help, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -417,7 +424,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         scrollToSection();
     }
 
-    private LinearLayout screenCard;
+    private LinearLayout screenCard, gamesCard;
     /** Usage access as shown in the Screen time card, to refresh it only when it changed. */
     private boolean screenAllowedShown;
     /** The first read of the screen log was started (once per app run, even if the log was empty). */
@@ -432,7 +439,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (card == null) return;
         card.removeAllViews();
         card.addView(Ui.caption(this, "Screen time"));
-        card.addView(Ui.body(this, "When this phone's screen was on. It shows on the Activity page and helps the sleep analysis. "
+        card.addView(Ui.body(this, "When this phone's screen was on. It has its own tab (Screen) and helps the sleep analysis. "
                 + "Android only shares this after you switch on Open Ring under usage access in Android's settings. "
                 + "It stays on this phone like everything else."));
         if (!p.demo() && !ScreenUse.supported()) {
@@ -453,7 +460,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
             });
         }
-        final EditText goal = num(card, "Daily goal in minutes (0 for no goal)", p.screenGoalMin());
+        final EditText goal = num(card, "Daily goal in minutes (0 for no goal, the score then uses 3 hours)", p.screenGoalMin());
         small(card, "Save goal", Ui.OXY, new Runnable() {
             @Override
             public void run() {
@@ -556,10 +563,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return card;
     }
 
-    /** Opens at a card when started with the extra {@code section} ("stages" or "screen"), used by the screen test. */
+    /** Opens at a card when started with the extra {@code section} ("stages", "screen" or "games"), used by the screen test. */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : null;
+        final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard : null;
         if (card == null) return;
         scroll.post(new Runnable() {
             @Override

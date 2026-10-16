@@ -325,6 +325,8 @@ public class CoreTest {
         pattern();
         stageFilter();
         screenTime();
+        screenApps();
+        screenScore();
         decoders();
         requests();
         auth();
@@ -334,6 +336,82 @@ public class CoreTest {
 
     static boolean near(double a, double b) {
         return Math.abs(a - b) < 1e-6;
+    }
+
+    /** Apps in front and apps left out of screen time (1.15). */
+    static void screenApps() {
+        final int ON = ScreenTime.APP_ON, OFF = ScreenTime.APP_OFF, SOFF = ScreenTime.OFF;
+        String m = "com.google.android.apps.maps", c = "com.chat";
+        // maps 100 to 200; chat opens twice (second screen of the same app ignored) and is closed by the screen going off
+        java.util.Map<String, List<double[]>> a = ScreenTime.appSessions(
+                new double[] {100, 200, 210, 220, 300, 400},
+                new int[] {ON, OFF, ON, ON, SOFF, ON},
+                new String[] {m, m, c, c, null, m}, 0, 500);
+        check("apps: maps range", a.get(m).size() == 2 && near(a.get(m).get(0)[0], 100) && near(a.get(m).get(0)[1], 200));
+        check("apps: still open runs to now", near(a.get(m).get(1)[0], 400) && near(a.get(m).get(1)[1], 500));
+        check("apps: second screen of an app ignored, screen off closes", a.get(c).size() == 1 && near(a.get(c).get(0)[0], 210) && near(a.get(c).get(0)[1], 300));
+        // an "off" right after the start of the read: in front since then; a late one is ignored
+        java.util.Map<String, List<double[]>> lead = ScreenTime.appSessions(new double[] {60, 9000}, new int[] {OFF, OFF}, new String[] {m, c}, 10, 10000);
+        check("apps: lead in from the read start", lead.get(m) != null && near(lead.get(m).get(0)[0], 10) && near(lead.get(m).get(0)[1], 60));
+        check("apps: late first off ignored", lead.get(c) == null);
+        java.util.Map<String, List<double[]>> boot = ScreenTime.appSessions(new double[] {10, 50}, new int[] {ON, ScreenTime.STARTUP}, new String[] {c, null}, 0, 100);
+        check("apps: a restart closes apps", boot.get(c).size() == 1 && near(boot.get(c).get(0)[1], 50));
+        check("apps: unknown package is skipped", ScreenTime.appSessions(new double[] {1}, new int[] {ON}, new String[] {null}, 0, 9).isEmpty());
+
+        List<double[]> screen = new ArrayList<double[]>();
+        screen.add(new double[] {0, 100});
+        screen.add(new double[] {200, 300});
+        List<double[]> cuts = new ArrayList<double[]>();
+        cuts.add(new double[] {250, 400});
+        cuts.add(new double[] {20, 30});
+        cuts.add(new double[] {25, 40});
+        List<double[]> left = ScreenTime.subtract(screen, cuts);
+        eq("subtract: pieces", left.size(), 3);
+        check("subtract: overlapping cuts merge", near(left.get(0)[1], 20) && near(left.get(1)[0], 40) && near(left.get(1)[1], 100));
+        check("subtract: cut at the end", near(left.get(2)[0], 200) && near(left.get(2)[1], 250));
+        check("subtract: nothing to cut", ScreenTime.subtract(screen, new ArrayList<double[]>()).size() == 2);
+        List<double[]> all = new ArrayList<double[]>();
+        all.add(new double[] {-10, 1000});
+        check("subtract: all cut", ScreenTime.subtract(screen, all).isEmpty());
+        List<double[]> touch = new ArrayList<double[]>();
+        touch.add(new double[] {100, 200});
+        check("subtract: touching edges keep everything", near(ScreenTime.minutes(ScreenTime.subtract(screen, touch), 0, 400), 200 / 60.0));
+
+        java.util.Set<String> only = new java.util.HashSet<String>(java.util.Arrays.asList(m));
+        eq("ranges: only the picked apps", ScreenTime.ranges(a, only).size(), 2);
+        List<java.util.Map.Entry<String, Double>> per = ScreenTime.perApp(a, screen, 0, 1000);
+        // maps 100..200 lies between the screen sessions (0 s), 400..500 outside; chat 210..300 is 90 s on screen
+        check("per app: only time with the screen on", per.size() == 1 && per.get(0).getKey().equals(c) && near(per.get(0).getValue(), 1.5));
+
+        check("first after", near(ScreenTime.firstAfter(screen, 50, 400), 200) && Double.isNaN(ScreenTime.firstAfter(screen, 250, 400)));
+        double[] f = ScreenTime.fill(screen, 0, 400, 4);
+        check("fill per step", near(f[0], 1) && near(f[1], 0) && near(f[2], 1) && near(f[3], 0));
+        double[] half = ScreenTime.fill(screen, 0, 400, 8);
+        check("fill: half steps", near(half[0], 1) && near(half[1], 1) && near(half[2], 0));
+        check("fill: empty range", ScreenTime.fill(screen, 10, 10, 3)[0] == 0);
+
+        eq("name: maps", ScreenTime.shortName(m), "Maps");
+        eq("name: firefox", ScreenTime.shortName("org.mozilla.firefox"), "Firefox");
+        eq("name: whatsapp", ScreenTime.shortName("com.whatsapp"), "Whatsapp");
+        eq("name: demo", ScreenTime.shortName("demo.maps"), "Maps");
+        eq("name: one word", ScreenTime.shortName("launcher"), "Launcher");
+        eq("name: nothing", ScreenTime.shortName(""), "Unknown app");
+    }
+
+    /** Screen score (1.15): amount against the goal, before bed and during the night. */
+    static void screenScore() {
+        check("score: half the goal is best", near(ScreenScore.amount(90, 180), 100));
+        check("score: the goal gives 70", near(ScreenScore.amount(180, 180), 70));
+        check("score: 1.5 times the goal", near(ScreenScore.amount(270, 180), 35));
+        check("score: twice the goal gives 0", near(ScreenScore.amount(360, 180), 0) && near(ScreenScore.amount(999, 180), 0));
+        check("score: no goal uses 3 hours", near(ScreenScore.amount(180, 0), 70));
+        check("score: before bed", near(ScreenScore.bedtime(5), 100) && near(ScreenScore.bedtime(25), 50) && near(ScreenScore.bedtime(60), 0));
+        check("score: night", near(ScreenScore.night(0.5), 100) && near(ScreenScore.night(20), 0) && ScreenScore.night(10) > 40 && ScreenScore.night(10) < 60);
+        ScreenScore.Result r = ScreenScore.of(180, 180, 25, 0);
+        eq("score: weighted", r.value, (int) Math.round(0.5 * 70 + 0.3 * 50 + 0.2 * 100));
+        ScreenScore.Result n = ScreenScore.of(90, 180, Double.NaN, Double.NaN);
+        check("score: without a night only the amount", n.value == 100 && Double.isNaN(n.bedtime) && Double.isNaN(n.night));
+        check("score: worst day", ScreenScore.of(600, 120, 60, 60).value == 0);
     }
 
     /** Screen time (issue #13): sessions from the on and off log, totals, and phone use in a sleep window. */

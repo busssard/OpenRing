@@ -4,11 +4,17 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
+import org.json.JSONObject;
+
+import app.openring.core.analysis.ScreenScore;
 import app.openring.core.analysis.ScreenTime;
 
-/** Screen time per day from the stored screen sessions, for the Activity page (issue #13). */
+/** Screen time per day from the stored screen sessions and apps in front, for the Screen tab and Today. */
 public final class ScreenDays {
     private ScreenDays() {}
 
@@ -61,5 +67,127 @@ public final class ScreenDays {
     /** True when any screen session is stored. */
     public static boolean any(Db db) {
         return db.screenStart(true) >= 0;
+    }
+
+    /** Steps of the clock dial (5 minutes each) and of a day row (15 minutes each). */
+    public static final int DIAL_STEPS = 288, ROW_STEPS = 96;
+    /** Days in the list on the Screen tab. */
+    public static final int ROWS = 14;
+
+    /** One day row of the list: what was on when, the nights in it, the first look after waking. */
+    public static final class Row {
+        public LocalDate date;
+        public double from, to;
+        /** Counted screen time, NaN before the first stored session (unknown, not zero). */
+        public double totalMin = Double.NaN;
+        public double[] fill = new double[ROW_STEPS];
+        /** Main nights {sleep start, sleep end} that touch this day. */
+        public final List<double[]> nights = new ArrayList<double[]>();
+        public double firstLook = Double.NaN;
+    }
+
+    /** Everything the Screen tab and the Today ring show for one date. */
+    public static final class Info {
+        public LocalDate date;
+        public double from, to;
+        /** Counted screen time of the day (apps not counted are left out); null when nothing is known. */
+        public ScreenTime.Day day;
+        /** Screen on time with every app counted, and the part left out. */
+        public double rawMin = Double.NaN, excludedMin;
+        public ScreenScore.Result score;
+        public int goalMin;
+        /** The night that ended on this day: sleep start and end (NaN when none). */
+        public double sleepStart = Double.NaN, sleepEnd = Double.NaN;
+        public double bedMin = Double.NaN, nightMin = Double.NaN, firstLook = Double.NaN;
+        public double[] dial = new double[DIAL_STEPS];
+        /** Nights {start, end} that touch this day, for the dial. */
+        public final List<double[]> nights = new ArrayList<double[]>();
+        /** Minutes per app this day (screen on and app in front), most used first; empty when the split is unknown. */
+        public List<Map.Entry<String, Double>> apps = Collections.emptyList();
+        /** Whether app times are stored for this day (they start with version 1.15, about a week back). */
+        public boolean appsKnown;
+        public Row[] rows = new Row[0];
+    }
+
+    /** Builds the Screen tab for {@code date}: the day, its score and the {@link #ROWS} days ending there. */
+    public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded) {
+        Info in = new Info();
+        in.date = date;
+        in.goalMin = goalMin;
+        in.from = date.atStartOfDay(zone).toEpochSecond();
+        in.to = date.plusDays(1).atStartOfDay(zone).toEpochSecond();
+        double first = db.screenStart(true);
+        LocalDate firstRow = date.minusDays(ROWS - 1);
+        double qFrom = firstRow.atStartOfDay(zone).toEpochSecond() - 2 * 3600, qTo = in.to;
+        // main nights touching the rows, by the day they belong to
+        List<double[]> nights = new ArrayList<double[]>();
+        java.util.Map<String, double[]> byDay = new java.util.HashMap<String, double[]>();
+        for (String js : db.nightsJson(firstRow.toString(), date.plusDays(1).toString(), true)) {
+            JSONObject o = Json.parse(js);
+            if (o == null) continue;
+            double a = Json.d(o, "sleep_start"), b = Json.d(o, "sleep_end");
+            if (Double.isNaN(a)) a = Json.d(o, "start");
+            if (Double.isNaN(b)) b = Json.d(o, "end");
+            if (Double.isNaN(a) || !(b > a)) continue;
+            double[] n = {a, b};
+            nights.add(n);
+            byDay.put(o.optString("day"), n);
+            qFrom = Math.min(qFrom, a - ScreenScore.BEDTIME_WINDOW_S);
+        }
+        List<double[]> raw = db.screen(qFrom, qTo);
+        Map<String, List<double[]>> apps = db.apps(qFrom, qTo);
+        List<double[]> counted = excluded.isEmpty() ? raw : ScreenTime.subtract(raw, ScreenTime.ranges(apps, excluded));
+        double appsFrom = db.appsStart();
+
+        // the day itself
+        double[] night = byDay.get(date.toString());
+        if (night != null) {
+            in.sleepStart = night[0];
+            in.sleepEnd = night[1];
+        }
+        for (double[] n : nights) if (n[1] > in.from && n[0] < in.to) in.nights.add(n);
+        boolean known = first >= 0 && in.to > first;
+        if (known) {
+            // how often the screen was turned on comes from the screen itself: leaving an app out of a
+            // session must not split it into two; total, per hour and longest only count what counts
+            double[] edges = hourEdges(date, zone);
+            in.day = ScreenTime.day(counted, edges);
+            in.day.turnedOn = ScreenTime.turnedOn(raw, in.from, in.to);
+            in.rawMin = ScreenTime.minutes(raw, in.from, in.to);
+            in.excludedMin = Math.max(0, in.rawMin - in.day.totalMin);
+            in.dial = ScreenTime.fill(counted, in.from, in.to, DIAL_STEPS);
+            if (night != null) in.firstLook = ScreenTime.firstAfter(counted, Math.max(in.from, night[1]), in.to);
+            if (night != null && night[0] - ScreenScore.BEDTIME_WINDOW_S >= first) {
+                in.bedMin = ScreenTime.minutes(counted, night[0] - ScreenScore.BEDTIME_WINDOW_S, night[0]);
+                in.nightMin = ScreenTime.minutes(counted, night[0], night[1]);
+            }
+            in.score = ScreenScore.of(in.day.totalMin, goalMin, in.bedMin, in.nightMin);
+            in.appsKnown = appsFrom >= 0 && in.to > appsFrom;
+            if (in.appsKnown) in.apps = ScreenTime.perApp(apps, raw, in.from, in.to);
+        }
+
+        // the list of days, oldest first
+        in.rows = new Row[ROWS];
+        for (int i = 0; i < ROWS; i++) {
+            Row r = new Row();
+            r.date = firstRow.plusDays(i);
+            r.from = r.date.atStartOfDay(zone).toEpochSecond();
+            r.to = r.date.plusDays(1).atStartOfDay(zone).toEpochSecond();
+            for (double[] n : nights) if (n[1] > r.from && n[0] < r.to) r.nights.add(n);
+            if (first >= 0 && r.to > first) {
+                r.totalMin = ScreenTime.minutes(counted, r.from, r.to);
+                r.fill = ScreenTime.fill(counted, r.from, r.to, ROW_STEPS);
+                double[] n = byDay.get(r.date.toString());
+                if (n != null) r.firstLook = ScreenTime.firstAfter(counted, Math.max(r.from, n[1]), r.to);
+            }
+            in.rows[i] = r;
+        }
+        return in;
+    }
+
+    /** Apps seen in front during the last {@code days} days, most used first (for the list of apps not to count). */
+    public static List<Map.Entry<String, Double>> recentApps(Db db, int days) {
+        double to = System.currentTimeMillis() / 1000.0, from = to - days * 86400.0;
+        return ScreenTime.perApp(db.apps(from, to), db.screen(from, to), from, to);
     }
 }

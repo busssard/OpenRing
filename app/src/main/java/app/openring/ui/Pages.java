@@ -3,6 +3,7 @@ package app.openring.ui;
 import android.content.Context;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -21,7 +22,7 @@ import app.openring.core.analysis.TS;
 import app.openring.data.Json;
 import app.openring.data.Prefs;
 
-/** The five main screens, built from a {@link DayData}. */
+/** The six main screens, built from a {@link DayData}. */
 public final class Pages {
     private Pages() {}
 
@@ -34,9 +35,12 @@ public final class Pages {
 
         /** Show another day (e.g. a night picked from the recent nights strip). */
         void showDay(java.time.LocalDate day);
+
+        /** Load the day again (after a setting on the page changed). */
+        void reload();
     }
 
-    public static final int TODAY = 0, SLEEP = 1, READINESS = 2, ACTIVITY = 3, BODY = 4;
+    public static final int TODAY = 0, SLEEP = 1, READINESS = 2, ACTIVITY = 3, BODY = 4, SCREEN = 5;
 
     // ======================================================================== TODAY
 
@@ -48,6 +52,8 @@ public final class Pages {
         row.addView(ringButton(c, d.score("readiness"), "Readiness", Ui.READY, nav, READINESS), Ui.weight(1));
         row.addView(ringButton(c, d.score("sleep"), "Sleep", Ui.SLEEP, nav, SLEEP), Ui.weight(1));
         row.addView(ringButton(c, d.score("activity_score"), "Activity", Ui.ACTIVE, nav, ACTIVITY), Ui.weight(1));
+        double sc = d.score("screen");
+        row.addView(ringButton(c, sc, "Screen", Ui.OXY, nav, SCREEN, Double.isNaN(sc) && !screenReady(c) ? "Tap to set up" : null), Ui.weight(1));
         rings.addView(row);
         root.addView(rings);
 
@@ -138,12 +144,17 @@ public final class Pages {
     }
 
     static View ringButton(Context c, double v, String label, int color, final Nav nav, final int tab) {
+        return ringButton(c, v, label, color, nav, tab, null);
+    }
+
+    /** A small score ring that opens its tab; four share a row, so each takes the width it gets (at most 96 dp). */
+    static View ringButton(Context c, double v, String label, int color, final Nav nav, final int tab, String note) {
         Charts.ScoreRing r = new Charts.ScoreRing(c, v, label, color, false);
-        r.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(c, 104), Ui.dp(c, 104)));
         LinearLayout box = Ui.vbox(c);
         box.setGravity(Gravity.CENTER_HORIZONTAL);
-        box.addView(r, new LinearLayout.LayoutParams(Ui.dp(c, 104), Ui.dp(c, 104)));
-        TextView verdict = Ui.text(c, Double.isNaN(v) ? " " : Scores.verdict((int) v), 12, Ui.TEXT_2, Ui.REGULAR);
+        box.addView(r, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(c, 84)));
+        TextView verdict = Ui.text(c, note != null ? note : Double.isNaN(v) ? " " : Scores.verdict((int) v), 12, Ui.TEXT_2, Ui.REGULAR);
+        verdict.setGravity(Gravity.CENTER);
         box.addView(verdict);
         box.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -673,10 +684,7 @@ public final class Pages {
         double active = Json.d(day, "active_kcal"), target = Json.d(day, "target_kcal");
         root.addView(hero(c, d.score("activity_score"), "Activity", Ui.ACTIVE,
                 day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal"));
-        if (day == null) {
-            root.addView(screenCard(c, d));
-            return root;
-        }
+        if (day == null) return root;
 
         LinearLayout goal = Ui.card(c);
         goal.addView(Ui.caption(c, "Goal progress"));
@@ -725,8 +733,6 @@ public final class Pages {
             root.addView(pc);
         }
 
-        root.addView(screenCard(c, d));
-
         JSONObject as = day.optJSONObject("activity_score");
         if (as != null) {
             root.addView(contributors(c, as, Ui.ACTIVE, "Contributors"));
@@ -746,81 +752,224 @@ public final class Pages {
         return root;
     }
 
-    /** Screen time of this phone for the day (issue #13): total against the goal, per hour, last 7 days. */
-    static View screenCard(final Context c, DayData d) {
-        LinearLayout card = Ui.card(c);
-        card.addView(Ui.caption(c, "Screen time"));
-        card.addView(Ui.gap(c, 4));
-        boolean demo = app.openring.data.Prefs.of(c).demo();
+    // ======================================================================== SCREEN
+
+    /** True when screen time can be read: demo mode, or Android 9 or newer with usage access. */
+    static boolean screenReady(Context c) {
+        return Prefs.of(c).demo() || app.openring.data.ScreenUse.supported() && app.openring.data.ScreenUse.allowed(c);
+    }
+
+    /**
+     * The Screen tab: a score, the day as a clock dial, the numbers, the last 14 days as rows and the
+     * apps, with a list of apps not to count (for example maps while navigating).
+     */
+    public static View screen(final Context c, DayData d, final Nav nav) {
+        LinearLayout root = Ui.vbox(c);
+        boolean demo = Prefs.of(c).demo();
         if (!demo && !app.openring.data.ScreenUse.supported()) {
-            card.addView(Ui.body(c, "Screen time needs Android 9 or newer."));
-            return card;
+            root.addView(infoCard(c, "Screen time", "Screen time needs Android 9 or newer."));
+            return root;
         }
         if (!demo && !app.openring.data.ScreenUse.allowed(c)) {
-            card.addView(Ui.body(c, "See how long and when this phone's screen was on each day, next to your activity. "
-                    + "For this, switch on Open Ring in Android's usage access settings (the button takes you there). "
+            LinearLayout card = Ui.card(c);
+            card.addView(Ui.h2(c, "See when you use your phone"));
+            card.addView(Ui.gap(c, 6));
+            card.addView(Ui.body(c, "Open Ring can show how long and when this phone's screen was on, next to your sleep, "
+                    + "and give it a score. For this, switch on Open Ring in Android's usage access list (the button takes you there). "
                     + "Like everything else it stays on this phone."));
-            TextView allow = Ui.smallButton(c, "Allow usage access", Ui.OXY);
+            card.addView(Ui.gap(c, 12));
+            TextView allow = Ui.button(c, "Allow usage access", Ui.OXY, true);
             allow.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     app.openring.data.ScreenUse.openAccessSettings(c);
                 }
             });
-            LinearLayout.LayoutParams lp = Ui.matchWrap();
-            lp.setMargins(0, Ui.dp(c, 10), 0, 0);
-            card.addView(allow, lp);
-            return card;
+            card.addView(allow, Ui.matchWrap());
+            card.addView(Ui.gap(c, 8));
+            card.addView(Ui.text(c, "Android asks for this itself, apps cannot switch it on. You can switch it off there at any time.",
+                    12, Ui.TEXT_3, Ui.REGULAR));
+            root.addView(card);
+            return root;
         }
-        ScreenTime.Day s = d.screen;
-        if (s == null) {
-            card.addView(Ui.body(c, "No screen time known for this day. Open Ring has screen time from about a week before you allowed access."));
-            return card;
-        }
-        int goal = app.openring.data.Prefs.of(c).screenGoalMin();
+        final app.openring.data.ScreenDays.Info in = d.screen;
         boolean today = d.date.equals(java.time.LocalDate.now());
-        LinearLayout row = Ui.hbox(c);
-        row.setGravity(android.view.Gravity.BOTTOM);
-        row.addView(Ui.text(c, Ui.hm(s.totalMin), 28, Ui.TEXT, Ui.LIGHT));
-        if (goal > 0) {
-            TextView g = Ui.text(c, "  of " + hours(goal) + " goal", 14, Ui.TEXT_2, Ui.REGULAR);
-            g.setPadding(0, 0, 0, Ui.dp(c, 5));
-            row.addView(g);
+        if (in == null || in.day == null) {
+            root.addView(infoCard(c, "Screen time", "No screen time known for this day. Open Ring has screen time from about a week "
+                    + "before you allowed usage access."));
+            if (in != null) root.addView(screenRows(c, in, nav));
+            return root;
         }
-        card.addView(row);
-        if (goal > 0) {
-            LinearLayout.LayoutParams bl = Ui.sized(c, -1, 8);
-            bl.setMargins(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
-            card.addView(new Ui.Bar(c, s.totalMin / goal, s.totalMin > goal ? Ui.WARN : Ui.OXY), bl);
+        int goal = in.goalMin;
+        String sub = Ui.hm(in.day.totalMin) + (goal > 0 ? " of " + hours(goal) + " goal" : "") + (today ? ", so far today" : "");
+        root.addView(hero(c, in.score == null ? Double.NaN : in.score.value, "Screen", Ui.OXY, sub));
+
+        // the day as a clock
+        LinearLayout dial = Ui.card(c);
+        dial.addView(Ui.caption(c, "When the screen was on"));
+        dial.addView(Ui.gap(c, 8));
+        dial.addView(new Charts.ScreenDial(c, in.dial, in.nights, in.from, in.to, System.currentTimeMillis() / 1000.0,
+                Ui.hm(in.day.totalMin), today ? "today" : "on this day"), Ui.sized(c, -1, 300));
+        dial.addView(Ui.gap(c, 8));
+        dial.addView(Ui.text(c, "The day as a clock, midnight at the top. Each blue line is 5 minutes with the screen on, "
+                + "brighter when it was on longer. Purple: your sleep.", 12, Ui.TEXT_2, Ui.REGULAR));
+        root.addView(dial);
+
+        // the numbers
+        LinearLayout num = Ui.card(c);
+        num.addView(Ui.caption(c, "This day"));
+        num.addView(Ui.statRow(c, Ui.stat(c, "Turned on", String.valueOf(in.day.turnedOn), "times", 0),
+                Ui.stat(c, "Longest", Ui.fmt(in.day.longestMin, 0), "min", 0)));
+        num.addView(Ui.statRow(c, Ui.stat(c, "First look", clock(in.firstLook), "", 0),
+                Ui.stat(c, "Not counted", Ui.fmt(in.excludedMin, 0), "min", 0)));
+        num.addView(Ui.statRow(c, Ui.stat(c, "Before bed", Ui.fmt(in.bedMin, 0), "min", 0),
+                Ui.stat(c, "In the night", Ui.fmt(in.nightMin, 0), "min", 0)));
+        num.addView(Ui.text(c, "Turned on: how often the screen was switched on. Longest: the longest time it stayed on in one go. "
+                + "First look: the first time after waking up. Not counted: time in apps you left out (below). "
+                + "Before bed: the hour before you fell asleep last night. In the night: between falling asleep and waking up. "
+                + "The lock screen counts too.", 12, Ui.TEXT_3, Ui.REGULAR));
+        root.addView(num);
+
+        // what makes the score
+        if (in.score != null) {
+            LinearLayout sc = Ui.card(c);
+            sc.addView(Ui.caption(c, "Contributors"));
+            int g = goal > 0 ? goal : app.openring.core.analysis.ScreenScore.DEFAULT_GOAL_MIN;
+            sc.addView(Ui.contributor(c, "Screen time", Ui.hm(in.day.totalMin) + " of " + hours(g), in.score.amount, Ui.OXY,
+                    "Half your goal or less is best, the goal itself still good, twice the goal or more lowers this to zero."));
+            if (!Double.isNaN(in.score.bedtime)) {
+                sc.addView(Ui.contributor(c, "Before bed", Ui.fmt(in.bedMin, 0) + " min", in.score.bedtime, Ui.OXY,
+                        "Screen light and content in the last hour keep the brain awake. 5 minutes or less is best, 45 or more lowers this to zero."));
+                sc.addView(Ui.contributor(c, "In the night", Ui.fmt(in.nightMin, 0) + " min", in.score.night, Ui.OXY,
+                        "Checking the phone after waking up at night makes it harder to fall asleep again. 1 minute or less is best, 20 or more lowers this to zero."));
+            } else {
+                sc.addView(Ui.text(c, "No night known for this day, so only the screen time counts.", 12, Ui.TEXT_3, Ui.REGULAR));
+            }
+            root.addView(sc);
         }
-        card.addView(Ui.text(c, "Time this phone's screen was on " + (today ? "today so far" : "on this day") + ", lock screen included."
-                + (goal > 0 ? " The goal is set in Settings, Screen time." : ""), 12, Ui.TEXT_2, Ui.REGULAR));
-        card.addView(Ui.statRow(c, Ui.stat(c, "Turned on", String.valueOf(s.turnedOn), "times", 0),
-                Ui.stat(c, "Longest", Ui.fmt(s.longestMin, 0), "min", 0)));
-        card.addView(Ui.text(c, "Turned on: how often the screen was switched on. Longest: the longest time it stayed on in one go.",
-                12, Ui.TEXT_3, Ui.REGULAR));
-        card.addView(Ui.gap(c, 12));
-        card.addView(Ui.text(c, "Minutes the screen was on, per hour of the day", 11, Ui.TEXT_3, Ui.MEDIUM));
-        String[] labels = new String[s.hourly.length];
-        int peak = 0;
-        for (int i = 0; i < s.hourly.length; i++) {
-            int h = i < d.screenHours.length ? d.screenHours[i] : i;
-            labels[i] = h % 6 == 0 && (i == 0 || i >= d.screenHours.length || d.screenHours[i - 1] != h) ? String.valueOf(h) : "";
-            if (s.hourly[i] > s.hourly[peak]) peak = i;
-        }
-        card.addView(Ui.gap(c, 6));
-        card.addView(new Charts.BarChart(c, s.hourly, labels, Ui.OXY).valueFormat("%.0f min").highlight(s.totalMin > 0 ? peak : -1),
-                Ui.sized(c, -1, 110));
-        card.addView(Ui.gap(c, 12));
-        card.addView(Ui.text(c, "Screen time in hours, last 7 days", 11, Ui.TEXT_3, Ui.MEDIUM));
-        double[] week = d.screenWeek.clone();
-        for (int i = 0; i < week.length; i++) week[i] /= 60.0;
-        Charts.BarChart wc = new Charts.BarChart(c, week, d.weekdayLabels(week.length), Ui.OXY).valueFormat("%.1f h");
-        if (goal > 0) wc.target(goal / 60.0);
-        card.addView(Ui.gap(c, 6));
-        card.addView(wc, Ui.sized(c, -1, 120));
-        if (goal > 0) card.addView(Ui.text(c, "The dashed line is your goal.", 11, Ui.TEXT_3, Ui.REGULAR));
+        root.addView(infoCard(c, "About the screen score", Explain.SCREEN));
+
+        root.addView(screenRows(c, in, nav));
+        root.addView(screenApps(c, in, nav));
+        TextView more = Ui.text(c, "Daily goal and whether phone use at night counts as awake: Settings, Screen time.", 12, Ui.TEXT_3, Ui.REGULAR);
+        more.setGravity(Gravity.CENTER);
+        more.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
+        root.addView(more);
+        return root;
+    }
+
+    /** "37m" under an hour, "1h 5m" above. */
+    static String span(double min) {
+        return Double.isNaN(min) || min >= 59.5 ? Ui.hm(min) : Math.round(min) + "m";
+    }
+
+    /** "07:42" for a moment, "--" when unknown. */
+    static String clock(double unix) {
+        if (Double.isNaN(unix)) return "--";
+        java.time.ZonedDateTime z = java.time.Instant.ofEpochSecond((long) unix).atZone(java.time.ZoneId.systemDefault());
+        return String.format(Locale.getDefault(), "%02d:%02d", z.getHour(), z.getMinute());
+    }
+
+    static View screenRows(Context c, app.openring.data.ScreenDays.Info in, final Nav nav) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Last " + in.rows.length + " days"));
+        card.addView(Ui.gap(c, 8));
+        card.addView(new Charts.ScreenRows(c, in.rows, in.date, new Charts.ScreenRows.Pick() {
+            @Override
+            public void day(java.time.LocalDate day) {
+                nav.showDay(day);
+            }
+        }), Ui.sized(c, -1, Charts.ScreenRows.heightDp(in.rows.length)));
+        card.addView(Ui.gap(c, 8));
+        card.addView(Ui.text(c, "One row per day, midnight to midnight, newest on top. Blue: screen on. Purple: sleep. "
+                + "Green dot: first look after waking up. Right: the day's screen time. Tap a day to open it.", 12, Ui.TEXT_2, Ui.REGULAR));
         return card;
+    }
+
+    static View screenApps(final Context c, app.openring.data.ScreenDays.Info in, final Nav nav) {
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Apps on this day"));
+        card.addView(Ui.gap(c, 4));
+        java.util.Set<String> ex = Prefs.of(c).screenExcluded();
+        if (!in.appsKnown) {
+            card.addView(Ui.body(c, "Times per app start with version 1.15, from about a week before it was installed."));
+        } else if (in.apps.isEmpty()) {
+            card.addView(Ui.body(c, "No app was in front for more than half a minute."));
+        } else {
+            int shown = 0;
+            for (java.util.Map.Entry<String, Double> e : in.apps) {
+                boolean out = ex.contains(e.getKey());
+                // the 8 most used, plus every app left out so it never disappears silently
+                if (shown >= 8 && !out) continue;
+                shown++;
+                LinearLayout row = Ui.hbox(c);
+                row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
+                row.addView(Ui.text(c, app.openring.data.ScreenUse.label(c, e.getKey()), 14, out ? Ui.TEXT_3 : Ui.TEXT, Ui.REGULAR), Ui.weight(1));
+                row.addView(Ui.text(c, (out ? "not counted, " : "") + span(e.getValue()), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
+                card.addView(row);
+            }
+        }
+        card.addView(Ui.gap(c, 8));
+        card.addView(Ui.text(c, "Time each app was in front with the screen on. Apps you leave out (for example maps while you "
+                + "navigate) do not count for the total, the clock, the days or the score. Phone use at night still counts as awake "
+                + "for your sleep.", 12, Ui.TEXT_2, Ui.REGULAR));
+        TextView pick = Ui.smallButton(c, ex.isEmpty() ? "Choose apps not to count" : "Apps not counted: " + ex.size(), Ui.OXY);
+        pick.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pickExcluded(c, nav);
+            }
+        });
+        LinearLayout.LayoutParams lp = Ui.matchWrap();
+        lp.setMargins(0, Ui.dp(c, 10), 0, 0);
+        card.addView(pick, lp);
+        return card;
+    }
+
+    /** A list of the apps seen in the last 10 days (and those already left out) with tick boxes. */
+    static void pickExcluded(final Context c, final Nav nav) {
+        final Prefs p = Prefs.of(c);
+        final java.util.Set<String> ex = p.screenExcluded();
+        final List<String> pkgs = new ArrayList<String>();
+        List<String> labels = new ArrayList<String>();
+        app.openring.data.Db db = app.openring.data.Db.get(c);
+        // per day over the days app times are known (fewer than 10 right after installing 1.15)
+        double since = db.appsStart();
+        double days = since < 0 ? 10 : Math.max(1, Math.min(10, (System.currentTimeMillis() / 1000.0 - since) / 86400));
+        for (java.util.Map.Entry<String, Double> e : app.openring.data.ScreenDays.recentApps(db, 10)) {
+            pkgs.add(e.getKey());
+            labels.add(app.openring.data.ScreenUse.label(c, e.getKey()) + "  (" + span(e.getValue() / days) + " a day)");
+        }
+        for (String x : ex) {
+            if (pkgs.contains(x)) continue;
+            pkgs.add(x);
+            labels.add(app.openring.data.ScreenUse.label(c, x) + "  (not used lately)");
+        }
+        if (pkgs.isEmpty()) {
+            android.widget.Toast.makeText(c, "No apps known yet. Use the phone a little and try again.", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        final boolean[] checked = new boolean[pkgs.size()];
+        for (int i = 0; i < checked.length; i++) checked[i] = ex.contains(pkgs.get(i));
+        new android.app.AlertDialog.Builder(c)
+                .setTitle("Apps not to count")
+                .setMultiChoiceItems(labels.toArray(new String[0]), checked, new android.content.DialogInterface.OnMultiChoiceClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface dlg, int which, boolean on) {
+                        checked[which] = on;
+                    }
+                })
+                .setPositiveButton("Save", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface dlg, int w) {
+                        List<String> out = new ArrayList<String>();
+                        for (int i = 0; i < checked.length; i++) if (checked[i]) out.add(pkgs.get(i));
+                        p.setScreenExcluded(out);
+                        nav.reload();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     /** "3h", "2h 30m" or "45m" for a goal in minutes. */

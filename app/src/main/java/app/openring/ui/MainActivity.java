@@ -28,7 +28,7 @@ import app.openring.data.Prefs;
 import app.openring.sync.SyncJob;
 import app.openring.sync.SyncService;
 
-/** Home: date navigation, the six tabs and the sync status strip. */
+/** Home: date navigation, the six tabs (the last one is screen time) and the sync status strip. */
 public final class MainActivity extends Activity implements RingManager.Listener, Pages.Nav {
     private LocalDate date = LocalDate.now();
     private int tab = Pages.TODAY;
@@ -44,8 +44,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     /** True until the person picks a date: the screen then follows the newest day with data. */
     private boolean autoDate = true;
 
-    private static final int[] ICONS = {R.drawable.ic_home, R.drawable.ic_sleep, R.drawable.ic_readiness, R.drawable.ic_activity, R.drawable.ic_heart, R.drawable.ic_game};
-    private static final String[] LABELS = {"Today", "Sleep", "Ready", "Activity", "Body", "Play"};
+    private static final int[] ICONS = {R.drawable.ic_home, R.drawable.ic_sleep, R.drawable.ic_readiness, R.drawable.ic_activity, R.drawable.ic_heart, R.drawable.ic_screen};
+    private static final String[] LABELS = {"Today", "Sleep", "Ready", "Activity", "Body", "Screen"};
     private static final int[] COLORS = {Ui.TEXT, Ui.SLEEP, Ui.READY, Ui.ACTIVE, Ui.HEART, Ui.OXY};
 
     @Override
@@ -314,8 +314,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             case Pages.BODY:
                 content = Pages.body(this, data, this);
                 break;
-            case 5:
-                content = app.openring.ui.games.GamesActivity.menu(this);
+            case Pages.SCREEN:
+                content = Pages.screen(this, data, this);
                 break;
             default:
                 content = Pages.today(this, data, this, syncLine());
@@ -432,6 +432,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
         wantedY = -1;
         scroll.scrollTo(0, 0);
         render();
+    }
+
+    @Override
+    public void reload() {
+        load();
     }
 
     @Override

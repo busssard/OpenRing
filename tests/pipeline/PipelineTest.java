@@ -371,6 +371,8 @@ public class PipelineTest {
         pr.saveKey(keyBytes);
         pr.setProfile(41, 1, 63, 168, 0);
         pr.setScreenGoalMin(120);
+        pr.setScreenExcluded(java.util.Arrays.asList("com.google.android.apps.maps", " ", "org.osmand"));
+        pr.setGamesOn(true);
         long eventsBefore = Db.get(ctx).count("SELECT COUNT(*) FROM events");
         java.io.ByteArrayOutputStream full = new java.io.ByteArrayOutputStream();
         app.openring.data.Backup.write(ctx, full, true);
@@ -383,6 +385,9 @@ public class PipelineTest {
         check("restored key matches", java.util.Arrays.equals(app.openring.data.Prefs.of(phone2).loadKey(), keyBytes), "");
         check("restored profile", app.openring.data.Prefs.of(phone2).age() == 41 && app.openring.data.Prefs.of(phone2).sex() == 1, "");
         check("restored screen time goal", app.openring.data.Prefs.of(phone2).screenGoalMin() == 120, app.openring.data.Prefs.of(phone2).screenGoalMin());
+        check("restored apps not counted", app.openring.data.Prefs.of(phone2).screenExcluded().equals(
+                new java.util.TreeSet<String>(java.util.Arrays.asList("com.google.android.apps.maps", "org.osmand"))), app.openring.data.Prefs.of(phone2).screenExcluded());
+        check("restored games switch", app.openring.data.Prefs.of(phone2).gamesOn(), null);
         check("restored history keeps screen time", Db.get(phone2).count("SELECT COUNT(*) FROM screen") == 3, Db.get(phone2).count("SELECT COUNT(*) FROM screen"));
         long eventsAfter = Db.get(phone2).count("SELECT COUNT(*) FROM events");
         check("restored history", eventsAfter == eventsBefore, eventsBefore + " -> " + eventsAfter);
@@ -409,6 +414,39 @@ public class PipelineTest {
         ScreenTime.Day demoScreen = app.openring.data.ScreenDays.day(demo, LocalDate.now().minusDays(2), java.time.ZoneId.systemDefault());
         check("demo has screen time", demoScreen != null && demoScreen.totalMin > 90 && demoScreen.totalMin < 300 && demoScreen.turnedOn > 20,
                 demoScreen == null ? null : Math.round(demoScreen.totalMin) + " min, turned on " + demoScreen.turnedOn);
+        // apps in front (1.15): the demo leaves its maps app out, so counted time is below the raw time
+        check("demo has apps in front", demo.count("SELECT COUNT(DISTINCT pkg) FROM apps") >= 5, demo.count("SELECT COUNT(DISTINCT pkg) FROM apps"));
+        app.openring.data.Prefs dp = app.openring.data.Prefs.of(phone2);
+        check("demo leaves maps out, the real list stays", dp.screenExcluded().contains(app.openring.data.Demo.MAPS), dp.screenExcluded());
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        int mapsDays = 0;
+        app.openring.data.ScreenDays.Info di = null;
+        for (int back = 1; back < 20; back++) {
+            app.openring.data.ScreenDays.Info x = app.openring.data.ScreenDays.info(demo, LocalDate.now().minusDays(back), z, 180, dp.screenExcluded());
+            if (x.excludedMin > 1) {
+                mapsDays++;
+                if (di == null) di = x;
+            }
+        }
+        check("some demo days have maps not counted", mapsDays >= 2 && di != null, mapsDays + " days");
+        if (di != null) {
+            check("counted is raw minus not counted", Math.abs(di.day.totalMin + di.excludedMin - di.rawMin) < 0.01, di.rawMin);
+            check("screen score known with a night", di.score != null && di.score.value >= 0 && di.score.value <= 100 && !Double.isNaN(di.score.bedtime), di.score == null ? null : di.score.value);
+            check("first look after waking", !Double.isNaN(di.firstLook) && di.firstLook >= di.sleepEnd, null);
+            check("before bed and night minutes", di.bedMin >= 0 && di.nightMin >= 0, di.bedMin + " / " + di.nightMin);
+            double dialMin = 0;
+            for (double v : di.dial) dialMin += v * 5;
+            check("dial adds up to the day", Math.abs(dialMin - di.day.totalMin) < 1, dialMin + " vs " + di.day.totalMin);
+            check("apps of the day known and sorted", di.appsKnown && di.apps.size() >= 3 && di.apps.get(0).getValue() >= di.apps.get(1).getValue(), di.apps.size());
+            check("14 day rows, last is the day", di.rows.length == 14 && di.rows[13].date.equals(di.date) && Math.abs(di.rows[13].totalMin - di.day.totalMin) < 0.01, null);
+            check("rows show nights", di.rows[13].nights.size() >= 1, null);
+            app.openring.data.ScreenDays.Info everyApp = app.openring.data.ScreenDays.info(demo, di.date, z, 180, new java.util.HashSet<String>());
+            check("leaving apps out does not split screen sessions", everyApp.day.turnedOn == di.day.turnedOn, everyApp.day.turnedOn + " vs " + di.day.turnedOn);
+            check("with every app counted nothing is left out", everyApp.excludedMin < 0.01 && Math.abs(everyApp.day.totalMin - di.rawMin) < 0.01, everyApp.excludedMin);
+        }
+        app.openring.data.ScreenDays.Info old = app.openring.data.ScreenDays.info(demo, LocalDate.now().minusDays(60), z, 180, dp.screenExcluded());
+        check("days before the screen data are unknown", old.day == null && old.score == null && Double.isNaN(old.rows[13].totalMin), null);
+        check("recent apps list", app.openring.data.ScreenDays.recentApps(demo, 10).size() >= 5, null);
         int phoneNights = 0;
         for (String js : demo.nightsJson("2000-01-01", "2100-01-01", true)) if (Json.d(Json.parse(js), "phone_min") >= 1) phoneNights++;
         check("demo nights show phone checks", phoneNights >= 3, phoneNights + " nights");
@@ -423,6 +461,7 @@ public class PipelineTest {
         app.openring.data.Demo.leave(phone2);
         check("leaving the demo restores the real data", Db.get(phone2).fileName.equals(Db.REAL)
                 && Db.get(phone2).count("SELECT COUNT(*) FROM events") == realEvents, "");
+        check("real list of apps not counted is back", app.openring.data.Prefs.of(phone2).screenExcluded().size() == 2, app.openring.data.Prefs.of(phone2).screenExcluded());
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);

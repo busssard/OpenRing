@@ -70,35 +70,86 @@ public final class ScreenUse {
         lastRun = now;
         Db db = Db.get(c);
         double last = db.screenStart(false);
-        long from = last > 0 ? (long) Math.floor(last * 1000) : now - 10L * 86400 * 1000;
+        long screenFrom = last > 0 ? (long) Math.floor(last * 1000) : now - 10L * 86400 * 1000;
+        // the first read of a version with apps (1.15) goes back as far as Android keeps the log, for
+        // the apps only: screen sessions keep starting at the newest stored one, so none is stored twice
+        boolean firstApps = db.kvLong("apps_read", 0) == 0;
+        long from = firstApps ? Math.min(screenFrom, now - 10L * 86400 * 1000) : screenFrom;
         List<Double> times = new ArrayList<Double>();
         List<Integer> kinds = new ArrayList<Integer>();
+        // apps in front (their own list: an app's "in front" also counts as a sign of use above)
+        List<Double> aTimes = new ArrayList<Double>();
+        List<Integer> aKinds = new ArrayList<Integer>();
+        List<String> aPkgs = new ArrayList<String>();
         try {
             UsageStatsManager um = (UsageStatsManager) c.getSystemService(Context.USAGE_STATS_SERVICE);
             UsageEvents ev = um.queryEvents(from, now);
             UsageEvents.Event e = new UsageEvents.Event();
             while (ev != null && ev.hasNextEvent()) {
                 ev.getNextEvent(e);
-                int kind = kind(e.getEventType());
-                if (kind == 0) continue;
-                times.add(e.getTimeStamp() / 1000.0);
+                double at = e.getTimeStamp() / 1000.0;
+                int type = e.getEventType();
+                int app = appKind(type);
+                if (app != 0) {
+                    aTimes.add(at);
+                    aKinds.add(app);
+                    aPkgs.add(app == ScreenTime.APP_ON || app == ScreenTime.APP_OFF ? e.getPackageName() : null);
+                }
+                int kind = kind(type);
+                if (kind == 0 || e.getTimeStamp() < screenFrom) continue;
+                times.add(at);
                 kinds.add(kind);
             }
         } catch (RuntimeException e) {
             return 0; // access withdrawn meanwhile, or the phone's log is not readable
         }
+        double[] at = new double[aTimes.size()];
+        int[] ak = new int[at.length];
+        for (int i = 0; i < at.length; i++) {
+            at[i] = aTimes.get(i);
+            ak[i] = aKinds.get(i);
+        }
+        db.putApps(ScreenTime.appSessions(at, ak, aPkgs.toArray(new String[0]), from / 1000.0, now / 1000.0));
+        if (firstApps) db.put("apps_read", 1);
         double[] t = new double[times.size()];
         int[] k = new int[kinds.size()];
         for (int i = 0; i < t.length; i++) {
             t[i] = times.get(i);
             k[i] = kinds.get(i);
         }
-        List<double[]> sessions = ScreenTime.sessions(t, k, from / 1000.0, now / 1000.0);
+        List<double[]> sessions = ScreenTime.sessions(t, k, screenFrom / 1000.0, now / 1000.0);
         if (sessions.isEmpty()) return 0;
         db.putScreen(sessions);
         // phone use for nights already analysed: the next analysis looks at them again
         if (p.screenAwake()) db.reanalyseFrom(sessions.get(0)[0]);
         return sessions.size();
+    }
+
+    /**
+     * Android usage event types for the apps in front: 1 an app came to the front, 2 it went to the
+     * back; the screen turning off, a shutdown or a start closes every app.
+     */
+    static int appKind(int type) {
+        switch (type) {
+            case 1: return ScreenTime.APP_ON;
+            case 2: return ScreenTime.APP_OFF;
+            case 16: return ScreenTime.OFF;
+            case 26: return ScreenTime.SHUTDOWN;
+            case 27: return ScreenTime.STARTUP;
+            default: return 0;
+        }
+    }
+
+    /** The name Android shows for an app, or a readable guess from the package name. */
+    public static String label(Context c, String pkg) {
+        try {
+            android.content.pm.PackageManager pm = c.getPackageManager();
+            CharSequence l = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
+            if (l != null && l.length() > 0 && !l.toString().equals(pkg)) return l.toString();
+        } catch (Exception ignored) {
+            // not visible to this app, or uninstalled since
+        }
+        return ScreenTime.shortName(pkg);
     }
 
     /**

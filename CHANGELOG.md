@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.15
+* Screen time gets its own tab (Screen) in place of the game tab: a screen score, the day as a clock dial
+  next to your sleep, how often and how long you used the phone, the first look after waking, and the
+  last 14 days as rows
+* A fourth ring on Today: the screen score (screen time against your goal, phone use before bed and at night)
+* Apps can be left out of screen time, for example maps while navigating (Screen tab, Apps on this day).
+  Times per app start about a week before this version was installed
+* Ring games moved to Settings (#15): a button tests whether your ring sends its movement, a switch shows the games
+
 ## 1.14
 * New app icon: a ring carrying a small infinity sign, because the ring keeps working for good without any cloud
 
