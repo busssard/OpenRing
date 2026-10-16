@@ -32,8 +32,28 @@ public final class Db extends SQLiteOpenHelper {
             instance.close();
             instance = null;
         }
-        if (instance == null) instance = new Db(c.getApplicationContext(), name);
+        if (instance == null) {
+            if (REAL.equals(name)) recoverSwap(c);
+            instance = new Db(c.getApplicationContext(), name);
+        }
         return instance;
+    }
+
+    /**
+     * A left over {@code openring.db.old} means the last {@link #replaceWith} never finished (the
+     * app was stopped in the middle): the file next to it may be missing or half copied, so the
+     * kept history comes back. Runs before the real file is opened; never throws.
+     */
+    static synchronized void recoverSwap(Context c) {
+        java.io.File dst = c.getDatabasePath(REAL);
+        String old = dst.getPath() + ".old";
+        if (!new java.io.File(old).exists()) return;
+        try {
+            for (String s : SIDE) new java.io.File(dst.getPath() + s).delete();
+            for (String s : SIDE) move(old + s, dst.getPath() + s);
+        } catch (java.io.IOException e) {
+            // tried again before the next open or swap; the kept file is never deleted here
+        }
     }
 
     private Db(Context c, String name) {
@@ -537,10 +557,11 @@ public final class Db extends SQLiteOpenHelper {
     };
 
     /**
-     * Look at a database file on its own. With {@code check} (a backup's copy, opened read write
-     * because it is a throwaway file) it must pass {@code PRAGMA quick_check}, have a version this
-     * app can open and hold the Open Ring tables. Without it (the phone's own history, opened read
-     * only next to the app's connection) only the event count and newest date are read.
+     * Look at a database file on its own, read only and without localized collators, so the file
+     * stays byte for byte as it was (a read write open on Android can switch the journal mode or
+     * write android_metadata). With {@code check} (a backup's copy) it must pass
+     * {@code PRAGMA quick_check}, have a version this app can open and hold the Open Ring tables.
+     * Without it (the phone's own history) only the event count and newest date are read.
      */
     static Info inspect(java.io.File f, boolean check) {
         Info i = new Info();
@@ -548,7 +569,7 @@ public final class Db extends SQLiteOpenHelper {
         i.exists = true;
         SQLiteDatabase d = null;
         try {
-            d = SQLiteDatabase.openDatabase(f.getPath(), null, check ? SQLiteDatabase.OPEN_READWRITE : SQLiteDatabase.OPEN_READONLY, KEEP_FILE);
+            d = SQLiteDatabase.openDatabase(f.getPath(), null, SQLiteDatabase.OPEN_READONLY | SQLiteDatabase.NO_LOCALIZED_COLLATORS, KEEP_FILE);
             i.version = d.getVersion();
             if (check) {
                 if (!"ok".equals(first(d, "PRAGMA quick_check"))) {
@@ -607,12 +628,19 @@ public final class Db extends SQLiteOpenHelper {
     private static final String[] SIDE = {"", "-wal", "-shm", "-journal"};
 
     /**
-     * Swap the real database for a restored copy (a backup) that {@link #inspect} accepted. The old
-     * file is kept as {@code openring.db.old} until the new one opens through the helper (which
-     * also upgrades an older copy); if that fails the old file comes back and an IOException tells
-     * the caller nothing changed.
+     * Swap the real database for a restored copy (a backup) that {@link #inspect} accepted and
+     * found {@code expectedEvents} events in. The old file is kept as {@code openring.db.old} until
+     * the new one opens through the helper (which also upgrades an older copy) and holds exactly
+     * that many events (Android's default error handler can replace a broken file with an empty
+     * one that "opens"). Otherwise the old file comes back and an IOException tells the caller
+     * nothing changed. If the app is stopped in the middle, {@link #recoverSwap} puts the old file
+     * back before the next open.
+     *
+     * Nobody else writes meanwhile: restore runs only on the Setup screen after the key was
+     * cleared (or before one was ever saved), so sync and the background job cannot reach the
+     * ring and stay idle. A running analysis is a separate case, handled where analysis runs.
      */
-    public static synchronized void replaceWith(Context c, java.io.File src) throws java.io.IOException {
+    public static synchronized void replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
         if (instance != null) {
             instance.close();
             instance = null;
@@ -620,19 +648,20 @@ public final class Db extends SQLiteOpenHelper {
         java.io.File dst = c.getDatabasePath(REAL);
         dst.getParentFile().mkdirs();
         String old = dst.getPath() + ".old";
-        // a swap that was cut off before the copy: put the kept history back first
-        if (!dst.exists() && new java.io.File(old).exists()) move(old, dst.getPath());
-        for (String s : SIDE) new java.io.File(old + s).delete();
+        // an unfinished earlier swap: its kept history comes back first, it is never deleted
+        recoverSwap(c);
+        if (new java.io.File(old).exists()) throw new java.io.IOException("an earlier restore could not be undone");
         try {
             for (String s : SIDE) move(dst.getPath() + s, old + s);
         } catch (java.io.IOException e) {
-            for (String s : SIDE) move(old + s, dst.getPath() + s);
+            recoverSwap(c);
             throw e;
         }
         try {
             copy(src, dst);
             instance = new Db(c.getApplicationContext(), REAL);
-            instance.eventCount();
+            long n = instance.eventCount();
+            if (n != expectedEvents) throw new java.io.IOException("the restored history holds " + n + " events, expected " + expectedEvents);
         } catch (java.io.IOException | RuntimeException e) {
             if (instance != null) {
                 try {
@@ -642,8 +671,7 @@ public final class Db extends SQLiteOpenHelper {
                 }
                 instance = null;
             }
-            for (String s : SIDE) new java.io.File(dst.getPath() + s).delete();
-            for (String s : SIDE) move(old + s, dst.getPath() + s);
+            recoverSwap(c);
             throw new java.io.IOException("the restored history did not open", e);
         }
         for (String s : SIDE) new java.io.File(old + s).delete();

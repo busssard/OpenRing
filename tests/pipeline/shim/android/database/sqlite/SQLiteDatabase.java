@@ -7,7 +7,7 @@ public class SQLiteDatabase {
     public static final int CONFLICT_REPLACE = 5;
     public final Connection conn;
     int depth; boolean ok;
-    public static final int OPEN_READWRITE = 0, OPEN_READONLY = 1;
+    public static final int OPEN_READWRITE = 0, OPEN_READONLY = 1, NO_LOCALIZED_COLLATORS = 16;
     public interface CursorFactory {}
     SQLiteDatabase(Connection c) { conn = c; }
     /** Opens an existing file on its own (no helper, no upgrade); fails like Android when it is missing. */

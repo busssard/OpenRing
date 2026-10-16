@@ -552,6 +552,52 @@ public class PipelineTest {
         unchanged(ph, phoneEvents, otherKey, "after a failed swap");
         check("no old copy left after the roll back", !new java.io.File(ph.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
 
+        // review of #37: a swap cut off in the middle (app stopped) brings the old history back on the next open
+        app.openring.data.Prefs.of(ph).setDemo(true);
+        Db.get(ph);
+        java.io.File real = ph.getDatabasePath(Db.REAL);
+        check("real history file closed for the cut off swap", real.renameTo(new java.io.File(real.getPath() + ".old")), null);
+        java.nio.file.Files.write(real.toPath(), java.util.Arrays.copyOf(dbBytes, 1000));
+        app.openring.data.Prefs.of(ph).setDemo(false);
+        check("a cut off swap brings the old history back", Db.get(ph).eventCount() == phoneEvents, Db.get(ph).eventCount());
+        check("no old copy left after the recovery", !new java.io.File(real.getPath() + ".old").exists(), null);
+
+        // review of #37: a swap whose file opens with other contents than checked is rolled back
+        java.io.File copy = java.nio.file.Files.createTempFile("copy", ".db").toFile();
+        java.nio.file.Files.write(copy.toPath(), dbBytes);
+        String swapError = null;
+        try {
+            Db.replaceWith(ph, copy, 1);
+        } catch (java.io.IOException e) {
+            swapError = e.getMessage();
+        }
+        check("a swap with another event count than checked is rolled back", swapError != null && Db.get(ph).eventCount() == phoneEvents,
+                swapError + ", " + Db.get(ph).eventCount());
+        check("no old copy left after that roll back", !new java.io.File(real.getPath() + ".old").exists(), null);
+
+        // review of #37: demo mode stays on when the swap fails
+        app.openring.data.Prefs.of(ph).setDemo(true);
+        app.openring.data.Backup.Plan pd = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(withDb(full, broken)));
+        app.openring.data.Backup.Result rdm = app.openring.data.Backup.finish(ph, pd, true);
+        check("a failed swap leaves demo mode as it was", !rdm.ok && app.openring.data.Prefs.of(ph).demo(), rdm.message);
+        app.openring.data.Prefs.of(ph).setDemo(false);
+        unchanged(ph, phoneEvents, otherKey, "after a failed swap in demo mode");
+
+        // two plans at once keep their own files; stale ones go
+        app.openring.data.Backup.Plan p1 = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Backup.Plan p2 = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        java.nio.file.Files.write(new java.io.File(ph.getCacheDir(), "restore.db").toPath(), new byte[] {1});
+        app.openring.data.Backup.cleanStale(ph);
+        String[] live = ph.getCacheDir().list(new java.io.FilenameFilter() {
+            public boolean accept(java.io.File d, String n) {
+                return n.startsWith("restore");
+            }
+        });
+        check("two plans keep their own files, a stale one is removed", live != null && live.length == 2, java.util.Arrays.toString(live));
+        app.openring.data.Backup.cancel(ph, p1);
+        app.openring.data.Backup.cancel(ph, p2);
+        noTemp(ph, "after two plans");
+
         // the shim now fails like Android for a newer version
         Context fresh = freshPhone();
         java.nio.file.Files.write(fresh.getDatabasePath("x.db").toPath(), newer);
@@ -628,7 +674,12 @@ public class PipelineTest {
     }
 
     static void noTemp(Context c, String when) {
-        check("no restore.db left " + when, !new java.io.File(c.getCacheDir(), "restore.db").exists(), null);
+        String[] left = c.getCacheDir().list(new java.io.FilenameFilter() {
+            public boolean accept(java.io.File d, String n) {
+                return n.startsWith("restore");
+            }
+        });
+        check("no restore file left " + when, left != null && left.length == 0, left == null ? null : java.util.Arrays.toString(left));
     }
 
     static byte[] zipEntry(byte[] zip, String name) throws java.io.IOException {
