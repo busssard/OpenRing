@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.14
+* New app icon: a ring carrying a small infinity sign, because the ring keeps working for good without any cloud
+
 ## 1.13
 * Screen time (#13): how long and when this phone's screen was on, with a daily goal, on the Activity page.
   It needs Android's usage access (Settings, Screen time) and Android 9 or newer; it stays on the phone
