@@ -199,6 +199,8 @@ public final class Backup {
             cancel(c, p);
         }
         applySettings(Prefs.of(c), p.key, p.o);
+        // the key is saved: a Setup screen closed before showing the result must not start over
+        Prefs.of(c).setSetupDone(true);
         r.ok = true;
         if (r.history) r.message = "Restored your key, settings and history";
         else if (p.history) r.message = "Restored your key and settings, the history on this phone stays";

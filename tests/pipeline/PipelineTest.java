@@ -636,6 +636,21 @@ public class PipelineTest {
                 phoneEvents + " -> " + Db.get(ph).eventCount());
         noTemp(ph, "after replace");
         check("no old copy left after a replace", !new java.io.File(ph.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
+        check("a restore marks setup as done", app.openring.data.Prefs.of(ph).setupDone(), null);
+
+        // review of #37: side files of a .old that is gone are removed by the next swap
+        java.io.File orphan = new java.io.File(ph.getDatabasePath(Db.REAL).getPath() + ".old-wal");
+        java.nio.file.Files.write(orphan.toPath(), new byte[] {1, 2, 3});
+        app.openring.data.Prefs.of(ph).setSetupDone(false);
+        app.openring.data.Backup.Plan pz = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Backup.Result rz = app.openring.data.Backup.finish(ph, pz, true);
+        java.io.File[] olds = ph.getDatabasePath(Db.REAL).getParentFile().listFiles(new java.io.FilenameFilter() {
+            public boolean accept(java.io.File d, String n) {
+                return n.startsWith(Db.REAL + ".old");
+            }
+        });
+        check("a swap removes orphan .old side files and leaves no .old", rz.ok && olds != null && olds.length == 0,
+                olds == null ? null : java.util.Arrays.toString(olds));
 
         // only more events (undated), not later: still asks
         for (int i = 0; i < 50; i++) {
