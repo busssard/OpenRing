@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.16
+* A thin orange line on the sleep chart shows where the clocks changed during the night (daylight saving),
+  with one line below that says what changed. Sleep times always count the real hours (#22)
+* Demo mode: bedtimes and wake times no longer jump by one hour after the clocks change (#22)
+
 ## 1.15
 * Screen time gets its own tab (Screen) in place of the game tab: a screen score, the day as a clock dial
   next to your sleep, how often and how long you used the phone, the first look after waking, and the

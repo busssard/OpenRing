@@ -36,15 +36,19 @@ public final class Demo {
 
     /** Switch to the demo database and fill it if it is empty. Blocks; call from a background thread. */
     public static void enter(Context c, Progress p) {
+        enter(c, p, LocalDate.now(), System.currentTimeMillis() / 1000);
+    }
+
+    /** As above with a chosen "today" and "now" (both in the past), so tests can cover any date and hour. */
+    public static void enter(Context c, Progress p, LocalDate today, long now) {
         Prefs.of(c).setDemo(true);
         Db db = Db.get(c);
-        if (db.eventCount() > 0 && db.latestDay() != null && db.latestDay().equals(LocalDate.now().toString())) return;
+        if (db.eventCount() > 0 && db.latestDay() != null && db.latestDay().equals(today.toString())) return;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll();
-        long now = System.currentTimeMillis() / 1000;
         ZoneId zone = ZoneId.systemDefault();
         int days = 35;
-        long t0 = LocalDate.now().minusDays(days).atStartOfDay(zone).toEpochSecond();
+        long t0 = today.minusDays(days).atStartOfDay(zone).toEpochSecond();
         List<double[]> screen = new ArrayList<double[]>();
         java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
         List<RingEvent> ev = history(t0, days, now, zone, new Random(7), screen, apps);
@@ -60,6 +64,23 @@ public final class Demo {
     public static void leave(Context c) {
         Prefs.of(c).setDemo(false);
         Db.get(c); // reopens the real database
+    }
+
+    /**
+     * Unix seconds of a clock time on {@code day}: {@code hours} after its local midnight on the
+     * clock (negative for the evening before). Keeps the made up person on clock time across a
+     * daylight saving switch (issue #22).
+     */
+    static double at(LocalDate day, double hours, ZoneId zone) {
+        long s = (long) Math.floor(hours * 3600);
+        double frac = hours * 3600 - s;
+        return day.atStartOfDay().plusSeconds(s).atZone(zone).toEpochSecond() + frac;
+    }
+
+    /** Clock hours of {@code unix} after the local midnight that starts {@code day} (can pass 24). */
+    static double clockHours(LocalDate day, double unix, ZoneId zone) {
+        java.time.LocalDateTime t = java.time.Instant.ofEpochSecond((long) Math.floor(unix)).atZone(zone).toLocalDateTime();
+        return java.time.Duration.between(day.atStartOfDay(), t).getSeconds() / 3600.0 + (unix - Math.floor(unix)) / 3600;
     }
 
     static long ds(long t0, double unix) {
@@ -87,13 +108,16 @@ public final class Demo {
     static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
             java.util.Map<String, List<double[]>> apps) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
+        List<Object[]> kept = new ArrayList<Object[]>();
+        LocalDate first = java.time.Instant.ofEpochSecond(t0).atZone(zone).toLocalDate();
         for (int d = 1; d <= days; d++) {
-            double midnight = t0 + d * 86400.0;
-            int dow = LocalDate.now().minusDays(days - d).getDayOfWeek().getValue(); // 6, 7 weekend mornings
+            // every time is a clock time on this day, so a daylight saving switch does not move it (issue #22)
+            LocalDate day = first.plusDays(d);
+            int dow = day.getDayOfWeek().getValue(); // 6, 7 weekend mornings
             boolean weekend = dow >= 6;
             boolean late = r.nextDouble() < 0.12;
-            double bed = midnight - (1.4 - (late ? 1.6 : 0) - (weekend ? 0.4 : 0)) * 3600 + r.nextGaussian() * 1500;
-            double wake = midnight + (weekend ? 8.0 : 6.7) * 3600 + r.nextGaussian() * 1200;
+            double bed = at(day, -(1.4 - (late ? 1.6 : 0) - (weekend ? 0.4 : 0)), zone) + r.nextGaussian() * 1500;
+            double wake = at(day, weekend ? 8.0 : 6.7, zone) + r.nextGaussian() * 1200;
             if (wake > now - 1200) wake = now - 1200;
             if (wake - bed < 3 * 3600) continue;
             double tempOffset = r.nextGaussian() * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0); // a warm spell lately
@@ -145,11 +169,7 @@ public final class Demo {
                 }
                 ev.add(new RingEvent(EventCodec.HRV_EVENT, ds(t0, t), hrv));
             }
-            if (screen != null) {
-                int before = screen.size();
-                screenDay(screen, new Random(1000 + d), midnight, bed, wake, wakeBouts, now, d == days);
-                if (apps != null) appsFor(screen.subList(before, screen.size()), new Random(2000 + d), bed, wake, apps);
-            }
+            kept.add(new Object[] {d, day, bed, wake, wakeBouts});
             byte[] bt = new byte[8];
             Protocol.Le.putU32(bt, 0, ds(t0, bed));
             Protocol.Le.putU32(bt, 4, ds(t0, wake));
@@ -158,9 +178,9 @@ public final class Demo {
             // ---- daytime: activity per minute in 10 minute events, a heart beat now and then ----
             boolean workout = r.nextDouble() < 0.45;
             double workoutAt = 17 + r.nextDouble() * 2;
-            double dayEnd = Math.min(now - 60, midnight + 22.3 * 3600);
+            double dayEnd = Math.min(now - 60, at(day, 22.3, zone));
             for (double t = wake + 600; t < dayEnd; t += 600) {
-                double hour = (t - midnight) / 3600;
+                double hour = clockHours(day, t, zone);
                 byte[] met = new byte[11];
                 met[0] = 1;
                 for (int k = 1; k <= 10; k++) {
@@ -182,6 +202,18 @@ public final class Demo {
                 if (t > now - 3600) ev.add(new RingEvent(EventCodec.TEMP_EVENT, ds(t0, t), le16(3312, 3300, 2900)));
             }
         }
+        // phone use after the loop, so "newest" is the newest night that exists: before about 02:00
+        // tonight's night is still too short and skipped, then last night gets the phone check
+        if (screen != null) {
+            for (int i = 0; i < kept.size(); i++) {
+                Object[] k = kept.get(i);
+                int d = (Integer) k[0];
+                double bed = (Double) k[2], wake = (Double) k[3];
+                int before = screen.size();
+                screenDay(screen, new Random(1000 + d), (LocalDate) k[1], zone, bed, wake, (double[][]) k[4], now, i == kept.size() - 1);
+                if (apps != null) appsFor(screen.subList(before, screen.size()), new Random(2000 + d), bed, wake, apps);
+            }
+        }
         Collections.sort(ev, new Comparator<RingEvent>() {
             @Override
             public int compare(RingEvent a, RingEvent b) {
@@ -197,7 +229,8 @@ public final class Demo {
      * about 35 short to long uses during the day (about 3 hours in all). Its own random numbers, so
      * the nights stay the same as without screen time.
      */
-    static void screenDay(List<double[]> out, Random r, double midnight, double bed, double wake, double[][] wakeBouts, long now, boolean newest) {
+    static void screenDay(List<double[]> out, Random r, LocalDate date, ZoneId zone, double bed, double wake, double[][] wakeBouts, long now,
+            boolean newest) {
         List<double[]> day = new ArrayList<double[]>();
         double eveEnd = bed - (5 + r.nextInt(16)) * 60;
         day.add(new double[] {eveEnd - (10 + r.nextInt(26)) * 60, eveEnd});
@@ -215,7 +248,7 @@ public final class Demo {
         }
         double morning = wake + (3 + r.nextInt(6)) * 60;
         day.add(new double[] {morning, morning + (4 + r.nextInt(7)) * 60});
-        double from = wake + 20 * 60, to = midnight + 21 * 3600;
+        double from = wake + 20 * 60, to = at(date, 21, zone);
         int n = 30 + r.nextInt(12);
         double[] starts = new double[n];
         for (int i = 0; i < n; i++) starts[i] = from + r.nextDouble() * (to - from);

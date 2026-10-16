@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 import app.openring.core.EventCodec;
+import app.openring.core.analysis.ClockChange;
 import app.openring.core.analysis.Night;
 import app.openring.core.analysis.NightAnalyzer;
 import app.openring.core.analysis.NightFinder;
@@ -220,7 +221,14 @@ public final class Analyzer {
             String d = date(n.end);
             n.main = main.get(d) == n;
             n.score = Scores.sleep(n, tzOffset(n.midpoint > 0 ? n.midpoint : n.end), prefs.age());
-            out.add(new Object[] {n.start, n.end, d, n.main ? 1 : 0, n.score.value, Json.night(n, d).toString()});
+            JSONObject js = Json.night(n, d);
+            // daylight saving during the night (issue #22): the Sleep page marks the moment
+            ClockChange.Change cc = ClockChange.find(zone, n.start, n.end);
+            if (cc != null) {
+                Json.put(js, "clock_change_at", cc.at);
+                Json.put(js, "clock_change_min", cc.minutes);
+            }
+            out.add(new Object[] {n.start, n.end, d, n.main ? 1 : 0, n.score.value, js.toString()});
             log.log(String.format(java.util.Locale.US, "sleep for %s%s: %s to %s, %.0f min asleep, score %d, stages from %s",
                     d, n.main ? "" : " (nap)", clock(n.start), clock(n.end), n.asleepMin, n.score.value, n.stageSource));
         }

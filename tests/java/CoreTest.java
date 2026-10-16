@@ -323,6 +323,7 @@ public class CoreTest {
         live();
         motion();
         pattern();
+        clockChange();
         stageFilter();
         screenTime();
         screenApps();
@@ -722,5 +723,38 @@ public class CoreTest {
         for (int x : ib) h.add(x);
         double r = h.rmssd();
         check("live rmssd ignores the doubled beat", r > 10 && r < 30);
+    }
+    static double zurich(String local) {
+        return java.time.LocalDateTime.parse(local).atZone(java.time.ZoneId.of("Europe/Zurich")).toEpochSecond();
+    }
+
+    static void clockChange() {
+        // issue #22: daylight saving inside a night
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        ClockChange.Change back = ClockChange.find(z, zurich("2026-10-24T22:30:00"), zurich("2026-10-25T07:00:00"));
+        check("clocks back found", back != null);
+        eq("clocks back at 01:00 UTC", (long) back.at, java.time.Instant.parse("2026-10-25T01:00:00Z").getEpochSecond());
+        eq("clocks back is minus 60", back.minutes, -60);
+        ClockChange.Change fwd = ClockChange.find(z, zurich("2026-03-28T23:00:00"), zurich("2026-03-29T07:00:00"));
+        check("clocks forward found", fwd != null);
+        eq("clocks forward at 01:00 UTC", (long) fwd.at, java.time.Instant.parse("2026-03-29T01:00:00Z").getEpochSecond());
+        eq("clocks forward is plus 60", fwd.minutes, 60);
+        check("normal night has no change", ClockChange.find(z, zurich("2026-10-20T22:30:00"), zurich("2026-10-21T07:00:00")) == null);
+        check("UTC has no change", ClockChange.find(java.time.ZoneOffset.UTC, 1790000000, 1790030000) == null);
+        double sw = java.time.Instant.parse("2026-10-25T01:00:00Z").getEpochSecond();
+        check("night ending at the switch has none", ClockChange.find(z, sw - 8 * 3600, sw) == null);
+        check("night starting at the switch has it", ClockChange.find(z, sw, sw + 3600) != null);
+        check("bad window has none", ClockChange.find(z, sw, sw) == null && ClockChange.find(null, 0, 1) == null
+                && ClockChange.find(z, Double.NaN, sw) == null);
+        java.time.ZoneId lh = java.time.ZoneId.of("Australia/Lord_Howe");
+        ClockChange.Change half = ClockChange.find(lh, java.time.LocalDateTime.parse("2026-04-04T22:00:00").atZone(lh).toEpochSecond(),
+                java.time.LocalDateTime.parse("2026-04-05T07:00:00").atZone(lh).toEpochSecond());
+        eq("Lord Howe goes back 30 minutes", half == null ? 0 : half.minutes, -30);
+        eq("text back", ClockChange.text(-60, java.time.LocalTime.of(2, 0)), "The clocks went back one hour this night (03:00 became 02:00). "
+                + "Sleep times count the real hours, so you had one hour more in bed than the clock shows.");
+        eq("text forward", ClockChange.text(60, java.time.LocalTime.of(3, 0)), "The clocks went forward one hour this night (02:00 became 03:00). "
+                + "Sleep times count the real hours, so the night was one hour shorter than the clock shows.");
+        check("text 30 minutes", ClockChange.text(-30, java.time.LocalTime.of(1, 30)).startsWith("The clocks went back 30 minutes this night (02:00 became 01:30)"));
+        check("text two hours", ClockChange.text(120, java.time.LocalTime.of(4, 0)).contains("forward 2 hours"));
     }
 }
