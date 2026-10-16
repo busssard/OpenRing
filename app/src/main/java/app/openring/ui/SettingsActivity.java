@@ -344,7 +344,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout help = Ui.card(this);
         help.addView(Ui.caption(this, "Help and diagnostics"));
         help.addView(Ui.body(this, "Data check follows your data from the ring to the screens and shows where it stops. Safe to share. "
-                + "Re analyse works out all nights and days again from the stored ring data. With a long history this takes a few minutes."));
+                + "Re analyse works out all nights and days again from the stored ring data. With a long history this can take a few minutes."));
         pair(help, "Data check and log", Ui.READY, new Runnable() {
             @Override
             public void run() {
@@ -819,7 +819,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     Analyzer.runAll(SettingsActivity.this, null);
                     return "Analysis updated";
                 } catch (RuntimeException e) {
-                    return "The analysis failed: " + e.getMessage();
+                    return "The analysis failed. Data check and log (in Help and diagnostics) shows why.";
                 }
             }
 

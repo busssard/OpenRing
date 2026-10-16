@@ -700,23 +700,29 @@ public class PipelineTest {
             Analyzer.run(c, null); // one sync per boot, like a person wearing the ring for years
         }
         long nights = db.count("SELECT COUNT(*) FROM nights"), days = db.count("SELECT COUNT(*) FROM days");
-        String oldest = db.count("SELECT COUNT(*) FROM nights") == 0 ? null
-                : Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0)).optString("day");
-        check("syncs keep the nights of both boots, 500 days apart", nights >= 12 && "2024-05-02".equals(oldest), nights + " nights, oldest " + oldest);
+        String oldest = nights == 0 ? null : Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0)).optString("day");
+        check("syncs keep the nights of both boots, 500 days apart", nights == 14 && "2024-05-02".equals(oldest), nights + " nights, oldest " + oldest);
+        // a new stage detail picked up by the next sync (incremental path) reaches the oldest night
+        app.openring.data.Prefs pr = app.openring.data.Prefs.of(c);
+        int level = pr.stageDetail() == app.openring.core.analysis.StageFilter.DETAILED
+                ? app.openring.core.analysis.StageFilter.BALANCED : app.openring.core.analysis.StageFilter.DETAILED;
+        pr.setStageDetail(level);
+        Analyzer.run(c, null);
+        JSONObject first = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0));
+        check("new stage detail at a sync reaches the oldest night", first.optInt("stage_detail", -1) == level
+                && "2024-05-02".equals(first.optString("day")) && db.count("SELECT COUNT(*) FROM nights") == nights,
+                first.optString("day") + " detail " + first.optInt("stage_detail", -1));
         Analyzer.runAll(c, null);
         long nightsAll = db.count("SELECT COUNT(*) FROM nights"), daysAll = db.count("SELECT COUNT(*) FROM days");
         String oldestAll = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0)).optString("day");
         check("full re analysis keeps every night and day (#20)", nightsAll == nights && daysAll == days,
                 nights + " to " + nightsAll + " nights, " + days + " to " + daysAll + " days");
         check("full re analysis keeps the oldest night", oldestAll.equals(oldest), oldestAll);
-        // a new stage detail picked up by the next sync reaches the oldest night too
-        int level = app.openring.data.Prefs.of(c).stageDetail() == app.openring.core.analysis.StageFilter.DETAILED
-                ? app.openring.core.analysis.StageFilter.BALANCED : app.openring.core.analysis.StageFilter.DETAILED;
-        app.openring.data.Prefs.of(c).setStageDetail(level);
-        Analyzer.run(c, null);
-        JSONObject first = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0));
-        check("new stage detail reaches the oldest night", first.optInt("stage_detail", -1) == level && db.count("SELECT COUNT(*) FROM nights") == nights,
-                first.optInt("stage_detail", -1) + " in " + (System.currentTimeMillis() - t) + " ms");
+        // and after the full re analysis the oldest night keeps its date and the chosen detail
+        first = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0));
+        check("after the full re analysis the oldest night has the chosen detail", first.optInt("stage_detail", -1) == level
+                && "2024-05-02".equals(first.optString("day")), first.optString("day") + " detail " + first.optInt("stage_detail", -1)
+                + ", " + (System.currentTimeMillis() - t) + " ms");
     }
 
     /** Clock minutes after 12:00 the day before (so 23:00 is 660, 07:00 is 1140). */

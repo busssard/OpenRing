@@ -7,8 +7,8 @@
   nothing on the phone changes. Before the history is swapped the old one is kept until the new one opens (#27)
 
 ## 1.17
-* Re analysing all history no longer loses nights and days older than 400 days. Every night the ring data
-  is still stored for comes back, and changing the sleep stage detail now reaches the oldest nights too (#20)
+* Re analysing all history no longer loses nights and days older than 400 days. All nights come back as long
+  as their ring data is still stored, and changing the sleep stage detail now reaches the oldest nights too (#20)
 * With a long history a re analysis can take a few minutes; the message says so. If it fails, Settings
   shows why instead of closing the app (#20)
 
