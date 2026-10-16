@@ -638,19 +638,41 @@ public final class Db extends SQLiteOpenHelper {
      *
      * Nobody else writes meanwhile: restore runs only on the Setup screen after the key was
      * cleared (or before one was ever saved), so sync and the background job cannot reach the
-     * ring and stay idle. A running analysis is a separate case, handled where analysis runs.
+     * ring and stay idle. A running analysis is waited for in {@link Backup#finish} before this
+     * is called.
+     *
+     * Before the rename the real file is checkpointed ({@code wal_checkpoint(TRUNCATE)}), so all
+     * of the old history sits in {@code openring.db} itself and its side files hold nothing that
+     * {@link #recoverSwap} could lose.
      */
     public static synchronized void replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
-        if (instance != null) {
-            instance.close();
-            instance = null;
-        }
         java.io.File dst = c.getDatabasePath(REAL);
         dst.getParentFile().mkdirs();
         String old = dst.getPath() + ".old";
         // an unfinished earlier swap: its kept history comes back first, it is never deleted
         recoverSwap(c);
         if (new java.io.File(old).exists()) throw new java.io.IOException("an earlier restore could not be undone");
+        // side files of a .old that is gone (a cleanup cut off half way) belong to nothing
+        for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
+        if (instance != null && !REAL.equals(instance.fileName)) {
+            instance.close();
+            instance = null;
+        }
+        if (instance == null && dst.exists()) instance = new Db(c.getApplicationContext(), REAL);
+        if (instance != null) {
+            try {
+                Cursor cp = instance.getWritableDatabase().rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null);
+                try {
+                    cp.moveToFirst();
+                } finally {
+                    cp.close();
+                }
+            } catch (RuntimeException e) {
+                // a history that cannot be opened has nothing left in its side files to keep
+            }
+            instance.close();
+            instance = null;
+        }
         try {
             for (String s : SIDE) move(dst.getPath() + s, old + s);
         } catch (java.io.IOException e) {
@@ -674,7 +696,9 @@ public final class Db extends SQLiteOpenHelper {
             recoverSwap(c);
             throw new java.io.IOException("the restored history did not open", e);
         }
-        for (String s : SIDE) new java.io.File(old + s).delete();
+        // side files first, the main .old last: while it exists, recoverSwap treats the swap as unfinished
+        for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
+        new java.io.File(old).delete();
     }
 
     /** Rename when the file exists; nothing to do when it does not. */
