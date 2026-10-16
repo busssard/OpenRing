@@ -90,7 +90,9 @@ public final class Backup {
         public double backupNewest = Double.NaN, phoneNewest = Double.NaN;
         JSONObject o;
         byte[] key;
+        /** This plan's own copy of the backup's history (a unique file in the cache). */
         File db;
+        long backupEvents;
     }
 
     static final String DAMAGED = "The history in this backup is damaged, nothing was changed.";
@@ -113,8 +115,8 @@ public final class Backup {
     /** Read and check a backup and compare it with the phone's history. Changes nothing. */
     public static Plan prepare(Context c, InputStream raw) throws IOException {
         Plan p = new Plan();
-        File tmp = tempFile(c);
-        deleteTemp(tmp);
+        cleanStale(c);
+        File tmp = null;
         boolean keep = false;
         try {
             BufferedInputStream in = new BufferedInputStream(raw);
@@ -130,6 +132,7 @@ public final class Backup {
                     if (JSON.equals(name)) {
                         json = new String(readAll(z, 1 << 20), StandardCharsets.UTF_8);
                     } else if (DB.equals(name)) {
+                        if (tmp == null) tmp = newTemp(c);
                         OutputStream out = new FileOutputStream(tmp);
                         try {
                             byte[] buf = new byte[64 * 1024];
@@ -155,6 +158,7 @@ public final class Backup {
                 Db.Info phone = Db.inspect(c.getDatabasePath(Db.REAL), false);
                 p.history = true;
                 p.backupNewest = b.newest;
+                p.backupEvents = b.events;
                 p.phoneNewest = phone.newest;
                 p.ask = wouldLose(phone, b);
                 p.phoneNewer = phoneNewer(phone.newest, b.newest);
@@ -164,7 +168,7 @@ public final class Backup {
         } finally {
             if (!keep) {
                 p.db = null;
-                deleteTemp(tmp);
+                release(tmp);
             }
         }
     }
@@ -178,12 +182,12 @@ public final class Backup {
         Result r = new Result();
         try {
             if (p.db != null && replaceHistory) {
-                Prefs.of(c).setDemo(false);
                 try {
-                    // wait for an analysis that may still run after a sync (it no longer holds the
+                    // demo mode is switched off only once the swap worked (applySettings).
+                    // Wait for an analysis that may still run after a sync (it no longer holds the
                     // ring, issue #21): closing its database under it would break it
                     synchronized (Analyzer.class) {
-                        Db.replaceWith(c, p.db);
+                        Db.replaceWith(c, p.db, p.backupEvents);
                     }
                 } catch (IOException e) {
                     r.message = NOT_OPENED;
@@ -202,10 +206,11 @@ public final class Backup {
         return r;
     }
 
-    /** Drop a plan without restoring anything (removes the temp file, also when {@code p} is null). */
+    /** Drop a plan without restoring anything (removes its own temp file). */
     public static void cancel(Context c, Plan p) {
-        if (p != null) p.db = null;
-        deleteTemp(tempFile(c));
+        if (p == null) return;
+        release(p.db);
+        p.db = null;
     }
 
     /**
@@ -231,12 +236,41 @@ public final class Backup {
         return p;
     }
 
-    static File tempFile(Context c) {
-        return new File(c.getCacheDir(), "restore.db");
+    /** Temp files of plans in this process; anything else named restore*.db in the cache is left over. */
+    private static final java.util.Set<String> LIVE = new java.util.HashSet<String>();
+
+    private static File newTemp(Context c) throws IOException {
+        File f = File.createTempFile("restore-", ".db", c.getCacheDir());
+        synchronized (LIVE) {
+            LIVE.add(f.getName());
+        }
+        return f;
     }
 
-    private static void deleteTemp(File f) {
+    private static void release(File f) {
+        if (f == null) return;
         for (String s : new String[] {"", "-wal", "-shm", "-journal"}) new File(f.getPath() + s).delete();
+        synchronized (LIVE) {
+            LIVE.remove(f.getName());
+        }
+    }
+
+    /**
+     * Delete restore files that no plan in this process owns (left by a stopped app, or the
+     * single {@code restore.db} older versions used).
+     */
+    public static void cleanStale(Context c) {
+        File[] fs = c.getCacheDir().listFiles();
+        if (fs == null) return;
+        synchronized (LIVE) {
+            for (File f : fs) {
+                String n = f.getName();
+                if (!n.startsWith("restore")) continue;
+                int end = n.indexOf(".db");
+                if (end < 0) continue;
+                if (!LIVE.contains(n.substring(0, end + 3))) f.delete();
+            }
+        }
     }
 
     private static void applySettings(Prefs p, byte[] key, JSONObject o) {

@@ -490,7 +490,7 @@ public class PipelineTest {
         oldNights();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
-        yearTiming();
+        longHistoryTiming();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -553,6 +553,52 @@ public class PipelineTest {
         check("history that does not open is rolled back (#27)", !rb.ok && rb.message.contains("was kept"), rb.message);
         unchanged(ph, phoneEvents, otherKey, "after a failed swap");
         check("no old copy left after the roll back", !new java.io.File(ph.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
+
+        // review of #37: a swap cut off in the middle (app stopped) brings the old history back on the next open
+        app.openring.data.Prefs.of(ph).setDemo(true);
+        Db.get(ph);
+        java.io.File real = ph.getDatabasePath(Db.REAL);
+        check("real history file closed for the cut off swap", real.renameTo(new java.io.File(real.getPath() + ".old")), null);
+        java.nio.file.Files.write(real.toPath(), java.util.Arrays.copyOf(dbBytes, 1000));
+        app.openring.data.Prefs.of(ph).setDemo(false);
+        check("a cut off swap brings the old history back", Db.get(ph).eventCount() == phoneEvents, Db.get(ph).eventCount());
+        check("no old copy left after the recovery", !new java.io.File(real.getPath() + ".old").exists(), null);
+
+        // review of #37: a swap whose file opens with other contents than checked is rolled back
+        java.io.File copy = java.nio.file.Files.createTempFile("copy", ".db").toFile();
+        java.nio.file.Files.write(copy.toPath(), dbBytes);
+        String swapError = null;
+        try {
+            Db.replaceWith(ph, copy, 1);
+        } catch (java.io.IOException e) {
+            swapError = e.getMessage();
+        }
+        check("a swap with another event count than checked is rolled back", swapError != null && Db.get(ph).eventCount() == phoneEvents,
+                swapError + ", " + Db.get(ph).eventCount());
+        check("no old copy left after that roll back", !new java.io.File(real.getPath() + ".old").exists(), null);
+
+        // review of #37: demo mode stays on when the swap fails
+        app.openring.data.Prefs.of(ph).setDemo(true);
+        app.openring.data.Backup.Plan pd = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(withDb(full, broken)));
+        app.openring.data.Backup.Result rdm = app.openring.data.Backup.finish(ph, pd, true);
+        check("a failed swap leaves demo mode as it was", !rdm.ok && app.openring.data.Prefs.of(ph).demo(), rdm.message);
+        app.openring.data.Prefs.of(ph).setDemo(false);
+        unchanged(ph, phoneEvents, otherKey, "after a failed swap in demo mode");
+
+        // two plans at once keep their own files; stale ones go
+        app.openring.data.Backup.Plan p1 = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Backup.Plan p2 = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        java.nio.file.Files.write(new java.io.File(ph.getCacheDir(), "restore.db").toPath(), new byte[] {1});
+        app.openring.data.Backup.cleanStale(ph);
+        String[] live = ph.getCacheDir().list(new java.io.FilenameFilter() {
+            public boolean accept(java.io.File d, String n) {
+                return n.startsWith("restore");
+            }
+        });
+        check("two plans keep their own files, a stale one is removed", live != null && live.length == 2, java.util.Arrays.toString(live));
+        app.openring.data.Backup.cancel(ph, p1);
+        app.openring.data.Backup.cancel(ph, p2);
+        noTemp(ph, "after two plans");
 
         // the shim now fails like Android for a newer version
         Context fresh = freshPhone();
@@ -630,7 +676,12 @@ public class PipelineTest {
     }
 
     static void noTemp(Context c, String when) {
-        check("no restore.db left " + when, !new java.io.File(c.getCacheDir(), "restore.db").exists(), null);
+        String[] left = c.getCacheDir().list(new java.io.FilenameFilter() {
+            public boolean accept(java.io.File d, String n) {
+                return n.startsWith("restore");
+            }
+        });
+        check("no restore file left " + when, left != null && left.length == 0, left == null ? null : java.util.Arrays.toString(left));
     }
 
     static byte[] zipEntry(byte[] zip, String name) throws java.io.IOException {
@@ -1005,16 +1056,18 @@ public class PipelineTest {
     }
 
     /**
-     * Issue #21: timing on a year of demo history. Prints the numbers; the only check is that
-     * the new rebuildTime is faster than the old full rewrite (machines differ a lot).
+     * Issue #21: timing on 120 days of demo history (a year takes about 25 s more test time and
+     * shows the same factor). Prints the numbers; the only check is that the new rebuildTime is
+     * faster than the old full rewrite (machines differ a lot).
      */
-    static void yearTiming() throws Exception {
-        Context c = freshDb("openring-year");
+    static void longHistoryTiming() throws Exception {
+        Context c = freshDb("openring-long");
         Db db = Db.get(c);
         ZoneId z = ZoneId.systemDefault();
         long t0 = LocalDate.parse("2025-01-06").atStartOfDay(z).toEpochSecond();
-        long now = t0 + 366 * 86400L;
-        List<RingEvent> ev = app.openring.data.Demo.history(t0, 365, now, z, new Random(7));
+        int days = 120;
+        long now = t0 + (days + 1) * 86400L;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, days, now, z, new Random(7));
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         long lastDs = ev.get(ev.size() - 1).ds;
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
@@ -1026,9 +1079,9 @@ public class PipelineTest {
         t = System.nanoTime();
         Db.TimeReport r = db.rebuildTime(now);
         long newMs = (System.nanoTime() - t) / 1000000;
-        System.out.println("  a year of demo history (" + r.total + " events), no new events: rebuildTime " + oldMs + " ms before, " + newMs + " ms now");
-        check("a year: the result of the old method needs no write", r.changed == 0, r.changed);
-        check("a year: rebuildTime faster than the old full rewrite", newMs < oldMs, newMs + " < " + oldMs + " ms");
+        System.out.println("  " + days + " days of demo history (" + r.total + " events), no new events: rebuildTime " + oldMs + " ms before, " + newMs + " ms now");
+        check("long history: the result of the old method needs no write", r.changed == 0, r.changed);
+        check("long history: rebuildTime faster than the old full rewrite", newMs < oldMs, newMs + " < " + oldMs + " ms");
         // an incremental analysis (the last two days), as after a sync without new nights
         double[] range = db.datedRange();
         db.put("analyzed_until", (long) range[1]);
@@ -1039,8 +1092,8 @@ public class PipelineTest {
         t = System.nanoTime();
         Analyzer.run(c, null);
         long incMs = (System.nanoTime() - t) / 1000000;
-        System.out.println("  a year: incremental analysis " + incMs + " ms (about " + (incMs - newMs + oldMs) + " ms with the old rewrite)");
-        check("a year: incremental analysis stays incremental", db.kvLong("analyzed_until", 0) >= (long) range[1] && db.count("SELECT COUNT(*) FROM nights") < 10,
+        System.out.println("  " + days + " days: incremental analysis " + incMs + " ms (about " + (incMs - newMs + oldMs) + " ms with the old rewrite)");
+        check("long history: incremental analysis stays incremental", db.kvLong("analyzed_until", 0) >= (long) range[1] && db.count("SELECT COUNT(*) FROM nights") < 10,
                 db.count("SELECT COUNT(*) FROM nights") + " nights");
         db.close();
     }

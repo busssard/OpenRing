@@ -73,7 +73,9 @@ Restoring a full backup (`Backup.prepare`, then `finish`) first checks the backu
 (`Db.inspect`: `quick_check`, a version this app can open, the Open Ring tables) and refuses it whole if
 it fails. If the phone's history reaches more than an hour later or holds more events, Setup asks
 before replacing it (#26). `Db.replaceWith` keeps the old file as `openring.db.old` until the new one
-opens, and puts it back if it does not (#27). Histories are never merged.
+opens with the event count the check saw, and puts it back if not (#27). A left over `.old` means a
+swap was cut off, so `Db.get` puts it back before opening the real file. Each restore has its own temp
+file in the cache. Histories are never merged.
 
 ## Analysis
 
