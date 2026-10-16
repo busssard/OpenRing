@@ -32,7 +32,7 @@ public final class Demo {
     /** How often each of {@link #APPS} is picked for a daytime session. */
     static final double[] SHARE = {0.30, 0.18, 0.22, 0.12, 0.07, 0.06, 0.05};
 
-    static final long DS0 = 3L * 86400 * 10; // the made up ring booted 3 days before the history starts
+    public static final long DS0 = 3L * 86400 * 10; // the made up ring booted 3 days before the history starts
 
     /** Switch to the demo database and fill it if it is empty. Blocks; call from a background thread. */
     public static void enter(Context c, Progress p) {
@@ -96,7 +96,8 @@ public final class Demo {
         return b;
     }
 
-    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r) {
+    /** Made up ring events for {@code days} nights after {@code t0} (public for the pipeline test). */
+    public static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r) {
         return history(t0, days, now, zone, r, null, null);
     }
 

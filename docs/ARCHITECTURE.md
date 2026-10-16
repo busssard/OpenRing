@@ -83,7 +83,8 @@ Demo mode uses a separate file (`openring-demo.db`), so demo and real data never
    35/15/10/10/10/10/10); contributor curves are transparent and based on sleep research. Baselines become
    personal after about 14 nights.
 5. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
-   when dating changed or the user asks (Settings, Help).
+   when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
+   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes.
 
 ## Threading
 

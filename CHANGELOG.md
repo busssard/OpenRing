@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.17
+* Re analysing all history no longer loses nights and days older than 400 days. Every night the ring data
+  is still stored for comes back, and changing the sleep stage detail now reaches the oldest nights too (#20)
+* With a long history a re analysis can take a few minutes; the message says so. If it fails, Settings
+  shows why instead of closing the app (#20)
+
 ## 1.16
 * A thin orange line on the sleep chart shows where the clocks changed during the night (daylight saving),
   with one line below that says what changed. Sleep times always count the real hours (#22)

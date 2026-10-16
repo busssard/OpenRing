@@ -85,8 +85,9 @@ public final class Analyzer {
             return;
         }
         double until = db.kvLong("analyzed_until", 0);
+        // no age limit (issue #20): a full re analysis must rebuild every night resetAnalysis deleted;
+        // the week by week chunks keep memory flat however long the history is
         double from = until > 0 ? Math.max(range[0], until - 2 * 86400) : range[0];
-        from = Math.max(from, range[1] - 400 * 86400.0);
         analyze(from, range[1]);
         db.put("analyzed_until", (long) range[1]);
         db.put("stage_detail", detail);

@@ -144,7 +144,7 @@ public final class LogActivity extends Activity {
     }
 
     void repair() {
-        Toast.makeText(this, "Repairing, this can take a minute", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "Repairing. With a long history this can take a few minutes.", Toast.LENGTH_LONG).show();
         new AsyncTask<Void, Void, String>() {
             @Override
             protected String doInBackground(Void... v) {

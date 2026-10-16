@@ -487,9 +487,50 @@ public class PipelineTest {
                 && "2026-04-12".equals(springNewest.optString("day")), springNewest.optString("day"));
         app.openring.data.Demo.leave(phone3);
 
+        oldNights();
+
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
+    /**
+     * Issue #20: a full re analysis must rebuild every night it deleted, also those older than 400 days.
+     * Cheap sparse history: two boots of the made up ring, 7 nights each, about 500 days apart.
+     */
+    static void oldNights() throws Exception {
+        long t = System.currentTimeMillis();
+        Context c = new Context(Files.createTempDirectory("openring4").toFile());
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        String[] starts = {"2024-05-01", "2025-09-10"};
+        for (int k = 0; k < 2; k++) {
+            long t0 = LocalDate.parse(starts[k]).atStartOfDay(z).toEpochSecond();
+            long end = t0 + 8 * 86400L + 12 * 3600;
+            List<RingEvent> ev = app.openring.data.Demo.history(t0, 7, end, z, new Random(7 + k));
+            for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), k + 1, end);
+            long lastDs = ev.get(ev.size() - 1).ds;
+            db.insertPhoneAnchor(k + 1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+            Analyzer.run(c, null); // one sync per boot, like a person wearing the ring for years
+        }
+        long nights = db.count("SELECT COUNT(*) FROM nights"), days = db.count("SELECT COUNT(*) FROM days");
+        String oldest = db.count("SELECT COUNT(*) FROM nights") == 0 ? null
+                : Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0)).optString("day");
+        check("syncs keep the nights of both boots, 500 days apart", nights >= 12 && "2024-05-02".equals(oldest), nights + " nights, oldest " + oldest);
+        Analyzer.runAll(c, null);
+        long nightsAll = db.count("SELECT COUNT(*) FROM nights"), daysAll = db.count("SELECT COUNT(*) FROM days");
+        String oldestAll = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0)).optString("day");
+        check("full re analysis keeps every night and day (#20)", nightsAll == nights && daysAll == days,
+                nights + " to " + nightsAll + " nights, " + days + " to " + daysAll + " days");
+        check("full re analysis keeps the oldest night", oldestAll.equals(oldest), oldestAll);
+        // a new stage detail picked up by the next sync reaches the oldest night too
+        int level = app.openring.data.Prefs.of(c).stageDetail() == app.openring.core.analysis.StageFilter.DETAILED
+                ? app.openring.core.analysis.StageFilter.BALANCED : app.openring.core.analysis.StageFilter.DETAILED;
+        app.openring.data.Prefs.of(c).setStageDetail(level);
+        Analyzer.run(c, null);
+        JSONObject first = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0));
+        check("new stage detail reaches the oldest night", first.optInt("stage_detail", -1) == level && db.count("SELECT COUNT(*) FROM nights") == nights,
+                first.optInt("stage_detail", -1) + " in " + (System.currentTimeMillis() - t) + " ms");
+    }
+
     /** Clock minutes after 12:00 the day before (so 23:00 is 660, 07:00 is 1140). */
     static double clockFromNoon(double unix, ZoneId z) {
         java.time.LocalTime t = java.time.Instant.ofEpochSecond((long) unix).atZone(z).toLocalTime();
