@@ -103,9 +103,10 @@ Anything that holds the ring (live, games) must release it when its screen pause
 15 seconds for the lock, live 10 seconds and games up to 3 minutes; Settings actions on the ring
 (read or switch measurements, factory reset) fail at once with "The ring is busy". A sync releases the
 lock as soon as its download ends, before it reads the screen log and analyses (issue #21); `busy()`
-stays true until that analysis is done, so screens reload only then. Code that replaces or wipes the
-database (restore, pairing a different ring) first waits for a running analysis (`synchronized
-(Analyzer.class)`). Analysis and database reads in the UI run in AsyncTasks.
+stays true until that analysis is done, so screens reload only then, and the status keeps saying
+"Analysing" (other ring tasks then only write to the log). Code that replaces or wipes the database
+(restore, pairing a different ring) first waits for a running analysis (`synchronized
+(Analyzer.class)`), except "Delete all local data" in Settings, which runs on the screen thread. Analysis and database reads in the UI run in AsyncTasks.
 
 ## Known limits
 

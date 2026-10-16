@@ -1022,6 +1022,17 @@ public class PipelineTest {
         long lastDs2 = lastDay.get(lastDay.size() - 1).ds;
         db.insertPhoneAnchor(1, lastDs2, t0 + (lastDs2 - ds0) / 10);
         sameAsOld(db, now, "one more day");
+        // 12 hours later the phone clock had been set back by 7 hours: the rows nearer to the new
+        // anchor are dated from it (no new segment, the ring counter did not jump)
+        long backDs = lastDs2 + 72 * 6000;
+        db.insertBatch(motion(lastDs2 + 6000, 72, 6000, 7), 1, now);
+        db.insertPhoneAnchor(1, backDs, t0 + (backDs - ds0) / 10 - 7 * 3600);
+        r = sameAsOld(db, now, "phone clock set back by 7 hours");
+        String newRow = "SELECT CAST(unix AS INTEGER) FROM events WHERE epoch = 1 AND tag = " + EventCodec.MOTION_EVENT + " AND body = X'01010207' AND ds = ";
+        long firstShift = t0 + (lastDs2 + 6000 - ds0) / 10 - db.count(newRow + (lastDs2 + 6000));
+        long lastShift = t0 + (backDs - ds0) / 10 - db.count(newRow + backDs);
+        check("rows near the set back anchor follow the phone clock", r.segments == 1 && Math.abs(firstShift) <= 1 && Math.abs(lastShift - 7 * 3600) <= 1,
+                firstShift + " s and " + lastShift + " s earlier");
         // a reboot: the counter restarts near zero in a new sync epoch, with the ring's own time record
         long bootUnix = t0 + 36 * 86400L + 3600;
         List<RingEvent> boot = motion(600, 40, 600, 2);
@@ -1067,6 +1078,11 @@ public class PipelineTest {
         check("events dated well after the download are cleared", late == 2, late);
         check("events dated before 2015 are cleared", early > 0 && early < a5.size(), early);
         check("an anchor in the future is not used", future == a6.size(), future);
+        // the time record of epoch 4 goes away: its rows must lose their dates, not keep the old ones
+        db.getWritableDatabase().execSQL("DELETE FROM events WHERE epoch = 4 AND tag = 66");
+        sameAsOld(db, now, "anchor row deleted");
+        long lost = db.count("SELECT COUNT(*) FROM events WHERE epoch = 4 AND unix IS NOT NULL");
+        check("rows without their time record are undated again", lost == 0, lost);
         db.close();
     }
 
