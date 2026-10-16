@@ -865,7 +865,8 @@ public final class Charts {
                 double a = Math.toRadians(dialAngle(now, from, to));
                 p.setStyle(Paint.Style.FILL);
                 p.setColor(Ui.TEXT);
-                cv.drawCircle(cx + (float) Math.cos(a) * (r1 + label * 0.35f), cy + (float) Math.sin(a) * (r1 + label * 0.35f), Ui.dp(getContext(), 3), p);
+                // on the hour ring, so it never covers an hour label
+                cv.drawCircle(cx + (float) Math.cos(a) * r0, cy + (float) Math.sin(a) * r0, Ui.dp(getContext(), 3.5f), p);
             }
             // hour labels
             t.setColor(Ui.TEXT_3);

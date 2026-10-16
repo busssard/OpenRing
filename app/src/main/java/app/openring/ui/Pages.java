@@ -858,6 +858,11 @@ public final class Pages {
         return root;
     }
 
+    /** "37m" under an hour, "1h 5m" above. */
+    static String span(double min) {
+        return Double.isNaN(min) || min >= 59.5 ? Ui.hm(min) : Math.round(min) + "m";
+    }
+
     /** "07:42" for a moment, "--" when unknown. */
     static String clock(double unix) {
         if (Double.isNaN(unix)) return "--";
@@ -900,7 +905,7 @@ public final class Pages {
                 LinearLayout row = Ui.hbox(c);
                 row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
                 row.addView(Ui.text(c, app.openring.data.ScreenUse.label(c, e.getKey()), 14, out ? Ui.TEXT_3 : Ui.TEXT, Ui.REGULAR), Ui.weight(1));
-                row.addView(Ui.text(c, (out ? "not counted, " : "") + Ui.hm(e.getValue()), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
+                row.addView(Ui.text(c, (out ? "not counted, " : "") + span(e.getValue()), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
                 card.addView(row);
             }
         }
@@ -933,7 +938,7 @@ public final class Pages {
         double days = since < 0 ? 10 : Math.max(1, Math.min(10, (System.currentTimeMillis() / 1000.0 - since) / 86400));
         for (java.util.Map.Entry<String, Double> e : app.openring.data.ScreenDays.recentApps(db, 10)) {
             pkgs.add(e.getKey());
-            labels.add(app.openring.data.ScreenUse.label(c, e.getKey()) + "  (" + Ui.hm(e.getValue() / days) + " a day)");
+            labels.add(app.openring.data.ScreenUse.label(c, e.getKey()) + "  (" + span(e.getValue() / days) + " a day)");
         }
         for (String x : ex) {
             if (pkgs.contains(x)) continue;
