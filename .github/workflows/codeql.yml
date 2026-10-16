@@ -14,8 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # the real build (javac via build_apk.sh, no Gradle), so CodeQL sees the compiled code with the
+      # Android classes resolved instead of guessing from the source files
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: github/codeql-action/init@v3
         with:
           languages: java-kotlin
-          build-mode: none
+          build-mode: manual
+      - name: Build
+        run: ./build_apk.sh
       - uses: github/codeql-action/analyze@v3
