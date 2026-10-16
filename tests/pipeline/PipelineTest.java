@@ -472,7 +472,7 @@ public class PipelineTest {
         // clocks back on 26 October 2025; "now" is 00:30, when tonight's night is still too short
         long fallNow = java.time.LocalDateTime.parse("2025-11-09T00:30:00").atZone(zz).toEpochSecond();
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2025-11-09"), fallNow);
-        dstChecks(Db.get(phone3), "back", "2025-10-26", "2025-10-26T01:00:00Z", -60);
+        dstChecks(Db.get(phone3), "back", "2025-10-26", "2025-10-26T01:00:00Z", -60, "03:00", "02:00");
         List<String> fallMain = Db.get(phone3).nightsJson("2000-01-01", "2100-01-01", true);
         JSONObject fallNewest = Json.parse(fallMain.get(fallMain.size() - 1));
         check("newest demo night has a phone check at 00:30", Json.d(fallNewest, "phone_min") >= 1, fallNewest.optString("day"));
@@ -480,7 +480,7 @@ public class PipelineTest {
         // clocks forward on 29 March 2026, at noon
         long springNow = java.time.LocalDateTime.parse("2026-04-12T12:00:00").atZone(zz).toEpochSecond();
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2026-04-12"), springNow);
-        dstChecks(Db.get(phone3), "forward", "2026-03-29", "2026-03-29T01:00:00Z", 60);
+        dstChecks(Db.get(phone3), "forward", "2026-03-29", "2026-03-29T01:00:00Z", 60, "02:00", "03:00");
         List<String> springMain = Db.get(phone3).nightsJson("2000-01-01", "2100-01-01", true);
         JSONObject springNewest = Json.parse(springMain.get(springMain.size() - 1));
         check("newest demo night has a phone check at noon", Json.d(springNewest, "phone_min") >= 1
@@ -507,7 +507,7 @@ public class PipelineTest {
      * Issue #22: demo bed and wake times keep their clock time across a switch (median of up to 14 nights on each side
      * moves by under 30 minutes, the old bug moved it by 60), and the switch night carries the marker.
      */
-    static void dstChecks(Db db, String way, String switchDay, String switchUtc, int minutes) {
+    static void dstChecks(Db db, String way, String switchDay, String switchUtc, int minutes, String from, String to) {
         ZoneId z = ZoneId.systemDefault();
         LocalDate sw = LocalDate.parse(switchDay);
         List<Double> bedBefore = new ArrayList<Double>(), bedAfter = new ArrayList<Double>(),
@@ -536,6 +536,9 @@ public class PipelineTest {
                 && switchNight.optInt("clock_change_min") == minutes
                 && (long) Json.d(switchNight, "clock_change_at") == java.time.Instant.parse(switchUtc).getEpochSecond(),
                 switchNight == null ? null : switchNight.optString("clock_change_min") + " at " + switchNight.optString("clock_change_at"));
+        check("demo switch night keeps the local clock times", switchNight != null
+                && from.equals(switchNight.optString("clock_change_from")) && to.equals(switchNight.optString("clock_change_to")),
+                switchNight == null ? null : switchNight.optString("clock_change_from") + " to " + switchNight.optString("clock_change_to"));
         check("only that demo night is marked", marked == 1, marked);
     }
 }

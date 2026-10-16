@@ -735,10 +735,12 @@ public class CoreTest {
         check("clocks back found", back != null);
         eq("clocks back at 01:00 UTC", (long) back.at, java.time.Instant.parse("2026-10-25T01:00:00Z").getEpochSecond());
         eq("clocks back is minus 60", back.minutes, -60);
+        eq("clocks back local times", back.from + " to " + back.to, "03:00 to 02:00");
         ClockChange.Change fwd = ClockChange.find(z, zurich("2026-03-28T23:00:00"), zurich("2026-03-29T07:00:00"));
         check("clocks forward found", fwd != null);
         eq("clocks forward at 01:00 UTC", (long) fwd.at, java.time.Instant.parse("2026-03-29T01:00:00Z").getEpochSecond());
         eq("clocks forward is plus 60", fwd.minutes, 60);
+        eq("clocks forward local times", fwd.from + " to " + fwd.to, "02:00 to 03:00");
         check("normal night has no change", ClockChange.find(z, zurich("2026-10-20T22:30:00"), zurich("2026-10-21T07:00:00")) == null);
         check("UTC has no change", ClockChange.find(java.time.ZoneOffset.UTC, 1790000000, 1790030000) == null);
         double sw = java.time.Instant.parse("2026-10-25T01:00:00Z").getEpochSecond();
@@ -750,11 +752,12 @@ public class CoreTest {
         ClockChange.Change half = ClockChange.find(lh, java.time.LocalDateTime.parse("2026-04-04T22:00:00").atZone(lh).toEpochSecond(),
                 java.time.LocalDateTime.parse("2026-04-05T07:00:00").atZone(lh).toEpochSecond());
         eq("Lord Howe goes back 30 minutes", half == null ? 0 : half.minutes, -30);
-        eq("text back", ClockChange.text(-60, java.time.LocalTime.of(2, 0)), "The clocks went back one hour this night (03:00 became 02:00). "
+        eq("text back", ClockChange.text(-60, "03:00", "02:00"), "The clocks went back one hour that night (03:00 became 02:00). "
                 + "Sleep times count the real hours, so you had one hour more in bed than the clock shows.");
-        eq("text forward", ClockChange.text(60, java.time.LocalTime.of(3, 0)), "The clocks went forward one hour this night (02:00 became 03:00). "
+        eq("text forward", ClockChange.text(60, "02:00", "03:00"), "The clocks went forward one hour that night (02:00 became 03:00). "
                 + "Sleep times count the real hours, so the night was one hour shorter than the clock shows.");
-        check("text 30 minutes", ClockChange.text(-30, java.time.LocalTime.of(1, 30)).startsWith("The clocks went back 30 minutes this night (02:00 became 01:30)"));
-        check("text two hours", ClockChange.text(120, java.time.LocalTime.of(4, 0)).contains("forward 2 hours"));
+        check("text 30 minutes", ClockChange.text(-30, "02:00", "01:30").startsWith("The clocks went back 30 minutes that night (02:00 became 01:30)"));
+        check("text two hours", ClockChange.text(120, "02:00", "04:00").contains("forward 2 hours"));
+        check("text without stored times", ClockChange.text(-60, "", null).startsWith("The clocks went back one hour that night. Sleep"));
     }
 }
