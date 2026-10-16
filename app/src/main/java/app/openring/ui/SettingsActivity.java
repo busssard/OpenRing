@@ -365,7 +365,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         small(danger, "Use a different key or ring", Ui.WARN, new Runnable() {
             @Override
             public void run() {
-                confirm("Forget this ring?", "The saved key is removed from this phone. Your synced history stays.", new Runnable() {
+                confirm("Forget this ring?", "The saved key is removed from this phone. Your synced history stays. If you restore a full backup later, the app asks before it replaces this history.", new Runnable() {
                     @Override
                     public void run() {
                         p.clearKey();

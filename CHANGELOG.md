@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.18
+* Restoring a full backup no longer replaces newer history without asking. If this phone has nights the
+  backup lacks, the app asks first, and "Key and settings only" keeps the history on the phone (#26)
+* A backup with a damaged history, or one made by a newer Open Ring, is refused with a clear message and
+  nothing on the phone changes. Before the history is swapped the old one is kept until the new one opens (#27)
+
 ## 1.17
 * Re analysing all history no longer loses nights and days older than 400 days. Every night the ring data
   is still stored for comes back, and changing the sleep stage detail now reaches the oldest nights too (#20)

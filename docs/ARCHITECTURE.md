@@ -67,6 +67,12 @@ Nothing leaves the phone: the app has no internet permission.
 
 Demo mode uses a separate file (`openring-demo.db`), so demo and real data never mix.
 
+Restoring a full backup (`Backup.prepare`, then `finish`) first checks the backup's database on its own
+(`Db.inspect`: `quick_check`, a version this app can open, the Open Ring tables) and refuses it whole if
+it fails. If the phone's history reaches more than an hour later or holds more events, Setup asks
+before replacing it (#26). `Db.replaceWith` keeps the old file as `openring.db.old` until the new one
+opens, and puts it back if it does not (#27). Histories are never merged.
+
 ## Analysis
 
 1. `NightFinder` finds sleep periods from the ring's bedtime markers, its per 30 second sleep state and

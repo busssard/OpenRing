@@ -7,7 +7,23 @@ public class SQLiteDatabase {
     public static final int CONFLICT_REPLACE = 5;
     public final Connection conn;
     int depth; boolean ok;
+    public static final int OPEN_READWRITE = 0, OPEN_READONLY = 1;
+    public interface CursorFactory {}
     SQLiteDatabase(Connection c) { conn = c; }
+    /** Opens an existing file on its own (no helper, no upgrade); fails like Android when it is missing. */
+    public static SQLiteDatabase openDatabase(String path, CursorFactory f, int flags, android.database.DatabaseErrorHandler h) {
+        if (!new java.io.File(path).isFile()) throw new RuntimeException("unable to open database file: " + path);
+        try {
+            java.util.Properties p = new java.util.Properties();
+            if ((flags & OPEN_READONLY) != 0) p.setProperty("open_mode", "1");
+            return new SQLiteDatabase(DriverManager.getConnection("jdbc:sqlite:" + path, p));
+        } catch (SQLException e) { throw wrap(e); }
+    }
+    public int getVersion() {
+        try (Statement s = conn.createStatement(); ResultSet r = s.executeQuery("PRAGMA user_version")) { r.next(); return r.getInt(1); }
+        catch (SQLException e) { throw wrap(e); }
+    }
+    public void close() { try { conn.close(); } catch (SQLException e) { throw wrap(e); } }
     static RuntimeException wrap(Exception e) { return new RuntimeException(e); }
     public void execSQL(String sql) { try (Statement s = conn.createStatement()) { s.execute(sql); } catch (SQLException e) { throw wrap(e); } }
     public void execSQL(String sql, Object[] args) {

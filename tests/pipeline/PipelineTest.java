@@ -488,10 +488,198 @@ public class PipelineTest {
         app.openring.data.Demo.leave(phone3);
 
         oldNights();
+        restoreSafety(full.toByteArray(), keyBytes);
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
+    /**
+     * Issues #26 and #27: a restore checks the backup's history before anything changes, never
+     * replaces newer history on the phone without asking, and keeps the old file until the new
+     * one opens. {@code full} is a full backup of the main test history.
+     */
+    static void restoreSafety(byte[] full, byte[] key) throws Exception {
+        byte[] otherKey = app.openring.core.Hex.parseKey("00112233445566778899aabbccddeeff");
+        byte[] dbBytes = zipEntry(full, "openring.db");
+
+        // a phone with the backup's history plus newer nights
+        Context ph = freshPhone();
+        app.openring.data.Backup.Result r0 = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(full));
+        check("restore onto an empty phone needs no question", r0.ok && r0.history, r0.message);
+        Db db = Db.get(ph);
+        long base = db.eventCount();
+        double newest = db.datedRange()[1];
+        for (int i = 0; i < 400; i++) {
+            db.getWritableDatabase().execSQL("INSERT INTO events(epoch, tag, ds, body, captured, unix) VALUES (?,?,?,?,?,?)",
+                    new Object[] {1L, 0x46, 900000000L + i, new byte[] {(byte) i, (byte) (i >> 8), 7}, 1L, newest + 86400 * 4 + i * 60.0});
+        }
+        long phoneEvents = db.eventCount();
+        app.openring.data.Prefs pp = app.openring.data.Prefs.of(ph);
+        pp.saveKey(otherKey);
+        pp.setScreenGoalMin(45);
+
+        // #27: damaged history, nothing changes
+        byte[] junk = new byte[4096];
+        System.arraycopy("SQLite format 3\0".getBytes("US-ASCII"), 0, junk, 0, 16);
+        for (int i = 16; i < junk.length; i++) junk[i] = (byte) (i * 31);
+        app.openring.data.Backup.Result rd = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(withDb(full, junk)));
+        check("damaged backup history is refused (#27)", !rd.ok && rd.message.contains("damaged"), rd.message);
+        unchanged(ph, phoneEvents, otherKey, "after a damaged backup");
+
+        // #27: a history from a newer app version
+        byte[] newer = withVersion(dbBytes, 99);
+        app.openring.data.Backup.Result rn = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(withDb(full, newer)));
+        check("newer version history is refused (#27)", !rn.ok && rn.message.contains("newer Open Ring"), rn.message);
+        unchanged(ph, phoneEvents, otherKey, "after a newer version backup");
+
+        // a healthy SQLite file that is not an Open Ring history
+        java.io.File plain = java.nio.file.Files.createTempFile("plain", ".db").toFile();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + plain.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)");
+            st.execute("PRAGMA user_version = 4");
+        }
+        app.openring.data.Backup.Result rp = app.openring.data.Backup.read(ph,
+                new java.io.ByteArrayInputStream(withDb(full, java.nio.file.Files.readAllBytes(plain.toPath()))));
+        check("history without the events table is refused", !rp.ok && rp.message.contains("damaged"), rp.message);
+        unchanged(ph, phoneEvents, otherKey, "after a file without events");
+
+        // #27: passes the check but its upgrade fails when opened: the old file comes back
+        byte[] broken = withVersion(dbBytes, 1); // already has the v2 column, so the v2 upgrade fails
+        app.openring.data.Backup.Plan pb = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(withDb(full, broken)));
+        app.openring.data.Backup.Result rb = app.openring.data.Backup.finish(ph, pb, true);
+        check("history that does not open is rolled back (#27)", !rb.ok && rb.message.contains("was kept"), rb.message);
+        unchanged(ph, phoneEvents, otherKey, "after a failed swap");
+        check("no old copy left after the roll back", !new java.io.File(ph.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
+
+        // the shim now fails like Android for a newer version
+        Context fresh = freshPhone();
+        java.nio.file.Files.write(fresh.getDatabasePath("x.db").toPath(), newer);
+        String thrown = null;
+        try {
+            new android.database.sqlite.SQLiteOpenHelper(fresh, "x.db", null, 4) {
+                public void onCreate(android.database.sqlite.SQLiteDatabase d) {}
+                public void onUpgrade(android.database.sqlite.SQLiteDatabase d, int o, int n) {}
+            }.getWritableDatabase();
+        } catch (RuntimeException e) {
+            thrown = e.getMessage();
+        }
+        check("opening a newer version database fails like on Android", thrown != null && thrown.contains("downgrade"), thrown);
+
+        // #26: an older backup over newer history asks first
+        app.openring.data.Backup.Plan po = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        check("older backup over newer history asks (#26)", po.error == null && po.ask && po.phoneNewer,
+                "ask " + po.ask + ", phone newer " + po.phoneNewer);
+        check("the question knows both dates", po.phoneNewest > po.backupNewest + 3 * 86400, (long) po.backupNewest + " vs " + (long) po.phoneNewest);
+        app.openring.data.Backup.Result rk = app.openring.data.Backup.finish(ph, po, false);
+        check("key and settings only keeps the newer history (#26)", rk.ok && !rk.history && Db.get(ph).eventCount() == phoneEvents
+                && rk.message.contains("stays"), rk.message + ", " + Db.get(ph).eventCount() + " events");
+        check("key and settings only restores the key", java.util.Arrays.equals(app.openring.data.Prefs.of(ph).loadKey(), key), null);
+        check("key and settings only restores the settings", app.openring.data.Prefs.of(ph).screenGoalMin() == 120, app.openring.data.Prefs.of(ph).screenGoalMin());
+        noTemp(ph, "after key and settings only");
+        app.openring.data.Backup.Result ra = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(full));
+        check("restore in one go keeps newer history too", ra.ok && !ra.history && Db.get(ph).eventCount() == phoneEvents, ra.message);
+        app.openring.data.Backup.Plan pc = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Backup.cancel(ph, pc);
+        noTemp(ph, "after cancel");
+        app.openring.data.Backup.Plan px = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Backup.Result rx = app.openring.data.Backup.finish(ph, px, true);
+        check("replace history, when chosen, restores the backup's history", rx.ok && rx.history && Db.get(ph).eventCount() == base,
+                phoneEvents + " -> " + Db.get(ph).eventCount());
+        noTemp(ph, "after replace");
+        check("no old copy left after a replace", !new java.io.File(ph.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
+
+        // only more events (undated), not later: still asks
+        for (int i = 0; i < 50; i++) {
+            Db.get(ph).getWritableDatabase().execSQL("INSERT INTO events(epoch, tag, ds, body, captured) VALUES (?,?,?,?,?)",
+                    new Object[] {2L, 0x46, 800000000L + i, new byte[] {(byte) i, 9}, 1L});
+        }
+        app.openring.data.Backup.Plan pm = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(full));
+        check("more events on the phone, not later, still asks", pm.ask && !pm.phoneNewer, "ask " + pm.ask + ", phone newer " + pm.phoneNewer);
+        app.openring.data.Backup.cancel(ph, pm);
+
+        // a key only backup never asks and never touches the history
+        java.io.ByteArrayOutputStream small = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(small)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(zipEntry(full, "openring-backup.json"));
+            z.closeEntry();
+        }
+        app.openring.data.Backup.Plan ps = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(small.toByteArray()));
+        check("key only backup does not ask", ps.error == null && !ps.ask && !ps.history, null);
+        app.openring.data.Backup.cancel(ph, ps);
+
+        // the leftover temp file from an invalid key is removed too
+        app.openring.data.Backup.Result ri = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(
+                withDb(zipWithJson("{\"key\":\"nope\"}"), dbBytes)));
+        check("invalid key refused", !ri.ok, ri.message);
+        noTemp(ph, "after an invalid key");
+    }
+
+    static Context freshPhone() throws java.io.IOException {
+        return new Context(java.nio.file.Files.createTempDirectory("openring-restore").toFile());
+    }
+
+    static void unchanged(Context c, long events, byte[] key, String when) {
+        check("phone history unchanged " + when, Db.get(c).eventCount() == events, Db.get(c).eventCount());
+        check("key and settings unchanged " + when, java.util.Arrays.equals(app.openring.data.Prefs.of(c).loadKey(), key)
+                && app.openring.data.Prefs.of(c).screenGoalMin() == 45, app.openring.data.Prefs.of(c).screenGoalMin());
+        noTemp(c, when);
+    }
+
+    static void noTemp(Context c, String when) {
+        check("no restore.db left " + when, !new java.io.File(c.getCacheDir(), "restore.db").exists(), null);
+    }
+
+    static byte[] zipEntry(byte[] zip, String name) throws java.io.IOException {
+        java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zip));
+        java.util.zip.ZipEntry e;
+        while ((e = z.getNextEntry()) != null) {
+            if (name.equals(e.getName())) {
+                java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = z.read(buf)) > 0) b.write(buf, 0, n);
+                return b.toByteArray();
+            }
+        }
+        return null;
+    }
+
+    static byte[] zipWithJson(String json) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(json.getBytes("UTF-8"));
+            z.closeEntry();
+        }
+        return out.toByteArray();
+    }
+
+    /** The backup's JSON with another history file. */
+    static byte[] withDb(byte[] zip, byte[] db) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(zipEntry(zip, "openring-backup.json"));
+            z.closeEntry();
+            z.putNextEntry(new java.util.zip.ZipEntry("openring.db"));
+            z.write(db);
+            z.closeEntry();
+        }
+        return out.toByteArray();
+    }
+
+    static byte[] withVersion(byte[] db, int version) throws Exception {
+        java.io.File f = java.nio.file.Files.createTempFile("ver", ".db").toFile();
+        java.nio.file.Files.write(f.toPath(), db);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("PRAGMA user_version = " + version);
+        }
+        return java.nio.file.Files.readAllBytes(f.toPath());
+    }
+
     /**
      * Issue #20: a full re analysis must rebuild every night it deleted, also those older than 400 days.
      * Cheap sparse history: two boots of the made up ring, 7 nights each, about 500 days apart.
