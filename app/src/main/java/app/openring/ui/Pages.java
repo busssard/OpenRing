@@ -893,8 +893,10 @@ public final class Pages {
         } else {
             int shown = 0;
             for (java.util.Map.Entry<String, Double> e : in.apps) {
-                if (shown++ >= 8) break;
                 boolean out = ex.contains(e.getKey());
+                // the 8 most used, plus every app left out so it never disappears silently
+                if (shown >= 8 && !out) continue;
+                shown++;
                 LinearLayout row = Ui.hbox(c);
                 row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
                 row.addView(Ui.text(c, app.openring.data.ScreenUse.label(c, e.getKey()), 14, out ? Ui.TEXT_3 : Ui.TEXT, Ui.REGULAR), Ui.weight(1));
@@ -925,9 +927,13 @@ public final class Pages {
         final java.util.Set<String> ex = p.screenExcluded();
         final List<String> pkgs = new ArrayList<String>();
         List<String> labels = new ArrayList<String>();
-        for (java.util.Map.Entry<String, Double> e : app.openring.data.ScreenDays.recentApps(app.openring.data.Db.get(c), 10)) {
+        app.openring.data.Db db = app.openring.data.Db.get(c);
+        // per day over the days app times are known (fewer than 10 right after installing 1.15)
+        double since = db.appsStart();
+        double days = since < 0 ? 10 : Math.max(1, Math.min(10, (System.currentTimeMillis() / 1000.0 - since) / 86400));
+        for (java.util.Map.Entry<String, Double> e : app.openring.data.ScreenDays.recentApps(db, 10)) {
             pkgs.add(e.getKey());
-            labels.add(app.openring.data.ScreenUse.label(c, e.getKey()) + "  (" + Ui.hm(e.getValue() / 10) + " a day)");
+            labels.add(app.openring.data.ScreenUse.label(c, e.getKey()) + "  (" + Ui.hm(e.getValue() / days) + " a day)");
         }
         for (String x : ex) {
             if (pkgs.contains(x)) continue;

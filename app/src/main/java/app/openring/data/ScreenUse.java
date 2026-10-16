@@ -70,9 +70,11 @@ public final class ScreenUse {
         lastRun = now;
         Db db = Db.get(c);
         double last = db.screenStart(false);
-        long from = last > 0 ? (long) Math.floor(last * 1000) : now - 10L * 86400 * 1000;
-        // the first read of a version with apps (1.15) goes back as far as Android keeps the log
-        if (db.appsStart() < 0) from = Math.min(from, now - 10L * 86400 * 1000);
+        long screenFrom = last > 0 ? (long) Math.floor(last * 1000) : now - 10L * 86400 * 1000;
+        // the first read of a version with apps (1.15) goes back as far as Android keeps the log, for
+        // the apps only: screen sessions keep starting at the newest stored one, so none is stored twice
+        boolean firstApps = db.kvLong("apps_read", 0) == 0;
+        long from = firstApps ? Math.min(screenFrom, now - 10L * 86400 * 1000) : screenFrom;
         List<Double> times = new ArrayList<Double>();
         List<Integer> kinds = new ArrayList<Integer>();
         // apps in front (their own list: an app's "in front" also counts as a sign of use above)
@@ -94,7 +96,7 @@ public final class ScreenUse {
                     aPkgs.add(app == ScreenTime.APP_ON || app == ScreenTime.APP_OFF ? e.getPackageName() : null);
                 }
                 int kind = kind(type);
-                if (kind == 0) continue;
+                if (kind == 0 || e.getTimeStamp() < screenFrom) continue;
                 times.add(at);
                 kinds.add(kind);
             }
@@ -108,13 +110,14 @@ public final class ScreenUse {
             ak[i] = aKinds.get(i);
         }
         db.putApps(ScreenTime.appSessions(at, ak, aPkgs.toArray(new String[0]), from / 1000.0, now / 1000.0));
+        if (firstApps) db.put("apps_read", 1);
         double[] t = new double[times.size()];
         int[] k = new int[kinds.size()];
         for (int i = 0; i < t.length; i++) {
             t[i] = times.get(i);
             k[i] = kinds.get(i);
         }
-        List<double[]> sessions = ScreenTime.sessions(t, k, from / 1000.0, now / 1000.0);
+        List<double[]> sessions = ScreenTime.sessions(t, k, screenFrom / 1000.0, now / 1000.0);
         if (sessions.isEmpty()) return 0;
         db.putScreen(sessions);
         // phone use for nights already analysed: the next analysis looks at them again

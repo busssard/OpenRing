@@ -148,11 +148,15 @@ public final class ScreenDays {
         for (double[] n : nights) if (n[1] > in.from && n[0] < in.to) in.nights.add(n);
         boolean known = first >= 0 && in.to > first;
         if (known) {
-            in.day = ScreenTime.day(counted, hourEdges(date, zone));
+            // how often the screen was turned on comes from the screen itself: leaving an app out of a
+            // session must not split it into two; total, per hour and longest only count what counts
+            double[] edges = hourEdges(date, zone);
+            in.day = ScreenTime.day(counted, edges);
+            in.day.turnedOn = ScreenTime.turnedOn(raw, in.from, in.to);
             in.rawMin = ScreenTime.minutes(raw, in.from, in.to);
             in.excludedMin = Math.max(0, in.rawMin - in.day.totalMin);
             in.dial = ScreenTime.fill(counted, in.from, in.to, DIAL_STEPS);
-            in.firstLook = ScreenTime.firstAfter(counted, night != null ? Math.max(in.from, night[1]) : in.from, in.to);
+            if (night != null) in.firstLook = ScreenTime.firstAfter(counted, Math.max(in.from, night[1]), in.to);
             if (night != null && night[0] - ScreenScore.BEDTIME_WINDOW_S >= first) {
                 in.bedMin = ScreenTime.minutes(counted, night[0] - ScreenScore.BEDTIME_WINDOW_S, night[0]);
                 in.nightMin = ScreenTime.minutes(counted, night[0], night[1]);
@@ -174,7 +178,7 @@ public final class ScreenDays {
                 r.totalMin = ScreenTime.minutes(counted, r.from, r.to);
                 r.fill = ScreenTime.fill(counted, r.from, r.to, ROW_STEPS);
                 double[] n = byDay.get(r.date.toString());
-                r.firstLook = ScreenTime.firstAfter(counted, n != null ? Math.max(r.from, n[1]) : r.from, r.to);
+                if (n != null) r.firstLook = ScreenTime.firstAfter(counted, Math.max(r.from, n[1]), r.to);
             }
             in.rows[i] = r;
         }
