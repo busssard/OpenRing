@@ -11,7 +11,7 @@ import math, os
 from shapely.geometry import Polygon, LineString
 from shapely import affinity
 
-HIGHLIGHT = "#8E9BFF"   # Ui.SLEEP, the app's highlight colour
+HIGHLIGHT = "#2E3B9E"   # Ui.STAGE_DEEP, the deep sleep blue of the app
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 

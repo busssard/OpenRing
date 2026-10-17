@@ -2,7 +2,7 @@
 
 ## 1.21
 * New icon from the owner's sketch: a ring seen slightly from above, the infinity sign cut into its band,
-  in one plain colour (the app's highlight). Also the notification icon and the themed icon on Android 13
+  in one plain colour (the app's deep sleep blue). Also the notification icon and the themed icon on Android 13
 
 ## 1.20
 * Screen time counts while the phone is unlocked and the screen is on, close to the ScreenTime app. The lock
