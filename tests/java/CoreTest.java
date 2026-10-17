@@ -178,7 +178,7 @@ public class CoreTest {
 
         // property test: random nights with short and long runs and missing data
         Random rnd = new Random(28);
-        int notSubset = 0, moreWakes = 0, moreAwake = 0, moved = 0, balancedDiffers = 0, nights = 20000;
+        int notSubset = 0, moreWakes = 0, moreWakeRuns = 0, moreAwake = 0, moved = 0, balancedDiffers = 0, nights = 20000;
         for (int t = 0; t < nights; t++) {
             int len = 20 + rnd.nextInt(200);
             int[] s = new int[len];
@@ -193,6 +193,7 @@ public class CoreTest {
                 for (int i = 0; i < len; i++) if (f[i] == W && s[i] != W) { notSubset++; break; }
                 Night n = metricsOnly(s, lv);
                 if (n.awakenings > det.awakenings) moreWakes++;
+                if (StageFilter.wakeRuns(f) > StageFilter.wakeRuns(s)) moreWakeRuns++;
                 if (n.awakeMin > det.awakeMin + 1e-9) moreAwake++;
                 if (!(Double.isNaN(det.sleepStart) ? Double.isNaN(n.sleepStart) : n.sleepStart == det.sleepStart && n.sleepEnd == det.sleepEnd)) moved++;
                 if (lv == B && n.awakenings != det.awakenings) balancedDiffers++;
@@ -200,6 +201,7 @@ public class CoreTest {
         }
         eq("random nights: awake in the result was awake in the input", notSubset, 0);
         eq("random nights: wake ups never above Detailed", moreWakes, 0);
+        eq("random nights: awake runs of any length never above the input", moreWakeRuns, 0);
         eq("random nights: awake minutes never above Detailed", moreAwake, 0);
         eq("random nights: falling asleep and waking up do not move", moved, 0);
         eq("random nights: Balanced counts the same wake ups as Detailed", balancedDiffers, 0);
