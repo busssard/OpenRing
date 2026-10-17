@@ -40,41 +40,63 @@ public final class ScreenTime {
     /** A sleep window shorter than this after trimming is dropped (same limit as NightFinder). */
     public static final double MIN_WINDOW_S = 15 * 60;
 
-    /**
-     * Sessions from log entries sorted by time. A second "on" while on is ignored (the screen was
-     * already on), "off" or "shutdown" closes the session, a session still open ends at
-     * {@code now}. "Startup" closes a session left open at the last sign of use before it (the
-     * phone died or restarted with the screen on). When the log starts with "off" within
-     * {@link #LEAD_MAX_S} of {@code from}, the screen was on since {@code from}; a later first
-     * "off" is ignored, because the log does not tell how long the screen had been on.
-     */
+    /** The lock screen appeared (Android's "keyguard shown"). */
+    public static final int LOCKED = 8;
+    /** The person unlocked the phone ("keyguard hidden"). */
+    public static final int UNLOCKED = 9;
+
+    /** Sessions from screen on to off, for a phone without a lock screen (see the other overload). */
     public static List<double[]> sessions(double[] times, int[] kinds, double from, double now) {
+        return sessions(times, kinds, from, now, false);
+    }
+
+    /**
+     * Phone use sessions from log entries sorted by time. With a lock screen ({@code lockScreen}) a
+     * session runs from unlocking to the screen going off or locking, so the lock screen lighting up
+     * for a notification, a look at the clock or a screen saver while charging do not count (the same
+     * rule as the ScreenTime app). Without a lock screen it runs from screen on to off. "Shutdown"
+     * closes a session; "startup" closes one left open at the last sign of use before it (the phone
+     * died or restarted with the screen on). A session still open ends at {@code now}. When the log
+     * starts with "off" or "locked" within {@link #LEAD_MAX_S} of {@code from}, the phone was in use
+     * since {@code from}; a later first "off" is ignored, because the log does not tell since when.
+     */
+    public static List<double[]> sessions(double[] times, int[] kinds, double from, double now, boolean lockScreen) {
         List<double[]> out = new ArrayList<double[]>();
         double open = Double.NaN, lastUse = Double.NaN;
-        boolean seen = false;
+        boolean seen = false, locked = lockScreen;
         for (int i = 0; i < times.length; i++) {
             int k = kinds[i];
+            double t = times[i];
             if (k == ALIVE) {
-                if (!Double.isNaN(open)) lastUse = times[i];
+                if (!Double.isNaN(open)) lastUse = t;
                 continue;
             }
             if (k == STARTUP) {
                 if (!Double.isNaN(open) && !Double.isNaN(lastUse) && lastUse > open) out.add(new double[] {open, lastUse});
                 open = Double.NaN;
+                locked = lockScreen;
                 seen = true;
                 continue;
             }
             if (k == ON) {
-                if (Double.isNaN(open)) {
-                    open = times[i];
-                    lastUse = times[i];
+                if (!locked && Double.isNaN(open)) {
+                    open = t;
+                    lastUse = t;
                 }
-            } else if (k == OFF || k == SHUTDOWN) {
-                if (Double.isNaN(open) && !seen && k == OFF && times[i] > from && times[i] - from <= LEAD_MAX_S) open = from;
+            } else if (k == UNLOCKED) {
+                locked = false;
+                if (Double.isNaN(open)) {
+                    open = t;
+                    lastUse = t;
+                }
+            } else if (k == OFF || k == SHUTDOWN || k == LOCKED) {
+                if (Double.isNaN(open) && !seen && k != SHUTDOWN && t > from && t - from <= LEAD_MAX_S) open = from;
                 if (!Double.isNaN(open)) {
-                    if (times[i] > open) out.add(new double[] {open, times[i]});
+                    if (t > open) out.add(new double[] {open, t});
                     open = Double.NaN;
                 }
+                // a phone with a lock screen counts again only after the next unlock
+                if (k == LOCKED || lockScreen) locked = lockScreen || k == LOCKED;
             } else {
                 continue;
             }
@@ -82,6 +104,23 @@ public final class ScreenTime {
         }
         if (!Double.isNaN(open) && now > open) out.add(new double[] {open, now});
         return out;
+    }
+
+    /**
+     * Each session made at least {@code minS} seconds long, for the clock and the day rows only (a
+     * short unlock otherwise shows as a faint flicker). Totals never use this.
+     */
+    public static List<double[]> widen(List<double[]> sessions, double minS) {
+        if (minS <= 0) return sessions;
+        List<double[]> out = new ArrayList<double[]>();
+        for (double[] x : sessions) out.add(new double[] {x[0], Math.max(x[1], x[0] + minS)});
+        return out;
+    }
+
+    /** The session that contains {@code t}, or null. */
+    public static double[] at(List<double[]> sessions, double t) {
+        for (double[] x : sessions) if (t >= x[0] && t < x[1]) return x;
+        return null;
     }
 
     /** Seconds two ranges overlap. */
@@ -189,7 +228,8 @@ public final class ScreenTime {
      * range, {@link #APP_OFF} closes it, a screen {@link #OFF}, {@link #SHUTDOWN} or {@link #STARTUP}
      * closes every open app. A second "on" of an open app is ignored (another screen of the same app).
      * An "off" with no "on" before it within {@link #LEAD_MAX_S} of {@code from} means the app was in
-     * front since {@code from}. Ranges still open end at {@code now}. Package names may be null only
+     * front since {@code from}. Another app coming to the front closes the others (one app is in
+     * front at a time). Ranges still open end at {@code now}. Package names may be null only
      * for screen entries.
      */
     public static Map<String, List<double[]>> appSessions(double[] times, int[] kinds, String[] pkgs, double from, double now) {
@@ -208,6 +248,15 @@ public final class ScreenTime {
             String p = pkgs[i];
             if (p == null) continue;
             if (k == APP_ON) {
+                // only one app is in front: another one coming to the front sends the others back,
+                // also when the phone did not log their "went to the back"
+                java.util.Iterator<Map.Entry<String, Double>> it = open.entrySet().iterator();
+                while (it.hasNext()) {
+                    Map.Entry<String, Double> e = it.next();
+                    if (e.getKey().equals(p)) continue;
+                    add(out, e.getKey(), e.getValue(), t);
+                    it.remove();
+                }
                 if (!open.containsKey(p)) open.put(p, t);
                 seen.add(p);
             } else if (k == APP_OFF) {

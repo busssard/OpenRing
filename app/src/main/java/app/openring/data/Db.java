@@ -591,6 +591,12 @@ public final class Db extends SQLiteOpenHelper {
         return out;
     }
 
+    /** Forget screen sessions and app ranges that end after {@code unix}, to read them again with new rules. */
+    public void deleteScreenSince(double unix) {
+        getWritableDatabase().execSQL("DELETE FROM screen WHERE stop > ?", new Object[] {unix});
+        getWritableDatabase().execSQL("DELETE FROM apps WHERE stop > ?", new Object[] {unix});
+    }
+
     /** Start of the oldest stored app range, or -1 (days before it have screen time but no app split). */
     public double appsStart() {
         Cursor c = getReadableDatabase().rawQuery("SELECT MIN(start) FROM apps", null);

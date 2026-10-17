@@ -107,10 +107,25 @@ public final class ScreenDays {
         /** Whether app times are stored for this day (they start with version 1.15, about a week back). */
         public boolean appsKnown;
         public Row[] rows = new Row[0];
+        /** Counted sessions and apps in front touching this day, for reading the clock by touch. */
+        public List<double[]> sessions = Collections.emptyList();
+        public Map<String, List<double[]>> dayApps = Collections.emptyMap();
+        /** Screen on time with no app in front (home screen, system screens), minutes. */
+        public double noAppMin;
+    }
+
+    /** As below, with the clock and rows showing each session exactly as long as it was. */
+    public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded) {
+        return info(db, date, zone, goalMin, excluded, 0);
     }
 
     /** Builds the Screen tab for {@code date}: the day, its score and the {@link #ROWS} days ending there. */
-    public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded) {
+    /**
+     * Builds the Screen tab for {@code date}: the day, its score and the {@link #ROWS} days ending
+     * there. {@code minShowS}: each session shows at least this long on the clock and in the rows (the
+     * totals never change).
+     */
+    public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded, double minShowS) {
         Info in = new Info();
         in.date = date;
         in.goalMin = goalMin;
@@ -155,7 +170,11 @@ public final class ScreenDays {
             in.day.turnedOn = ScreenTime.turnedOn(raw, in.from, in.to);
             in.rawMin = ScreenTime.minutes(raw, in.from, in.to);
             in.excludedMin = Math.max(0, in.rawMin - in.day.totalMin);
-            in.dial = ScreenTime.fill(counted, in.from, in.to, DIAL_STEPS);
+            List<double[]> shown = ScreenTime.widen(counted, minShowS);
+            in.dial = ScreenTime.fill(shown, in.from, in.to, DIAL_STEPS);
+            in.sessions = new ArrayList<double[]>();
+            for (double[] x : counted) if (x[1] > in.from && x[0] < in.to) in.sessions.add(x);
+            in.dayApps = apps;
             if (night != null) in.firstLook = ScreenTime.firstAfter(counted, Math.max(in.from, night[1]), in.to);
             if (night != null && night[0] - ScreenScore.BEDTIME_WINDOW_S >= first) {
                 in.bedMin = ScreenTime.minutes(counted, night[0] - ScreenScore.BEDTIME_WINDOW_S, night[0]);
@@ -163,7 +182,12 @@ public final class ScreenDays {
             }
             in.score = ScreenScore.of(in.day.totalMin, goalMin, in.bedMin, in.nightMin);
             in.appsKnown = appsFrom >= 0 && in.to > appsFrom;
-            if (in.appsKnown) in.apps = ScreenTime.perApp(apps, raw, in.from, in.to);
+            if (in.appsKnown) {
+                in.apps = ScreenTime.perApp(apps, raw, in.from, in.to);
+                double sum = 0;
+                for (Map.Entry<String, Double> e : in.apps) sum += e.getValue();
+                in.noAppMin = Math.max(0, in.rawMin - sum);
+            }
         }
 
         // the list of days, oldest first
@@ -176,7 +200,7 @@ public final class ScreenDays {
             for (double[] n : nights) if (n[1] > r.from && n[0] < r.to) r.nights.add(n);
             if (first >= 0 && r.to > first) {
                 r.totalMin = ScreenTime.minutes(counted, r.from, r.to);
-                r.fill = ScreenTime.fill(counted, r.from, r.to, ROW_STEPS);
+                r.fill = ScreenTime.fill(ScreenTime.widen(counted, minShowS), r.from, r.to, ROW_STEPS);
                 double[] n = byDay.get(r.date.toString());
                 if (n != null) r.firstLook = ScreenTime.firstAfter(counted, Math.max(r.from, n[1]), r.to);
             }

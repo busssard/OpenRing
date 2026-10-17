@@ -327,6 +327,7 @@ public class CoreTest {
         stageFilter();
         screenTime();
         screenApps();
+        screenUnlock();
         screenScore();
         decoders();
         requests();
@@ -397,6 +398,39 @@ public class CoreTest {
         eq("name: demo", ScreenTime.shortName("demo.maps"), "Maps");
         eq("name: one word", ScreenTime.shortName("launcher"), "Launcher");
         eq("name: nothing", ScreenTime.shortName(""), "Unknown app");
+    }
+
+    /** Phone use from unlocking (1.20): the lock screen lighting up does not count. */
+    static void screenUnlock() {
+        final int ON = ScreenTime.ON, OFF = ScreenTime.OFF, L = ScreenTime.LOCKED, U = ScreenTime.UNLOCKED, A = ScreenTime.ALIVE;
+        // a message lights the lock screen 100..110 (no unlock): nothing; then on 200, unlock 205, off 400
+        List<double[]> s = ScreenTime.sessions(new double[] {100, 110, 200, 205, 400}, new int[] {ON, OFF, ON, U, OFF}, 0, 1000, true);
+        eq("unlock: lock screen glance not counted", s.size(), 1);
+        check("unlock: from unlocking to off", near(s.get(0)[0], 205) && near(s.get(0)[1], 400));
+        // the same log on a phone without a lock screen counts from screen on
+        List<double[]> plain = ScreenTime.sessions(new double[] {100, 110, 200, 400}, new int[] {ON, OFF, ON, OFF}, 0, 1000, false);
+        check("no lock screen: screen on counts", plain.size() == 2 && near(plain.get(1)[0], 200));
+        // locking with the screen still on ends the session (a screen saver while charging stays out)
+        List<double[]> lock = ScreenTime.sessions(new double[] {10, 50, 60, 5000}, new int[] {U, L, A, OFF}, 0, 9000, true);
+        check("unlock: locking ends it", lock.size() == 1 && near(lock.get(0)[1], 50));
+        // screen back on within the lock delay without an unlock: not counted until the next unlock
+        List<double[]> delay = ScreenTime.sessions(new double[] {10, 20, 22, 30, 40, 50}, new int[] {U, OFF, ON, OFF, U, OFF}, 0, 99, true);
+        check("unlock: screen on without unlock not counted", delay.size() == 2 && near(delay.get(1)[0], 40));
+        // the read starts while in use: locked soon after the start means in use since then
+        List<double[]> lead = ScreenTime.sessions(new double[] {60}, new int[] {L}, 10, 99, true);
+        check("unlock: lead in until locked", lead.size() == 1 && near(lead.get(0)[0], 10) && near(lead.get(0)[1], 60));
+        List<double[]> open = ScreenTime.sessions(new double[] {70}, new int[] {U}, 0, 99, true);
+        check("unlock: still in use runs to now", open.size() == 1 && near(open.get(0)[1], 99));
+        // widen only for the display, at finds the session
+        List<double[]> w = ScreenTime.widen(s, 600);
+        check("widen: at least the minimum", near(w.get(0)[1], 805) && near(s.get(0)[1], 400));
+        check("widen: zero keeps the list", ScreenTime.widen(s, 0) == s);
+        check("at: inside and outside", ScreenTime.at(s, 300) != null && ScreenTime.at(s, 500) == null);
+        // apps: another app in front closes the one whose "went to the back" is missing
+        String a = "a.app", b = "b.app";
+        java.util.Map<String, List<double[]>> m = ScreenTime.appSessions(new double[] {10, 50, 80}, new int[] {ScreenTime.APP_ON, ScreenTime.APP_ON, ScreenTime.APP_OFF},
+                new String[] {a, b, b}, 0, 1000);
+        check("apps: next app closes the previous one", near(m.get(a).get(0)[1], 50) && m.get(a).size() == 1 && near(m.get(b).get(0)[0], 50));
     }
 
     /** Screen score (1.15): amount against the goal, before bed and during the night. */

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.20
+* Screen time counts from unlocking the phone until the screen goes off, like the ScreenTime app. The lock
+  screen lighting up for a message, a look at the clock or a screen saver while charging no longer count,
+  so the total is much closer to other screen time apps. The last week is counted again with the new rule;
+  older days keep the old numbers
+* Touch the clock on the Screen tab and slide around it to see the times: when each use started and ended
+  and which app was in front
+* Each use can show as at least 5, 10 or 15 minutes on the clock and the day rows, so short looks do not
+  flicker (default 5). The totals and the score always use the real minutes
+* Apps: when another app comes to the front, the one before counts as gone to the back, also if the phone
+  did not log it. A new line shows time with no app in front (home screen, system screens)
+
 ## 1.19
 * Syncing stays quick with a long history: after each sync only the events whose time changed are written
   again, instead of all of them. With a year of data this part is about 5 times faster (#21)

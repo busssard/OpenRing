@@ -444,10 +444,24 @@ public class PipelineTest {
             check("rows show nights", di.rows[13].nights.size() >= 1, null);
             app.openring.data.ScreenDays.Info everyApp = app.openring.data.ScreenDays.info(demo, di.date, z, 180, new java.util.HashSet<String>());
             check("leaving apps out does not split screen sessions", everyApp.day.turnedOn == di.day.turnedOn, everyApp.day.turnedOn + " vs " + di.day.turnedOn);
+            app.openring.data.ScreenDays.Info wide = app.openring.data.ScreenDays.info(demo, di.date, z, 180, dp.screenExcluded(), 15 * 60);
+            double wideMin = 0, exactMin = 0;
+            for (double v : wide.dial) wideMin += v * 5;
+            for (double v : di.dial) exactMin += v * 5;
+            check("each use shown longer on the clock only", wideMin > exactMin + 10 && Math.abs(wide.day.totalMin - di.day.totalMin) < 0.01
+                    && wide.score.value == di.score.value, Math.round(exactMin) + " -> " + Math.round(wideMin) + " min shown");
+            check("touch readout data: sessions and apps of the day", !wide.sessions.isEmpty() && !wide.dayApps.isEmpty()
+                    && app.openring.core.analysis.ScreenTime.at(wide.sessions, wide.sessions.get(0)[0] + 1) != null, null);
+            check("no app in front is small in the demo", wide.noAppMin >= 0 && wide.noAppMin < 5, wide.noAppMin);
             check("with every app counted nothing is left out", everyApp.excludedMin < 0.01 && Math.abs(everyApp.day.totalMin - di.rawMin) < 0.01, everyApp.excludedMin);
         }
         app.openring.data.ScreenDays.Info old = app.openring.data.ScreenDays.info(demo, LocalDate.now().minusDays(60), z, 180, dp.screenExcluded());
         check("days before the screen data are unknown", old.day == null && old.score == null && Double.isNaN(old.rows[13].totalMin), null);
+        long before = demo.count("SELECT COUNT(*) FROM screen");
+        demo.deleteScreenSince(System.currentTimeMillis() / 1000.0 - 3 * 86400);
+        long after = demo.count("SELECT COUNT(*) FROM screen");
+        check("new counting rules read the last days again", after < before && after > 0 && demo.count("SELECT COUNT(*) FROM apps WHERE stop > " + (System.currentTimeMillis() / 1000 - 3 * 86400)) == 0,
+                before + " -> " + after);
         check("recent apps list", app.openring.data.ScreenDays.recentApps(demo, 10).size() >= 5, null);
         int phoneNights = 0;
         for (String js : demo.nightsJson("2000-01-01", "2100-01-01", true)) if (Json.d(Json.parse(js), "phone_min") >= 1) phoneNights++;
