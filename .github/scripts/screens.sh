@@ -19,6 +19,7 @@ adb shell am broadcast -a com.android.systemui.demo -e command clock -e hhmm 094
 adb shell am broadcast -a com.android.systemui.demo -e command battery -e level 100 -e plugged false >/dev/null
 adb shell am broadcast -a com.android.systemui.demo -e command notifications -e visible false >/dev/null
 adb shell am broadcast -a com.android.systemui.demo -e command network -e wifi show -e level 4 >/dev/null
+adb logcat -G 8M >/dev/null 2>&1   # room for the whole run, so early lines are still there at the end
 adb logcat -c
 sleep 20   # let the launcher and Play services finish their start up work first
 
@@ -65,6 +66,8 @@ else
 fi
 adb shell settings put system user_rotation 0   # back to portrait for every screenshot
 sleep 2
+# keep any leaked window line now, before later screens can push it out of the log buffer
+adb logcat -d 2>/dev/null | grep -E "has leaked window" > "$OUT/leaked.txt"
 # wait for the demo to be generated and analysed (up to 3 minutes)
 for i in $(seq 1 90); do
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
@@ -101,8 +104,10 @@ if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$O
 fi
 log "no crashes"
 # a screen closed with its dialog still open (issue #29: the demo progress after turning the phone)
-if grep -E "has leaked window" "$OUT/logcat.txt" | grep -q "app\.openring\."; then
+grep -E "has leaked window" "$OUT/logcat.txt" >> "$OUT/leaked.txt"
+if grep -q "app\.openring\." "$OUT/leaked.txt"; then
   echo "::error::Open Ring left a dialog behind on a closed screen"
+  grep "app\.openring\." "$OUT/leaked.txt" | head -20
   grep -A8 -E "has leaked window" "$OUT/logcat.txt" | head -40
   exit 1
 fi

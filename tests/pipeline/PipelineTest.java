@@ -923,8 +923,8 @@ public class PipelineTest {
         check("at 00:30 the newest demo day is still yesterday", day.minusDays(1).toString().equals(Db.get(phone).latestDay()), Db.get(phone).latestDay());
 
         Steps again = new Steps();
-        app.openring.data.Demo.enter(phone, again, day, now + 600);
-        check("demo started again the same day is not rebuilt", again.n.get() == 0 && demoCounts(Db.get(phone)).equals(want), again.n.get() + " steps");
+        boolean rebuilt = app.openring.data.Demo.enter(phone, again, day, now + 600);
+        check("demo started again the same day is not rebuilt", !rebuilt && again.n.get() == 0 && demoCounts(Db.get(phone)).equals(want), again.n.get() + " steps");
         Steps cut = new Steps();
         app.openring.data.Demo.complete(phone, cut, day.plusDays(1), now + 86400);
         check("a complete demo is kept after a restart", cut.n.get() == 0, cut.n.get() + " steps");
@@ -938,12 +938,12 @@ public class PipelineTest {
         // cut off half way: events written, no mark (the app was ended while preparing)
         Db.get(phone).put("demo_day", null);
         Steps resume = new Steps();
-        app.openring.data.Demo.complete(phone, resume, day.plusDays(1), nextNow + 60);
-        check("a demo cut off half way is finished", resume.n.get() == 2 && "2026-02-11".equals(Db.get(phone).kv("demo_day", null)),
+        boolean finished = app.openring.data.Demo.complete(phone, resume, day.plusDays(1), nextNow + 60);
+        check("a demo cut off half way is finished", finished && resume.n.get() == 2 && "2026-02-11".equals(Db.get(phone).kv("demo_day", null)),
                 resume.n.get() + " steps");
         Steps later = new Steps();
-        app.openring.data.Demo.complete(phone, later);
-        check("a complete demo from an earlier day is kept after a restart", later.n.get() == 0, later.n.get() + " steps");
+        boolean redone = app.openring.data.Demo.complete(phone, later);
+        check("a complete demo from an earlier day is kept after a restart", !redone && later.n.get() == 0, later.n.get() + " steps");
         Db.get(phone).resetAll();
         Steps empty = new Steps();
         app.openring.data.Demo.enter(phone, empty, day.plusDays(1), nextNow + 120);

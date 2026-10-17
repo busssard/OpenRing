@@ -238,7 +238,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     }
 
     /** Holds only the application and the hand over state, never a screen, so a turned screen can go. */
-    private static final class DemoTask extends AsyncTask<Void, String, Void> {
+    private static final class DemoTask extends AsyncTask<Void, String, Integer> {
+        static final int FAILED = -1, KEPT = 0, BUILT = 1;
         private final android.content.Context ctx;
         private final DemoRun run;
         private final boolean fresh;
@@ -250,16 +251,25 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
 
         @Override
-        protected Void doInBackground(Void... v) {
+        protected Integer doInBackground(Void... v) {
             app.openring.data.Demo.Progress p = new app.openring.data.Demo.Progress() {
                 @Override
                 public void step(String what) {
                     publishProgress(what);
                 }
             };
-            if (fresh) app.openring.data.Demo.enter(ctx, p);
-            else app.openring.data.Demo.complete(ctx, p);
-            return null;
+            try {
+                boolean built = fresh ? app.openring.data.Demo.enter(ctx, p) : app.openring.data.Demo.complete(ctx, p);
+                return built ? BUILT : KEPT;
+            } catch (RuntimeException e) {
+                android.util.Log.w("OpenRing", "demo: preparing the demo data failed", e);
+                // back to the person's own data (or Setup), so the demo can be started again
+                try {
+                    app.openring.data.Demo.leave(ctx);
+                } catch (RuntimeException ignored) {
+                }
+                return FAILED;
+            }
         }
 
         @Override
@@ -269,11 +279,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
 
         @Override
-        protected void onPostExecute(Void r) {
+        protected void onPostExecute(Integer r) {
             run.running = false;
             run.step = null;
             MainActivity a = run.owner;
-            if (a != null && !a.isDestroyed()) a.demoReady();
+            if (a != null && !a.isDestroyed()) a.demoReady(r == FAILED, fresh || r == BUILT);
         }
     }
 
@@ -287,14 +297,28 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (!demoDialog.isShowing()) demoDialog.show();
     }
 
-    void demoReady() {
+    /**
+     * The preparation ended. {@code newest}: show the newest day (the demo was just asked for or
+     * built); otherwise keep the date the screen had before Android ended the app.
+     */
+    void demoReady(boolean failed, boolean newest) {
         preparingDemo = false;
         if (demoDialog != null) {
             demoDialog.dismiss();
             demoDialog = null;
         }
-        autoDate = true;
-        date = LocalDate.now();
+        if (failed) {
+            android.widget.Toast.makeText(this, "Demo data could not be prepared. Please try again.", android.widget.Toast.LENGTH_LONG).show();
+            Prefs prefs = Prefs.of(this);
+            if (!prefs.setupDone() || !prefs.hasKey()) {
+                startActivity(new Intent(this, SetupActivity.class));
+                return;
+            }
+        }
+        if (newest) {
+            autoDate = true;
+            date = LocalDate.now();
+        }
         load();
     }
 
