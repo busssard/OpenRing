@@ -20,7 +20,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    private static final int VERSION = 4;
+    static final int VERSION = 4;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -32,8 +32,28 @@ public final class Db extends SQLiteOpenHelper {
             instance.close();
             instance = null;
         }
-        if (instance == null) instance = new Db(c.getApplicationContext(), name);
+        if (instance == null) {
+            if (REAL.equals(name)) recoverSwap(c);
+            instance = new Db(c.getApplicationContext(), name);
+        }
         return instance;
+    }
+
+    /**
+     * A left over {@code openring.db.old} means the last {@link #replaceWith} never finished (the
+     * app was stopped in the middle): the file next to it may be missing or half copied, so the
+     * kept history comes back. Runs before the real file is opened; never throws.
+     */
+    static synchronized void recoverSwap(Context c) {
+        java.io.File dst = c.getDatabasePath(REAL);
+        String old = dst.getPath() + ".old";
+        if (!new java.io.File(old).exists()) return;
+        try {
+            for (String s : SIDE) new java.io.File(dst.getPath() + s).delete();
+            for (String s : SIDE) move(old + s, dst.getPath() + s);
+        } catch (java.io.IOException e) {
+            // tried again before the next open or swap; the kept file is never deleted here
+        }
     }
 
     private Db(Context c, String name) {
@@ -515,33 +535,195 @@ public final class Db extends SQLiteOpenHelper {
         getWritableDatabase().insertWithOnConflict("battery", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
-    /** Wipe everything (keeps nothing). */
+    /** What a database file holds, read without the app's helper (no upgrade, nothing written). */
+    public static final class Info {
+        /** The file exists and could be read. */
+        public boolean exists, ok;
+        /** Why it cannot be restored: {@link #DAMAGED} or {@link #NEWER}, null when fine. */
+        public String problem;
+        public int version;
+        public long events;
+        /** Newest dated event (unix seconds), NaN when nothing is dated. */
+        public double newest = Double.NaN;
+    }
+
+    public static final String DAMAGED = "damaged", NEWER = "newer";
+    private static final String[] TABLES = {"events", "nights", "days", "kv"};
+
+    /** Does nothing, so Android's default handler cannot delete a file we only look at. */
+    private static final android.database.DatabaseErrorHandler KEEP_FILE = new android.database.DatabaseErrorHandler() {
+        @Override
+        public void onCorruption(SQLiteDatabase db) {}
+    };
+
     /**
-     * Swap the whole database for a restored copy (a backup). The open connection is closed first;
-     * the next {@link #get} opens the new file and upgrades its schema if it is older.
+     * Look at a database file on its own, read only and without localized collators, so the file
+     * stays byte for byte as it was (a read write open on Android can switch the journal mode or
+     * write android_metadata). With {@code check} (a backup's copy) it must pass
+     * {@code PRAGMA quick_check}, have a version this app can open and hold the Open Ring tables.
+     * Without it (the phone's own history) only the event count and newest date are read.
      */
-    public static synchronized void replaceWith(Context c, java.io.File src) throws java.io.IOException {
-        if (instance != null) {
-            instance.close();
-            instance = null;
-        }
-        java.io.File dst = c.getDatabasePath(REAL);
-        dst.getParentFile().mkdirs();
-        new java.io.File(dst.getPath() + "-wal").delete();
-        new java.io.File(dst.getPath() + "-shm").delete();
-        new java.io.File(dst.getPath() + "-journal").delete();
-        java.io.InputStream in = new java.io.FileInputStream(src);
-        java.io.OutputStream out = new java.io.FileOutputStream(dst);
+    static Info inspect(java.io.File f, boolean check) {
+        Info i = new Info();
+        if (!f.isFile()) return i;
+        i.exists = true;
+        SQLiteDatabase d = null;
         try {
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            d = SQLiteDatabase.openDatabase(f.getPath(), null, SQLiteDatabase.OPEN_READONLY | SQLiteDatabase.NO_LOCALIZED_COLLATORS, KEEP_FILE);
+            i.version = d.getVersion();
+            if (check) {
+                if (!"ok".equals(first(d, "PRAGMA quick_check"))) {
+                    i.problem = DAMAGED;
+                    return i;
+                }
+                if (i.version > VERSION) {
+                    i.problem = NEWER;
+                    return i;
+                }
+                if (i.version < 1) {
+                    i.problem = DAMAGED;
+                    return i;
+                }
+                for (String t : TABLES) {
+                    if (!t.equals(first(d, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '" + t + "'"))) {
+                        i.problem = DAMAGED;
+                        return i;
+                    }
+                }
+            }
+            Cursor c = d.rawQuery("SELECT COUNT(*), MAX(unix) FROM events", null);
+            try {
+                if (c.moveToFirst()) {
+                    i.events = c.getLong(0);
+                    if (!c.isNull(1)) i.newest = c.getDouble(1);
+                }
+            } finally {
+                c.close();
+            }
+            i.ok = true;
+        } catch (RuntimeException e) {
+            i.ok = false;
+            i.problem = DAMAGED;
         } finally {
-            in.close();
-            out.close();
+            if (d != null) {
+                try {
+                    d.close();
+                } catch (RuntimeException ignored) {
+                    // nothing left to do with a file we only looked at
+                }
+            }
+        }
+        return i;
+    }
+
+    private static String first(SQLiteDatabase d, String sql) {
+        Cursor c = d.rawQuery(sql, null);
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getString(0) : null;
+        } finally {
+            c.close();
         }
     }
 
+    private static final String[] SIDE = {"", "-wal", "-shm", "-journal"};
+
+    /**
+     * Swap the real database for a restored copy (a backup) that {@link #inspect} accepted and
+     * found {@code expectedEvents} events in. The old file is kept as {@code openring.db.old} until
+     * the new one opens through the helper (which also upgrades an older copy) and holds exactly
+     * that many events (Android's default error handler can replace a broken file with an empty
+     * one that "opens"). Otherwise the old file comes back and an IOException tells the caller
+     * nothing changed. If the app is stopped in the middle, {@link #recoverSwap} puts the old file
+     * back before the next open.
+     *
+     * Nobody else writes meanwhile: restore runs only on the Setup screen after the key was
+     * cleared (or before one was ever saved), so sync and the background job cannot reach the
+     * ring and stay idle. A running analysis is waited for in {@link Backup#finish} before this
+     * is called.
+     *
+     * Before the rename the real file is checkpointed ({@code wal_checkpoint(TRUNCATE)}), so all
+     * of the old history sits in {@code openring.db} itself and its side files hold nothing that
+     * {@link #recoverSwap} could lose.
+     */
+    public static synchronized void replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
+        java.io.File dst = c.getDatabasePath(REAL);
+        dst.getParentFile().mkdirs();
+        String old = dst.getPath() + ".old";
+        // an unfinished earlier swap: its kept history comes back first, it is never deleted
+        recoverSwap(c);
+        if (new java.io.File(old).exists()) throw new java.io.IOException("an earlier restore could not be undone");
+        // side files of a .old that is gone (a cleanup cut off half way) belong to nothing
+        for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
+        if (instance != null && !REAL.equals(instance.fileName)) {
+            instance.close();
+            instance = null;
+        }
+        if (instance == null && dst.exists()) instance = new Db(c.getApplicationContext(), REAL);
+        if (instance != null) {
+            try {
+                Cursor cp = instance.getWritableDatabase().rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null);
+                try {
+                    cp.moveToFirst();
+                } finally {
+                    cp.close();
+                }
+            } catch (RuntimeException e) {
+                // a history that cannot be opened has nothing left in its side files to keep
+            }
+            instance.close();
+            instance = null;
+        }
+        try {
+            for (String s : SIDE) move(dst.getPath() + s, old + s);
+        } catch (java.io.IOException e) {
+            recoverSwap(c);
+            throw e;
+        }
+        try {
+            copy(src, dst);
+            instance = new Db(c.getApplicationContext(), REAL);
+            long n = instance.eventCount();
+            if (n != expectedEvents) throw new java.io.IOException("the restored history holds " + n + " events, expected " + expectedEvents);
+        } catch (java.io.IOException | RuntimeException e) {
+            if (instance != null) {
+                try {
+                    instance.close();
+                } catch (RuntimeException ignored) {
+                    // the new file is deleted next anyway
+                }
+                instance = null;
+            }
+            recoverSwap(c);
+            throw new java.io.IOException("the restored history did not open", e);
+        }
+        // side files first, the main .old last: while it exists, recoverSwap treats the swap as unfinished
+        for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
+        new java.io.File(old).delete();
+    }
+
+    /** Rename when the file exists; nothing to do when it does not. */
+    private static void move(String from, String to) throws java.io.IOException {
+        java.io.File f = new java.io.File(from);
+        if (f.exists() && !f.renameTo(new java.io.File(to))) throw new java.io.IOException("could not rename " + f.getName());
+    }
+
+    private static void copy(java.io.File src, java.io.File dst) throws java.io.IOException {
+        java.io.InputStream in = new java.io.FileInputStream(src);
+        try {
+            java.io.OutputStream out = new java.io.FileOutputStream(dst);
+            try {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            } finally {
+                out.close();
+            }
+        } finally {
+            in.close();
+        }
+    }
+
+    /** Wipe everything (keeps nothing). */
     public void resetAll() {
         SQLiteDatabase db = getWritableDatabase();
         for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps"}) db.execSQL("DELETE FROM " + t);

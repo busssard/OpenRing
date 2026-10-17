@@ -30,44 +30,218 @@ public final class SetupActivity extends Activity {
     private static final int RESTORE = 21;
     private TextView restoreStatus;
 
+    /**
+     * Restore state that survives this screen being recreated (rotation, dark mode, font or
+     * language change). The background tasks report to whichever screen is attached now.
+     */
+    static final class Restore {
+        SetupActivity owner;
+        /** Checked backup waiting for the person's choice. */
+        app.openring.data.Backup.Plan plan;
+        /** Results that arrived while no screen was attached. */
+        app.openring.data.Backup.Plan prepared;
+        app.openring.data.Backup.Result result;
+        boolean busy;
+        /** The screen was closed for good: a prepare that finishes later is dropped. */
+        boolean abandoned;
+    }
+
+    private Restore restore;
+    private android.app.AlertDialog dialog;
+
+    @Override
+    public Object onRetainNonConfigurationInstance() {
+        return restore;
+    }
+
     @Override
     protected void onActivityResult(int code, int result, Intent data) {
         if (code != RESTORE || result != RESULT_OK || data == null || data.getData() == null) return;
+        if (restore.busy || restore.plan != null) return;
         final android.net.Uri uri = data.getData();
-        if (restoreStatus != null) {
-            restoreStatus.setTextColor(Ui.TEXT_2);
-            restoreStatus.setText("Restoring");
-        }
-        new android.os.AsyncTask<Void, Void, app.openring.data.Backup.Result>() {
+        final Context appCtx = getApplicationContext();
+        final Restore st = restore;
+        st.busy = true;
+        restoreStatus("Restoring", Ui.TEXT_2);
+        new android.os.AsyncTask<Void, Void, app.openring.data.Backup.Plan>() {
             @Override
-            protected app.openring.data.Backup.Result doInBackground(Void... v) {
+            protected app.openring.data.Backup.Plan doInBackground(Void... v) {
                 try {
-                    java.io.InputStream in = getContentResolver().openInputStream(uri);
+                    java.io.InputStream in = appCtx.getContentResolver().openInputStream(uri);
                     try {
-                        return app.openring.data.Backup.read(SetupActivity.this, in);
+                        return app.openring.data.Backup.prepare(appCtx, in);
                     } finally {
                         in.close();
                     }
                 } catch (Exception e) {
+                    android.util.Log.w("OpenRing", "restore: reading the backup failed", e);
+                    app.openring.data.Backup.Plan p = new app.openring.data.Backup.Plan();
+                    p.error = new app.openring.data.Backup.Result();
+                    p.error.message = "Could not read this file, nothing was changed.";
+                    return p;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(app.openring.data.Backup.Plan p) {
+                st.busy = false;
+                if (st.abandoned) {
+                    app.openring.data.Backup.cancel(appCtx, p);
+                    return;
+                }
+                if (st.owner == null) st.prepared = p;
+                else st.owner.prepared(p);
+            }
+        }.executeOnExecutor(android.os.AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    void prepared(app.openring.data.Backup.Plan p) {
+        if (p.error != null) {
+            restoreStatus(p.error.message, Ui.WARN);
+            return;
+        }
+        if (p.ask) askReplace(p);
+        else finishRestore(p, true);
+    }
+
+    /** Issue #26: the phone has history the backup lacks, so the person decides. */
+    void askReplace(final app.openring.data.Backup.Plan p) {
+        restore.plan = p;
+        String msg;
+        if (p.phoneNewer && !Double.isNaN(p.backupNewest)) {
+            String b = day(p.backupNewest), ph = day(p.phoneNewest);
+            if (b.equals(ph)) {
+                // same calendar day: the time tells them apart
+                b = dayTime(p.backupNewest);
+                ph = dayTime(p.phoneNewest);
+            }
+            msg = "This backup is older than the history on this phone. The backup ends on " + b + ", this phone has history up to "
+                    + ph + ". Replacing the history loses everything synced after " + b + ".";
+        } else {
+            msg = "The history on this phone holds data that is not in this backup. Replacing the history loses that data.";
+        }
+        dialog = new android.app.AlertDialog.Builder(this).setTitle("Keep the history on this phone?").setMessage(msg)
+                .setPositiveButton("Key and settings only", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        finishRestore(p, false);
+                    }
+                })
+                .setNeutralButton("Replace history", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        finishRestore(p, true);
+                    }
+                })
+                .setNegativeButton("Cancel", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        cancelRestore(p);
+                    }
+                })
+                .setOnCancelListener(new android.content.DialogInterface.OnCancelListener() {
+                    @Override
+                    public void onCancel(android.content.DialogInterface d) {
+                        cancelRestore(p);
+                    }
+                }).show();
+    }
+
+    static String day(double unix) {
+        return java.time.Instant.ofEpochSecond((long) unix).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                .format(java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM));
+    }
+
+    static String dayTime(double unix) {
+        java.time.ZonedDateTime t = java.time.Instant.ofEpochSecond((long) unix).atZone(java.time.ZoneId.systemDefault());
+        return day(unix) + ", " + t.toLocalTime().format(java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT));
+    }
+
+    void cancelRestore(app.openring.data.Backup.Plan p) {
+        dialog = null;
+        if (restore.plan == p) restore.plan = null;
+        app.openring.data.Backup.cancel(this, p);
+        restoreStatus("Nothing was restored.", Ui.TEXT_2);
+    }
+
+    void finishRestore(final app.openring.data.Backup.Plan p, final boolean replaceHistory) {
+        dialog = null;
+        if (restore.plan == p) restore.plan = null;
+        final Context appCtx = getApplicationContext();
+        final Restore st = restore;
+        st.busy = true;
+        restoreStatus("Restoring", Ui.TEXT_2);
+        new android.os.AsyncTask<Void, Void, app.openring.data.Backup.Result>() {
+            @Override
+            protected app.openring.data.Backup.Result doInBackground(Void... v) {
+                try {
+                    return app.openring.data.Backup.finish(appCtx, p, replaceHistory);
+                } catch (Exception e) {
+                    android.util.Log.w("OpenRing", "restore: applying the backup failed", e);
+                    app.openring.data.Backup.cancel(appCtx, p);
                     app.openring.data.Backup.Result r = new app.openring.data.Backup.Result();
-                    r.message = "Could not read the file: " + e.getMessage();
+                    r.message = "Could not restore this backup, nothing was changed.";
                     return r;
                 }
             }
 
             @Override
             protected void onPostExecute(app.openring.data.Backup.Result r) {
-                if (isFinishing() || isDestroyed()) return;
-                if (!r.ok) {
-                    if (restoreStatus != null) {
-                        restoreStatus.setTextColor(Ui.WARN);
-                        restoreStatus.setText(r.message);
-                    }
-                    return;
-                }
-                paired(r.message);
+                st.busy = false;
+                if (st.abandoned) return;
+                if (st.owner == null) st.result = r;
+                else st.owner.restored(r);
             }
         }.executeOnExecutor(android.os.AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    void restored(app.openring.data.Backup.Result r) {
+        if (!r.ok) {
+            restoreStatus(r.message, Ui.WARN);
+            return;
+        }
+        paired(r.message);
+    }
+
+    /** Pick up a restore that was under way when this screen was recreated. */
+    void resumeRestore() {
+        if (restore.prepared != null) {
+            app.openring.data.Backup.Plan p = restore.prepared;
+            restore.prepared = null;
+            prepared(p);
+        } else if (restore.result != null) {
+            app.openring.data.Backup.Result r = restore.result;
+            restore.result = null;
+            restored(r);
+        } else if (restore.plan != null) {
+            askReplace(restore.plan);
+        } else if (restore.busy) {
+            restoreStatus("Restoring", Ui.TEXT_2);
+        }
+    }
+
+    void restoreStatus(String text, int color) {
+        if (restoreStatus == null) return;
+        restoreStatus.setTextColor(color);
+        restoreStatus.setText(text);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (dialog != null) {
+            // dismiss does not count as Cancel: the plan waits for the recreated screen
+            dialog.dismiss();
+            dialog = null;
+        }
+        restore.owner = null;
+        if (isFinishing()) {
+            restore.abandoned = true;
+            app.openring.data.Backup.cancel(this, restore.plan);
+            app.openring.data.Backup.cancel(this, restore.prepared);
+            restore.plan = null;
+            restore.prepared = null;
+        }
+        super.onDestroy();
     }
 
     @Override
@@ -81,7 +255,12 @@ public final class SetupActivity extends Activity {
         setContentView(scroll);
         step = b == null ? 0 : b.getInt("step", 0);
         if (b != null) pairedMessage = b.getString("paired", pairedMessage);
+        Object last = getLastNonConfigurationInstance();
+        restore = last instanceof Restore ? (Restore) last : new Restore();
+        restore.owner = this;
+        if (!restore.busy) app.openring.data.Backup.cleanStale(this);
         show();
+        resumeRestore();
     }
 
     @Override
@@ -364,7 +543,7 @@ public final class SetupActivity extends Activity {
         rcard.addView(Ui.gap(this, 4));
         rcard.addView(Ui.body(this, "Moving to a new phone or reinstalling? Pick an Open Ring backup file (saved in Settings, Key and backup). "
                 + "It restores the key and your settings, and a full backup also brings back all your history. A text file that "
-                + "only holds the key works too."));
+                + "only holds the key works too. If this phone already has newer history, the app asks before replacing it."));
         restoreStatus = Ui.text(this, "", 13, Ui.TEXT_2, Ui.REGULAR);
         secondary(rcard, "Choose backup file", new View.OnClickListener() {
             @Override
