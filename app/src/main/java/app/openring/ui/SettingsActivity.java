@@ -344,7 +344,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout help = Ui.card(this);
         help.addView(Ui.caption(this, "Help and diagnostics"));
         help.addView(Ui.body(this, "Data check follows your data from the ring to the screens and shows where it stops. Safe to share. "
-                + "Re analyse works out all nights and days again from the stored ring data."));
+                + "Re analyse works out all nights and days again from the stored ring data. With a long history this can take a few minutes."));
         pair(help, "Data check and log", Ui.READY, new Runnable() {
             @Override
             public void run() {
@@ -811,17 +811,21 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     void reanalyse() {
-        toast("Re analysing, this can take a minute");
-        new AsyncTask<Void, Void, Void>() {
+        toast("Re analysing all nights. With a long history this can take a few minutes.");
+        new AsyncTask<Void, Void, String>() {
             @Override
-            protected Void doInBackground(Void... v) {
-                Analyzer.runAll(SettingsActivity.this, null);
-                return null;
+            protected String doInBackground(Void... v) {
+                try {
+                    Analyzer.runAll(SettingsActivity.this, null);
+                    return "Analysis updated";
+                } catch (RuntimeException e) {
+                    return "The analysis failed. Data check and log (in Help and diagnostics) shows why.";
+                }
             }
 
             @Override
-            protected void onPostExecute(Void r) {
-                toast("Analysis updated");
+            protected void onPostExecute(String r) {
+                toast(r);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
