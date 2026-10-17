@@ -300,7 +300,10 @@ public final class Backup {
             p.setScreenExcluded(l);
         }
         if (o.has("games_on")) p.setGamesOn(o.optBoolean("games_on", false));
-        if (o.has("screen_min_show")) p.setScreenMinShowMin(o.optInt("screen_min_show", 5));
+        if (o.has("screen_min_show")) {
+            int m = o.optInt("screen_min_show", 5);
+            p.setScreenMinShowMin(m == 0 || m == 5 || m == 10 || m == 15 ? m : 5);
+        }
     }
 
     static boolean looksLikeSqlite(File f) throws IOException {

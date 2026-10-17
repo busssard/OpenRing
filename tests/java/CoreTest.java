@@ -403,23 +403,35 @@ public class CoreTest {
     /** Phone use from unlocking (1.20): the lock screen lighting up does not count. */
     static void screenUnlock() {
         final int ON = ScreenTime.ON, OFF = ScreenTime.OFF, L = ScreenTime.LOCKED, U = ScreenTime.UNLOCKED, A = ScreenTime.ALIVE;
-        // a message lights the lock screen 100..110 (no unlock): nothing; then on 200, unlock 205, off 400
-        List<double[]> s = ScreenTime.sessions(new double[] {100, 110, 200, 205, 400}, new int[] {ON, OFF, ON, U, OFF}, 0, 1000, true);
+        // locked earlier (50); a message lights the lock screen 100..110: nothing; then on 200, unlock 205, off 400
+        List<double[]> s = ScreenTime.sessions(new double[] {50, 100, 110, 200, 205, 400}, new int[] {L, ON, OFF, ON, U, OFF}, -10000, 1000);
         eq("unlock: lock screen glance not counted", s.size(), 1);
         check("unlock: from unlocking to off", near(s.get(0)[0], 205) && near(s.get(0)[1], 400));
-        // the same log on a phone without a lock screen counts from screen on
-        List<double[]> plain = ScreenTime.sessions(new double[] {100, 110, 200, 400}, new int[] {ON, OFF, ON, OFF}, 0, 1000, false);
+        // a phone without a lock screen never logs one: screen on counts
+        List<double[]> plain = ScreenTime.sessions(new double[] {100, 110, 200, 400}, new int[] {ON, OFF, ON, OFF}, 0, 1000);
         check("no lock screen: screen on counts", plain.size() == 2 && near(plain.get(1)[0], 200));
-        // locking with the screen still on ends the session (a screen saver while charging stays out)
-        List<double[]> lock = ScreenTime.sessions(new double[] {10, 50, 60, 5000}, new int[] {U, L, A, OFF}, 0, 9000, true);
-        check("unlock: locking ends it", lock.size() == 1 && near(lock.get(0)[1], 50));
-        // screen back on within the lock delay without an unlock: not counted until the next unlock
-        List<double[]> delay = ScreenTime.sessions(new double[] {10, 20, 22, 30, 40, 50}, new int[] {U, OFF, ON, OFF, U, OFF}, 0, 99, true);
-        check("unlock: screen on without unlock not counted", delay.size() == 2 && near(delay.get(1)[0], 40));
+        // locking with the screen still on ends the session (a screen saver behind the lock stays out)
+        List<double[]> lock = ScreenTime.sessions(new double[] {10, 50, 60, 5000}, new int[] {U, L, A, OFF}, 0, 9000);
+        check("unlock: locking ends it", lock.size() == 1 && near(lock.get(0)[0], 10) && near(lock.get(0)[1], 50));
+        // screen back on within the lock delay (no lock logged): counts
+        List<double[]> delay = ScreenTime.sessions(new double[] {10, 20, 22, 30}, new int[] {U, OFF, ON, OFF}, 0, 99);
+        check("unlock: lock delay use counts", delay.size() == 2 && near(delay.get(1)[0], 22));
+        // a phone that shows its lock screen only when the screen comes on: the glance is dropped
+        List<double[]> late = ScreenTime.sessions(new double[] {10, 20, 30, 31, 35}, new int[] {U, OFF, ON, L, OFF}, 0, 99);
+        check("unlock: lock screen shown at screen on is a glance", late.size() == 1 && near(late.get(0)[1], 20));
+        // face unlock logged before the screen on: the session starts with the screen
+        List<double[]> face = ScreenTime.sessions(new double[] {5, 100, 101, 200}, new int[] {L, U, ON, OFF}, -10000, 999);
+        check("unlock: unlock while dark starts with the screen", face.size() == 1 && near(face.get(0)[0], 101));
+        // an unlock while the screen is off never counts dark time
+        List<double[]> dark = ScreenTime.sessions(new double[] {5, 10, 20, 500, 600}, new int[] {L, ON, OFF, U, L}, -10000, 999);
+        check("unlock: no dark time", dark.isEmpty());
+        // switching the lock screen off later: screen on counts again right after the last unlock
+        List<double[]> none = ScreenTime.sessions(new double[] {10, 20, 30, 40}, new int[] {U, OFF, ON, OFF}, 0, 99);
+        check("lock screen switched off: still counted", none.size() == 2);
         // the read starts while in use: locked soon after the start means in use since then
-        List<double[]> lead = ScreenTime.sessions(new double[] {60}, new int[] {L}, 10, 99, true);
+        List<double[]> lead = ScreenTime.sessions(new double[] {60}, new int[] {L}, 10, 99);
         check("unlock: lead in until locked", lead.size() == 1 && near(lead.get(0)[0], 10) && near(lead.get(0)[1], 60));
-        List<double[]> open = ScreenTime.sessions(new double[] {70}, new int[] {U}, 0, 99, true);
+        List<double[]> open = ScreenTime.sessions(new double[] {70}, new int[] {U}, 0, 99);
         check("unlock: still in use runs to now", open.size() == 1 && near(open.get(0)[1], 99));
         // widen only for the display, at finds the session
         List<double[]> w = ScreenTime.widen(s, 600);

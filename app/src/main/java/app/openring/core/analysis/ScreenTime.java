@@ -45,25 +45,31 @@ public final class ScreenTime {
     /** The person unlocked the phone ("keyguard hidden"). */
     public static final int UNLOCKED = 9;
 
-    /** Sessions from screen on to off, for a phone without a lock screen (see the other overload). */
-    public static List<double[]> sessions(double[] times, int[] kinds, double from, double now) {
-        return sessions(times, kinds, from, now, false);
+    /** A session that the lock screen ends within this time of its start was only a glance at the lock screen. */
+    public static final double GLANCE_S = 5;
+
+    /** As below; the old overload with a lock screen flag gives the same result (the log itself tells). */
+    public static List<double[]> sessions(double[] times, int[] kinds, double from, double now, boolean ignored) {
+        return sessions(times, kinds, from, now);
     }
 
     /**
-     * Phone use sessions from log entries sorted by time. With a lock screen ({@code lockScreen}) a
-     * session runs from unlocking to the screen going off or locking, so the lock screen lighting up
-     * for a notification, a look at the clock or a screen saver while charging do not count (the same
-     * rule as the ScreenTime app). Without a lock screen it runs from screen on to off. "Shutdown"
-     * closes a session; "startup" closes one left open at the last sign of use before it (the phone
-     * died or restarted with the screen on). A session still open ends at {@code now}. When the log
-     * starts with "off" or "locked" within {@link #LEAD_MAX_S} of {@code from}, the phone was in use
-     * since {@code from}; a later first "off" is ignored, because the log does not tell since when.
+     * Phone use sessions from log entries sorted by time. Use is counted while the screen is on and the
+     * phone is unlocked, so the lock screen lighting up for a message, a look at the clock or a screen
+     * saver behind the lock screen do not count (close to the ScreenTime app, which counts from
+     * unlocking). Whether the phone is locked comes only from the lock and unlock entries: a phone
+     * without a lock screen never logs them and counts from screen on, and turning the screen back on
+     * within the lock delay counts too. A session the lock screen ends within {@link #GLANCE_S} of
+     * its start was the lock screen showing up and is dropped. An unlock while the screen is off (face
+     * unlock can come first) only marks the phone unlocked, the session starts with the screen.
+     * "Shutdown" closes a session; "startup" closes one left open at the last sign of use before it.
+     * A session still open ends at {@code now}. When the log starts with "off" or "locked" within
+     * {@link #LEAD_MAX_S} of {@code from}, the phone was in use since {@code from}.
      */
-    public static List<double[]> sessions(double[] times, int[] kinds, double from, double now, boolean lockScreen) {
+    public static List<double[]> sessions(double[] times, int[] kinds, double from, double now) {
         List<double[]> out = new ArrayList<double[]>();
         double open = Double.NaN, lastUse = Double.NaN;
-        boolean seen = false, locked = lockScreen;
+        boolean seen = false, locked = false, screenOn = false;
         for (int i = 0; i < times.length; i++) {
             int k = kinds[i];
             double t = times[i];
@@ -74,29 +80,32 @@ public final class ScreenTime {
             if (k == STARTUP) {
                 if (!Double.isNaN(open) && !Double.isNaN(lastUse) && lastUse > open) out.add(new double[] {open, lastUse});
                 open = Double.NaN;
-                locked = lockScreen;
+                screenOn = false;
                 seen = true;
                 continue;
             }
             if (k == ON) {
+                screenOn = true;
                 if (!locked && Double.isNaN(open)) {
                     open = t;
                     lastUse = t;
                 }
             } else if (k == UNLOCKED) {
                 locked = false;
-                if (Double.isNaN(open)) {
+                if (!seen) screenOn = true; // the first entry of a read: the phone is being used
+                if (screenOn && Double.isNaN(open)) {
                     open = t;
                     lastUse = t;
                 }
             } else if (k == OFF || k == SHUTDOWN || k == LOCKED) {
                 if (Double.isNaN(open) && !seen && k != SHUTDOWN && t > from && t - from <= LEAD_MAX_S) open = from;
                 if (!Double.isNaN(open)) {
-                    if (t > open) out.add(new double[] {open, t});
+                    boolean glance = k == LOCKED && t - open < GLANCE_S && open > from;
+                    if (t > open && !glance) out.add(new double[] {open, t});
                     open = Double.NaN;
                 }
-                // a phone with a lock screen counts again only after the next unlock
-                if (k == LOCKED || lockScreen) locked = lockScreen || k == LOCKED;
+                if (k == LOCKED) locked = true;
+                else screenOn = false;
             } else {
                 continue;
             }

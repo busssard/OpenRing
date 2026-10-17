@@ -119,7 +119,6 @@ public final class ScreenDays {
         return info(db, date, zone, goalMin, excluded, 0);
     }
 
-    /** Builds the Screen tab for {@code date}: the day, its score and the {@link #ROWS} days ending there. */
     /**
      * Builds the Screen tab for {@code date}: the day, its score and the {@link #ROWS} days ending
      * there. {@code minShowS}: each session shows at least this long on the clock and in the rows (the

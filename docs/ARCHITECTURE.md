@@ -63,7 +63,7 @@ Nothing leaves the phone: the app has no internet permission.
 | `anchors` | Unused (kept from an early schema). Time records are `time_sync` and `rtc_beacon` rows in `events`; the phone anchor is stored as a `time_sync` row |
 | `nights` | One row per sleep period, the full analysis as JSON (stages as a digit string per 30 seconds: 1 deep, 2 light, 3 REM, 4 awake, 0 unknown) |
 | `days` | One row per day: scores, activity, vitals, trends as JSON |
-| `screen` | Phone use sessions (start, end) from Android's usage log, which keeps only about a week (version 3). Since 1.20 a session runs from unlocking (keyguard hidden) to screen off or lock; a phone that never logs a lock screen counts from screen on (`ScreenTime.sessions`, kv `lock_screen`, `screen_rule`) |
+| `screen` | Phone use sessions (start, end) from Android's usage log, which keeps only about a week (version 3). Since 1.20 use counts while the screen is on and the phone unlocked, the lock state taken only from keyguard shown and hidden; a phone without a lock screen logs neither and counts from screen on (`ScreenTime.sessions`, kv `screen_rule`) |
 | `apps` | When each app was in front (package, start, end), from the same log (version 4). Apps the person leaves out (Prefs) are subtracted from screen time; the sleep analysis ignores this list |
 | `battery`, `kv` | Battery history; small key value state (cursor, analysis progress, errors) |
 

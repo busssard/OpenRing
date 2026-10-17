@@ -824,6 +824,8 @@ public final class Charts {
 
         private final double[] fill;
         private final java.util.List<double[]> nights, sessions;
+        /** Each session as long as it is drawn (at least the chosen minimum), same order as {@link #sessions}. */
+        private java.util.List<double[]> shown;
         private final java.util.Map<String, java.util.List<double[]>> apps;
         private final Names names;
         private final double from, to, now;
@@ -843,6 +845,7 @@ public final class Charts {
             this.fill = fill;
             this.nights = nights;
             this.sessions = sessions;
+            this.shown = sessions;
             this.apps = apps;
             this.names = names;
             this.from = from;
@@ -851,6 +854,12 @@ public final class Charts {
             this.total = total;
             this.sub = sub;
             t.setTextAlign(Paint.Align.CENTER);
+        }
+
+        /** Touching a mark finds its use even when short uses are drawn longer than they were. */
+        public ScreenDial shownAs(java.util.List<double[]> widened) {
+            if (widened != null && widened.size() == sessions.size()) shown = widened;
+            return this;
         }
 
         float radius() {
@@ -863,12 +872,15 @@ public final class Charts {
             double d = Math.sqrt(dx * dx + dy * dy);
             int action = e.getActionMasked();
             if (action == android.view.MotionEvent.ACTION_DOWN) {
-                // the middle clears the readout; the ring itself is for reading times
+                // a tap in the middle clears the readout; only the ring of marks reads times, the rest
+                // of the card scrolls the page as usual
                 if (d < radius() * 0.45) {
                     picked = Double.NaN;
                     invalidate();
+                    performClick();
                     return false;
                 }
+                if (d < radius() * 0.6 || d > radius() + Ui.dp(getContext(), 18)) return false;
                 getParent().requestDisallowInterceptTouchEvent(true);
             }
             if (action == android.view.MotionEvent.ACTION_DOWN || action == android.view.MotionEvent.ACTION_MOVE) {
@@ -962,12 +974,16 @@ public final class Charts {
                 p.setColor(Ui.TEXT);
                 cv.drawLine(cx + (float) Math.cos(a) * r * 0.5f, cy + (float) Math.sin(a) * r * 0.5f,
                         cx + (float) Math.cos(a) * (r1 + label * 0.2f), cy + (float) Math.sin(a) * (r1 + label * 0.2f), p);
-                double[] s = app.openring.core.analysis.ScreenTime.at(sessions, picked);
+                double[] s = null;
+                for (int i = 0; i < shown.size() && s == null; i++) {
+                    double[] x = shown.get(i);
+                    if (picked >= x[0] && picked < x[1]) s = sessions.get(i);
+                }
                 String line1 = clock(picked), line2, line3 = null;
                 if (s != null) {
                     double m = (s[1] - s[0]) / 60.0;
-                    line2 = clock(s[0]) + " to " + clock(s[1]) + ", " + (m < 1 ? "under a minute" : Ui.hm(m).replace("0h ", ""));
-                    line3 = appAt(picked);
+                    line2 = clock(s[0]) + " to " + clock(s[1]) + ", " + (m < 1 ? "under a minute" : Pages.span(m));
+                    line3 = appAt(Math.min(Math.max(picked, s[0]), s[1] - 1));
                 } else {
                     boolean asleep = false;
                     for (double[] x : nights) if (picked >= x[0] && picked < x[1]) asleep = true;

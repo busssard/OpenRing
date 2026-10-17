@@ -1,12 +1,13 @@
 # Changelog
 
 ## 1.20
-* Screen time counts from unlocking the phone until the screen goes off, like the ScreenTime app. The lock
-  screen lighting up for a message, a look at the clock or a screen saver while charging no longer count,
-  so the total is much closer to other screen time apps. The last week is counted again with the new rule;
+* Screen time counts while the phone is unlocked and the screen is on, close to the ScreenTime app. The lock
+  screen lighting up for a message, a look at the clock or a screen saver behind the lock screen no longer
+  count, so the total is much closer to other screen time apps. Phones without a lock screen count as before. The last week is counted again with the new rule;
   older days keep the old numbers
 * Touch the clock on the Screen tab and slide around it to see the times: when each use started and ended
   and which app was in front
+* "Turned on" is now "Uses"
 * Each use can show as at least 5, 10 or 15 minutes on the clock and the day rows, so short looks do not
   flicker (default 5). The totals and the score always use the real minutes
 * Apps: when another app comes to the front, the one before counts as gone to the back, also if the phone
