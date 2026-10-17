@@ -282,7 +282,8 @@ public final class Pages {
         LinearLayout hyp = Ui.card(c);
         hyp.addView(Ui.caption(c, "Sleep depth through the night"));
         hyp.addView(Ui.gap(c, 10));
-        hyp.addView(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")), Ui.sized(c, -1, 170));
+        double clockAt = Json.d(n, "clock_change_at");
+        hyp.addView(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt), Ui.sized(c, -1, 170));
         JSONArray mv = n.optJSONArray("motion_series");
         if (mv != null && mv.length() > 0) {
             hyp.addView(Ui.gap(c, 6));
@@ -313,6 +314,13 @@ public final class Pages {
             hyp.addView(Ui.gap(c, 4));
             hyp.addView(Ui.text(c, "Phone in use for " + Ui.fmt(phone, 0) + " min during this night, shown as awake (Settings, Screen time).",
                     12, Ui.OXY, Ui.REGULAR));
+        }
+        int clockMin = n.optInt("clock_change_min", 0);
+        if (!Double.isNaN(clockAt) && clockMin != 0) {
+            // daylight saving during the night (issue #22); the clock times were stored in the zone of the analysis
+            hyp.addView(Ui.gap(c, 4));
+            hyp.addView(Ui.text(c, app.openring.core.analysis.ClockChange.text(clockMin, n.optString("clock_change_from", ""),
+                    n.optString("clock_change_to", "")), 12, Ui.ACTIVE, Ui.REGULAR));
         }
         root.addView(hyp);
 

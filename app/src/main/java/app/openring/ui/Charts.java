@@ -170,6 +170,14 @@ public final class Charts {
         private final double start, end;
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint();
         private final RectF r = new RectF();
+        private final Paint mark = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private double markAt = Double.NaN;
+
+        /** A thin orange line where the clocks changed during the night (issue #22). */
+        public Hypnogram clockChange(double at) {
+            markAt = at;
+            return this;
+        }
 
         public Hypnogram(Context c, int[] stages, double start, double end) {
             super(c);
@@ -181,6 +189,8 @@ public final class Charts {
             txt.setTypeface(Ui.REGULAR);
             grid.setColor(Ui.LINE);
             grid.setStrokeWidth(1);
+            mark.setColor(Ui.ACTIVE);
+            mark.setStrokeWidth(Ui.dp(c, 1.5f));
         }
 
         static int level(int s) {
@@ -253,6 +263,10 @@ public final class Charts {
                     cv.drawRoundRect(r, rad, rad, p);
                 }
                 i = j;
+            }
+            if (!Double.isNaN(markAt) && markAt > start && markAt < end) {
+                float x = labelW + (float) ((markAt - start) / (end - start)) * (w - labelW);
+                cv.drawLine(x, 0, x, bottom, mark);
             }
             if (!Float.isNaN(scrubX)) {
                 int k = (int) Math.max(0, Math.min(n - 1, Math.floor((scrubX - labelW) / cw)));
