@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.22
+* Balanced and Calm stage detail no longer turn short sleep into awake. Before, a short REM or light stage next to
+  a wake up could be counted as awake, adding awake minutes or even a wake up and lowering efficiency and the score.
+  Balanced now counts the same wake ups as Detailed (#28)
+* After updating, all nights are analysed again once with the fixed filter
+
 ## 1.20
 * Screen time counts while the phone is unlocked and the screen is on, close to the ScreenTime app. The lock
   screen lighting up for a message, a look at the clock or a screen saver behind the lock screen no longer

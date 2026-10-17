@@ -117,8 +117,11 @@ public class CoreTest {
             int j = i;
             while (j < f.length && f[j] == f[i]) j++;
             int min = f[i] == W ? 4 : 10;
+            boolean prevSleep = i > 0 && f[i - 1] != 0 && f[i - 1] != W, nextSleep = j < f.length && f[j] != 0 && f[j] != W;
             boolean boxed = (i == 0 || f[i - 1] == 0) && (j == f.length || f[j] == 0)
-                    || f[i] == W && (i == 0 || f[i - 1] == 0 || j == f.length || f[j] == 0);
+                    || f[i] == W && (i == 0 || f[i - 1] == 0 || j == f.length || f[j] == 0)
+                    // sleep never merges into awake (issue #28): with no sleep neighbour it may stay short
+                    || f[i] != W && !prevSleep && !nextSleep;
             if (f[i] != 0 && j - i < min && !boxed) ok = false;
             i = j;
         }
@@ -126,6 +129,8 @@ public class CoreTest {
         check("filter reduces stage changes", StageFilter.changes(f) < StageFilter.changes(busy));
         eq("stage changes count", StageFilter.changes(runs(L, 5, D, 5, 0, 2, D, 3, W, 2)), 2);
         eq("awake runs inside the night", StageFilter.wakeRuns(runs(W, 10, L, 5, W, 1, L, 5, W, 3, R, 2, W, 20)), 2);
+
+        stageFilterKeepsSleep();
 
         // NightAnalyzer: metrics and score come from the filtered stages, the raw ones are kept
         int[] remFlicker = new int[8 * 120];
@@ -137,6 +142,67 @@ public class CoreTest {
         eq("raw stages kept", Arrays.toString(bal.stagesRaw), Arrays.toString(remFlicker));
         check("REM minutes come from filtered stages", raw.remMin > 0 && bal.remMin == 0);
         eq("detail level recorded", bal.stageDetail, B);
+    }
+
+    /** Issue #28: the detail filter never turns sleep into awake and never adds wake ups. */
+    static void stageFilterKeepsSleep() {
+        int D = Stager.DEEP, L = Stager.LIGHT, R = Stager.REM, W = Stager.WAKE;
+        int B = StageFilter.BALANCED, C = StageFilter.CALM;
+        // case 1: a 30 s REM next to a 30 s awake joins deep, then the 30 s awake joins deep too
+        int[] c1 = runs(D, 40, R, 1, W, 1, D, 40);
+        eq("short REM next to awake joins deep, not awake", Arrays.toString(StageFilter.filter(c1, B)), Arrays.toString(runs(D, 82)));
+        Night d1 = metricsOnly(c1, StageFilter.DETAILED), b1 = metricsOnly(c1, B);
+        eq("case 1 Detailed: no wake up", d1.awakenings, 0);
+        eq("case 1 Balanced: no wake up added", b1.awakenings, 0);
+        check("case 1 Balanced: no awake time added", b1.awakeMin == 0 && b1.efficiency >= d1.efficiency);
+        // case 2: 2 minutes of REM before a 1 minute wake up join deep, the wake up stays as it is
+        int[] c2 = runs(D, 40, R, 4, W, 2, D, 40);
+        eq("short REM before a wake up joins deep", Arrays.toString(StageFilter.filter(c2, B)), Arrays.toString(runs(D, 44, W, 2, D, 40)));
+        Night d2 = metricsOnly(c2, StageFilter.DETAILED), b2 = metricsOnly(c2, B);
+        eq("case 2 Balanced: same wake ups as Detailed", b2.awakenings, d2.awakenings);
+        check("case 2 Balanced: awake minutes and efficiency as Detailed", near(b2.awakeMin, 1.0) && near(b2.awakeMin, d2.awakeMin)
+                && near(b2.efficiency, d2.efficiency));
+        // case 3: REM between two 1 minute wake ups has no sleep neighbour, so it stays
+        int[] c3 = runs(L, 40, W, 2, R, 3, W, 2, L, 40);
+        eq("sleep between two wake ups stays under Balanced", Arrays.toString(StageFilter.filter(c3, B)), Arrays.toString(c3));
+        Night b3 = metricsOnly(c3, B);
+        check("case 3 Balanced: 2 wake ups, 2 minutes awake", b3.awakenings == 2 && near(b3.awakeMin, 2.0));
+        // Calm hides the two 1 minute wake ups (documented), after which the REM has sleep around it and joins light
+        eq("Calm: short wake ups join sleep, then the REM joins light", Arrays.toString(StageFilter.filter(c3, C)), Arrays.toString(runs(L, 87)));
+        // Calm keeps 2 minute wake ups; the short REM between them stays, it was sleep
+        int[] c4 = runs(L, 40, W, 4, R, 3, W, 4, L, 40);
+        eq("sleep between two long wake ups stays under Calm", Arrays.toString(StageFilter.filter(c4, C)), Arrays.toString(c4));
+        // short sleep between awake and the night's edge or missing data stays
+        int[] c5 = runs(0, 3, L, 2, W, 6, L, 40);
+        eq("short sleep next to awake and missing data stays", Arrays.toString(StageFilter.filter(c5, B)), Arrays.toString(c5));
+
+        // property test: random nights with short and long runs and missing data
+        Random rnd = new Random(28);
+        int notSubset = 0, moreWakes = 0, moreAwake = 0, moved = 0, balancedDiffers = 0, nights = 20000;
+        for (int t = 0; t < nights; t++) {
+            int len = 20 + rnd.nextInt(200);
+            int[] s = new int[len];
+            for (int i = 0; i < len; ) {
+                int code = rnd.nextInt(12) == 0 ? 0 : 1 + rnd.nextInt(4);
+                int run = 1 + rnd.nextInt(rnd.nextBoolean() ? 3 : 12);
+                for (int k = 0; k < run && i < len; k++) s[i++] = code;
+            }
+            Night det = metricsOnly(s, StageFilter.DETAILED);
+            for (int lv = B; lv <= C; lv++) {
+                int[] f = StageFilter.filter(s, lv);
+                for (int i = 0; i < len; i++) if (f[i] == W && s[i] != W) { notSubset++; break; }
+                Night n = metricsOnly(s, lv);
+                if (n.awakenings > det.awakenings) moreWakes++;
+                if (n.awakeMin > det.awakeMin + 1e-9) moreAwake++;
+                if (!(Double.isNaN(det.sleepStart) ? Double.isNaN(n.sleepStart) : n.sleepStart == det.sleepStart && n.sleepEnd == det.sleepEnd)) moved++;
+                if (lv == B && n.awakenings != det.awakenings) balancedDiffers++;
+            }
+        }
+        eq("random nights: awake in the result was awake in the input", notSubset, 0);
+        eq("random nights: wake ups never above Detailed", moreWakes, 0);
+        eq("random nights: awake minutes never above Detailed", moreAwake, 0);
+        eq("random nights: falling asleep and waking up do not move", moved, 0);
+        eq("random nights: Balanced counts the same wake ups as Detailed", balancedDiffers, 0);
     }
 
     static Night metricsOnly(int[] stages, int level) {
