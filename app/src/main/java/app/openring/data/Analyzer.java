@@ -476,12 +476,15 @@ public final class Analyzer {
             for (JSONObject p : prevDays) {
                 LocalDate pd = LocalDate.parse(p.optString("date", key));
                 if (pd.isBefore(day.minusDays(6))) continue;
+                if (p.optDouble("covered_min", 0) < 60) continue; // ring not worn: left out (issue #44)
                 n7++;
                 if (p.optDouble("active_kcal", 0) >= p.optDouble("target_kcal", 1e9)) met7++;
                 if (p.optDouble("medium_min", 0) + p.optDouble("high_min", 0) >= 30) train++;
                 trainKcal += p.optDouble("training_kcal", 0);
             }
-            ai.targetsMetFraction = met7 / 7.0;
+            ai.days7 = n7;
+            ai.targetsMetFraction = met7 / (double) n7;
+            Json.put(out, "activity_days", n7);
             ai.trainingDays7 = train;
             ai.trainingKcal7 = trainKcal;
             Night.Score as = Scores.activity(ai);

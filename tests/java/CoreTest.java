@@ -320,6 +320,7 @@ public class CoreTest {
         client();
         analysis();
         timeline();
+        activityWeek();
         live();
         motion();
         pattern();
@@ -694,6 +695,63 @@ public class CoreTest {
         double[] debt = Wellness.sleepDebt(new int[] {6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600}, new int[] {8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600});
         check("sleep debt", debt[0] > 0 && debt[1] == 1);
         eq("nightly temp short", Double.isNaN(NightAnalyzer.nightlyTemperature(new double[] {35, 35})), true);
+    }
+
+    /** Issue #44: the weekly parts of the activity score look at the worn days only. */
+    static Night.Contributor part(Night.Score s, String key) {
+        for (Night.Contributor c : s.contributors) if (c.key.equals(key)) return c;
+        return null;
+    }
+
+    static Scores.ActivityInput activityIn(int days, double met, int train, double kcal) {
+        Scores.ActivityInput in = new Scores.ActivityInput();
+        in.inactiveMin = 7 * 60;
+        in.longInactiveStreaks = 1;
+        in.days7 = days;
+        in.targetsMetFraction = met / days;
+        in.trainingDays7 = train;
+        in.trainingKcal7 = kcal;
+        return in;
+    }
+
+    static void activityWeek() {
+        // a full week: exactly the numbers and texts from before the change
+        Scores.ActivityInput full = activityIn(7, 5, 2, 800);
+        eq("activity: default is a full week", new Scores.ActivityInput().days7, 7);
+        Night.Score w = Scores.activity(full);
+        double t = Stats.curve(5 / 7.0, new double[][] {{0, 20}, {0.15, 35}, {0.43, 62}, {0.71, 86}, {1, 100}});
+        double f = Stats.curve(2, new double[][] {{0, 35}, {1, 60}, {2, 82}, {3, 100}});
+        double v = Stats.curve(800, new double[][] {{0, 20}, {300, 42}, {700, 66}, {1200, 86}, {2000, 100}});
+        double a = Stats.curve(7, new double[][] {{5, 100}, {7, 92}, {9, 72}, {11, 45}, {13, 20}}), m = 90;
+        eq("activity week: targets unchanged", Math.round(part(w, "targets").score), Math.round(t));
+        eq("activity week: targets text", part(w, "targets").detail, "5 of 7 days");
+        eq("activity week: frequency unchanged", Math.round(part(w, "frequency").score), Math.round(f));
+        eq("activity week: frequency text", part(w, "frequency").detail, "2 training days");
+        eq("activity week: volume unchanged", Math.round(part(w, "volume").score), Math.round(v));
+        eq("activity week: volume text", part(w, "volume").detail, "800 kcal this week");
+        long all = Math.round((Math.round(a) * 17 + m * 33 + Math.round(t) * 24 + Math.round(f) * 12 + Math.round(v) * 14) / 100.0);
+        eq("activity week: score unchanged", (long) w.value, all);
+
+        // four worn days: share of them, training scaled up to a week
+        Night.Score four = Scores.activity(activityIn(4, 3, 2, 800));
+        eq("activity 4 days: targets of the worn days", Math.round(part(four, "targets").score),
+            Math.round(Stats.curve(0.75, new double[][] {{0, 20}, {0.15, 35}, {0.43, 62}, {0.71, 86}, {1, 100}})));
+        eq("activity 4 days: targets text", part(four, "targets").detail, "3 of 4 days");
+        eq("activity 4 days: frequency scaled to a week", Math.round(part(four, "frequency").score), 100L); // 3.5 a week
+        eq("activity 4 days: frequency text", part(four, "frequency").detail, "2 training days in 4 days");
+        eq("activity 4 days: volume scaled to a week", Math.round(part(four, "volume").score),
+            Math.round(Stats.curve(1400, new double[][] {{0, 20}, {300, 42}, {700, 66}, {1200, 86}, {2000, 100}})));
+        eq("activity 4 days: volume text", part(four, "volume").detail, "800 kcal in 4 days");
+        check("activity 4 days: higher than the same days counted against 7", four.value > Scores.activity(activityIn(7, 3, 2, 800)).value);
+
+        // fewer than 3 worn days: the weekly parts are left out, the daily ones carry the score
+        for (int n = 1; n < Scores.MIN_WEEK_DAYS; n++) {
+            Night.Score few = Scores.activity(activityIn(n, n, 1, 400));
+            eq("activity " + n + " days: two daily parts only", few.contributors.size(), 2);
+            eq("activity " + n + " days: score from the daily parts", (long) few.value, Math.round((Math.round(a) * 17 + m * 33) / 50.0));
+        }
+        eq("activity 3 days: weekly parts join", Scores.activity(activityIn(3, 2, 1, 400)).contributors.size(), 5);
+        eq("activity: day count above 7 is a week", part(Scores.activity(activityIn(9, 9, 2, 800)), "frequency").detail, "2 training days");
     }
 
     static void timeline() {

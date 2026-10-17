@@ -11,8 +11,8 @@ cd "$(dirname "$0")"
 ROOT=$(pwd)
 OUT="$ROOT/build"
 SRC="$ROOT/app/src/main"
-VERSION_CODE=22
-VERSION_NAME=1.21
+VERSION_CODE=30
+VERSION_NAME=1.29
 MIN_SDK=26
 TARGET_SDK=34
 

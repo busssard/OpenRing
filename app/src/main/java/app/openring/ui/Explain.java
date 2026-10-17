@@ -14,7 +14,16 @@ public final class Explain {
             + "your sleep fits your body clock.";
 
     public static final String ACTIVITY = "The activity score looks at how much you moved, how long you sat still, whether you "
-            + "reached your daily goal and your training over the last week. Balance matters: both too little and too much lower it.";
+            + "reached your daily goal and your training over the last week. Balance matters: both too little and too much lower it. "
+            + "Days without the ring are left out of the weekly parts.";
+
+    /** The note above the activity contributors while fewer than 7 days of the last week were worn (issue #44). */
+    public static String activityDays(int n) {
+        String days = n == 1 ? "1 day" : n + " days";
+        String rule = " with the ring in the last 7 (a day counts with at least an hour of wear). ";
+        if (n >= app.openring.core.analysis.Scores.MIN_WEEK_DAYS) return "Based on " + days + rule + "Daily targets and training settle after a full week.";
+        return "Only " + days + rule + "Daily targets and training join the score from " + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " days.";
+    }
 
     public static final String SCREEN = "The screen score looks at your phone use: how long the screen was on compared with your "
             + "daily goal (half), phone use in the hour before you fell asleep (about a third) and during the night (the rest). "
@@ -50,9 +59,9 @@ public final class Explain {
             // activity
             case "stay_active": return "Hours spent sitting or inactive while awake.";
             case "move_hourly": return "Long sitting periods of an hour or more during the day.";
-            case "targets": return "How often you reached your daily activity goal in the last week.";
-            case "frequency": return "Days this week with at least 30 minutes of medium or high activity.";
-            case "volume": return "Energy burned in medium and high activity this week.";
+            case "targets": return "How often you reached your daily activity goal in the last week. Days without the ring are left out.";
+            case "frequency": return "Days this week with at least 30 minutes of medium or high activity. With fewer than 7 days of wear, it is scaled up to a week.";
+            case "volume": return "Energy burned in medium and high activity this week. With fewer than 7 days of wear, it is scaled up to a week.";
             default: return null;
         }
     }
