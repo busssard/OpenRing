@@ -52,8 +52,19 @@ log "first start: setup"
 launch
 shot setup 5
 
-log "demo data"
+log "demo data, turning the phone twice while it is prepared (issue #29)"
+adb shell settings put system accelerometer_rotation 0
 launch --ez demo true
+adb shell settings put system user_rotation 1   # landscape: the screen is recreated
+sleep 3
+adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q -e "demo data" -e "5 weeks" -e "demo nights"; then
+  log "demo progress shown again after turning"
+else
+  log "no demo progress on screen after turning (it may already be done)"
+fi
+adb shell settings put system user_rotation 0   # back to portrait for every screenshot
+sleep 2
 # wait for the demo to be generated and analysed (up to 3 minutes)
 for i in $(seq 1 90); do
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
@@ -89,6 +100,13 @@ if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$O
   exit 1
 fi
 log "no crashes"
+# a screen closed with its dialog still open (issue #29: the demo progress after turning the phone)
+if grep -E "has leaked window" "$OUT/logcat.txt" | grep -q "app\.openring\."; then
+  echo "::error::Open Ring left a dialog behind on a closed screen"
+  grep -A8 -E "has leaked window" "$OUT/logcat.txt" | head -40
+  exit 1
+fi
+log "no leaked dialogs"
 if [ "$DIRTY" = 1 ]; then
   echo "::error::some screenshots show a system dialog; not publishing them as README pictures"
   exit 1

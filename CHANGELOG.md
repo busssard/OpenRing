@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.23
+* Turning the phone while the demo data is prepared no longer starts it a second time or closes the app.
+  The progress stays on screen after turning (#29)
+
 ## 1.21
 * New icon from the owner's sketch: a ring seen slightly from above, the infinity sign cut into its band,
   in one plain colour (the app's deep sleep blue). Also the notification icon and the themed icon on Android 13

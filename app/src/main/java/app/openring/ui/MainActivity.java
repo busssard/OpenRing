@@ -51,13 +51,21 @@ public final class MainActivity extends Activity implements RingManager.Listener
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        Object last = getLastNonConfigurationInstance();
+        // recreated without the state handed over: Android ended the app in the meantime
+        boolean restored = b != null && !(last instanceof DemoRun);
+        if (last instanceof DemoRun) demoRun = (DemoRun) last;
+        demoRun.owner = this;
         if (b != null) {
             tab = b.getInt("tab", Pages.TODAY);
             String d = b.getString("date");
             if (d != null) date = LocalDate.parse(d);
             autoDate = b.getBoolean("auto", true);
+        } else {
+            // only on a fresh start: a turned screen keeps its tab and date and does not start
+            // the demo or open Settings again (issue #29)
+            handleExtras(getIntent());
         }
-        handleExtras(getIntent());
         Window w = getWindow();
         w.setStatusBarColor(Ui.BG);
         w.setNavigationBarColor(Ui.CARD);
@@ -130,6 +138,42 @@ public final class MainActivity extends Activity implements RingManager.Listener
         for (int i = 0; i < ICONS.length; i++) nav.addView(navItem(i), Ui.weight(1));
         root.addView(nav);
         setContentView(root);
+        if (demoRun.running) {
+            // a preparation started before the phone was turned: show its progress again
+            preparingDemo = true;
+            showDemoDialog();
+        } else if (restored && Prefs.of(this).demo()) {
+            startDemo(false);
+        }
+    }
+
+    /**
+     * Demo preparation that outlives a turned screen (issue #29), handed to the new screen like
+     * SetupActivity's restore. The task reports to whichever screen is attached now.
+     */
+    static final class DemoRun {
+        MainActivity owner;
+        /** Message shown now, null while nothing needs to be shown. */
+        String step;
+        boolean running;
+    }
+
+    private DemoRun demoRun = new DemoRun();
+    private android.app.ProgressDialog demoDialog;
+
+    @Override
+    public Object onRetainNonConfigurationInstance() {
+        return demoRun;
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (demoDialog != null) {
+            demoDialog.dismiss();
+            demoDialog = null;
+        }
+        if (demoRun.owner == this) demoRun.owner = null;
+        super.onDestroy();
     }
 
     private boolean preparingDemo;
@@ -143,7 +187,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     }
 
     /**
-     * Extras used by the setup screen and by the emulator screenshot test:
+     * Extras used by the setup screen and by the emulator screenshot test, read on a fresh start
+     * and for a new intent, not when a turned screen is recreated:
      * demo (boolean) starts demo mode, tab (int) opens a tab, analysis (boolean) unfolds
      * Further analysis on the Sleep page, period (int) picks its range, day (yyyy-mm-dd) a date.
      */
@@ -160,7 +205,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
             } catch (RuntimeException ignored) {
             }
         }
-        if (i.getBooleanExtra("demo", false)) startDemo();
+        if (i.getBooleanExtra("demo", false)) startDemo(true);
         // screen test: open Settings at a card ("stages")
         String section = i.getStringExtra("settings");
         if (section != null) startActivity(new Intent(this, SettingsActivity.class).putExtra("section", section));
@@ -171,44 +216,86 @@ public final class MainActivity extends Activity implements RingManager.Listener
         super.onNewIntent(i);
         setIntent(i);
         handleExtras(i);
-        if (scroll != null) {
+        // while the demo is prepared the database is half written; the task loads when it is done
+        if (scroll != null && !preparingDemo) {
             scroll.scrollTo(0, 0);
             load();
         }
     }
 
-    void startDemo() {
+    /**
+     * Prepares the demo in the background. {@code fresh}: the person asked for it (build it unless
+     * that was done today, with progress shown at once); otherwise only finish a demo that was cut
+     * off, and show progress only if there is work to do.
+     */
+    void startDemo(boolean fresh) {
         preparingDemo = true;
-        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
-        pd.setMessage("Preparing demo data");
-        pd.setCancelable(false);
-        pd.show();
-        new AsyncTask<Void, String, Void>() {
-            @Override
-            protected Void doInBackground(Void... v) {
-                app.openring.data.Demo.enter(MainActivity.this, new app.openring.data.Demo.Progress() {
-                    @Override
-                    public void step(String what) {
-                        publishProgress(what);
-                    }
-                });
-                return null;
-            }
+        if (demoRun.running) return; // one preparation at a time (issue #29)
+        demoRun.running = true;
+        demoRun.step = fresh ? "Preparing demo data" : null;
+        showDemoDialog();
+        new DemoTask(getApplicationContext(), demoRun, fresh).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
 
-            @Override
-            protected void onProgressUpdate(String... s) {
-                pd.setMessage(s[0]);
-            }
+    /** Holds only the application and the hand over state, never a screen, so a turned screen can go. */
+    private static final class DemoTask extends AsyncTask<Void, String, Void> {
+        private final android.content.Context ctx;
+        private final DemoRun run;
+        private final boolean fresh;
 
-            @Override
-            protected void onPostExecute(Void r) {
-                preparingDemo = false;
-                if (!isFinishing()) pd.dismiss();
-                autoDate = true;
-                date = LocalDate.now();
-                load();
-            }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        DemoTask(android.content.Context ctx, DemoRun run, boolean fresh) {
+            this.ctx = ctx;
+            this.run = run;
+            this.fresh = fresh;
+        }
+
+        @Override
+        protected Void doInBackground(Void... v) {
+            app.openring.data.Demo.Progress p = new app.openring.data.Demo.Progress() {
+                @Override
+                public void step(String what) {
+                    publishProgress(what);
+                }
+            };
+            if (fresh) app.openring.data.Demo.enter(ctx, p);
+            else app.openring.data.Demo.complete(ctx, p);
+            return null;
+        }
+
+        @Override
+        protected void onProgressUpdate(String... s) {
+            run.step = s[0];
+            if (run.owner != null) run.owner.showDemoDialog();
+        }
+
+        @Override
+        protected void onPostExecute(Void r) {
+            run.running = false;
+            run.step = null;
+            MainActivity a = run.owner;
+            if (a != null && !a.isDestroyed()) a.demoReady();
+        }
+    }
+
+    void showDemoDialog() {
+        if (demoRun.step == null || isDestroyed()) return;
+        if (demoDialog == null) {
+            demoDialog = new android.app.ProgressDialog(this);
+            demoDialog.setCancelable(false);
+        }
+        demoDialog.setMessage(demoRun.step);
+        if (!demoDialog.isShowing()) demoDialog.show();
+    }
+
+    void demoReady() {
+        preparingDemo = false;
+        if (demoDialog != null) {
+            demoDialog.dismiss();
+            demoDialog = null;
+        }
+        autoDate = true;
+        date = LocalDate.now();
+        load();
     }
 
     @Override
