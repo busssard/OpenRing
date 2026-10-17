@@ -622,7 +622,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             int[] st = StageFilter.filter(Json.stagesRaw(night), detailChoice);
             card.addView(Ui.text(this, "Your last night with this setting", 11, Ui.TEXT_3, Ui.MEDIUM));
             card.addView(Ui.gap(this, 6));
-            card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")), Ui.sized(this, -1, 150));
+            card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")).zone(Json.zone(night, java.time.ZoneId.systemDefault())), Ui.sized(this, -1, 150));
             card.addView(Ui.gap(this, 4));
             int wakes = StageFilter.wakeRuns(st);
             card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, awake %d %s on this chart.",

@@ -27,6 +27,8 @@ public final class DayData {
     public final List<JSONObject> recent = new ArrayList<JSONObject>();
     /** Screen time of the selected date and the days before (Screen tab, Today ring); null if it could not be read. */
     public app.openring.data.ScreenDays.Info screen;
+    /** The zone this day is shown in: its main night's, else the zone noted then, else the phone's (issue #22). */
+    public java.time.ZoneId zone = java.time.ZoneId.systemDefault();
 
     public static DayData load(Context c, LocalDate date) {
         Db db = Db.get(c);
@@ -40,6 +42,9 @@ public final class DayData {
             if (o.optBoolean("main")) d.night = o;
             else d.naps.add(o);
         }
+        java.time.ZoneId phone = java.time.ZoneId.systemDefault();
+        java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(date.atTime(12, 0).atZone(phone).toEpochSecond()));
+        d.zone = Json.zone(d.night, noted == null ? phone : noted);
         for (String s : db.nightsJson(date.minusDays(30).toString(), LocalDate.now().plusDays(1).toString(), true)) {
             JSONObject o = Json.parse(s);
             if (o != null) d.recent.add(o);
@@ -50,7 +55,7 @@ public final class DayData {
         }
         try {
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
-            d.screen = app.openring.data.ScreenDays.info(db, date, java.time.ZoneId.systemDefault(), p.screenGoalMin(), p.screenExcluded(),
+            d.screen = app.openring.data.ScreenDays.info(db, date, d.zone, p.screenGoalMin(), p.screenExcluded(),
                     p.screenMinShowMin() * 60.0);
         } catch (RuntimeException ignored) {
         }
@@ -104,6 +109,22 @@ public final class DayData {
     public JSONObject scoreObj(String key) {
         if ("sleep".equals(key)) return night == null ? null : night.optJSONObject("score");
         return day == null ? null : day.optJSONObject(key);
+    }
+
+    /** The zone a night is shown in: its own, else this day's (issue #22). */
+    public java.time.ZoneId zoneOf(JSONObject night) {
+        return Json.zone(night, zone);
+    }
+
+    /** The orange line after a trip: the main night's zone differs from the main night before it (issue #22). */
+    public String travelLine() {
+        if (night == null) return null;
+        double start = Json.d(night, "start");
+        JSONObject prev = null;
+        for (JSONObject o : recent) if (Json.d(o, "start") < start && (prev == null || Json.d(o, "start") > Json.d(prev, "start"))) prev = o;
+        if (prev == null) return null;
+        double mid = (start + Json.d(night, "end")) / 2;
+        return app.openring.core.analysis.ClockChange.travel(prev.optString("zone", null), night.optString("zone", null), mid);
     }
 
     public boolean empty() {

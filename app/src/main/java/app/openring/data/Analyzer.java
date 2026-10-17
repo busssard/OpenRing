@@ -37,6 +37,7 @@ public final class Analyzer {
 
     private final Db db;
     private final Prefs prefs;
+    /** The phone's zone now; each night and day uses the zone it was in (issue #22), this only when none was noted. */
     private final ZoneId zone = ZoneId.systemDefault();
     private final Log log;
 
@@ -63,6 +64,8 @@ public final class Analyzer {
 
     void runInner() {
         long now = System.currentTimeMillis() / 1000;
+        // the phone's time zone, noted at every sync (issue #22); demo mode has no zone history
+        if (!prefs.demo()) noteZone(db, now, zone);
         Db.TimeReport t = db.rebuildTime(now);
         log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written",
                 t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed));
@@ -107,20 +110,49 @@ public final class Analyzer {
         run(c, log);
     }
 
+    /**
+     * Note the phone's zone (issue #22). When it opened a new zone, the nights since the end of the
+     * zone before belong to the new one and are analysed again. Returns true in that case.
+     */
+    public static boolean noteZone(Db db, double now, ZoneId zone) {
+        double prevEnd = db.noteZone(now, zone.getId());
+        if (Double.isNaN(prevEnd)) return false;
+        db.reanalyseFrom(prevEnd);
+        return true;
+    }
+
+    /** The zone at {@code unix} from the zone history, the phone's zone when none is known. */
+    ZoneId zoneAt(double unix) {
+        ZoneId z = ClockChange.zone(db.zoneAt(unix));
+        return z == null ? zone : z;
+    }
+
     String date(double unix) {
-        return Instant.ofEpochSecond((long) unix).atZone(zone).toLocalDate().toString();
+        return date(unix, zone);
     }
 
-    String clock(double unix) {
-        return Instant.ofEpochSecond((long) unix).atZone(zone).toLocalTime().withNano(0).toString();
+    static String date(double unix, ZoneId z) {
+        return Instant.ofEpochSecond((long) unix).atZone(z).toLocalDate().toString();
     }
 
-    int tzOffset(double unix) {
-        return zone.getRules().getOffset(Instant.ofEpochSecond((long) unix)).getTotalSeconds();
+    static String clock(double unix, ZoneId z) {
+        return Instant.ofEpochSecond((long) unix).atZone(z).toLocalTime().withNano(0).toString();
     }
 
-    double dayStart(LocalDate d) {
-        return d.atStartOfDay(zone).toEpochSecond();
+    static int tzOffset(double unix, ZoneId z) {
+        return z.getRules().getOffset(Instant.ofEpochSecond((long) unix)).getTotalSeconds();
+    }
+
+    /** Midnight starting {@code d} in the zone valid around that day. */
+    double dayStartThen(LocalDate d) {
+        return d.atStartOfDay(zoneAt(d.atTime(12, 0).atZone(zone).toEpochSecond())).toEpochSecond();
+    }
+
+    /** A day's zone: its main night's, else the zone history's, else the phone's. */
+    ZoneId dayZone(LocalDate d) {
+        JSONObject main = nightJson(db.nightsJson(d.toString(), d.toString(), true));
+        ZoneId z = main == null ? null : ClockChange.zone(main.optString("zone", null));
+        return z != null ? z : zoneAt(d.atTime(12, 0).atZone(zone).toEpochSecond());
     }
 
     // ------------------------------------------------------------------------------ main
@@ -129,10 +161,14 @@ public final class Analyzer {
         log.log("analysing " + date(from) + " to " + date(to));
         // start at a local midnight so every day's sleeps are decided within one chunk
         LocalDate d0 = LocalDate.parse(date(from - 36 * 3600));
-        LocalDate d1 = LocalDate.parse(date(to));
-        // a week at a time keeps memory flat on a long first sync
+        // one day more: a night in a zone ahead of the phone's can end on the next date
+        LocalDate d1 = LocalDate.parse(date(to)).plusDays(1);
+        // a week at a time keeps memory flat on a long first sync; each week starts at midnight in
+        // the zone valid then, so a day's nights are decided together also after a trip (issue #22)
         for (LocalDate c = d0; !c.isAfter(d1); c = c.plusDays(7)) {
-            analyzeNights(dayStart(c), Math.min(to + 1, dayStart(c.plusDays(7))));
+            double a = dayStartThen(c);
+            if (a > to) break;
+            analyzeNights(a, Math.min(to + 1, dayStartThen(c.plusDays(7))));
         }
         for (LocalDate d = d0; !d.isAfter(d1); d = d.plusDays(1)) analyzeDay(d);
     }
@@ -195,7 +231,8 @@ public final class Analyzer {
             if (!screen.isEmpty()) {
                 double[] w = ScreenTime.trim(p.start, p.end, screen);
                 if (w[1] - w[0] < ScreenTime.MIN_WINDOW_S) {
-                    log.log("skipped a sleep window " + clock(p.start) + " to " + clock(p.end) + ": the phone was in use");
+                    ZoneId pz = zoneAt(p.end);
+                    log.log("skipped a sleep window " + clock(p.start, pz) + " to " + clock(p.end, pz) + ": the phone was in use");
                     continue;
                 }
                 start = w[0];
@@ -215,21 +252,27 @@ public final class Analyzer {
             }
             nights.add(n);
         }
+        // each night in the zone it ended in (issue #22): the later zone counts for the whole night
+        Map<Night, String> zoneIds = new HashMap<Night, String>();
+        for (Night n : nights) zoneIds.put(n, db.zoneAt(n.end));
         // main sleep per day = the longest one
         Map<String, Night> main = new HashMap<String, Night>();
         for (Night n : nights) {
-            String d = date(n.end);
+            String d = date(n.end, zoneOf(zoneIds.get(n)));
             Night m = main.get(d);
             if (m == null || n.asleepMin > m.asleepMin) main.put(d, n);
         }
         List<Object[]> out = new ArrayList<Object[]>();
         for (Night n : nights) {
-            String d = date(n.end);
+            String zid = zoneIds.get(n);
+            ZoneId nz = zoneOf(zid);
+            String d = date(n.end, nz);
             n.main = main.get(d) == n;
-            n.score = Scores.sleep(n, tzOffset(n.midpoint > 0 ? n.midpoint : n.end), prefs.age());
+            n.score = Scores.sleep(n, tzOffset(n.midpoint > 0 ? n.midpoint : n.end, nz), prefs.age());
             JSONObject js = Json.night(n, d);
+            if (ClockChange.zone(zid) != null) Json.put(js, "zone", zid);
             // daylight saving during the night (issue #22): the Sleep page marks the moment
-            ClockChange.Change cc = ClockChange.find(zone, n.start, n.end);
+            ClockChange.Change cc = ClockChange.find(nz, n.start, n.end);
             if (cc != null) {
                 Json.put(js, "clock_change_at", cc.at);
                 Json.put(js, "clock_change_min", cc.minutes);
@@ -238,10 +281,16 @@ public final class Analyzer {
             }
             out.add(new Object[] {n.start, n.end, d, n.main ? 1 : 0, n.score.value, js.toString()});
             log.log(String.format(java.util.Locale.US, "sleep for %s%s: %s to %s, %.0f min asleep, score %d, stages from %s",
-                    d, n.main ? "" : " (nap)", clock(n.start), clock(n.end), n.asleepMin, n.score.value, n.stageSource));
+                    d, n.main ? "" : " (nap)", clock(n.start, nz), clock(n.end, nz), n.asleepMin, n.score.value, n.stageSource));
         }
         db.replaceNights(from, Double.MAX_VALUE, out);
         log.log(nights.size() + " sleep periods");
+    }
+
+    /** The zone of a noted id, the phone's zone when there is none (or the phone does not know it). */
+    ZoneId zoneOf(String id) {
+        ZoneId z = ClockChange.zone(id);
+        return z == null ? zone : z;
     }
 
     /** Analyses the sleep window [start, end) of period {@code p} (its edges may have moved past phone use). */
@@ -334,7 +383,9 @@ public final class Analyzer {
 
     void analyzeDay(LocalDate day) {
         String key = day.toString();
-        double ds = dayStart(day), de = dayStart(day.plusDays(1));
+        // the day's own 24 hours, in the zone of its main night (issue #22)
+        ZoneId dz = dayZone(day);
+        double ds = day.atStartOfDay(dz).toEpochSecond(), de = day.plusDays(1).atStartOfDay(dz).toEpochSecond();
         int weight = prefs.weightKg();
         double bmr = Wellness.bmr(prefs.age(), prefs.sex(), weight);
 
