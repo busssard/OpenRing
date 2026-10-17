@@ -74,6 +74,7 @@ launch --ei tab 4;                          shot body
 swipe_up; swipe_up;                       shot body-trends 1
 launch --ei tab 5;                          shot screen
 adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fling
+adb shell input tap 462 1282;              shot screen-touch 1     # read the clock by touch (about 13:00)
 swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 launch --es settings top;                   shot settings

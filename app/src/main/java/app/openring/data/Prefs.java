@@ -72,6 +72,9 @@ public final class Prefs {
         }
         sp.edit().putString(demo() ? "screen_exclude_demo" : "screen_exclude", b.toString()).apply();
     }
+    /** Minutes each phone use shows as at least on the Screen tab's clock and day rows (not in totals). */
+    public int screenMinShowMin() { return sp.getInt("screen_min_show", 5); }
+    public void setScreenMinShowMin(int m) { sp.edit().putInt("screen_min_show", m).apply(); }
     /** Ring games show in Settings (issue #15); the motion test is always there. */
     public boolean gamesOn() { return sp.getBoolean("games_on", false); }
     public void setGamesOn(boolean b) { sp.edit().putBoolean("games_on", b).apply(); }

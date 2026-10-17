@@ -60,6 +60,7 @@ public final class Backup {
         Json.put(o, "screen_awake", p.screenAwake());
         Json.put(o, "screen_exclude", new org.json.JSONArray(p.screenExcluded()));
         Json.put(o, "games_on", p.gamesOn());
+        Json.put(o, "screen_min_show", p.screenMinShowMin());
         ZipOutputStream z = new ZipOutputStream(os);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
@@ -299,6 +300,10 @@ public final class Backup {
             p.setScreenExcluded(l);
         }
         if (o.has("games_on")) p.setGamesOn(o.optBoolean("games_on", false));
+        if (o.has("screen_min_show")) {
+            int m = o.optInt("screen_min_show", 5);
+            p.setScreenMinShowMin(m == 0 || m == 5 || m == 10 || m == 15 ? m : 5);
+        }
     }
 
     static boolean looksLikeSqlite(File f) throws IOException {

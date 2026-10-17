@@ -60,6 +60,8 @@ public final class ScreenUse {
     }
 
     private static long lastRun;
+    /** Version of the counting rules; 2 counts from unlocking (1.20). */
+    static final int RULE = 2;
 
     /** As {@link #collect(Context)}; without {@code force} it reads at most once a minute (stepping through days). */
     public static synchronized int collect(Context c, boolean force) {
@@ -69,12 +71,22 @@ public final class ScreenUse {
         if (!force && now - lastRun < 60 * 1000) return 0;
         lastRun = now;
         Db db = Db.get(c);
+        long back = now - 10L * 86400 * 1000;
+        // 1.20 counts from unlocking instead of screen on, and one app in front at a time: what
+        // Android still keeps (about a week) is read again with the new rules, older days stay as they were
+        if (db.kvLong("screen_rule", 1) < RULE) {
+            db.deleteScreenSince(back / 1000.0);
+            db.put("apps_read", 0);
+        }
         double last = db.screenStart(false);
-        long screenFrom = last > 0 ? (long) Math.floor(last * 1000) : now - 10L * 86400 * 1000;
+        long screenFrom = last > 0 ? (long) Math.floor(last * 1000) : back;
+        // the run that changes the rules starts right where the kept (older) sessions end, so the
+        // newest kept one is not read again under the new rule and stored a second time
+        if (db.kvLong("screen_rule", 1) < RULE) screenFrom = back;
         // the first read of a version with apps (1.15) goes back as far as Android keeps the log, for
         // the apps only: screen sessions keep starting at the newest stored one, so none is stored twice
         boolean firstApps = db.kvLong("apps_read", 0) == 0;
-        long from = firstApps ? Math.min(screenFrom, now - 10L * 86400 * 1000) : screenFrom;
+        long from = firstApps ? Math.min(screenFrom, back) : screenFrom;
         List<Double> times = new ArrayList<Double>();
         List<Integer> kinds = new ArrayList<Integer>();
         // apps in front (their own list: an app's "in front" also counts as a sign of use above)
@@ -118,6 +130,10 @@ public final class ScreenUse {
             k[i] = kinds.get(i);
         }
         List<double[]> sessions = ScreenTime.sessions(t, k, screenFrom / 1000.0, now / 1000.0);
+        if (db.kvLong("screen_rule", 1) < RULE) {
+            db.put("screen_rule", RULE);
+            if (p.screenAwake()) db.reanalyseFrom(back / 1000.0);
+        }
         if (sessions.isEmpty()) return 0;
         db.putScreen(sessions);
         // phone use for nights already analysed: the next analysis looks at them again
@@ -163,7 +179,9 @@ public final class ScreenUse {
             case 16: return ScreenTime.OFF;
             case 26: return ScreenTime.SHUTDOWN;
             case 27: return ScreenTime.STARTUP;
-            case 1: case 7: case 18: return ScreenTime.ALIVE;
+            case 17: return ScreenTime.LOCKED;
+            case 18: return ScreenTime.UNLOCKED;
+            case 1: case 7: return ScreenTime.ALIVE;
             default: return 0;
         }
     }

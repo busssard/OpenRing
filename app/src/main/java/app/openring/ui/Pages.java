@@ -814,28 +814,44 @@ public final class Pages {
 
         // the day as a clock
         LinearLayout dial = Ui.card(c);
-        dial.addView(Ui.caption(c, "When the screen was on"));
+        dial.addView(Ui.caption(c, "When you used the phone"));
         dial.addView(Ui.gap(c, 8));
-        dial.addView(new Charts.ScreenDial(c, in.dial, in.nights, in.from, in.to, System.currentTimeMillis() / 1000.0,
-                Ui.hm(in.day.totalMin), today ? "today" : "on this day"), Ui.sized(c, -1, 300));
+        final java.util.Map<String, String> names = new java.util.HashMap<String, String>();
+        dial.addView(new Charts.ScreenDial(c, in.dial, in.nights, in.sessions, in.dayApps, new Charts.ScreenDial.Names() {
+            @Override
+            public String of(String pkg) {
+                String n = names.get(pkg);
+                if (n == null) names.put(pkg, n = app.openring.data.ScreenUse.label(c, pkg));
+                return n;
+            }
+        }, in.from, in.to, System.currentTimeMillis() / 1000.0, Ui.hm(in.day.totalMin), today ? "today" : "on this day")
+                .shownAs(ScreenTime.widen(in.sessions, Prefs.of(c).screenMinShowMin() * 60.0)), Ui.sized(c, -1, 300));
         dial.addView(Ui.gap(c, 8));
-        dial.addView(Ui.text(c, "The day as a clock, midnight at the top. Each blue line is 5 minutes with the screen on, "
-                + "brighter when it was on longer. Purple: your sleep.", 12, Ui.TEXT_2, Ui.REGULAR));
+        int minShow = Prefs.of(c).screenMinShowMin();
+        dial.addView(Ui.text(c, "The day as a clock, midnight at the top. Each blue line is 5 minutes of the day with phone use, "
+                + "brighter the more of them was used. Purple: your sleep. Touch the clock and slide around it to see the times; "
+                + "tap the middle for the total again.", 12, Ui.TEXT_2, Ui.REGULAR));
+        dial.addView(Ui.gap(c, 10));
+        dial.addView(Ui.text(c, "Each use shows as at least", 12, Ui.TEXT_3, Ui.MEDIUM));
+        dial.addView(minShowChips(c, minShow, nav));
+        dial.addView(Ui.text(c, "Only for the clock and the days below, so short looks do not flicker. The times and the score always count the real minutes.",
+                12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(dial);
 
         // the numbers
         LinearLayout num = Ui.card(c);
         num.addView(Ui.caption(c, "This day"));
-        num.addView(Ui.statRow(c, Ui.stat(c, "Turned on", String.valueOf(in.day.turnedOn), "times", 0),
+        num.addView(Ui.statRow(c, Ui.stat(c, "Uses", String.valueOf(in.day.turnedOn), "times", 0),
                 Ui.stat(c, "Longest", Ui.fmt(in.day.longestMin, 0), "min", 0)));
         num.addView(Ui.statRow(c, Ui.stat(c, "First look", clock(in.firstLook), "", 0),
                 Ui.stat(c, "Not counted", Ui.fmt(in.excludedMin, 0), "min", 0)));
         num.addView(Ui.statRow(c, Ui.stat(c, "Before bed", Ui.fmt(in.bedMin, 0), "min", 0),
                 Ui.stat(c, "In the night", Ui.fmt(in.nightMin, 0), "min", 0)));
-        num.addView(Ui.text(c, "Turned on: how often the screen was switched on. Longest: the longest time it stayed on in one go. "
+        num.addView(Ui.text(c, "Uses: how often you started using the phone (unlocked it, or turned the screen on if it has no lock screen). Longest: the longest use in one go. "
                 + "First look: the first time after waking up. Not counted: time in apps you left out (below). "
                 + "Before bed: the hour before you fell asleep last night. In the night: between falling asleep and waking up. "
-                + "The lock screen counts too.", 12, Ui.TEXT_3, Ui.REGULAR));
+                + "Phone use counts while the phone is unlocked and the screen is on; the lock screen lighting up for a "
+                + "message does not count.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(num);
 
         // what makes the score
@@ -866,6 +882,31 @@ public final class Pages {
         return root;
     }
 
+    /** Choice of how long each use shows at least on the clock and the day rows (display only). */
+    static View minShowChips(final Context c, int current, final Nav nav) {
+        LinearLayout row = Ui.hbox(c);
+        row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
+        int[] opts = {0, 5, 10, 15};
+        for (final int m : opts) {
+            boolean on = m == current;
+            TextView chip = Ui.button(c, m == 0 ? "Exact" : m + " min", on ? Ui.OXY : Ui.TEXT_2, on);
+            chip.setTextSize(13);
+            int ph = Ui.dp(c, 12), pv = Ui.dp(c, 6);
+            chip.setPadding(ph, pv, ph, pv);
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Prefs.of(c).setScreenMinShowMin(m);
+                    nav.reload();
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
+            lp.setMargins(0, 0, Ui.dp(c, 6), 0);
+            row.addView(chip, lp);
+        }
+        return row;
+    }
+
     /** "37m" under an hour, "1h 5m" above. */
     static String span(double min) {
         return Double.isNaN(min) || min >= 59.5 ? Ui.hm(min) : Math.round(min) + "m";
@@ -889,7 +930,7 @@ public final class Pages {
             }
         }), Ui.sized(c, -1, Charts.ScreenRows.heightDp(in.rows.length)));
         card.addView(Ui.gap(c, 8));
-        card.addView(Ui.text(c, "One row per day, midnight to midnight, newest on top. Blue: screen on. Purple: sleep. "
+        card.addView(Ui.text(c, "One row per day, midnight to midnight, newest on top. Blue: phone in use. Purple: sleep. "
                 + "Green dot: first look after waking up. Right: the day's screen time. Tap a day to open it.", 12, Ui.TEXT_2, Ui.REGULAR));
         return card;
     }
@@ -916,9 +957,17 @@ public final class Pages {
                 row.addView(Ui.text(c, (out ? "not counted, " : "") + span(e.getValue()), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
                 card.addView(row);
             }
+            if (in.noAppMin >= 1) {
+                LinearLayout row = Ui.hbox(c);
+                row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
+                row.addView(Ui.text(c, "No app in front", 14, Ui.TEXT_2, Ui.REGULAR), Ui.weight(1));
+                row.addView(Ui.text(c, span(in.noAppMin), 14, Ui.TEXT_2, Ui.REGULAR));
+                card.addView(row);
+            }
         }
         card.addView(Ui.gap(c, 8));
-        card.addView(Ui.text(c, "Time each app was in front with the screen on. Apps you leave out (for example maps while you "
+        card.addView(Ui.text(c, "Time each app was in front while you used the phone. No app in front: uses shorter than half a minute "
+                + "and screens Android does not name. Apps you leave out (for example maps while you "
                 + "navigate) do not count for the total, the clock, the days or the score. Phone use at night still counts as awake "
                 + "for your sleep.", 12, Ui.TEXT_2, Ui.REGULAR));
         TextView pick = Ui.smallButton(c, ex.isEmpty() ? "Choose apps not to count" : "Apps not counted: " + ex.size(), Ui.OXY);

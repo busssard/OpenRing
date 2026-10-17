@@ -811,21 +811,43 @@ public final class Charts {
     }
 
     /**
-     * The day as a clock dial: a short line for every 5 minutes the screen was on (brighter the
-     * longer), the nights as a purple band inside, the total in the middle.
+     * The day as a clock dial: a short line for every 5 minutes the phone was in use (brighter the
+     * longer), the nights as a purple band inside, the total in the middle. Touch and slide around the
+     * dial to read the time, the phone use at that moment and the app in front; tap the middle to
+     * go back to the total.
      */
     public static final class ScreenDial extends View {
+        /** Names for package names (Android's app names, looked up by the page). */
+        public interface Names {
+            String of(String pkg);
+        }
+
         private final double[] fill;
-        private final java.util.List<double[]> nights;
+        private final java.util.List<double[]> nights, sessions;
+        /** Each session as long as it is drawn (at least the chosen minimum), same order as {@link #sessions}. */
+        private java.util.List<double[]> shown;
+        private final java.util.Map<String, java.util.List<double[]>> apps;
+        private final Names names;
         private final double from, to, now;
         private final String total, sub;
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), t = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF oval = new RectF();
+        /** The moment picked by touch, NaN when none. */
+        private double picked = Double.NaN;
 
         public ScreenDial(Context c, double[] fill, java.util.List<double[]> nights, double from, double to, double now, String total, String sub) {
+            this(c, fill, nights, new java.util.ArrayList<double[]>(), new java.util.HashMap<String, java.util.List<double[]>>(), null, from, to, now, total, sub);
+        }
+
+        public ScreenDial(Context c, double[] fill, java.util.List<double[]> nights, java.util.List<double[]> sessions,
+                java.util.Map<String, java.util.List<double[]>> apps, Names names, double from, double to, double now, String total, String sub) {
             super(c);
             this.fill = fill;
             this.nights = nights;
+            this.sessions = sessions;
+            this.shown = sessions;
+            this.apps = apps;
+            this.names = names;
             this.from = from;
             this.to = to;
             this.now = now;
@@ -834,11 +856,65 @@ public final class Charts {
             t.setTextAlign(Paint.Align.CENTER);
         }
 
+        /** Touching a mark finds its use even when short uses are drawn longer than they were. */
+        public ScreenDial shownAs(java.util.List<double[]> widened) {
+            if (widened != null && widened.size() == sessions.size()) shown = widened;
+            return this;
+        }
+
+        float radius() {
+            return Math.min(getWidth(), getHeight()) / 2f - Ui.dp(getContext(), 18);
+        }
+
+        @Override
+        public boolean onTouchEvent(android.view.MotionEvent e) {
+            float dx = e.getX() - getWidth() / 2f, dy = e.getY() - getHeight() / 2f;
+            double d = Math.sqrt(dx * dx + dy * dy);
+            int action = e.getActionMasked();
+            if (action == android.view.MotionEvent.ACTION_DOWN) {
+                // a tap in the middle clears the readout; only the ring of marks reads times, the rest
+                // of the card scrolls the page as usual
+                if (d < radius() * 0.45) {
+                    picked = Double.NaN;
+                    invalidate();
+                    performClick();
+                    return false;
+                }
+                if (d < radius() * 0.6 || d > radius() + Ui.dp(getContext(), 18)) return false;
+                getParent().requestDisallowInterceptTouchEvent(true);
+            }
+            if (action == android.view.MotionEvent.ACTION_DOWN || action == android.view.MotionEvent.ACTION_MOVE) {
+                double a = Math.atan2(dy, dx) + Math.PI / 2; // 0 at the top, clockwise
+                if (a < 0) a += 2 * Math.PI;
+                picked = from + (to - from) * a / (2 * Math.PI);
+                invalidate();
+                return true;
+            }
+            if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_CANCEL) {
+                getParent().requestDisallowInterceptTouchEvent(false);
+                return true;
+            }
+            return true;
+        }
+
+        static String clock(double unix) {
+            java.time.ZonedDateTime z = java.time.Instant.ofEpochSecond((long) Math.floor(unix)).atZone(java.time.ZoneId.systemDefault());
+            return String.format(Locale.getDefault(), "%02d:%02d", z.getHour(), z.getMinute());
+        }
+
+        /** The app in front at {@code at}, or null. */
+        String appAt(double at) {
+            for (java.util.Map.Entry<String, java.util.List<double[]>> e : apps.entrySet()) {
+                for (double[] r : e.getValue()) if (at >= r[0] && at < r[1]) return names == null ? e.getKey() : names.of(e.getKey());
+            }
+            return null;
+        }
+
         @Override
         protected void onDraw(Canvas cv) {
             float w = getWidth(), h = getHeight(), cx = w / 2, cy = h / 2;
             float label = Ui.dp(getContext(), 18);
-            float r = Math.min(w, h) / 2 - label;
+            float r = radius();
             float r0 = r * 0.70f, r1 = r;
             // the hour ring under the lines
             p.setStyle(Paint.Style.STROKE);
@@ -863,7 +939,7 @@ public final class Charts {
                 float s = dialAngle(a, from, to);
                 cv.drawArc(oval, s, dialAngle(b, from, to) - s, false, p);
             }
-            // screen use: one line per step
+            // phone use: one line per step
             int n = fill.length;
             p.setStrokeCap(Paint.Cap.ROUND);
             p.setStrokeWidth(Math.max(1.5f, (float) (2 * Math.PI * r1 / n) * 0.55f));
@@ -874,12 +950,11 @@ public final class Charts {
                 float ra = r0 + r * 0.05f;
                 cv.drawLine(cx + (float) Math.cos(a) * ra, cy + (float) Math.sin(a) * ra, cx + (float) Math.cos(a) * r1, cy + (float) Math.sin(a) * r1, p);
             }
-            // now, on today's dial
+            // now, on today's dial: a dot on the hour ring, so it never covers an hour label
             if (now > from && now < to) {
                 double a = Math.toRadians(dialAngle(now, from, to));
                 p.setStyle(Paint.Style.FILL);
                 p.setColor(Ui.TEXT);
-                // on the hour ring, so it never covers an hour label
                 cv.drawCircle(cx + (float) Math.cos(a) * r0, cy + (float) Math.sin(a) * r0, Ui.dp(getContext(), 3.5f), p);
             }
             // hour labels
@@ -891,6 +966,43 @@ public final class Charts {
             cv.drawText("12", cx, cy + r + label * 0.55f + off, t);
             cv.drawText("6", cx + r + label * 0.5f, cy + off, t);
             cv.drawText("18", cx - r - label * 0.55f, cy + off, t);
+            if (!Double.isNaN(picked)) {
+                // the picked moment: a hand from the middle to the edge, and what happened then
+                double a = Math.toRadians(dialAngle(picked, from, to));
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(Ui.dp(getContext(), 2));
+                p.setColor(Ui.TEXT);
+                cv.drawLine(cx + (float) Math.cos(a) * r * 0.62f, cy + (float) Math.sin(a) * r * 0.62f,
+                        cx + (float) Math.cos(a) * (r1 + label * 0.2f), cy + (float) Math.sin(a) * (r1 + label * 0.2f), p);
+                double[] s = null;
+                for (int i = 0; i < shown.size() && s == null; i++) {
+                    double[] x = shown.get(i);
+                    if (picked >= x[0] && picked < x[1]) s = sessions.get(i);
+                }
+                String line1 = clock(picked), line2, line3 = null;
+                if (s != null) {
+                    double m = (s[1] - s[0]) / 60.0;
+                    line2 = clock(s[0]) + " to " + clock(s[1]) + ", " + (m < 1 ? "under a minute" : Pages.span(m));
+                    line3 = appAt(Math.min(Math.max(picked, s[0]), s[1] - 1));
+                } else {
+                    boolean asleep = false;
+                    for (double[] x : nights) if (picked >= x[0] && picked < x[1]) asleep = true;
+                    line2 = asleep ? "asleep, phone not used" : "phone not used";
+                }
+                t.setColor(Ui.TEXT);
+                t.setTypeface(Ui.LIGHT);
+                t.setTextSize(r * 0.20f);
+                cv.drawText(line1, cx, cy - r * 0.02f, t);
+                t.setColor(s != null ? Ui.OXY : Ui.TEXT_2);
+                t.setTypeface(Ui.REGULAR);
+                t.setTextSize(Math.min(Ui.dp(getContext(), 13), r * 0.085f));
+                cv.drawText(line2, cx, cy + r * 0.16f, t);
+                if (line3 != null) {
+                    t.setColor(Ui.TEXT_2);
+                    cv.drawText(line3, cx, cy + r * 0.29f, t);
+                }
+                return;
+            }
             // the total in the middle
             t.setColor(Ui.TEXT);
             t.setTypeface(Ui.LIGHT);

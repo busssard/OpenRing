@@ -50,7 +50,8 @@ public final class DayData {
         }
         try {
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
-            d.screen = app.openring.data.ScreenDays.info(db, date, java.time.ZoneId.systemDefault(), p.screenGoalMin(), p.screenExcluded());
+            d.screen = app.openring.data.ScreenDays.info(db, date, java.time.ZoneId.systemDefault(), p.screenGoalMin(), p.screenExcluded(),
+                    p.screenMinShowMin() * 60.0);
         } catch (RuntimeException ignored) {
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {

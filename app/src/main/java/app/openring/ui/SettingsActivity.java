@@ -439,7 +439,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (card == null) return;
         card.removeAllViews();
         card.addView(Ui.caption(this, "Screen time"));
-        card.addView(Ui.body(this, "When this phone's screen was on. It has its own tab (Screen) and helps the sleep analysis. "
+        card.addView(Ui.body(this, "When you used this phone (from unlocking until the screen goes off). It has its own tab (Screen) and helps the sleep analysis. "
                 + "Android only shares this after you switch on Open Ring under usage access in Android's settings. "
                 + "It stays on this phone like everything else."));
         if (!p.demo() && !ScreenUse.supported()) {
