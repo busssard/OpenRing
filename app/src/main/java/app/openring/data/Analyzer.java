@@ -73,6 +73,9 @@ public final class Analyzer {
         // mode, or analysed by a version before 1.11): analyse everything again
         int detail = prefs.stageDetail();
         if (db.kvLong("stage_detail", -1) != detail) db.put("analyzed_until", 0);
+        // the rules for finding nights changed (issue #42, long wake ups): nights from older rules are
+        // analysed again once; databases from before the version existed read as version 1
+        if (db.kvLong("night_finder", 1) != NightFinder.VERSION) db.put("analyzed_until", 0);
         // "count phone use as awake" switched (issue #13): only nights since the first screen data change
         long screenAwake = prefs.screenAwake() ? 1 : 0;
         double firstScreen = db.screenStart(true);
@@ -91,6 +94,7 @@ public final class Analyzer {
         analyze(from, range[1]);
         db.put("analyzed_until", (long) range[1]);
         db.put("stage_detail", detail);
+        db.put("night_finder", NightFinder.VERSION);
         db.put("screen_awake", screenAwake);
         db.put("last_analysis", now);
     }
@@ -180,7 +184,15 @@ public final class Analyzer {
             }
         }
         List<NightFinder.RingRun> runs = NightFinder.ringRuns(pageTimes, pages);
-        List<NightFinder.Period> periods = NightFinder.find(bedtimes, runs, state, support);
+        // the phone's clock tells a wake up in the middle of the night from a nap (issue #42)
+        NightFinder.LocalClock clock = new NightFinder.LocalClock() {
+            @Override
+            public int minuteOfDay(double unix) {
+                java.time.LocalTime lt = Instant.ofEpochSecond((long) unix).atZone(zone).toLocalTime();
+                return lt.getHour() * 60 + lt.getMinute();
+            }
+        };
+        List<NightFinder.Period> periods = NightFinder.find(bedtimes, runs, state, support, clock);
         // phone use (issue #13): someone using the phone is awake, whatever the ring thinks
         List<double[]> screen = new ArrayList<double[]>();
         if (prefs.screenAwake()) {
@@ -253,6 +265,7 @@ public final class Analyzer {
         in.start = start;
         in.end = end;
         for (double[] s : screen) if (s[1] > start && s[0] < end) in.screen.add(s);
+        in.ringAwake.addAll(p.awake);
         TS spHr = new TS();
         TS motionFromSp = new TS();
         for (Db.Row r : rows) {

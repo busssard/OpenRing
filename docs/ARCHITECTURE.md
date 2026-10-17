@@ -80,7 +80,10 @@ file in the cache. Histories are never merged.
 ## Analysis
 
 1. `NightFinder` finds sleep periods from the ring's bedtime markers, its per 30 second sleep state and
-   nocturnal events. A period is never stretched into time the ring marks as awake. `Analyzer` then
+   nocturnal events. A period is never stretched into time the ring marks as awake at its edges. A wake
+   up in the middle of the night (up to 3 hours, the middle of the gap between 23:00 and 06:00, the ring
+   worn through it) joins the pieces before and after into one night, and the time the ring calls awake
+   in the gap counts as awake (issue #42); kv `night_finder` holds the rules version. `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
    When "Count phone use as awake" is on (default), phone use of a minute or more that overlaps the first or
    last 10 minutes of a period moves its edge past it, and a period of under 15 minutes left is dropped.

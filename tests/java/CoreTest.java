@@ -319,6 +319,7 @@ public class CoreTest {
         history();
         client();
         analysis();
+        longWake();
         timeline();
         live();
         motion();
@@ -694,6 +695,77 @@ public class CoreTest {
         double[] debt = Wellness.sleepDebt(new int[] {6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600}, new int[] {8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600});
         check("sleep debt", debt[0] > 0 && debt[1] == 1);
         eq("nightly temp short", Double.isNaN(NightAnalyzer.nightlyTemperature(new double[] {35, 35})), true);
+    }
+
+    /** Ring sleep state every 5 minutes from {@code from} to {@code to} (hours after midnight UTC), awake in {@code awake} (hours), no samples in {@code off}. */
+    static TS ringState(double from, double to, double[] awake, double[] off) {
+        TS st = new TS();
+        double day = 1_760_000_000L - 1_760_000_000L % 86400;
+        for (double h = from; h < to; h += 5 / 60.0) {
+            if (off != null && h >= off[0] && h < off[1]) continue;
+            boolean aw = awake != null && h >= awake[0] && h < awake[1];
+            st.add(day + h * 3600, aw ? 0 : 1);
+        }
+        return st;
+    }
+
+    static List<NightFinder.Period> findIn(TS st, NightFinder.LocalClock clock) {
+        TS support = new TS();
+        for (int i = 0; i < st.size(); i++) support.add(st.t(i), 1);
+        return NightFinder.find(new ArrayList<double[]>(), new ArrayList<NightFinder.RingRun>(), st, support, clock);
+    }
+
+    static double awakeMin(NightFinder.Period p) {
+        double s = 0;
+        for (double[] a : p.awake) s += a[1] - a[0];
+        return s / 60;
+    }
+
+    /** Issue #42: a long wake up in the middle of the night joins the two pieces, a nap does not. */
+    static void longWake() {
+        NightFinder.LocalClock utc = new NightFinder.LocalClock() {
+            @Override
+            public int minuteOfDay(double unix) {
+                return (int) (((long) unix % 86400) / 60);
+            }
+        };
+        // night 23:00 to 07:00 (hours from midnight; -1 is 23:00 the evening before)
+        List<NightFinder.Period> ps = findIn(ringState(-1, 7, new double[] {2.5, 3.75}, null), utc);
+        eq("75 min wake up at 02:30 is one night", ps.size(), 1);
+        check("75 min wake up returned as awake", ps.size() == 1 && Math.abs(awakeMin(ps.get(0)) - 75) <= 10);
+        check("joined night keeps its edges", ps.size() == 1 && ps.get(0).end - ps.get(0).start <= 8 * 3600);
+        ps = findIn(ringState(-1, 7, new double[] {2.5, 4.5}, null), utc);
+        eq("120 min wake up is one night", ps.size(), 1);
+        check("120 min wake up returned as awake", ps.size() == 1 && Math.abs(awakeMin(ps.get(0)) - 120) <= 10);
+        eq("200 min wake up stays two sleeps", findIn(ringState(-1, 7, new double[] {2.5, 2.5 + 200 / 60.0}, null), utc).size(), 2);
+        eq("without a clock the old rule splits it", findIn(ringState(-1, 7, new double[] {2.5, 3.75}, null), null).size(), 2);
+        // sofa 19:00 to 21:00, awake 21:00 to 22:15, bed 22:15: the middle of the gap is 21:37
+        eq("evening wake up keeps the sofa sleep apart", findIn(ringState(19, 30, new double[] {21, 22.25}, null), utc).size(), 2);
+        // ring taken off 02:30 to 03:45: no sleep state in the gap, not a wake up
+        eq("ring taken off is not joined", findIn(ringState(-1, 7, null, new double[] {2.5, 3.75}), utc).size(), 2);
+        // the gap's middle at 05:50 joins, at 06:10 it does not
+        eq("early morning wake up joins", findIn(ringState(-1, 8, new double[] {5, 6 + 40 / 60.0}, null), utc).size(), 1);
+        eq("wake up after 06:00 does not join", findIn(ringState(-1, 9, new double[] {5.5, 6 + 50 / 60.0}, null), utc).size(), 2);
+        // a short doze inside the gap is not counted as awake
+        List<double[]> asleep = new ArrayList<double[]>();
+        asleep.add(new double[] {100, 200});
+        List<double[]> parts = NightFinder.awakeParts(0, 300, asleep);
+        check("awake parts leave sleep out", parts.size() == 2 && parts.get(0)[1] == 100 && parts.get(1)[0] == 200);
+        // the analyser counts the ring's awake time even when heart rate and movement look calm
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        double day = 1_760_000_000L - 1_760_000_000L % 86400;
+        in.start = day - 3600;
+        in.end = day + 7 * 3600;
+        for (double t = in.start; t < in.end; t += 300) {
+            in.hr5.add(t, 55);
+            in.hrv5.add(t, 60);
+        }
+        for (double t = in.start; t < in.end; t += 60) in.motion.add(t, 0);
+        Night calm = NightAnalyzer.analyze(in);
+        in.ringAwake.add(new double[] {day + 2.5 * 3600, day + 3.75 * 3600});
+        Night woke = NightAnalyzer.analyze(in);
+        check("ring awake gap counts as awake", woke.awakeMin - calm.awakeMin >= 70 && woke.awakenings >= 1);
+        check("ring awake gap lowers the score", Scores.sleep(woke, 0, 40).value < Scores.sleep(calm, 0, 40).value);
     }
 
     static void timeline() {

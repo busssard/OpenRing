@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.28
+* A wake up of up to 3 hours in the middle of the night no longer splits the night in two. The night
+  keeps the sleep before and after it, the time awake counts as a wake up and lowers the score, so a
+  night like that scores less than sleeping through, but no longer half. A nap in the afternoon or
+  evening stays a nap. All nights are analysed again once after the update (#42)
+
 ## 1.21
 * New icon from the owner's sketch: a ring seen slightly from above, the infinity sign cut into its band,
   in one plain colour (the app's deep sleep blue). Also the notification icon and the themed icon on Android 13
