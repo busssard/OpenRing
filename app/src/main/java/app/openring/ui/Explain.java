@@ -43,7 +43,7 @@ public final class Explain {
             case "total": return "Time actually asleep. Most adults need 7 to 9 hours.";
             case "efficiency": return "Share of your time in bed spent asleep. 85% or more is good.";
             case "restfulness": return "Wake ups, time awake and restless movement during the night.";
-            case "rem": return "Dreaming sleep, important for memory, learning and mood. Usually about a fifth of the night.";
+            case "rem": return "Dreaming sleep, important for memory, learning and mood. Usually about a fifth of sleep.";
             case "deep": return "The most restorative stage, mostly in the first half of the night. Usually 13 to 23% of sleep.";
             case "latency": return "How long it took to fall asleep. 10 to 20 minutes is ideal; falling asleep instantly can mean sleep debt.";
             case "timing": return "Whether the middle of your sleep falls around 2 to 4 a.m., in step with your body clock.";

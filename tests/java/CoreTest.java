@@ -325,6 +325,7 @@ public class CoreTest {
         pattern();
         clockChange();
         stageFilter();
+        stageShare();
         screenTime();
         screenApps();
         screenUnlock();
@@ -334,6 +335,37 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Stage percentages: REM, light and deep of time asleep add up to 100, awake of time in bed (issue #32). */
+    static void stageShare() {
+        int[] a = StageShare.sleepShares(43, 262, 113);
+        eq("shares: night like the issue's", Arrays.toString(a), "[10, 63, 27]");
+        int[] third = StageShare.sleepShares(100, 100, 100);
+        eq("shares: thirds add up to 100, not 99", third[0] + third[1] + third[2], 100);
+        eq("shares: thirds tie goes to the first stage", Arrays.toString(third), "[34, 33, 33]");
+        int[] up = StageShare.sleepShares(45, 245, 210);
+        // exact 9, 49, 42 with no remainder
+        eq("shares: exact values stay", Arrays.toString(up), "[9, 49, 42]");
+        int[] over = StageShare.sleepShares(5.5, 5.5, 89); // 5.5 + 5.5 + 89, plain rounding gives 6 + 6 + 89 = 101
+        eq("shares: no 101", over[0] + over[1] + over[2], 100);
+        eq("shares: 101 case", Arrays.toString(over), "[6, 5, 89]");
+        for (int t = 0; t < 200; t++) {
+            int[] r = StageShare.sleepShares(t * 1.37 % 97, t * 2.11 % 300, t * 0.73 % 140 + 1);
+            if (r[0] + r[1] + r[2] != 100) { check("shares: always 100 (" + t + ")", false); break; }
+        }
+        check("shares: no sleep gives null", StageShare.sleepShares(0, 0, 0) == null && StageShare.sleepShares(0.2, 0.3, 0.1) == null);
+        eq("shares: missing stage counts as 0", Arrays.toString(StageShare.sleepShares(Double.NaN, 300, -5)), "[0, 100, 0]");
+        eq("share: awake of time in bed", StageShare.share(54, 543), 10.0);
+        check("share: no base", Double.isNaN(StageShare.share(10, 0)) && Double.isNaN(StageShare.share(10, Double.NaN))
+                && Double.isNaN(StageShare.share(Double.NaN, 400)));
+        eq("share: negative part is 0", StageShare.share(-3, 400), 0.0);
+        eq("note: with range", StageShare.note(10, "sleep", StageShare.USUAL_DEEP), "10% of sleep (usual 13 to 23%)");
+        eq("note: rem range", StageShare.note(27, "sleep", StageShare.USUAL_REM), "27% of sleep (usual about a fifth)");
+        eq("note: without range", StageShare.note(63, "sleep", null), "63% of sleep");
+        eq("note: awake", StageShare.note(9, "time in bed", null), "9% of time in bed");
+        eq("note: unknown with range", StageShare.note(Double.NaN, "sleep", StageShare.USUAL_DEEP), "Usual 13 to 23% of sleep");
+        eq("note: unknown without range", StageShare.note(Double.NaN, "sleep", null), "Average per night");
     }
 
     static boolean near(double a, double b) {
