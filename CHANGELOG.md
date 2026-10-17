@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.19
+* Syncing stays quick with a long history: after each sync only the events whose time changed are written
+  again, instead of all of them. With a year of data this part is about 5 times faster (#21)
+* Live, games and the ring buttons in Settings no longer wait while a sync analyses your nights: the ring is
+  free as soon as the download ends. The status still says "Analysing" until the new nights are ready (#21)
+
 ## 1.18
 * Restoring a full backup no longer replaces newer history without asking. If this phone has nights the
   backup lacks, the app asks first, and "Key and settings only" keeps the history on the phone (#26)

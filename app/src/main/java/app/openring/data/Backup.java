@@ -183,8 +183,12 @@ public final class Backup {
         try {
             if (p.db != null && replaceHistory) {
                 try {
-                    // demo mode is switched off only once the swap worked (applySettings)
-                    Db.replaceWith(c, p.db, p.backupEvents);
+                    // demo mode is switched off only once the swap worked (applySettings).
+                    // Wait for an analysis that may still run after a sync (it no longer holds the
+                    // ring, issue #21): closing its database under it would break it
+                    synchronized (Analyzer.class) {
+                        Db.replaceWith(c, p.db, p.backupEvents);
+                    }
                 } catch (IOException e) {
                     r.message = NOT_OPENED;
                     return r;

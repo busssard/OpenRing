@@ -4,7 +4,11 @@ public class SQLiteStatement {
     final PreparedStatement p;
     SQLiteStatement(PreparedStatement p) { this.p = p; }
     public void bindLong(int i, long v) { try { p.setLong(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
+    public void bindDouble(int i, double v) { try { p.setDouble(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
+    public void bindNull(int i) { try { p.setNull(i, Types.NULL); } catch (SQLException e) { throw new RuntimeException(e); } }
     public void bindBlob(int i, byte[] v) { try { p.setBytes(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
+    public int executeUpdateDelete() { try { return p.executeUpdate(); } catch (SQLException e) { throw new RuntimeException(e); } }
+    public void close() { try { p.close(); } catch (SQLException e) { throw new RuntimeException(e); } }
     /** -1 when the row was ignored by a conflict clause, as on Android. */
     public long executeInsert() {
         try { int n = p.executeUpdate(); if (n == 0) return -1;

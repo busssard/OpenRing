@@ -89,6 +89,10 @@ public final class RingManager {
     private final LinkedList<String> logLines = new LinkedList<String>();
     private volatile String status = "";
     private volatile boolean busy;
+    /** Syncs running, download or analysis (issue #21). */
+    private final java.util.concurrent.atomic.AtomicInteger syncs = new java.util.concurrent.atomic.AtomicInteger();
+    /** Syncs past their download, analysing; they no longer hold the ring (issue #21). */
+    private final java.util.concurrent.atomic.AtomicInteger analysing = new java.util.concurrent.atomic.AtomicInteger();
     private volatile double progress = -1;
     private volatile boolean liveRunning;
     private volatile RingClient current;
@@ -117,8 +121,9 @@ public final class RingManager {
         return status;
     }
 
+    /** A ring task runs, or a sync is still analysing what it downloaded (the ring is free then). */
     public boolean busy() {
-        return busy;
+        return busy || syncs.get() > 0;
     }
 
     /** Sync progress 0..1, or -1 when unknown. */
@@ -156,7 +161,20 @@ public final class RingManager {
         notifyListeners();
     }
 
+    /**
+     * Status line of a ring task. While a sync analyses (the ring is free then, issue #21) the
+     * line keeps saying "Analysing" and other tasks only write to the log.
+     */
     private void setStatus(String s) {
+        if (analysing.get() > 0) {
+            log(s);
+            return;
+        }
+        forceStatus(s);
+    }
+
+    /** Status line of the sync itself, also while it analyses. */
+    private void forceStatus(String s) {
         status = s;
         log(s);
     }
@@ -264,11 +282,63 @@ public final class RingManager {
             log("sync skipped: the ring is busy with another task");
             return res;
         }
-        cancelRequested = false;
-        busy = true;
-        progress = -1;
-        prefs.setLastAttempt(System.currentTimeMillis() / 1000);
-        notifyListeners();
+        // busy() stays true from here until the analysis has ended, also when the download
+        // fails with an Error, so screens reload only once the new nights are there (issue #21)
+        syncs.incrementAndGet();
+        boolean analysingRaised = false;
+        try {
+            boolean stopped = false;
+            try {
+                cancelRequested = false;
+                busy = true;
+                progress = -1;
+                prefs.setLastAttempt(System.currentTimeMillis() / 1000);
+                notifyListeners();
+                download(res, key, prefs);
+            } finally {
+                try {
+                    prefs.setLastSyncError(res.ok ? null : res.message);
+                    if (res.ok) prefs.setLastSync(System.currentTimeMillis() / 1000);
+                } finally {
+                    // the download is over and the link closed: free the ring for Live, games and
+                    // Settings while the screen log is read and the nights are analysed (issue #21)
+                    stopped = cancelRequested;
+                    analysing.incrementAndGet();
+                    analysingRaised = true;
+                    progress = -1;
+                    busy = false;
+                    op.unlock();
+                }
+            }
+            try {
+                // screen time (issue #13): copy the phone's screen log before the nights are analysed
+                app.openring.data.ScreenUse.collect(ctx, true);
+            } catch (RuntimeException e) {
+                log("screen time not read: " + e);
+            }
+            try {
+                if (Db.get(ctx).eventCount() > 0 && !stopped) {
+                    forceStatus("Analysing");
+                    Analyzer.run(ctx, new Analyzer.Log() {
+                        @Override
+                        public void log(String m) {
+                            RingManager.this.log(m);
+                        }
+                    });
+                }
+            } catch (RuntimeException e) {
+                log("analysis failed: " + android.util.Log.getStackTraceString(e));
+            }
+        } finally {
+            if (analysingRaised) analysing.decrementAndGet();
+            syncs.decrementAndGet();
+            forceStatus(res.ok ? "Up to date" : ("Sync failed: " + res.message));
+        }
+        return res;
+    }
+
+    /** The connect and download attempts of a sync; fills {@code res}. Runs with the ring lock held. */
+    private void download(SyncResult res, byte[] key, Prefs prefs) {
         Set<String> exclude = new HashSet<String>();
         try {
             for (int attempt = 1; attempt <= 3; attempt++) {
@@ -310,36 +380,7 @@ public final class RingManager {
         } catch (RuntimeException e) {
             res.message = "Unexpected error: " + e;
             log(android.util.Log.getStackTraceString(e));
-        } finally {
-            prefs.setLastSyncError(res.ok ? null : res.message);
-            if (res.ok) prefs.setLastSync(System.currentTimeMillis() / 1000);
         }
-        try {
-            // screen time (issue #13): copy the phone's screen log before the nights are analysed
-            app.openring.data.ScreenUse.collect(ctx, true);
-        } catch (RuntimeException e) {
-            log("screen time not read: " + e);
-        }
-        try {
-            if (Db.get(ctx).eventCount() > 0 && !cancelRequested) {
-                setStatus("Analysing");
-                notifyListeners();
-                Analyzer.run(ctx, new Analyzer.Log() {
-                    @Override
-                    public void log(String m) {
-                        RingManager.this.log(m);
-                    }
-                });
-            }
-        } catch (RuntimeException e) {
-            log("analysis failed: " + android.util.Log.getStackTraceString(e));
-        } finally {
-            busy = false;
-            progress = -1;
-            op.unlock();
-            setStatus(res.ok ? "Up to date" : ("Sync failed: " + res.message));
-        }
-        return res;
     }
 
     private int syncSession(Session s, byte[] key, final Prefs prefs) throws IOException, InterruptedException, HistoryBatch.BatchException {
@@ -475,43 +516,49 @@ public final class RingManager {
             @Override
             public String run() throws Exception {
                 Prefs prefs = Prefs.of(ctx);
-                Session s = open(true, null);
-                try {
-                    String serial = s.client.serial();
-                    byte[] key = existingKey != null ? existingKey : Auth.newKey();
-                    if (install) {
-                        setStatus("Installing the key");
-                        int st = s.client.setAuthKey(key);
-                        if (st != 0) {
-                            throw new IOException(st == 1 ? "The ring already has a key. Factory reset it first, or use the existing key."
-                                    : st == 5 ? "The ring reports unfinished factory tests (status 5)."
-                                    : String.format(Locale.US, "The ring refused the key (status 0x%02x)", st));
-                        }
-                    }
-                    setStatus("Verifying the key");
-                    s.client.authenticate(key);
-                    prefs.saveKey(key);
-                    prefs.setAddress(s.link.device().getAddress());
-                    if (prefs.serial() != null && !prefs.serial().equals(serial)) {
-                        // a different ring: start a fresh history
-                        Db.get(ctx).resetAll();
-                    }
-                    prefs.setSerial(serial);
+                // a sync may still analyse (it released the ring, issue #21). Wait for it before the
+                // link opens, so the link cannot go stale meanwhile, and hold the analysis lock for
+                // the few seconds of pairing: no analysis runs between the wipe of a different ring's
+                // history and the new serial, in the same order as before
+                synchronized (Analyzer.class) {
+                    Session s = open(true, null);
                     try {
-                        RingClient.DeviceInfo info = s.client.firmware();
-                        prefs.setFirmware(info.firmware);
-                    } catch (IOException ignored) {
+                        String serial = s.client.serial();
+                        byte[] key = existingKey != null ? existingKey : Auth.newKey();
+                        if (install) {
+                            setStatus("Installing the key");
+                            int st = s.client.setAuthKey(key);
+                            if (st != 0) {
+                                throw new IOException(st == 1 ? "The ring already has a key. Factory reset it first, or use the existing key."
+                                        : st == 5 ? "The ring reports unfinished factory tests (status 5)."
+                                        : String.format(Locale.US, "The ring refused the key (status 0x%02x)", st));
+                            }
+                        }
+                        setStatus("Verifying the key");
+                        s.client.authenticate(key);
+                        prefs.saveKey(key);
+                        prefs.setAddress(s.link.device().getAddress());
+                        if (prefs.serial() != null && !prefs.serial().equals(serial)) {
+                            // a different ring: start a fresh history
+                            Db.get(ctx).resetAll();
+                        }
+                        prefs.setSerial(serial);
+                        try {
+                            RingClient.DeviceInfo info = s.client.firmware();
+                            prefs.setFirmware(info.firmware);
+                        } catch (IOException ignored) {
+                        }
+                        if (install) {
+                            // a ring keyed outside the official app starts with daytime HR and SpO2 off
+                            s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
+                            s.client.setFeatureMode(Protocol.FEATURE_SPO2, Protocol.MODE_AUTOMATIC);
+                            long now = System.currentTimeMillis() / 1000;
+                            s.client.syncTime(now, TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1800000);
+                        }
+                        return "Paired with " + serial;
+                    } finally {
+                        close(s);
                     }
-                    if (install) {
-                        // a ring keyed outside the official app starts with daytime HR and SpO2 off
-                        s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
-                        s.client.setFeatureMode(Protocol.FEATURE_SPO2, Protocol.MODE_AUTOMATIC);
-                        long now = System.currentTimeMillis() / 1000;
-                        s.client.syncTime(now, TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1800000);
-                    }
-                    return "Paired with " + serial;
-                } finally {
-                    close(s);
                 }
             }
         });
@@ -1095,7 +1142,8 @@ public final class RingManager {
                     busy = false;
                     op.unlock();
                 }
-                status = ok ? "" : msg;
+                // a sync analysing meanwhile keeps its "Analysing" (issue #21)
+                if (analysing.get() == 0) status = ok ? "" : msg;
                 reply(cb, ok, msg);
                 notifyListeners();
             }

@@ -489,6 +489,8 @@ public class PipelineTest {
 
         oldNights();
         restoreSafety(full.toByteArray(), keyBytes);
+        rebuildSameAsOld();
+        longHistoryTiming();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -841,5 +843,289 @@ public class PipelineTest {
                 && from.equals(switchNight.optString("clock_change_from")) && to.equals(switchNight.optString("clock_change_to")),
                 switchNight == null ? null : switchNight.optString("clock_change_from") + " to " + switchNight.optString("clock_change_to"));
         check("only that demo night is marked", marked == 1, marked);
+    }
+
+    // ---------------------------------------------------------------- issue #21, dating
+
+    /** A context with a database of its own ({@code Db.get} keeps one open instance). */
+    static Context freshDb(String name) throws Exception {
+        java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
+        f.setAccessible(true);
+        Db open = (Db) f.get(null);
+        if (open != null) open.close();
+        f.set(null, null);
+        return new Context(Files.createTempDirectory(name).toFile());
+    }
+
+    /** id, seg and the exact bits of unix of every row. */
+    static List<long[]> timeRows(Db db) {
+        List<long[]> out = new ArrayList<long[]>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT id, seg, unix FROM events ORDER BY id", null);
+        try {
+            while (c.moveToNext()) {
+                out.add(new long[] {c.getLong(0), c.isNull(1) ? -1 : c.getLong(1), c.isNull(2) ? Long.MIN_VALUE : Double.doubleToLongBits(c.getDouble(2))});
+            }
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    static void putTimeRows(Db db, List<long[]> rows) {
+        android.database.sqlite.SQLiteDatabase d = db.getWritableDatabase();
+        d.beginTransaction();
+        try {
+            for (long[] r : rows) {
+                d.execSQL("UPDATE events SET seg = ?, unix = ? WHERE id = ?", new Object[] {r[1] < 0 ? null : r[1],
+                        r[2] == Long.MIN_VALUE ? null : Double.longBitsToDouble(r[2]), r[0]});
+            }
+            d.setTransactionSuccessful();
+        } finally {
+            d.endTransaction();
+        }
+    }
+
+    static int differences(List<long[]> a, List<long[]> b) {
+        if (a.size() != b.size()) return Math.abs(a.size() - b.size()) + 1000000;
+        int n = 0;
+        for (int i = 0; i < a.size(); i++) if (!Arrays.equals(a.get(i), b.get(i))) n++;
+        return n;
+    }
+
+    /**
+     * The full rewrite that {@code Db.rebuildTime} did up to version 1.18, kept as the reference:
+     * every row undated, then each segment dated by SQL, then the 2015 and future limits.
+     */
+    static Db.TimeReport oldRebuildTime(Db d, long nowUnix) {
+        android.database.sqlite.SQLiteDatabase db = d.getWritableDatabase();
+        Db.TimeReport rep = new Db.TimeReport();
+        rep.datedBefore = d.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
+        android.database.Cursor c = db.rawQuery("SELECT id, epoch, tag, ds, CASE WHEN tag IN (66, 133) THEN body END FROM events ORDER BY id", null);
+        int n = c.getCount();
+        long[] id = new long[n], epoch = new long[n], ds = new long[n], anchor = new long[n];
+        boolean[] phone = new boolean[n];
+        try {
+            int i = 0;
+            while (c.moveToNext()) {
+                id[i] = c.getLong(0);
+                epoch[i] = c.getLong(1);
+                int tag = c.getInt(2);
+                ds[i] = c.getLong(3);
+                anchor[i] = -1;
+                if (!c.isNull(4)) {
+                    byte[] body = c.getBlob(4);
+                    anchor[i] = EventCodec.anchorUnix(tag, body);
+                    phone[i] = tag == EventCodec.TIME_SYNC && EventCodec.isPhoneAnchor(body);
+                }
+                i++;
+            }
+        } finally {
+            c.close();
+        }
+        rep.total = n;
+        List<app.openring.core.TimeLine.Segment> segs = app.openring.core.TimeLine.build(id, epoch, ds, anchor, phone, nowUnix);
+        rep.segs = segs;
+        rep.segments = segs.size();
+        db.beginTransaction();
+        try {
+            db.execSQL("UPDATE events SET unix = NULL, seg = NULL");
+            for (app.openring.core.TimeLine.Segment sg : segs) {
+                db.execSQL("UPDATE events SET seg = ? WHERE id BETWEEN ? AND ?", new Object[] {sg.no, sg.firstId, sg.lastId});
+                for (Long stray : sg.strayIds) db.execSQL("UPDATE events SET seg = ? WHERE id = ?", new Object[] {sg.no, stray});
+                if (sg.anchors.isEmpty()) continue;
+                rep.anchoredSegments++;
+                for (long[] r : app.openring.core.TimeLine.regions(sg)) {
+                    db.execSQL("UPDATE events SET unix = ? + (ds - ?) / 10.0 WHERE seg = ? AND ds >= ? AND ds < ?",
+                            new Object[] {r[3], r[2], sg.no, r[0], r[1]});
+                }
+            }
+            db.execSQL("UPDATE events SET unix = NULL WHERE unix > ? OR unix < 1420000000", new Object[] {nowUnix + 6 * 3600});
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+        rep.datedAfter = d.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
+        return rep;
+    }
+
+    static String report(Db.TimeReport r) {
+        return r.datedBefore + " dated before, " + r.datedAfter + " after, " + r.total + " events, " + r.segments + " segments, " + r.anchoredSegments + " anchored";
+    }
+
+    /**
+     * Run the new rebuildTime and the old full rewrite on the same starting state and compare
+     * every row and the report. Returns the new method's report.
+     */
+    static Db.TimeReport sameAsOld(Db db, long now, String step) {
+        List<long[]> start = timeRows(db);
+        Db.TimeReport fresh = db.rebuildTime(now);
+        List<long[]> mine = timeRows(db);
+        putTimeRows(db, start);
+        Db.TimeReport ref = oldRebuildTime(db, now);
+        List<long[]> theirs = timeRows(db);
+        int diff = differences(mine, theirs);
+        check(step + ": seg and date of every row as the old full rewrite", diff == 0, diff + " rows differ of " + mine.size());
+        check(step + ": same dating report", report(fresh).equals(report(ref)) && fresh.segs.size() == ref.segs.size(), report(fresh) + " / " + report(ref));
+        long changedRows = differences(start, mine);
+        check(step + ": rows written are the rows that changed", fresh.changed == changedRows, fresh.changed + " / " + changedRows);
+        Db.TimeReport again = db.rebuildTime(now);
+        check(step + ": a second run writes nothing", again.changed == 0 && differences(timeRows(db), theirs) == 0, again.changed);
+        return fresh;
+    }
+
+    static byte[] timeSync(long unix) {
+        byte[] b = new byte[4];
+        Protocol.Le.putU32(b, 0, unix);
+        return b;
+    }
+
+    /** Movement rows; {@code mark} keeps them apart from equal rows of another boot (rows are unique). */
+    static List<RingEvent> motion(long ds0, int count, long step, int mark) {
+        List<RingEvent> out = new ArrayList<RingEvent>();
+        for (int k = 0; k < count; k++) out.add(new RingEvent(EventCodec.MOTION_EVENT, ds0 + k * step, new byte[] {1, 1, 2, (byte) mark}));
+        return out;
+    }
+
+    /** Issue #21: rebuildTime writes only changed rows and gives exactly the old result. */
+    static void rebuildSameAsOld() throws Exception {
+        Context c = freshDb("openring-time");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2026-01-05").atStartOfDay(z).toEpochSecond();
+        long now = t0 + 37 * 86400L;
+        long ds0 = app.openring.data.Demo.DS0;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, 36, now, z, new Random(11));
+        long cut = ds0 + 35L * 86400 * 10;
+        List<RingEvent> first = new ArrayList<RingEvent>(), lastDay = new ArrayList<RingEvent>();
+        for (RingEvent e : ev) (e.ds < cut ? first : lastDay).add(e);
+        int part1 = (int) (first.size() * 0.1), part2 = (int) (first.size() * 0.6);
+        // an interrupted first sync: no anchor yet, nothing can be dated
+        for (int i = 0; i < part1; i += 4000) db.insertBatch(first.subList(i, Math.min(part1, i + 4000)), 1, now);
+        Db.TimeReport r = sameAsOld(db, now, "interrupted sync");
+        check("interrupted sync leaves the rows undated", r.datedAfter == 0, r.datedAfter);
+        // a second interrupted sync starts with a time record of the ring, whose clock is 30 s ahead
+        List<RingEvent> second = new ArrayList<RingEvent>(first.subList(part1, part2));
+        long tsDs = second.get(0).ds;
+        second.add(0, new RingEvent(EventCodec.TIME_SYNC, tsDs, timeSync(t0 + (tsDs - ds0) / 10 + 30)));
+        for (int i = 0; i < second.size(); i += 4000) db.insertBatch(second.subList(i, Math.min(second.size(), i + 4000)), 1, now);
+        r = sameAsOld(db, now, "interrupted sync with a time record");
+        check("every row dated from the ring's time record", r.datedAfter == r.total, r.datedAfter + "/" + r.total);
+        // the next sync reaches the present: its phone anchor re dates the older rows nearer to it
+        for (int i = part2; i < first.size(); i += 4000) db.insertBatch(first.subList(i, Math.min(first.size(), i + 4000)), 1, now);
+        long lastDs = first.get(first.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - ds0) / 10);
+        r = sameAsOld(db, now, "a later anchor re dates older rows");
+        long added = first.size() - part2 + 1;
+        check("older rows re dated, not only the new ones", r.changed > added, r.changed + " written, " + added + " new");
+        // a day later, synced again
+        db.insertBatch(lastDay, 1, now);
+        long lastDs2 = lastDay.get(lastDay.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs2, t0 + (lastDs2 - ds0) / 10);
+        sameAsOld(db, now, "one more day");
+        // 12 hours later the phone clock had been set back by 7 hours: the rows nearer to the new
+        // anchor are dated from it (no new segment, the ring counter did not jump)
+        long backDs = lastDs2 + 72 * 6000;
+        db.insertBatch(motion(lastDs2 + 6000, 72, 6000, 7), 1, now);
+        db.insertPhoneAnchor(1, backDs, t0 + (backDs - ds0) / 10 - 7 * 3600);
+        r = sameAsOld(db, now, "phone clock set back by 7 hours");
+        String newRow = "SELECT CAST(unix AS INTEGER) FROM events WHERE epoch = 1 AND tag = " + EventCodec.MOTION_EVENT + " AND body = X'01010207' AND ds = ";
+        long firstShift = t0 + (lastDs2 + 6000 - ds0) / 10 - db.count(newRow + (lastDs2 + 6000));
+        long lastShift = t0 + (backDs - ds0) / 10 - db.count(newRow + backDs);
+        check("rows near the set back anchor follow the phone clock", r.segments == 1 && Math.abs(firstShift) <= 1 && Math.abs(lastShift - 7 * 3600) <= 1,
+                firstShift + " s and " + lastShift + " s earlier");
+        // a reboot: the counter restarts near zero in a new sync epoch, with the ring's own time record
+        long bootUnix = t0 + 36 * 86400L + 3600;
+        List<RingEvent> boot = motion(600, 40, 600, 2);
+        boot.add(0, new RingEvent(EventCodec.TIME_SYNC, 300, timeSync(bootUnix)));
+        db.insertBatch(boot, 2, now);
+        r = sameAsOld(db, now, "reboot");
+        check("reboot is a segment of its own", r.segments == 2 && r.anchoredSegments == 2, report(r));
+        // a phone anchor of the first boot written after the reboot's rows (a stray), then more reboot rows
+        db.insertPhoneAnchor(1, lastDs2 + 50, t0 + (lastDs2 + 50 - ds0) / 10 + 30);
+        db.insertBatch(motion(600 + 40 * 600, 10, 600, 2), 2, now);
+        r = sameAsOld(db, now, "stray phone anchor");
+        check("the stray anchor belongs to the first boot", !r.segs.get(0).strayIds.isEmpty(), r.segs.get(0).strayIds);
+        // epoch 3: a segment with an anchor, then a reboot without one; a phone anchor of the first
+        // part lands inside the rows of the second
+        long e3 = 5000000;
+        List<RingEvent> a3 = motion(e3, 20, 600, 3);
+        a3.add(0, new RingEvent(EventCodec.TIME_SYNC, e3, timeSync(t0 + 30 * 86400L)));
+        db.insertBatch(a3, 3, now);
+        db.insertBatch(motion(100, 5, 600, 3), 3, now);
+        db.insertPhoneAnchor(3, e3 + 20 * 600, t0 + 30 * 86400L + 1200);
+        db.insertBatch(motion(100 + 5 * 600, 5, 600, 3), 3, now);
+        r = sameAsOld(db, now, "phone anchor inside a segment without anchors");
+        long undated = db.count("SELECT COUNT(*) FROM events WHERE epoch = 3 AND ds < 10000 AND unix IS NULL");
+        check("a segment without a time record stays undated", undated == 10, undated);
+        long inside = db.count("SELECT COUNT(*) FROM events p WHERE p.epoch = 3 AND p.tag = 66 AND p.ds > 1000000 AND p.unix IS NOT NULL"
+                + " AND p.seg = (SELECT seg FROM events WHERE epoch = 3 AND ds = 100)");
+        check("that phone anchor keeps its date inside the undated segment, as before", inside == 1, inside);
+        // epoch 4: dates after the download; epoch 5: dates before 2015; epoch 6: an anchor in the future
+        List<RingEvent> a4 = motion(1000, 10, 3600 * 10, 4);
+        a4.add(0, new RingEvent(EventCodec.TIME_SYNC, 1000, timeSync(now - 3600)));
+        db.insertBatch(a4, 4, now);
+        List<RingEvent> a5 = motion(100, 10, 10000, 5);
+        a5.add(new RingEvent(EventCodec.TIME_SYNC, 100000, timeSync(1420000100L)));
+        db.insertBatch(a5, 5, now);
+        List<RingEvent> a6 = motion(100, 10, 600, 6);
+        a6.add(new RingEvent(EventCodec.TIME_SYNC, 200, timeSync(now + 86400)));
+        db.insertBatch(a6, 6, now);
+        r = sameAsOld(db, now, "dates out of range");
+        long late = db.count("SELECT COUNT(*) FROM events WHERE epoch = 4 AND unix IS NULL");
+        long early = db.count("SELECT COUNT(*) FROM events WHERE epoch = 5 AND unix IS NULL");
+        long future = db.count("SELECT COUNT(*) FROM events WHERE epoch = 6 AND unix IS NULL");
+        // one hour apart from an hour before now: the 9th and 10th lie more than 6 hours ahead
+        check("events dated well after the download are cleared", late == 2, late);
+        check("events dated before 2015 are cleared", early > 0 && early < a5.size(), early);
+        check("an anchor in the future is not used", future == a6.size(), future);
+        // the time record of epoch 4 goes away: its rows must lose their dates, not keep the old ones
+        db.getWritableDatabase().execSQL("DELETE FROM events WHERE epoch = 4 AND tag = 66");
+        sameAsOld(db, now, "anchor row deleted");
+        long lost = db.count("SELECT COUNT(*) FROM events WHERE epoch = 4 AND unix IS NOT NULL");
+        check("rows without their time record are undated again", lost == 0, lost);
+        db.close();
+    }
+
+    /**
+     * Issue #21: timing on 120 days of demo history (a year takes about 25 s more test time and
+     * shows the same factor). Prints the numbers; the only check is that the new rebuildTime is
+     * faster than the old full rewrite (machines differ a lot).
+     */
+    static void longHistoryTiming() throws Exception {
+        Context c = freshDb("openring-long");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2025-01-06").atStartOfDay(z).toEpochSecond();
+        int days = 120;
+        long now = t0 + (days + 1) * 86400L;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, days, now, z, new Random(7));
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        ev = null;
+        db.rebuildTime(now);
+        long t = System.nanoTime();
+        oldRebuildTime(db, now);
+        long oldMs = (System.nanoTime() - t) / 1000000;
+        t = System.nanoTime();
+        Db.TimeReport r = db.rebuildTime(now);
+        long newMs = (System.nanoTime() - t) / 1000000;
+        System.out.println("  " + days + " days of demo history (" + r.total + " events), no new events: rebuildTime " + oldMs + " ms before, " + newMs + " ms now");
+        check("long history: the result of the old method needs no write", r.changed == 0, r.changed);
+        check("long history: rebuildTime faster than the old full rewrite", newMs < oldMs, newMs + " < " + oldMs + " ms");
+        // an incremental analysis (the last two days), as after a sync without new nights
+        double[] range = db.datedRange();
+        db.put("analyzed_until", (long) range[1]);
+        db.put("dated_count", r.datedAfter);
+        db.put("event_count", r.total);
+        db.put("stage_detail", app.openring.data.Prefs.of(c).stageDetail());
+        db.put("screen_awake", 1);
+        t = System.nanoTime();
+        Analyzer.run(c, null);
+        long incMs = (System.nanoTime() - t) / 1000000;
+        System.out.println("  " + days + " days: incremental analysis " + incMs + " ms (about " + (incMs - newMs + oldMs) + " ms with the old rewrite)");
+        check("long history: incremental analysis stays incremental", db.kvLong("analyzed_until", 0) >= (long) range[1] && db.count("SELECT COUNT(*) FROM nights") < 10,
+                db.count("SELECT COUNT(*) FROM nights") + " nights");
+        db.close();
     }
 }

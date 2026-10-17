@@ -40,7 +40,9 @@ Nothing leaves the phone: the app has no internet permission.
   makes the next sync continue where the last stopped.
 * Time: the counter becomes a date through time records: the ring's `time_sync` (`0x42`) and
   `rtc_beacon` (`0x85`) events plus a phone anchor written at the end of each drain. `Db.rebuildTime`
-  maps every boot segment from scratch after each sync, which also repairs interrupted syncs.
+  maps every boot segment from scratch after each sync, which also repairs interrupted syncs. It works
+  the result out in Java and writes only the rows whose segment or date changed (issue #21); the
+  pipeline test keeps the old full SQL rewrite as the reference and checks every row against it.
 * Measurements on the ring (daytime heart rate `0x02`, SpO2 `0x04`, resting heart rate `0x08`) have
   modes off, automatic, requested and live. A ring paired outside the official app starts with them off.
 
@@ -99,7 +101,12 @@ file in the cache. Histories are never merged.
 `RingManager` runs every ring task on one worker thread and guards the ring with one lock (`op`).
 Anything that holds the ring (live, games) must release it when its screen pauses. Sync waits up to
 15 seconds for the lock, live 10 seconds and games up to 3 minutes; Settings actions on the ring
-(read or switch measurements, factory reset) fail at once with "The ring is busy". Analysis and database reads in the UI run in AsyncTasks.
+(read or switch measurements, factory reset) fail at once with "The ring is busy". A sync releases the
+lock as soon as its download ends, before it reads the screen log and analyses (issue #21); `busy()`
+stays true until that analysis is done, so screens reload only then, and the status keeps saying
+"Analysing" (other ring tasks then only write to the log). Code that replaces or wipes the database
+(restore, pairing a different ring) first waits for a running analysis (`synchronized
+(Analyzer.class)`), except "Delete all local data" in Settings, which runs on the screen thread. Analysis and database reads in the UI run in AsyncTasks.
 
 ## Known limits
 
