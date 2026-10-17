@@ -17,6 +17,8 @@ public final class HistoryBatch {
     public int replayed;
     /** Pauses of more than 27 hours inside one extended bundle (see {@link ExtEnvelopeParser}). */
     public int longPauses;
+    /** The longest of those pauses in ms, 0 when there was none. */
+    public long longestPauseMs;
 
     HistoryBatch(List<RingEvent> events, long bytesLeft) {
         this.events = events;
@@ -67,6 +69,7 @@ public final class HistoryBatch {
         }
         HistoryBatch out = new HistoryBatch(events, bytesLeft);
         out.longPauses = envelopes.longPauses;
+        out.longestPauseMs = envelopes.longestPauseMs;
         return out;
     }
 
@@ -90,6 +93,7 @@ public final class HistoryBatch {
         out.rejected = rejected;
         out.replayed = replayed;
         out.longPauses = batch.longPauses;
+        out.longestPauseMs = batch.longestPauseMs;
         return out;
     }
 }

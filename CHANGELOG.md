@@ -1,7 +1,7 @@
 # Changelog
 
 ## 1.24
-* Rings that send history in bundles (Ring 5, newer Ring 4 firmware): events after a pause of more than a day now
+* Rings that send history in bundles (Ring 5, newer Ring 4 firmware): events after a pause of more than 27 hours now
   keep their real time instead of being placed right after the event before the pause (#31)
 
 ## 1.21

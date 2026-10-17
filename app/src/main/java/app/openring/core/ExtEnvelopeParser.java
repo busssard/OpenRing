@@ -20,6 +20,8 @@ public final class ExtEnvelopeParser {
     static final long LONG_PAUSE_MS = 100_000_000L;
     /** Deltas of {@link #LONG_PAUSE_MS} or more seen so far, kept as real pauses. */
     public int longPauses;
+    /** The longest such delta in ms, 0 when there was none. */
+    public long longestPauseMs;
 
     public List<Packet> push(Packet packet) {
         List<Packet> out = new ArrayList<Packet>();
@@ -78,7 +80,10 @@ public final class ExtEnvelopeParser {
             }
             if (used < 0) break;
             long ms = lastMs >= 0 ? lastMs + value : value;
-            if (lastMs >= 0 && value >= LONG_PAUSE_MS) longPauses++;
+            if (lastMs >= 0 && value >= LONG_PAUSE_MS) {
+                longPauses++;
+                longestPauseMs = Math.max(longestPauseMs, value);
+            }
             lastMs = ms;
             long ts = (ms / 100) & 0xffffffffL;
             if (lastTs >= 0 && value > 0 && ts <= lastTs) ts = lastTs + 1;

@@ -569,6 +569,7 @@ public class CoreTest {
     }
 
     /** One extended envelope packet (2f .. 43) holding 0x46 temperature events at these varints. */
+    // the frame length is one byte, so the bundle body must stay at 252 bytes or less
     static Packet bundle(long... varints) {
         java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
         for (long v : varints) {
@@ -620,12 +621,16 @@ public class CoreTest {
         // events in the same decisecond still move forward by one
         eq("bundle: same decisecond bumps", bundleDs(ep, bundle(500_000_000L, 1, 1)), "5000000 5000001 5000002");
         eq("bundle: count over several envelopes", ep.longPauses, 1);
+        eq("bundle: longest pause", ep.longestPauseMs, 108_000_000L);
 
         // the batch carries the count, and the drain writes it to the log
         Packet summary = Packet.parse(Hex.decode("2f0a42010000000000000000"));
         HistoryBatch hb = HistoryBatch.decode(Arrays.asList(bundle(500_000_000L, 200_000_000L), bundle(1_000_000_000L, 150_000_000L, 1), summary));
         eq("batch: long pauses summed", hb.longPauses, 2);
         eq("batch: long pauses kept by validate", HistoryBatch.validate(hb, 0).longPauses, 2);
+        eq("batch: longest pause", HistoryBatch.validate(hb, 0).longestPauseMs, 200_000_000L);
+        eq("log: several pauses", RingClient.longPauseText(2, 200_000_000L),
+                "history: 2 pauses of more than 27 hours between stored events, kept as real time (longest 55.6 h)");
 
         Mock m = new Mock();
         m.on("280100", "290100");
@@ -645,7 +650,7 @@ public class CoreTest {
         });
         eq("drain: events after a long pause", r.eventsSynced, 2);
         eq("drain: cursor after the long pause", r.nextCursor, 7000001L);
-        check("drain: long pause logged", log.contains("history bundle: 1 pauses over 27 hours inside one bundle, kept as real pauses"));
+        check("drain: long pause logged", log.contains("history: 1 pause of more than 27 hours between stored events, kept as real time (longest 55.6 h)"));
     }
 
     static void history() throws Exception {
