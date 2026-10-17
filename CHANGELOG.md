@@ -1,13 +1,13 @@
 # Changelog
 
 ## 1.25
-* Sleep stages: REM, light and deep are now shown as a share of your time asleep, so they add up to 100% and match
-  the usual ranges in the explanations (before they were a share of the time in bed and looked a little low). Awake
-  stays a share of the time in bed, and a line under the stages says so (#32)
+* Sleep stages: deep, REM and light are now shown as a share of sleep, so they add up to 100% and match the usual
+  ranges in the explanations (before they were a share of time in bed and looked a little low). Awake stays a share
+  of time in bed, and a line under the stages says so (#32)
 * Today: the temperature tile is now called "Temp vs usual", because it shows how far last night's skin temperature
   was from your usual, not your body temperature. A value close to zero shows as 0.0 instead of -0.0 (#32)
 * Every number in Key metrics (Today) and in Typical values (Sleep, Further analysis) has a short line saying what
-  it is. Typical deep, REM, light and awake time also show their share of the night (#32)
+  it is. Typical deep, REM and light also show their share of sleep, and awake its share of time in bed (#32)
 
 ## 1.21
 * New icon from the owner's sketch: a ring seen slightly from above, the infinity sign cut into its band,

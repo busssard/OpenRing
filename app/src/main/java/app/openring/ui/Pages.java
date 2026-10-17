@@ -97,7 +97,7 @@ public final class Pages {
             stats.addView(Ui.caption(c, "Key metrics"));
             JSONObject n = d.night;
             stats.addView(Ui.statRow(c,
-                    Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, "Time asleep in your main sleep"),
+                    Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, "Time asleep last night, naps not counted"),
                     Ui.stat(c, "Resting HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", Ui.HEART, "Lowest heart rate while asleep")));
             stats.addView(Ui.statRow(c,
                     Ui.stat(c, "HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", Ui.READY, "Average while asleep, higher is calmer"),
@@ -552,7 +552,7 @@ public final class Pages {
         out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(h.deepMin), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
                 Ui.stat(c, "REM", Ui.hm(h.remMin), "", Ui.STAGE_REM, StageShare.note(remPct, "sleep", StageShare.USUAL_REM))));
         out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(h.lightMin), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
-                Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", 0, StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
+                Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", Ui.STAGE_AWAKE, StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
         out.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(h.efficiency, 0), "%", 0, "Share of time in bed asleep"),
                 Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0, "Wake ups of a minute or more")));
         out.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(h.lowestHr, 0), "bpm", Ui.HEART, "Average lowest heart rate"),

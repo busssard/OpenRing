@@ -12,9 +12,11 @@ public final class StageShare {
 
     /**
      * Deep, light and REM minutes as whole percentages of their sum (the time asleep), adding up to exactly 100
-     * (largest remainder). Missing or negative minutes count as 0. Returns null when there is under a minute of sleep.
+     * (largest remainder). Negative minutes count as 0. Returns null when a stage is missing (NaN) or there is under a
+     * minute of sleep.
      */
     public static int[] sleepShares(double deep, double light, double rem) {
+        if (Double.isNaN(deep) || Double.isNaN(light) || Double.isNaN(rem)) return null;
         double[] m = {clean(deep), clean(light), clean(rem)};
         double sum = m[0] + m[1] + m[2];
         if (sum < MIN_BASE) return null;
@@ -45,20 +47,20 @@ public final class StageShare {
     }
 
     /** Usual ranges, written as they follow "usual" ("Usual 13 to 23% of sleep"); null where no range is known. */
-    public static final String USUAL_DEEP = "13 to 23%", USUAL_REM = "about a fifth";
+    public static final String USUAL_DEEP = "13 to 23%", USUAL_REM = "about 20%";
 
     /**
      * One line under a stage tile: "10% of sleep (usual 13 to 23%)", "63% of sleep" without a range, and only the range
-     * when the percentage is unknown ("Usual about a fifth of sleep", or "Average per night" without a range).
+     * when the percentage is unknown ("Usual about 20% of sleep", or "No data yet" without a range).
      * {@code of} is "sleep" or "time in bed".
      */
     public static String note(double pct, String of, String usual) {
-        if (Double.isNaN(pct)) return usual == null ? "Average per night" : "Usual " + usual + " of " + of;
+        if (Double.isNaN(pct)) return usual == null ? "No data yet" : "Usual " + usual + " of " + of;
         String s = Math.round(pct) + "% of " + of;
         return usual == null ? s : s + " (usual " + usual + ")";
     }
 
     private static double clean(double v) {
-        return Double.isNaN(v) || v < 0 ? 0 : v;
+        return v < 0 ? 0 : v;
     }
 }

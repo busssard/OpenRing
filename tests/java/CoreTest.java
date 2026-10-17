@@ -355,17 +355,19 @@ public class CoreTest {
             if (r[0] + r[1] + r[2] != 100) { check("shares: always 100 (" + t + ")", false); break; }
         }
         check("shares: no sleep gives null", StageShare.sleepShares(0, 0, 0) == null && StageShare.sleepShares(0.2, 0.3, 0.1) == null);
-        eq("shares: missing stage counts as 0", Arrays.toString(StageShare.sleepShares(Double.NaN, 300, -5)), "[0, 100, 0]");
+        check("shares: a missing stage gives null", StageShare.sleepShares(Double.NaN, 300, 50) == null
+                && StageShare.sleepShares(40, Double.NaN, 50) == null && StageShare.sleepShares(40, 300, Double.NaN) == null);
+        eq("shares: negative minutes count as 0", Arrays.toString(StageShare.sleepShares(0, 300, -5)), "[0, 100, 0]");
         eq("share: awake of time in bed", StageShare.share(54, 543), 10.0);
         check("share: no base", Double.isNaN(StageShare.share(10, 0)) && Double.isNaN(StageShare.share(10, Double.NaN))
                 && Double.isNaN(StageShare.share(Double.NaN, 400)));
         eq("share: negative part is 0", StageShare.share(-3, 400), 0.0);
         eq("note: with range", StageShare.note(10, "sleep", StageShare.USUAL_DEEP), "10% of sleep (usual 13 to 23%)");
-        eq("note: rem range", StageShare.note(27, "sleep", StageShare.USUAL_REM), "27% of sleep (usual about a fifth)");
+        eq("note: rem range", StageShare.note(27, "sleep", StageShare.USUAL_REM), "27% of sleep (usual about 20%)");
         eq("note: without range", StageShare.note(63, "sleep", null), "63% of sleep");
         eq("note: awake", StageShare.note(9, "time in bed", null), "9% of time in bed");
         eq("note: unknown with range", StageShare.note(Double.NaN, "sleep", StageShare.USUAL_DEEP), "Usual 13 to 23% of sleep");
-        eq("note: unknown without range", StageShare.note(Double.NaN, "sleep", null), "Average per night");
+        eq("note: unknown without range", StageShare.note(Double.NaN, "sleep", null), "No data yet");
     }
 
     static boolean near(double a, double b) {
