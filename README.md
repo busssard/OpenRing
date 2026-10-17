@@ -1,4 +1,4 @@
-<img src="docs/images/icon.png" width="96" align="right" alt="Open Ring icon: a ring carrying an infinity sign">
+<img src="docs/images/icon.png" width="96" align="right" alt="Open Ring icon: a ring with an infinity sign cut into its band">
 
 # Open Ring
 

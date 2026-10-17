@@ -20,6 +20,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `.github/scripts/screens.sh`, `.github/scripts/badge.sh` | The emulator script that opens every screen with demo data; the README badge publisher |
 | `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` | Templates for issues (bug, idea) and pull requests |
 | `docs/` | This guide and the architecture notes |
+| `tools/make_icon.py` | Draws the icon (launcher, themed, notification, `docs/images/icon.svg` and `.png`) from one shape; run it after changing the icon |
 | `CHANGELOG.md` | User facing changes per version; the release notes come from here |
 | `README.md`, `CONTRIBUTING.md`, `SECURITY.md` | For users, contributors, and security and privacy |
 | `LICENSE`, `NOTICE` | MIT license; credits for the ported open_oura and open_health code |
