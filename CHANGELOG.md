@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.30
+* When a sync fails, the main screen says in plain words what happened and what to try (for example "The ring could
+  not be reached. Keep it close to the phone and sync again.") instead of a technical Bluetooth message. The
+  technical text stays in Settings, Help and diagnostics, Data check and log (#47)
+* More numbers have a short line saying what they are: Sleep details, Goal progress and the intensity chart on
+  Activity, Heart rate today on Body, and the example score on the first setup screen (#47)
+* Body: the latest readings say "Blood oxygen" instead of "SpO2", like the rest of the app (#47)
+
 ## 1.25
 * Sleep stages: deep, REM and light are now shown as a share of sleep, so they add up to 100% and match the usual
   ranges in the explanations (before they were a share of time in bed and looked a little low). Awake stays a share
