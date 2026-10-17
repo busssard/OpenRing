@@ -50,9 +50,12 @@ completely, then read the two guides it points to before changing anything:
 * Two scheduled Claude runs are configured in the owner's Claude account (not in this repository):
   * **Daily experiments (about 18:00):** designs and runs experiments to find bugs and inconsistencies.
     It never pushes code; it only opens issues titled `[EXP] ...` with the label `experiment`.
-  * **Nightly build (about midnight):** works through open issues by the process above and opens pull
-    requests; it never merges. It skips every issue whose title starts with `[EXP]`: the owner reviews
-    those and releases one by removing `[EXP]` from its title.
+  * **Nightly build (about midnight):** works through all open issues (no fixed number) by the process
+    above and opens pull requests; it never merges. An issue that needs to be thought over gets a comment
+    with options and a recommendation instead of a build, and is built after the owner answers. Problems
+    it notices outside its issues become new `[EXP]` issues (at most 5 a night), not fixes in passing.
+    It skips every issue whose title starts with `[EXP]`: the owner reviews those and releases one by
+    removing `[EXP]` from its title.
 * Never implement an issue whose title starts with `[EXP]`, whichever session you are.
 
 ## Rules
