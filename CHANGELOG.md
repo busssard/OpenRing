@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.26
+* Travelling: each night keeps the time zone you slept in. After a trip to New York your nights at home still
+  show your home times, and the nights there show New York times, so bedtimes, the average night and the
+  regular bedtime no longer jump. A night that crosses a border counts in the zone you woke up in (#22)
+* The app notes the phone's time zone when you open it and at every sync. Nights from before this version
+  count in the zone the phone has when you first open 1.26 (#22)
+* When a night is in another time zone than the night before, an orange line under the sleep chart says so,
+  for example "Times this night are in New York time (6 hours behind the night before)." (#22)
+* Scores and days of earlier nights stay the same after a trip, also after Re analyse all (#22)
+
 ## 1.21
 * New icon from the owner's sketch: a ring seen slightly from above, the infinity sign cut into its band,
   in one plain colour (the app's deep sleep blue). Also the notification icon and the themed icon on Android 13
