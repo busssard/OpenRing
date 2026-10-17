@@ -972,7 +972,7 @@ public final class Charts {
                 p.setStyle(Paint.Style.STROKE);
                 p.setStrokeWidth(Ui.dp(getContext(), 2));
                 p.setColor(Ui.TEXT);
-                cv.drawLine(cx + (float) Math.cos(a) * r * 0.5f, cy + (float) Math.sin(a) * r * 0.5f,
+                cv.drawLine(cx + (float) Math.cos(a) * r * 0.62f, cy + (float) Math.sin(a) * r * 0.62f,
                         cx + (float) Math.cos(a) * (r1 + label * 0.2f), cy + (float) Math.sin(a) * (r1 + label * 0.2f), p);
                 double[] s = null;
                 for (int i = 0; i < shown.size() && s == null; i++) {
