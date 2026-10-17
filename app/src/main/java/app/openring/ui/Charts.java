@@ -833,11 +833,6 @@ public final class Charts {
 
     // ------------------------------------------------------------------ screen time
 
-    /** Where on a 24 hour circle (midnight at the top) a moment of the day lies, in degrees for drawArc. */
-    static float dialAngle(double t, double from, double to) {
-        return (float) (-90 + 360 * (t - from) / (to - from));
-    }
-
     /**
      * The day as a clock dial: a short line for every 5 minutes the phone was in use (brighter the
      * longer), the nights as a purple band inside, the total in the middle. Touch and slide around the
@@ -914,7 +909,7 @@ public final class Charts {
             if (action == android.view.MotionEvent.ACTION_DOWN || action == android.view.MotionEvent.ACTION_MOVE) {
                 double a = Math.atan2(dy, dx) + Math.PI / 2; // 0 at the top, clockwise
                 if (a < 0) a += 2 * Math.PI;
-                picked = from + (to - from) * a / (2 * Math.PI);
+                picked = pick(a / (2 * Math.PI));
                 invalidate();
                 return true;
             }
@@ -935,6 +930,24 @@ public final class Charts {
 
         String clock(double unix) {
             return Charts.clock(Math.floor(unix), zone);
+        }
+
+        /** Where a moment lies on the face: by its clock time, so 03:00 is at its tick also when the clocks change (issue #46). */
+        float angle(double t) {
+            return app.openring.core.analysis.DialMath.angle(t, from, to, zone);
+        }
+
+        /**
+         * The moment at a touched clock time (share of 24 hours). In the hour that repeats when the clocks
+         * go back, the one with phone use then (the earlier when both or neither have use).
+         */
+        double pick(double fraction) {
+            java.time.LocalDate day = Instant.ofEpochSecond((long) from).atZone(zone).toLocalDate();
+            double[] at = app.openring.core.analysis.DialMath.instants(fraction, day, zone);
+            for (double x : at) {
+                for (double[] s : shown) if (x >= s[0] && x < s[1]) return Math.max(from, Math.min(to - 1, x));
+            }
+            return Math.max(from, Math.min(to - 1, at[0]));
         }
 
         /** The app in front at {@code at}, or null. */
@@ -968,11 +981,22 @@ public final class Charts {
             p.setStrokeCap(Paint.Cap.BUTT);
             p.setColor(Ui.alpha(Ui.SLEEP, 0.55f));
             oval.set(cx - rb, cy - rb, cx + rb, cy + rb);
-            for (double[] n : nights) {
-                double a = Math.max(n[0], from), b = Math.min(n[1], to);
-                if (b <= a) continue;
-                float s = dialAngle(a, from, to);
-                cv.drawArc(oval, s, dialAngle(b, from, to) - s, false, p);
+            // per 5 minutes of clock time, so a night through the repeated hour stays one band (issue #46)
+            double[] band5 = app.openring.core.analysis.DialMath.fill(nights, from, to, zone, 288);
+            for (int i = 0; i < band5.length; i++) {
+                if (band5[i] <= 0) continue;
+                int j = i;
+                while (j < band5.length && band5[j] > 0) j++;
+                cv.drawArc(oval, -90 + 360f * i / band5.length, 360f * (j - i) / band5.length, false, p);
+                i = j;
+            }
+            // the hour that repeats or is missing on a day the clocks change, in orange like the sleep chart (#22, #46)
+            double[] arc = app.openring.core.analysis.DialMath.changeArc(app.openring.core.analysis.ClockChange.find(zone, from, to));
+            if (arc != null) {
+                p.setStrokeWidth(Ui.dp(getContext(), 2.5f));
+                p.setColor(Ui.ACTIVE);
+                oval.set(cx - r0, cy - r0, cx + r0, cy + r0);
+                cv.drawArc(oval, (float) (-90 + 360 * arc[0]), (float) (360 * arc[1]), false, p);
             }
             // phone use: one line per step
             int n = fill.length;
@@ -987,7 +1011,7 @@ public final class Charts {
             }
             // now, on today's dial: a dot on the hour ring, so it never covers an hour label
             if (now > from && now < to) {
-                double a = Math.toRadians(dialAngle(now, from, to));
+                double a = Math.toRadians(angle(now));
                 p.setStyle(Paint.Style.FILL);
                 p.setColor(Ui.TEXT);
                 cv.drawCircle(cx + (float) Math.cos(a) * r0, cy + (float) Math.sin(a) * r0, Ui.dp(getContext(), 3.5f), p);
@@ -1003,7 +1027,7 @@ public final class Charts {
             cv.drawText("18", cx - r - label * 0.55f, cy + off, t);
             if (!Double.isNaN(picked)) {
                 // the picked moment: a hand from the middle to the edge, and what happened then
-                double a = Math.toRadians(dialAngle(picked, from, to));
+                double a = Math.toRadians(angle(picked));
                 p.setStyle(Paint.Style.STROKE);
                 p.setStrokeWidth(Ui.dp(getContext(), 2));
                 p.setColor(Ui.TEXT);
@@ -1121,8 +1145,10 @@ public final class Charts {
                 for (double[] n : row.nights) {
                     double a = Math.max(n[0], row.from), b = Math.min(n[1], row.to);
                     if (b <= a) continue;
-                    cv.drawRect(x0 + (float) (bw * (a - row.from) / (row.to - row.from)), cy - track / 2,
-                            x0 + (float) (bw * (b - row.from) / (row.to - row.from)), cy + track / 2, p);
+                    // by clock time, like the hour labels (issue #46)
+                    double fa = app.openring.core.analysis.DialMath.fraction(a, row.from, row.to, row.zone);
+                    double fb = Math.max(fa, app.openring.core.analysis.DialMath.fraction(b, row.from, row.to, row.zone));
+                    cv.drawRect(x0 + (float) (bw * fa), cy - track / 2, x0 + (float) (bw * fb), cy + track / 2, p);
                 }
                 int n = row.fill.length;
                 float step = bw / n;
@@ -1133,7 +1159,8 @@ public final class Charts {
                 }
                 if (!Double.isNaN(row.firstLook)) {
                     p.setColor(Ui.GOOD);
-                    cv.drawCircle(x0 + (float) (bw * (row.firstLook - row.from) / (row.to - row.from)), cy, Ui.dp(getContext(), 3.5f), p);
+                    cv.drawCircle(x0 + (float) (bw * app.openring.core.analysis.DialMath.fraction(row.firstLook, row.from, row.to, row.zone)), cy,
+                            Ui.dp(getContext(), 3.5f), p);
                 }
                 t.setTextAlign(Paint.Align.RIGHT);
                 t.setColor(known ? (sel ? Ui.TEXT : Ui.TEXT_2) : Ui.TEXT_3);

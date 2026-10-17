@@ -84,6 +84,8 @@ public final class ScreenDays {
         /** Main nights {sleep start, sleep end} that touch this day. */
         public final List<double[]> nights = new ArrayList<double[]>();
         public double firstLook = Double.NaN;
+        /** The zone the row is drawn in: positions follow the clock (issue #46). */
+        public ZoneId zone = ZoneId.systemDefault();
     }
 
     /** Everything the Screen tab and the Today ring show for one date. */
@@ -173,7 +175,8 @@ public final class ScreenDays {
             in.rawMin = ScreenTime.minutes(raw, in.from, in.to);
             in.excludedMin = Math.max(0, in.rawMin - in.day.totalMin);
             List<double[]> shown = ScreenTime.widen(counted, minShowS);
-            in.dial = ScreenTime.fill(shown, in.from, in.to, DIAL_STEPS);
+            // 5 minutes of clock time per line, so 03:00 is at its tick also when the clocks change (issue #46)
+            in.dial = app.openring.core.analysis.DialMath.fill(shown, in.from, in.to, zone, DIAL_STEPS);
             in.sessions = new ArrayList<double[]>();
             for (double[] x : counted) if (x[1] > in.from && x[0] < in.to) in.sessions.add(x);
             in.dayApps = apps;
@@ -197,12 +200,13 @@ public final class ScreenDays {
         for (int i = 0; i < ROWS; i++) {
             Row r = new Row();
             r.date = firstRow.plusDays(i);
+            r.zone = zone;
             r.from = r.date.atStartOfDay(zone).toEpochSecond();
             r.to = r.date.plusDays(1).atStartOfDay(zone).toEpochSecond();
             for (double[] n : nights) if (n[1] > r.from && n[0] < r.to) r.nights.add(n);
             if (first >= 0 && r.to > first) {
                 r.totalMin = ScreenTime.minutes(counted, r.from, r.to);
-                r.fill = ScreenTime.fill(ScreenTime.widen(counted, minShowS), r.from, r.to, ROW_STEPS);
+                r.fill = app.openring.core.analysis.DialMath.fill(ScreenTime.widen(counted, minShowS), r.from, r.to, zone, ROW_STEPS);
                 double[] n = byDay.get(r.date.toString());
                 if (n != null) r.firstLook = ScreenTime.firstAfter(counted, Math.max(r.from, n[1]), r.to);
             }

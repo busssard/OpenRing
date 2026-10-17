@@ -840,6 +840,12 @@ public final class Pages {
         dial.addView(Ui.text(c, "The day as a clock, midnight at the top. Each blue line is 5 minutes of the day with phone use, "
                 + "brighter the more of them was used. Purple: your sleep. Touch the clock and slide around it to see the times; "
                 + "tap the middle for the total again.", 12, Ui.TEXT_2, Ui.REGULAR));
+        String change = app.openring.core.analysis.ClockChange.dialText(app.openring.core.analysis.ClockChange.find(in.zone, in.from, in.to));
+        if (change != null) {
+            // a day the clocks changed (issue #46): the orange arc on the clock is explained here
+            dial.addView(Ui.gap(c, 4));
+            dial.addView(Ui.text(c, change, 12, Ui.ACTIVE, Ui.REGULAR));
+        }
         dial.addView(Ui.gap(c, 10));
         dial.addView(Ui.text(c, "Each use shows as at least", 12, Ui.TEXT_3, Ui.MEDIUM));
         dial.addView(minShowChips(c, minShow, nav));

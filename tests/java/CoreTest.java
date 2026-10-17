@@ -324,6 +324,7 @@ public class CoreTest {
         motion();
         pattern();
         clockChange();
+        dialMath();
         stageFilter();
         screenTime();
         screenApps();
@@ -770,6 +771,76 @@ public class CoreTest {
         double r = h.rmssd();
         check("live rmssd ignores the doubled beat", r > 10 && r < 30);
     }
+    static void dialMath() {
+        // issue #46: the screen time clock places moments by their clock time
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        for (String day : new String[] {"2026-03-29", "2026-10-25", "2026-10-14"}) {
+            java.time.LocalDate d = java.time.LocalDate.parse(day);
+            double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            check("dial " + day + ": 03:00, 06:00 and 12:00 at their ticks", DialMath.fraction(zurich(day + "T03:00:00"), from, to, z) == 0.125
+                    && DialMath.fraction(zurich(day + "T06:00:00"), from, to, z) == 0.25 && DialMath.fraction(zurich(day + "T12:00:00"), from, to, z) == 0.5);
+            check("dial " + day + ": angle of 06:00 is three o'clock", DialMath.angle(zurich(day + "T06:00:00"), from, to, z) == 0);
+            check("dial " + day + ": midnight at both ends", DialMath.fraction(from, from, to, z) == 0 && DialMath.fraction(to, from, to, z) == 1
+                    && DialMath.fraction(from - 100, from, to, z) == 0);
+            // touch and back: every 5 minutes of the clock maps back to itself (except the skipped hour)
+            int bad = 0;
+            for (int k = 0; k < 288; k++) {
+                double f = k / 288.0;
+                double[] at = DialMath.instants(f, d, z);
+                boolean skipped = day.equals("2026-03-29") && k >= 24 && k < 36;
+                for (double x : at) if (!skipped && Math.abs(DialMath.fraction(x, from, to, z) - f) > 1e-9) bad++;
+            }
+            check("dial " + day + ": touch maps back to the same clock time", bad == 0);
+        }
+        java.time.LocalDate back = java.time.LocalDate.parse("2026-10-25"), fwd = java.time.LocalDate.parse("2026-03-29");
+        double bFrom = back.atStartOfDay(z).toEpochSecond(), bTo = back.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double fFrom = fwd.atStartOfDay(z).toEpochSecond(), fTo = fwd.plusDays(1).atStartOfDay(z).toEpochSecond();
+        check("25 and 23 hour days", bTo - bFrom == 25 * 3600 && fTo - fFrom == 23 * 3600);
+        double first0215 = java.time.Instant.parse("2026-10-25T00:15:00Z").getEpochSecond(), second0215 = first0215 + 3600;
+        List<double[]> twice = new ArrayList<double[]>();
+        twice.add(new double[] {first0215, first0215 + 150});
+        twice.add(new double[] {second0215, second0215 + 300});
+        double[] fb = DialMath.fill(twice, bFrom, bTo, z, 288);
+        int lit = 0;
+        for (double v : fb) if (v > 0) lit++;
+        check("clocks back: both 02:15 uses on the 02:15 line, the fuller wins", fb[27] == 1 && lit == 1);
+        List<double[]> spring = new ArrayList<double[]>();
+        spring.add(new double[] {fFrom, fTo});
+        double[] ff = DialMath.fill(spring, fFrom, fTo, z, 288);
+        boolean emptyHour = true, restFull = true;
+        for (int k = 0; k < 288; k++) {
+            if (k >= 24 && k < 36) emptyHour &= ff[k] == 0;
+            else restFull &= ff[k] == 1;
+        }
+        check("clocks forward: 02:00 to 03:00 stays empty, the rest is filled", emptyHour && restFull);
+        List<double[]> at0310 = new ArrayList<double[]>();
+        at0310.add(new double[] {zurich("2026-03-29T03:10:00"), zurich("2026-03-29T03:15:00")});
+        double[] f3 = DialMath.fill(at0310, fFrom, fTo, z, 288);
+        check("clocks forward: a use at 03:10 is on step 38", f3[38] == 1 && f3[37] == 0 && f3[39] == 0);
+        double[] rows = DialMath.fill(at0310, fFrom, fTo, z, 96);
+        check("day rows: 15 minute clock steps", rows[12] == 1.0 / 3);
+        double[] two = DialMath.instants(2.5 / 24, back, z);
+        check("touching 02:30 on the long day gives both moments", two.length == 2 && two[1] - two[0] == 3600
+                && two[0] == java.time.Instant.parse("2026-10-25T00:30:00Z").getEpochSecond());
+        double[] gap = DialMath.instants(2.5 / 24, fwd, z);
+        check("touching the skipped hour gives the switch", gap.length == 1 && gap[0] == java.time.Instant.parse("2026-03-29T01:00:00Z").getEpochSecond());
+        check("touching the end of the day gives midnight", DialMath.instants(1, back, z)[0] == bTo && DialMath.instants(0, back, z)[0] == bFrom);
+        double[] arcB = DialMath.changeArc(ClockChange.find(z, bFrom, bTo)), arcF = DialMath.changeArc(ClockChange.find(z, fFrom, fTo));
+        check("orange arc over 02:00 to 03:00 on both days", arcB[0] == 2 / 24.0 && arcB[1] == 1 / 24.0 && arcF[0] == 2 / 24.0 && arcF[1] == 1 / 24.0);
+        check("no arc on a normal day", DialMath.changeArc(ClockChange.find(z, zurich("2026-10-14T00:00:00"), zurich("2026-10-15T00:00:00"))) == null);
+        eq("dial text back", ClockChange.dialText(ClockChange.find(z, bFrom, bTo)), "The clocks went back one hour on this day (03:00 became 02:00). "
+                + "Phone use from 02:00 to 03:00 happened twice and shows on the same part of the clock, marked in orange.");
+        eq("dial text forward", ClockChange.dialText(ClockChange.find(z, fFrom, fTo)), "The clocks went forward one hour on this day (02:00 became 03:00), "
+                + "so the part of the clock from 02:00 to 03:00, marked in orange, stays empty.");
+        check("no dial text without a change", ClockChange.dialText(null) == null);
+        java.time.ZoneId lh = java.time.ZoneId.of("Australia/Lord_Howe");
+        java.time.LocalDate lhd = java.time.LocalDate.parse("2026-04-05");
+        ClockChange.Change half = ClockChange.find(lh, lhd.atStartOfDay(lh).toEpochSecond(), lhd.plusDays(1).atStartOfDay(lh).toEpochSecond());
+        check("30 minute change: half an hour arc and text", DialMath.changeArc(half)[1] == 30 / 1440.0
+                && ClockChange.dialText(half).startsWith("The clocks went back 30 minutes on this day"));
+        check("empty day fills nothing", DialMath.fill(twice, bFrom, bFrom, z, 288)[0] == 0);
+    }
+
     static double zurich(String local) {
         return java.time.LocalDateTime.parse(local).atZone(java.time.ZoneId.of("Europe/Zurich")).toEpochSecond();
     }
