@@ -372,6 +372,7 @@ public final class RingClient {
             HistoryBatch batch = HistoryBatch.validate(HistoryBatch.decode(packets), start);
             total += batch.events.size();
             if (batch.rejected > 0) log.log("discarded " + batch.rejected + " events with impossible timestamps");
+            if (batch.longPauses > 0) log.log("history bundle: " + batch.longPauses + " pauses over 27 hours inside one bundle, kept as real pauses");
             long bytesLeft = batch.bytesLeft;
             boolean progressed = batch.progressed(start);
             boolean tail = progressed && bytesLeft == 0 && batch.events.size() < TAIL_BATCH_EVENTS;

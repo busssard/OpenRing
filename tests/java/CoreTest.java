@@ -317,6 +317,7 @@ public class CoreTest {
     public static void main(String[] args) throws Exception {
         protocol();
         history();
+        bundles();
         client();
         analysis();
         timeline();
@@ -565,6 +566,86 @@ public class CoreTest {
         eq("battery debug", bat[1], 4200);
         double[] temps = EventCodec.temps(new byte[] {(byte) 0x4c, 0x0d});
         check("temp", Math.abs(temps[0] - 34.04) < 1e-9);
+    }
+
+    /** One extended envelope packet (2f .. 43) holding 0x46 temperature events at these varints. */
+    static Packet bundle(long... varints) {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        for (long v : varints) {
+            java.io.ByteArrayOutputStream vb = new java.io.ByteArrayOutputStream();
+            do {
+                int x = (int) (v & 0x7f);
+                v >>>= 7;
+                vb.write(v != 0 ? x | 0x80 : x);
+            } while (v != 0);
+            b.write(0);
+            b.write(0x46);
+            b.write(vb.size() + 2);
+            b.write(vb.toByteArray(), 0, vb.size());
+            b.write(0x98);
+            b.write(0x0e);
+        }
+        byte[] body = b.toByteArray();
+        byte[] f = new byte[5 + body.length];
+        f[0] = 0x2f;
+        f[1] = (byte) (3 + body.length);
+        f[2] = 0x43;
+        f[3] = (byte) body.length;
+        f[4] = (byte) (body.length >> 8);
+        System.arraycopy(body, 0, f, 5, body.length);
+        return Packet.parse(f);
+    }
+
+    static String bundleDs(ExtEnvelopeParser parser, Packet p) {
+        StringBuilder sb = new StringBuilder();
+        for (Packet e : parser.push(p)) sb.append(sb.length() > 0 ? " " : "").append(RingEvent.fromPacket(e).ds);
+        return sb.toString();
+    }
+
+    static void bundles() throws Exception {
+        // issue #31: every varint after the first is a delta, however large
+        ExtEnvelopeParser ep = new ExtEnvelopeParser();
+        eq("bundle: delta just under 27.8 h", bundleDs(ep, bundle(500_000_000L, 99_999_900L, 1000)), "5000000 5999999 6000009");
+        eq("bundle: no long pause counted", ep.longPauses, 0);
+        eq("bundle: delta of 27.8 h stays a delta", bundleDs(ep, bundle(500_000_000L, 100_000_000L, 1000)), "5000000 6000000 6000010");
+        eq("bundle: long pause counted", ep.longPauses, 1);
+        ep = new ExtEnvelopeParser();
+        eq("bundle: delta of 55.6 h stays a delta", bundleDs(ep, bundle(500_000_000L, 200_000_000L, 1000)), "5000000 7000000 7000010");
+        eq("bundle: one long pause", ep.longPauses, 1);
+        // a pause longer than the time since the ring started (10 h, then 30 h) is still a pause
+        ep = new ExtEnvelopeParser();
+        eq("bundle: pause longer than uptime", bundleDs(ep, bundle(36_000_000L, 108_000_000L)), "360000 1440000");
+        // each envelope starts with an absolute time, even a small one after a reboot
+        eq("bundle: small absolute start after reboot", bundleDs(ep, bundle(200, 1000)), "2 12");
+        // events in the same decisecond still move forward by one
+        eq("bundle: same decisecond bumps", bundleDs(ep, bundle(500_000_000L, 1, 1)), "5000000 5000001 5000002");
+        eq("bundle: count over several envelopes", ep.longPauses, 1);
+
+        // the batch carries the count, and the drain writes it to the log
+        Packet summary = Packet.parse(Hex.decode("2f0a42010000000000000000"));
+        HistoryBatch hb = HistoryBatch.decode(Arrays.asList(bundle(500_000_000L, 200_000_000L), bundle(1_000_000_000L, 150_000_000L, 1), summary));
+        eq("batch: long pauses summed", hb.longPauses, 2);
+        eq("batch: long pauses kept by validate", HistoryBatch.validate(hb, 0).longPauses, 2);
+
+        Mock m = new Mock();
+        m.on("280100", "290100");
+        m.on(Hex.encode(Protocol.extGetEvent(0, 4096, 0)), Hex.encode(bundle(500_000_000L, 200_000_000L).encode()), "2f0a42020000000000000000");
+        m.on(Hex.encode(Protocol.extGetEvent(7000001L * 100, 4096, 0)), "2f0a42000000000000000000");
+        RingClient c = new RingClient(m).quiet(5);
+        final List<String> log = new ArrayList<String>();
+        c.setLog(new RingClient.Log() {
+            public void log(String msg) {
+                log.add(msg);
+            }
+        });
+        RingClient.DrainResult r = c.drain(0, new RingClient.BatchSink() {
+            public boolean onBatch(List<RingEvent> events, long next, long left, int total) {
+                return true;
+            }
+        });
+        eq("drain: events after a long pause", r.eventsSynced, 2);
+        eq("drain: cursor after the long pause", r.nextCursor, 7000001L);
+        check("drain: long pause logged", log.contains("history bundle: 1 pauses over 27 hours inside one bundle, kept as real pauses"));
     }
 
     static void history() throws Exception {
