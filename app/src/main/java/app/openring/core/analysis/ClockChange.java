@@ -63,7 +63,7 @@ public final class ClockChange {
 
     /**
      * The line under the sleep chart after travelling (issue #22), for example "Times this night are
-     * in New York time (6 hours behind the night before).", or null when both zones have the same
+     * in New York time, 6 hours behind where you slept the night before.", or null when both zones have the same
      * clock at {@code at} (Zurich and Berlin), or an id is missing or unknown.
      */
     public static String travel(String prevId, String id, double at) {
@@ -72,8 +72,8 @@ public final class ClockChange {
         Instant t = Instant.ofEpochSecond((long) at);
         int diff = (now.getRules().getOffset(t).getTotalSeconds() - prev.getRules().getOffset(t).getTotalSeconds()) / 60;
         if (diff == 0) return null;
-        return "Times this night are in " + zoneName(id) + " (" + amount(Math.abs(diff)) + (diff > 0 ? " ahead of" : " behind")
-                + " the night before).";
+        return "Times this night are in " + zoneName(id) + ", " + amount(Math.abs(diff)) + (diff > 0 ? " ahead of" : " behind")
+                + " where you slept the night before.";
     }
 
     /** The zone, or null when the id is empty or unknown on this phone. */

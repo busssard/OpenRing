@@ -64,8 +64,6 @@ public final class Analyzer {
 
     void runInner() {
         long now = System.currentTimeMillis() / 1000;
-        // the phone's time zone, noted at every sync (issue #22); demo mode has no zone history
-        if (!prefs.demo()) noteZone(db, now, zone);
         Db.TimeReport t = db.rebuildTime(now);
         log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written",
                 t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed));
@@ -83,6 +81,9 @@ public final class Analyzer {
         db.put("dated_count", t.datedAfter);
         db.put("event_count", t.total);
         double[] range = db.datedRange();
+        // the phone's time zone, noted at every sync (issue #22), never later than a day after the newest
+        // dated event (a phone clock set far ahead for a moment). Demo mode has no zone history.
+        if (!prefs.demo()) noteZone(db, now, zone, range == null ? Double.NaN : range[1]);
         if (range == null) {
             log.log("no dated events yet, nothing to analyse");
             return;
@@ -111,12 +112,22 @@ public final class Analyzer {
     }
 
     /**
-     * Note the phone's zone (issue #22). When it opened a new zone, the nights since the end of the
-     * zone before belong to the new one and are analysed again. Returns true in that case.
+     * Note the phone's zone at {@code unix} (issue #22). A time more than a day after this phone's clock
+     * or after {@code newest} (the newest dated event, NaN when not known) is ignored, so a clock set
+     * far ahead for a moment cannot spoil the history. When a new zone with another clock opened, the
+     * nights since the end of the zone before belong to it and are analysed again; returns true then.
+     * Synchronized with the analysis, which notes the zone itself from inside {@link #run}.
      */
-    public static boolean noteZone(Db db, double now, ZoneId zone) {
-        double prevEnd = db.noteZone(now, zone.getId());
+    public static synchronized boolean noteZone(Db db, double unix, ZoneId zone, double newest) {
+        if (unix > System.currentTimeMillis() / 1000.0 + 86400) return false;
+        if (!Double.isNaN(newest) && unix > newest + 86400) return false;
+        String before = db.zoneAt(Double.MAX_VALUE);
+        double prevEnd = db.noteZone(unix, zone.getId());
         if (Double.isNaN(prevEnd)) return false;
+        ZoneId old = ClockChange.zone(before);
+        // Zurich to Paris: the same clock, nothing to analyse again
+        Instant at = Instant.ofEpochSecond((long) prevEnd);
+        if (old != null && old.getRules().getOffset(at).equals(zone.getRules().getOffset(at))) return false;
         db.reanalyseFrom(prevEnd);
         return true;
     }
@@ -254,11 +265,25 @@ public final class Analyzer {
         }
         // each night in the zone it ended in (issue #22): the later zone counts for the whole night
         Map<Night, String> zoneIds = new HashMap<Night, String>();
-        for (Night n : nights) zoneIds.put(n, db.zoneAt(n.end));
+        Map<Night, String> days = new HashMap<Night, String>();
+        for (Night n : nights) {
+            String zid = db.zoneAt(n.end);
+            zoneIds.put(n, zid);
+            String d = date(n.end, zoneOf(zid));
+            // a night between two notes counts in the later zone, but never on an earlier date than in the
+            // zone before (flying west, waking at 05:30 in Zurich is 23:30 in New York the day before,
+            // which would make the night before a nap)
+            ZoneId before = ClockChange.zone(db.zoneBeforeGap(n.end));
+            if (before != null) {
+                String earlier = date(n.end, before);
+                if (earlier.compareTo(d) > 0) d = earlier;
+            }
+            days.put(n, d);
+        }
         // main sleep per day = the longest one
         Map<String, Night> main = new HashMap<String, Night>();
         for (Night n : nights) {
-            String d = date(n.end, zoneOf(zoneIds.get(n)));
+            String d = days.get(n);
             Night m = main.get(d);
             if (m == null || n.asleepMin > m.asleepMin) main.put(d, n);
         }
@@ -266,7 +291,7 @@ public final class Analyzer {
         for (Night n : nights) {
             String zid = zoneIds.get(n);
             ZoneId nz = zoneOf(zid);
-            String d = date(n.end, nz);
+            String d = days.get(n);
             n.main = main.get(d) == n;
             n.score = Scores.sleep(n, tzOffset(n.midpoint > 0 ? n.midpoint : n.end, nz), prefs.age());
             JSONObject js = Json.night(n, d);

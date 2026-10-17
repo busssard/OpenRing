@@ -690,6 +690,22 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * When {@code unix} lies in a gap between two rows: the id of the row before the gap (the zone
+     * you were in when last seen before it), else null.
+     */
+    public String zoneBeforeGap(double unix) {
+        String u = String.valueOf(unix);
+        if (count("SELECT COUNT(*) FROM zones WHERE start <= " + u + " AND stop >= " + u) > 0) return null;
+        if (count("SELECT COUNT(*) FROM zones WHERE start > " + u) == 0) return null;
+        Cursor c = getReadableDatabase().rawQuery("SELECT id FROM zones WHERE stop < ? ORDER BY start DESC LIMIT 1", new String[] {u});
+        try {
+            return c.moveToFirst() ? c.getString(0) : null;
+        } finally {
+            c.close();
+        }
+    }
+
     /** All rows {start, stop} with their ids, oldest first (tests and the zone count). */
     public List<Object[]> zones() {
         List<Object[]> out = new ArrayList<Object[]>();

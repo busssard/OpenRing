@@ -835,6 +835,27 @@ public class PipelineTest {
         check("zone in a gap is the later one", "America/New_York".equals(db.zoneAt(2500)), db.zoneAt(2500));
         check("zone after the newest row is the newest", "Europe/Zurich".equals(db.zoneAt(1e10)), db.zoneAt(1e10));
         check("an empty id is not noted", Double.isNaN(db.noteZone(5000, "")) && db.zones().size() == 3, null);
+        // Analyzer.noteZone: a clock set far ahead is ignored, a zone with the same clock analyses nothing again
+        double now = System.currentTimeMillis() / 1000.0;
+        Db a = Db.get(freshDb("openring-zones-clamp"));
+        Analyzer.noteZone(a, now - 86400 * 3, ZoneId.of("Europe/Zurich"), Double.NaN);
+        check("a time two days after this phone's clock is ignored", !Analyzer.noteZone(a, now + 2 * 86400, ZoneId.of("America/New_York"), Double.NaN)
+                && a.zones().size() == 1, a.zones().size());
+        check("a time over a day after the newest event is ignored", !Analyzer.noteZone(a, now, ZoneId.of("America/New_York"), now - 3 * 86400)
+                && a.zones().size() == 1, a.zones().size());
+        a.put("analyzed_until", (long) now);
+        check("Zurich to Paris: a new row, nothing analysed again", !Analyzer.noteZone(a, now - 86400, ZoneId.of("Europe/Paris"), Double.NaN)
+                && a.zones().size() == 2 && a.kvLong("analyzed_until", 0) == (long) now, a.kvLong("analyzed_until", 0));
+        check("Paris to New York: the nights since are analysed again", Analyzer.noteZone(a, now - 3600, ZoneId.of("America/New_York"), now)
+                && a.zones().size() == 3 && a.kvLong("analyzed_until", 0) == (long) (now - 86400), a.kvLong("analyzed_until", 0));
+        db = Db.get(freshDb("openring-zones-2"));
+        db.noteZone(1000, "Europe/Zurich");
+        db.noteZone(2000, "America/New_York");
+        check("the zone before a gap", "Europe/Zurich".equals(db.zoneBeforeGap(1500)) && db.zoneBeforeGap(500) == null
+                && db.zoneBeforeGap(3000) == null, db.zoneBeforeGap(1500));
+        db.noteZone(4000, "Europe/Zurich");
+        db.noteZone(5000, "Europe/Zurich");
+        db.noteZone(6000, "Europe/Zurich");
         db.resetAnalysis();
         check("a full re analysis keeps the zone history", db.zones().size() == 3, db.zones().size());
         db.resetAll();
@@ -877,6 +898,27 @@ public class PipelineTest {
             java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/Zurich"));
             Analyzer.runAll(c, null);
             tripChecks(db, homeNights, "back home, after Re analyse all");
+
+            // flying far west: nights between two notes count in Los Angeles but keep their Zurich date, so
+            // no two nights share a day and none becomes a nap
+            Context w = freshDb("openring-west");
+            Db wdb = Db.get(w);
+            for (int d = 2; d <= 8; d++) wdb.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(zh).toEpochSecond(), "Europe/Zurich");
+            wdb.noteZone(LocalDate.parse("2026-09-13").atTime(8, 0).atZone(ZoneId.of("America/Los_Angeles")).toEpochSecond(), "America/Los_Angeles");
+            putBoot(wdb, home, 1, t0, end0);
+            Analyzer.runAll(w, null);
+            java.util.Set<String> wdays = new java.util.HashSet<String>();
+            int la = 0, collide = 0;
+            for (String js : wdb.nightsJson("2000-01-01", "2100-01-01", false)) {
+                JSONObject o = Json.parse(js);
+                if ("America/Los_Angeles".equals(o.optString("zone"))) la++;
+                if (!wdays.add(o.optString("day"))) collide++;
+                JSONObject h = homeNights.get(Json.d(o, "start"));
+                if (h == null || !h.optString("day").equals(o.optString("day"))) collide++;
+            }
+            check("west: nights between the notes count in Los Angeles", la >= 3, la + " nights");
+            check("west: no night lands on the day before, none becomes a nap", collide == 0
+                    && wdb.count("SELECT COUNT(*) FROM nights WHERE main = 1") == rdb.count("SELECT COUNT(*) FROM nights WHERE main = 1"), collide + " collisions");
         } finally {
             java.util.TimeZone.setDefault(keep);
         }
@@ -938,7 +980,7 @@ public class PipelineTest {
         String line = first == null || prev == null ? null : app.openring.core.analysis.ClockChange.travel(prev.optString("zone"),
                 first.optString("zone"), (Json.d(first, "start") + Json.d(first, "end")) / 2);
         check("trip " + when + ": the first night away gets the orange line",
-                "Times this night are in New York time (6 hours behind the night before).".equals(line), line);
+                "Times this night are in New York time, 6 hours behind where you slept the night before.".equals(line), line);
     }
 
     /** Schema 4 to 5 (#22): an old database and an old full backup still open, with all rows and an empty zone table. */

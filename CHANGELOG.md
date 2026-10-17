@@ -7,7 +7,7 @@
 * The app notes the phone's time zone when you open it and at every sync. Nights from before this version
   count in the zone the phone has when you first open 1.26 (#22)
 * When a night is in another time zone than the night before, an orange line under the sleep chart says so,
-  for example "Times this night are in New York time (6 hours behind the night before)." (#22)
+  for example "Times this night are in New York time, 6 hours behind where you slept the night before." (#22)
 * Scores and days of earlier nights stay the same after a trip, also after Re analyse all (#22)
 
 ## 1.21
