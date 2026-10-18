@@ -645,10 +645,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     static final String[] DETAIL_TEXTS = {
         "Detailed: every stage change the estimate finds, even short ones. Many thin lines.",
-        "Balanced (recommended): stages shorter than 3 minutes join the stage next to them. "
-            + "Being awake for 1 minute or more always stays on the chart.",
-        "Calm: stages shorter than 5 minutes join the stage next to them, being awake needs 2 minutes to stay. "
-            + "Long, calm blocks, similar in style to the official app. Wake ups shorter than 2 minutes are no longer shown or counted."
+        "Balanced (recommended): sleep stages shorter than 3 minutes join the sleep stage next to them. "
+            + "Being awake for 30 seconds between sleep joins the sleep around it, 1 minute or more always stays, "
+            + "and short sleep is never turned into awake.",
+        "Calm: sleep stages shorter than 5 minutes join the sleep stage next to them, being awake needs 2 minutes to stay. "
+            + "Long, calm blocks, similar in style to the official app. Wake ups shorter than 2 minutes are no longer shown or counted. "
+            + "Short sleep is never turned into awake."
     };
 
     void refreshStageDetail(Prefs p) {
