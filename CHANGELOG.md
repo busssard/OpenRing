@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.24
+* Rings that send history in bundles (Ring 5, newer Ring 4 firmware): events after a pause of more than 27 hours now
+  keep their real time instead of being placed right after the event before the pause (#31)
+
 ## 1.23
 * Turning the phone while the demo data is prepared no longer starts it a second time or closes the app.
   The progress stays on screen after turning (#29)
