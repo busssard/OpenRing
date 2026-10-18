@@ -19,6 +19,11 @@ public final class StageFilter {
     /** Minimum run length in 30 second epochs for sleep stages and for awake, per level. */
     static final int[] MIN_STAGE = {1, 6, 10};
     static final int[] MIN_WAKE = {1, 2, 4};
+    /**
+     * Version of the merge rules. Nights analysed with an older one are analysed again once
+     * ({@code Analyzer}). 1: issue #9, 2: sleep never merges into awake (issue #28).
+     */
+    public static final int VERSION = 2;
 
     public static int minStageEpochs(int level) {
         return MIN_STAGE[clampLevel(level)];
@@ -41,9 +46,11 @@ public final class StageFilter {
      * Repeatedly merges the shortest run below its minimum ({@code minWakeEpochs} for awake,
      * {@code minStageEpochs} for deep, light and REM) into the neighbour closest in depth
      * (deep, light, REM, awake); a tie goes to the longer neighbour, then to the earlier one.
-     * Runs next to unknown epochs or the night's edges only merge into a known neighbour; a run with
-     * none stays. Awake runs merge only between two known runs, so the night never grows into time
-     * marked awake. The result has the same length as the input.
+     * A deep, light or REM run only merges into a sleep neighbour, never into awake (issue #28); with
+     * none it stays, and is looked at again after later merges. Awake runs merge only between two
+     * known runs. Unknown epochs never absorb anything. So every awake epoch of the result was awake
+     * in the input, awake runs are kept or removed whole (never lengthened or joined), and falling
+     * asleep and waking up do not move. The result has the same length as the input.
      */
     public static int[] filter(int[] stages, int minStageEpochs, int minWakeEpochs) {
         int[] out = stages.clone();
@@ -81,11 +88,14 @@ public final class StageFilter {
         return i > 0 && runs.get(i - 1)[0] != 0 && i + 1 < runs.size() && runs.get(i + 1)[0] != 0;
     }
 
-    /** Index of the run that run {@code i} should merge into, or -1 when it has no known neighbour. */
+    /**
+     * Index of the run that run {@code i} should merge into, or -1 when it has none: unknown runs
+     * never absorb anything, and a sleep run never merges into awake.
+     */
     static int neighbour(List<int[]> runs, int i) {
         int[] r = runs.get(i);
-        int a = i > 0 && runs.get(i - 1)[0] != 0 ? i - 1 : -1;
-        int b = i + 1 < runs.size() && runs.get(i + 1)[0] != 0 ? i + 1 : -1;
+        int a = i > 0 && canAbsorb(runs.get(i - 1)[0], r[0]) ? i - 1 : -1;
+        int b = i + 1 < runs.size() && canAbsorb(runs.get(i + 1)[0], r[0]) ? i + 1 : -1;
         if (a < 0) return b;
         if (b < 0) return a;
         int da = Math.abs(depth(runs.get(a)[0]) - depth(r[0]));
@@ -93,6 +103,11 @@ public final class StageFilter {
         if (da != db) return da < db ? a : b;
         int la = runs.get(a)[2] - runs.get(a)[1], lb = runs.get(b)[2] - runs.get(b)[1];
         return lb > la ? b : a;
+    }
+
+    /** Whether a run of stage {@code into} may take over a run of stage {@code from}. */
+    static boolean canAbsorb(int into, int from) {
+        return into != 0 && (into != Stager.WAKE || from == Stager.WAKE);
     }
 
     /** Position on the depth scale: deep 0, light 1, REM 2, awake 3. */
