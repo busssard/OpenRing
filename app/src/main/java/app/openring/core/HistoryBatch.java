@@ -15,6 +15,10 @@ public final class HistoryBatch {
     public long nextCursor;
     public int rejected;
     public int replayed;
+    /** Pauses of more than 27 hours inside one extended bundle (see {@link ExtEnvelopeParser}). */
+    public int longPauses;
+    /** The longest of those pauses in ms, 0 when there was none. */
+    public long longestPauseMs;
 
     HistoryBatch(List<RingEvent> events, long bytesLeft) {
         this.events = events;
@@ -63,7 +67,10 @@ public final class HistoryBatch {
         if (resultCode > 0) {
             throw new BatchException(String.format("extended history request failed with result code 0x%02x", resultCode), resultCode);
         }
-        return new HistoryBatch(events, bytesLeft);
+        HistoryBatch out = new HistoryBatch(events, bytesLeft);
+        out.longPauses = envelopes.longPauses;
+        out.longestPauseMs = envelopes.longestPauseMs;
+        return out;
     }
 
     /** Drop replayed (older than cursor) and implausible events and compute the next cursor. */
@@ -85,6 +92,8 @@ public final class HistoryBatch {
         out.nextCursor = kept.isEmpty() ? batchStart : max + 1;
         out.rejected = rejected;
         out.replayed = replayed;
+        out.longPauses = batch.longPauses;
+        out.longestPauseMs = batch.longestPauseMs;
         return out;
     }
 }
