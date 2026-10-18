@@ -501,6 +501,7 @@ public class PipelineTest {
                 && "2026-04-12".equals(springNewest.optString("day")), springNewest.optString("day"));
         app.openring.data.Demo.leave(phone3);
 
+        demoTwice();
         oldNights();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
@@ -805,6 +806,21 @@ public class PipelineTest {
         check("after the full re analysis the oldest night has the chosen detail", first.optInt("stage_detail", -1) == level
                 && "2024-05-02".equals(first.optString("day")), first.optString("day") + " detail " + first.optInt("stage_detail", -1)
                 + ", " + (System.currentTimeMillis() - t) + " ms");
+        // issue #28: nights from the old filter rules (no "stage_filter" yet) are analysed again once, then the
+        // analysis is incremental again. A deleted oldest night shows which way the next sync went.
+        int version = app.openring.core.analysis.StageFilter.VERSION;
+        check("the filter version is stored after an analysis", db.kvLong("stage_filter", -1) == version, db.kvLong("stage_filter", -1));
+        db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {"2024-05-02"});
+        long without = db.count("SELECT COUNT(*) FROM nights");
+        Analyzer.run(c, null);
+        check("same filter version: the next sync stays incremental", without < nights && db.count("SELECT COUNT(*) FROM nights") == without,
+                without + " to " + db.count("SELECT COUNT(*) FROM nights") + " nights");
+        db.put("stage_filter", null); // a database from before 1.22
+        Analyzer.run(c, null);
+        JSONObject again = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0));
+        check("older filter rules: every night is analysed again once (#28)", db.count("SELECT COUNT(*) FROM nights") == nights
+                && "2024-05-02".equals(again.optString("day")) && db.kvLong("stage_filter", -1) == version,
+                db.count("SELECT COUNT(*) FROM nights") + " nights, oldest " + again.optString("day"));
     }
 
     /** Clock minutes after 12:00 the day before (so 23:00 is 660, 07:00 is 1140). */
@@ -857,6 +873,97 @@ public class PipelineTest {
                 && from.equals(switchNight.optString("clock_change_from")) && to.equals(switchNight.optString("clock_change_to")),
                 switchNight == null ? null : switchNight.optString("clock_change_from") + " to " + switchNight.optString("clock_change_to"));
         check("only that demo night is marked", marked == 1, marked);
+    }
+
+    // ------------------------------------------------- issue #29, demo started twice at once
+
+    /** Events, main nights, days, screen sessions and app rows of a demo database. */
+    static String demoCounts(Db db) {
+        return db.count("SELECT COUNT(*) FROM events") + " events, " + db.count("SELECT COUNT(*) FROM nights WHERE main = 1") + " nights, "
+                + db.count("SELECT COUNT(*) FROM days") + " days, " + db.count("SELECT COUNT(*) FROM screen") + " screen, "
+                + db.count("SELECT COUNT(*) FROM apps") + " apps";
+    }
+
+    /** Counts the progress steps one call reports. */
+    static final class Steps implements app.openring.data.Demo.Progress {
+        final java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+
+        @Override
+        public void step(String what) {
+            n.incrementAndGet();
+        }
+    }
+
+    /**
+     * Turning the phone while the demo is prepared used to start a second run that reset the
+     * database under the first. Now a second call waits and finds the demo built; the "built" mark
+     * also keeps 00:30 (newest day still yesterday) from rebuilding it.
+     */
+    static void demoTwice() throws Exception {
+        ZoneId z = ZoneId.systemDefault();
+        final LocalDate day = LocalDate.parse("2026-02-10");
+        final long now = java.time.LocalDateTime.parse("2026-02-10T00:30:00").atZone(z).toEpochSecond();
+        Context single = freshDb("openring-demo-one");
+        app.openring.data.Demo.enter(single, null, day, now);
+        String want = demoCounts(Db.get(single));
+        app.openring.data.Demo.leave(single);
+
+        final Context phone = freshDb("openring-demo-two");
+        final Steps a = new Steps(), b = new Steps();
+        final java.util.concurrent.CyclicBarrier start = new java.util.concurrent.CyclicBarrier(2);
+        final Throwable[] err = new Throwable[2];
+        Thread[] th = new Thread[2];
+        for (int i = 0; i < 2; i++) {
+            final int k = i;
+            th[i] = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        start.await();
+                        app.openring.data.Demo.enter(phone, k == 0 ? a : b, day, now);
+                    } catch (Throwable t) {
+                        err[k] = t;
+                    }
+                }
+            });
+            th[i].start();
+        }
+        for (Thread t : th) t.join(600000);
+        check("two demo starts at once: no error", err[0] == null && err[1] == null, err[0] != null ? err[0] : err[1]);
+        String got = demoCounts(Db.get(phone));
+        check("two demo starts at once: same demo as one start", got.equals(want), got + " (one start: " + want + ")");
+        check("two demo starts at once: only one builds", a.n.get() + b.n.get() == 2 && (a.n.get() == 0 || b.n.get() == 0),
+                a.n.get() + " and " + b.n.get() + " steps");
+        check("demo marked as built today", day.toString().equals(Db.get(phone).kv("demo_day", null)), Db.get(phone).kv("demo_day", null));
+        check("at 00:30 the newest demo day is still yesterday", day.minusDays(1).toString().equals(Db.get(phone).latestDay()), Db.get(phone).latestDay());
+
+        Steps again = new Steps();
+        boolean rebuilt = app.openring.data.Demo.enter(phone, again, day, now + 600);
+        check("demo started again the same day is not rebuilt", !rebuilt && again.n.get() == 0 && demoCounts(Db.get(phone)).equals(want), again.n.get() + " steps");
+        Steps cut = new Steps();
+        app.openring.data.Demo.complete(phone, cut, day.plusDays(1), now + 86400);
+        check("a complete demo is kept after a restart", cut.n.get() == 0, cut.n.get() + " steps");
+
+        Steps next = new Steps();
+        long nextNow = java.time.LocalDateTime.parse("2026-02-11T12:00:00").atZone(z).toEpochSecond();
+        app.openring.data.Demo.enter(phone, next, day.plusDays(1), nextNow);
+        check("demo started on a later day is built again", next.n.get() == 2 && "2026-02-11".equals(Db.get(phone).latestDay()),
+                next.n.get() + " steps, newest " + Db.get(phone).latestDay());
+
+        // cut off half way: events written, no mark (the app was ended while preparing)
+        Db.get(phone).put("demo_day", null);
+        Steps resume = new Steps();
+        boolean finished = app.openring.data.Demo.complete(phone, resume, day.plusDays(1), nextNow + 60);
+        check("a demo cut off half way is finished", finished && resume.n.get() == 2 && "2026-02-11".equals(Db.get(phone).kv("demo_day", null)),
+                resume.n.get() + " steps");
+        Steps later = new Steps();
+        boolean redone = app.openring.data.Demo.complete(phone, later);
+        check("a complete demo from an earlier day is kept after a restart", !redone && later.n.get() == 0, later.n.get() + " steps");
+        Db.get(phone).resetAll();
+        Steps empty = new Steps();
+        app.openring.data.Demo.enter(phone, empty, day.plusDays(1), nextNow + 120);
+        check("an emptied demo is built again", empty.n.get() == 2 && Db.get(phone).count("SELECT COUNT(*) FROM events") > 0, empty.n.get() + " steps");
+        app.openring.data.Demo.leave(phone);
     }
 
     // ---------------------------------------------------------------- issue #21, dating
@@ -1133,6 +1240,7 @@ public class PipelineTest {
         db.put("dated_count", r.datedAfter);
         db.put("event_count", r.total);
         db.put("stage_detail", app.openring.data.Prefs.of(c).stageDetail());
+        db.put("stage_filter", app.openring.core.analysis.StageFilter.VERSION);
         db.put("screen_awake", 1);
         t = System.nanoTime();
         Analyzer.run(c, null);
