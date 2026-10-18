@@ -20,7 +20,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 4;
+    static final int VERSION = 5;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -79,6 +79,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo2(db);
         upgradeTo3(db);
         upgradeTo4(db);
+        upgradeTo5(db);
     }
 
     @Override
@@ -86,6 +87,12 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 2) upgradeTo2(db);
         if (oldV < 3) upgradeTo3(db);
         if (oldV < 4) upgradeTo4(db);
+        if (oldV < 5) upgradeTo5(db);
+    }
+
+    /** v5: the phone's time zone over time (issue #22), so each night keeps the zone it was slept in. */
+    private static void upgradeTo5(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS zones (start REAL PRIMARY KEY, stop REAL NOT NULL, id TEXT NOT NULL)");
     }
 
     /** v4: when each app was in front (package name, unix seconds), to leave chosen apps out of screen time. */
@@ -626,6 +633,91 @@ public final class Db extends SQLiteOpenHelper {
         if (until > 0 && unix < until) put("analyzed_until", Math.max(1, (long) unix));
     }
 
+    // ---------------------------------------------------------------------------- zones
+
+    /**
+     * Note the phone's time zone {@code id} at {@code unix} (issue #22): the same zone as the newest
+     * row extends it, another zone opens a new row (never before the newest row ends, so a phone
+     * clock set back cannot make rows overlap). The very first row starts at 0, so everything before
+     * belongs to it. Returns the end of the row before when a new row was opened, NaN otherwise.
+     */
+    public synchronized double noteZone(double unix, String id) {
+        if (id == null || id.isEmpty()) return Double.NaN;
+        SQLiteDatabase db = getWritableDatabase();
+        Cursor c = db.rawQuery("SELECT start, stop, id FROM zones ORDER BY start DESC LIMIT 1", null);
+        double start = Double.NaN, stop = Double.NaN;
+        String last = null;
+        try {
+            if (c.moveToFirst()) {
+                start = c.getDouble(0);
+                stop = c.getDouble(1);
+                last = c.getString(2);
+            }
+        } finally {
+            c.close();
+        }
+        if (last == null) {
+            db.execSQL("INSERT OR REPLACE INTO zones(start, stop, id) VALUES (0, ?, ?)", new Object[] {unix, id});
+            return Double.NaN;
+        }
+        if (last.equals(id)) {
+            if (unix > stop) db.execSQL("UPDATE zones SET stop = ? WHERE start = ?", new Object[] {unix, start});
+            return Double.NaN;
+        }
+        double from = Math.max(unix, stop);
+        if (from <= start) from = start + 1;
+        db.execSQL("INSERT OR REPLACE INTO zones(start, stop, id) VALUES (?, ?, ?)", new Object[] {from, from, id});
+        return stop;
+    }
+
+    /**
+     * The zone id valid at {@code unix}: the row that holds it; between two rows the later one (the
+     * first note after it, "the last time zone counts for the whole night"); after the newest row the
+     * newest. Null when no zone was ever noted (demo mode, or before the first run of 1.26).
+     */
+    public String zoneAt(double unix) {
+        Cursor c = getReadableDatabase().rawQuery("SELECT id FROM zones WHERE stop >= ? ORDER BY start LIMIT 1", new String[] {String.valueOf(unix)});
+        try {
+            if (c.moveToFirst()) return c.getString(0);
+        } finally {
+            c.close();
+        }
+        c = getReadableDatabase().rawQuery("SELECT id FROM zones ORDER BY start DESC LIMIT 1", null);
+        try {
+            return c.moveToFirst() ? c.getString(0) : null;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
+     * When {@code unix} lies in a gap between two rows: the id of the row before the gap (the zone
+     * you were in when last seen before it), else null.
+     */
+    public String zoneBeforeGap(double unix) {
+        String u = String.valueOf(unix);
+        if (count("SELECT COUNT(*) FROM zones WHERE start <= " + u + " AND stop >= " + u) > 0) return null;
+        if (count("SELECT COUNT(*) FROM zones WHERE start > " + u) == 0) return null;
+        Cursor c = getReadableDatabase().rawQuery("SELECT id FROM zones WHERE stop < ? ORDER BY start DESC LIMIT 1", new String[] {u});
+        try {
+            return c.moveToFirst() ? c.getString(0) : null;
+        } finally {
+            c.close();
+        }
+    }
+
+    /** All rows {start, stop} with their ids, oldest first (tests and the zone count). */
+    public List<Object[]> zones() {
+        List<Object[]> out = new ArrayList<Object[]>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT start, stop, id FROM zones ORDER BY start", null);
+        try {
+            while (c.moveToNext()) out.add(new Object[] {c.getDouble(0), c.getDouble(1), c.getString(2)});
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     public void addBattery(long unix, int pct) {
         ContentValues cv = new ContentValues();
         cv.put("unix", unix);
@@ -824,7 +916,7 @@ public final class Db extends SQLiteOpenHelper {
     /** Wipe everything (keeps nothing). */
     public void resetAll() {
         SQLiteDatabase db = getWritableDatabase();
-        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps"}) db.execSQL("DELETE FROM " + t);
+        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones"}) db.execSQL("DELETE FROM " + t);
     }
 
     /** Forget computed results so the next analysis rebuilds everything from raw events. */
