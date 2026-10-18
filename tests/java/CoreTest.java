@@ -396,6 +396,7 @@ public class CoreTest {
         stageFilter();
         stageShare();
         screenTime();
+        screenAwakeGrid();
         screenApps();
         screenUnlock();
         screenScore();
@@ -637,6 +638,153 @@ public class CoreTest {
         eq("screen: no phone use in range, nothing counted", ScreenTime.markAwake(already, 0, 60, m), 0);
         int[] awakeAlready = {4, 2, 2};
         eq("screen: phone use while already awake still counts", ScreenTime.markAwake(awakeAlready, 60, 150, m), 1);
+    }
+
+    /** The awake rule before issue #41: a step is awake when the screen was on for 15 s of it. */
+    static boolean[] oldAwake(int n, double start, double end, List<double[]> sessions) {
+        boolean[] out = new boolean[n];
+        double step = (end - start) / n;
+        for (int i = 0; i < n; i++) {
+            double a = start + i * step, b = a + step, on = 0;
+            for (double[] x : sessions) on += Math.max(0, Math.min(x[1], b) - Math.max(x[0], a));
+            out[i] = on >= ScreenTime.AWAKE_MIN_S * step / 30.0;
+        }
+        return out;
+    }
+
+    static int awakeCount(int[] st) {
+        int c = 0;
+        for (int x : st) if (x == 4) c++;
+        return c;
+    }
+
+    /** Issue #41: a short phone check counts wherever it falls on the 30 second grid. */
+    static void screenAwakeGrid() {
+        // one check slid over every start time in a step (tenths of a second, the borders included)
+        double[] lengths = {15, 20, 25, 29, 29.9};
+        boolean always = true, atMostTwo = true, mostIsMarked = true;
+        String miss = "";
+        for (double len : lengths) {
+            for (int k = 0; k <= 300; k++) {
+                double s0 = 600 + k / 10.0;
+                int[] st = new int[120];
+                Arrays.fill(st, 2);
+                List<double[]> one = new ArrayList<double[]>();
+                one.add(new double[] {s0, s0 + len});
+                int r = ScreenTime.markAwake(st, 0, 3600, one);
+                if (awakeCount(st) < 1 || r != awakeCount(st)) {
+                    always = false;
+                    miss = " (missed " + len + " s at " + s0 + ")";
+                }
+                atMostTwo &= awakeCount(st) <= 2;
+                // the step holding most of the check is marked (the earlier one on a tie)
+                int first = (int) Math.floor(s0 / 30);
+                double inFirst = Math.min(s0 + len, (first + 1) * 30) - s0;
+                int expect = inFirst >= len - inFirst - 1e-9 ? first : first + 1;
+                mostIsMarked &= st[expect] == 4;
+            }
+        }
+        check("screen #41: every check of 15 s or more marks a step, wherever it starts" + miss, always);
+        check("screen #41: a short check marks at most two steps", atMostTwo);
+        check("screen #41: the step holding most of the check is marked", mostIsMarked);
+
+        // the cases from the issue
+        int[] a = new int[120];
+        List<double[]> s = new ArrayList<double[]>();
+        s.add(new double[] {617.5, 642.5});
+        eq("screen #41: a 25 s check split half and half marks one step", ScreenTime.markAwake(a, 0, 3600, s), 1);
+        eq("screen #41: a tie goes to the earlier step", a[20], 4);
+        int[] b = new int[120];
+        s.clear();
+        s.add(new double[] {22, 37});
+        eq("screen #41: a 15 s check from 22 s to 37 s marks one step", ScreenTime.markAwake(b, 0, 3600, s), 1);
+        eq("screen #41: the step with 8 of its 15 s", b[0], 4);
+
+        // a 14 s check never marks a step
+        boolean never = true;
+        for (int k = 0; k <= 300; k++) {
+            double s0 = 600 + k / 10.0;
+            int[] st = new int[120];
+            List<double[]> one = new ArrayList<double[]>();
+            one.add(new double[] {s0, s0 + 14});
+            never &= ScreenTime.markAwake(st, 0, 3600, one) == 0 && awakeCount(st) == 0;
+        }
+        check("screen #41: a 14 s check never marks a step", never);
+
+        // longer sessions behave exactly as before
+        boolean same = true;
+        for (double len = 30; len <= 600; len += 7.3) {
+            for (int k = 0; k <= 30; k++) {
+                double s0 = 900 + k;
+                int[] st = new int[120];
+                List<double[]> one = new ArrayList<double[]>();
+                one.add(new double[] {s0, s0 + len});
+                ScreenTime.markAwake(st, 0, 3600, one);
+                boolean[] old = oldAwake(120, 0, 3600, one);
+                for (int i = 0; i < 120; i++) same &= (st[i] == 4) == old[i];
+            }
+        }
+        check("screen #41: sessions of 30 s or more mark the same steps as before", same);
+
+        // two short checks: in one step together 15 s still count, on both sides of a border not
+        int[] two = new int[10];
+        List<double[]> t = new ArrayList<double[]>();
+        t.add(new double[] {32, 42});
+        t.add(new double[] {45, 55});
+        eq("screen #41: two 10 s checks in one step still count", ScreenTime.markAwake(two, 0, 300, t), 1);
+        eq("screen #41: two 10 s checks in one step mark it", two[1], 4);
+        int[] apart = new int[10];
+        t.clear();
+        t.add(new double[] {45, 55});
+        t.add(new double[] {62, 72});
+        eq("screen #41: 10 s checks on both sides of a border do not count", ScreenTime.markAwake(apart, 0, 300, t), 0);
+        // a short check over a border, one of its steps already marked with another check: nothing extra
+        int[] next = new int[10];
+        t.clear();
+        t.add(new double[] {50, 70}); // 10 s in step 1, 10 s in step 2
+        t.add(new double[] {72, 78}); // step 2 now has 16 s
+        eq("screen #41: a check with a step already marked adds no step", ScreenTime.markAwake(next, 0, 300, t), 1);
+        eq("screen #41: that step is the one marked", next[2], 4);
+        // the part outside the window does not count
+        int[] edge = new int[10];
+        t.clear();
+        t.add(new double[] {-10, 10});
+        eq("screen #41: only 10 s inside the window, nothing marked", ScreenTime.markAwake(edge, 0, 300, t), 0);
+        t.clear();
+        t.add(new double[] {-10, 16});
+        eq("screen #41: 16 s inside the window marks the first step", ScreenTime.markAwake(edge, 0, 300, t), 1);
+
+        // random nights: every step the old rule marked is still marked, extra steps only from
+        // checks under 30 s with 15 s inside the window, at most one each
+        Random rnd = new Random(41);
+        boolean superset = true, fewExtra = true;
+        for (int night = 0; night < 3000; night++) {
+            int n = 60 + rnd.nextInt(60);
+            double start = rnd.nextInt(1000), end = start + n * 30;
+            List<double[]> ss = new ArrayList<double[]>();
+            double cur = start - 40;
+            int shortOnes = 0;
+            while (cur < end) {
+                cur += 1 + rnd.nextDouble() * 200;
+                double len = rnd.nextInt(4) == 0 ? 30 + rnd.nextDouble() * 300 : rnd.nextDouble() * 32;
+                ss.add(new double[] {cur, cur + len});
+                double in = Math.min(cur + len, end) - Math.max(cur, start);
+                if (len < 30 && in >= 15) shortOnes++;
+                cur += len;
+            }
+            int[] st = new int[n];
+            Arrays.fill(st, 1);
+            ScreenTime.markAwake(st, start, end, ss);
+            boolean[] old = oldAwake(n, start, end, ss);
+            int extra = 0;
+            for (int i = 0; i < n; i++) {
+                if (old[i] && st[i] != 4) superset = false;
+                if (!old[i] && st[i] == 4) extra++;
+            }
+            fewExtra &= extra <= shortOnes;
+        }
+        check("screen #41: random nights keep every step the old rule marked", superset);
+        check("screen #41: extra steps only from short checks, at most one each", fewExtra);
     }
 
     static void protocol() {

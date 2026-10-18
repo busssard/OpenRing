@@ -82,6 +82,9 @@ public final class Analyzer {
         long screenAwake = prefs.screenAwake() ? 1 : 0;
         double firstScreen = db.screenStart(true);
         if (db.kvLong("screen_awake", screenAwake) != screenAwake && firstScreen >= 0) db.reanalyseFrom(firstScreen);
+        // the rule for which steps phone use marks awake changed (issue #41): nights with screen data
+        // are analysed again once; databases from before the version existed read as rule 1
+        if (screenAwake == 1 && db.kvLong("phone_awake", 1) != ScreenTime.AWAKE_RULE && firstScreen >= 0) db.reanalyseFrom(firstScreen);
         db.put("dated_count", t.datedAfter);
         db.put("event_count", t.total);
         double[] range = db.datedRange();
@@ -101,6 +104,7 @@ public final class Analyzer {
         db.put("stage_detail", detail);
         db.put("stage_filter", StageFilter.VERSION);
         db.put("screen_awake", screenAwake);
+        db.put("phone_awake", ScreenTime.AWAKE_RULE);
         db.put("last_analysis", now);
     }
 

@@ -276,6 +276,39 @@ public class PipelineTest {
             JSONObject on = Json.parse(db.nightsJson(key, key, true).get(0));
             check("switch on again: phone use counts again", Math.abs(on.optDouble("start") - (s0 + 900)) < 1, null);
 
+            // issue #41: a 20 s check split 10 s and 10 s over a step border counts as awake
+            int[] onRaw = Json.stagesRaw(on);
+            double oStart = on.optDouble("start"), oStep = (on.optDouble("end") - oStart) / onRaw.length;
+            int j = (int) (3 * 3600 / oStep);
+            double border = oStart + (j + 1) * oStep;
+            List<double[]> split = new ArrayList<double[]>();
+            split.add(new double[] {border - 10, border + 10});
+            db.putScreen(split);
+            db.reanalyseFrom(border - 10);
+            Analyzer.run(ctx, null);
+            JSONObject withSplit = Json.parse(db.nightsJson(key, key, true).get(0));
+            check("a 20 s check over a step border counts as awake (#41)", Json.stagesRaw(withSplit)[j] == 4
+                    && Math.abs(withSplit.optDouble("phone_min") - on.optDouble("phone_min") - oStep / 60) < 0.01,
+                    on.opt("phone_min") + " to " + withSplit.opt("phone_min"));
+            check("the awake rule version is stored", db.kvLong("phone_awake", -1) == ScreenTime.AWAKE_RULE, db.kvLong("phone_awake", -1));
+            // a database from before the rule version: the nights with screen data are analysed again once.
+            // The night is deleted and the analysis set to redo only the days after it, so a night
+            // that comes back shows the re analysis.
+            db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {key});
+            db.put("analyzed_until", (long) (e0 + 5 * 86400));
+            Analyzer.run(ctx, null);
+            check("same awake rule: the next sync stays incremental", db.nightsJson(key, key, true).isEmpty(), null);
+            db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {key});
+            db.put("analyzed_until", (long) (e0 + 5 * 86400));
+            db.put("phone_awake", null);
+            Analyzer.run(ctx, null);
+            check("older awake rule: nights with screen data are analysed again (#41)", db.nightsJson(key, key, true).size() == 1
+                    && db.kvLong("phone_awake", -1) == ScreenTime.AWAKE_RULE, null);
+            // the extra check is gone again for the tests below
+            db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {border - 10});
+            db.reanalyseFrom(border - 10);
+            Analyzer.run(ctx, null);
+
             // the couch: phone in use for the whole of a short window, it is not a night
             String key0 = day0.toString();
             JSONObject n0 = Json.parse(db.nightsJson(key0, key0, true).get(0));
@@ -1469,6 +1502,7 @@ public class PipelineTest {
         db.put("stage_detail", app.openring.data.Prefs.of(c).stageDetail());
         db.put("stage_filter", app.openring.core.analysis.StageFilter.VERSION);
         db.put("screen_awake", 1);
+        db.put("phone_awake", app.openring.core.analysis.ScreenTime.AWAKE_RULE);
         t = System.nanoTime();
         Analyzer.run(c, null);
         long incMs = (System.nanoTime() - t) / 1000000;

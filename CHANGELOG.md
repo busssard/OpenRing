@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.27
+* A short look at the phone at night (15 seconds or more) now always counts as 30 seconds awake. Before,
+  a look of 15 to 29 seconds was often lost when it fell across two 30 second steps of the night. Longer
+  phone use counts as before. Nights with screen time are analysed again once after the update (#41)
 ## 1.26
 * Travelling: each night keeps the time zone you slept in. After a trip to New York your nights at home still
   show your home times, and the nights there show New York times, so bedtimes, the average night and the

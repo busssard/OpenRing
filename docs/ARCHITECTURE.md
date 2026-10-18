@@ -88,6 +88,8 @@ file in the cache. Histories are never merged.
 2. `Stager` estimates stages per 30 seconds from heart rate, HRV and movement (open_health's model free
    stager). Ring 4 does not stage sleep itself. Sleep versus wake is reliable; deep and REM are estimates.
    Every 30 seconds with the phone screen on for at least 15 seconds becomes awake (`ScreenTime.markAwake`).
+   A single use of 15 seconds or more that a step border splits so neither part reaches 15 seconds marks
+   the step holding most of it (issue #41); `ScreenTime.AWAKE_RULE` (kv `phone_awake`) re analyses nights on a change.
 3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep
