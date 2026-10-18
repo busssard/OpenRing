@@ -34,16 +34,51 @@ public final class Demo {
 
     public static final long DS0 = 3L * 86400 * 10; // the made up ring booted 3 days before the history starts
 
-    /** Switch to the demo database and fill it if it is empty. Blocks; call from a background thread. */
-    public static void enter(Context c, Progress p) {
-        enter(c, p, LocalDate.now(), System.currentTimeMillis() / 1000);
+    /**
+     * Switch to the demo database and build it unless that was done today. Returns whether it was
+     * built now. Blocks; call from a background thread.
+     */
+    public static boolean enter(Context c, Progress p) {
+        return enter(c, p, LocalDate.now(), System.currentTimeMillis() / 1000);
     }
 
-    /** As above with a chosen "today" and "now" (both in the past), so tests can cover any date and hour. */
-    public static void enter(Context c, Progress p, LocalDate today, long now) {
+    /** Key in {@code kv}: the day the demo was last built completely (written last, cleared by {@code resetAll}). */
+    static final String BUILT = "demo_day";
+
+    /**
+     * As above with a chosen "today" and "now" (both in the past), so tests can cover any date and hour.
+     * Only one run at a time (issue #29): a second caller waits and then finds the demo built.
+     */
+    public static boolean enter(Context c, Progress p, LocalDate today, long now) {
+        synchronized (Demo.class) {
+            return build(c, p, today, now);
+        }
+    }
+
+    /**
+     * Finish a demo that was cut off half way (Android ended the app while it was prepared); a demo
+     * built completely on any day stays as it is. Returns whether it was built now. Blocks; call
+     * from a background thread.
+     */
+    public static boolean complete(Context c, Progress p) {
+        return complete(c, p, LocalDate.now(), System.currentTimeMillis() / 1000);
+    }
+
+    /** As above with a chosen "today" and "now", for the tests. */
+    public static boolean complete(Context c, Progress p, LocalDate today, long now) {
+        synchronized (Demo.class) {
+            Db db = Db.get(c);
+            if (db.eventCount() > 0 && db.kv(BUILT, null) != null) return false;
+            return build(c, p, today, now);
+        }
+    }
+
+    private static boolean build(Context c, Progress p, LocalDate today, long now) {
         Prefs.of(c).setDemo(true);
         Db db = Db.get(c);
-        if (db.eventCount() > 0 && db.latestDay() != null && db.latestDay().equals(today.toString())) return;
+        // built completely today: nothing to do. Not "the newest day is today", which is still
+        // yesterday until about 04:00 and missing while another run is half way (issue #29)
+        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null))) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll();
         ZoneId zone = ZoneId.systemDefault();
@@ -59,6 +94,8 @@ public final class Demo {
         db.putApps(apps);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
+        db.put(BUILT, today.toString());
+        return true;
     }
 
     public static void leave(Context c) {
