@@ -10,6 +10,15 @@
   for example "Times this night are in New York time, 6 hours behind where you slept the night before." (#22)
 * Scores and days of earlier nights stay the same after a trip, also after Re analyse all (#22)
 
+## 1.23
+* Turning the phone while the demo data is prepared no longer starts it a second time or closes the app.
+  The progress stays on screen after turning (#29)
+## 1.22
+* Balanced and Calm stage detail no longer turn short sleep into awake. Before, a short REM or light stage next to
+  a wake up could be counted as awake, adding awake minutes or even a wake up and lowering efficiency and the score.
+  Balanced now counts the same wake ups as Detailed (#28)
+* After updating, all nights are analysed again once with the fixed filter
+
 ## 1.21
 * New icon from the owner's sketch: a ring seen slightly from above, the infinity sign cut into its band,
   in one plain colour (the app's deep sleep blue). Also the notification icon and the themed icon on Android 13

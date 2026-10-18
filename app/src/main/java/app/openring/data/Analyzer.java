@@ -21,6 +21,7 @@ import app.openring.core.analysis.NightAnalyzer;
 import app.openring.core.analysis.NightFinder;
 import app.openring.core.analysis.Scores;
 import app.openring.core.analysis.ScreenTime;
+import app.openring.core.analysis.StageFilter;
 import app.openring.core.analysis.Stats;
 import app.openring.core.analysis.TS;
 import app.openring.core.analysis.Wellness;
@@ -74,6 +75,9 @@ public final class Analyzer {
         // mode, or analysed by a version before 1.11): analyse everything again
         int detail = prefs.stageDetail();
         if (db.kvLong("stage_detail", -1) != detail) db.put("analyzed_until", 0);
+        // the detail filter's rules changed (issue #28): nights from older rules are analysed again once;
+        // databases from before the version existed read as version 1
+        if (db.kvLong("stage_filter", 1) != StageFilter.VERSION) db.put("analyzed_until", 0);
         // "count phone use as awake" switched (issue #13): only nights since the first screen data change
         long screenAwake = prefs.screenAwake() ? 1 : 0;
         double firstScreen = db.screenStart(true);
@@ -95,6 +99,7 @@ public final class Analyzer {
         analyze(from, range[1]);
         db.put("analyzed_until", (long) range[1]);
         db.put("stage_detail", detail);
+        db.put("stage_filter", StageFilter.VERSION);
         db.put("screen_awake", screenAwake);
         db.put("last_analysis", now);
     }
