@@ -833,6 +833,17 @@ public class PipelineTest {
         check("clocks back: a use at 03:30 is on the 03:30 line of the clock", lit == 42 && in.day.totalMin > 4.9, lit);
         app.openring.data.ScreenDays.Row row = in.rows[in.rows.length - 1];
         check("and on the 03:30 part of the day row", row.fill[14] > 0 && row.fill[13] == 0 && row.zone.equals(z), null);
+        // a night through the repeated hour, 02:40 summer time to 02:20 winter time: the row keeps its width
+        db.replaceNights(0, Double.MAX_VALUE, java.util.Collections.singletonList(new Object[] {
+            (double) java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond(), (double) java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond(),
+            "2026-10-25", 1, 80, "{\"start\":" + java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond() + ",\"end\":"
+                + java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond() + ",\"sleep_start\":" + java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond()
+                + ",\"sleep_end\":" + java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond() + "}"}));
+        in = app.openring.data.ScreenDays.info(db, LocalDate.parse("2026-10-25"), z, 180, new java.util.HashSet<String>());
+        row = in.rows[in.rows.length - 1];
+        int covered = 0;
+        for (double v : row.nightFill) if (v > 0) covered++;
+        check("a night inside the repeated hour keeps its width on the row", row.nights.size() == 1 && covered == 8, covered + " steps of 5 minutes");
     }
 
     /** The zone history: rows extend and open, a gap counts for the later zone. */

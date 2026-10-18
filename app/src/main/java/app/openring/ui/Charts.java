@@ -877,6 +877,16 @@ public final class Charts {
             this.total = total;
             this.sub = sub;
             t.setTextAlign(Paint.Align.CENTER);
+            prepare();
+        }
+
+        /** The night band per 5 minutes of clock time and the clock change arc, worked out once per day and zone (issue #46). */
+        private double[] band5;
+        private double[] changeArc;
+
+        private void prepare() {
+            band5 = app.openring.core.analysis.DialMath.fill(nights, from, to, zone, 288);
+            changeArc = app.openring.core.analysis.DialMath.changeArc(app.openring.core.analysis.ClockChange.find(zone, from, to));
         }
 
         /** Touching a mark finds its use even when short uses are drawn longer than they were. */
@@ -924,7 +934,10 @@ public final class Charts {
 
         /** The zone of the day shown (issue #22). */
         public ScreenDial zone(ZoneId z) {
-            if (z != null) zone = z;
+            if (z != null && !z.equals(zone)) {
+                zone = z;
+                prepare();
+            }
             return this;
         }
 
@@ -982,7 +995,6 @@ public final class Charts {
             p.setColor(Ui.alpha(Ui.SLEEP, 0.55f));
             oval.set(cx - rb, cy - rb, cx + rb, cy + rb);
             // per 5 minutes of clock time, so a night through the repeated hour stays one band (issue #46)
-            double[] band5 = app.openring.core.analysis.DialMath.fill(nights, from, to, zone, 288);
             for (int i = 0; i < band5.length; i++) {
                 if (band5[i] <= 0) continue;
                 int j = i;
@@ -991,7 +1003,7 @@ public final class Charts {
                 i = j;
             }
             // the hour that repeats or is missing on a day the clocks change, in orange like the sleep chart (#22, #46)
-            double[] arc = app.openring.core.analysis.DialMath.changeArc(app.openring.core.analysis.ClockChange.find(zone, from, to));
+            double[] arc = changeArc;
             if (arc != null) {
                 p.setStrokeWidth(Ui.dp(getContext(), 2.5f));
                 p.setColor(Ui.ACTIVE);
@@ -1142,13 +1154,14 @@ public final class Charts {
                 p.setColor(Ui.alpha(Ui.LINE, 0.6f));
                 cv.drawRoundRect(r, track / 2, track / 2, p);
                 p.setColor(Ui.alpha(Ui.SLEEP, 0.35f));
-                for (double[] n : row.nights) {
-                    double a = Math.max(n[0], row.from), b = Math.min(n[1], row.to);
-                    if (b <= a) continue;
-                    // by clock time, like the hour labels (issue #46)
-                    double fa = app.openring.core.analysis.DialMath.fraction(a, row.from, row.to, row.zone);
-                    double fb = Math.max(fa, app.openring.core.analysis.DialMath.fraction(b, row.from, row.to, row.zone));
-                    cv.drawRect(x0 + (float) (bw * fa), cy - track / 2, x0 + (float) (bw * fb), cy + track / 2, p);
+                // by clock time, like the hour labels; a night through the repeated hour keeps its width (issue #46)
+                double[] nf = row.nightFill;
+                for (int i = 0; i < nf.length; i++) {
+                    if (nf[i] <= 0) continue;
+                    int j = i;
+                    while (j < nf.length && nf[j] > 0) j++;
+                    cv.drawRect(x0 + bw * i / nf.length, cy - track / 2, x0 + bw * j / nf.length, cy + track / 2, p);
+                    i = j;
                 }
                 int n = row.fill.length;
                 float step = bw / n;

@@ -84,6 +84,8 @@ public final class ScreenDays {
         /** Main nights {sleep start, sleep end} that touch this day. */
         public final List<double[]> nights = new ArrayList<double[]>();
         public double firstLook = Double.NaN;
+        /** How much of each 5 minutes of clock time the nights cover (288 steps), so a night through the repeated hour keeps its width (issue #46). */
+        public double[] nightFill = new double[DIAL_STEPS];
         /** The zone the row is drawn in: positions follow the clock (issue #46). */
         public ZoneId zone = ZoneId.systemDefault();
     }
@@ -204,6 +206,7 @@ public final class ScreenDays {
             r.from = r.date.atStartOfDay(zone).toEpochSecond();
             r.to = r.date.plusDays(1).atStartOfDay(zone).toEpochSecond();
             for (double[] n : nights) if (n[1] > r.from && n[0] < r.to) r.nights.add(n);
+            r.nightFill = app.openring.core.analysis.DialMath.fill(r.nights, r.from, r.to, zone, DIAL_STEPS);
             if (first >= 0 && r.to > first) {
                 r.totalMin = ScreenTime.minutes(counted, r.from, r.to);
                 r.fill = app.openring.core.analysis.DialMath.fill(ScreenTime.widen(counted, minShowS), r.from, r.to, zone, ROW_STEPS);

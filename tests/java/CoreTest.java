@@ -829,7 +829,7 @@ public class CoreTest {
         check("orange arc over 02:00 to 03:00 on both days", arcB[0] == 2 / 24.0 && arcB[1] == 1 / 24.0 && arcF[0] == 2 / 24.0 && arcF[1] == 1 / 24.0);
         check("no arc on a normal day", DialMath.changeArc(ClockChange.find(z, zurich("2026-10-14T00:00:00"), zurich("2026-10-15T00:00:00"))) == null);
         eq("dial text back", ClockChange.dialText(ClockChange.find(z, bFrom, bTo)), "The clocks went back one hour on this day (03:00 became 02:00). "
-                + "Phone use from 02:00 to 03:00 happened twice and shows on the same part of the clock, marked in orange.");
+                + "The hour from 02:00 to 03:00 happened twice, phone use in both shows on the same part of the clock, marked in orange.");
         eq("dial text forward", ClockChange.dialText(ClockChange.find(z, fFrom, fTo)), "The clocks went forward one hour on this day (02:00 became 03:00), "
                 + "so the part of the clock from 02:00 to 03:00, marked in orange, stays empty.");
         check("no dial text without a change", ClockChange.dialText(null) == null);
@@ -838,6 +838,13 @@ public class CoreTest {
         ClockChange.Change half = ClockChange.find(lh, lhd.atStartOfDay(lh).toEpochSecond(), lhd.plusDays(1).atStartOfDay(lh).toEpochSecond());
         check("30 minute change: half an hour arc and text", DialMath.changeArc(half)[1] == 30 / 1440.0
                 && ClockChange.dialText(half).startsWith("The clocks went back 30 minutes on this day"));
+        // a night inside the repeated hour, 02:40 summer time to 02:20 winter time, keeps its 40 minutes
+        List<double[]> inside = new ArrayList<double[]>();
+        inside.add(new double[] {java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond(), java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond()});
+        double[] fi = DialMath.fill(inside, bFrom, bTo, z, 288);
+        int on = 0;
+        for (double v : fi) if (v > 0) on++;
+        check("a night inside the repeated hour keeps its width", on == 8 && fi[24] == 1 && fi[27] == 1 && fi[32] == 1 && fi[35] == 1 && fi[28] == 0);
         check("empty day fills nothing", DialMath.fill(twice, bFrom, bFrom, z, 288)[0] == 0);
     }
 

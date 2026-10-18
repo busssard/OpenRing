@@ -84,8 +84,8 @@ public final class ClockChange {
         if (c == null || c.minutes == 0) return null;
         String amount = amount(Math.abs(c.minutes));
         if (c.minutes < 0) {
-            return "The clocks went back " + amount + " on this day (" + c.from + " became " + c.to + "). Phone use from " + c.to
-                    + " to " + c.from + " happened twice and shows on the same part of the clock, marked in orange.";
+            return "The clocks went back " + amount + " on this day (" + c.from + " became " + c.to + "). The hour from " + c.to
+                    + " to " + c.from + " happened twice, phone use in both shows on the same part of the clock, marked in orange.";
         }
         return "The clocks went forward " + amount + " on this day (" + c.from + " became " + c.to + "), so the part of the clock from "
                 + c.from + " to " + c.to + ", marked in orange, stays empty.";
