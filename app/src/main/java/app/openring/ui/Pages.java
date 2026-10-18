@@ -17,6 +17,7 @@ import java.util.Locale;
 
 import app.openring.core.analysis.Scores;
 import app.openring.core.analysis.ScreenTime;
+import app.openring.core.analysis.StageShare;
 import app.openring.core.analysis.Stats;
 import app.openring.core.analysis.TS;
 import app.openring.data.Json;
@@ -96,14 +97,15 @@ public final class Pages {
             stats.addView(Ui.caption(c, "Key metrics"));
             JSONObject n = d.night;
             stats.addView(Ui.statRow(c,
-                    Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP),
-                    Ui.stat(c, "Resting HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", Ui.HEART)));
+                    Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, "Time asleep last night, naps not counted"),
+                    Ui.stat(c, "Resting HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", Ui.HEART, "Lowest heart rate while asleep")));
             stats.addView(Ui.statRow(c,
-                    Ui.stat(c, "HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", Ui.READY),
-                    Ui.stat(c, "Temperature", signed(Json.d(d.day, "temp_dev")), "°C", Ui.TEMP)));
+                    Ui.stat(c, "HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", Ui.READY, "Average while asleep, higher is calmer"),
+                    // temp_dev is a difference from the usual skin temperature, not a body temperature (issue #32)
+                    Ui.stat(c, "Temp vs usual", signed(Json.d(d.day, "temp_dev")), "°C", Ui.TEMP, "Skin temperature compared with your usual")));
             stats.addView(Ui.statRow(c,
-                    Ui.stat(c, "Steps", Ui.fmt(Json.d(d.day, "steps"), 0), "est.", Ui.ACTIVE),
-                    Ui.stat(c, "Active burn", Ui.fmt(Json.d(d.day, "active_kcal"), 0), "kcal", Ui.ACTIVE)));
+                    Ui.stat(c, "Steps", Ui.fmt(Json.d(d.day, "steps"), 0), "est.", Ui.ACTIVE, "Estimated from your movement"),
+                    Ui.stat(c, "Active burn", Ui.fmt(Json.d(d.day, "active_kcal"), 0), "kcal", Ui.ACTIVE, "Calories burned by moving")));
             root.addView(stats);
 
             JSONObject radar = d.day == null ? null : d.day.optJSONObject("radar");
@@ -254,6 +256,7 @@ public final class Pages {
 
     static String signed(double v) {
         if (Double.isNaN(v)) return "--";
+        if (Math.abs(v) < 0.05) return String.format(Locale.getDefault(), "%.1f", 0.0); // not "-0.0"
         return String.format(Locale.getDefault(), "%+.1f", v);
     }
 
@@ -297,11 +300,16 @@ public final class Pages {
         hyp.addView(Ui.gap(c, 8));
         hyp.addView(Ui.text(c, Explain.STAGES, 12, Ui.TEXT_2, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 10));
-        double inBed = Math.max(1, Json.d(n, "in_bed_min"));
-        hyp.addView(stageRow(c, "Awake", Json.d(n, "awake_min"), inBed, Ui.STAGE_AWAKE));
-        hyp.addView(stageRow(c, "REM", Json.d(n, "rem_min"), inBed, Ui.STAGE_REM));
-        hyp.addView(stageRow(c, "Light", Json.d(n, "light_min"), inBed, Ui.STAGE_LIGHT));
-        hyp.addView(stageRow(c, "Deep", Json.d(n, "deep_min"), inBed, Ui.STAGE_DEEP));
+        // REM, light and deep as shares of time asleep (adding up to 100), awake of time in bed (issue #32)
+        double deepMin = Json.d(n, "deep_min"), lightMin = Json.d(n, "light_min"), remMin = Json.d(n, "rem_min"), awakeMin = Json.d(n, "awake_min");
+        int[] share = StageShare.sleepShares(deepMin, lightMin, remMin);
+        hyp.addView(stageRowPct(c, "Awake", awakeMin, StageShare.share(awakeMin, Json.d(n, "in_bed_min")), Ui.STAGE_AWAKE));
+        hyp.addView(stageRowPct(c, "REM", remMin, share == null ? Double.NaN : share[2], Ui.STAGE_REM));
+        hyp.addView(stageRowPct(c, "Light", lightMin, share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
+        hyp.addView(stageRowPct(c, "Deep", deepMin, share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
+        hyp.addView(Ui.gap(c, 2));
+        hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. Awake is a share of your time in bed.",
+                11, Ui.TEXT_3, Ui.REGULAR));
         String src = n.optString("source");
         hyp.addView(Ui.gap(c, 6));
         hyp.addView(Ui.text(c, "ring".equals(src) ? "Stages from your ring's own analysis"
@@ -541,18 +549,22 @@ public final class Pages {
                 12, Ui.TEXT_2, Ui.REGULAR));
         out.addView(Ui.gap(c, 12));
         out.addView(Ui.caption(c, "Typical values"));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Asleep", Ui.hm(h.asleepMin), "", Ui.SLEEP),
-                Ui.stat(c, "Sleep score", Ui.fmt(h.score, 0), "", Ui.SLEEP)));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Falls asleep", clockOf(h.bedtimeMin), "", 0),
-                Ui.stat(c, "Wakes up", clockOf(h.wakeMin), "", 0)));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(h.deepMin), "", Ui.STAGE_DEEP),
-                Ui.stat(c, "REM", Ui.hm(h.remMin), "", Ui.STAGE_REM)));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(h.lightMin), "", Ui.STAGE_LIGHT),
-                Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", 0)));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(h.efficiency, 0), "%", 0),
-                Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0)));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(h.lowestHr, 0), "bpm", Ui.HEART),
-                Ui.stat(c, "Average HRV", Ui.fmt(h.hrv, 0), "ms", Ui.READY)));
+        // the same shares as on the night: stages of time asleep, awake of time in bed (issue #32)
+        int[] share = StageShare.sleepShares(h.deepMin, h.lightMin, h.remMin);
+        double deepPct = share == null ? Double.NaN : share[0], lightPct = share == null ? Double.NaN : share[1],
+                remPct = share == null ? Double.NaN : share[2];
+        out.addView(Ui.statRow(c, Ui.stat(c, "Asleep", Ui.hm(h.asleepMin), "", Ui.SLEEP, "Average per night"),
+                Ui.stat(c, "Sleep score", Ui.fmt(h.score, 0), "", Ui.SLEEP, "Average per night")));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Falls asleep", clockOf(h.bedtimeMin), "", 0, "Usual time you fall asleep"),
+                Ui.stat(c, "Wakes up", clockOf(h.wakeMin), "", 0, "Usual time you wake up")));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(h.deepMin), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
+                Ui.stat(c, "REM", Ui.hm(h.remMin), "", Ui.STAGE_REM, StageShare.note(remPct, "sleep", StageShare.USUAL_REM))));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(h.lightMin), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
+                Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", Ui.STAGE_AWAKE, StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(h.efficiency, 0), "%", 0, "Share of time in bed asleep"),
+                Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0, "Wake ups of a minute or more")));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(h.lowestHr, 0), "bpm", Ui.HEART, "Average lowest heart rate"),
+                Ui.stat(c, "Average HRV", Ui.fmt(h.hrv, 0), "ms", Ui.READY, "Average while asleep")));
         if (!Double.isNaN(h.bedtimeSdMin)) {
             out.addView(Ui.gap(c, 6));
             String reg = h.bedtimeSdMin < 30 ? "very regular" : h.bedtimeSdMin < 60 ? "fairly regular" : "irregular";
@@ -578,6 +590,11 @@ public final class Pages {
     }
 
     static View stageRow(Context c, String name, double min, double total, int color) {
+        return stageRowPct(c, name, min, 100 * min / total, color);
+    }
+
+    /** A stage row with its percentage worked out by the caller (NaN shows "--"). */
+    static View stageRowPct(Context c, String name, double min, double pct, int color) {
         LinearLayout row = Ui.hbox(c);
         row.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 4));
         View dot = new View(c);
@@ -586,7 +603,7 @@ public final class Pages {
         TextView t = Ui.text(c, "  " + name, 14, Ui.TEXT, Ui.REGULAR);
         row.addView(t, Ui.weight(1));
         row.addView(Ui.text(c, Ui.hm(min) + "   ", 14, Ui.TEXT, Ui.REGULAR));
-        row.addView(Ui.text(c, Ui.fmt(100 * min / total, 0) + "%", 13, Ui.TEXT_3, Ui.REGULAR));
+        row.addView(Ui.text(c, Double.isNaN(pct) ? "--" : Ui.fmt(pct, 0) + "%", 13, Ui.TEXT_3, Ui.REGULAR));
         return row;
     }
 
@@ -618,7 +635,7 @@ public final class Pages {
         root.addView(contributors(c, sc, Ui.READY, "Contributors"));
 
         LinearLayout t = Ui.card(c);
-        t.addView(Ui.caption(c, "Body temperature"));
+        t.addView(Ui.caption(c, "Temperature vs usual"));
         t.addView(Ui.text(c, signed(Json.d(d.day, "temp_dev")) + " \u00b0C", 26, Ui.TEXT, Ui.LIGHT));
         t.addView(Ui.body(c, "Deviation from your usual nightly skin temperature. Within about half a degree is normal."));
         t.addView(Ui.gap(c, 8));

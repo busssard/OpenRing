@@ -385,6 +385,7 @@ public class CoreTest {
     public static void main(String[] args) throws Exception {
         protocol();
         history();
+        bundles();
         client();
         analysis();
         timeline();
@@ -393,6 +394,7 @@ public class CoreTest {
         pattern();
         clockChange();
         stageFilter();
+        stageShare();
         screenTime();
         screenApps();
         screenUnlock();
@@ -402,6 +404,39 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Stage percentages: REM, light and deep of time asleep add up to 100, awake of time in bed (issue #32). */
+    static void stageShare() {
+        int[] a = StageShare.sleepShares(43, 262, 113);
+        eq("shares: night like the issue's", Arrays.toString(a), "[10, 63, 27]");
+        int[] third = StageShare.sleepShares(100, 100, 100);
+        eq("shares: thirds add up to 100, not 99", third[0] + third[1] + third[2], 100);
+        eq("shares: thirds tie goes to the first stage", Arrays.toString(third), "[34, 33, 33]");
+        int[] up = StageShare.sleepShares(45, 245, 210);
+        // exact 9, 49, 42 with no remainder
+        eq("shares: exact values stay", Arrays.toString(up), "[9, 49, 42]");
+        int[] over = StageShare.sleepShares(5.5, 5.5, 89); // 5.5 + 5.5 + 89, plain rounding gives 6 + 6 + 89 = 101
+        eq("shares: no 101", over[0] + over[1] + over[2], 100);
+        eq("shares: 101 case", Arrays.toString(over), "[6, 5, 89]");
+        for (int t = 0; t < 200; t++) {
+            int[] r = StageShare.sleepShares(t * 1.37 % 97, t * 2.11 % 300, t * 0.73 % 140 + 1);
+            if (r[0] + r[1] + r[2] != 100) { check("shares: always 100 (" + t + ")", false); break; }
+        }
+        check("shares: no sleep gives null", StageShare.sleepShares(0, 0, 0) == null && StageShare.sleepShares(0.2, 0.3, 0.1) == null);
+        check("shares: a missing stage gives null", StageShare.sleepShares(Double.NaN, 300, 50) == null
+                && StageShare.sleepShares(40, Double.NaN, 50) == null && StageShare.sleepShares(40, 300, Double.NaN) == null);
+        eq("shares: negative minutes count as 0", Arrays.toString(StageShare.sleepShares(0, 300, -5)), "[0, 100, 0]");
+        eq("share: awake of time in bed", StageShare.share(54, 543), 10.0);
+        check("share: no base", Double.isNaN(StageShare.share(10, 0)) && Double.isNaN(StageShare.share(10, Double.NaN))
+                && Double.isNaN(StageShare.share(Double.NaN, 400)));
+        eq("share: negative part is 0", StageShare.share(-3, 400), 0.0);
+        eq("note: with range", StageShare.note(10, "sleep", StageShare.USUAL_DEEP), "10% of sleep (usual 13 to 23%)");
+        eq("note: rem range", StageShare.note(27, "sleep", StageShare.USUAL_REM), "27% of sleep (usual about 20%)");
+        eq("note: without range", StageShare.note(63, "sleep", null), "63% of sleep");
+        eq("note: awake", StageShare.note(9, "time in bed", null), "9% of time in bed");
+        eq("note: unknown with range", StageShare.note(Double.NaN, "sleep", StageShare.USUAL_DEEP), "Usual 13 to 23% of sleep");
+        eq("note: unknown without range", StageShare.note(Double.NaN, "sleep", null), "No data yet");
     }
 
     static boolean near(double a, double b) {
@@ -633,6 +668,91 @@ public class CoreTest {
         eq("battery debug", bat[1], 4200);
         double[] temps = EventCodec.temps(new byte[] {(byte) 0x4c, 0x0d});
         check("temp", Math.abs(temps[0] - 34.04) < 1e-9);
+    }
+
+    /** One extended envelope packet (2f .. 43) holding 0x46 temperature events at these varints. */
+    // the frame length is one byte, so the bundle body must stay at 252 bytes or less
+    static Packet bundle(long... varints) {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        for (long v : varints) {
+            java.io.ByteArrayOutputStream vb = new java.io.ByteArrayOutputStream();
+            do {
+                int x = (int) (v & 0x7f);
+                v >>>= 7;
+                vb.write(v != 0 ? x | 0x80 : x);
+            } while (v != 0);
+            b.write(0);
+            b.write(0x46);
+            b.write(vb.size() + 2);
+            b.write(vb.toByteArray(), 0, vb.size());
+            b.write(0x98);
+            b.write(0x0e);
+        }
+        byte[] body = b.toByteArray();
+        byte[] f = new byte[5 + body.length];
+        f[0] = 0x2f;
+        f[1] = (byte) (3 + body.length);
+        f[2] = 0x43;
+        f[3] = (byte) body.length;
+        f[4] = (byte) (body.length >> 8);
+        System.arraycopy(body, 0, f, 5, body.length);
+        return Packet.parse(f);
+    }
+
+    static String bundleDs(ExtEnvelopeParser parser, Packet p) {
+        StringBuilder sb = new StringBuilder();
+        for (Packet e : parser.push(p)) sb.append(sb.length() > 0 ? " " : "").append(RingEvent.fromPacket(e).ds);
+        return sb.toString();
+    }
+
+    static void bundles() throws Exception {
+        // issue #31: every varint after the first is a delta, however large
+        ExtEnvelopeParser ep = new ExtEnvelopeParser();
+        eq("bundle: delta just under 27.8 h", bundleDs(ep, bundle(500_000_000L, 99_999_900L, 1000)), "5000000 5999999 6000009");
+        eq("bundle: no long pause counted", ep.longPauses, 0);
+        eq("bundle: delta of 27.8 h stays a delta", bundleDs(ep, bundle(500_000_000L, 100_000_000L, 1000)), "5000000 6000000 6000010");
+        eq("bundle: long pause counted", ep.longPauses, 1);
+        ep = new ExtEnvelopeParser();
+        eq("bundle: delta of 55.6 h stays a delta", bundleDs(ep, bundle(500_000_000L, 200_000_000L, 1000)), "5000000 7000000 7000010");
+        eq("bundle: one long pause", ep.longPauses, 1);
+        // a pause longer than the time since the ring started (10 h, then 30 h) is still a pause
+        ep = new ExtEnvelopeParser();
+        eq("bundle: pause longer than uptime", bundleDs(ep, bundle(36_000_000L, 108_000_000L)), "360000 1440000");
+        // each envelope starts with an absolute time, even a small one after a reboot
+        eq("bundle: small absolute start after reboot", bundleDs(ep, bundle(200, 1000)), "2 12");
+        // events in the same decisecond still move forward by one
+        eq("bundle: same decisecond bumps", bundleDs(ep, bundle(500_000_000L, 1, 1)), "5000000 5000001 5000002");
+        eq("bundle: count over several envelopes", ep.longPauses, 1);
+        eq("bundle: longest pause", ep.longestPauseMs, 108_000_000L);
+
+        // the batch carries the count, and the drain writes it to the log
+        Packet summary = Packet.parse(Hex.decode("2f0a42010000000000000000"));
+        HistoryBatch hb = HistoryBatch.decode(Arrays.asList(bundle(500_000_000L, 200_000_000L), bundle(1_000_000_000L, 150_000_000L, 1), summary));
+        eq("batch: long pauses summed", hb.longPauses, 2);
+        eq("batch: long pauses kept by validate", HistoryBatch.validate(hb, 0).longPauses, 2);
+        eq("batch: longest pause", HistoryBatch.validate(hb, 0).longestPauseMs, 200_000_000L);
+        eq("log: several pauses", RingClient.longPauseText(2, 200_000_000L),
+                "history: 2 pauses of more than 27 hours between stored events, kept as real time (longest 55.6 h)");
+
+        Mock m = new Mock();
+        m.on("280100", "290100");
+        m.on(Hex.encode(Protocol.extGetEvent(0, 4096, 0)), Hex.encode(bundle(500_000_000L, 200_000_000L).encode()), "2f0a42020000000000000000");
+        m.on(Hex.encode(Protocol.extGetEvent(7000001L * 100, 4096, 0)), "2f0a42000000000000000000");
+        RingClient c = new RingClient(m).quiet(5);
+        final List<String> log = new ArrayList<String>();
+        c.setLog(new RingClient.Log() {
+            public void log(String msg) {
+                log.add(msg);
+            }
+        });
+        RingClient.DrainResult r = c.drain(0, new RingClient.BatchSink() {
+            public boolean onBatch(List<RingEvent> events, long next, long left, int total) {
+                return true;
+            }
+        });
+        eq("drain: events after a long pause", r.eventsSynced, 2);
+        eq("drain: cursor after the long pause", r.nextCursor, 7000001L);
+        check("drain: long pause logged", log.contains("history: 1 pause of more than 27 hours between stored events, kept as real time (longest 55.6 h)"));
     }
 
     static void history() throws Exception {
