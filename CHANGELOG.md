@@ -5,6 +5,15 @@
   a look of 15 to 29 seconds was often lost when it fell across two 30 second steps of the night. Longer
   phone use counts as before. Nights with screen time are analysed again once after the update (#41)
 
+## 1.23
+* Turning the phone while the demo data is prepared no longer starts it a second time or closes the app.
+  The progress stays on screen after turning (#29)
+## 1.22
+* Balanced and Calm stage detail no longer turn short sleep into awake. Before, a short REM or light stage next to
+  a wake up could be counted as awake, adding awake minutes or even a wake up and lowering efficiency and the score.
+  Balanced now counts the same wake ups as Detailed (#28)
+* After updating, all nights are analysed again once with the fixed filter
+
 ## 1.21
 * New icon from the owner's sketch: a ring seen slightly from above, the infinity sign cut into its band,
   in one plain colour (the app's deep sleep blue). Also the notification icon and the themed icon on Android 13
