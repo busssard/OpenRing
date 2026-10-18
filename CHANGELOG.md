@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.24
+* Rings that send history in bundles (Ring 5, newer Ring 4 firmware): events after a pause of more than 27 hours now
+  keep their real time instead of being placed right after the event before the pause (#31)
+
 ## 1.21
 * New icon from the owner's sketch: a ring seen slightly from above, the infinity sign cut into its band,
   in one plain colour (the app's deep sleep blue). Also the notification icon and the themed icon on Android 13
