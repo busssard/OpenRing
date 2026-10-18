@@ -38,6 +38,7 @@ public final class Analyzer {
 
     private final Db db;
     private final Prefs prefs;
+    /** The phone's zone now; each night and day uses the zone it was in (issue #22), this only when none was noted. */
     private final ZoneId zone = ZoneId.systemDefault();
     private final Log log;
 
@@ -84,6 +85,9 @@ public final class Analyzer {
         db.put("dated_count", t.datedAfter);
         db.put("event_count", t.total);
         double[] range = db.datedRange();
+        // the phone's time zone, noted at every sync (issue #22), never later than a day after the newest
+        // dated event (a phone clock set far ahead for a moment). Demo mode has no zone history.
+        if (!prefs.demo()) noteZone(db, now, zone, range == null ? Double.NaN : range[1]);
         if (range == null) {
             log.log("no dated events yet, nothing to analyse");
             return;
@@ -112,20 +116,59 @@ public final class Analyzer {
         run(c, log);
     }
 
+    /**
+     * Note the phone's zone at {@code unix} (issue #22). A time more than a day after this phone's clock
+     * or after {@code newest} (the newest dated event, NaN when not known) is ignored, so a clock set
+     * far ahead for a moment cannot spoil the history. When a new zone with another clock opened, the
+     * nights since the end of the zone before belong to it and are analysed again; returns true then.
+     * Synchronized with the analysis, which notes the zone itself from inside {@link #run}.
+     */
+    public static synchronized boolean noteZone(Db db, double unix, ZoneId zone, double newest) {
+        if (unix > System.currentTimeMillis() / 1000.0 + 86400) return false;
+        if (!Double.isNaN(newest) && unix > newest + 86400) return false;
+        String before = db.zoneAt(Double.MAX_VALUE);
+        double prevEnd = db.noteZone(unix, zone.getId());
+        if (Double.isNaN(prevEnd)) return false;
+        ZoneId old = ClockChange.zone(before);
+        // Zurich to Paris: the same clock, nothing to analyse again
+        Instant at = Instant.ofEpochSecond((long) prevEnd);
+        if (old != null && old.getRules().getOffset(at).equals(zone.getRules().getOffset(at))) return false;
+        db.reanalyseFrom(prevEnd);
+        return true;
+    }
+
+    /** The zone at {@code unix} from the zone history, the phone's zone when none is known. */
+    ZoneId zoneAt(double unix) {
+        ZoneId z = ClockChange.zone(db.zoneAt(unix));
+        return z == null ? zone : z;
+    }
+
     String date(double unix) {
-        return Instant.ofEpochSecond((long) unix).atZone(zone).toLocalDate().toString();
+        return date(unix, zone);
     }
 
-    String clock(double unix) {
-        return Instant.ofEpochSecond((long) unix).atZone(zone).toLocalTime().withNano(0).toString();
+    static String date(double unix, ZoneId z) {
+        return Instant.ofEpochSecond((long) unix).atZone(z).toLocalDate().toString();
     }
 
-    int tzOffset(double unix) {
-        return zone.getRules().getOffset(Instant.ofEpochSecond((long) unix)).getTotalSeconds();
+    static String clock(double unix, ZoneId z) {
+        return Instant.ofEpochSecond((long) unix).atZone(z).toLocalTime().withNano(0).toString();
     }
 
-    double dayStart(LocalDate d) {
-        return d.atStartOfDay(zone).toEpochSecond();
+    static int tzOffset(double unix, ZoneId z) {
+        return z.getRules().getOffset(Instant.ofEpochSecond((long) unix)).getTotalSeconds();
+    }
+
+    /** Midnight starting {@code d} in the zone valid around that day. */
+    double dayStartThen(LocalDate d) {
+        return d.atStartOfDay(zoneAt(d.atTime(12, 0).atZone(zone).toEpochSecond())).toEpochSecond();
+    }
+
+    /** A day's zone: its main night's, else the zone history's, else the phone's. */
+    ZoneId dayZone(LocalDate d) {
+        JSONObject main = nightJson(db.nightsJson(d.toString(), d.toString(), true));
+        ZoneId z = main == null ? null : ClockChange.zone(main.optString("zone", null));
+        return z != null ? z : zoneAt(d.atTime(12, 0).atZone(zone).toEpochSecond());
     }
 
     // ------------------------------------------------------------------------------ main
@@ -134,10 +177,14 @@ public final class Analyzer {
         log.log("analysing " + date(from) + " to " + date(to));
         // start at a local midnight so every day's sleeps are decided within one chunk
         LocalDate d0 = LocalDate.parse(date(from - 36 * 3600));
-        LocalDate d1 = LocalDate.parse(date(to));
-        // a week at a time keeps memory flat on a long first sync
+        // one day more: a night in a zone ahead of the phone's can end on the next date
+        LocalDate d1 = LocalDate.parse(date(to)).plusDays(1);
+        // a week at a time keeps memory flat on a long first sync; each week starts at midnight in
+        // the zone valid then, so a day's nights are decided together also after a trip (issue #22)
         for (LocalDate c = d0; !c.isAfter(d1); c = c.plusDays(7)) {
-            analyzeNights(dayStart(c), Math.min(to + 1, dayStart(c.plusDays(7))));
+            double a = dayStartThen(c);
+            if (a > to) break;
+            analyzeNights(a, Math.min(to + 1, dayStartThen(c.plusDays(7))));
         }
         for (LocalDate d = d0; !d.isAfter(d1); d = d.plusDays(1)) analyzeDay(d);
     }
@@ -200,7 +247,8 @@ public final class Analyzer {
             if (!screen.isEmpty()) {
                 double[] w = ScreenTime.trim(p.start, p.end, screen);
                 if (w[1] - w[0] < ScreenTime.MIN_WINDOW_S) {
-                    log.log("skipped a sleep window " + clock(p.start) + " to " + clock(p.end) + ": the phone was in use");
+                    ZoneId pz = zoneAt(p.end);
+                    log.log("skipped a sleep window " + clock(p.start, pz) + " to " + clock(p.end, pz) + ": the phone was in use");
                     continue;
                 }
                 start = w[0];
@@ -220,21 +268,41 @@ public final class Analyzer {
             }
             nights.add(n);
         }
+        // each night in the zone it ended in (issue #22): the later zone counts for the whole night
+        Map<Night, String> zoneIds = new HashMap<Night, String>();
+        Map<Night, String> days = new HashMap<Night, String>();
+        for (Night n : nights) {
+            String zid = db.zoneAt(n.end);
+            zoneIds.put(n, zid);
+            String d = date(n.end, zoneOf(zid));
+            // a night between two notes counts in the later zone, but never on an earlier date than in the
+            // zone before (flying west, waking at 05:30 in Zurich is 23:30 in New York the day before,
+            // which would make the night before a nap)
+            ZoneId before = ClockChange.zone(db.zoneBeforeGap(n.end));
+            if (before != null) {
+                String earlier = date(n.end, before);
+                if (earlier.compareTo(d) > 0) d = earlier;
+            }
+            days.put(n, d);
+        }
         // main sleep per day = the longest one
         Map<String, Night> main = new HashMap<String, Night>();
         for (Night n : nights) {
-            String d = date(n.end);
+            String d = days.get(n);
             Night m = main.get(d);
             if (m == null || n.asleepMin > m.asleepMin) main.put(d, n);
         }
         List<Object[]> out = new ArrayList<Object[]>();
         for (Night n : nights) {
-            String d = date(n.end);
+            String zid = zoneIds.get(n);
+            ZoneId nz = zoneOf(zid);
+            String d = days.get(n);
             n.main = main.get(d) == n;
-            n.score = Scores.sleep(n, tzOffset(n.midpoint > 0 ? n.midpoint : n.end), prefs.age());
+            n.score = Scores.sleep(n, tzOffset(n.midpoint > 0 ? n.midpoint : n.end, nz), prefs.age());
             JSONObject js = Json.night(n, d);
+            if (ClockChange.zone(zid) != null) Json.put(js, "zone", zid);
             // daylight saving during the night (issue #22): the Sleep page marks the moment
-            ClockChange.Change cc = ClockChange.find(zone, n.start, n.end);
+            ClockChange.Change cc = ClockChange.find(nz, n.start, n.end);
             if (cc != null) {
                 Json.put(js, "clock_change_at", cc.at);
                 Json.put(js, "clock_change_min", cc.minutes);
@@ -243,10 +311,16 @@ public final class Analyzer {
             }
             out.add(new Object[] {n.start, n.end, d, n.main ? 1 : 0, n.score.value, js.toString()});
             log.log(String.format(java.util.Locale.US, "sleep for %s%s: %s to %s, %.0f min asleep, score %d, stages from %s",
-                    d, n.main ? "" : " (nap)", clock(n.start), clock(n.end), n.asleepMin, n.score.value, n.stageSource));
+                    d, n.main ? "" : " (nap)", clock(n.start, nz), clock(n.end, nz), n.asleepMin, n.score.value, n.stageSource));
         }
         db.replaceNights(from, Double.MAX_VALUE, out);
         log.log(nights.size() + " sleep periods");
+    }
+
+    /** The zone of a noted id, the phone's zone when there is none (or the phone does not know it). */
+    ZoneId zoneOf(String id) {
+        ZoneId z = ClockChange.zone(id);
+        return z == null ? zone : z;
     }
 
     /** Analyses the sleep window [start, end) of period {@code p} (its edges may have moved past phone use). */
@@ -339,7 +413,9 @@ public final class Analyzer {
 
     void analyzeDay(LocalDate day) {
         String key = day.toString();
-        double ds = dayStart(day), de = dayStart(day.plusDays(1));
+        // the day's own 24 hours, in the zone of its main night (issue #22)
+        ZoneId dz = dayZone(day);
+        double ds = day.atStartOfDay(dz).toEpochSecond(), de = day.plusDays(1).atStartOfDay(dz).toEpochSecond();
         int weight = prefs.weightKg();
         double bmr = Wellness.bmr(prefs.age(), prefs.sex(), weight);
 

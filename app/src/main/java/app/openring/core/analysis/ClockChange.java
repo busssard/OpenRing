@@ -61,6 +61,57 @@ public final class ClockChange {
                 + amount + " shorter than the clock shows.";
     }
 
+    /**
+     * The line under the sleep chart after travelling (issue #22), for example "Times this night are
+     * in New York time, 6 hours behind where you slept the night before.", or null when both zones have the same
+     * clock at {@code at} (Zurich and Berlin), or an id is missing or unknown.
+     */
+    public static String travel(String prevId, String id, double at) {
+        ZoneId prev = zone(prevId), now = zone(id);
+        if (prev == null || now == null || prev.equals(now) || Double.isNaN(at)) return null;
+        Instant t = Instant.ofEpochSecond((long) at);
+        int diff = (now.getRules().getOffset(t).getTotalSeconds() - prev.getRules().getOffset(t).getTotalSeconds()) / 60;
+        if (diff == 0) return null;
+        return "Times this night are in " + zoneName(id) + ", " + amount(Math.abs(diff)) + (diff > 0 ? " ahead of" : " behind")
+                + " where you slept the night before.";
+    }
+
+    /** The zone, or null when the id is empty or unknown on this phone. */
+    public static ZoneId zone(String id) {
+        if (id == null || id.isEmpty()) return null;
+        try {
+            return ZoneId.of(id);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * A readable name without the internet: the city part of the id with spaces ("New York time",
+     * "Buenos Aires time"); ids without a city read as their offset ("UTC", "UTC+5", "UTC+5:30").
+     */
+    public static String zoneName(String id) {
+        int slash = id.lastIndexOf('/');
+        if (slash > 0 && slash < id.length() - 1 && !id.startsWith("Etc/")) {
+            String city = id.substring(slash + 1).replace('_', ' ');
+            if (Character.isLetter(city.charAt(0)) && !city.startsWith("GMT") && !city.startsWith("UTC")) return city + " time";
+        }
+        ZoneId z = zone(id);
+        if (z == null) return id;
+        int s = z.getRules().getOffset(Instant.EPOCH).getTotalSeconds();
+        if (s == 0) return "UTC";
+        int m = Math.abs(s) / 60;
+        return "UTC" + (s > 0 ? "+" : "-") + (m / 60) + (m % 60 == 0 ? "" : String.format(java.util.Locale.US, ":%02d", m % 60));
+    }
+
+    /** "one hour", "2 hours", "30 minutes", "4 hours 30 minutes". */
+    static String amount(int min) {
+        int h = min / 60, m = min % 60;
+        String hs = h == 0 ? "" : h == 1 ? "one hour" : h + " hours";
+        if (m == 0) return hs;
+        return (hs.isEmpty() ? "" : hs + " ") + m + " minutes";
+    }
+
     static String hm(LocalTime t) {
         return String.format(java.util.Locale.US, "%02d:%02d", t.getHour(), t.getMinute());
     }

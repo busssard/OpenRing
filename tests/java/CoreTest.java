@@ -993,5 +993,39 @@ public class CoreTest {
         check("text 30 minutes", ClockChange.text(-30, "02:00", "01:30").startsWith("The clocks went back 30 minutes that night (02:00 became 01:30)"));
         check("text two hours", ClockChange.text(120, "02:00", "04:00").contains("forward 2 hours"));
         check("text without stored times", ClockChange.text(-60, "", null).startsWith("The clocks went back one hour that night. Sleep"));
+        travel();
+    }
+
+    static void travel() {
+        // issue #22 part 4: the line under the chart when a night is in another zone than the night before
+        double oct = java.time.Instant.parse("2026-10-14T03:00:00Z").getEpochSecond();
+        eq("travel west", ClockChange.travel("Europe/Zurich", "America/New_York", oct),
+                "Times this night are in New York time, 6 hours behind where you slept the night before.");
+        eq("travel east", ClockChange.travel("America/New_York", "Europe/Zurich", oct),
+                "Times this night are in Zurich time, 6 hours ahead of where you slept the night before.");
+        // 20 March 2026: America is on summer time already, Europe not yet
+        eq("travel while the switches differ", ClockChange.travel("Europe/Zurich", "America/New_York",
+                java.time.Instant.parse("2026-03-20T03:00:00Z").getEpochSecond()),
+                "Times this night are in New York time, 5 hours behind where you slept the night before.");
+        eq("travel half hours", ClockChange.travel("Europe/Zurich", "Asia/Kolkata", java.time.Instant.parse("2026-01-10T03:00:00Z").getEpochSecond()),
+                "Times this night are in Kolkata time, 4 hours 30 minutes ahead of where you slept the night before.");
+        eq("travel one hour", ClockChange.travel("Europe/London", "Europe/Zurich", oct),
+                "Times this night are in Zurich time, one hour ahead of where you slept the night before.");
+        check("same clock, other zone: no line", ClockChange.travel("Europe/Zurich", "Europe/Berlin", oct) == null);
+        check("same zone: no line", ClockChange.travel("Europe/Zurich", "Europe/Zurich", oct) == null);
+        check("missing or unknown zone: no line", ClockChange.travel(null, "Europe/Zurich", oct) == null
+                && ClockChange.travel("Europe/Zurich", "", oct) == null && ClockChange.travel("Mars/Olympus", "Europe/Zurich", oct) == null
+                && ClockChange.travel("Europe/Zurich", "America/New_York", Double.NaN) == null);
+        eq("zone name with two parts", ClockChange.zoneName("America/Argentina/Buenos_Aires"), "Buenos Aires time");
+        eq("zone name UTC", ClockChange.zoneName("UTC"), "UTC");
+        eq("zone name Etc", ClockChange.zoneName("Etc/GMT-5"), "UTC+5");
+        eq("zone name offset", ClockChange.zoneName("GMT-03:30"), "UTC-3:30");
+        eq("zone name unknown", ClockChange.zoneName("Mars"), "Mars");
+        eq("travel to a zone without a city", ClockChange.travel("Europe/Zurich", "Etc/GMT-5", oct),
+                "Times this night are in UTC+5, 3 hours ahead of where you slept the night before.");
+        check("unknown zone id is null", ClockChange.zone("Nowhere/Place") == null && ClockChange.zone(null) == null
+                && ClockChange.zone("Asia/Tokyo") != null);
+        eq("minutes alone", ClockChange.travel("Asia/Kolkata", "Asia/Kathmandu", oct),
+                "Times this night are in Kathmandu time, 15 minutes ahead of where you slept the night before.");
     }
 }

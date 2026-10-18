@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.26
+* Travelling: each night keeps the time zone you slept in. After a trip to New York your nights at home still
+  show your home times, and the nights there show New York times, so bedtimes, the average night and the
+  regular bedtime no longer jump. A night that crosses a border counts in the zone you woke up in (#22)
+* The app notes the phone's time zone when you open it and at every sync. Nights from before this version
+  count in the zone the phone has when you first open 1.26 (#22)
+* When a night is in another time zone than the night before, an orange line under the sleep chart says so,
+  for example "Times this night are in New York time, 6 hours behind where you slept the night before." (#22)
+* Scores and days of earlier nights stay the same after a trip, also after Re analyse all (#22)
 ## 1.25
 * Sleep stages: deep, REM and light are now shown as a share of sleep, so they add up to 100% and match the usual
   ranges in the explanations (before they were a share of time in bed and looked a little low). Awake stays a share
