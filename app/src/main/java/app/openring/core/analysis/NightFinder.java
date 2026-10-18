@@ -11,9 +11,9 @@ import java.util.List;
  * sleeps next, and runs of the ring's own sleep_state fill nights the ring never declared.
  * Adjacent pieces split by a short awakening are merged, but never across a gap the ring calls
  * awake from end to end, except a wake up in the middle of the night (issue #42): two pieces up to
- * 3 hours apart, with the middle of the gap between 23:00 and 06:00 and the ring worn through it,
- * are one night, and the time the ring calls awake in the gap is returned as awake time. The
- * night's edges are never stretched into awake time.
+ * 3 hours apart, the gap from 22:00 at the earliest to before 06:30, the piece before it begun at
+ * 21:00 or later and the ring worn through the gap, are one night, and the time the ring calls
+ * awake in the gap is returned as awake time. The night's edges are never stretched into awake time.
  */
 public final class NightFinder {
     private NightFinder() {}
@@ -26,8 +26,11 @@ public final class NightFinder {
     static final int SMOOTHING = 5;
     /** Longest wake up in the middle of the night that still joins two pieces (issue #42). */
     static final double MAX_NIGHT_WAKE_S = 3 * 60 * 60;
-    /** The middle of such a wake up lies between these clock minutes (23:00 to 06:00). */
-    static final int NIGHT_FROM_MIN = 23 * 60, NIGHT_TO_MIN = 6 * 60;
+    /**
+     * Such a wake up starts at 22:00 or later and ends before 06:30, and the sleep before it began
+     * at 21:00 or later (clock minutes): a sofa sleep in the evening or a nap after getting up stays apart.
+     */
+    static final int WAKE_FROM_MIN = 22 * 60, WAKE_TO_MIN = 6 * 60 + 30, SLEEP_FROM_MIN = 21 * 60;
     /** Version of these rules; a new one makes the app analyse all nights again. */
     public static final int VERSION = 2;
 
@@ -174,9 +177,18 @@ public final class NightFinder {
                 for (double[] r : asleep) if (r[0] < p.start && prev.end < r[1]) awakeThroughout = false;
             }
             boolean join = gap <= MAX_BREAK_S && !awakeThroughout;
-            if (!join && nightWake(prev.end, p.start, state, clock)) {
-                join = true;
-                prev.awake.addAll(awakeParts(prev.end, p.start, asleep));
+            if (!join && nightWake(prev.start, prev.end, p.start, state, clock)) {
+                List<double[]> gapAwake = awakeParts(prev.end, p.start, asleep);
+                // ring stages on either side keep their own times; the gap is awake (issue #42)
+                if (prev.staged || p.staged) {
+                    prev.codes = stitch(prev, p, gapAwake);
+                    prev.staged = true;
+                }
+                prev.awake.addAll(gapAwake);
+                prev.awake.addAll(p.awake);
+                prev.end = Math.max(prev.end, p.end);
+                prev.start = Math.min(prev.start, p.start);
+                continue;
             }
             if (join) {
                 prev.awake.addAll(p.awake);
@@ -193,24 +205,66 @@ public final class NightFinder {
         return out;
     }
 
+    /** Minutes since 12:00 the day before, so a night's clock times count up across midnight. */
+    static int fromNoon(LocalClock clock, double unix) {
+        return (clock.minuteOfDay(unix) + 12 * 60) % (24 * 60);
+    }
+
     /**
-     * A gap {@code [a, b]} between two pieces is a wake up in the middle of the night: at most 3
-     * hours, its middle between 23:00 and 06:00, and the ring reporting its sleep state at least
-     * every 30 minutes through it (a ring taken off is not a wake up).
+     * A gap {@code [a, b]} after a sleep that began at {@code sleepStart} is a wake up in the middle
+     * of the night: at most 3 hours, from 22:00 at the earliest to before 06:30, the sleep before it
+     * begun at 21:00 or later, and the ring reporting its sleep state at least every 30 minutes
+     * through it (a ring taken off is not a wake up).
      */
-    static boolean nightWake(double a, double b, TS state, LocalClock clock) {
+    static boolean nightWake(double sleepStart, double a, double b, TS state, LocalClock clock) {
         if (clock == null || b <= a || b - a > MAX_NIGHT_WAKE_S) return false;
-        int mid = clock.minuteOfDay((a + b) / 2);
-        if (mid < NIGHT_FROM_MIN && mid >= NIGHT_TO_MIN) return false;
+        int from = fromNoon(clock, a), to = fromNoon(clock, b), began = fromNoon(clock, sleepStart);
+        int wakeFrom = WAKE_FROM_MIN - 12 * 60, wakeTo = WAKE_TO_MIN + 12 * 60, sleepFrom = SLEEP_FROM_MIN - 12 * 60;
+        if (from < wakeFrom || to >= wakeTo || to < from || began < sleepFrom || began > from) return false;
+        // first sample at or after a (state is sorted)
+        int lo = 0, hi = state.size();
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (state.t(mid) < a) lo = mid + 1;
+            else hi = mid;
+        }
         double last = a;
-        for (int i = 0; i < state.size(); i++) {
-            double t = state.t(i);
-            if (t < a) continue;
-            if (t > b) break;
-            if (t - last > MAX_SUPPORT_GAP_S) return false;
-            last = t;
+        for (int i = lo; i < state.size() && state.t(i) <= b; i++) {
+            if (state.t(i) - last > MAX_SUPPORT_GAP_S) return false;
+            last = state.t(i);
         }
         return b - last <= MAX_SUPPORT_GAP_S;
+    }
+
+    /**
+     * Ring stages for two pieces joined across a night wake: the first piece's codes, awake (4) in
+     * the gap where the ring says awake, the second piece's codes, 0 (unknown) where a piece has
+     * none. Each piece's codes end at that piece's own end (as {@code Analyzer} aligns them), and
+     * the result ends at the joined end, so every code keeps its real time.
+     */
+    static int[] stitch(Period a, Period b, List<double[]> gapAwake) {
+        double end = Math.max(a.end, b.end), start = Math.min(a.start, b.start);
+        int cells = (int) Math.max(1, Math.ceil((end - start) / 30 - 1e-9));
+        double base = end - cells * 30.0;
+        int[] out = new int[cells];
+        for (double[] g : gapAwake) {
+            for (int i = 0; i < cells; i++) {
+                double t = base + i * 30.0;
+                if (t >= g[0] && t + 30 <= g[1] + 1e-9) out[i] = 4;
+            }
+        }
+        place(out, base, a);
+        place(out, base, b);
+        return out;
+    }
+
+    private static void place(int[] out, double base, Period p) {
+        if (!p.staged || p.codes == null) return;
+        double runStart = p.end - p.codes.length * 30.0;
+        for (int i = 0; i < p.codes.length; i++) {
+            int idx = (int) Math.round((runStart + i * 30.0 - base) / 30);
+            if (idx >= 0 && idx < out.length) out[idx] = p.codes[i];
+        }
     }
 
     /** The parts of {@code [a, b]} outside the ring's asleep regions. */

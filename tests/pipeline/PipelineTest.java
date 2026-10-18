@@ -1298,6 +1298,23 @@ public class PipelineTest {
         JSONObject night = mainNight(db, d.plusDays(1));
         check("#42 evening sofa sleep stays a nap", evening.size() == 2 && night != null && night.optDouble("asleep_min") < 440
                 && night.optDouble("asleep_min") > 380, evening.size() + " sleeps, " + describe(night));
+        // review of #42: sofa 20:30 to 22:30, awake to 00:30, bed to 07:30: the sofa stays its own sleep
+        ev = new ArrayList<RingEvent>();
+        wornSleep(ev, at(d, 20.5), at(d, 31.5), java.util.Collections.singletonList(new double[] {at(d, 22.5), at(d, 24.5)}), t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 32));
+        JSONObject sofa = mainNight(db, d), bedNight = mainNight(db, d.plusDays(1));
+        check("#42 sofa sleep from 20:30 and a wake up to 00:30 stay two sleeps", sofa != null && bedNight != null
+                && sofa.optDouble("asleep_min") < 130 && bedNight.optDouble("asleep_min") < 420
+                && db.nightsJson(d.plusDays(1).toString(), d.plusDays(1).toString(), false).size() == 1,
+                describe(sofa) + " / " + describe(bedNight));
+        // asleep 23:00 to 04:00, up 04:00 to 06:30, nap 06:30 to 08:00: the night is not stretched past getting up
+        ev = new ArrayList<RingEvent>();
+        wornSleep(ev, at(d, -1), at(d, 8), java.util.Collections.singletonList(new double[] {at(d, 4), at(d, 6.5)}), t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 8.5));
+        List<String> morning = db.nightsJson(d.toString(), d.toString(), false);
+        JSONObject early = mainNight(db, d);
+        check("#42 nap after getting up at 04:00 stays a nap", morning.size() == 2 && early != null
+                && early.optDouble("asleep_min") > 250 && early.optDouble("asleep_min") < 310, morning.size() + " sleeps, " + describe(early));
         freshDb("openring42-done"); // the next test opens its own phone
     }
 }
