@@ -172,7 +172,7 @@ public final class Scores {
             Double.isNaN(in.targetsMetFraction) ? "" : Math.round(in.targetsMetFraction * n) + " of " + n + " days");
         if (in.trainingDays7 >= 0) {
             add(sc, "frequency", "Training frequency", Stats.curve(in.trainingDays7 * week, new double[][] {{0, 35}, {1, 60}, {2, 82}, {3, 100}}), 12,
-                in.trainingDays7 + " training days" + span);
+                in.trainingDays7 + (in.trainingDays7 == 1 ? " training day" : " training days") + span);
         }
         add(sc, "volume", "Training volume", Stats.curve(in.trainingKcal7 * week, new double[][] {{0, 20}, {300, 42}, {700, 66}, {1200, 86}, {2000, 100}}), 14,
             Double.isNaN(in.trainingKcal7) ? "" : Math.round(in.trainingKcal7) + (n == 7 ? " kcal this week" : " kcal" + span));

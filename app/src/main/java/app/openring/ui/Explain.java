@@ -21,7 +21,7 @@ public final class Explain {
     public static String activityDays(int n) {
         String days = n == 1 ? "1 day" : n + " days";
         String rule = " with the ring in the last 7 (a day counts with at least an hour of wear). ";
-        if (n >= app.openring.core.analysis.Scores.MIN_WEEK_DAYS) return "Based on " + days + rule + "Daily targets and training settle after a full week.";
+        if (n >= app.openring.core.analysis.Scores.MIN_WEEK_DAYS) return "Based on " + days + rule + "Daily targets and training are steadier after a full week.";
         return "Only " + days + rule + "Daily targets and training join the score from " + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " days.";
     }
 
@@ -60,8 +60,8 @@ public final class Explain {
             case "stay_active": return "Hours spent sitting or inactive while awake.";
             case "move_hourly": return "Long sitting periods of an hour or more during the day.";
             case "targets": return "How often you reached your daily activity goal in the last week. Days without the ring are left out.";
-            case "frequency": return "Days this week with at least 30 minutes of medium or high activity. With fewer than 7 days of wear, it is scaled up to a week.";
-            case "volume": return "Energy burned in medium and high activity this week. With fewer than 7 days of wear, it is scaled up to a week.";
+            case "frequency": return "Days in the last 7 with at least 30 minutes of medium or high activity. With fewer than 7 days of wear, it is scaled up to a week.";
+            case "volume": return "Energy burned in medium and high activity in the last 7 days. With fewer than 7 days of wear, it is scaled up to a week.";
             default: return null;
         }
     }
