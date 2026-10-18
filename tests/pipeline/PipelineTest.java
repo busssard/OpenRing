@@ -806,6 +806,21 @@ public class PipelineTest {
         check("after the full re analysis the oldest night has the chosen detail", first.optInt("stage_detail", -1) == level
                 && "2024-05-02".equals(first.optString("day")), first.optString("day") + " detail " + first.optInt("stage_detail", -1)
                 + ", " + (System.currentTimeMillis() - t) + " ms");
+        // issue #28: nights from the old filter rules (no "stage_filter" yet) are analysed again once, then the
+        // analysis is incremental again. A deleted oldest night shows which way the next sync went.
+        int version = app.openring.core.analysis.StageFilter.VERSION;
+        check("the filter version is stored after an analysis", db.kvLong("stage_filter", -1) == version, db.kvLong("stage_filter", -1));
+        db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {"2024-05-02"});
+        long without = db.count("SELECT COUNT(*) FROM nights");
+        Analyzer.run(c, null);
+        check("same filter version: the next sync stays incremental", without < nights && db.count("SELECT COUNT(*) FROM nights") == without,
+                without + " to " + db.count("SELECT COUNT(*) FROM nights") + " nights");
+        db.put("stage_filter", null); // a database from before 1.22
+        Analyzer.run(c, null);
+        JSONObject again = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0));
+        check("older filter rules: every night is analysed again once (#28)", db.count("SELECT COUNT(*) FROM nights") == nights
+                && "2024-05-02".equals(again.optString("day")) && db.kvLong("stage_filter", -1) == version,
+                db.count("SELECT COUNT(*) FROM nights") + " nights, oldest " + again.optString("day"));
     }
 
     /** Clock minutes after 12:00 the day before (so 23:00 is 660, 07:00 is 1140). */
@@ -1225,6 +1240,7 @@ public class PipelineTest {
         db.put("dated_count", r.datedAfter);
         db.put("event_count", r.total);
         db.put("stage_detail", app.openring.data.Prefs.of(c).stageDetail());
+        db.put("stage_filter", app.openring.core.analysis.StageFilter.VERSION);
         db.put("screen_awake", 1);
         t = System.nanoTime();
         Analyzer.run(c, null);
