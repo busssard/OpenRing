@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.28
+* A wake up of up to 3 hours in the middle of the night no longer splits the night in two. The night
+  keeps the sleep before and after it, the time awake counts as a wake up and lowers the score, so a
+  night like that scores less than sleeping through, but no longer half. A nap in the afternoon or
+  evening stays a nap. All nights are analysed again once after the update (#42)
 ## 1.27
 * A short look at the phone at night (15 seconds or more) now always counts as 30 seconds awake. Before,
   a look of 15 to 29 seconds was often lost when it fell across two 30 second steps of the night. Longer

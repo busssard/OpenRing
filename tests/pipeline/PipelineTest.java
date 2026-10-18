@@ -538,6 +538,7 @@ public class PipelineTest {
                 && "2026-04-12".equals(springNewest.optString("day")), springNewest.optString("day"));
         app.openring.data.Demo.leave(phone3);
 
+        longWakeChecks();
         demoTwice();
         oldNights();
         restoreSafety(full.toByteArray(), keyBytes);
@@ -1502,6 +1503,7 @@ public class PipelineTest {
         db.put("stage_detail", app.openring.data.Prefs.of(c).stageDetail());
         db.put("stage_filter", app.openring.core.analysis.StageFilter.VERSION);
         db.put("screen_awake", 1);
+        db.put("night_finder", app.openring.core.analysis.NightFinder.VERSION);
         db.put("phone_awake", app.openring.core.analysis.ScreenTime.AWAKE_RULE);
         t = System.nanoTime();
         Analyzer.run(c, null);
@@ -1510,5 +1512,178 @@ public class PipelineTest {
         check("long history: incremental analysis stays incremental", db.kvLong("analyzed_until", 0) >= (long) range[1] && db.count("SELECT COUNT(*) FROM nights") < 10,
                 db.count("SELECT COUNT(*) FROM nights") + " nights");
         db.close();
+    }
+
+    // ---------------------------------------------------------------- long wake ups (issue #42)
+
+    /** Local clock time on 2026-10-1x as unix seconds; hour may pass 24 for the next morning. */
+    static double at(LocalDate d, double hour) {
+        return d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + hour * 3600;
+    }
+
+    /**
+     * One worn stretch {from, to} with the ring's streams: sleep_state asleep (awake inside
+     * {@code awake} stretches and in the first and last 10 minutes), heart rate, HRV, motion, temperature.
+     */
+    static void wornSleep(List<RingEvent> ev, double from, double to, List<double[]> awake, long t0, long ds0) {
+        for (double t = from; t < to; t += 60) {
+            boolean aw = t < from + 600 || t >= to - 600;
+            for (double[] a : awake) if (t >= a[0] && t < a[1]) aw = true;
+            long d = ds0 + Math.round((t - t0) * 10);
+            if (((long) (t - from)) % 300 == 0) {
+                int hr = aw ? 68 + rnd.nextInt(4) : 54 + rnd.nextInt(4);
+                byte[] spi = new byte[10];
+                spi[0] = (byte) (hr * 2);
+                spi[4] = (byte) Math.round((14 + rnd.nextGaussian() * 0.5) * 8);
+                spi[6] = (byte) (aw ? 20 : 0);
+                spi[7] = (byte) (aw ? 0 : 1);
+                spi[9] = 0x10;
+                ev.add(new RingEvent(EventCodec.SLEEP_PERIOD_INFO_2, d, spi));
+                byte[] hrv = new byte[2];
+                hrv[0] = (byte) hr;
+                hrv[1] = (byte) (aw ? 30 : 55 + rnd.nextInt(10));
+                ev.add(new RingEvent(EventCodec.HRV_EVENT, d, hrv));
+            }
+            ev.add(new RingEvent(EventCodec.MOTION_EVENT, d, new byte[] {(byte) (aw ? 14 : (rnd.nextDouble() < 0.03 ? 5 : 0)), 1, 2, 3}));
+            ev.add(new RingEvent(EventCodec.SLEEP_TEMP_EVENT, d, le16((int) Math.round((35.3 + rnd.nextGaussian() * 0.04) * 100))));
+        }
+    }
+
+    /** Runs one synthetic history through the real Db and Analyzer; returns the database. */
+    static Db runSynthetic(List<RingEvent> ev, long t0, long ds0, double now) throws Exception {
+        Context c = freshDb("openring42"); // each scenario on its own empty phone
+        Db db = Db.get(c);
+        java.util.Collections.sort(ev, new java.util.Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        db.insertBatch(ev, 1, (long) now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - ds0) / 10);
+        Analyzer.run(c, null);
+        return db;
+    }
+
+    /**
+     * A night 23:00 to 07:00 with one wake up of {@code wakeMin} minutes from 02:30, optionally a
+     * bedtime marker, a nap 13:30 to 15:00 the day after and the next night as well.
+     */
+    static Db longWakeNight(LocalDate d, int wakeMin, boolean marker, boolean napAndNextNight) throws Exception {
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        double bed = at(d, -1), up = at(d, 7), w0 = at(d, 2.5), w1 = w0 + wakeMin * 60;
+        List<double[]> awake = new ArrayList<double[]>();
+        if (wakeMin > 0) awake.add(new double[] {w0, w1});
+        wornSleep(ev, bed, up, awake, t0, ds0);
+        if (marker) {
+            byte[] bt = new byte[8];
+            Protocol.Le.putU32(bt, 0, ds0 + Math.round((bed - t0) * 10));
+            Protocol.Le.putU32(bt, 4, ds0 + Math.round((up - t0) * 10));
+            ev.add(new RingEvent(EventCodec.BEDTIME_PERIOD, ds0 + Math.round((up + 600 - t0) * 10), bt));
+        }
+        double now = up + 1800;
+        if (napAndNextNight) {
+            wornSleep(ev, at(d, 13.5), at(d, 15), new ArrayList<double[]>(), t0, ds0);
+            wornSleep(ev, at(d, 23), at(d, 31), new ArrayList<double[]>(), t0, ds0);
+            now = at(d, 31.5);
+        }
+        return runSynthetic(ev, t0, ds0, now);
+    }
+
+    static JSONObject mainNight(Db db, LocalDate d) {
+        List<String> m = db.nightsJson(d.toString(), d.toString(), true);
+        return m.size() == 1 ? Json.parse(m.get(0)) : null;
+    }
+
+    static String describe(JSONObject n) {
+        if (n == null) return "no single main night";
+        JSONObject sc = n.optJSONObject("score");
+        return String.format(java.util.Locale.US, "%.0f min asleep, %d wake ups, %.0f min awake, score %s",
+                n.optDouble("asleep_min"), n.optInt("awakenings"), n.optDouble("waso_min"), sc == null ? "-" : sc.opt("value"));
+    }
+
+    static void longWakeChecks() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        int[] score = new int[4];
+        String[] cases = {"sleeping through", "75 min", "120 min", "200 min"};
+        int[] wakes = {0, 75, 120, 200};
+        for (int k = 0; k < 4; k++) {
+            for (boolean marker : new boolean[] {false, true}) {
+                Db db = longWakeNight(d, wakes[k], marker, false);
+                List<String> all = db.nightsJson(d.toString(), d.toString(), false);
+                JSONObject n = mainNight(db, d);
+                String how = "#42 " + cases[k] + (marker ? " with" : " without") + " bedtime marker";
+                System.out.println("    " + how + ": " + all.size() + " sleeps, main " + describe(n));
+                if (k == 1 && !marker) check("#42 the rules version is noted, so a new one re analyses all nights",
+                        db.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION, db.kvLong("night_finder", 0));
+                if (n == null) {
+                    check(how + " has a main night", false, all.size());
+                    continue;
+                }
+                double asleep = n.optDouble("asleep_min"), waso = n.optDouble("waso_min");
+                int sc = n.optJSONObject("score").optInt("value");
+                if (k == 0) {
+                    check(how + ": one night of 7 hours or more", all.size() == 1 && asleep >= 420, describe(n));
+                    if (!marker) score[0] = sc;
+                } else if (k < 3) {
+                    double sleep = 480 - wakes[k] - 20;
+                    check(how + ": one night, the wake up inside it", all.size() == 1 && n.optInt("awakenings") >= 1
+                            && Math.abs(waso - wakes[k]) <= 15 && Math.abs(asleep - sleep) <= 25, describe(n));
+                    check(how + ": scores lower than sleeping through", sc < score[0] - 5, sc + " vs " + score[0]);
+                    if (!marker) score[k] = sc;
+                    check(how + ": latency " + (marker ? "from the marker" : "stays 0 without a marker"),
+                            marker || n.optDouble("latency_min") <= 1, n.opt("latency_min"));
+                } else if (marker) {
+                    check(how + ": the marker keeps one night", all.size() == 1, describe(n));
+                } else {
+                    check(how + ": over 3 hours stays two sleeps, the longer one is the night", all.size() == 2
+                            && asleep > 150 && asleep < 220, all.size() + " sleeps, " + describe(n));
+                }
+            }
+        }
+        check("#42 a longer wake up scores lower", score[2] < score[1], score[1] + " then " + score[2]);
+        // a nap in the afternoon stays a nap, and the next night is its own night
+        Db db = longWakeNight(d, 75, false, true);
+        List<String> today = db.nightsJson(d.toString(), d.toString(), false);
+        JSONObject next = mainNight(db, d.plusDays(1));
+        check("#42 afternoon nap stays a nap next to the joined night", today.size() == 2 && mainNight(db, d) != null
+                && Math.abs(mainNight(db, d).optDouble("asleep_min") - 385) <= 25, today.size() + " sleeps, " + describe(mainNight(db, d)));
+        check("#42 the next night stays its own night", next != null && next.optDouble("asleep_min") >= 420
+                && db.nightsJson(d.plusDays(1).toString(), d.plusDays(1).toString(), false).size() == 1, describe(next));
+        // falling asleep on the sofa in the evening (19:30 to 21:00), bed at 23:30: the gap's middle is
+        // before 23:00, so the sofa stays a nap
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        List<double[]> none = new ArrayList<double[]>();
+        wornSleep(ev, at(d, 19.5), at(d, 21), none, t0, ds0);
+        wornSleep(ev, at(d, 21), at(d, 23.5), java.util.Collections.singletonList(new double[] {at(d, 21), at(d, 23.5)}), t0, ds0);
+        wornSleep(ev, at(d, 23.5), at(d, 31), none, t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 31.5));
+        List<String> evening = db.nightsJson(d.toString(), d.plusDays(1).toString(), false);
+        JSONObject night = mainNight(db, d.plusDays(1));
+        check("#42 evening sofa sleep stays a nap", evening.size() == 2 && night != null && night.optDouble("asleep_min") < 440
+                && night.optDouble("asleep_min") > 380, evening.size() + " sleeps, " + describe(night));
+        // review of #42: sofa 20:30 to 22:30, awake to 00:30, bed to 07:30: the sofa stays its own sleep
+        ev = new ArrayList<RingEvent>();
+        wornSleep(ev, at(d, 20.5), at(d, 31.5), java.util.Collections.singletonList(new double[] {at(d, 22.5), at(d, 24.5)}), t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 32));
+        JSONObject sofa = mainNight(db, d), bedNight = mainNight(db, d.plusDays(1));
+        check("#42 sofa sleep from 20:30 and a wake up to 00:30 stay two sleeps", sofa != null && bedNight != null
+                && sofa.optDouble("asleep_min") < 130 && bedNight.optDouble("asleep_min") < 420
+                && db.nightsJson(d.plusDays(1).toString(), d.plusDays(1).toString(), false).size() == 1,
+                describe(sofa) + " / " + describe(bedNight));
+        // asleep 23:00 to 04:00, up 04:00 to 06:30, nap 06:30 to 08:00: the night is not stretched past getting up
+        ev = new ArrayList<RingEvent>();
+        wornSleep(ev, at(d, -1), at(d, 8), java.util.Collections.singletonList(new double[] {at(d, 4), at(d, 6.5)}), t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 8.5));
+        List<String> morning = db.nightsJson(d.toString(), d.toString(), false);
+        JSONObject early = mainNight(db, d);
+        check("#42 nap after getting up at 04:00 stays a nap", morning.size() == 2 && early != null
+                && early.optDouble("asleep_min") > 250 && early.optDouble("asleep_min") < 310, morning.size() + " sleeps, " + describe(early));
+        freshDb("openring42-done"); // the next test opens its own phone
     }
 }
