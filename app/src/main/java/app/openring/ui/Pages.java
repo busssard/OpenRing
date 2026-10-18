@@ -1069,8 +1069,8 @@ public final class Pages {
         hr.addView(Ui.statRow(c, Ui.stat(c, "Lowest", Ui.fmt(Json.d(day, "hr_day_low"), 0), "bpm", 0),
                 Ui.stat(c, "Average", Ui.fmt(Json.d(day, "hr_day_avg"), 0), "bpm", 0),
                 Ui.stat(c, "Highest", Ui.fmt(Json.d(day, "hr_day_high"), 0), "bpm", 0)));
-        // Analyzer: 2nd and 98th percentile of all readings of the day (issue #47)
-        hr.addView(Ui.text(c, "Lowest, average and highest over the whole day and night, single odd readings left out.", 12, Ui.TEXT_3, Ui.REGULAR));
+        // Analyzer: lowest and highest are the 2nd and 98th percentile, the average a plain mean of all readings (issue #47)
+        hr.addView(Ui.text(c, "Over the whole day and night. Lowest and highest leave out single odd readings.", 12, Ui.TEXT_3, Ui.REGULAR));
         double ds = d.date.atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond();
         hr.addView(new Charts.LineChart(c, Json.series(day == null ? null : day.optJSONArray("hr_day")), ds, ds + 86400, Ui.HEART), Ui.sized(c, -1, 140));
         hr.addView(Ui.gap(c, 10));

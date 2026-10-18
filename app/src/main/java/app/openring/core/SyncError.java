@@ -29,12 +29,12 @@ public final class SyncError {
         if (s.startsWith("no ring found")) return Kind.NOT_FOUND;
         if (s.contains("factory reset and has no key")) return Kind.RING_RESET;
         if (s.startsWith("authentication failed")) return Kind.KEY_REFUSED;
-        if (s.contains("mtu")) return Kind.CONNECTION_SETUP;
+        if (s.contains("could not raise the bluetooth mtu")) return Kind.CONNECTION_SETUP;
         if (s.contains("bonding") || s.contains("could not subscribe")) return Kind.PAIRING;
         if (s.contains("no oura ring service") || s.contains("characteristics missing")) return Kind.NOT_A_RING;
         if (s.startsWith("connection failed") || s.contains("did not accept the connection") || s.contains("refused to open a gatt")
                 || s.startsWith("service discovery") || s.contains("scan failed")) return Kind.NOT_REACHED;
-        if (s.contains("disconnected") || s.startsWith("write failed") || s.contains("never acknowledged") || s.contains("refused the write")
+        if (s.equals("ring disconnected") || s.equals("the ring disconnected") || s.startsWith("write failed") || s.contains("never acknowledged") || s.contains("refused the write")
                 || s.contains("without a summary packet") || (s.startsWith("no ") && s.contains(" response")) || s.startsWith("storage failed")
                 || s.contains("bytes left but the batch was empty") || s.contains("history request failed")) return Kind.BROKE_OFF;
         return Kind.UNKNOWN;
