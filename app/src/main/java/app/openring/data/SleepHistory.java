@@ -34,6 +34,7 @@ public final class SleepHistory {
         return of(list, zone);
     }
 
+    /** {@code zone}: for nights stored without their own zone (before 1.26, demo mode); others use theirs (issue #22). */
     public static SleepHistory of(List<JSONObject> nights, ZoneId zone) {
         SleepHistory h = new SleepHistory();
         int n = nights.size();
@@ -58,12 +59,13 @@ public final class SleepHistory {
             low[i] = Json.d(o, "lowest_hr");
             hrv[i] = Json.d(o, "avg_hrv");
             wakes[i] = o.has("awakenings") ? o.optInt("awakenings") : Double.NaN;
-            bed[i] = relClock(Json.d(o, "sleep_start"), zone);
-            wake[i] = relClock(Json.d(o, "sleep_end"), zone);
+            ZoneId nz = Json.zone(o, zone);
+            bed[i] = relClock(Json.d(o, "sleep_start"), nz);
+            wake[i] = relClock(Json.d(o, "sleep_end"), nz);
             double start = Json.d(o, "start"), end = Json.d(o, "end");
             int[] st = Json.stages(o);
             if (!Double.isNaN(start) && end > start && st.length > 0) {
-                h.pattern.add(clockMin(start, zone), st, (end - start) / st.length);
+                h.pattern.add(clockMin(start, nz), st, (end - start) / st.length);
             }
         }
         h.asleepMin = Stats.mean(asleep);

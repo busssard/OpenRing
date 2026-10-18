@@ -4,6 +4,26 @@
 * A short look at the phone at night (15 seconds or more) now always counts as 30 seconds awake. Before,
   a look of 15 to 29 seconds was often lost when it fell across two 30 second steps of the night. Longer
   phone use counts as before. Nights with screen time are analysed again once after the update (#41)
+## 1.26
+* Travelling: each night keeps the time zone you slept in. After a trip to New York your nights at home still
+  show your home times, and the nights there show New York times, so bedtimes, the average night and the
+  regular bedtime no longer jump. A night that crosses a border counts in the zone you woke up in (#22)
+* The app notes the phone's time zone when you open it and at every sync. Nights from before this version
+  count in the zone the phone has when you first open 1.26 (#22)
+* When a night is in another time zone than the night before, an orange line under the sleep chart says so,
+  for example "Times this night are in New York time, 6 hours behind where you slept the night before." (#22)
+* Scores and days of earlier nights stay the same after a trip, also after Re analyse all (#22)
+## 1.25
+* Sleep stages: deep, REM and light are now shown as a share of sleep, so they add up to 100% and match the usual
+  ranges in the explanations (before they were a share of time in bed and looked a little low). Awake stays a share
+  of time in bed, and a line under the stages says so (#32)
+* Today: the temperature tile is now called "Temp vs usual", because it shows how far last night's skin temperature
+  was from your usual, not your body temperature. A value close to zero shows as 0.0 instead of -0.0 (#32)
+* Every number in Key metrics (Today) and in Typical values (Sleep, Further analysis) has a short line saying what
+  it is. Typical deep, REM and light also show their share of sleep, and awake its share of time in bed (#32)
+## 1.24
+* Rings that send history in bundles (Ring 5, newer Ring 4 firmware): events after a pause of more than 27 hours now
+  keep their real time instead of being placed right after the event before the pause (#31)
 
 ## 1.23
 * Turning the phone while the demo data is prepared no longer starts it a second time or closes the app.

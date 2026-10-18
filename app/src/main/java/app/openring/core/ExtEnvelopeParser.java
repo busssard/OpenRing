@@ -8,12 +8,20 @@ import java.util.List;
  * Reassembles ExtGetEvent envelope chunks (0x2f ext 0x43) into normal history event packets.
  * Each completed envelope is a bundle of {@code control | tag | ext_len | ts_varint | body}; the
  * first varint is absolute milliseconds, later ones are millisecond deltas. Port of open_oura
- * {@code ExtEventEnvelopeParser}.
+ * {@code ExtEventEnvelopeParser}. Upstream also read a later varint of 100,000,000 ms or more as
+ * absolute, a leftover from when its state ran across envelopes; here every later varint is a delta
+ * and such long pauses are only counted (issue #31).
  */
 public final class ExtEnvelopeParser {
     private final ByteArrayOutputStream lenBuf = new ByteArrayOutputStream();
     private int expected = -1;
     private final ByteArrayOutputStream payload = new ByteArrayOutputStream();
+    /** A delta this large (27.8 h) inside one bundle is counted in {@link #longPauses}. */
+    static final long LONG_PAUSE_MS = 100_000_000L;
+    /** Deltas of {@link #LONG_PAUSE_MS} or more seen so far, kept as real pauses. */
+    public int longPauses;
+    /** The longest such delta in ms, 0 when there was none. */
+    public long longestPauseMs;
 
     public List<Packet> push(Packet packet) {
         List<Packet> out = new ArrayList<Packet>();
@@ -49,7 +57,7 @@ public final class ExtEnvelopeParser {
         return out;
     }
 
-    static List<Packet> parseBundle(byte[] b) {
+    List<Packet> parseBundle(byte[] b) {
         List<Packet> out = new ArrayList<Packet>();
         int i = 0;
         long lastMs = -1;
@@ -71,7 +79,11 @@ public final class ExtEnvelopeParser {
                 }
             }
             if (used < 0) break;
-            long ms = (lastMs >= 0 && value < 100_000_000L) ? lastMs + value : value;
+            long ms = lastMs >= 0 ? lastMs + value : value;
+            if (lastMs >= 0 && value >= LONG_PAUSE_MS) {
+                longPauses++;
+                longestPauseMs = Math.max(longestPauseMs, value);
+            }
             lastMs = ms;
             long ts = (ms / 100) & 0xffffffffL;
             if (lastTs >= 0 && value > 0 && ts <= lastTs) ts = lastTs + 1;
