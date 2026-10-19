@@ -20,6 +20,7 @@ import app.openring.core.analysis.ScreenTime;
 import app.openring.core.analysis.StageShare;
 import app.openring.core.analysis.Stats;
 import app.openring.core.analysis.TS;
+import app.openring.core.analysis.WakeUps;
 import app.openring.data.Json;
 import app.openring.data.Prefs;
 
@@ -210,6 +211,7 @@ public final class Pages {
     static View timeline(Context c, JSONObject n, java.time.ZoneId z) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Night timeline"));
+        card.addView(Ui.text(c, "Every wake up of a minute or more, as counted in Wake ups.", 11, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(c, 6));
         int[] st = Json.stages(n);
         double s = Json.d(n, "start"), e = Json.d(n, "end");
@@ -225,19 +227,14 @@ public final class Pages {
         boolean lowDone = Double.isNaN(low);
         if (first >= 0) {
             rows.add(new String[] {Charts.clock(s + first * ep, z), "Fell asleep" + (first > 0 ? " after " + Math.round(first * ep / 60) + " min" : "")});
-            int i = first;
-            while (i <= last) {
-                if (st[i] != 4) { i++; continue; }
-                int j = i;
-                while (j <= last && st[j] == 4) j++;
-                double a = s + i * ep, b = s + j * ep;
+            // every wake up the Wake ups number counts, none left out (issue #70)
+            for (int[] w : WakeUps.list(st, ep)) {
+                double a = s + w[0] * ep, b = s + w[1] * ep;
                 if (!lowDone && low < a) {
                     rows.add(new String[] {Charts.clock(low, z), "Lowest heart rate, " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm"});
                     lowDone = true;
                 }
-                // short stirrings are normal; list wake ups of 5 minutes or more
-                if (b - a >= 300) rows.add(new String[] {Charts.clock(a, z), "Awake for " + Math.round((b - a) / 60) + " min, back asleep " + Charts.clock(b, z)});
-                i = j;
+                rows.add(new String[] {Charts.clock(a, z), "Awake for " + Math.round((b - a) / 60) + " min, back asleep " + Charts.clock(b, z)});
             }
             if (!lowDone) rows.add(new String[] {Charts.clock(low, z), "Lowest heart rate, " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm"});
             rows.add(new String[] {Charts.clock(s + (last + 1) * ep, z), "Woke up"});
@@ -250,6 +247,12 @@ public final class Pages {
             row.addView(t, new LinearLayout.LayoutParams(Ui.dp(c, 58), -2));
             row.addView(Ui.text(c, r[1], 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
             card.addView(row);
+        }
+        int brief = WakeUps.shortOnes(st, ep);
+        if (brief > 0) {
+            card.addView(Ui.gap(c, 4));
+            card.addView(Ui.text(c, "Also " + brief + (brief == 1 ? " moment" : " moments")
+                    + " awake under a minute, drawn on the chart but not counted as wake ups.", 11, Ui.TEXT_3, Ui.REGULAR));
         }
         return card;
     }
@@ -350,7 +353,7 @@ public final class Pages {
         stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(Json.d(n, "in_bed_min")), "", 0, "From start to end of the sleep window"),
                 Ui.stat(c, "Efficiency", Ui.fmt(Json.d(n, "efficiency"), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal"),
-                Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, "Wake ups of a minute or more")));
+                Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, "Awake a minute or more, each one is in the timeline")));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0, "Lowest heart rate while asleep"),
                 Ui.stat(c, "Average HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", 0, "Average while asleep, higher is calmer")));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0, "Breaths per minute while asleep"),

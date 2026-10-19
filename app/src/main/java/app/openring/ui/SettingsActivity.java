@@ -624,11 +624,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
             card.addView(Ui.gap(this, 6));
             card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")).zone(Json.zone(night, java.time.ZoneId.systemDefault())), Ui.sized(this, -1, 150));
             card.addView(Ui.gap(this, 4));
-            int wakes = StageFilter.wakeRuns(st);
-            card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, awake %d %s on this chart.",
-                    StageFilter.changes(st), wakes, wakes == 1 ? "time" : "times"), 13, Ui.TEXT, Ui.MEDIUM));
+            // wake ups counted exactly as on the Sleep page (issue #70)
+            double stepS = st.length == 0 ? 30 : (Json.d(night, "end") - Json.d(night, "start")) / st.length;
+            int wakes = app.openring.core.analysis.WakeUps.count(st, stepS);
+            int brief = app.openring.core.analysis.WakeUps.shortOnes(st, stepS);
+            card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, %d %s on this chart.",
+                    StageFilter.changes(st), wakes, wakes == 1 ? "wake up" : "wake ups"), 13, Ui.TEXT, Ui.MEDIUM));
             card.addView(Ui.text(this, "Stage changes: how often the chart switches between deep, light, REM and awake. "
-                    + "Awake: separate times awake between falling asleep and waking up, of any length.", 11, Ui.TEXT_3, Ui.REGULAR));
+                    + "Wake ups: awake for a minute or more between falling asleep and waking up, counted as on the Sleep page."
+                    + (brief > 0 ? String.format(Locale.getDefault(), " Awake under a minute (%d %s here) is drawn but not counted.",
+                            brief, brief == 1 ? "time" : "times") : ""), 11, Ui.TEXT_3, Ui.REGULAR));
         }
         final boolean changed = detailChoice != p.stageDetail();
         action(card, changed ? "Save and update all nights" : "Saved: " + StageFilter.NAMES[p.stageDetail()],
