@@ -388,6 +388,10 @@ public class PipelineTest {
         check("ring on a table is not a night", nightsAfter == nightsBefore, nightsBefore + " -> " + nightsAfter);
         app.openring.data.RightNow now2 = app.openring.data.RightNow.load(ctx);
         check("latest sensor temperature read", Math.abs(now2.skinTemp - 19.94) < 0.01, now2.skinTemp);
+        // ring finder (issue #74): three hours at room temperature read as taken off
+        app.openring.core.analysis.LastWorn.Result off = app.openring.data.RightNow.lastWorn(db, realNow);
+        check("ring finder: ring on a table reads as taken off", off.state == app.openring.core.analysis.LastWorn.OFF
+                && Math.abs(off.roomC - 19.94) < 0.01, off.state + " " + off.roomC);
 
         // ---- the same ring, worn: skin temperature ----
         List<RingEvent> worn = new ArrayList<RingEvent>();
@@ -399,6 +403,21 @@ public class PipelineTest {
         Analyzer.run(ctx, null);
         app.openring.data.RightNow now3 = app.openring.data.RightNow.load(ctx);
         check("worn ring recognised", now3.worn == 1, now3.skinTemp + " C, worn " + now3.worn);
+        app.openring.core.analysis.LastWorn.Result on = app.openring.data.RightNow.lastWorn(db, realNow);
+        check("ring finder: worn again reads as worn", on.state == app.openring.core.analysis.LastWorn.WORN
+                && Math.abs(on.skinC - 33.10) < 0.01, on.state + " " + on.skinC);
+        app.openring.data.Prefs fp = app.openring.data.Prefs.of(ctx);
+        fp.setBattery(40, 1000);
+        fp.setBattery(41, 1300); // 5 minutes later: the read before stays unset
+        check("ring finder: no earlier battery read within 10 minutes", fp.batteryBefore() == -1 && fp.battery() == 41, fp.batteryBefore());
+        fp.setBattery(55, 4000);
+        check("ring finder: the battery read before is kept", fp.batteryBefore() == 41 && fp.batteryBeforeAt() == 1300 && fp.battery() == 55, fp.batteryBefore());
+        fp.setLastHeard(4100);
+        check("ring finder: last heard saved", fp.lastHeard() == 4100, fp.lastHeard());
+        boolean soundDefault = fp.finderSound();
+        fp.setFinderSound(false);
+        check("ring finder: clicks on by default, can be switched off", soundDefault && !fp.finderSound(), null);
+        fp.setFinderSound(true);
 
         // ---- sleep history: average night over all analysed nights ----
         app.openring.data.SleepHistory sh = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", java.time.ZoneId.of("Europe/Zurich"));

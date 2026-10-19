@@ -56,6 +56,16 @@ public final class Pages {
         double sc = d.score("screen");
         row.addView(ringButton(c, sc, "Screen", Ui.OXY, nav, SCREEN, Double.isNaN(sc) && !screenReady(c) ? "Tap to set up" : null), Ui.weight(1));
         rings.addView(row);
+        TextView find = Ui.smallButton(c, "Find my ring", Ui.OXY); // issue #74
+        find.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                c.startActivity(new android.content.Intent(c, FinderActivity.class));
+            }
+        });
+        LinearLayout.LayoutParams fl = Ui.matchWrap();
+        fl.setMargins(0, Ui.dp(c, 12), 0, 0);
+        rings.addView(find, fl);
         root.addView(rings);
 
         if (d.empty()) {

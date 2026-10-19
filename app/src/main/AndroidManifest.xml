@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Ring finder (issue #74): a short buzz with each click, faster when closer -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Screen time (issue #13): read when the screen was on. Granted by the person in Android's
          settings (usage access); it gives no network access. Android Studio's lint calls it
          a protected permission: that is expected for usage access. -->
@@ -48,6 +50,7 @@
         <activity android:name="app.openring.ui.SettingsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name="app.openring.ui.LiveActivity" android:exported="false" />
         <activity android:name="app.openring.ui.LogActivity" android:exported="false" />
+        <activity android:name="app.openring.ui.FinderActivity" android:exported="false" />
         <activity android:name="app.openring.ui.games.GamesActivity" android:exported="false" android:screenOrientation="portrait" />
 
         <service

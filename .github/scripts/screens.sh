@@ -100,6 +100,9 @@ launch --es settings top;                   shot settings
 launch --es settings stages;                shot settings-stage-detail
 launch --es settings screen;                shot settings-screen-time
 launch --es settings games;                 shot settings-games
+# Find my ring (issue #74): in demo a made up signal fills the meter and a made up turn shows the arrow
+launch --ez finder true;                    shot finder 4
+swipe_up; swipe_up;                       shot finder-turn 2
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then

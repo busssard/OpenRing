@@ -190,7 +190,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * Extras used by the setup screen and by the emulator screenshot test, read on a fresh start
      * and for a new intent, not when a turned screen is recreated:
      * demo (boolean) starts demo mode, tab (int) opens a tab, analysis (boolean) unfolds
-     * Further analysis on the Sleep page, period (int) picks its range, day (yyyy-mm-dd) a date.
+     * Further analysis on the Sleep page, period (int) picks its range, day (yyyy-mm-dd) a date,
+     * finder (boolean) opens Find my ring.
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -209,6 +210,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // screen test: open Settings at a card ("stages")
         String section = i.getStringExtra("settings");
         if (section != null) startActivity(new Intent(this, SettingsActivity.class).putExtra("section", section));
+        // screen test: open Find my ring (issue #74)
+        if (i.getBooleanExtra("finder", false)) startActivity(new Intent(this, FinderActivity.class));
     }
 
     @Override
