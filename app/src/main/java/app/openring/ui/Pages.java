@@ -769,6 +769,12 @@ public final class Pages {
 
         JSONObject as = day.optJSONObject("activity_score");
         if (as != null) {
+            int worn = day.optInt("activity_days", 7);
+            if (worn < 7) {
+                LinearLayout note = Ui.card(c);
+                note.addView(Ui.body(c, Explain.activityDays(worn)));
+                root.addView(note);
+            }
             root.addView(contributors(c, as, Ui.ACTIVE, "Contributors"));
             root.addView(infoCard(c, "About the activity score", Explain.ACTIVITY));
         }

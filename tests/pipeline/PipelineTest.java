@@ -56,8 +56,14 @@ public class PipelineTest {
     }
 
     static List<RingEvent> history(int days) {
+        return history(days, java.util.Collections.<Integer>emptySet(), java.util.Collections.<Integer>emptySet());
+    }
+
+    /** As above, without any event on the days in {@code off} (the ring stayed in a drawer). */
+    static List<RingEvent> history(int days, java.util.Set<Integer> off, java.util.Set<Integer> rest) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         for (int d = 0; d < days; d++) {
+            if (off.contains(d)) continue;
             double day = T0 + d * 86400.0; // local midnight
             double bed = day - 1.25 * 3600 + rnd.nextGaussian() * 900; // ~22:45 the evening before
             double wake = day + 6.75 * 3600 + rnd.nextGaussian() * 900; // ~06:45
@@ -104,7 +110,7 @@ public class PipelineTest {
                 byte[] met = new byte[11];
                 met[0] = 1;
                 for (int k = 1; k <= 10; k++) {
-                    double m = (hour > 17.5 && hour < 18.5) ? 6.5 : (hour > 12 && hour < 12.5 ? 3.5 : 1.3 + rnd.nextDouble() * 0.6);
+                    double m = (hour > 17.5 && hour < 18.5 && !rest.contains(d)) ? 6.5 : (hour > 12 && hour < 12.5 && !rest.contains(d) ? 3.5 : 1.3 + rnd.nextDouble() * 0.6);
                     met[k] = (byte) Math.round(m * 10);
                 }
                 ev.add(new RingEvent(EventCodec.ACTIVITY_INFO, ds(t), met));
@@ -187,6 +193,11 @@ public class PipelineTest {
                     dayJ.optJSONObject("activity_score") == null ? "-" : dayJ.optJSONObject("activity_score").opt("value"),
                     dayJ.opt("steps"), dayJ.opt("active_kcal"));
             check(key + " readiness", rd != null && rd.optInt("value", -1) > 0, rd == null ? null : rd.opt("value"));
+            // issue #44: the weekly parts count only the days so far, and wait for 3 of them
+            JSONObject as = dayJ.optJSONObject("activity_score");
+            check(key + " activity counts " + (d + 1) + " worn days", dayJ.optInt("activity_days", -1) == d + 1, dayJ.opt("activity_days"));
+            check(key + " weekly parts " + (d < 2 ? "left out" : "included"), as != null && (activityPart(as, "targets") == null) == (d < 2), as);
+            if (d == 2) check(key + " targets of 3 days", activityPart(as, "targets").optString("detail").endsWith(" of 3 days"), activityPart(as, "targets"));
         }
 
         // ---- sleep stage detail (issue #9): Balanced by default, raw stages kept, a change re analyses ----
@@ -448,6 +459,20 @@ public class PipelineTest {
         check("demo notes no time zones, so its nights look as before (#22)", demo.zones().isEmpty()
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
+        // issue #44: the first demo days count the worn days so far, later ones a full week as before
+        int firstWorn = -1, fullWeek = 0, weekDays = 0;
+        boolean weekTexts = true;
+        for (String[] r : demo.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o == null || o.optJSONObject("activity_score") == null) continue;
+            if (firstWorn < 0) firstWorn = o.optInt("activity_days", -1);
+            if (o.optInt("activity_days", -1) != 7) continue;
+            weekDays++;
+            JSONObject tp = activityPart(o.optJSONObject("activity_score"), "targets"), vp = activityPart(o.optJSONObject("activity_score"), "volume");
+            weekTexts &= tp != null && tp.optString("detail").endsWith(" of 7 days") && vp != null && vp.optString("detail").endsWith(" kcal this week");
+        }
+        check("first demo day counts 1 worn day", firstWorn == 1, firstWorn);
+        check("demo weeks are full weeks with the old texts", weekDays >= 25 && weekTexts, weekDays + " days");
         ScreenTime.Day demoScreen = app.openring.data.ScreenDays.day(demo, LocalDate.now().minusDays(2), java.time.ZoneId.systemDefault());
         check("demo has screen time", demoScreen != null && demoScreen.totalMin > 90 && demoScreen.totalMin < 300 && demoScreen.turnedOn > 20,
                 demoScreen == null ? null : Math.round(demoScreen.totalMin) + " min, turned on " + demoScreen.turnedOn);
@@ -544,6 +569,7 @@ public class PipelineTest {
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
         longHistoryTiming();
+        activityGap();
         zoneTable();
         travelZones();
         zoneStorage(full.toByteArray());
@@ -551,6 +577,62 @@ public class PipelineTest {
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
+    static JSONObject activityPart(JSONObject score, String key) {
+        org.json.JSONArray cs = score == null ? null : score.optJSONArray("contributors");
+        for (int i = 0; cs != null && i < cs.length(); i++) if (key.equals(cs.optJSONObject(i).optString("key"))) return cs.optJSONObject(i);
+        return null;
+    }
+
+    /**
+     * Issue #44: ten days with the ring left off on days 3 to 6, and an evening workout only on
+     * days 0 and 7 (and the lunch walk only then too), so the days before and after the gap have the same pattern (1 training day of
+     * 3 worn days) and the weekly parts stay below 100. Days without the ring are left out
+     * of the weekly parts of the activity score instead of counting as missed targets.
+     */
+    static void activityGap() throws Exception {
+        LocalDate day0 = java.time.Instant.ofEpochSecond(T0).atZone(ZONE).toLocalDate(); // T0 is shared with main
+        java.util.Set<Integer> off = new java.util.HashSet<Integer>(Arrays.asList(3, 4, 5, 6));
+        List<RingEvent> ev = history(10, off, new java.util.HashSet<Integer>(Arrays.asList(1, 2, 8, 9)));
+        long now = T0 + 10 * 86400 + 7 * 3600 + 1800;
+        Context c = new Context(Files.createTempDirectory("openring-gap").toFile());
+        Db db = Db.get(c);
+        for (int i = 0; i < ev.size(); i += 4096) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4096)), 1, now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, T0 + (lastDs - DS0) / 10);
+        Analyzer.run(c, null);
+        int[] worn = new int[10];
+        int[] score = new int[10];
+        JSONObject[] targets = new JSONObject[10], freq = new JSONObject[10], vol = new JSONObject[10];
+        for (int d = 0; d < 10; d++) {
+            JSONObject o = Json.parse(db.dayJson(day0.plusDays(d).toString()));
+            JSONObject as = o == null ? null : o.optJSONObject("activity_score");
+            worn[d] = o == null ? -1 : o.optInt("activity_days", -1);
+            score[d] = as == null ? -1 : as.optInt("value", -1);
+            targets[d] = activityPart(as, "targets");
+            freq[d] = activityPart(as, "frequency");
+            vol[d] = activityPart(as, "volume");
+        }
+        System.out.println("  gap history: worn days " + Arrays.toString(worn) + ", activity " + Arrays.toString(score));
+        check("gap: days without the ring have no activity score", score[3] < 0 && score[4] < 0 && score[5] < 0 && score[6] < 0, Arrays.toString(score));
+        check("gap: the day after counts 3 worn days in the last 7", worn[7] == 3 && worn[8] == 3 && worn[9] == 3, Arrays.toString(worn));
+        check("gap: targets count only the worn days", targets[7] != null && targets[7].optString("detail").endsWith(" of 3 days"), targets[7]);
+        int met7 = targets[7] == null ? -1 : Integer.parseInt(targets[7].optString("detail").split(" ")[0]);
+        double expect = app.openring.core.analysis.Stats.curve(met7 / 3.0, new double[][] {{0, 20}, {0.15, 35}, {0.43, 62}, {0.71, 86}, {1, 100}});
+        check("gap: days without the ring are not missed targets", met7 >= 0 && targets[7].optLong("score") == Math.round(expect), targets[7] + " expected " + expect);
+        check("gap: before the gap the same count", worn[2] == 3 && worn[1] == 2, Arrays.toString(worn));
+        check("gap: the same kind of day scores about the same after the gap", score[9] > 0 && Math.abs(score[9] - score[2]) <= 3, score[2] + " / " + score[9]);
+        // day 2 (days 0 to 2) and day 9 (days 7 to 9, the gap left out) both hold 1 training day in 3 worn days
+        check("gap: training frequency below 100 and the same before and after", freq[2] != null && freq[9] != null
+                && freq[2].optLong("score") < 100 && freq[2].optLong("score") == freq[9].optLong("score")
+                && "1 training day in 3 days".equals(freq[9].optString("detail")), freq[2] + " / " + freq[9]);
+        long fExpect = Math.round(app.openring.core.analysis.Stats.curve(7 / 3.0, new double[][] {{0, 35}, {1, 60}, {2, 82}, {3, 100}}));
+        check("gap: one training day in 3 worn days is scaled to a week", freq[9] != null && freq[9].optLong("score") == fExpect, freq[9] + " expected " + fExpect);
+        check("gap: training volume below 100 and about the same before and after", vol[2] != null && vol[9] != null
+                && vol[9].optLong("score") < 100 && Math.abs(vol[2].optLong("score") - vol[9].optLong("score")) <= 3, vol[2] + " / " + vol[9]);
+        check("gap: the day right after the gap is not pulled down", score[7] > 0 && Math.abs(score[7] - score[2]) <= 3, score[2] + " / " + score[7]);
+        db.close();
+    }
+
     /**
      * Issues #26 and #27: a restore checks the backup's history before anything changes, never
      * replaces newer history on the phone without asking, and keeps the old file until the new
