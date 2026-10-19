@@ -18,6 +18,10 @@ completely, then read the two guides it points to before changing anything:
   Screenshots only ever come from demo mode.
 
 ## How a change should go
+0. **History first.** Before planning, read the issues (open and closed) and pull requests (open and
+   closed) that touch the same area, with their comments: design notes, the owner's decisions,
+   "Code review" comments, PRs closed without merging and why. Do not redo, undo or contradict that
+   work without saying so. Open PRs also hold version numbers; yours goes above them.
 1. **Understand before building.** Read the code involved, find the real cause, and say honestly
    what a change can and cannot do (example: a stage filter changes detail, not accuracy).
 2. **Write the design down before coding** for anything not trivial: post it as an issue comment
@@ -57,6 +61,8 @@ completely, then read the two guides it points to before changing anything:
     it notices outside its issues become new `[EXP]` issues (at most 5 a night), not fixes in passing.
     It skips every issue whose title starts with `[EXP]`: the owner reviews those and releases one by
     removing `[EXP]` from its title.
+    Before new issues it fixes open PRs that got owner feedback or a code review with Must fix or
+    Should fix items, and answers with a "Fixed after review" comment.
   * **Nightly PR review (about 01:00):** reviews every open pull request that changed since its last
     review and leaves one comment starting "Code review of <commit>" with a verdict and findings
     (Must fix, Should fix, Could improve). It never changes code. When you work on a PR, read such a
