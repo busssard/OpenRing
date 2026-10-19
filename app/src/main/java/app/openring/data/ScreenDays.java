@@ -89,6 +89,8 @@ public final class ScreenDays {
     /** Everything the Screen tab and the Today ring show for one date. */
     public static final class Info {
         public LocalDate date;
+        /** The zone the day is shown in (the zone of its night, issue #22). */
+        public ZoneId zone;
         public double from, to;
         /** Counted screen time of the day (apps not counted are left out); null when nothing is known. */
         public ScreenTime.Day day;
@@ -127,6 +129,7 @@ public final class ScreenDays {
     public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded, double minShowS) {
         Info in = new Info();
         in.date = date;
+        in.zone = zone;
         in.goalMin = goalMin;
         in.from = date.atStartOfDay(zone).toEpochSecond();
         in.to = date.plusDays(1).atStartOfDay(zone).toEpochSecond();

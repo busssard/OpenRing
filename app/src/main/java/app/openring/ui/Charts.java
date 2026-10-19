@@ -24,7 +24,12 @@ public final class Charts {
     private Charts() {}
 
     static String clock(double unix) {
-        ZonedDateTime z = Instant.ofEpochSecond((long) unix).atZone(ZoneId.systemDefault());
+        return clock(unix, ZoneId.systemDefault());
+    }
+
+    /** "07:42" in {@code zone}: each night shows in the zone it was slept in (issue #22). */
+    static String clock(double unix, ZoneId zone) {
+        ZonedDateTime z = Instant.ofEpochSecond((long) unix).atZone(zone == null ? ZoneId.systemDefault() : zone);
         return String.format(Locale.getDefault(), "%02d:%02d", z.getHour(), z.getMinute());
     }
 
@@ -173,10 +178,22 @@ public final class Charts {
         private final Paint mark = new Paint(Paint.ANTI_ALIAS_FLAG);
         private double markAt = Double.NaN;
 
+        private ZoneId zone = ZoneId.systemDefault();
+
         /** A thin orange line where the clocks changed during the night (issue #22). */
         public Hypnogram clockChange(double at) {
             markAt = at;
             return this;
+        }
+
+        /** The zone the night's times are shown in (issue #22). */
+        public Hypnogram zone(ZoneId z) {
+            if (z != null) zone = z;
+            return this;
+        }
+
+        private String clock(double t) {
+            return Charts.clock(t, zone);
         }
 
         public Hypnogram(Context c, int[] stages, double start, double end) {
@@ -343,6 +360,17 @@ public final class Charts {
         private boolean daily;
         private String emptyText = "No data";
         private java.time.LocalDate dayEnd;
+        private ZoneId zone = ZoneId.systemDefault();
+
+        /** The zone of the time labels and readout, the night's own for a night chart (issue #22). */
+        public LineChart zone(ZoneId z) {
+            if (z != null) zone = z;
+            return this;
+        }
+
+        private String clock(double t) {
+            return Charts.clock(t, zone);
+        }
         private int maxDays;
 
         public LineChart(Context c, TS series, double from, double to, int color) {
@@ -535,7 +563,7 @@ public final class Charts {
 
         private String clockOrDate(double t) {
             if (daily || to - from > 3 * 86400) {
-                ZonedDateTime z = Instant.ofEpochSecond((long) t).atZone(ZoneId.systemDefault());
+                ZonedDateTime z = Instant.ofEpochSecond((long) t).atZone(zone);
                 return z.getDayOfMonth() + "." + z.getMonthValue() + ".";
             }
             return clock(t);
@@ -897,9 +925,16 @@ public final class Charts {
             return true;
         }
 
-        static String clock(double unix) {
-            java.time.ZonedDateTime z = java.time.Instant.ofEpochSecond((long) Math.floor(unix)).atZone(java.time.ZoneId.systemDefault());
-            return String.format(Locale.getDefault(), "%02d:%02d", z.getHour(), z.getMinute());
+        private ZoneId zone = ZoneId.systemDefault();
+
+        /** The zone of the day shown (issue #22). */
+        public ScreenDial zone(ZoneId z) {
+            if (z != null) zone = z;
+            return this;
+        }
+
+        String clock(double unix) {
+            return Charts.clock(Math.floor(unix), zone);
         }
 
         /** The app in front at {@code at}, or null. */

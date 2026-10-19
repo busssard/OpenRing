@@ -209,23 +209,55 @@ public final class ScreenTime {
     }
 
     /**
-     * Marks every step of {@code stages} (equal steps over [start, end)) as awake (4) when the
-     * screen was on for at least {@link #AWAKE_MIN_S} seconds of a 30 second step (half of a step of
-     * another length). Returns how many steps had phone use (also those already awake); stages are
-     * changed in place.
+     * Version of the rule in {@link #markAwake}; nights marked with another version are analysed
+     * again (2: a short check across a step border counts, issue #41).
+     */
+    public static final int AWAKE_RULE = 2;
+
+    /**
+     * Marks steps of {@code stages} (equal steps over [start, end)) as awake (4) where the phone was
+     * in use. A step is awake when the screen was on for at least {@link #AWAKE_MIN_S} seconds of
+     * it (all sessions added up; half of a step of another length). A session of at least that long
+     * inside the window that marked no step this way (a short check split by a step border, issue
+     * #41) marks the step holding most of it, the earlier one on a tie. Returns how many steps had
+     * phone use (also those already awake); stages are changed in place.
      */
     public static int markAwake(int[] stages, double start, double end, List<double[]> sessions) {
         if (stages.length == 0 || end <= start || sessions.isEmpty()) return 0;
-        double step = (end - start) / stages.length;
+        int n = stages.length;
+        double step = (end - start) / n;
         double need = AWAKE_MIN_S * step / 30.0;
-        int changed = 0;
-        for (int i = 0; i < stages.length; i++) {
+        boolean[] phone = new boolean[n];
+        for (int i = 0; i < n; i++) {
             double a = start + i * step, b = a + step, on = 0;
             for (double[] x : sessions) on += overlap(x[0], x[1], a, b);
-            if (on >= need) {
-                stages[i] = 4;
-                changed++;
+            phone[i] = on >= need;
+        }
+        for (double[] x : sessions) {
+            double a = Math.max(x[0], start), b = Math.min(x[1], end);
+            if (b - a < need) continue;
+            // the steps the session touches (one more on each side against rounding at a border)
+            int i0 = Math.max(0, (int) Math.floor((a - start) / step) - 1);
+            int i1 = Math.min(n - 1, (int) Math.floor((b - start) / step) + 1);
+            int best = -1;
+            double most = 0;
+            boolean marked = false;
+            for (int i = i0; i <= i1; i++) {
+                double o = overlap(a, b, start + i * step, start + (i + 1) * step);
+                if (o <= 0) continue;
+                marked |= phone[i];
+                if (o > most + 1e-9) {
+                    most = o;
+                    best = i;
+                }
             }
+            if (!marked && best >= 0) phone[best] = true;
+        }
+        int changed = 0;
+        for (int i = 0; i < n; i++) {
+            if (!phone[i]) continue;
+            stages[i] = 4;
+            changed++;
         }
         return changed;
     }

@@ -2,6 +2,11 @@ plugins {
     id 'com.android.application'
 }
 
+// The version is counted from the change notes in changes/ (same rule as tools/version.sh)
+def changeNotes = (new File(rootDir, 'changes').listFiles() ?: []).findAll { it.name ==~ /[0-9].*\.md/ }.size()
+def appVersionCode = 29 + changeNotes
+def appVersionName = '1.' + (28 + changeNotes)
+
 android {
     namespace 'app.openring'
     compileSdk 34
@@ -10,8 +15,8 @@ android {
         applicationId 'app.openring'
         minSdk 26
         targetSdk 34
-        versionCode 31
-        versionName '1.30'
+        versionCode appVersionCode
+        versionName appVersionName
     }
 
     buildTypes {

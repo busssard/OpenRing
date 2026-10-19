@@ -141,6 +141,12 @@ public final class Json {
         return o;
     }
 
+    /** The zone a night was slept in (issue #22), {@code fallback} for older nights or an id this phone does not know. */
+    public static java.time.ZoneId zone(JSONObject night, java.time.ZoneId fallback) {
+        java.time.ZoneId z = night == null ? null : app.openring.core.analysis.ClockChange.zone(night.optString("zone", null));
+        return z == null ? fallback : z;
+    }
+
     public static int[] stages(JSONObject night) {
         return digits(night.optString("stages", ""));
     }

@@ -148,7 +148,11 @@ public final class Scores {
         public int trainingDays7 = -1;            // days in 7 with >= 30 min of medium or high activity
         public double trainingKcal7 = Double.NaN; // medium + high kcal over 7 days
         public double recoveryDays7 = Double.NaN; // easy days in the last week (not scored, shown)
+        public int days7 = 7;                     // days in the last 7 (today included) with an hour of wear (issue #44)
     }
+
+    /** Fewer worn days than this in the last 7: the weekly parts are left out (issue #44). */
+    public static final int MIN_WEEK_DAYS = 3;
 
     public static Night.Score activity(ActivityInput in) {
         Night.Score sc = new Night.Score();
@@ -158,14 +162,20 @@ public final class Scores {
             add(sc, "move_hourly", "Move every hour", Stats.curve(in.longInactiveStreaks, new double[][] {{0, 100}, {1, 90}, {2, 75}, {3, 55}, {5, 25}}), 33,
                 in.longInactiveStreaks + " long sitting periods");
         }
+        // the weekly parts look at the worn days only: targets as a share of them, training scaled
+        // up to a week; with fewer than MIN_WEEK_DAYS they are left out (issue #44)
+        int n = Math.max(1, Math.min(7, in.days7));
+        if (n < MIN_WEEK_DAYS) return finish(sc);
+        double week = 7.0 / n;
+        String span = n == 7 ? "" : " in " + n + " days";
         add(sc, "targets", "Meet daily targets", Stats.curve(in.targetsMetFraction, new double[][] {{0, 20}, {0.15, 35}, {0.43, 62}, {0.71, 86}, {1, 100}}), 24,
-            Double.isNaN(in.targetsMetFraction) ? "" : Math.round(in.targetsMetFraction * 7) + " of 7 days");
+            Double.isNaN(in.targetsMetFraction) ? "" : Math.round(in.targetsMetFraction * n) + " of " + n + " days");
         if (in.trainingDays7 >= 0) {
-            add(sc, "frequency", "Training frequency", Stats.curve(in.trainingDays7, new double[][] {{0, 35}, {1, 60}, {2, 82}, {3, 100}}), 12,
-                in.trainingDays7 + " training days");
+            add(sc, "frequency", "Training frequency", Stats.curve(in.trainingDays7 * week, new double[][] {{0, 35}, {1, 60}, {2, 82}, {3, 100}}), 12,
+                in.trainingDays7 + (in.trainingDays7 == 1 ? " training day" : " training days") + span);
         }
-        add(sc, "volume", "Training volume", Stats.curve(in.trainingKcal7, new double[][] {{0, 20}, {300, 42}, {700, 66}, {1200, 86}, {2000, 100}}), 14,
-            Double.isNaN(in.trainingKcal7) ? "" : Math.round(in.trainingKcal7) + " kcal this week");
+        add(sc, "volume", "Training volume", Stats.curve(in.trainingKcal7 * week, new double[][] {{0, 20}, {300, 42}, {700, 66}, {1200, 86}, {2000, 100}}), 14,
+            Double.isNaN(in.trainingKcal7) ? "" : Math.round(in.trainingKcal7) + (n == 7 ? " kcal this week" : " kcal" + span));
         return finish(sc);
     }
 
