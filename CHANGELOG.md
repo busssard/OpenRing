@@ -6,6 +6,13 @@
 * Each line on the clock is again exactly 5 minutes. On the day the clocks go back, the hour that happens twice
   shows on the same part of the clock; on the day they go forward the skipped hour stays empty. An orange arc
   on the clock and a line under it mark that hour (#46)
+## 1.30
+* When a sync fails, the main screen says in plain words what happened and what to try (for example "The ring could
+  not be reached. Keep it close to the phone and sync again.") instead of a technical Bluetooth message. The
+  technical text stays in Settings, Help and diagnostics, Data check and log (#47)
+* More numbers have a short line saying what they are: Sleep details, Goal progress and the intensity chart on
+  Activity, Heart rate today on Body, and the example score on the first setup screen (#47)
+* Body: the latest readings say "Blood oxygen" instead of "SpO2", like the rest of the app (#47)
 
 ## 1.29
 * The activity score no longer counts days without the ring as missed goals. In the first week and after days

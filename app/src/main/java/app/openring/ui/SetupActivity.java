@@ -370,8 +370,12 @@ public final class SetupActivity extends Activity {
         Charts.ScoreRing r = new Charts.ScoreRing(this, 86, "Ready", Ui.READY, true);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(this, 170), Ui.dp(this, 170));
         lp.gravity = Gravity.CENTER_HORIZONTAL;
-        lp.setMargins(0, Ui.dp(this, 10), 0, Ui.dp(this, 30));
+        lp.setMargins(0, Ui.dp(this, 10), 0, Ui.dp(this, 4));
         l.addView(r, lp);
+        TextView sample = Ui.text(this, "An example. Readiness, sleep and activity are scores from 0 to 100, higher is better.", 12, Ui.TEXT_3, Ui.REGULAR);
+        sample.setGravity(Gravity.CENTER_HORIZONTAL);
+        l.addView(sample);
+        l.addView(Ui.gap(this, 22));
         l.addView(Ui.text(this, "Built on the open_oura and open_health reverse engineering projects. Not affiliated with Oura. "
                 + "Scores follow Oura's recovered contributor weights but are not identical to the official app, and nothing here is medical advice.", 12, Ui.TEXT_3, Ui.REGULAR));
         l.addView(Ui.gap(this, 16));
