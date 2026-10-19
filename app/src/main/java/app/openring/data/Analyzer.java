@@ -16,6 +16,7 @@ import java.util.Map;
 
 import app.openring.core.EventCodec;
 import app.openring.core.analysis.ClockChange;
+import app.openring.core.analysis.DayHeart;
 import app.openring.core.analysis.Night;
 import app.openring.core.analysis.NightAnalyzer;
 import app.openring.core.analysis.NightFinder;
@@ -641,7 +642,6 @@ public final class Analyzer {
 
         // ---- daytime heart rate ----
         TS beats = new TS();
-        double low = Double.NaN, high = Double.NaN;
         for (Db.Row r : db.events(new int[] {EventCodec.GREEN_IBI_QUALITY, EventCodec.AOHR_EVENT, EventCodec.HRV_EVENT, EventCodec.SLEEP_PERIOD_INFO_2}, ds, de)) {
             if (r.tag == EventCodec.GREEN_IBI_QUALITY) {
                 int[][] g = EventCodec.greenIbi(r.body);
@@ -658,13 +658,15 @@ public final class Analyzer {
             }
         }
         if (beats.size() > 0) {
-            TS binned = NightAnalyzer.bin(beats.sort(), ds, de, 900);
-            Json.put(out, "hr_day", Json.series(binned, 96));
-            low = Stats.percentile(beats.values(), 0.02);
-            high = Stats.percentile(beats.values(), 0.98);
-            Json.put(out, "hr_day_low", low);
-            Json.put(out, "hr_day_high", high);
-            Json.put(out, "hr_day_avg", beats.mean());
+            // the line: one point per quarter hour (100 on a 25 hour day, none merged); Lowest, Average and
+            // Highest come from the stored line itself, so they match the chart (issue #72). The Body tab works
+            // them out from the line again, so days stored before keep matching too.
+            JSONArray line = Json.series(DayHeart.curve(beats, ds, de), DayHeart.maxPoints(ds, de));
+            Json.put(out, "hr_day", line);
+            DayHeart sum = DayHeart.of(Json.series(line), ds, de);
+            Json.put(out, "hr_day_low", sum.low);
+            Json.put(out, "hr_day_high", sum.high);
+            Json.put(out, "hr_day_avg", sum.avg);
         }
         db.putDay(key, out.toString());
     }

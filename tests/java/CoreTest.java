@@ -388,6 +388,7 @@ public class CoreTest {
         bundles();
         client();
         analysis();
+        dayHeart();
         longWake();
         timeline();
         activityWeek();
@@ -717,6 +718,68 @@ public class CoreTest {
             out[i] = on >= ScreenTime.AWAKE_MIN_S * step / 30.0;
         }
         return out;
+    }
+
+    /** Issue #72: the Body tab's Lowest, Average and Highest are the line's own points. */
+    static void dayHeart() {
+        double ds = 1_760_000_000L - 1_760_000_000L % 86400, de = ds + 86400;
+        TS readings = new TS();
+        double run = ds + 18 * 3600, calm = ds + 4 * 3600;
+        for (double t = ds; t < de; t += 2) {
+            if (t >= run && t < run + 600) readings.add(t, 130);       // a 10 minute run
+            else if (t >= calm && t < calm + 900) readings.add(t, 50); // a calm quarter hour
+            else readings.add(t, 60);
+        }
+        TS line = DayHeart.curve(readings, ds, de);
+        DayHeart d = DayHeart.of(line, ds, de);
+        double oldHigh = Stats.percentile(readings.values(), 0.98);
+        check("day heart: the old 98th percentile cut the run off", oldHigh < 70);
+        eq("day heart: Highest is the line's highest point", d.high, line.max());
+        check("day heart: Highest shows the run", d.high > 100);
+        check("day heart: no drawn point above Highest", d.high >= line.max() && d.points == line.size() && d.points == 96);
+        eq("day heart: Lowest is the line's lowest point", d.low, line.min());
+        check("day heart: Lowest is the calm quarter hour", near(d.low, 50) && near(d.lowAt, ds + 4 * 3600 + 450));
+        check("day heart: Highest at the run's quarter hour", d.highAt == ds + 18 * 3600 + 450);
+        eq("day heart: Average counts each quarter hour once", d.avg, line.mean());
+
+        // only the points the chart draws: inside the day, with a value
+        TS edges = new TS();
+        edges.add(ds - 1, 200);
+        edges.add(ds + 450, 70);
+        edges.add(ds + 1350, Double.NaN);
+        edges.add(ds + 2250, 80);
+        edges.add(de + 1, 20);
+        DayHeart e = DayHeart.of(edges, ds, de);
+        check("day heart: points outside the day and without a value left out", e.points == 2 && e.low == 70 && e.high == 80 && e.avg == 75);
+        DayHeart none = DayHeart.of(new TS(), ds, de);
+        check("day heart: no points gives no numbers", none.points == 0 && Double.isNaN(none.low) && Double.isNaN(none.avg)
+                && Double.isNaN(none.high) && Double.isNaN(none.lowAt) && Double.isNaN(DayHeart.of(null, ds, de).high));
+
+        // a clock change: 25 and 23 hour days keep one point per quarter hour
+        eq("day heart: 25 hour day has 100 quarter hours", DayHeart.maxPoints(ds, ds + 25 * 3600), 100);
+        eq("day heart: 23 hour day has 92 quarter hours", DayHeart.maxPoints(ds, ds + 23 * 3600), 92);
+        TS long25 = new TS();
+        for (double t = ds; t < ds + 25 * 3600; t += 60) long25.add(t, 60);
+        eq("day heart: 25 hour day line", DayHeart.curve(long25, ds, ds + 25 * 3600).size(), 100);
+
+        // the night's lowest (5 minute averages) is never above the day's Lowest from the same readings
+        Random r = new Random(72);
+        boolean never = true;
+        for (int k = 0; k < 20; k++) {
+            NightAnalyzer.Input in = new NightAnalyzer.Input();
+            in.start = ds + 3600;
+            in.end = in.start + 7 * 3600;
+            int[] st = new int[7 * 120];
+            Arrays.fill(st, Stager.LIGHT);
+            in.ringStages = st;
+            TS hr5 = new TS();
+            for (double t = in.start + 150; t < in.end; t += 300) hr5.add(t, 46 + r.nextInt(25));
+            in.hr5 = hr5;
+            Night n = NightAnalyzer.analyze(in);
+            DayHeart day = DayHeart.of(DayHeart.curve(hr5, ds, de), ds, de);
+            if (!(day.low >= n.lowestHr)) never = false;
+        }
+        check("day heart: Lowest never below the night's lowest from the same readings", never);
     }
 
     static int awakeCount(int[] st) {
