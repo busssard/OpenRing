@@ -76,6 +76,21 @@ public final class ClockChange {
                 + " where you slept the night before.";
     }
 
+    /**
+     * The line under the screen time clock on a day the clocks changed (issue #46), for example "The
+     * clocks went back one hour on this day (03:00 became 02:00). ...", or null without a change.
+     */
+    public static String dialText(Change c) {
+        if (c == null || c.minutes == 0) return null;
+        String amount = amount(Math.abs(c.minutes));
+        if (c.minutes < 0) {
+            return "The clocks went back " + amount + " on this day (" + c.from + " became " + c.to + "). The hour from " + c.to
+                    + " to " + c.from + " happened twice, phone use in both shows on the same part of the clock, marked in orange.";
+        }
+        return "The clocks went forward " + amount + " on this day (" + c.from + " became " + c.to + "), so the part of the clock from "
+                + c.from + " to " + c.to + ", marked in orange, stays empty.";
+    }
+
     /** The zone, or null when the id is empty or unknown on this phone. */
     public static ZoneId zone(String id) {
         if (id == null || id.isEmpty()) return null;

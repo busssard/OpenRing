@@ -497,10 +497,12 @@ public class PipelineTest {
             check("first look after waking", !Double.isNaN(di.firstLook) && di.firstLook >= di.sleepEnd, null);
             check("before bed and night minutes", di.bedMin >= 0 && di.nightMin >= 0, di.bedMin + " / " + di.nightMin);
             double dialMin = 0;
-            // a dial step is 5 minutes, or a little more or less on a day the clocks change (25 or 23 hours)
-            double stepMin = (di.to - di.from) / di.dial.length / 60;
-            for (double v : di.dial) dialMin += v * stepMin;
-            check("dial adds up to the day", Math.abs(dialMin - di.day.totalMin) < 1, dialMin + " vs " + di.day.totalMin);
+            // a dial step is 5 minutes of clock time (#46); on the day the clocks go back the repeated hour
+            // shares its steps, so the dial can show less than the total then
+            for (double v : di.dial) dialMin += v * 5;
+            boolean longDay = di.to - di.from > 86400 + 1;
+            check("dial adds up to the day", longDay ? dialMin <= di.day.totalMin + 1 : Math.abs(dialMin - di.day.totalMin) < 1,
+                    dialMin + " vs " + di.day.totalMin);
             check("apps of the day known and sorted", di.appsKnown && di.apps.size() >= 3 && di.apps.get(0).getValue() >= di.apps.get(1).getValue(), di.apps.size());
             check("14 day rows, last is the day", di.rows.length == 14 && di.rows[13].date.equals(di.date) && Math.abs(di.rows[13].totalMin - di.day.totalMin) < 0.01, null);
             check("rows show nights", di.rows[13].nights.size() >= 1, null);
@@ -569,6 +571,7 @@ public class PipelineTest {
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
         longHistoryTiming();
+        dialClockChange();
         activityGap();
         zoneTable();
         travelZones();
@@ -947,6 +950,33 @@ public class PipelineTest {
     }
 
     // ------------------------------------------------------------ issue #22, travel
+
+    /** Issue #46: on the day the clocks go back a use at 03:30 is drawn at 03:30 on the clock and the row. */
+    static void dialClockChange() throws Exception {
+        Db db = Db.get(freshDb("openring-dial"));
+        ZoneId z = ZoneId.of("Europe/Zurich");
+        double t = java.time.LocalDateTime.parse("2026-10-25T03:30:00").atZone(z).toEpochSecond();
+        List<double[]> s = new ArrayList<double[]>();
+        s.add(new double[] {t, t + 300});
+        db.putScreen(s);
+        app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(db, LocalDate.parse("2026-10-25"), z, 180, new java.util.HashSet<String>());
+        int lit = -1;
+        for (int i = 0; i < in.dial.length; i++) if (in.dial[i] > 0) lit = lit == -1 ? i : -2;
+        check("clocks back: a use at 03:30 is on the 03:30 line of the clock", lit == 42 && in.day.totalMin > 4.9, lit);
+        app.openring.data.ScreenDays.Row row = in.rows[in.rows.length - 1];
+        check("and on the 03:30 part of the day row", row.fill[14] > 0 && row.fill[13] == 0 && row.zone.equals(z), null);
+        // a night through the repeated hour, 02:40 summer time to 02:20 winter time: the row keeps its width
+        db.replaceNights(0, Double.MAX_VALUE, java.util.Collections.singletonList(new Object[] {
+            (double) java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond(), (double) java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond(),
+            "2026-10-25", 1, 80, "{\"start\":" + java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond() + ",\"end\":"
+                + java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond() + ",\"sleep_start\":" + java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond()
+                + ",\"sleep_end\":" + java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond() + "}"}));
+        in = app.openring.data.ScreenDays.info(db, LocalDate.parse("2026-10-25"), z, 180, new java.util.HashSet<String>());
+        row = in.rows[in.rows.length - 1];
+        int covered = 0;
+        for (double v : row.nightFill) if (v > 0) covered++;
+        check("a night inside the repeated hour keeps its width on the row", row.nights.size() == 1 && covered == 8, covered + " steps of 5 minutes");
+    }
 
     /** The zone history: rows extend and open, a gap counts for the later zone. */
     static void zoneTable() throws Exception {
