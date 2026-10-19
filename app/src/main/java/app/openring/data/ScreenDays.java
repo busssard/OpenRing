@@ -118,8 +118,6 @@ public final class ScreenDays {
         /** Counted sessions and apps in front touching this day, for reading the clock by touch. */
         public List<double[]> sessions = Collections.emptyList();
         public Map<String, List<double[]>> dayApps = Collections.emptyMap();
-        /** Counted screen time with no app counted in front (time Android names no app for), minutes. */
-        public double noAppMin;
     }
 
     /** As below, with the clock and rows showing each session exactly as long as it was. */
@@ -195,9 +193,6 @@ public final class ScreenDays {
             in.appsKnown = appsFrom >= 0 && in.to > appsFrom;
             if (in.appsKnown) {
                 in.apps = ScreenTime.perApp(front, raw, in.from, in.to, 0);
-                double sum = 0;
-                for (Map.Entry<String, Double> e : in.apps) if (!excluded.contains(e.getKey())) sum += e.getValue();
-                in.noAppMin = Math.max(0, in.day.totalMin - sum);
                 in.appRows = ScreenTime.appRows(in.apps, excluded, in.day.totalMin, in.excludedMin);
             }
         }

@@ -574,12 +574,13 @@ public final class Db extends SQLiteOpenHelper {
                 for (double[] s : e.getValue()) {
                     if (!(s[1] > s[0])) continue;
                     double a = s[0], b = s[1];
-                    // grow the range over every row it reaches (old rows may overlap each other too)
+                    // grow the range over every row it reaches (old rows may overlap each other too); the
+                    // index on stop keeps this to the rows since the range starts, not the app's whole history
                     boolean grew = true;
                     while (grew) {
                         grew = false;
-                        Cursor c = db.rawQuery("SELECT start, stop FROM apps WHERE pkg = ? AND start <= ? AND stop >= ?",
-                                new String[] {e.getKey(), String.valueOf(b), String.valueOf(a)});
+                        Cursor c = db.rawQuery("SELECT start, stop FROM apps INDEXED BY apps_stop WHERE stop >= ? AND pkg = ? AND start <= ?",
+                                new String[] {String.valueOf(a), e.getKey(), String.valueOf(b)});
                         try {
                             while (c.moveToNext()) {
                                 if (c.getDouble(0) < a) {
@@ -595,7 +596,7 @@ public final class Db extends SQLiteOpenHelper {
                             c.close();
                         }
                     }
-                    db.execSQL("DELETE FROM apps WHERE pkg = ? AND start <= ? AND stop >= ?", new Object[] {e.getKey(), b, a});
+                    db.execSQL("DELETE FROM apps INDEXED BY apps_stop WHERE stop >= ? AND pkg = ? AND start <= ?", new Object[] {a, e.getKey(), b});
                     ContentValues cv = new ContentValues();
                     cv.put("pkg", e.getKey());
                     cv.put("start", a);

@@ -360,11 +360,13 @@ public final class ScreenTime {
      * the last read is the one that came to the front last, so the read sees it come to the front
      * again and gives its whole range; reading time already stored again changes nothing because
      * ranges are merged when stored ({@link #store}). Without any stored range: {@code screenFrom}.
+     * Never after {@code now}.
      */
-    public static double appsReadFrom(boolean firstRead, double back, double screenFrom, double newestAppStart) {
-        if (firstRead) return back;
-        if (newestAppStart < 0) return screenFrom;
-        return Math.max(back, newestAppStart);
+    public static double appsReadFrom(boolean firstRead, double back, double screenFrom, double newestAppStart, double now) {
+        if (firstRead) return Math.min(now, back);
+        if (newestAppStart < 0) return Math.min(now, screenFrom);
+        // a stored start in the future (the phone's clock was set back) must not stop reading the apps
+        return Math.min(now, Math.max(back, newestAppStart));
     }
 
     /** The ranges sorted, with ranges that overlap or touch joined into one. */
@@ -509,6 +511,7 @@ public final class ScreenTime {
         public final boolean excluded;
         /** How many apps the "Other apps" row holds (1 for an app, 0 for no app in front). */
         public final int apps;
+        /** Exact minutes (scaled down to the total in the rare case described at {@link ScreenTime#appRows}). */
         public final double exactMin;
         /** Whole minutes shown, rounded together with the other rows of its group so they add up. */
         public long shownMin;
@@ -527,8 +530,10 @@ public final class ScreenTime {
      * {@link #LIST_MIN_S} or more, then every app left out (always shown), then "Other apps" (the rest
      * together) and "No app in front" ({@code countedMin} minus all apps counted). Minutes are rounded
      * per group (largest remainder): the counted rows add up to the rounded {@code countedMin}, the
-     * rows left out to their rounded sum. "Other apps" and "No app in front" are dropped when they
-     * round to 0. {@code perApp} holds every app's exact minutes, most used first.
+     * rows left out to their rounded sum. A counted app whose row would round to 0m joins "Other
+     * apps"; "Other apps" and "No app in front" are dropped when they round to 0 (an app left out
+     * keeps its row). When old overlapping rows make the apps counted more than {@code countedMin},
+     * their minutes are scaled down to it. {@code perApp} holds every app's exact minutes, most used first.
      */
     public static List<AppRow> appRows(List<Map.Entry<String, Double>> perApp, Set<String> excluded, double countedMin) {
         return appRows(perApp, excluded, countedMin, Double.NaN);
@@ -539,30 +544,52 @@ public final class ScreenTime {
      * so unless old stored rows overlap), they are rounded to exactly its rounded value.
      */
     public static List<AppRow> appRows(List<Map.Entry<String, Double>> perApp, Set<String> excluded, double countedMin, double excludedMin) {
-        List<AppRow> counted = new ArrayList<AppRow>(), out = new ArrayList<AppRow>();
-        double other = 0, appsCounted = 0;
-        int others = 0, own = 0;
+        List<AppRow> out = new ArrayList<AppRow>();
+        List<Map.Entry<String, Double>> mine = new ArrayList<Map.Entry<String, Double>>();
+        double appsCounted = 0;
         for (Map.Entry<String, Double> e : perApp) {
-            double v = e.getValue();
-            if (excluded.contains(e.getKey())) {
-                out.add(new AppRow(AppRow.APP, e.getKey(), true, 1, v));
-                continue;
-            }
-            appsCounted += v;
-            if (own < LIST_APPS && v * 60 >= LIST_MIN_S - 1e-9) {
-                counted.add(new AppRow(AppRow.APP, e.getKey(), false, 1, v));
-                own++;
-            } else {
-                other += v;
-                others++;
+            if (excluded.contains(e.getKey())) out.add(new AppRow(AppRow.APP, e.getKey(), true, 1, e.getValue()));
+            else {
+                mine.add(e);
+                appsCounted += e.getValue();
             }
         }
-        if (others > 0) counted.add(new AppRow(AppRow.OTHER, null, false, others, other));
-        double none = Double.isNaN(countedMin) ? 0 : Math.max(0, countedMin - appsCounted);
-        if (none > 0) counted.add(new AppRow(AppRow.NO_APP, null, false, 0, none));
-        // with time left for "No app in front" the counted rows add up to countedMin exactly: round to
-        // the very number shown as the day's total (a sum of parts could round the other way at .5)
-        roundRows(counted, none > 0 ? Math.round(countedMin) : -1);
+        boolean known = !Double.isNaN(countedMin);
+        // old overlapping rows of a counted and a left out app can make the apps counted more than the
+        // total: they are scaled down to it, so the rows never add up to more than the total
+        double cap = known && appsCounted > countedMin ? Math.max(0, countedMin) / appsCounted : 1;
+        double none = known ? Math.max(0, countedMin - appsCounted) : 0;
+        // the rows counted add up to the very number shown as the day's total
+        long target = known ? Math.round(countedMin) : -1;
+        java.util.HashSet<String> small = new java.util.HashSet<String>();
+        List<AppRow> counted;
+        while (true) {
+            counted = new ArrayList<AppRow>();
+            double other = 0;
+            int others = 0, own = 0;
+            for (Map.Entry<String, Double> e : mine) {
+                double v = e.getValue() * cap;
+                if (own < LIST_APPS && !small.contains(e.getKey()) && e.getValue() * 60 >= LIST_MIN_S - 1e-9) {
+                    counted.add(new AppRow(AppRow.APP, e.getKey(), false, 1, v));
+                    own++;
+                } else {
+                    other += v;
+                    others++;
+                }
+            }
+            if (others > 0) counted.add(new AppRow(AppRow.OTHER, null, false, others, other));
+            if (none > 0) counted.add(new AppRow(AppRow.NO_APP, null, false, 0, none));
+            roundRows(counted, target);
+            // an app of its own that rounds to 0m joins "Other apps" instead
+            boolean moved = false;
+            for (AppRow r : counted) {
+                if (r.kind == AppRow.APP && r.shownMin == 0) {
+                    small.add(r.pkg);
+                    moved = true;
+                }
+            }
+            if (!moved) break;
+        }
         double left = 0;
         for (AppRow r : out) left += r.exactMin;
         roundRows(out, !out.isEmpty() && Math.abs(left - excludedMin) < 0.01 ? Math.round(excludedMin) : -1);
@@ -570,6 +597,14 @@ public final class ScreenTime {
         for (AppRow r : counted) if (r.kind == AppRow.APP || r.shownMin > 0) rows.add(r);
         rows.addAll(out);
         return rows;
+    }
+
+    /**
+     * The line shown instead of the list when it has no rows: no app at all, or apps that together
+     * stayed under a minute (they round to 0m).
+     */
+    public static String emptyListText(List<Map.Entry<String, Double>> perApp) {
+        return perApp.isEmpty() ? "No app was in front on this day." : "Apps were in front for less than a minute in all on this day.";
     }
 
     private static void roundRows(List<AppRow> rows, long target) {

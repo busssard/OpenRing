@@ -658,7 +658,7 @@ public class CoreTest {
             double screenFrom = screen.isEmpty() ? back : screen.lastKey();
             double newest = -1;
             for (List<double[]> l : apps.values()) for (double[] r : l) newest = Math.max(newest, r[0]);
-            double appFrom = ScreenTime.appsReadFrom(first, back, screenFrom, newest);
+            double appFrom = ScreenTime.appsReadFrom(first, back, screenFrom, newest, now);
             List<Double> at = new ArrayList<Double>(), st = new ArrayList<Double>();
             List<Integer> ak = new ArrayList<Integer>(), sk = new ArrayList<Integer>();
             List<String> ap = new ArrayList<String>();
@@ -750,10 +750,12 @@ public class CoreTest {
         check("lead: not after the screen went off", afterOff.isEmpty());
 
         // where the next read starts
-        check("read from: first read goes back", near(ScreenTime.appsReadFrom(true, 100, 500, 400), 100));
-        check("read from: the newest app", near(ScreenTime.appsReadFrom(false, 100, 500, 400), 400));
-        check("read from: never before back", near(ScreenTime.appsReadFrom(false, 100, 500, 50), 100));
-        check("read from: no app yet", near(ScreenTime.appsReadFrom(false, 100, 500, -1), 500));
+        check("read from: first read goes back", near(ScreenTime.appsReadFrom(true, 100, 500, 400, 1000), 100));
+        check("read from: the newest app", near(ScreenTime.appsReadFrom(false, 100, 500, 400, 1000), 400));
+        check("read from: never before back", near(ScreenTime.appsReadFrom(false, 100, 500, 50, 1000), 100));
+        check("read from: no app yet", near(ScreenTime.appsReadFrom(false, 100, 500, -1, 1000), 500));
+        check("read from: a stored start in the future does not stop reading", near(ScreenTime.appsReadFrom(false, 100, 500, 5000, 1000), 1000)
+                && near(ScreenTime.appsReadFrom(false, 100, 2000, -1, 1000), 1000));
 
         // merging and storing
         List<double[]> m = ScreenTime.mergeRanges(Arrays.asList(new double[] {30, 40}, new double[] {0, 10}, new double[] {10, 20}, new double[] {35, 50}, new double[] {5, 5}));
@@ -909,6 +911,39 @@ public class CoreTest {
         check("list: order is apps, Other apps, No app in front, then the ones left out", rows.get(8) == other && rows.get(9) == none && rows.get(10).excluded);
         check("list: an empty Other apps and no app in front are left out",
                 ScreenTime.appRows(per.subList(0, 3), new HashSet<String>(), 20 + 19 + 18).size() == 3);
+        // review of #84: no own row shows 0m, the cases of an empty list, counted rows never above the total
+        List<Map.Entry<String, Double>> tiny = new ArrayList<Map.Entry<String, Double>>();
+        tiny.add(new AbstractMap.SimpleEntry<String, Double>("a", 20 / 60.0));
+        check("empty list: one app of 20 s rounds away", ScreenTime.appRows(tiny, new HashSet<String>(), 20 / 60.0).isEmpty());
+        eq("empty list: says apps were in front for less than a minute", ScreenTime.emptyListText(tiny), "Apps were in front for less than a minute in all on this day.");
+        eq("empty list: no app at all", ScreenTime.emptyListText(new ArrayList<Map.Entry<String, Double>>()), "No app was in front on this day.");
+        List<Map.Entry<String, Double>> three = new ArrayList<Map.Entry<String, Double>>();
+        for (String p : new String[] {"a", "b", "c"}) three.add(new AbstractMap.SimpleEntry<String, Double>(p, 0.6));
+        List<ScreenTime.AppRow> r3 = ScreenTime.appRows(three, new HashSet<String>(), 1.8);
+        boolean zero = false;
+        long sum3 = 0;
+        for (ScreenTime.AppRow r : r3) {
+            zero |= r.kind == ScreenTime.AppRow.APP && r.shownMin == 0;
+            sum3 += r.shownMin;
+        }
+        check("an app that rounds to 0m joins Other apps, no own row shows 0m", !zero && r3.size() == 2 && sum3 == 2);
+        List<Map.Entry<String, Double>> over = new ArrayList<Map.Entry<String, Double>>();
+        over.add(new AbstractMap.SimpleEntry<String, Double>("a", 10.0));
+        over.add(new AbstractMap.SimpleEntry<String, Double>("b", 8.0));
+        List<ScreenTime.AppRow> ro = ScreenTime.appRows(over, new HashSet<String>(), 15.0);
+        check("old overlapping rows: counted rows capped at the total", ro.size() == 2 && ro.get(0).shownMin + ro.get(1).shownMin == 15
+                && Math.abs(ro.get(0).exactMin + ro.get(1).exactMin - 15) < 1e-9);
+        List<Map.Entry<String, Double>> full = new ArrayList<Map.Entry<String, Double>>();
+        full.add(new AbstractMap.SimpleEntry<String, Double>("launcher", 17.15));
+        full.add(new AbstractMap.SimpleEntry<String, Double>("b", 17.15));
+        full.add(new AbstractMap.SimpleEntry<String, Double>("c", 17.2));
+        List<ScreenTime.AppRow> rf = ScreenTime.appRows(full, new HashSet<String>(), 17.15 + 17.15 + 17.2);
+        long sumF = 0;
+        for (ScreenTime.AppRow r : rf) sumF += r.shownMin;
+        check("apps cover the whole total: no row for no app in front, rows add up to the total", rf.size() == 3 && sumF == 52);
+        List<Map.Entry<String, Double>> leftTiny = new ArrayList<Map.Entry<String, Double>>(tiny);
+        List<ScreenTime.AppRow> rl = ScreenTime.appRows(leftTiny, new HashSet<String>(Arrays.asList("a")), 0, 20 / 60.0);
+        check("an app left out keeps its row also under a minute", rl.size() == 1 && rl.get(0).excluded && rl.get(0).shownMin == 0);
         check("list: unknown total gives no row for no app in front", ScreenTime.appRows(per.subList(0, 1), new HashSet<String>(), Double.NaN).size() == 1);
     }
 

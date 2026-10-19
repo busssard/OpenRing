@@ -516,7 +516,9 @@ public class PipelineTest {
                     && wide.score.value == di.score.value, Math.round(exactMin) + " -> " + Math.round(wideMin) + " min shown");
             check("touch readout data: sessions and apps of the day", !wide.sessions.isEmpty() && !wide.dayApps.isEmpty()
                     && app.openring.core.analysis.ScreenTime.at(wide.sessions, wide.sessions.get(0)[0] + 1) != null, null);
-            check("no app in front is small in the demo", wide.noAppMin >= 0 && wide.noAppMin < 5, wide.noAppMin);
+            long noApp = 0;
+            for (ScreenTime.AppRow r : wide.appRows) if (r.kind == ScreenTime.AppRow.NO_APP) noApp += r.shownMin;
+            check("no app in front is small in the demo", noApp < 5, noApp);
             long rowsCounted = 0, rowsLeft = 0;
             for (ScreenTime.AppRow r : di.appRows) {
                 if (r.excluded) rowsLeft += r.shownMin;
@@ -1006,6 +1008,12 @@ public class PipelineTest {
                 && db.count("SELECT MIN(start) FROM apps") == (long) (t0 + 1005) && db.count("SELECT MAX(stop) FROM apps") == (long) (t0 + 1200)
                 && core.get(d).size() == 1 && core.get(d).get(0)[1] == t0 + 1200, db.count("SELECT COUNT(*) FROM apps"));
         check("newest app start for the next read", db.appsNewest() == t0 + 1005, db.appsNewest());
+        android.database.Cursor plan = db.getReadableDatabase().rawQuery("EXPLAIN QUERY PLAN SELECT start, stop FROM apps INDEXED BY apps_stop WHERE stop >= ? AND pkg = ? AND start <= ?",
+                new String[] {"1", d, "2"});
+        String how = "";
+        while (plan.moveToNext()) how += plan.getString(3);
+        plan.close();
+        check("merging looks only at rows since the new range starts (index on stop)", how.contains("apps_stop") && how.contains("stop>?"), how);
         // rows stored doubled by an older version: read merged, stored rows untouched until new ones join
         db.getWritableDatabase().execSQL("DELETE FROM apps");
         db.getWritableDatabase().execSQL("INSERT INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {d, t0 + 1005, t0 + 1100});

@@ -95,7 +95,7 @@ public final class ScreenUse {
         boolean firstApps = appsRule || db.kvLong("apps_read", 0) == 0;
         // later reads start at the newest stored app, so the app still in front at the last read is
         // seen coming to the front again and its time is neither counted twice nor lost (issue #71)
-        long appFrom = (long) Math.floor(ScreenTime.appsReadFrom(firstApps, back / 1000.0, screenFrom / 1000.0, db.appsNewest()) * 1000);
+        long appFrom = (long) Math.floor(ScreenTime.appsReadFrom(firstApps, back / 1000.0, screenFrom / 1000.0, db.appsNewest(), now / 1000.0) * 1000);
         long from = Math.min(screenFrom, appFrom);
         List<Double> times = new ArrayList<Double>();
         List<Integer> kinds = new ArrayList<Integer>();
