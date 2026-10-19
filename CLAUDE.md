@@ -37,6 +37,31 @@ completely, then read the two guides it points to before changing anything:
    or states: extend `.github/scripts/screens.sh`.
 6. Do not send APK files in chat; GitHub builds them.
 
+## Design instincts (what the owner kept pushing for; do it without being asked)
+Check every plan and PR against these before showing it:
+* **Partial version before "not possible".** Before calling an idea infeasible, list what the phone and
+  ring already have (sensors, history, Bluetooth signal, the person's profile) and offer the best rough
+  version with an honest error. Example: no triangulation with one phone, but a walked path with signal
+  strength on a mini map (#74).
+* **Show the evidence, then the estimate.** Let people see the raw picture (the signal trail, the night's
+  timeline, each use on the clock) next to any computed answer, so they can judge it themselves.
+* **Every chart is readable by touch.** Wherever there is time on an axis or a dial, touching it shows
+  the exact time and value (asked for the night timeline and again for the screen time clock).
+* **Display settings never change the numbers.** Smoothing, minimum mark lengths and detail levels
+  change how things look; totals, scores and the stored data stay exact (#9, the "each use shows as at
+  least" chips).
+* **A working feature is standard, not hidden.** Do not put something useful behind an opt in or a
+  settings switch; give it its proper place and ask for permissions in context. Rarely used extras
+  (the games) move out of prime spots instead.
+* **Same mechanism, same phase.** Features that reuse the same data or sensor ship together (direction
+  with signal strength, both from one scan).
+* **Check against a reference.** When another app or device measures the same thing, compare the
+  numbers and read how it counts before trusting ours (the screen time mismatch was found that way).
+* **No arbitrary limits, no quotas.** Do not cap work at a made up number and do not fill a quota:
+  zero findings is a valid result. Read the full history (issues, PRs, comments) before acting.
+* **Use the owner's material.** When he sends a sketch or a reference screenshot, build from it (own
+  drawing, his layout and colours from the app's palette), describe it in words instead of posting it.
+
 ## What Claude sessions can and cannot do here
 * Check CI with `gh api repos/busssard/OpenRing/commits/<sha>/check-runs`; the Actions API is
   blocked for Claude sessions.
