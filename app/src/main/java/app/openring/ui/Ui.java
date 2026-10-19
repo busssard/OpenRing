@@ -219,6 +219,17 @@ public final class Ui {
         return l;
     }
 
+    /** A stat tile with a short grey line under it that says what the number is (issue #32). */
+    public static LinearLayout stat(Context c, String label, String value, String unit, int accent, String note) {
+        LinearLayout l = stat(c, label, value, unit, accent);
+        if (note != null && !note.isEmpty()) {
+            TextView n = text(c, note, 11, TEXT_3, REGULAR);
+            n.setPadding(0, dp(c, 4), dp(c, 6), 0);
+            l.addView(n);
+        }
+        return l;
+    }
+
     /** A grid row of stat tiles with equal widths. */
     public static LinearLayout statRow(Context c, View... tiles) {
         LinearLayout row = hbox(c);

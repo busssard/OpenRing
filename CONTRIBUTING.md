@@ -23,7 +23,7 @@ Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) (build, test, release, common ta
 1. Branch from `main`, keep the change focused.
 2. Run `./tests/run_tests.sh`, `./tests/run_pipeline.sh`, `./tests/check_privacy.sh` and
    `./tests/check_version.sh`.
-3. For a change users will notice, bump the version and add a CHANGELOG section (see DEVELOPMENT.md).
+3. For a change users will notice, add one note in `changes/` (see `changes/README.md`); the version is counted from them.
 4. Open a pull request explaining what, why and how you tested; the template has a checklist. When the
    emulator test has run, look at the screenshots of your change.
 

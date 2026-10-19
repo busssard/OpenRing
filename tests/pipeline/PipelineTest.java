@@ -287,6 +287,39 @@ public class PipelineTest {
             JSONObject on = Json.parse(db.nightsJson(key, key, true).get(0));
             check("switch on again: phone use counts again", Math.abs(on.optDouble("start") - (s0 + 900)) < 1, null);
 
+            // issue #41: a 20 s check split 10 s and 10 s over a step border counts as awake
+            int[] onRaw = Json.stagesRaw(on);
+            double oStart = on.optDouble("start"), oStep = (on.optDouble("end") - oStart) / onRaw.length;
+            int j = (int) (3 * 3600 / oStep);
+            double border = oStart + (j + 1) * oStep;
+            List<double[]> split = new ArrayList<double[]>();
+            split.add(new double[] {border - 10, border + 10});
+            db.putScreen(split);
+            db.reanalyseFrom(border - 10);
+            Analyzer.run(ctx, null);
+            JSONObject withSplit = Json.parse(db.nightsJson(key, key, true).get(0));
+            check("a 20 s check over a step border counts as awake (#41)", Json.stagesRaw(withSplit)[j] == 4
+                    && Math.abs(withSplit.optDouble("phone_min") - on.optDouble("phone_min") - oStep / 60) < 0.01,
+                    on.opt("phone_min") + " to " + withSplit.opt("phone_min"));
+            check("the awake rule version is stored", db.kvLong("phone_awake", -1) == ScreenTime.AWAKE_RULE, db.kvLong("phone_awake", -1));
+            // a database from before the rule version: the nights with screen data are analysed again once.
+            // The night is deleted and the analysis set to redo only the days after it, so a night
+            // that comes back shows the re analysis.
+            db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {key});
+            db.put("analyzed_until", (long) (e0 + 5 * 86400));
+            Analyzer.run(ctx, null);
+            check("same awake rule: the next sync stays incremental", db.nightsJson(key, key, true).isEmpty(), null);
+            db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {key});
+            db.put("analyzed_until", (long) (e0 + 5 * 86400));
+            db.put("phone_awake", null);
+            Analyzer.run(ctx, null);
+            check("older awake rule: nights with screen data are analysed again (#41)", db.nightsJson(key, key, true).size() == 1
+                    && db.kvLong("phone_awake", -1) == ScreenTime.AWAKE_RULE, null);
+            // the extra check is gone again for the tests below
+            db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {border - 10});
+            db.reanalyseFrom(border - 10);
+            Analyzer.run(ctx, null);
+
             // the couch: phone in use for the whole of a short window, it is not a night
             String key0 = day0.toString();
             JSONObject n0 = Json.parse(db.nightsJson(key0, key0, true).get(0));
@@ -400,6 +433,8 @@ public class PipelineTest {
                 new java.util.TreeSet<String>(java.util.Arrays.asList("com.google.android.apps.maps", "org.osmand"))), app.openring.data.Prefs.of(phone2).screenExcluded());
         check("restored games switch", app.openring.data.Prefs.of(phone2).gamesOn(), null);
         check("restored history keeps screen time", Db.get(phone2).count("SELECT COUNT(*) FROM screen") == 3, Db.get(phone2).count("SELECT COUNT(*) FROM screen"));
+        check("restored history keeps the zone history (#22)", Db.get(phone2).zones().size() == Db.get(ctx).zones().size()
+                && !Db.get(phone2).zones().isEmpty() && Db.get(phone2).zones().get(0)[2].equals(Db.get(ctx).zones().get(0)[2]), Db.get(phone2).zones().size());
         long eventsAfter = Db.get(phone2).count("SELECT COUNT(*) FROM events");
         check("restored history", eventsAfter == eventsBefore, eventsBefore + " -> " + eventsAfter);
         app.openring.data.Backup.Result bs = app.openring.data.Backup.read(phone2, new java.io.ByteArrayInputStream(small.toByteArray()));
@@ -421,6 +456,8 @@ public class PipelineTest {
         app.openring.data.SleepHistory dh = app.openring.data.SleepHistory.load(demo, "2000-01-01", "2100-01-01", java.time.ZoneId.systemDefault());
         check("demo nights look like real nights", dh.asleepMin > 330 && dh.asleepMin < 560 && dh.awakeMin > 10 && dh.deepMin > 20 && dh.remMin > 20,
                 String.format(java.util.Locale.US, "asleep %.0f, awake %.0f, deep %.0f, rem %.0f, score %.0f", dh.asleepMin, dh.awakeMin, dh.deepMin, dh.remMin, dh.score));
+        check("demo notes no time zones, so its nights look as before (#22)", demo.zones().isEmpty()
+                && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
         // issue #44: the first demo days count the worn days so far, later ones a full week as before
         int firstWorn = -1, fullWeek = 0, weekDays = 0;
@@ -526,12 +563,16 @@ public class PipelineTest {
                 && "2026-04-12".equals(springNewest.optString("day")), springNewest.optString("day"));
         app.openring.data.Demo.leave(phone3);
 
+        longWakeChecks();
         demoTwice();
         oldNights();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
         longHistoryTiming();
         activityGap();
+        zoneTable();
+        travelZones();
+        zoneStorage(full.toByteArray());
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -903,6 +944,226 @@ public class PipelineTest {
         check("older filter rules: every night is analysed again once (#28)", db.count("SELECT COUNT(*) FROM nights") == nights
                 && "2024-05-02".equals(again.optString("day")) && db.kvLong("stage_filter", -1) == version,
                 db.count("SELECT COUNT(*) FROM nights") + " nights, oldest " + again.optString("day"));
+    }
+
+    // ------------------------------------------------------------ issue #22, travel
+
+    /** The zone history: rows extend and open, a gap counts for the later zone. */
+    static void zoneTable() throws Exception {
+        Db db = Db.get(freshDb("openring-zones"));
+        check("no zone known before the first note", db.zoneAt(1000) == null, null);
+        check("first note opens a row", Double.isNaN(db.noteZone(1000, "Europe/Zurich")), null);
+        check("first row starts at 0", db.zones().size() == 1 && (Double) db.zones().get(0)[0] == 0 && (Double) db.zones().get(0)[1] == 1000, null);
+        check("same zone extends the row", Double.isNaN(db.noteZone(2000, "Europe/Zurich")) && db.zones().size() == 1
+                && (Double) db.zones().get(0)[1] == 2000, db.zones().size());
+        check("a new zone opens a row and returns the end of the last", db.noteZone(3000, "America/New_York") == 2000
+                && db.zones().size() == 2 && (Double) db.zones().get(1)[0] == 3000, db.zones().size());
+        db.noteZone(1500, "America/New_York");
+        check("an older note does not shorten a row", (Double) db.zones().get(1)[1] == 3000, db.zones().get(1)[1]);
+        db.noteZone(2500, "Europe/Zurich");
+        List<Object[]> z = db.zones();
+        check("a clock set back never makes rows overlap", z.size() == 3 && (Double) z.get(2)[0] > (Double) z.get(1)[1], z.size());
+        check("zone inside a row", "Europe/Zurich".equals(db.zoneAt(500)) && "Europe/Zurich".equals(db.zoneAt(2000)), db.zoneAt(500));
+        check("zone in a gap is the later one", "America/New_York".equals(db.zoneAt(2500)), db.zoneAt(2500));
+        check("zone after the newest row is the newest", "Europe/Zurich".equals(db.zoneAt(1e10)), db.zoneAt(1e10));
+        check("an empty id is not noted", Double.isNaN(db.noteZone(5000, "")) && db.zones().size() == 3, null);
+        // Analyzer.noteZone: a clock set far ahead is ignored, a zone with the same clock analyses nothing again
+        double now = System.currentTimeMillis() / 1000.0;
+        Db a = Db.get(freshDb("openring-zones-clamp"));
+        Analyzer.noteZone(a, now - 86400 * 3, ZoneId.of("Europe/Zurich"), Double.NaN);
+        check("a time two days after this phone's clock is ignored", !Analyzer.noteZone(a, now + 2 * 86400, ZoneId.of("America/New_York"), Double.NaN)
+                && a.zones().size() == 1, a.zones().size());
+        check("a time over a day after the newest event is ignored", !Analyzer.noteZone(a, now, ZoneId.of("America/New_York"), now - 3 * 86400)
+                && a.zones().size() == 1, a.zones().size());
+        a.put("analyzed_until", (long) now);
+        check("Zurich to Paris: a new row, nothing analysed again", !Analyzer.noteZone(a, now - 86400, ZoneId.of("Europe/Paris"), Double.NaN)
+                && a.zones().size() == 2 && a.kvLong("analyzed_until", 0) == (long) now, a.kvLong("analyzed_until", 0));
+        check("Paris to New York: the nights since are analysed again", Analyzer.noteZone(a, now - 3600, ZoneId.of("America/New_York"), now)
+                && a.zones().size() == 3 && a.kvLong("analyzed_until", 0) == (long) (now - 86400), a.kvLong("analyzed_until", 0));
+        db = Db.get(freshDb("openring-zones-2"));
+        db.noteZone(1000, "Europe/Zurich");
+        db.noteZone(2000, "America/New_York");
+        check("the zone before a gap", "Europe/Zurich".equals(db.zoneBeforeGap(1500)) && db.zoneBeforeGap(500) == null
+                && db.zoneBeforeGap(3000) == null, db.zoneBeforeGap(1500));
+        db.noteZone(4000, "Europe/Zurich");
+        db.noteZone(5000, "Europe/Zurich");
+        db.noteZone(6000, "Europe/Zurich");
+        db.resetAnalysis();
+        check("a full re analysis keeps the zone history", db.zones().size() == 3, db.zones().size());
+        db.resetAll();
+        check("delete all local data deletes it", db.zones().isEmpty(), db.zones().size());
+    }
+
+    /**
+     * A trip (issue #22): 10 nights in Zurich, a flight, 5 nights in New York, analysed with the phone in
+     * New York. Each night keeps the zone it was slept in, its day and its score, also after Re analyse all.
+     */
+    static void travelZones() throws Exception {
+        java.util.TimeZone keep = java.util.TimeZone.getDefault();
+        ZoneId zh = ZoneId.of("Europe/Zurich"), ny = ZoneId.of("America/New_York");
+        long t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond(), end0 = t0 + 11 * 86400L + 12 * 3600;
+        long t1 = LocalDate.parse("2026-09-13").atStartOfDay(ny).toEpochSecond(), end1 = t1 + 6 * 86400L + 12 * 3600;
+        List<RingEvent> home = app.openring.data.Demo.history(t0, 10, end0, zh, new Random(21));
+        List<RingEvent> away = app.openring.data.Demo.history(t1, 5, end1, ny, new Random(22));
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/Zurich"));
+            // the same Zurich nights alone, analysed at home: the reference
+            Context ref = freshDb("openring-home");
+            Db rdb = Db.get(ref);
+            putBoot(rdb, home, 1, t0, end0);
+            Analyzer.run(ref, null);
+            java.util.Map<Double, JSONObject> homeNights = new java.util.HashMap<Double, JSONObject>();
+            for (String js : rdb.nightsJson("2000-01-01", "2100-01-01", false)) homeNights.put(Json.d(Json.parse(js), "start"), Json.parse(js));
+
+            Context c = freshDb("openring-trip");
+            Db db = Db.get(c);
+            // the phone notes its zone each morning; the flight is on 12 September, the first note in New York
+            // is the morning of the 14th, after the first night there
+            for (int d = 2; d <= 12; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(zh).toEpochSecond(), "Europe/Zurich");
+            for (int d = 14; d <= 19; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(ny).toEpochSecond(), "America/New_York");
+            putBoot(db, home, 1, t0, end0);
+            putBoot(db, away, 2, t1, end1);
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"));
+            Analyzer.runAll(c, null);
+            tripChecks(db, homeNights, "with the phone in New York");
+            // #45: back home, Re analyse all again; nothing moves
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/Zurich"));
+            Analyzer.runAll(c, null);
+            tripChecks(db, homeNights, "back home, after Re analyse all");
+
+            // flying far west: nights between two notes count in Los Angeles but keep their Zurich date, so
+            // no two nights share a day and none becomes a nap
+            Context w = freshDb("openring-west");
+            Db wdb = Db.get(w);
+            for (int d = 2; d <= 8; d++) wdb.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(zh).toEpochSecond(), "Europe/Zurich");
+            wdb.noteZone(LocalDate.parse("2026-09-13").atTime(8, 0).atZone(ZoneId.of("America/Los_Angeles")).toEpochSecond(), "America/Los_Angeles");
+            putBoot(wdb, home, 1, t0, end0);
+            Analyzer.runAll(w, null);
+            java.util.Set<String> wdays = new java.util.HashSet<String>();
+            int la = 0, collide = 0;
+            for (String js : wdb.nightsJson("2000-01-01", "2100-01-01", false)) {
+                JSONObject o = Json.parse(js);
+                if ("America/Los_Angeles".equals(o.optString("zone"))) la++;
+                if (!wdays.add(o.optString("day"))) collide++;
+                JSONObject h = homeNights.get(Json.d(o, "start"));
+                if (h == null || !h.optString("day").equals(o.optString("day"))) collide++;
+            }
+            check("west: nights between the notes count in Los Angeles", la >= 3, la + " nights");
+            check("west: no night lands on the day before, none becomes a nap", collide == 0
+                    && wdb.count("SELECT COUNT(*) FROM nights WHERE main = 1") == rdb.count("SELECT COUNT(*) FROM nights WHERE main = 1"), collide + " collisions");
+        } finally {
+            java.util.TimeZone.setDefault(keep);
+        }
+    }
+
+    static void putBoot(Db db, List<RingEvent> ev, int epoch, long t0, long end) {
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), epoch, end);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(epoch, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+    }
+
+    static void tripChecks(Db db, java.util.Map<Double, JSONObject> homeNights, String when) {
+        ZoneId zh = ZoneId.of("Europe/Zurich"), ny = ZoneId.of("America/New_York");
+        List<JSONObject> main = new ArrayList<JSONObject>();
+        for (String js : db.nightsJson("2000-01-01", "2100-01-01", true)) main.add(Json.parse(js));
+        int zurich = 0, newYork = 0, sameDay = 0, sameScore = 0, ownClock = 0;
+        String firstNy = null;
+        for (JSONObject o : main) {
+            String z = o.optString("zone");
+            ZoneId oz = "Europe/Zurich".equals(z) ? zh : ny;
+            if ("Europe/Zurich".equals(z)) {
+                zurich++;
+                JSONObject h = homeNights.get(Json.d(o, "start"));
+                if (h != null && h.optString("day").equals(o.optString("day"))) sameDay++;
+                if (h != null && h.optJSONObject("score").optInt("value") == o.optJSONObject("score").optInt("value")) sameScore++;
+            } else if ("America/New_York".equals(z)) {
+                newYork++;
+                if (firstNy == null) firstNy = o.optString("day");
+            }
+            double m = clockFromNoon(Json.d(o, "sleep_start"), oz);
+            if (m > 9 * 60 && m < 13 * 60) ownClock++; // between 21:00 and 01:00 on its own clock
+            if (!o.optString("day").equals(java.time.Instant.ofEpochSecond((long) Json.d(o, "end")).atZone(oz).toLocalDate().toString())) ownClock -= 100;
+        }
+        check("trip " + when + ": nights keep their zones", zurich >= 9 && newYork >= 4 && zurich + newYork == main.size(),
+                zurich + " Zurich, " + newYork + " New York of " + main.size());
+        check("trip " + when + ": Zurich nights keep their days and scores", sameDay == zurich && sameScore == zurich,
+                sameDay + " days, " + sameScore + " scores of " + zurich);
+        check("trip " + when + ": each night falls asleep in the evening on its own clock, its day in its own zone", ownClock == main.size(),
+                ownClock + " of " + main.size());
+        check("trip " + when + ": the night before the first note there counts in New York", "2026-09-14".equals(firstNy), firstNy);
+        app.openring.data.SleepHistory h = app.openring.data.SleepHistory.of(main, ZoneId.systemDefault());
+        List<JSONObject> bare = new ArrayList<JSONObject>();
+        for (JSONObject o : main) {
+            JSONObject x = Json.parse(o.toString());
+            x.remove("zone");
+            bare.add(x);
+        }
+        app.openring.data.SleepHistory hb = app.openring.data.SleepHistory.of(bare, ZoneId.systemDefault());
+        check("trip " + when + ": typical bedtime uses each night's clock", h.bedtimeMin > 21 * 60 && h.bedtimeMin < 24 * 60
+                && h.bedtimeSdMin < 60 && hb.bedtimeSdMin > 120, Math.round(h.bedtimeMin) + " min, spread " + Math.round(h.bedtimeSdMin)
+                + " (without zones " + Math.round(hb.bedtimeSdMin) + ")");
+        JSONObject nyDay = Json.parse(db.dayJson("2026-09-15"));
+        check("trip " + when + ": a day in New York is analysed", nyDay != null && nyDay.has("readiness"), null);
+        JSONObject prev = null, first = null;
+        for (JSONObject o : main) {
+            if ("2026-09-14".equals(o.optString("day"))) first = o;
+            else if (first == null) prev = o;
+        }
+        String line = first == null || prev == null ? null : app.openring.core.analysis.ClockChange.travel(prev.optString("zone"),
+                first.optString("zone"), (Json.d(first, "start") + Json.d(first, "end")) / 2);
+        check("trip " + when + ": the first night away gets the orange line",
+                "Times this night are in New York time, 6 hours behind where you slept the night before.".equals(line), line);
+    }
+
+    /** Schema 4 to 5 (#22): an old database and an old full backup still open, with all rows and an empty zone table. */
+    static void zoneStorage(byte[] full) throws Exception {
+        byte[] v5 = zipEntry(full, "openring.db");
+        java.io.File f = Files.createTempFile("v4", ".db").toFile();
+        Files.write(f.toPath(), v5);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("DROP TABLE zones");
+            st.execute("PRAGMA user_version = 4");
+        }
+        byte[] v4 = Files.readAllBytes(f.toPath());
+        // the old database file on the phone, opened by the new version
+        Context c = freshDb("openring-v4");
+        Files.write(c.getDatabasePath(Db.REAL).toPath(), v4);
+        long[] before = counts(f);
+        Db db = Db.get(c);
+        long[] after = {db.count("SELECT COUNT(*) FROM events"), db.count("SELECT COUNT(*) FROM nights"), db.count("SELECT COUNT(*) FROM days"),
+            db.count("SELECT COUNT(*) FROM screen"), db.count("SELECT COUNT(*) FROM kv")};
+        check("a schema 4 database opens with all its rows", Arrays.equals(before, after) && before[0] > 0 && before[1] > 0,
+                Arrays.toString(before) + " -> " + Arrays.toString(after));
+        check("it becomes schema 5 with an empty zone table", db.getReadableDatabase().getVersion() == 5 && db.zones().isEmpty()
+                && db.count("SELECT COUNT(*) FROM sqlite_master WHERE name = 'zones'") == 1, db.getReadableDatabase().getVersion());
+        Analyzer.run(c, null);
+        check("the first run after the update notes the zone from 0", db.zones().size() == 1 && (Double) db.zones().get(0)[0] == 0
+                && ZoneId.systemDefault().getId().equals(db.zones().get(0)[2]), db.zones().size());
+        // a full backup made by 1.25 or earlier
+        Context ph = freshDb("openring-v4-restore");
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(withDb(full, v4)));
+        Db rd = Db.get(ph);
+        check("a schema 4 backup still restores", r.ok && r.history && rd.count("SELECT COUNT(*) FROM events") == before[0]
+                && rd.count("SELECT COUNT(*) FROM nights") == before[1] && rd.zones().isEmpty(), r.message);
+        // and a backup from a newer schema is refused whole, as before
+        app.openring.data.Backup.Result rn = app.openring.data.Backup.read(freshDb("openring-v6"), new java.io.ByteArrayInputStream(withDb(full, withVersion(v5, 6))));
+        check("a backup from a newer schema is refused", !rn.ok, rn.message);
+    }
+
+    static long[] counts(java.io.File f) throws Exception {
+        long[] out = new long[5];
+        String[] t = {"events", "nights", "days", "screen", "kv"};
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            for (int i = 0; i < t.length; i++) {
+                try (java.sql.ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM " + t[i])) {
+                    rs.next();
+                    out[i] = rs.getLong(1);
+                }
+            }
+        }
+        return out;
     }
 
     /** Clock minutes after 12:00 the day before (so 23:00 is 660, 07:00 is 1140). */
@@ -1324,6 +1585,8 @@ public class PipelineTest {
         db.put("stage_detail", app.openring.data.Prefs.of(c).stageDetail());
         db.put("stage_filter", app.openring.core.analysis.StageFilter.VERSION);
         db.put("screen_awake", 1);
+        db.put("night_finder", app.openring.core.analysis.NightFinder.VERSION);
+        db.put("phone_awake", app.openring.core.analysis.ScreenTime.AWAKE_RULE);
         t = System.nanoTime();
         Analyzer.run(c, null);
         long incMs = (System.nanoTime() - t) / 1000000;
@@ -1331,5 +1594,178 @@ public class PipelineTest {
         check("long history: incremental analysis stays incremental", db.kvLong("analyzed_until", 0) >= (long) range[1] && db.count("SELECT COUNT(*) FROM nights") < 10,
                 db.count("SELECT COUNT(*) FROM nights") + " nights");
         db.close();
+    }
+
+    // ---------------------------------------------------------------- long wake ups (issue #42)
+
+    /** Local clock time on 2026-10-1x as unix seconds; hour may pass 24 for the next morning. */
+    static double at(LocalDate d, double hour) {
+        return d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + hour * 3600;
+    }
+
+    /**
+     * One worn stretch {from, to} with the ring's streams: sleep_state asleep (awake inside
+     * {@code awake} stretches and in the first and last 10 minutes), heart rate, HRV, motion, temperature.
+     */
+    static void wornSleep(List<RingEvent> ev, double from, double to, List<double[]> awake, long t0, long ds0) {
+        for (double t = from; t < to; t += 60) {
+            boolean aw = t < from + 600 || t >= to - 600;
+            for (double[] a : awake) if (t >= a[0] && t < a[1]) aw = true;
+            long d = ds0 + Math.round((t - t0) * 10);
+            if (((long) (t - from)) % 300 == 0) {
+                int hr = aw ? 68 + rnd.nextInt(4) : 54 + rnd.nextInt(4);
+                byte[] spi = new byte[10];
+                spi[0] = (byte) (hr * 2);
+                spi[4] = (byte) Math.round((14 + rnd.nextGaussian() * 0.5) * 8);
+                spi[6] = (byte) (aw ? 20 : 0);
+                spi[7] = (byte) (aw ? 0 : 1);
+                spi[9] = 0x10;
+                ev.add(new RingEvent(EventCodec.SLEEP_PERIOD_INFO_2, d, spi));
+                byte[] hrv = new byte[2];
+                hrv[0] = (byte) hr;
+                hrv[1] = (byte) (aw ? 30 : 55 + rnd.nextInt(10));
+                ev.add(new RingEvent(EventCodec.HRV_EVENT, d, hrv));
+            }
+            ev.add(new RingEvent(EventCodec.MOTION_EVENT, d, new byte[] {(byte) (aw ? 14 : (rnd.nextDouble() < 0.03 ? 5 : 0)), 1, 2, 3}));
+            ev.add(new RingEvent(EventCodec.SLEEP_TEMP_EVENT, d, le16((int) Math.round((35.3 + rnd.nextGaussian() * 0.04) * 100))));
+        }
+    }
+
+    /** Runs one synthetic history through the real Db and Analyzer; returns the database. */
+    static Db runSynthetic(List<RingEvent> ev, long t0, long ds0, double now) throws Exception {
+        Context c = freshDb("openring42"); // each scenario on its own empty phone
+        Db db = Db.get(c);
+        java.util.Collections.sort(ev, new java.util.Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        db.insertBatch(ev, 1, (long) now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - ds0) / 10);
+        Analyzer.run(c, null);
+        return db;
+    }
+
+    /**
+     * A night 23:00 to 07:00 with one wake up of {@code wakeMin} minutes from 02:30, optionally a
+     * bedtime marker, a nap 13:30 to 15:00 the day after and the next night as well.
+     */
+    static Db longWakeNight(LocalDate d, int wakeMin, boolean marker, boolean napAndNextNight) throws Exception {
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        double bed = at(d, -1), up = at(d, 7), w0 = at(d, 2.5), w1 = w0 + wakeMin * 60;
+        List<double[]> awake = new ArrayList<double[]>();
+        if (wakeMin > 0) awake.add(new double[] {w0, w1});
+        wornSleep(ev, bed, up, awake, t0, ds0);
+        if (marker) {
+            byte[] bt = new byte[8];
+            Protocol.Le.putU32(bt, 0, ds0 + Math.round((bed - t0) * 10));
+            Protocol.Le.putU32(bt, 4, ds0 + Math.round((up - t0) * 10));
+            ev.add(new RingEvent(EventCodec.BEDTIME_PERIOD, ds0 + Math.round((up + 600 - t0) * 10), bt));
+        }
+        double now = up + 1800;
+        if (napAndNextNight) {
+            wornSleep(ev, at(d, 13.5), at(d, 15), new ArrayList<double[]>(), t0, ds0);
+            wornSleep(ev, at(d, 23), at(d, 31), new ArrayList<double[]>(), t0, ds0);
+            now = at(d, 31.5);
+        }
+        return runSynthetic(ev, t0, ds0, now);
+    }
+
+    static JSONObject mainNight(Db db, LocalDate d) {
+        List<String> m = db.nightsJson(d.toString(), d.toString(), true);
+        return m.size() == 1 ? Json.parse(m.get(0)) : null;
+    }
+
+    static String describe(JSONObject n) {
+        if (n == null) return "no single main night";
+        JSONObject sc = n.optJSONObject("score");
+        return String.format(java.util.Locale.US, "%.0f min asleep, %d wake ups, %.0f min awake, score %s",
+                n.optDouble("asleep_min"), n.optInt("awakenings"), n.optDouble("waso_min"), sc == null ? "-" : sc.opt("value"));
+    }
+
+    static void longWakeChecks() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        int[] score = new int[4];
+        String[] cases = {"sleeping through", "75 min", "120 min", "200 min"};
+        int[] wakes = {0, 75, 120, 200};
+        for (int k = 0; k < 4; k++) {
+            for (boolean marker : new boolean[] {false, true}) {
+                Db db = longWakeNight(d, wakes[k], marker, false);
+                List<String> all = db.nightsJson(d.toString(), d.toString(), false);
+                JSONObject n = mainNight(db, d);
+                String how = "#42 " + cases[k] + (marker ? " with" : " without") + " bedtime marker";
+                System.out.println("    " + how + ": " + all.size() + " sleeps, main " + describe(n));
+                if (k == 1 && !marker) check("#42 the rules version is noted, so a new one re analyses all nights",
+                        db.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION, db.kvLong("night_finder", 0));
+                if (n == null) {
+                    check(how + " has a main night", false, all.size());
+                    continue;
+                }
+                double asleep = n.optDouble("asleep_min"), waso = n.optDouble("waso_min");
+                int sc = n.optJSONObject("score").optInt("value");
+                if (k == 0) {
+                    check(how + ": one night of 7 hours or more", all.size() == 1 && asleep >= 420, describe(n));
+                    if (!marker) score[0] = sc;
+                } else if (k < 3) {
+                    double sleep = 480 - wakes[k] - 20;
+                    check(how + ": one night, the wake up inside it", all.size() == 1 && n.optInt("awakenings") >= 1
+                            && Math.abs(waso - wakes[k]) <= 15 && Math.abs(asleep - sleep) <= 25, describe(n));
+                    check(how + ": scores lower than sleeping through", sc < score[0] - 5, sc + " vs " + score[0]);
+                    if (!marker) score[k] = sc;
+                    check(how + ": latency " + (marker ? "from the marker" : "stays 0 without a marker"),
+                            marker || n.optDouble("latency_min") <= 1, n.opt("latency_min"));
+                } else if (marker) {
+                    check(how + ": the marker keeps one night", all.size() == 1, describe(n));
+                } else {
+                    check(how + ": over 3 hours stays two sleeps, the longer one is the night", all.size() == 2
+                            && asleep > 150 && asleep < 220, all.size() + " sleeps, " + describe(n));
+                }
+            }
+        }
+        check("#42 a longer wake up scores lower", score[2] < score[1], score[1] + " then " + score[2]);
+        // a nap in the afternoon stays a nap, and the next night is its own night
+        Db db = longWakeNight(d, 75, false, true);
+        List<String> today = db.nightsJson(d.toString(), d.toString(), false);
+        JSONObject next = mainNight(db, d.plusDays(1));
+        check("#42 afternoon nap stays a nap next to the joined night", today.size() == 2 && mainNight(db, d) != null
+                && Math.abs(mainNight(db, d).optDouble("asleep_min") - 385) <= 25, today.size() + " sleeps, " + describe(mainNight(db, d)));
+        check("#42 the next night stays its own night", next != null && next.optDouble("asleep_min") >= 420
+                && db.nightsJson(d.plusDays(1).toString(), d.plusDays(1).toString(), false).size() == 1, describe(next));
+        // falling asleep on the sofa in the evening (19:30 to 21:00), bed at 23:30: the gap's middle is
+        // before 23:00, so the sofa stays a nap
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        List<double[]> none = new ArrayList<double[]>();
+        wornSleep(ev, at(d, 19.5), at(d, 21), none, t0, ds0);
+        wornSleep(ev, at(d, 21), at(d, 23.5), java.util.Collections.singletonList(new double[] {at(d, 21), at(d, 23.5)}), t0, ds0);
+        wornSleep(ev, at(d, 23.5), at(d, 31), none, t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 31.5));
+        List<String> evening = db.nightsJson(d.toString(), d.plusDays(1).toString(), false);
+        JSONObject night = mainNight(db, d.plusDays(1));
+        check("#42 evening sofa sleep stays a nap", evening.size() == 2 && night != null && night.optDouble("asleep_min") < 440
+                && night.optDouble("asleep_min") > 380, evening.size() + " sleeps, " + describe(night));
+        // review of #42: sofa 20:30 to 22:30, awake to 00:30, bed to 07:30: the sofa stays its own sleep
+        ev = new ArrayList<RingEvent>();
+        wornSleep(ev, at(d, 20.5), at(d, 31.5), java.util.Collections.singletonList(new double[] {at(d, 22.5), at(d, 24.5)}), t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 32));
+        JSONObject sofa = mainNight(db, d), bedNight = mainNight(db, d.plusDays(1));
+        check("#42 sofa sleep from 20:30 and a wake up to 00:30 stay two sleeps", sofa != null && bedNight != null
+                && sofa.optDouble("asleep_min") < 130 && bedNight.optDouble("asleep_min") < 420
+                && db.nightsJson(d.plusDays(1).toString(), d.plusDays(1).toString(), false).size() == 1,
+                describe(sofa) + " / " + describe(bedNight));
+        // asleep 23:00 to 04:00, up 04:00 to 06:30, nap 06:30 to 08:00: the night is not stretched past getting up
+        ev = new ArrayList<RingEvent>();
+        wornSleep(ev, at(d, -1), at(d, 8), java.util.Collections.singletonList(new double[] {at(d, 4), at(d, 6.5)}), t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 8.5));
+        List<String> morning = db.nightsJson(d.toString(), d.toString(), false);
+        JSONObject early = mainNight(db, d);
+        check("#42 nap after getting up at 04:00 stays a nap", morning.size() == 2 && early != null
+                && early.optDouble("asleep_min") > 250 && early.optDouble("asleep_min") < 310, morning.size() + " sleeps, " + describe(early));
+        freshDb("openring42-done"); // the next test opens its own phone
     }
 }

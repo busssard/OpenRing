@@ -23,6 +23,8 @@ public final class NightAnalyzer {
         public int stageDetail = StageFilter.DETAILED; // how much stage detail to keep (issue #9)
         /** Phone screen sessions {start, end} near the window; time with the screen on counts as awake (issue #13). */
         public java.util.List<double[]> screen = new java.util.ArrayList<double[]>();
+        /** Wake ups in the middle of the night the ring calls awake {start, end}, from {@link NightFinder} (issue #42). */
+        public java.util.List<double[]> ringAwake = new java.util.ArrayList<double[]>();
     }
 
     public static Night analyze(Input in) {
@@ -71,6 +73,12 @@ public final class NightAnalyzer {
             int steps = ScreenTime.markAwake(stages, in.start, in.end, in.screen);
             n.phoneMin = steps * (in.end - in.start) / stages.length / 60.0;
         }
+        // a long wake up in the middle of the night that joined two pieces (issue #42): the ring
+        // says awake, so it is awake even when heart rate and movement look calm. Only adds awake time.
+        if (!in.ringAwake.isEmpty()) {
+            stages = stages.clone();
+            ScreenTime.markAwake(stages, in.start, in.end, in.ringAwake);
+        }
         // detail filter: metrics and the score use the filtered stages; the stager's output is kept
         // so Settings can preview other levels without re analysing
         n.stagesRaw = stages;
@@ -78,6 +86,7 @@ public final class NightAnalyzer {
         stages = StageFilter.filter(stages, n.stageDetail);
         // the detail filter must not hide phone use again: it was counted as awake, so it stays awake
         if (!in.screen.isEmpty()) ScreenTime.markAwake(stages, in.start, in.end, in.screen);
+        if (!in.ringAwake.isEmpty()) ScreenTime.markAwake(stages, in.start, in.end, in.ringAwake);
         n.stages = stages;
         metrics(n, stages, in);
 
