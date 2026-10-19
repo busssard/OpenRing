@@ -1,5 +1,8 @@
 # Changelog
 
+Versions after 1.28: one file per change in [changes/](changes/), and the release notes on the
+[Releases page](https://github.com/busssard/OpenRing/releases).
+
 ## 1.28
 * A wake up of up to 3 hours in the middle of the night no longer splits the night in two. The night
   keeps the sleep before and after it, the time awake counts as a wake up and lowers the score, so a
