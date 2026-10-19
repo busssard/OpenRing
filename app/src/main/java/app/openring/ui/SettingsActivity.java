@@ -264,11 +264,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     RingManager.get(SettingsActivity.this).setFeature(RingManager.FEATURES[k], mode, new RingManager.Callback() {
                         @Override
                         public void done(boolean ok, String message) {
-                            toast(message);
-                            if (ok) {
-                                featureModes[k] = mode;
-                                build();
+                            if (!ok) {
+                                problem(message);
+                                return;
                             }
+                            toast(message);
+                            featureModes[k] = mode;
+                            build();
                         }
                     });
                 }
@@ -509,7 +511,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             @Override
             public void done(boolean ok, String message) {
                 if (!ok) {
-                    toast(message);
+                    problem(message);
                     return;
                 }
                 for (String part : message.split(",")) {
@@ -802,6 +804,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
         Toast.makeText(this, m, Toast.LENGTH_LONG).show();
     }
 
+    /** A failed ring action: its plain sentence says what to do, which a toast would cut after two lines (issue #60). */
+    void problem(String m) {
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this).setMessage(m).setPositiveButton("OK", null).show();
+    }
+
     void confirm(String title, String msg, final Runnable yes) {
         new AlertDialog.Builder(this).setTitle(title).setMessage(msg)
                 .setPositiveButton("Yes", new DialogInterface.OnClickListener() {
@@ -846,11 +854,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         RingManager.get(SettingsActivity.this).factoryReset(e.getText().toString(), new RingManager.Callback() {
                             @Override
                             public void done(boolean ok, String message) {
-                                toast(message);
-                                if (ok) {
-                                    startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
-                                    finish();
+                                if (!ok) {
+                                    problem(message);
+                                    return;
                                 }
+                                toast(message);
+                                startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
+                                finish();
                             }
                         });
                     }

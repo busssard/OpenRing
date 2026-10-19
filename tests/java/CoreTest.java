@@ -478,7 +478,7 @@ public class CoreTest {
             {"ring characteristics missing", SyncError.Kind.NOT_A_RING},
             {"authentication failed: " + Auth.describe(Auth.WRONG_KEY), SyncError.Kind.KEY_REFUSED},
             {"authentication failed: " + Auth.describe(Auth.NOT_ORIGINAL_DEVICE), SyncError.Kind.KEY_REFUSED},
-            {"authentication failed: " + Auth.describe(0x7f), SyncError.Kind.KEY_REFUSED},
+            {"authentication failed: " + Auth.describe(0x7f), SyncError.Kind.UNKNOWN},
             {"authentication failed: " + Auth.describe(Auth.IN_FACTORY_RESET), SyncError.Kind.RING_RESET},
             {"No ring key saved. Finish setup first.", SyncError.Kind.NO_KEY},
             {"The ring is busy with another task", SyncError.Kind.BUSY},
@@ -486,6 +486,15 @@ public class CoreTest {
             {"Interrupted", SyncError.Kind.STOPPED},
             {"cancelled", SyncError.Kind.STOPPED},
             {"Demo mode: syncing is off", SyncError.Kind.DEMO},
+            {"The ring already has a key. Factory reset it first, or use the existing key.", SyncError.Kind.KEY_EXISTS},
+            {"The ring reports unfinished factory tests (status 5).", SyncError.Kind.KEY_NOT_TAKEN},
+            {"The ring refused the key (status 0x03)", SyncError.Kind.KEY_NOT_TAKEN},
+            {"no set key response, is the ring factory reset?", SyncError.Kind.KEY_NOT_TAKEN},
+            {"the ring did not accept the change", SyncError.Kind.NOT_SAVED},
+            {"Refusing: the ring that answered is 3A1B2C, not 3A1B2D", SyncError.Kind.SERIAL_MISMATCH},
+            {"interrupted", SyncError.Kind.STOPPED},
+            {"no firmware response", SyncError.Kind.BROKE_OFF},
+            {"no battery response", SyncError.Kind.BROKE_OFF},
             {"Unexpected error: java.lang.NullPointerException: no response", SyncError.Kind.UNKNOWN},
             {"something new", SyncError.Kind.UNKNOWN},
             {"", SyncError.Kind.UNKNOWN},
@@ -505,6 +514,73 @@ public class CoreTest {
             check("sync error: plain text for " + kd, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014")
                     && !low.contains("gatt") && !low.contains("mtu") && !low.contains("exception") && t.endsWith("."));
         }
+        ringError(cases);
+    }
+
+    /** The same raw texts after pairing, a Settings action, live heart rate or game motion failed (issue #60). */
+    static void ringError(Object[][] cases) {
+        SyncError.Task P = SyncError.Task.PAIR, A = SyncError.Task.ACTION, L = SyncError.Task.LIVE;
+        // every kind and task: plain, no jargon or raw codes, a sync is never mentioned outside a sync
+        for (Object[] k : cases) {
+            for (SyncError.Task task : SyncError.Task.values()) {
+                String t = SyncError.plain((String) k[0], task);
+                String low = t.toLowerCase(Locale.ROOT);
+                check("ring error: plain " + task + " " + k[0], !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014")
+                        && !low.contains("gatt") && !low.contains("mtu") && !low.contains("exception") && !low.contains("0x")
+                        && !low.contains("status ") && !low.contains("refusing") && t.endsWith(".")
+                        && (task == SyncError.Task.SYNC || k[1] == SyncError.Kind.DEMO || !low.contains("sync again")));
+            }
+        }
+        // the texts the issue lists
+        eq("ring error: serial mismatch", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not 3A1B2D", A),
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3A1B2D. Check the serial in the reset message and try again.");
+        eq("ring error: serial mismatch, nothing typed", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not ", A),
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed nothing. Check the serial in the reset message and try again.");
+        eq("ring error: serial mismatch, typed with spaces", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not  3a1b2d ", A),
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3a1b2d. Check the serial in the reset message and try again.");
+        eq("ring error: serial mismatch without a typed part", SyncError.plain("Refusing: the ring that answered is ", A),
+                "Nothing was erased: the ring that answered is another one, but you typed nothing. Check the serial in the reset message and try again.");
+        String reach = "The ring could not be reached. Keep it close to the phone (on its charger is best) and try again.";
+        eq("ring error: GATT 133 in Settings", SyncError.plain("connection failed (GATT status 133)", A), reach);
+        eq("ring error: not in time in Settings", SyncError.plain("ring did not accept the connection in time", A), reach);
+        eq("ring error: GATT 133 in Setup", SyncError.plain("connection failed (GATT status 133)", P), reach);
+        eq("ring error: GATT 133 in live", SyncError.plain("connection failed (GATT status 133)", L),
+                "The ring could not be reached. Keep it close to the phone and try again.");
+        eq("ring error: key refused in Setup", SyncError.plain("authentication failed: " + Auth.describe(Auth.WRONG_KEY), P),
+                "Your ring did not accept this key. Check that the key is complete and belongs to this ring, or factory reset the ring and use Pair and create a new key.");
+        check("ring error: key refused in Settings points to setup", SyncError.plain("authentication failed: " + Auth.describe(Auth.WRONG_KEY), A)
+                .endsWith(SyncError.SETUP_AGAIN));
+        eq("ring error: reset ring in Setup", SyncError.plain("authentication failed: " + Auth.describe(Auth.IN_FACTORY_RESET), P),
+                "Your ring was factory reset and has no key yet. Use Pair and create a new key, or tick Install this key on a factory reset ring.");
+        eq("ring error: key status in Setup", SyncError.plain("The ring refused the key (status 0x03)", P),
+                "The ring did not take the new key. Check that it was factory reset (blinking blue on the dock means done), put it on its charger next to the phone and try again.");
+        eq("ring error: factory tests in Setup", SyncError.plain("The ring reports unfinished factory tests (status 5).", P),
+                SyncError.plain("The ring refused the key (status 0x03)", P));
+        eq("ring error: key exists kept", SyncError.plain("The ring already has a key. Factory reset it first, or use the existing key.", P),
+                "The ring already has a key. Factory reset it first, or use the existing key.");
+        eq("ring error: change not saved", SyncError.plain("the ring did not accept the change", A),
+                "The ring did not save the change. Keep it close to the phone and try again.");
+        eq("ring error: busy in Settings", SyncError.plain("The ring is busy with another task", A),
+                "The ring is busy with a sync, live heart rate or a game. Try again in a minute.");
+        eq("ring error: broke off in Setup", SyncError.plain("no serial response", P),
+                "The connection to the ring broke off. Keep the ring close and try again.");
+        eq("ring error: not found in live", SyncError.plain("No ring found. Put it on its charger next to the phone, and close the Oura app if it is installed.", L),
+                "Your ring was not found. Keep it close to the phone, close the Oura app if it is installed, and try again.");
+        eq("ring error: bluetooth off in Setup", SyncError.plain("Bluetooth is off", P), "Bluetooth is off or not ready. Turn it on and try again.");
+        eq("ring error: pairing in Settings", SyncError.plain("bonding was declined or failed", A),
+                "The phone and the ring could not pair. Try again and accept the pairing request when it appears.");
+        eq("ring error: stopped in live", SyncError.plain("interrupted", L), "This was stopped before it finished. Try again when you like.");
+        eq("ring error: unknown in Setup", SyncError.plain("java.lang.NullPointerException", P),
+                "Pairing did not finish because of an unexpected problem. Try again.");
+        check("ring error: unknown in Settings and live names the details", SyncError.plain("java.lang.NullPointerException", A).endsWith(SyncError.DETAILS)
+                && SyncError.plain(null, L).endsWith(SyncError.DETAILS));
+        eq("ring error: unknown auth state is no reason to set up again", SyncError.plain("authentication failed: " + Auth.describe(0x7f)),
+                "The sync did not finish because of an unexpected problem. Sync again. " + SyncError.DETAILS);
+        // the sentences on the main screen stay as they were (#47)
+        eq("ring error: sync sentence unchanged", SyncError.plain("ring disconnected"), SyncError.plain("ring disconnected", SyncError.Task.SYNC));
+        eq("ring error: sync broke off", SyncError.plain("ring disconnected"),
+                "The connection to the ring broke off during the sync. Keep the ring close and sync again, the next sync continues where this one stopped.");
+        eq("ring error: sync busy", SyncError.plain("The ring is busy with another task"), "The ring is busy with live heart rate or a game. Sync again in a minute.");
     }
 
     static boolean near(double a, double b) {
