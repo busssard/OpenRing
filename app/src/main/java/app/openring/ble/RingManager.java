@@ -625,6 +625,10 @@ public final class RingManager {
                 try {
                     String serial = s.client.serial();
                     if (!serial.equalsIgnoreCase(confirmSerial.trim())) {
+                        // the saved serial typed correctly means another ring answered, not a typo (issue #60)
+                        if (prefs.serial() != null && prefs.serial().equalsIgnoreCase(confirmSerial.trim())) {
+                            throw new IOException(SyncError.OTHER_RING_PREFIX + " (" + serial + "), not the saved " + prefs.serial());
+                        }
                         throw new IOException("Refusing: the ring that answered is " + serial + ", not " + confirmSerial);
                     }
                     s.client.authenticate(prefs.loadKey());
@@ -1051,7 +1055,7 @@ public final class RingManager {
                 } catch (Exception e) {
                     String raw = e.getMessage() == null ? e.toString() : e.getMessage();
                     log("motion: stopped by " + raw);
-                    motionState("Ring motion stopped. " + SyncError.plain(raw, SyncError.Task.LIVE), false);
+                    motionState(SyncError.game(raw), false);
                 } finally {
                     try {
                         if (s != null && s.link.isConnected()) s.client.request(Protocol.realtimeOff(), null, 500);

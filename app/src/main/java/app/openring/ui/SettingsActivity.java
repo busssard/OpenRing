@@ -807,7 +807,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     /** A failed ring action: its plain sentence says what to do, which a toast would cut after two lines (issue #60). */
     void problem(String m) {
         if (isFinishing() || isDestroyed()) return;
-        new AlertDialog.Builder(this).setMessage(m).setPositiveButton("OK", null).show();
+        new AlertDialog.Builder(this).setTitle("Not done").setMessage(m).setPositiveButton("OK", null).show();
     }
 
     void confirm(String title, String msg, final Runnable yes) {

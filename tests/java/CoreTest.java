@@ -492,6 +492,7 @@ public class CoreTest {
             {"no set key response, is the ring factory reset?", SyncError.Kind.KEY_NOT_TAKEN},
             {"the ring did not accept the change", SyncError.Kind.NOT_SAVED},
             {"Refusing: the ring that answered is 3A1B2C, not 3A1B2D", SyncError.Kind.SERIAL_MISMATCH},
+            {SyncError.OTHER_RING_PREFIX + " (3A1B2C), not the saved 3A1B2D", SyncError.Kind.OTHER_RING},
             {"interrupted", SyncError.Kind.STOPPED},
             {"no firmware response", SyncError.Kind.BROKE_OFF},
             {"no battery response", SyncError.Kind.BROKE_OFF},
@@ -576,11 +577,49 @@ public class CoreTest {
                 && SyncError.plain(null, L).endsWith(SyncError.DETAILS));
         eq("ring error: unknown auth state is no reason to set up again", SyncError.plain("authentication failed: " + Auth.describe(0x7f)),
                 "The sync did not finish because of an unexpected problem. Sync again. " + SyncError.DETAILS);
-        // the sentences on the main screen stay as they were (#47)
-        eq("ring error: sync sentence unchanged", SyncError.plain("ring disconnected"), SyncError.plain("ring disconnected", SyncError.Task.SYNC));
-        eq("ring error: sync broke off", SyncError.plain("ring disconnected"),
-                "The connection to the ring broke off during the sync. Keep the ring close and sync again, the next sync continues where this one stopped.");
-        eq("ring error: sync busy", SyncError.plain("The ring is busy with another task"), "The ring is busy with live heart rate or a game. Sync again in a minute.");
+        eq("ring error: a different ring answered", SyncError.plain(SyncError.OTHER_RING_PREFIX + " (3A1B2C), not the saved 3A1B2D", A),
+                "Nothing was erased: a different ring (3A1B2C) answered. Move other rings away from the phone and try again.");
+        eq("ring error: a different ring without serial", SyncError.plain(SyncError.OTHER_RING_PREFIX, A),
+                "Nothing was erased: a different ring answered. Move other rings away from the phone and try again.");
+        // the sentences on the main screen stay as #47 wrote them, pinned word for word
+        String[][] sync = {
+            {"Bluetooth is off", "Bluetooth is off or not ready. Turn it on and sync again."},
+            {"This phone has no Bluetooth", "This phone has no Bluetooth, so it cannot reach the ring."},
+            {"No ring found. Put it on its charger next to the phone, and close the Oura app if it is installed.",
+                "Your ring was not found. Put it on its charger next to the phone, close the Oura app if it is installed, and sync again."},
+            {"connection failed (GATT status 133)", "The ring could not be reached. Keep it close to the phone (on its charger is best) and sync again."},
+            {"the ring disconnected", "The connection to the ring broke off during the sync. Keep the ring close and sync again, the next sync continues where this one stopped."},
+            {"the phone could not raise the Bluetooth MTU (23), data would be cut off",
+                "This phone's Bluetooth could not set up the connection the ring needs. Turn Bluetooth off and on, then sync again."},
+            {"bonding was declined or failed", "The phone and the ring could not pair. Sync again and accept the pairing request when it appears."},
+            {"ring characteristics missing", "The device that answered is not an Oura ring. Sync again with your ring close to the phone."},
+            {"authentication failed: " + Auth.describe(Auth.WRONG_KEY),
+                "Your ring did not accept the key saved on this phone (it may have been paired again with another app). Set it up again in Settings, Careful, Use a different key or ring."},
+            {"authentication failed: " + Auth.describe(Auth.IN_FACTORY_RESET),
+                "Your ring was factory reset and has no key yet. Set it up again in Settings, Careful, Use a different key or ring."},
+            {"No ring key saved. Finish setup first.", "No ring key is saved on this phone. Finish the setup first."},
+            {"The ring is busy with another task", "The ring is busy with live heart rate or a game. Sync again in a minute."},
+            {"Sync stopped", "The sync was stopped. Sync again when you like."},
+            {"Demo mode: syncing is off", "Syncing is off in demo mode."},
+            {"Unexpected error: java.lang.IllegalStateException",
+                "The sync did not finish because of an unexpected problem. Sync again. Details are in Settings, Help and diagnostics, Data check and log."},
+        };
+        for (String[] k : sync) {
+            eq("ring error: sync sentence for " + k[0], SyncError.plain(k[0]), k[1]);
+            eq("ring error: sync task same for " + k[0], SyncError.plain(k[0], SyncError.Task.SYNC), k[1]);
+        }
+        // games: the reason and that touch steering goes on, never cut by the three line drawing
+        eq("ring error: game text", SyncError.game("authentication failed: " + Auth.describe(Auth.WRONG_KEY)),
+                "Ring motion stopped. Your ring did not accept the key saved on this phone. Touch steering works meanwhile.");
+        eq("ring error: game text unknown", SyncError.game(null), "Ring motion stopped. Something unexpected went wrong. Touch steering works meanwhile.");
+        for (Object[] k : cases) {
+            String g = SyncError.game((String) k[0]);
+            List<String> lines = SyncError.wrap(g, SyncError.GAME_LINE);
+            boolean fits = lines.size() <= SyncError.GAME_LINES;
+            for (String line : lines) fits &= line.length() <= SyncError.GAME_LINE;
+            check("ring error: game text fits for " + k[0] + " (" + g + ")", fits && !g.contains("(") && String.join(" ", lines).equals(g));
+        }
+        eq("ring error: wrap", SyncError.wrap("aaa bbb  ccc dddddddd", 7), Arrays.asList("aaa bbb", "ccc", "dddddddd"));
     }
 
     static boolean near(double a, double b) {

@@ -1,5 +1,7 @@
 package app.openring.core;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -11,7 +13,7 @@ public final class SyncError {
     private SyncError() {}
 
     public enum Kind { BLUETOOTH_OFF, NO_BLUETOOTH, NOT_FOUND, NOT_REACHED, BROKE_OFF, CONNECTION_SETUP, PAIRING, NOT_A_RING,
-        KEY_REFUSED, RING_RESET, NO_KEY, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, NOT_SAVED, SERIAL_MISMATCH, UNKNOWN }
+        KEY_REFUSED, RING_RESET, NO_KEY, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, UNKNOWN }
 
     /** What the ring was doing: a sync, pairing in Setup, an action in Settings, live heart rate or game motion. */
     public enum Task { SYNC, PAIR, ACTION, LIVE }
@@ -20,6 +22,11 @@ public final class SyncError {
     public static final String DETAILS = "Details are in Settings, Help and diagnostics, Data check and log.";
 
     static final String SERIAL_PREFIX = "Refusing: the ring that answered is";
+    /** Factory reset: the serial typed is the saved one, but another ring answered (RingManager). */
+    public static final String OTHER_RING_PREFIX = "Refusing: a different ring answered";
+
+    /** The games draw the ring state in at most this many lines of this many characters. */
+    public static final int GAME_LINES = 3, GAME_LINE = 44;
 
     /** Sorts a raw error text (from GattLink, RingScanner, RingManager, RingClient, Auth, HistoryBatch) into a class. */
     public static Kind kind(String raw) {
@@ -27,6 +34,7 @@ public final class SyncError {
         String s = raw.toLowerCase(Locale.ROOT).trim();
         if (s.isEmpty() || s.startsWith("unexpected error")) return Kind.UNKNOWN;
         if (s.startsWith(SERIAL_PREFIX.toLowerCase(Locale.ROOT))) return Kind.SERIAL_MISMATCH;
+        if (s.startsWith(OTHER_RING_PREFIX.toLowerCase(Locale.ROOT))) return Kind.OTHER_RING;
         if (s.startsWith("the ring already has a key")) return Kind.KEY_EXISTS;
         if (s.startsWith("the ring refused the key") || s.contains("unfinished factory tests") || s.startsWith("no set key response"))
             return Kind.KEY_NOT_TAKEN;
@@ -89,12 +97,48 @@ public final class SyncError {
                     + "put it on its charger next to the phone and try again.";
             case NOT_SAVED: return "The ring did not save the change. Keep it close to the phone and try again.";
             case SERIAL_MISMATCH: return serialMismatch(raw);
+            case OTHER_RING: return otherRing(raw);
             default:
                 if (sync) return "The sync did not finish because of an unexpected problem. Sync again. " + DETAILS;
                 if (pair) return "Pairing did not finish because of an unexpected problem. Try again.";
                 if (live) return "Something unexpected went wrong. Try again. " + DETAILS;
                 return "The ring did not finish this because of an unexpected problem. Try again. " + DETAILS;
         }
+    }
+
+    /** "Refusing: a different ring answered (X), ..." as a sentence: the serial was right, another ring was closer. */
+    static String otherRing(String raw) {
+        int a = raw.indexOf('('), b = a < 0 ? -1 : raw.indexOf(')', a);
+        String other = b > a + 1 ? raw.substring(a + 1, b).trim() : "";
+        return "Nothing was erased: a different ring" + (other.isEmpty() ? "" : " (" + other + ")")
+                + " answered. Move other rings away from the phone and try again.";
+    }
+
+    /**
+     * The short ring state of the games when motion stopped: the reason without its bracket, and that touch
+     * steering goes on. Fits {@link #GAME_LINES} lines of {@link #GAME_LINE} characters (issue #60).
+     */
+    public static String game(String raw) {
+        String t = plain(raw, Task.LIVE);
+        int dot = t.indexOf(". ");
+        String first = (dot < 0 ? t : t.substring(0, dot + 1)).replaceAll(" \\([^)]*\\)", "");
+        return "Ring motion stopped. " + first + " Touch steering works meanwhile.";
+    }
+
+    /** Splits a text at spaces into lines of at most {@code max} characters (a longer word gets a line of its own). */
+    public static List<String> wrap(String text, int max) {
+        List<String> lines = new ArrayList<String>();
+        StringBuilder cur = new StringBuilder();
+        for (String wd : text.trim().split(" +")) {
+            if (cur.length() > 0 && cur.length() + 1 + wd.length() > max) {
+                lines.add(cur.toString());
+                cur.setLength(0);
+            }
+            if (cur.length() > 0) cur.append(' ');
+            cur.append(wd);
+        }
+        if (cur.length() > 0) lines.add(cur.toString());
+        return lines;
     }
 
     /** "Refusing: the ring that answered is X, not Y" (factory reset in Settings) as a sentence that keeps both serials. */
