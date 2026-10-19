@@ -227,7 +227,7 @@ public class CoreTest {
         // awake before falling asleep and after waking up is not a wake up, nor a short piece
         int[] edges = runs(W, 10, L, 20, W, 1, L, 20, W, 10);
         eq("edges are not wake ups", WakeUps.count(edges, 30), 0);
-        eq("edges are not short pieces", WakeUps.shortOnes(edges, 30), 1);
+        eq("awake at the edges is not a short piece either, only the 30 s inside counts", WakeUps.shortOnes(edges, 30), 1);
         eq("no sleep, no wake ups", WakeUps.count(runs(W, 10, 0, 5), 30) + WakeUps.shortOnes(runs(W, 10), 30), 0);
         eq("empty night", WakeUps.count(new int[0], 30), 0);
         // missing data splits awake runs; each part is judged on its own
@@ -240,6 +240,32 @@ public class CoreTest {
         eq("a step a little over 30 s still needs 2", WakeUps.minSteps(30.00000001), 2);
         eq("odd step length", WakeUps.minSteps(25), 3);
         eq("no step length", WakeUps.minSteps(0), 1);
+
+        // shown times (display only): clock times and minutes come from the same whole minutes
+        double t0 = 1_700_000_000 - 1_700_000_000 % 60; // a whole minute
+        eq("rounds down under half a minute", WakeUps.roundMin(t0 + 29), t0);
+        eq("rounds up from half a minute", WakeUps.roundMin(t0 + 30), t0 + 60);
+        // the review's demo case: 23:41:40 to 23:44:10 showed "Awake for 4 min, back asleep 23:44" after "23:41"
+        double a = t0 + 100, b = t0 + 250;
+        eq("minutes match the rounded clocks", WakeUps.shownMinutes(a, b), (long) ((WakeUps.roundMin(b) - WakeUps.roundMin(a)) / 60));
+        eq("demo case shows 2 min (23:42 to 23:44)", WakeUps.shownMinutes(a, b), 2L);
+        eq("a one minute wake up never shows 0 min", WakeUps.shownMinutes(t0 + 29, t0 + 89), 1L);
+        eq("under a minute may show 0", WakeUps.shownMinutes(t0 + 31, t0 + 89), 0L);
+        Random rr = new Random(83);
+        int unordered = 0, mismatch = 0;
+        for (int k = 0; k < 20000; k++) {
+            double x = t0 + rr.nextDouble() * 86400, y = x + rr.nextDouble() * 7200;
+            if (WakeUps.roundMin(y) < WakeUps.roundMin(x)) unordered++;
+            long m = WakeUps.shownMinutes(x, y), diff = Math.round((WakeUps.roundMin(y) - WakeUps.roundMin(x)) / 60);
+            if (m != diff || y - x >= 60 && m < 1) mismatch++;
+        }
+        eq("random spans: rounded times keep their order", unordered, 0);
+        eq("random spans: shown minutes equal the clock difference", mismatch, 0);
+        // the level's rule in the texts: only Calm folds wake ups of a minute or more
+        eq("Detailed adds nothing", WakeUps.levelNote(StageFilter.DETAILED), null);
+        eq("Balanced adds nothing", WakeUps.levelNote(B), null);
+        eq("Calm names its rule", WakeUps.levelNote(C), "Calm stage detail folds being awake under 2 minutes into sleep.");
+        eq("shortest kept: Balanced 1 min, Calm 2 min", WakeUps.shortestKeptMin(B) * 10 + WakeUps.shortestKeptMin(C), 12);
 
         // random nights: for every level, preview count = night count = timeline rows, and the old rule agrees
         Random rnd = new Random(70);

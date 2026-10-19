@@ -37,6 +37,36 @@ public final class WakeUps {
         return runs(stages, stepS, false).size();
     }
 
+    /** A time rounded to the nearest whole minute, so clock times and lengths shown together agree. */
+    public static double roundMin(double unix) {
+        return Math.round(unix / 60.0) * 60.0;
+    }
+
+    /**
+     * Minutes shown for a span from {@code a} to {@code b}: the difference of the two rounded clock
+     * times, so "Awake for 3 min, back asleep 02:17" after "02:14" adds up. A span of a minute or
+     * more always rounds to at least 1 min, so a wake up never shows as 0 min.
+     */
+    public static long shownMinutes(double a, double b) {
+        return Math.max(0, Math.round((roundMin(b) - roundMin(a)) / 60.0));
+    }
+
+    /**
+     * What a stage detail level adds to the wake up rule, or null when it keeps every wake up of a
+     * minute or more (Detailed, Balanced). Calm folds being awake under 2 minutes into sleep.
+     */
+    public static String levelNote(int level) {
+        int lv = StageFilter.clampLevel(level);
+        int sec = StageFilter.minWakeEpochs(lv) * 30;
+        if (sec <= MIN_S) return null;
+        return StageFilter.NAMES[lv] + " stage detail folds being awake under " + (sec / 60) + " minutes into sleep.";
+    }
+
+    /** Shortest wake up a level keeps, in whole minutes, for short labels. */
+    public static int shortestKeptMin(int level) {
+        return Math.max(1, StageFilter.minWakeEpochs(StageFilter.clampLevel(level)) * 30 / 60);
+    }
+
     static List<int[]> runs(int[] st, double stepS, boolean wakeUps) {
         List<int[]> out = new ArrayList<int[]>();
         int first = -1, last = -1;
