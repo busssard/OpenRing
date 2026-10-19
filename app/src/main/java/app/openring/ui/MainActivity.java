@@ -527,7 +527,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
             if (pr >= 0) statusBar.setProgress((int) (pr * 1000));
         } else if (err != null) {
             statusStrip.setVisibility(View.VISIBLE);
-            statusText.setText(err);
+            statusText.setText(app.openring.core.SyncError.plain(err)); // raw text stays in the data check (issue #47)
             statusText.setTextColor(Ui.WARN);
             statusBar.setVisibility(View.GONE);
         } else {

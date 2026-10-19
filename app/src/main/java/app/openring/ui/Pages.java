@@ -346,16 +346,17 @@ public final class Pages {
 
         LinearLayout stats = Ui.card(c);
         stats.addView(Ui.caption(c, "Details"));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(Json.d(n, "in_bed_min")), "", 0),
-                Ui.stat(c, "Efficiency", Ui.fmt(Json.d(n, "efficiency"), 0), "%", 0)));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0),
-                Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0)));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0),
-                Ui.stat(c, "Average HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", 0)));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0),
-                Ui.stat(c, "Blood oxygen", Ui.fmt(Json.d(n, "spo2"), 0), "%", 0)));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Cycles", String.valueOf(n.optInt("cycles")), "", 0),
-                Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0)));
+        // a short line under every number (issue #47); ranges as in Explain
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(Json.d(n, "in_bed_min")), "", 0, "From start to end of the sleep window"),
+                Ui.stat(c, "Efficiency", Ui.fmt(Json.d(n, "efficiency"), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal"),
+                Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, "Wake ups of a minute or more")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0, "Lowest heart rate while asleep"),
+                Ui.stat(c, "Average HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", 0, "Average while asleep, higher is calmer")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0, "Breaths per minute while asleep"),
+                Ui.stat(c, "Blood oxygen", Ui.fmt(Json.d(n, "spo2"), 0), "%", 0, "Average while asleep")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Cycles", String.valueOf(n.optInt("cycles")), "", 0, "Rounds of light, deep and REM, about 90 min each"),
+                Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0, "Average at night, lower than body temperature")));
         root.addView(stats);
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
@@ -724,9 +725,10 @@ public final class Pages {
         goal.addView(Ui.caption(c, "Goal progress"));
         goal.addView(Ui.gap(c, 8));
         goal.addView(new Ui.Bar(c, target > 0 ? active / target : 0, Ui.ACTIVE), Ui.sized(c, -1, 8));
-        goal.addView(Ui.statRow(c, Ui.stat(c, "Active burn", Ui.fmt(active, 0), "kcal", 0), Ui.stat(c, "Total burn", Ui.fmt(Json.d(day, "total_kcal"), 0), "kcal", 0)));
-        goal.addView(Ui.statRow(c, Ui.stat(c, "Steps", Ui.fmt(Json.d(day, "steps"), 0), "est.", 0),
-                Ui.stat(c, "Distance", Ui.fmt(Json.d(day, "distance_m") / 1000.0, 1), "km", 0)));
+        goal.addView(Ui.statRow(c, Ui.stat(c, "Active burn", Ui.fmt(active, 0), "kcal", 0, "Calories burned by moving"),
+                Ui.stat(c, "Total burn", Ui.fmt(Json.d(day, "total_kcal"), 0), "kcal", 0, "Active burn plus what your body uses at rest")));
+        goal.addView(Ui.statRow(c, Ui.stat(c, "Steps", Ui.fmt(Json.d(day, "steps"), 0), "est.", 0, "Estimated from how much you moved, so \"est.\""),
+                Ui.stat(c, "Distance", Ui.fmt(Json.d(day, "distance_m") / 1000.0, 1), "km", 0, "Estimated from the steps")));
         root.addView(goal);
 
         LinearLayout intensity = Ui.card(c);
@@ -764,6 +766,10 @@ public final class Pages {
             int peak = 0;
             for (int h = 0; h < 24; h++) if (!Double.isNaN(hourly[h]) && (Double.isNaN(hourly[peak]) || hourly[h] > hourly[peak])) peak = h;
             pc.addView(new Charts.BarChart(c, hourly, labels, Ui.ACTIVE).valueFormat("%.1f").highlight(peak), Ui.sized(c, -1, 120));
+            pc.addView(Ui.gap(c, 6));
+            // the bands of Wellness.day (issue #47)
+            pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. Under 1.5 counts as inactive, 1.5 to 3 low, 3 to 6 medium, "
+                    + "6 or more high (the bands of Daily movement).", 12, Ui.TEXT_3, Ui.REGULAR));
             root.addView(pc);
         }
 
@@ -1166,11 +1172,12 @@ public final class Pages {
         card.addView(Ui.statRow(c,
                 Ui.stat(c, "Heart rate", Ui.fmt(now.hr, 0), "bpm", Ui.HEART),
                 Ui.stat(c, "Sensor temp", Ui.fmt(now.skinTemp, 1), "\u00b0C", Ui.TEMP),
-                Ui.stat(c, "SpO2", Ui.fmt(now.spo2, 0), "%", Ui.OXY)));
-        StringBuilder when = new StringBuilder();
+                Ui.stat(c, "Blood oxygen", Ui.fmt(now.spo2, 0), "%", Ui.OXY)));
+        StringBuilder when = new StringBuilder("Heart rate is the newest reading. Sensor temp is the ring's own reading, lower than body "
+                + "temperature (room temperature when not worn). Blood oxygen is the share of oxygen in your blood. ");
         if (!Double.isNaN(now.hrAt)) when.append("Heart rate at ").append(Charts.clock(now.hrAt)).append(". ");
         if (!Double.isNaN(now.skinTempAt)) when.append("Temperature at ").append(Charts.clock(now.skinTempAt)).append(". ");
-        if (!Double.isNaN(now.spo2At)) when.append("SpO2 at ").append(Charts.clock(now.spo2At)).append(". ");
+        if (!Double.isNaN(now.spo2At)) when.append("Blood oxygen at ").append(Charts.clock(now.spo2At)).append(". ");
         when.append("The ring measures on its own schedule, every few minutes when you are still. Sync to update.");
         card.addView(Ui.text(c, when.toString(), 12, Ui.TEXT_3, Ui.REGULAR));
         return card;

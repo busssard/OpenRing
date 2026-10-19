@@ -332,7 +332,9 @@ public final class RingManager {
         } finally {
             if (analysingRaised) analysing.decrementAndGet();
             syncs.decrementAndGet();
-            forceStatus(res.ok ? "Up to date" : ("Sync failed: " + res.message));
+            // the screens get a plain sentence, the raw text stays in the log and the data check (issue #47)
+            if (!res.ok) log("sync failed: " + res.message);
+            forceStatus(res.ok ? "Up to date" : app.openring.core.SyncError.plain(res.message));
         }
         return res;
     }

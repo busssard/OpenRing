@@ -397,6 +397,7 @@ public class CoreTest {
         clockChange();
         stageFilter();
         stageShare();
+        syncError();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -440,6 +441,69 @@ public class CoreTest {
         eq("note: awake", StageShare.note(9, "time in bed", null), "9% of time in bed");
         eq("note: unknown with range", StageShare.note(Double.NaN, "sleep", StageShare.USUAL_DEEP), "Usual 13 to 23% of sleep");
         eq("note: unknown without range", StageShare.note(Double.NaN, "sleep", null), "No data yet");
+    }
+
+    /** Plain sentences for failed syncs; the raw texts come from the code (issue #47). */
+    static void syncError() {
+        Object[][] cases = {
+            {"Bluetooth is off", SyncError.Kind.BLUETOOTH_OFF},
+            {"Bluetooth LE scanner unavailable", SyncError.Kind.BLUETOOTH_OFF},
+            {"This phone has no Bluetooth", SyncError.Kind.NO_BLUETOOTH},
+            {"No ring found. Put it on its charger next to the phone, and close the Oura app if it is installed.", SyncError.Kind.NOT_FOUND},
+            {"connection failed (GATT status 133)", SyncError.Kind.NOT_REACHED},
+            {"ring did not accept the connection in time", SyncError.Kind.NOT_REACHED},
+            {"Bluetooth refused to open a GATT connection", SyncError.Kind.NOT_REACHED},
+            {"service discovery could not start", SyncError.Kind.NOT_REACHED},
+            {"service discovery failed", SyncError.Kind.NOT_REACHED},
+            {"Bluetooth scan failed (error 2)", SyncError.Kind.NOT_REACHED},
+            {"ring disconnected", SyncError.Kind.BROKE_OFF},
+            {"the ring disconnected", SyncError.Kind.BROKE_OFF},
+            {"write failed (GATT status 133)", SyncError.Kind.BROKE_OFF},
+            {"write was never acknowledged", SyncError.Kind.BROKE_OFF},
+            {"Bluetooth stack refused the write", SyncError.Kind.BROKE_OFF},
+            {"event batch ended without a summary packet (3 packets); the link was probably lost mid batch", SyncError.Kind.BROKE_OFF},
+            {"extended history request failed with result code 0x02", SyncError.Kind.BROKE_OFF},
+            {"no nonce response from the ring (12 packets)", SyncError.Kind.BROKE_OFF},
+            {"no authenticate response (0 packets)", SyncError.Kind.BROKE_OFF},
+            {"no serial response", SyncError.Kind.BROKE_OFF},
+            {"storage failed; batch not acknowledged", SyncError.Kind.BROKE_OFF},
+            {"ring reports 4096 bytes left but the batch was empty (cursor 12)", SyncError.Kind.BROKE_OFF},
+            {"the phone could not raise the Bluetooth MTU (23), data would be cut off", SyncError.Kind.CONNECTION_SETUP},
+            {"Android refused to start bonding", SyncError.Kind.PAIRING},
+            {"bonding was declined or failed", SyncError.Kind.PAIRING},
+            {"bonding timed out (accept the pairing request when it appears)", SyncError.Kind.PAIRING},
+            {"could not subscribe to ring notifications even after bonding", SyncError.Kind.PAIRING},
+            {"this device has no Oura ring service", SyncError.Kind.NOT_A_RING},
+            {"ring characteristics missing", SyncError.Kind.NOT_A_RING},
+            {"authentication failed: " + Auth.describe(Auth.WRONG_KEY), SyncError.Kind.KEY_REFUSED},
+            {"authentication failed: " + Auth.describe(Auth.NOT_ORIGINAL_DEVICE), SyncError.Kind.KEY_REFUSED},
+            {"authentication failed: " + Auth.describe(0x7f), SyncError.Kind.KEY_REFUSED},
+            {"authentication failed: " + Auth.describe(Auth.IN_FACTORY_RESET), SyncError.Kind.RING_RESET},
+            {"No ring key saved. Finish setup first.", SyncError.Kind.NO_KEY},
+            {"The ring is busy with another task", SyncError.Kind.BUSY},
+            {"Sync stopped", SyncError.Kind.STOPPED},
+            {"Interrupted", SyncError.Kind.STOPPED},
+            {"cancelled", SyncError.Kind.STOPPED},
+            {"Demo mode: syncing is off", SyncError.Kind.DEMO},
+            {"Unexpected error: java.lang.NullPointerException: no response", SyncError.Kind.UNKNOWN},
+            {"something new", SyncError.Kind.UNKNOWN},
+            {"", SyncError.Kind.UNKNOWN},
+            {null, SyncError.Kind.UNKNOWN},
+        };
+        for (Object[] k : cases) eq("sync error: " + k[0], SyncError.kind((String) k[0]), k[1]);
+        eq("sync error: GATT 133 sentence", SyncError.plain("connection failed (GATT status 133)"),
+                "The ring could not be reached. Keep it close to the phone (on its charger is best) and sync again.");
+        check("sync error: unknown names the details", SyncError.plain("Unexpected error: java.lang.IllegalStateException").endsWith(SyncError.DETAILS)
+                && SyncError.plain(null).endsWith(SyncError.DETAILS));
+        check("sync error: key refused says how to set up again", SyncError.plain("authentication failed: x").endsWith(SyncError.SETUP_AGAIN));
+        for (SyncError.Kind kd : SyncError.Kind.values()) {
+            String raw = null;
+            for (Object[] k : cases) if (k[1] == kd) { raw = (String) k[0]; break; }
+            String t = SyncError.plain(raw);
+            String low = t.toLowerCase(Locale.ROOT);
+            check("sync error: plain text for " + kd, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014")
+                    && !low.contains("gatt") && !low.contains("mtu") && !low.contains("exception") && t.endsWith("."));
+        }
     }
 
     static boolean near(double a, double b) {
