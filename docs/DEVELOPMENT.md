@@ -12,7 +12,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `app/src/main/AndroidManifest.xml` | Permissions, activities, services. Must never request `INTERNET` |
 | `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh` |
 | `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh` |
-| `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if version numbers and changelog disagree |
+| `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
 | `build_apk.sh` | Builds and signs the APK without Gradle (used by CI) |
 | `build.gradle`, `settings.gradle`, `app/build.gradle`, `gradle.properties`, `gradle/` | Gradle files for Android Studio (no wrapper script committed; CI does not use Gradle) |
@@ -21,7 +21,9 @@ Everything you need to build, test, change and release Open Ring. Read
 | `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` | Templates for issues (bug, idea) and pull requests |
 | `docs/` | This guide and the architecture notes |
 | `tools/make_icon.py` | Draws the icon (launcher, themed, notification, `docs/images/icon.svg` and `.png`) from one shape; run it after changing the icon |
-| `CHANGELOG.md` | User facing changes per version; the release notes come from here |
+| `changes/` | One note per user visible pull request; they count the version and become the release notes (see `changes/README.md`) |
+| `CHANGELOG.md` | User facing changes up to 1.28 |
+| `tools/version.sh` | Prints the version, counted from `changes/` |
 | `README.md`, `CONTRIBUTING.md`, `SECURITY.md` | For users, contributors, and security and privacy |
 | `LICENSE`, `NOTICE` | MIT license; credits for the ported open_oura and open_health code |
 | `CLAUDE.md` | Rules and context for Claude sessions working on the repository |
@@ -47,7 +49,7 @@ Run all of them before every commit; CI runs them too.
 ./tests/run_tests.sh       # protocol framing, auth, history drain, decoders, staging, scores, sleep pattern
 ./tests/run_pipeline.sh    # storage, dating, interrupted sync, analysis, backup, sleep history, demo data
 ./tests/check_privacy.sh   # no INTERNET permission, no networking, analytics, ads or crash reporting code
-./tests/check_version.sh   # version numbers agree and the changelog has a section for this version
+./tests/check_version.sh   # the version is counted, change notes are well formed
 ./tests/coverage.sh        # the two JVM suites again, with a coverage report (optional locally)
 ```
 
@@ -110,13 +112,19 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
 
 ## Versions and releases
 
-1. Bump `VERSION_CODE` (always up by one, Android refuses lower codes) and `VERSION_NAME` in
-   `build_apk.sh`, and `versionCode` / `versionName` in `app/build.gradle` to the same values
-   (`tests/check_version.sh` fails if they differ). The About screen reads the installed version.
-2. Add a section at the top of `CHANGELOG.md` whose heading is exactly `## <VERSION_NAME>`, written for
-   users; it becomes the release notes.
-3. When this reaches `main`, `build.yml` builds the APK signed with the release key (repository secrets
-   `KEYSTORE_B64`, `KEYSTORE_PASS`), attests its provenance and publishes the GitHub Release `vX.Y` with
-   the changelog section, checksum and certificate. Versions that already have a release are skipped.
+Nobody types a version number, so pull requests never conflict over one.
 
-Changes without a version bump (docs, CI) publish nothing.
+1. A pull request with a change people will notice adds **one** new file `changes/YYYY-MM-DD-short-name.md`
+   with one to five bullets written for users (details in `changes/README.md`). Do not edit
+   `CHANGELOG.md`, `build_apk.sh` or the version in `app/build.gradle`.
+2. The version is counted: `tools/version.sh` gives `VERSION_CODE = 29 + notes` and
+   `VERSION_NAME = 1.(28 + notes)`. `build_apk.sh` and `app/build.gradle` use the same rule
+   (`tests/check_version.sh` fails otherwise). The About screen reads the installed version. Notes are
+   never deleted or renamed, so the code only grows (Android refuses lower codes).
+3. When a merge adds a note to `main`, `build.yml` builds the APK signed with the release key (repository
+   secrets `KEYSTORE_B64`, `KEYSTORE_PASS`), attests its provenance and publishes the GitHub Release
+   `vX.Y`. Its notes are the change notes added since the last release, plus checksum and certificate.
+   Versions that already have a release are skipped.
+
+Changes without a note (docs, CI, a refactor nobody notices) publish nothing. Because a PR does not know
+its final number, write "next version" in PR texts, not a number.

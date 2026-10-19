@@ -28,8 +28,11 @@ completely, then read the two guides it points to before changing anything:
 3. **Build** on a branch in the existing style, with tests for the logic (see DEVELOPMENT.md). New
    logic gets tests so the coverage of its package does not drop (`./tests/coverage.sh` shows it).
 4. **Pull request** with what changed, why, how it was tested, what to try on the phone, and
-   `Fixes #N` (the template has the checklist). Bump the version for user visible changes; merging
-   then publishes the release. Never merge yourself, never push to `main`.
+   `Fixes #N` (the template has the checklist). For user visible changes add one note in `changes/`
+   (never type a version number or edit `CHANGELOG.md`, see DEVELOPMENT.md); merging then publishes
+   the release. Keep your open PRs mergeable: when `main` moved, merge it into the branch and resolve
+   conflicts yourself. A PR that needs another open PR's code is built on that branch ("Stacked on
+   #x"). Never merge yourself, never push to `main`.
 5. **Look at the result.** The emulator test runs for pull requests (not for plain branch pushes).
    When it has passed, open the PNGs on the branch `screenshots-preview` with the Read tool. That
    branch is shared by all pull requests: its commit message must name your PR head commit, otherwise
