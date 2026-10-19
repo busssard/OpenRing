@@ -385,16 +385,21 @@ public class CoreTest {
     public static void main(String[] args) throws Exception {
         protocol();
         history();
+        bundles();
         client();
         analysis();
+        longWake();
         timeline();
+        activityWeek();
         live();
         motion();
         pattern();
         clockChange();
         dialMath();
         stageFilter();
+        stageShare();
         screenTime();
+        screenAwakeGrid();
         screenApps();
         screenUnlock();
         screenScore();
@@ -403,6 +408,39 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Stage percentages: REM, light and deep of time asleep add up to 100, awake of time in bed (issue #32). */
+    static void stageShare() {
+        int[] a = StageShare.sleepShares(43, 262, 113);
+        eq("shares: night like the issue's", Arrays.toString(a), "[10, 63, 27]");
+        int[] third = StageShare.sleepShares(100, 100, 100);
+        eq("shares: thirds add up to 100, not 99", third[0] + third[1] + third[2], 100);
+        eq("shares: thirds tie goes to the first stage", Arrays.toString(third), "[34, 33, 33]");
+        int[] up = StageShare.sleepShares(45, 245, 210);
+        // exact 9, 49, 42 with no remainder
+        eq("shares: exact values stay", Arrays.toString(up), "[9, 49, 42]");
+        int[] over = StageShare.sleepShares(5.5, 5.5, 89); // 5.5 + 5.5 + 89, plain rounding gives 6 + 6 + 89 = 101
+        eq("shares: no 101", over[0] + over[1] + over[2], 100);
+        eq("shares: 101 case", Arrays.toString(over), "[6, 5, 89]");
+        for (int t = 0; t < 200; t++) {
+            int[] r = StageShare.sleepShares(t * 1.37 % 97, t * 2.11 % 300, t * 0.73 % 140 + 1);
+            if (r[0] + r[1] + r[2] != 100) { check("shares: always 100 (" + t + ")", false); break; }
+        }
+        check("shares: no sleep gives null", StageShare.sleepShares(0, 0, 0) == null && StageShare.sleepShares(0.2, 0.3, 0.1) == null);
+        check("shares: a missing stage gives null", StageShare.sleepShares(Double.NaN, 300, 50) == null
+                && StageShare.sleepShares(40, Double.NaN, 50) == null && StageShare.sleepShares(40, 300, Double.NaN) == null);
+        eq("shares: negative minutes count as 0", Arrays.toString(StageShare.sleepShares(0, 300, -5)), "[0, 100, 0]");
+        eq("share: awake of time in bed", StageShare.share(54, 543), 10.0);
+        check("share: no base", Double.isNaN(StageShare.share(10, 0)) && Double.isNaN(StageShare.share(10, Double.NaN))
+                && Double.isNaN(StageShare.share(Double.NaN, 400)));
+        eq("share: negative part is 0", StageShare.share(-3, 400), 0.0);
+        eq("note: with range", StageShare.note(10, "sleep", StageShare.USUAL_DEEP), "10% of sleep (usual 13 to 23%)");
+        eq("note: rem range", StageShare.note(27, "sleep", StageShare.USUAL_REM), "27% of sleep (usual about 20%)");
+        eq("note: without range", StageShare.note(63, "sleep", null), "63% of sleep");
+        eq("note: awake", StageShare.note(9, "time in bed", null), "9% of time in bed");
+        eq("note: unknown with range", StageShare.note(Double.NaN, "sleep", StageShare.USUAL_DEEP), "Usual 13 to 23% of sleep");
+        eq("note: unknown without range", StageShare.note(Double.NaN, "sleep", null), "No data yet");
     }
 
     static boolean near(double a, double b) {
@@ -605,6 +643,153 @@ public class CoreTest {
         eq("screen: phone use while already awake still counts", ScreenTime.markAwake(awakeAlready, 60, 150, m), 1);
     }
 
+    /** The awake rule before issue #41: a step is awake when the screen was on for 15 s of it. */
+    static boolean[] oldAwake(int n, double start, double end, List<double[]> sessions) {
+        boolean[] out = new boolean[n];
+        double step = (end - start) / n;
+        for (int i = 0; i < n; i++) {
+            double a = start + i * step, b = a + step, on = 0;
+            for (double[] x : sessions) on += Math.max(0, Math.min(x[1], b) - Math.max(x[0], a));
+            out[i] = on >= ScreenTime.AWAKE_MIN_S * step / 30.0;
+        }
+        return out;
+    }
+
+    static int awakeCount(int[] st) {
+        int c = 0;
+        for (int x : st) if (x == 4) c++;
+        return c;
+    }
+
+    /** Issue #41: a short phone check counts wherever it falls on the 30 second grid. */
+    static void screenAwakeGrid() {
+        // one check slid over every start time in a step (tenths of a second, the borders included)
+        double[] lengths = {15, 20, 25, 29, 29.9};
+        boolean always = true, atMostTwo = true, mostIsMarked = true;
+        String miss = "";
+        for (double len : lengths) {
+            for (int k = 0; k <= 300; k++) {
+                double s0 = 600 + k / 10.0;
+                int[] st = new int[120];
+                Arrays.fill(st, 2);
+                List<double[]> one = new ArrayList<double[]>();
+                one.add(new double[] {s0, s0 + len});
+                int r = ScreenTime.markAwake(st, 0, 3600, one);
+                if (awakeCount(st) < 1 || r != awakeCount(st)) {
+                    always = false;
+                    miss = " (missed " + len + " s at " + s0 + ")";
+                }
+                atMostTwo &= awakeCount(st) <= 2;
+                // the step holding most of the check is marked (the earlier one on a tie)
+                int first = (int) Math.floor(s0 / 30);
+                double inFirst = Math.min(s0 + len, (first + 1) * 30) - s0;
+                int expect = inFirst >= len - inFirst - 1e-9 ? first : first + 1;
+                mostIsMarked &= st[expect] == 4;
+            }
+        }
+        check("screen #41: every check of 15 s or more marks a step, wherever it starts" + miss, always);
+        check("screen #41: a short check marks at most two steps", atMostTwo);
+        check("screen #41: the step holding most of the check is marked", mostIsMarked);
+
+        // the cases from the issue
+        int[] a = new int[120];
+        List<double[]> s = new ArrayList<double[]>();
+        s.add(new double[] {617.5, 642.5});
+        eq("screen #41: a 25 s check split half and half marks one step", ScreenTime.markAwake(a, 0, 3600, s), 1);
+        eq("screen #41: a tie goes to the earlier step", a[20], 4);
+        int[] b = new int[120];
+        s.clear();
+        s.add(new double[] {22, 37});
+        eq("screen #41: a 15 s check from 22 s to 37 s marks one step", ScreenTime.markAwake(b, 0, 3600, s), 1);
+        eq("screen #41: the step with 8 of its 15 s", b[0], 4);
+
+        // a 14 s check never marks a step
+        boolean never = true;
+        for (int k = 0; k <= 300; k++) {
+            double s0 = 600 + k / 10.0;
+            int[] st = new int[120];
+            List<double[]> one = new ArrayList<double[]>();
+            one.add(new double[] {s0, s0 + 14});
+            never &= ScreenTime.markAwake(st, 0, 3600, one) == 0 && awakeCount(st) == 0;
+        }
+        check("screen #41: a 14 s check never marks a step", never);
+
+        // longer sessions behave exactly as before
+        boolean same = true;
+        for (double len = 30; len <= 600; len += 7.3) {
+            for (int k = 0; k <= 30; k++) {
+                double s0 = 900 + k;
+                int[] st = new int[120];
+                List<double[]> one = new ArrayList<double[]>();
+                one.add(new double[] {s0, s0 + len});
+                ScreenTime.markAwake(st, 0, 3600, one);
+                boolean[] old = oldAwake(120, 0, 3600, one);
+                for (int i = 0; i < 120; i++) same &= (st[i] == 4) == old[i];
+            }
+        }
+        check("screen #41: sessions of 30 s or more mark the same steps as before", same);
+
+        // two short checks: in one step together 15 s still count, on both sides of a border not
+        int[] two = new int[10];
+        List<double[]> t = new ArrayList<double[]>();
+        t.add(new double[] {32, 42});
+        t.add(new double[] {45, 55});
+        eq("screen #41: two 10 s checks in one step still count", ScreenTime.markAwake(two, 0, 300, t), 1);
+        eq("screen #41: two 10 s checks in one step mark it", two[1], 4);
+        int[] apart = new int[10];
+        t.clear();
+        t.add(new double[] {45, 55});
+        t.add(new double[] {62, 72});
+        eq("screen #41: 10 s checks on both sides of a border do not count", ScreenTime.markAwake(apart, 0, 300, t), 0);
+        // a short check over a border, one of its steps already marked with another check: nothing extra
+        int[] next = new int[10];
+        t.clear();
+        t.add(new double[] {50, 70}); // 10 s in step 1, 10 s in step 2
+        t.add(new double[] {72, 78}); // step 2 now has 16 s
+        eq("screen #41: a check with a step already marked adds no step", ScreenTime.markAwake(next, 0, 300, t), 1);
+        eq("screen #41: that step is the one marked", next[2], 4);
+        // the part outside the window does not count
+        int[] edge = new int[10];
+        t.clear();
+        t.add(new double[] {-10, 10});
+        eq("screen #41: only 10 s inside the window, nothing marked", ScreenTime.markAwake(edge, 0, 300, t), 0);
+        t.clear();
+        t.add(new double[] {-10, 16});
+        eq("screen #41: 16 s inside the window marks the first step", ScreenTime.markAwake(edge, 0, 300, t), 1);
+
+        // random nights: every step the old rule marked is still marked, extra steps only from
+        // checks under 30 s with 15 s inside the window, at most one each
+        Random rnd = new Random(41);
+        boolean superset = true, fewExtra = true;
+        for (int night = 0; night < 3000; night++) {
+            int n = 60 + rnd.nextInt(60);
+            double start = rnd.nextInt(1000), end = start + n * 30;
+            List<double[]> ss = new ArrayList<double[]>();
+            double cur = start - 40;
+            int shortOnes = 0;
+            while (cur < end) {
+                cur += 1 + rnd.nextDouble() * 200;
+                double len = rnd.nextInt(4) == 0 ? 30 + rnd.nextDouble() * 300 : rnd.nextDouble() * 32;
+                ss.add(new double[] {cur, cur + len});
+                double in = Math.min(cur + len, end) - Math.max(cur, start);
+                if (len < 30 && in >= 15) shortOnes++;
+                cur += len;
+            }
+            int[] st = new int[n];
+            Arrays.fill(st, 1);
+            ScreenTime.markAwake(st, start, end, ss);
+            boolean[] old = oldAwake(n, start, end, ss);
+            int extra = 0;
+            for (int i = 0; i < n; i++) {
+                if (old[i] && st[i] != 4) superset = false;
+                if (!old[i] && st[i] == 4) extra++;
+            }
+            fewExtra &= extra <= shortOnes;
+        }
+        check("screen #41: random nights keep every step the old rule marked", superset);
+        check("screen #41: extra steps only from short checks, at most one each", fewExtra);
+    }
+
     static void protocol() {
         byte[] key = Hex.decode("4431967d8bacc2659743142b68391d9a");
         byte[] nonce = Hex.decode("0e2d6a0a08c99b4365f458e6e97382");
@@ -634,6 +819,91 @@ public class CoreTest {
         eq("battery debug", bat[1], 4200);
         double[] temps = EventCodec.temps(new byte[] {(byte) 0x4c, 0x0d});
         check("temp", Math.abs(temps[0] - 34.04) < 1e-9);
+    }
+
+    /** One extended envelope packet (2f .. 43) holding 0x46 temperature events at these varints. */
+    // the frame length is one byte, so the bundle body must stay at 252 bytes or less
+    static Packet bundle(long... varints) {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        for (long v : varints) {
+            java.io.ByteArrayOutputStream vb = new java.io.ByteArrayOutputStream();
+            do {
+                int x = (int) (v & 0x7f);
+                v >>>= 7;
+                vb.write(v != 0 ? x | 0x80 : x);
+            } while (v != 0);
+            b.write(0);
+            b.write(0x46);
+            b.write(vb.size() + 2);
+            b.write(vb.toByteArray(), 0, vb.size());
+            b.write(0x98);
+            b.write(0x0e);
+        }
+        byte[] body = b.toByteArray();
+        byte[] f = new byte[5 + body.length];
+        f[0] = 0x2f;
+        f[1] = (byte) (3 + body.length);
+        f[2] = 0x43;
+        f[3] = (byte) body.length;
+        f[4] = (byte) (body.length >> 8);
+        System.arraycopy(body, 0, f, 5, body.length);
+        return Packet.parse(f);
+    }
+
+    static String bundleDs(ExtEnvelopeParser parser, Packet p) {
+        StringBuilder sb = new StringBuilder();
+        for (Packet e : parser.push(p)) sb.append(sb.length() > 0 ? " " : "").append(RingEvent.fromPacket(e).ds);
+        return sb.toString();
+    }
+
+    static void bundles() throws Exception {
+        // issue #31: every varint after the first is a delta, however large
+        ExtEnvelopeParser ep = new ExtEnvelopeParser();
+        eq("bundle: delta just under 27.8 h", bundleDs(ep, bundle(500_000_000L, 99_999_900L, 1000)), "5000000 5999999 6000009");
+        eq("bundle: no long pause counted", ep.longPauses, 0);
+        eq("bundle: delta of 27.8 h stays a delta", bundleDs(ep, bundle(500_000_000L, 100_000_000L, 1000)), "5000000 6000000 6000010");
+        eq("bundle: long pause counted", ep.longPauses, 1);
+        ep = new ExtEnvelopeParser();
+        eq("bundle: delta of 55.6 h stays a delta", bundleDs(ep, bundle(500_000_000L, 200_000_000L, 1000)), "5000000 7000000 7000010");
+        eq("bundle: one long pause", ep.longPauses, 1);
+        // a pause longer than the time since the ring started (10 h, then 30 h) is still a pause
+        ep = new ExtEnvelopeParser();
+        eq("bundle: pause longer than uptime", bundleDs(ep, bundle(36_000_000L, 108_000_000L)), "360000 1440000");
+        // each envelope starts with an absolute time, even a small one after a reboot
+        eq("bundle: small absolute start after reboot", bundleDs(ep, bundle(200, 1000)), "2 12");
+        // events in the same decisecond still move forward by one
+        eq("bundle: same decisecond bumps", bundleDs(ep, bundle(500_000_000L, 1, 1)), "5000000 5000001 5000002");
+        eq("bundle: count over several envelopes", ep.longPauses, 1);
+        eq("bundle: longest pause", ep.longestPauseMs, 108_000_000L);
+
+        // the batch carries the count, and the drain writes it to the log
+        Packet summary = Packet.parse(Hex.decode("2f0a42010000000000000000"));
+        HistoryBatch hb = HistoryBatch.decode(Arrays.asList(bundle(500_000_000L, 200_000_000L), bundle(1_000_000_000L, 150_000_000L, 1), summary));
+        eq("batch: long pauses summed", hb.longPauses, 2);
+        eq("batch: long pauses kept by validate", HistoryBatch.validate(hb, 0).longPauses, 2);
+        eq("batch: longest pause", HistoryBatch.validate(hb, 0).longestPauseMs, 200_000_000L);
+        eq("log: several pauses", RingClient.longPauseText(2, 200_000_000L),
+                "history: 2 pauses of more than 27 hours between stored events, kept as real time (longest 55.6 h)");
+
+        Mock m = new Mock();
+        m.on("280100", "290100");
+        m.on(Hex.encode(Protocol.extGetEvent(0, 4096, 0)), Hex.encode(bundle(500_000_000L, 200_000_000L).encode()), "2f0a42020000000000000000");
+        m.on(Hex.encode(Protocol.extGetEvent(7000001L * 100, 4096, 0)), "2f0a42000000000000000000");
+        RingClient c = new RingClient(m).quiet(5);
+        final List<String> log = new ArrayList<String>();
+        c.setLog(new RingClient.Log() {
+            public void log(String msg) {
+                log.add(msg);
+            }
+        });
+        RingClient.DrainResult r = c.drain(0, new RingClient.BatchSink() {
+            public boolean onBatch(List<RingEvent> events, long next, long left, int total) {
+                return true;
+            }
+        });
+        eq("drain: events after a long pause", r.eventsSynced, 2);
+        eq("drain: cursor after the long pause", r.nextCursor, 7000001L);
+        check("drain: long pause logged", log.contains("history: 1 pause of more than 27 hours between stored events, kept as real time (longest 55.6 h)"));
     }
 
     static void history() throws Exception {
@@ -763,6 +1033,163 @@ public class CoreTest {
         double[] debt = Wellness.sleepDebt(new int[] {6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600}, new int[] {8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600});
         check("sleep debt", debt[0] > 0 && debt[1] == 1);
         eq("nightly temp short", Double.isNaN(NightAnalyzer.nightlyTemperature(new double[] {35, 35})), true);
+    }
+
+    /** Issue #44: the weekly parts of the activity score look at the worn days only. */
+    static Night.Contributor part(Night.Score s, String key) {
+        for (Night.Contributor c : s.contributors) if (c.key.equals(key)) return c;
+        return null;
+    }
+
+    static Scores.ActivityInput activityIn(int days, double met, int train, double kcal) {
+        Scores.ActivityInput in = new Scores.ActivityInput();
+        in.inactiveMin = 7 * 60;
+        in.longInactiveStreaks = 1;
+        in.days7 = days;
+        in.targetsMetFraction = met / days;
+        in.trainingDays7 = train;
+        in.trainingKcal7 = kcal;
+        return in;
+    }
+
+    static void activityWeek() {
+        // a full week: exactly the numbers and texts from before the change
+        Scores.ActivityInput full = activityIn(7, 5, 2, 800);
+        eq("activity: default is a full week", new Scores.ActivityInput().days7, 7);
+        Night.Score w = Scores.activity(full);
+        double t = Stats.curve(5 / 7.0, new double[][] {{0, 20}, {0.15, 35}, {0.43, 62}, {0.71, 86}, {1, 100}});
+        double f = Stats.curve(2, new double[][] {{0, 35}, {1, 60}, {2, 82}, {3, 100}});
+        double v = Stats.curve(800, new double[][] {{0, 20}, {300, 42}, {700, 66}, {1200, 86}, {2000, 100}});
+        double a = Stats.curve(7, new double[][] {{5, 100}, {7, 92}, {9, 72}, {11, 45}, {13, 20}}), m = 90;
+        eq("activity week: targets unchanged", Math.round(part(w, "targets").score), Math.round(t));
+        eq("activity week: targets text", part(w, "targets").detail, "5 of 7 days");
+        eq("activity week: frequency unchanged", Math.round(part(w, "frequency").score), Math.round(f));
+        eq("activity week: frequency text", part(w, "frequency").detail, "2 training days");
+        eq("activity week: volume unchanged", Math.round(part(w, "volume").score), Math.round(v));
+        eq("activity week: volume text", part(w, "volume").detail, "800 kcal this week");
+        long all = Math.round((Math.round(a) * 17 + m * 33 + Math.round(t) * 24 + Math.round(f) * 12 + Math.round(v) * 14) / 100.0);
+        eq("activity week: score unchanged", (long) w.value, all);
+
+        // four worn days: share of them, training scaled up to a week
+        Night.Score four = Scores.activity(activityIn(4, 3, 2, 800));
+        eq("activity 4 days: targets of the worn days", Math.round(part(four, "targets").score),
+            Math.round(Stats.curve(0.75, new double[][] {{0, 20}, {0.15, 35}, {0.43, 62}, {0.71, 86}, {1, 100}})));
+        eq("activity 4 days: targets text", part(four, "targets").detail, "3 of 4 days");
+        eq("activity 4 days: frequency scaled to a week", Math.round(part(four, "frequency").score), 100L); // 3.5 a week
+        eq("activity 4 days: frequency text", part(four, "frequency").detail, "2 training days in 4 days");
+        eq("activity 4 days: volume scaled to a week", Math.round(part(four, "volume").score),
+            Math.round(Stats.curve(1400, new double[][] {{0, 20}, {300, 42}, {700, 66}, {1200, 86}, {2000, 100}})));
+        eq("activity 4 days: volume text", part(four, "volume").detail, "800 kcal in 4 days");
+        check("activity 4 days: higher than the same days counted against 7", four.value > Scores.activity(activityIn(7, 3, 2, 800)).value);
+
+        // fewer than 3 worn days: the weekly parts are left out, the daily ones carry the score
+        for (int n = 1; n < Scores.MIN_WEEK_DAYS; n++) {
+            Night.Score few = Scores.activity(activityIn(n, n, 1, 400));
+            eq("activity " + n + " days: two daily parts only", few.contributors.size(), 2);
+            eq("activity " + n + " days: score from the daily parts", (long) few.value, Math.round((Math.round(a) * 17 + m * 33) / 50.0));
+        }
+        eq("activity: one training day is singular", part(Scores.activity(activityIn(3, 2, 1, 400)), "frequency").detail, "1 training day in 3 days");
+        eq("activity 3 days: weekly parts join", Scores.activity(activityIn(3, 2, 1, 400)).contributors.size(), 5);
+        eq("activity: day count above 7 is a week", part(Scores.activity(activityIn(9, 9, 2, 800)), "frequency").detail, "2 training days");
+    /** Ring sleep state every 5 minutes from {@code from} to {@code to} (hours after midnight UTC), awake in {@code awake} (hours), no samples in {@code off}. */
+    static TS ringState(double from, double to, double[] awake, double[] off) {
+        TS st = new TS();
+        double day = 1_760_000_000L - 1_760_000_000L % 86400;
+        for (double h = from; h < to; h += 5 / 60.0) {
+            if (off != null && h >= off[0] && h < off[1]) continue;
+            boolean aw = awake != null && h >= awake[0] && h < awake[1];
+            st.add(day + h * 3600, aw ? 0 : 1);
+        }
+        return st;
+    }
+
+    static List<NightFinder.Period> findIn(TS st, NightFinder.LocalClock clock) {
+        TS support = new TS();
+        for (int i = 0; i < st.size(); i++) support.add(st.t(i), 1);
+        return NightFinder.find(new ArrayList<double[]>(), new ArrayList<NightFinder.RingRun>(), st, support, clock);
+    }
+
+    static double awakeMin(NightFinder.Period p) {
+        double s = 0;
+        for (double[] a : p.awake) s += a[1] - a[0];
+        return s / 60;
+    }
+
+    /** Issue #42: a long wake up in the middle of the night joins the two pieces, a nap does not. */
+    static void longWake() {
+        NightFinder.LocalClock utc = new NightFinder.LocalClock() {
+            @Override
+            public int minuteOfDay(double unix) {
+                return (int) (((long) unix % 86400) / 60);
+            }
+        };
+        // night 23:00 to 07:00 (hours from midnight; -1 is 23:00 the evening before)
+        List<NightFinder.Period> ps = findIn(ringState(-1, 7, new double[] {2.5, 3.75}, null), utc);
+        eq("75 min wake up at 02:30 is one night", ps.size(), 1);
+        check("75 min wake up returned as awake", ps.size() == 1 && Math.abs(awakeMin(ps.get(0)) - 75) <= 10);
+        check("joined night keeps its edges", ps.size() == 1 && ps.get(0).end - ps.get(0).start <= 8 * 3600);
+        ps = findIn(ringState(-1, 7, new double[] {2.5, 4.5}, null), utc);
+        eq("120 min wake up is one night", ps.size(), 1);
+        check("120 min wake up returned as awake", ps.size() == 1 && Math.abs(awakeMin(ps.get(0)) - 120) <= 10);
+        eq("200 min wake up stays two sleeps", findIn(ringState(-1, 7, new double[] {2.5, 2.5 + 200 / 60.0}, null), utc).size(), 2);
+        eq("without a clock the old rule splits it", findIn(ringState(-1, 7, new double[] {2.5, 3.75}, null), null).size(), 2);
+        // sofa 19:00 to 21:00, awake 21:00 to 22:15, bed 22:15: the middle of the gap is 21:37
+        eq("evening wake up keeps the sofa sleep apart", findIn(ringState(19, 30, new double[] {21, 22.25}, null), utc).size(), 2);
+        // ring taken off 02:30 to 03:45: no sleep state in the gap, not a wake up
+        eq("ring taken off is not joined", findIn(ringState(-1, 7, null, new double[] {2.5, 3.75}), utc).size(), 2);
+        // a wake up ending 06:20 joins, one ending 06:50 does not
+        eq("early morning wake up joins", findIn(ringState(-1, 8, new double[] {5, 6 + 20 / 60.0}, null), utc).size(), 1);
+        eq("wake up past 06:30 does not join", findIn(ringState(-1, 9, new double[] {5.5, 6 + 50 / 60.0}, null), utc).size(), 2);
+        // review of #42: sofa 20:30 to 22:30, awake to 00:30, bed: the sofa started before 21:00
+        eq("sofa sleep from 20:30 stays apart", findIn(ringState(20.5, 31.5, new double[] {22.5, 24.5}, null), utc).size(), 2);
+        // asleep 23:00 to 04:00, up 04:00 to 06:30, nap 06:30 to 08:00: the gap reaches 06:30
+        eq("nap after getting up stays apart", findIn(ringState(-1, 8, new double[] {4, 6.5}, null), utc).size(), 2);
+        // a bed at 21:30, asleep to 23:00, awake to 00:30 is one night
+        eq("early bed with a long wake up joins", findIn(ringState(21.5, 31, new double[] {23, 24.5}, null), utc).size(), 1);
+        // a staged ring piece 23:00 to 02:30 joined with an unstaged one 03:45 to 07:00: the ring's
+        // codes keep their times, the gap is awake, the unstaged piece unknown
+        {
+            double day = 1_760_000_000L - 1_760_000_000L % 86400;
+            double rs = day - 3600, re = day + 2.5 * 3600;
+            int[] codes = new int[(int) ((re - rs) / 30)];
+            for (int i = 0; i < codes.length; i++) codes[i] = rs + i * 30 < day ? 1 : 3; // deep before midnight, REM after
+            List<NightFinder.RingRun> runs = new ArrayList<NightFinder.RingRun>();
+            runs.add(new NightFinder.RingRun(rs, re, codes));
+            TS st = ringState(-1, 7, new double[] {2.5, 3.75}, null);
+            TS support = new TS();
+            for (int i = 0; i < st.size(); i++) support.add(st.t(i), 1);
+            List<NightFinder.Period> sp = NightFinder.find(new ArrayList<double[]>(), runs, st, support, utc);
+            eq("staged and unstaged pieces join", sp.size(), 1);
+            if (sp.size() == 1) {
+                NightFinder.Period q = sp.get(0);
+                int[] al = NightFinder.align(new NightFinder.RingRun(q.end - q.codes.length * 30.0, q.end, q.codes), q.start, q.end);
+                int at2330 = al[(int) ((day - 1800 - q.start) / 30)], at0100 = al[(int) ((day + 3600 - q.start) / 30)];
+                int at0300 = al[(int) ((day + 3 * 3600 - q.start) / 30)], at0500 = al[(int) ((day + 5 * 3600 - q.start) / 30)];
+                check("stitched codes cover the whole night", Math.abs(q.codes.length * 30.0 - (q.end - q.start)) <= 30);
+                check("ring codes keep their times", at2330 == 1 && at0100 == 3);
+                check("gap is awake, unstaged piece unknown", at0300 == 4 && at0500 == 0);
+            }
+        }
+        // a short doze inside the gap is not counted as awake
+        List<double[]> asleep = new ArrayList<double[]>();
+        asleep.add(new double[] {100, 200});
+        List<double[]> parts = NightFinder.awakeParts(0, 300, asleep);
+        check("awake parts leave sleep out", parts.size() == 2 && parts.get(0)[1] == 100 && parts.get(1)[0] == 200);
+        // the analyser counts the ring's awake time even when heart rate and movement look calm
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        double day = 1_760_000_000L - 1_760_000_000L % 86400;
+        in.start = day - 3600;
+        in.end = day + 7 * 3600;
+        for (double t = in.start; t < in.end; t += 300) {
+            in.hr5.add(t, 55);
+            in.hrv5.add(t, 60);
+        }
+        for (double t = in.start; t < in.end; t += 60) in.motion.add(t, 0);
+        Night calm = NightAnalyzer.analyze(in);
+        in.ringAwake.add(new double[] {day + 2.5 * 3600, day + 3.75 * 3600});
+        Night woke = NightAnalyzer.analyze(in);
+        check("ring awake gap counts as awake", woke.awakeMin - calm.awakeMin >= 70 && woke.awakenings >= 1);
+        check("ring awake gap lowers the score", Scores.sleep(woke, 0, 40).value < Scores.sleep(calm, 0, 40).value);
     }
 
     static void timeline() {

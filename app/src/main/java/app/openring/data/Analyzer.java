@@ -78,10 +78,16 @@ public final class Analyzer {
         // the detail filter's rules changed (issue #28): nights from older rules are analysed again once;
         // databases from before the version existed read as version 1
         if (db.kvLong("stage_filter", 1) != StageFilter.VERSION) db.put("analyzed_until", 0);
+        // the rules for finding nights changed (issue #42, long wake ups): nights from older rules are
+        // analysed again once; databases from before the version existed read as version 1
+        if (db.kvLong("night_finder", 1) != NightFinder.VERSION) db.put("analyzed_until", 0);
         // "count phone use as awake" switched (issue #13): only nights since the first screen data change
         long screenAwake = prefs.screenAwake() ? 1 : 0;
         double firstScreen = db.screenStart(true);
         if (db.kvLong("screen_awake", screenAwake) != screenAwake && firstScreen >= 0) db.reanalyseFrom(firstScreen);
+        // the rule for which steps phone use marks awake changed (issue #41): nights with screen data
+        // are analysed again once; databases from before the version existed read as rule 1
+        if (screenAwake == 1 && db.kvLong("phone_awake", 1) != ScreenTime.AWAKE_RULE && firstScreen >= 0) db.reanalyseFrom(firstScreen);
         db.put("dated_count", t.datedAfter);
         db.put("event_count", t.total);
         double[] range = db.datedRange();
@@ -100,7 +106,9 @@ public final class Analyzer {
         db.put("analyzed_until", (long) range[1]);
         db.put("stage_detail", detail);
         db.put("stage_filter", StageFilter.VERSION);
+        db.put("night_finder", NightFinder.VERSION);
         db.put("screen_awake", screenAwake);
+        db.put("phone_awake", ScreenTime.AWAKE_RULE);
         db.put("last_analysis", now);
     }
 
@@ -232,7 +240,15 @@ public final class Analyzer {
             }
         }
         List<NightFinder.RingRun> runs = NightFinder.ringRuns(pageTimes, pages);
-        List<NightFinder.Period> periods = NightFinder.find(bedtimes, runs, state, support);
+        // the phone's clock tells a wake up in the middle of the night from a nap (issue #42)
+        NightFinder.LocalClock clock = new NightFinder.LocalClock() {
+            @Override
+            public int minuteOfDay(double unix) {
+                java.time.LocalTime lt = Instant.ofEpochSecond((long) unix).atZone(zone).toLocalTime();
+                return lt.getHour() * 60 + lt.getMinute();
+            }
+        };
+        List<NightFinder.Period> periods = NightFinder.find(bedtimes, runs, state, support, clock);
         // phone use (issue #13): someone using the phone is awake, whatever the ring thinks
         List<double[]> screen = new ArrayList<double[]>();
         if (prefs.screenAwake()) {
@@ -332,6 +348,7 @@ public final class Analyzer {
         in.start = start;
         in.end = end;
         for (double[] s : screen) if (s[1] > start && s[0] < end) in.screen.add(s);
+        in.ringAwake.addAll(p.awake);
         TS spHr = new TS();
         TS motionFromSp = new TS();
         for (Db.Row r : rows) {
@@ -557,12 +574,15 @@ public final class Analyzer {
             for (JSONObject p : prevDays) {
                 LocalDate pd = LocalDate.parse(p.optString("date", key));
                 if (pd.isBefore(day.minusDays(6))) continue;
+                if (p.optDouble("covered_min", 0) < 60) continue; // ring not worn: left out (issue #44)
                 n7++;
                 if (p.optDouble("active_kcal", 0) >= p.optDouble("target_kcal", 1e9)) met7++;
                 if (p.optDouble("medium_min", 0) + p.optDouble("high_min", 0) >= 30) train++;
                 trainKcal += p.optDouble("training_kcal", 0);
             }
-            ai.targetsMetFraction = met7 / 7.0;
+            ai.days7 = n7;
+            ai.targetsMetFraction = met7 / (double) n7;
+            Json.put(out, "activity_days", n7);
             ai.trainingDays7 = train;
             ai.trainingKcal7 = trainKcal;
             Night.Score as = Scores.activity(ai);

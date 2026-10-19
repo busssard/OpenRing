@@ -19,7 +19,7 @@ Nothing leaves the phone: the app has no internet permission.
 | Package | Responsibility |
 | --- | --- |
 | `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `Hex` |
-| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `LiveHrv`, `Stats`, `TS` (time series) |
+| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
 | `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours) |
@@ -81,13 +81,19 @@ file in the cache. Histories are never merged.
 ## Analysis
 
 1. `NightFinder` finds sleep periods from the ring's bedtime markers, its per 30 second sleep state and
-   nocturnal events. A period is never stretched into time the ring marks as awake. `Analyzer` then
+   nocturnal events. A period is never stretched into time the ring marks as awake at its edges. A wake
+   up in the middle of the night (up to 3 hours, the gap from 22:00 at the earliest to before 06:30, the
+   sleep before it begun at 21:00 or later, the ring worn through it) joins the pieces before and after
+   into one night; the time the ring calls awake in the gap counts as awake, and ring stages of both
+   pieces keep their own times (issue #42). kv `night_finder` holds the rules version. `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
    When "Count phone use as awake" is on (default), phone use of a minute or more that overlaps the first or
    last 10 minutes of a period moves its edge past it, and a period of under 15 minutes left is dropped.
 2. `Stager` estimates stages per 30 seconds from heart rate, HRV and movement (open_health's model free
    stager). Ring 4 does not stage sleep itself. Sleep versus wake is reliable; deep and REM are estimates.
    Every 30 seconds with the phone screen on for at least 15 seconds becomes awake (`ScreenTime.markAwake`).
+   A single use of 15 seconds or more that a step border splits so neither part reaches 15 seconds marks
+   the step holding most of it (issue #41); `ScreenTime.AWAKE_RULE` (kv `phone_awake`) re analyses nights on a change.
 3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep

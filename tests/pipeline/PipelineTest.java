@@ -56,8 +56,14 @@ public class PipelineTest {
     }
 
     static List<RingEvent> history(int days) {
+        return history(days, java.util.Collections.<Integer>emptySet(), java.util.Collections.<Integer>emptySet());
+    }
+
+    /** As above, without any event on the days in {@code off} (the ring stayed in a drawer). */
+    static List<RingEvent> history(int days, java.util.Set<Integer> off, java.util.Set<Integer> rest) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         for (int d = 0; d < days; d++) {
+            if (off.contains(d)) continue;
             double day = T0 + d * 86400.0; // local midnight
             double bed = day - 1.25 * 3600 + rnd.nextGaussian() * 900; // ~22:45 the evening before
             double wake = day + 6.75 * 3600 + rnd.nextGaussian() * 900; // ~06:45
@@ -104,7 +110,7 @@ public class PipelineTest {
                 byte[] met = new byte[11];
                 met[0] = 1;
                 for (int k = 1; k <= 10; k++) {
-                    double m = (hour > 17.5 && hour < 18.5) ? 6.5 : (hour > 12 && hour < 12.5 ? 3.5 : 1.3 + rnd.nextDouble() * 0.6);
+                    double m = (hour > 17.5 && hour < 18.5 && !rest.contains(d)) ? 6.5 : (hour > 12 && hour < 12.5 && !rest.contains(d) ? 3.5 : 1.3 + rnd.nextDouble() * 0.6);
                     met[k] = (byte) Math.round(m * 10);
                 }
                 ev.add(new RingEvent(EventCodec.ACTIVITY_INFO, ds(t), met));
@@ -187,6 +193,11 @@ public class PipelineTest {
                     dayJ.optJSONObject("activity_score") == null ? "-" : dayJ.optJSONObject("activity_score").opt("value"),
                     dayJ.opt("steps"), dayJ.opt("active_kcal"));
             check(key + " readiness", rd != null && rd.optInt("value", -1) > 0, rd == null ? null : rd.opt("value"));
+            // issue #44: the weekly parts count only the days so far, and wait for 3 of them
+            JSONObject as = dayJ.optJSONObject("activity_score");
+            check(key + " activity counts " + (d + 1) + " worn days", dayJ.optInt("activity_days", -1) == d + 1, dayJ.opt("activity_days"));
+            check(key + " weekly parts " + (d < 2 ? "left out" : "included"), as != null && (activityPart(as, "targets") == null) == (d < 2), as);
+            if (d == 2) check(key + " targets of 3 days", activityPart(as, "targets").optString("detail").endsWith(" of 3 days"), activityPart(as, "targets"));
         }
 
         // ---- sleep stage detail (issue #9): Balanced by default, raw stages kept, a change re analyses ----
@@ -275,6 +286,39 @@ public class PipelineTest {
             Analyzer.run(ctx, null);
             JSONObject on = Json.parse(db.nightsJson(key, key, true).get(0));
             check("switch on again: phone use counts again", Math.abs(on.optDouble("start") - (s0 + 900)) < 1, null);
+
+            // issue #41: a 20 s check split 10 s and 10 s over a step border counts as awake
+            int[] onRaw = Json.stagesRaw(on);
+            double oStart = on.optDouble("start"), oStep = (on.optDouble("end") - oStart) / onRaw.length;
+            int j = (int) (3 * 3600 / oStep);
+            double border = oStart + (j + 1) * oStep;
+            List<double[]> split = new ArrayList<double[]>();
+            split.add(new double[] {border - 10, border + 10});
+            db.putScreen(split);
+            db.reanalyseFrom(border - 10);
+            Analyzer.run(ctx, null);
+            JSONObject withSplit = Json.parse(db.nightsJson(key, key, true).get(0));
+            check("a 20 s check over a step border counts as awake (#41)", Json.stagesRaw(withSplit)[j] == 4
+                    && Math.abs(withSplit.optDouble("phone_min") - on.optDouble("phone_min") - oStep / 60) < 0.01,
+                    on.opt("phone_min") + " to " + withSplit.opt("phone_min"));
+            check("the awake rule version is stored", db.kvLong("phone_awake", -1) == ScreenTime.AWAKE_RULE, db.kvLong("phone_awake", -1));
+            // a database from before the rule version: the nights with screen data are analysed again once.
+            // The night is deleted and the analysis set to redo only the days after it, so a night
+            // that comes back shows the re analysis.
+            db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {key});
+            db.put("analyzed_until", (long) (e0 + 5 * 86400));
+            Analyzer.run(ctx, null);
+            check("same awake rule: the next sync stays incremental", db.nightsJson(key, key, true).isEmpty(), null);
+            db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {key});
+            db.put("analyzed_until", (long) (e0 + 5 * 86400));
+            db.put("phone_awake", null);
+            Analyzer.run(ctx, null);
+            check("older awake rule: nights with screen data are analysed again (#41)", db.nightsJson(key, key, true).size() == 1
+                    && db.kvLong("phone_awake", -1) == ScreenTime.AWAKE_RULE, null);
+            // the extra check is gone again for the tests below
+            db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {border - 10});
+            db.reanalyseFrom(border - 10);
+            Analyzer.run(ctx, null);
 
             // the couch: phone in use for the whole of a short window, it is not a night
             String key0 = day0.toString();
@@ -415,6 +459,20 @@ public class PipelineTest {
         check("demo notes no time zones, so its nights look as before (#22)", demo.zones().isEmpty()
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
+        // issue #44: the first demo days count the worn days so far, later ones a full week as before
+        int firstWorn = -1, fullWeek = 0, weekDays = 0;
+        boolean weekTexts = true;
+        for (String[] r : demo.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o == null || o.optJSONObject("activity_score") == null) continue;
+            if (firstWorn < 0) firstWorn = o.optInt("activity_days", -1);
+            if (o.optInt("activity_days", -1) != 7) continue;
+            weekDays++;
+            JSONObject tp = activityPart(o.optJSONObject("activity_score"), "targets"), vp = activityPart(o.optJSONObject("activity_score"), "volume");
+            weekTexts &= tp != null && tp.optString("detail").endsWith(" of 7 days") && vp != null && vp.optString("detail").endsWith(" kcal this week");
+        }
+        check("first demo day counts 1 worn day", firstWorn == 1, firstWorn);
+        check("demo weeks are full weeks with the old texts", weekDays >= 25 && weekTexts, weekDays + " days");
         ScreenTime.Day demoScreen = app.openring.data.ScreenDays.day(demo, LocalDate.now().minusDays(2), java.time.ZoneId.systemDefault());
         check("demo has screen time", demoScreen != null && demoScreen.totalMin > 90 && demoScreen.totalMin < 300 && demoScreen.turnedOn > 20,
                 demoScreen == null ? null : Math.round(demoScreen.totalMin) + " min, turned on " + demoScreen.turnedOn);
@@ -507,12 +565,14 @@ public class PipelineTest {
                 && "2026-04-12".equals(springNewest.optString("day")), springNewest.optString("day"));
         app.openring.data.Demo.leave(phone3);
 
+        longWakeChecks();
         demoTwice();
         oldNights();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
         longHistoryTiming();
         dialClockChange();
+        activityGap();
         zoneTable();
         travelZones();
         zoneStorage(full.toByteArray());
@@ -520,6 +580,62 @@ public class PipelineTest {
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
+    static JSONObject activityPart(JSONObject score, String key) {
+        org.json.JSONArray cs = score == null ? null : score.optJSONArray("contributors");
+        for (int i = 0; cs != null && i < cs.length(); i++) if (key.equals(cs.optJSONObject(i).optString("key"))) return cs.optJSONObject(i);
+        return null;
+    }
+
+    /**
+     * Issue #44: ten days with the ring left off on days 3 to 6, and an evening workout only on
+     * days 0 and 7 (and the lunch walk only then too), so the days before and after the gap have the same pattern (1 training day of
+     * 3 worn days) and the weekly parts stay below 100. Days without the ring are left out
+     * of the weekly parts of the activity score instead of counting as missed targets.
+     */
+    static void activityGap() throws Exception {
+        LocalDate day0 = java.time.Instant.ofEpochSecond(T0).atZone(ZONE).toLocalDate(); // T0 is shared with main
+        java.util.Set<Integer> off = new java.util.HashSet<Integer>(Arrays.asList(3, 4, 5, 6));
+        List<RingEvent> ev = history(10, off, new java.util.HashSet<Integer>(Arrays.asList(1, 2, 8, 9)));
+        long now = T0 + 10 * 86400 + 7 * 3600 + 1800;
+        Context c = new Context(Files.createTempDirectory("openring-gap").toFile());
+        Db db = Db.get(c);
+        for (int i = 0; i < ev.size(); i += 4096) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4096)), 1, now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, T0 + (lastDs - DS0) / 10);
+        Analyzer.run(c, null);
+        int[] worn = new int[10];
+        int[] score = new int[10];
+        JSONObject[] targets = new JSONObject[10], freq = new JSONObject[10], vol = new JSONObject[10];
+        for (int d = 0; d < 10; d++) {
+            JSONObject o = Json.parse(db.dayJson(day0.plusDays(d).toString()));
+            JSONObject as = o == null ? null : o.optJSONObject("activity_score");
+            worn[d] = o == null ? -1 : o.optInt("activity_days", -1);
+            score[d] = as == null ? -1 : as.optInt("value", -1);
+            targets[d] = activityPart(as, "targets");
+            freq[d] = activityPart(as, "frequency");
+            vol[d] = activityPart(as, "volume");
+        }
+        System.out.println("  gap history: worn days " + Arrays.toString(worn) + ", activity " + Arrays.toString(score));
+        check("gap: days without the ring have no activity score", score[3] < 0 && score[4] < 0 && score[5] < 0 && score[6] < 0, Arrays.toString(score));
+        check("gap: the day after counts 3 worn days in the last 7", worn[7] == 3 && worn[8] == 3 && worn[9] == 3, Arrays.toString(worn));
+        check("gap: targets count only the worn days", targets[7] != null && targets[7].optString("detail").endsWith(" of 3 days"), targets[7]);
+        int met7 = targets[7] == null ? -1 : Integer.parseInt(targets[7].optString("detail").split(" ")[0]);
+        double expect = app.openring.core.analysis.Stats.curve(met7 / 3.0, new double[][] {{0, 20}, {0.15, 35}, {0.43, 62}, {0.71, 86}, {1, 100}});
+        check("gap: days without the ring are not missed targets", met7 >= 0 && targets[7].optLong("score") == Math.round(expect), targets[7] + " expected " + expect);
+        check("gap: before the gap the same count", worn[2] == 3 && worn[1] == 2, Arrays.toString(worn));
+        check("gap: the same kind of day scores about the same after the gap", score[9] > 0 && Math.abs(score[9] - score[2]) <= 3, score[2] + " / " + score[9]);
+        // day 2 (days 0 to 2) and day 9 (days 7 to 9, the gap left out) both hold 1 training day in 3 worn days
+        check("gap: training frequency below 100 and the same before and after", freq[2] != null && freq[9] != null
+                && freq[2].optLong("score") < 100 && freq[2].optLong("score") == freq[9].optLong("score")
+                && "1 training day in 3 days".equals(freq[9].optString("detail")), freq[2] + " / " + freq[9]);
+        long fExpect = Math.round(app.openring.core.analysis.Stats.curve(7 / 3.0, new double[][] {{0, 35}, {1, 60}, {2, 82}, {3, 100}}));
+        check("gap: one training day in 3 worn days is scaled to a week", freq[9] != null && freq[9].optLong("score") == fExpect, freq[9] + " expected " + fExpect);
+        check("gap: training volume below 100 and about the same before and after", vol[2] != null && vol[9] != null
+                && vol[9].optLong("score") < 100 && Math.abs(vol[2].optLong("score") - vol[9].optLong("score")) <= 3, vol[2] + " / " + vol[9]);
+        check("gap: the day right after the gap is not pulled down", score[7] > 0 && Math.abs(score[7] - score[2]) <= 3, score[2] + " / " + score[7]);
+        db.close();
+    }
+
     /**
      * Issues #26 and #27: a restore checks the backup's history before anything changes, never
      * replaces newer history on the phone without asking, and keeps the old file until the new
@@ -1499,6 +1615,8 @@ public class PipelineTest {
         db.put("stage_detail", app.openring.data.Prefs.of(c).stageDetail());
         db.put("stage_filter", app.openring.core.analysis.StageFilter.VERSION);
         db.put("screen_awake", 1);
+        db.put("night_finder", app.openring.core.analysis.NightFinder.VERSION);
+        db.put("phone_awake", app.openring.core.analysis.ScreenTime.AWAKE_RULE);
         t = System.nanoTime();
         Analyzer.run(c, null);
         long incMs = (System.nanoTime() - t) / 1000000;
@@ -1506,5 +1624,178 @@ public class PipelineTest {
         check("long history: incremental analysis stays incremental", db.kvLong("analyzed_until", 0) >= (long) range[1] && db.count("SELECT COUNT(*) FROM nights") < 10,
                 db.count("SELECT COUNT(*) FROM nights") + " nights");
         db.close();
+    }
+
+    // ---------------------------------------------------------------- long wake ups (issue #42)
+
+    /** Local clock time on 2026-10-1x as unix seconds; hour may pass 24 for the next morning. */
+    static double at(LocalDate d, double hour) {
+        return d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + hour * 3600;
+    }
+
+    /**
+     * One worn stretch {from, to} with the ring's streams: sleep_state asleep (awake inside
+     * {@code awake} stretches and in the first and last 10 minutes), heart rate, HRV, motion, temperature.
+     */
+    static void wornSleep(List<RingEvent> ev, double from, double to, List<double[]> awake, long t0, long ds0) {
+        for (double t = from; t < to; t += 60) {
+            boolean aw = t < from + 600 || t >= to - 600;
+            for (double[] a : awake) if (t >= a[0] && t < a[1]) aw = true;
+            long d = ds0 + Math.round((t - t0) * 10);
+            if (((long) (t - from)) % 300 == 0) {
+                int hr = aw ? 68 + rnd.nextInt(4) : 54 + rnd.nextInt(4);
+                byte[] spi = new byte[10];
+                spi[0] = (byte) (hr * 2);
+                spi[4] = (byte) Math.round((14 + rnd.nextGaussian() * 0.5) * 8);
+                spi[6] = (byte) (aw ? 20 : 0);
+                spi[7] = (byte) (aw ? 0 : 1);
+                spi[9] = 0x10;
+                ev.add(new RingEvent(EventCodec.SLEEP_PERIOD_INFO_2, d, spi));
+                byte[] hrv = new byte[2];
+                hrv[0] = (byte) hr;
+                hrv[1] = (byte) (aw ? 30 : 55 + rnd.nextInt(10));
+                ev.add(new RingEvent(EventCodec.HRV_EVENT, d, hrv));
+            }
+            ev.add(new RingEvent(EventCodec.MOTION_EVENT, d, new byte[] {(byte) (aw ? 14 : (rnd.nextDouble() < 0.03 ? 5 : 0)), 1, 2, 3}));
+            ev.add(new RingEvent(EventCodec.SLEEP_TEMP_EVENT, d, le16((int) Math.round((35.3 + rnd.nextGaussian() * 0.04) * 100))));
+        }
+    }
+
+    /** Runs one synthetic history through the real Db and Analyzer; returns the database. */
+    static Db runSynthetic(List<RingEvent> ev, long t0, long ds0, double now) throws Exception {
+        Context c = freshDb("openring42"); // each scenario on its own empty phone
+        Db db = Db.get(c);
+        java.util.Collections.sort(ev, new java.util.Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        db.insertBatch(ev, 1, (long) now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - ds0) / 10);
+        Analyzer.run(c, null);
+        return db;
+    }
+
+    /**
+     * A night 23:00 to 07:00 with one wake up of {@code wakeMin} minutes from 02:30, optionally a
+     * bedtime marker, a nap 13:30 to 15:00 the day after and the next night as well.
+     */
+    static Db longWakeNight(LocalDate d, int wakeMin, boolean marker, boolean napAndNextNight) throws Exception {
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        double bed = at(d, -1), up = at(d, 7), w0 = at(d, 2.5), w1 = w0 + wakeMin * 60;
+        List<double[]> awake = new ArrayList<double[]>();
+        if (wakeMin > 0) awake.add(new double[] {w0, w1});
+        wornSleep(ev, bed, up, awake, t0, ds0);
+        if (marker) {
+            byte[] bt = new byte[8];
+            Protocol.Le.putU32(bt, 0, ds0 + Math.round((bed - t0) * 10));
+            Protocol.Le.putU32(bt, 4, ds0 + Math.round((up - t0) * 10));
+            ev.add(new RingEvent(EventCodec.BEDTIME_PERIOD, ds0 + Math.round((up + 600 - t0) * 10), bt));
+        }
+        double now = up + 1800;
+        if (napAndNextNight) {
+            wornSleep(ev, at(d, 13.5), at(d, 15), new ArrayList<double[]>(), t0, ds0);
+            wornSleep(ev, at(d, 23), at(d, 31), new ArrayList<double[]>(), t0, ds0);
+            now = at(d, 31.5);
+        }
+        return runSynthetic(ev, t0, ds0, now);
+    }
+
+    static JSONObject mainNight(Db db, LocalDate d) {
+        List<String> m = db.nightsJson(d.toString(), d.toString(), true);
+        return m.size() == 1 ? Json.parse(m.get(0)) : null;
+    }
+
+    static String describe(JSONObject n) {
+        if (n == null) return "no single main night";
+        JSONObject sc = n.optJSONObject("score");
+        return String.format(java.util.Locale.US, "%.0f min asleep, %d wake ups, %.0f min awake, score %s",
+                n.optDouble("asleep_min"), n.optInt("awakenings"), n.optDouble("waso_min"), sc == null ? "-" : sc.opt("value"));
+    }
+
+    static void longWakeChecks() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        int[] score = new int[4];
+        String[] cases = {"sleeping through", "75 min", "120 min", "200 min"};
+        int[] wakes = {0, 75, 120, 200};
+        for (int k = 0; k < 4; k++) {
+            for (boolean marker : new boolean[] {false, true}) {
+                Db db = longWakeNight(d, wakes[k], marker, false);
+                List<String> all = db.nightsJson(d.toString(), d.toString(), false);
+                JSONObject n = mainNight(db, d);
+                String how = "#42 " + cases[k] + (marker ? " with" : " without") + " bedtime marker";
+                System.out.println("    " + how + ": " + all.size() + " sleeps, main " + describe(n));
+                if (k == 1 && !marker) check("#42 the rules version is noted, so a new one re analyses all nights",
+                        db.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION, db.kvLong("night_finder", 0));
+                if (n == null) {
+                    check(how + " has a main night", false, all.size());
+                    continue;
+                }
+                double asleep = n.optDouble("asleep_min"), waso = n.optDouble("waso_min");
+                int sc = n.optJSONObject("score").optInt("value");
+                if (k == 0) {
+                    check(how + ": one night of 7 hours or more", all.size() == 1 && asleep >= 420, describe(n));
+                    if (!marker) score[0] = sc;
+                } else if (k < 3) {
+                    double sleep = 480 - wakes[k] - 20;
+                    check(how + ": one night, the wake up inside it", all.size() == 1 && n.optInt("awakenings") >= 1
+                            && Math.abs(waso - wakes[k]) <= 15 && Math.abs(asleep - sleep) <= 25, describe(n));
+                    check(how + ": scores lower than sleeping through", sc < score[0] - 5, sc + " vs " + score[0]);
+                    if (!marker) score[k] = sc;
+                    check(how + ": latency " + (marker ? "from the marker" : "stays 0 without a marker"),
+                            marker || n.optDouble("latency_min") <= 1, n.opt("latency_min"));
+                } else if (marker) {
+                    check(how + ": the marker keeps one night", all.size() == 1, describe(n));
+                } else {
+                    check(how + ": over 3 hours stays two sleeps, the longer one is the night", all.size() == 2
+                            && asleep > 150 && asleep < 220, all.size() + " sleeps, " + describe(n));
+                }
+            }
+        }
+        check("#42 a longer wake up scores lower", score[2] < score[1], score[1] + " then " + score[2]);
+        // a nap in the afternoon stays a nap, and the next night is its own night
+        Db db = longWakeNight(d, 75, false, true);
+        List<String> today = db.nightsJson(d.toString(), d.toString(), false);
+        JSONObject next = mainNight(db, d.plusDays(1));
+        check("#42 afternoon nap stays a nap next to the joined night", today.size() == 2 && mainNight(db, d) != null
+                && Math.abs(mainNight(db, d).optDouble("asleep_min") - 385) <= 25, today.size() + " sleeps, " + describe(mainNight(db, d)));
+        check("#42 the next night stays its own night", next != null && next.optDouble("asleep_min") >= 420
+                && db.nightsJson(d.plusDays(1).toString(), d.plusDays(1).toString(), false).size() == 1, describe(next));
+        // falling asleep on the sofa in the evening (19:30 to 21:00), bed at 23:30: the gap's middle is
+        // before 23:00, so the sofa stays a nap
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        List<double[]> none = new ArrayList<double[]>();
+        wornSleep(ev, at(d, 19.5), at(d, 21), none, t0, ds0);
+        wornSleep(ev, at(d, 21), at(d, 23.5), java.util.Collections.singletonList(new double[] {at(d, 21), at(d, 23.5)}), t0, ds0);
+        wornSleep(ev, at(d, 23.5), at(d, 31), none, t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 31.5));
+        List<String> evening = db.nightsJson(d.toString(), d.plusDays(1).toString(), false);
+        JSONObject night = mainNight(db, d.plusDays(1));
+        check("#42 evening sofa sleep stays a nap", evening.size() == 2 && night != null && night.optDouble("asleep_min") < 440
+                && night.optDouble("asleep_min") > 380, evening.size() + " sleeps, " + describe(night));
+        // review of #42: sofa 20:30 to 22:30, awake to 00:30, bed to 07:30: the sofa stays its own sleep
+        ev = new ArrayList<RingEvent>();
+        wornSleep(ev, at(d, 20.5), at(d, 31.5), java.util.Collections.singletonList(new double[] {at(d, 22.5), at(d, 24.5)}), t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 32));
+        JSONObject sofa = mainNight(db, d), bedNight = mainNight(db, d.plusDays(1));
+        check("#42 sofa sleep from 20:30 and a wake up to 00:30 stay two sleeps", sofa != null && bedNight != null
+                && sofa.optDouble("asleep_min") < 130 && bedNight.optDouble("asleep_min") < 420
+                && db.nightsJson(d.plusDays(1).toString(), d.plusDays(1).toString(), false).size() == 1,
+                describe(sofa) + " / " + describe(bedNight));
+        // asleep 23:00 to 04:00, up 04:00 to 06:30, nap 06:30 to 08:00: the night is not stretched past getting up
+        ev = new ArrayList<RingEvent>();
+        wornSleep(ev, at(d, -1), at(d, 8), java.util.Collections.singletonList(new double[] {at(d, 4), at(d, 6.5)}), t0, ds0);
+        db = runSynthetic(ev, t0, ds0, at(d, 8.5));
+        List<String> morning = db.nightsJson(d.toString(), d.toString(), false);
+        JSONObject early = mainNight(db, d);
+        check("#42 nap after getting up at 04:00 stays a nap", morning.size() == 2 && early != null
+                && early.optDouble("asleep_min") > 250 && early.optDouble("asleep_min") < 310, morning.size() + " sleeps, " + describe(early));
+        freshDb("openring42-done"); // the next test opens its own phone
     }
 }
