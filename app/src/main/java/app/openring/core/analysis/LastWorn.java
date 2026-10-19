@@ -25,7 +25,7 @@ public final class LastWorn {
          * NaN when it was not worn at all within the history given.
          */
         public double at = Double.NaN;
-        /** WORN: the newest warm reading in C (NaN when only heart rate showed it). */
+        /** WORN: the skin temperature at {@link #at} in C (NaN when the newest sign was a heart rate). */
         public double skinC = Double.NaN;
         /** OFF: the typical temperature since it came off (median), about the room's. */
         public double roomC = Double.NaN;
@@ -75,8 +75,7 @@ public final class LastWorn {
             while (k2 < n && t[k2] <= lastHr) k2++;
             if (k2 == n) {
                 r.state = WORN;
-                r.at = lastHr;
-                if (k > 0) r.skinC = c[k - 1];
+                r.at = lastHr; // the newest sign was a heart beat; the older warm reading would not be from then
                 return r;
             }
             k = k2;

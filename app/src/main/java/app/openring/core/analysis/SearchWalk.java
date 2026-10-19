@@ -20,6 +20,8 @@ public final class SearchWalk {
     public static final int SECTORS_NEEDED = 10;
     /** ... and readings came from at least this many directions. */
     public static final int SECTORS_WITH_READINGS = 3;
+    /** A direction faced without hearing the ring counts as this many dB below the weakest one heard. */
+    public static final double SILENT_DB = 6;
     /** Under this difference between strongest and weakest direction there is no clear direction. */
     public static final double CLEAR_DB = 4;
     /** Readings while the phone tilts more than this from upright are kept but not counted. */
@@ -126,10 +128,24 @@ public final class SearchWalk {
      * with one smooth wave (strong on one side, weak on the other, as the body's shadow makes it),
      * each of the 12 directions weighted equally however many readings it has; the wave's peak is
      * the direction and its height from trough to peak the spread.
+     *
+     * A direction the person faced without hearing the ring at all is evidence too: the body hid
+     * the ring there. It counts as {@link #SILENT_DB} below the weakest direction that was heard,
+     * so a ring heard only from the front still gets an arrow to the front.
      */
     public Direction direction() {
         if (!ready()) return null;
         int[] n = sectorCounts();
+        boolean silent = false;
+        for (int i = 0; i < SECTORS; i++) if (faced[i] && n[i] == 0) silent = true;
+        Direction r = silent ? sectorFit(n) : sampleFit(n);
+        r.degrees = Math.round(norm(r.degrees)) % 360;
+        r.clear = r.spread >= CLEAR_DB;
+        return r;
+    }
+
+    /** Every faced direction was heard: fit the readings themselves (keeps their exact headings). */
+    private Direction sampleFit(int[] n) {
         double wSum = 0, mean = 0;
         for (Sample s : samples) {
             if (!s.upright) continue;
@@ -145,14 +161,42 @@ public final class SearchWalk {
             c += w * (s.rssi - mean) * Math.cos(a);
             sn += w * (s.rssi - mean) * Math.sin(a);
         }
-        // with readings spread evenly, the sum of cos squared over the directions is half their count
-        double amp = 2 * Math.sqrt(c * c + sn * sn) / wSum;
+        return wave(mean, c, sn, wSum);
+    }
+
+    /** Some faced directions stayed silent: fit one value per faced direction, silent ones weak. */
+    private Direction sectorFit(int[] n) {
+        double[] means = sectorMeans();
+        double weakest = Double.POSITIVE_INFINITY;
+        for (double m : means) if (!Double.isNaN(m)) weakest = Math.min(weakest, m);
+        double[] v = new double[SECTORS];
+        double mean = 0;
+        int k = 0;
+        for (int i = 0; i < SECTORS; i++) {
+            if (!faced[i] && n[i] == 0) continue;
+            v[i] = n[i] == 0 ? weakest - SILENT_DB : means[i];
+            mean += v[i];
+            k++;
+        }
+        mean /= k;
+        double c = 0, sn = 0;
+        for (int i = 0; i < SECTORS; i++) {
+            if (!faced[i] && n[i] == 0) continue;
+            double a = Math.toRadians(i * SECTOR_DEG);
+            c += (v[i] - mean) * Math.cos(a);
+            sn += (v[i] - mean) * Math.sin(a);
+        }
+        return wave(mean, c, sn, k);
+    }
+
+    private static Direction wave(double mean, double c, double sn, double count) {
+        // with values spread evenly, the sum of cos squared over the directions is half their count
+        double amp = 2 * Math.sqrt(c * c + sn * sn) / count;
         Direction r = new Direction();
-        r.degrees = Math.round(norm(Math.toDegrees(Math.atan2(sn, c)))) % 360;
+        r.degrees = Math.toDegrees(Math.atan2(sn, c));
         r.strongest = mean + amp;
         r.weakest = mean - amp;
         r.spread = 2 * amp;
-        r.clear = r.spread >= CLEAR_DB;
         return r;
     }
 

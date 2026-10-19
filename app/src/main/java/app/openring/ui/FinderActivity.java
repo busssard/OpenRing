@@ -81,10 +81,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private long vibAt;
     private double demoHeading;
     private final Random demoNoise = new Random(74);
-    /** Scan starts in the last 30 s: Android blocks an app's sixth start within 30 s. */
-    private static final ArrayDeque<Long> starts = new ArrayDeque<Long>();
+    private boolean askedPermission, permissionBlocked;
+    private Charts.LineChart trailChart;
 
-    private TextView lastText, heardText, batteryText, bandText, signalText, issueText, turnText, turnButton;
+    static final String HOLD = "Hold the phone upright, flat against your chest, screen towards you.";
+
+    private TextView lastText, heardText, batteryText, bandText, signalText, issueText, turnText, turnButton, soundHint;
     private LinearLayout issueBox, trailBox;
     private TextView issueButton;
     private Meter meter;
@@ -180,10 +182,16 @@ public final class FinderActivity extends Activity implements SensorEventListene
             }
         });
         LinearLayout.LayoutParams sl = Ui.matchWrap();
-        sl.setMargins(0, Ui.dp(this, 12), 0, Ui.dp(this, 8));
+        sl.setMargins(0, Ui.dp(this, 12), 0, 0);
         hot.addView(sound, sl);
+        soundHint = Ui.text(this, "", 12, Ui.WARN, Ui.REGULAR);
+        hot.addView(soundHint);
+        hot.addView(Ui.gap(this, 8));
         hot.addView(Ui.caption(this, "Signal, last 2 minutes"));
         trailBox = Ui.vbox(this);
+        double now0 = System.currentTimeMillis() / 1000.0;
+        trailChart = new Charts.LineChart(this, new TS(), now0 - 120, now0, Ui.OXY).noFill().unit(" dBm").empty("No signal yet");
+        trailBox.addView(trailChart, Ui.sized(this, -1, 130));
         hot.addView(trailBox, Ui.sized(this, -1, 130));
         hot.addView(Ui.gap(this, 6));
         hot.addView(Ui.text(this, "The signal jumps with walls, blankets, your body and the ring's angle. A ring under a duvet sounds "
@@ -194,7 +202,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         LinearLayout turn = Ui.card(this);
         turn.addView(Ui.caption(this, "Turn on the spot"));
         turn.addView(Ui.gap(this, 4));
-        turn.addView(Ui.body(this, "1. Hold the phone flat against your chest, screen towards you.\n"
+        turn.addView(Ui.body(this, "1. " + HOLD + "\n"
                 + "2. Tap Start and turn slowly once around, about 20 seconds.\n"
                 + "3. Tap Stop when you are done."));
         dial = new Dial(this);
@@ -277,7 +285,22 @@ public final class FinderActivity extends Activity implements SensorEventListene
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
+        if (askedPermission && !Permissions.granted(this)) {
+            // denied and Android will not ask again: only the app's settings can switch it on
+            boolean canAsk = false;
+            for (String p : Permissions.needed()) {
+                if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED && shouldShowRequestPermissionRationale(p)) canAsk = true;
+            }
+            permissionBlocked = !canAsk;
+        }
         if (resumed) startScan();
+    }
+
+    boolean locationOn() {
+        android.location.LocationManager lm = (android.location.LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        if (lm == null) return true;
+        if (android.os.Build.VERSION.SDK_INT >= 28) return lm.isLocationEnabled();
+        return lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
     }
 
     // ------------------------------------------------------------------ where was it last
@@ -301,8 +324,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
     void showLast(LastWorn.Result r) {
         String s;
         if (r.state == LastWorn.WORN) {
-            s = "It was on a finger at the last sync ("
-                    + (Double.isNaN(r.skinC) ? "heart rate " : "skin " + Ui.fmt(r.skinC, 1) + " °C ") + when(r.at) + ").";
+            s = "The newest reading (" + when(r.at) + ") was from a finger ("
+                    + (Double.isNaN(r.skinC) ? "a heart rate" : "skin " + Ui.fmt(r.skinC, 1) + " °C") + ").";
         } else if (r.state == LastWorn.OFF && !Double.isNaN(r.at)) {
             s = "Taken off " + when(r.at) + " (then it lay at room temperature, about " + Math.round(r.roomC) + " °C).";
         } else if (r.state == LastWorn.OFF) {
@@ -317,18 +340,28 @@ public final class FinderActivity extends Activity implements SensorEventListene
             batteryText.setVisibility(View.GONE);
             return;
         }
-        long heard = p.lastHeard();
-        heardText.setText(heard == 0 ? "This phone has not heard it since this screen was added to the app."
-                : "This phone last heard it " + when(heard) + ".");
+        showHeard();
         if (p.battery() < 0) {
             batteryText.setVisibility(View.GONE);
             return;
         }
-        String bt = "Battery " + p.battery() + " % (read " + when(p.batteryAt()) + ").";
+        String bt = "Battery " + p.battery() + "% (read " + when(p.batteryAt()) + ").";
         int ch = LastWorn.charging(p.batteryBefore(), p.battery());
-        if (ch == 1) bt += " It went up since the read before (" + p.batteryBefore() + " %), so it was probably on the charger then.";
-        else if (ch == 0) bt += " It went down since the read before (" + p.batteryBefore() + " %), so it was not charging then.";
+        if (ch == 1) bt += " It went up since the read before (" + p.batteryBefore() + "%), so it was probably on the charger then.";
+        else if (ch == 0) bt += " It went down since the read before (" + p.batteryBefore() + "%), so it was not charging then.";
         batteryText.setText(bt);
+    }
+
+    /** The "last heard" line: right now while the meter hears the ring, else the saved time. */
+    void showHeard() {
+        if (demo || heardText == null) return;
+        if (prox.band() != Proximity.NOT_HEARD) {
+            heardText.setText("This phone hears it right now.");
+            return;
+        }
+        long heard = Prefs.of(this).lastHeard();
+        heardText.setText(heard == 0 ? "This phone has not noted the ring yet (it starts noting this with this version)."
+                : "This phone last heard it " + when(heard) + ".");
     }
 
     /** "today at 22:14", "yesterday at 22:14" or "on Mon 13.10. at 22:14". */
@@ -350,13 +383,13 @@ public final class FinderActivity extends Activity implements SensorEventListene
         BluetoothAdapter a = RingScanner.adapter(this);
         if (a == null || !a.isEnabled()) return;
         long now = SystemClock.elapsedRealtime();
-        while (!starts.isEmpty() && now - starts.peekFirst() > 30000) starts.pollFirst();
-        if (starts.size() >= 4) {
+        // the start budget is shared with a sync's own scan (RingScanner counts both)
+        long wait = RingScanner.startWaitMs();
+        if (wait > 0) {
             h.removeCallbacks(retryScan);
-            h.postDelayed(retryScan, 30000 - (now - starts.peekFirst()) + 200);
+            h.postDelayed(retryScan, wait);
             return;
         }
-        starts.addLast(now);
         scanFailedAt = -1;
         try {
             watch = RingScanner.watch(this, address, new RingScanner.Heard() {
@@ -385,7 +418,6 @@ public final class FinderActivity extends Activity implements SensorEventListene
             watch = null;
             scanFailed(-1);
         }
-        if (watch == null && scanFailedAt < 0) starts.pollLast(); // nothing was started
         listenSince = now;
     }
 
@@ -458,6 +490,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
             if (!demo && !on && watch != null) stopScan();
             if (!demo && on && watch == null && scanFailedAt < 0) startScan();
             showSignal(now, on);
+            showHeard();
+            showSoundHint();
             if (now - trailAt >= 1000) {
                 trailAt = now;
                 drawTrail();
@@ -480,10 +514,33 @@ public final class FinderActivity extends Activity implements SensorEventListene
         }
         if (!demo && !Permissions.granted(this)) {
             bandText.setText("Not listening");
-            issue("To hear the ring, this app needs the Nearby devices permission.", "Allow", new Runnable() {
+            String what = android.os.Build.VERSION.SDK_INT >= 31 ? "the Nearby devices permission"
+                    : "the Location permission (Android 11 and older ask for it to find Bluetooth devices; Open Ring has no internet and keeps no place)";
+            if (permissionBlocked) {
+                issue("To hear the ring, this app needs " + what + ". Android no longer asks, so switch it on in the app's settings.", "Open app settings", new Runnable() {
+                    @Override
+                    public void run() {
+                        startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                android.net.Uri.fromParts("package", getPackageName(), null)));
+                    }
+                });
+            } else {
+                issue("To hear the ring, this app needs " + what + ".", "Allow", new Runnable() {
+                    @Override
+                    public void run() {
+                        askedPermission = true;
+                        Permissions.request(FinderActivity.this);
+                    }
+                });
+            }
+            return;
+        }
+        if (!demo && android.os.Build.VERSION.SDK_INT < 31 && !locationOn()) {
+            bandText.setText("Not listening");
+            issue("Location is off. Android 11 and older only find Bluetooth devices while Location is on.", "Open Location settings", new Runnable() {
                 @Override
                 public void run() {
-                    Permissions.request(FinderActivity.this);
+                    startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));
                 }
             });
             return;
@@ -531,6 +588,13 @@ public final class FinderActivity extends Activity implements SensorEventListene
         signalText.setText(why);
     }
 
+    void showSoundHint() {
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        boolean silent = am != null && am.getStreamVolume(AudioManager.STREAM_MUSIC) == 0;
+        soundHint.setText(silent && Prefs.of(this).finderSound() ? "Media volume is off, so you only feel the clicks. Turn the volume up to hear them." : "");
+        soundHint.setVisibility(soundHint.getText().length() == 0 ? View.GONE : View.VISIBLE);
+    }
+
     void issue(String text, String button, final Runnable r) {
         issueBox.setVisibility(View.VISIBLE);
         issueText.setText(text);
@@ -550,8 +614,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         double t = System.currentTimeMillis() / 1000.0;
         TS ts = new TS();
         for (double[] p : trail) if (p[0] >= t - 120) ts.add(p[0], p[1]);
-        trailBox.removeAllViews();
-        trailBox.addView(new Charts.LineChart(this, ts, t - 120, t, Ui.OXY).noFill().unit(" dBm").empty("No signal yet"), Ui.sized(this, -1, 130));
+        trailChart.data(ts, t - 120, t);
     }
 
     // ------------------------------------------------------------------ sound
@@ -624,7 +687,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             b.append("No clear direction (").append(Math.round(d.spread)).append(" dB between strongest and weakest side, under ")
                     .append(Math.round(SearchWalk.CLEAR_DB)).append("). The ring may be very close, above or below you, or the signal bounced off walls.");
         }
-        if (recording && !upright) b.append("\nHold the phone upright against your chest, readings while it is tilted are not counted.");
+        if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted.");
         if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the turn needs the ring to be heard.");
         turnText.setText(b.toString());
     }
@@ -726,7 +789,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             num.setTextSize(size * 0.24f);
             cv.drawText(Double.isNaN(value) ? "--" : String.valueOf(Math.round(value)), w / 2, hh / 2 + num.getTextSize() * 0.3f, num);
             unit.setTextSize(size * 0.075f);
-            cv.drawText("DBM", w / 2, hh / 2 + num.getTextSize() * 0.3f + unit.getTextSize() * 1.6f, unit);
+            cv.drawText("dBm", w / 2, hh / 2 + num.getTextSize() * 0.3f + unit.getTextSize() * 1.6f, unit);
         }
     }
 
@@ -758,18 +821,57 @@ public final class FinderActivity extends Activity implements SensorEventListene
             return Double.isNaN(facing) ? 0 : (float) facing;
         }
 
+        private float downX, downY;
+        private boolean dragging;
+        private final int slop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
+
+        /**
+         * Like the other dials: a tap reads the petal under the finger, a sideways or circling drag
+         * keeps reading, a vertical swipe scrolls the page, a tap in the middle clears the readout.
+         */
         @Override
         public boolean onTouchEvent(MotionEvent e) {
-            if (e.getActionMasked() == MotionEvent.ACTION_DOWN || e.getActionMasked() == MotionEvent.ACTION_MOVE) {
-                float dx = e.getX() - getWidth() / 2f, dy = e.getY() - getHeight() / 2f;
-                // clockwise from up, as seen by the person now
-                touchAngle = (float) Math.toDegrees(Math.atan2(dx, -dy));
-                if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
-                invalidate();
-                return true;
+            float dx = e.getX() - getWidth() / 2f, dy = e.getY() - getHeight() / 2f;
+            double d = Math.sqrt(dx * dx + dy * dy), rad = Math.min(getWidth(), getHeight()) / 2f - Ui.dp(getContext(), 18);
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    if (d > rad + Ui.dp(getContext(), 12)) return false;
+                    downX = e.getX();
+                    downY = e.getY();
+                    dragging = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    if (!dragging) {
+                        float mx = Math.abs(e.getX() - downX), my = Math.abs(e.getY() - downY);
+                        if (my > slop && my >= mx) return false; // a vertical swipe: the page scrolls
+                        if (mx > slop) {
+                            dragging = true;
+                            if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
+                        }
+                    }
+                    if (dragging) read(dx, dy);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!dragging) {
+                        if (d < rad * 0.25) touchAngle = Float.NaN;
+                        else read(dx, dy);
+                        invalidate();
+                        performClick();
+                    }
+                    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
+                    dragging = false;
+                    return true;
+                default:
+                    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
+                    dragging = false;
+                    return true;
             }
-            if (e.getActionMasked() == MotionEvent.ACTION_UP) performClick();
-            return true;
+        }
+
+        void read(float dx, float dy) {
+            // clockwise from up, as seen by the person now
+            touchAngle = (float) Math.toDegrees(Math.atan2(dx, -dy));
+            invalidate();
         }
 
         @Override

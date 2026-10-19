@@ -116,7 +116,7 @@ public class FinderTest {
         String[] labels = {Proximity.label(Proximity.CLOSE), Proximity.label(Proximity.ROOM), Proximity.label(Proximity.NEARBY),
                 Proximity.label(Proximity.FAR), Proximity.label(Proximity.NOT_HEARD)};
         check("labels from the plan", labels[0].equals("Very close (within an arm)") && labels[1].equals("In this room")
-                && labels[2].equals("Nearby") && labels[3].equals("Far or behind walls") && labels[4].equals("Not heard for 10 s"));
+                && labels[2].equals("Nearby") && labels[3].equals("Far or behind walls") && labels[4].equals("Not heard for 10 seconds"));
     }
 
     static void clicks() {
@@ -170,6 +170,11 @@ public class FinderTest {
      * 10 dB away from behind, 4 dB noise, 20 % of readings lost and half of them from behind.
      */
     static SearchWalk turn(double ringAt, long seed, double startAt) {
+        return turn(ringAt, seed, startAt, 180);
+    }
+
+    /** The same turn, but the ring is heard only within {@code heardWithin} degrees of facing it (the body hides it otherwise). */
+    static SearchWalk turn(double ringAt, long seed, double startAt, double heardWithin) {
         Random r = new Random(seed);
         SearchWalk w = new SearchWalk();
         long dur = 20000;
@@ -181,6 +186,7 @@ public class FinderTest {
                 nextRead += 125;
                 double off = Math.toRadians(SearchWalk.diff(faced, ringAt));
                 double behind = (1 - Math.cos(off)) / 2; // 0 facing, 1 behind
+                if (SearchWalk.diff(faced, ringAt) > heardWithin) continue;
                 if (r.nextDouble() < 0.2) continue;
                 if (behind > 0.75 && r.nextDouble() < 0.5) continue;
                 w.rssi(t, -66 - 10 * behind + r.nextGaussian() * 4);
@@ -209,6 +215,27 @@ public class FinderTest {
             check("turn: ring at " + ring + " found within 30 degrees every time", worst <= 30, worst);
             check("turn: ring at " + ring + " mean error under 10 degrees", sum / runs < 10, sum / runs);
             check("turn: ring at " + ring + " reads as a clear direction", unclear == 0, unclear);
+        }
+        // silent from behind: the ring is heard only from the front, the faced but silent directions count as weak
+        for (double within : new double[] {50, 70, 100}) {
+            for (double ring : new double[] {0, 90, 200}) {
+                double sum = 0, worst = 0;
+                int unclear = 0, runs = 40;
+                for (int s = 0; s < runs; s++) {
+                    SearchWalk.Direction d = turn(ring, 2000 + s, 0, within).direction();
+                    if (d == null) {
+                        worst = 999;
+                        continue;
+                    }
+                    double e = SearchWalk.diff(d.degrees, ring);
+                    sum += e;
+                    worst = Math.max(worst, e);
+                    if (!d.clear) unclear++;
+                }
+                System.out.printf(Locale.US, "  silent from behind, heard within %3.0f, ring at %3.0f: mean error %.1f, worst %.1f degrees%n", within, ring, sum / runs, worst);
+                check("silent from behind (heard within " + within + "), ring at " + ring + ": within 30 degrees every time", worst <= 30, worst);
+                check("silent from behind (heard within " + within + "), ring at " + ring + ": clear every time", unclear == 0, unclear);
+            }
         }
         // starting the turn facing another way changes nothing: headings are relative to the start
         SearchWalk.Direction d = turn(90, 5, 170).direction();
@@ -246,8 +273,18 @@ public class FinderTest {
         few.rssi(20200, -62);
         check("readings from 3 directions: ready", few.ready());
         SearchWalk.Direction fdir = few.direction();
-        // -60 at 0, -61 at 30, -62 at 90: strongest away from 90, a spread of under 4 dB
-        check("three readings: a direction, not a clear one", fdir != null && fdir.degrees == 315 && !fdir.clear, fdir == null ? null : fdir.degrees);
+        // heard only at 0, 30 and 90, silent in the 8 other faced directions: the arrow points to the heard side
+        check("three heard directions, the rest silent: a clear direction to the heard side", fdir != null && SearchWalk.diff(fdir.degrees, 40) <= 20 && fdir.clear, fdir == null ? null : fdir.degrees);
+        // all faced directions heard (a flat 3 direction turn): the readings themselves are fitted
+        SearchWalk three = new SearchWalk();
+        double[][] pts = {{0, -60}, {30, -61}, {90, -62}};
+        long tt = 0;
+        for (double[] pt : pts) for (int k = 0; k < 3; k++) {
+            three.heading(tt, pt[0], true);
+            three.rssi(tt, pt[1]);
+            tt += 100;
+        }
+        check("three directions faced and heard: not ready (10 needed)", !three.ready() && three.direction() == null);
         int[] counts = few.sectorCounts();
         double[] means = few.sectorMeans();
         check("sector counts and means", counts[0] == 1 && counts[1] == 1 && counts[2] == 0 && means[3] == -62 && Double.isNaN(means[2]));
@@ -307,7 +344,7 @@ public class FinderTest {
         // cold fingers: cool readings from 10 h, but the heart keeps beating until now
         double[][] cold = temps(12, new double[] {0, 10});
         LastWorn.Result cf = LastWorn.find(cold[0], cold[1], beats(new double[] {0, 12}));
-        check("cold fingers with heart beats: still worn", cf.state == LastWorn.WORN && cf.skinC == 34 && cf.at > BASE + 11.9 * H, cf.state);
+        check("cold fingers with heart beats: still worn, no skin value from an older time", cf.state == LastWorn.WORN && Double.isNaN(cf.skinC) && cf.at > BASE + 11.9 * H, cf.state);
         // cold fingers until 11 h, then really taken off
         LastWorn.Result cf2 = LastWorn.find(cold[0], cold[1], beats(new double[] {0, 11}));
         check("cold fingers, then off at 11 h", cf2.state == LastWorn.OFF && Math.abs(cf2.at - (BASE + 11 * H)) <= 300, (cf2.at - BASE) / H);

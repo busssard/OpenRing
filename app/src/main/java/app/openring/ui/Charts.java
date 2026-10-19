@@ -347,7 +347,7 @@ public final class Charts {
     // ---------------------------------------------------------------------- line chart
 
     public static final class LineChart extends Scrub {
-        private final TS series;
+        private TS series;
         private final int color;
         private double from, to;
         private double yMin = Double.NaN, yMax = Double.NaN;
@@ -431,6 +431,14 @@ public final class Charts {
         public LineChart noFill() {
             fill = false;
             return this;
+        }
+
+        /** New data for a live chart; a touch readout stays where it is (the ring finder, issue #74). */
+        public void data(TS s, double from, double to) {
+            series = s.sort();
+            this.from = from;
+            this.to = to;
+            invalidate();
         }
 
         @Override

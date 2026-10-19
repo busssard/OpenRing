@@ -120,7 +120,7 @@ public final class Proximity {
             case ROOM: return "In this room";
             case NEARBY: return "Nearby";
             case FAR: return "Far or behind walls";
-            default: return "Not heard for 10 s";
+            default: return "Not heard for 10 seconds";
         }
     }
 }

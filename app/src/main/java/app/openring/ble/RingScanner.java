@@ -87,6 +87,7 @@ public final class RingScanner {
         filters.add(new ScanFilter.Builder().setManufacturerData(Protocol.COMPANY_ID, new byte[0]).build());
         filters.add(new ScanFilter.Builder().setServiceUuid(new ParcelUuid(Protocol.SERVICE)).build());
         log.log("scanning for a ring");
+        waitForStart();
         s.startScan(filters, settings, cb);
         boolean unfiltered = false;
         long started = SystemClock.elapsedRealtime();
@@ -102,6 +103,7 @@ public final class RingScanner {
                 if (!unfiltered && empty && SystemClock.elapsedRealtime() - started > timeoutMs / 2) {
                     // some rings only advertise a name; widen the scan for the second half
                     s.stopScan(cb);
+                    waitForStart();
                     s.startScan(null, settings, cb);
                     unfiltered = true;
                 }
@@ -124,6 +126,31 @@ public final class RingScanner {
     }
 
     private static long heardSaved;
+
+    /** Scan starts of this app in the last 30 s: Android silently blocks the sixth one (issue #74). */
+    private static final java.util.ArrayDeque<Long> starts = new java.util.ArrayDeque<Long>();
+    static final int MAX_STARTS = 4;
+    static final long START_WINDOW_MS = 30000;
+
+    /** Milliseconds until another scan may start, 0 when one may start now. */
+    public static synchronized long startWaitMs() {
+        long now = SystemClock.elapsedRealtime();
+        while (!starts.isEmpty() && now - starts.peekFirst() > START_WINDOW_MS) starts.pollFirst();
+        return starts.size() < MAX_STARTS ? 0 : START_WINDOW_MS - (now - starts.peekFirst()) + 200;
+    }
+
+    /** Takes one start from the budget, or returns how long to wait first. */
+    static synchronized long reserveStart() {
+        long w = startWaitMs();
+        if (w == 0) starts.addLast(SystemClock.elapsedRealtime());
+        return w;
+    }
+
+    /** Waits (on a background thread) until a scan may start, and takes it. */
+    private static void waitForStart() throws InterruptedException {
+        long w;
+        while ((w = reserveStart()) > 0) Thread.sleep(w);
+    }
 
     /** Notes that this phone heard the saved ring now (for the ring finder, issue #74), at most every 10 s. */
     static void heard(Context c, String addr) {
@@ -170,13 +197,16 @@ public final class RingScanner {
      * Starts one continuous low latency scan for the ring with {@code address} (issue #74). It also
      * reports other Oura rings, so the finder can say when it hears a ring that is not the saved
      * one. Returns null when Bluetooth is off or has no scanner. Android blocks an app that starts
-     * more than 5 scans in 30 seconds, so the caller keeps one scan running while its screen is open.
+     * more than 5 scans in 30 seconds, so the caller keeps one scan running while its screen is open;
+     * starts are counted together with {@link #find}'s, and a start that would exceed the budget does
+     * not happen (null; {@link #startWaitMs} says when to try again).
      */
     public static Watch watch(final Context c, final String address, final Heard l) {
         BluetoothAdapter a = adapter(c);
         if (a == null || !a.isEnabled()) return null;
         BluetoothLeScanner s = a.getBluetoothLeScanner();
         if (s == null) return null;
+        if (reserveStart() > 0) return null;
         ScanCallback cb = new ScanCallback() {
             @Override
             public void onScanFailed(int errorCode) {

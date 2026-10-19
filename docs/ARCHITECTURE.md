@@ -129,12 +129,12 @@ can run meanwhile. Everything below stops in `onPause`.
   5 minutes after the first cool reading). `Prefs.lastHeard` is saved when a connection opens or closes
   and when any scan hears the saved address; `Prefs` keeps the battery read before the newest one.
 * Hot and cold: `RingScanner.watch` runs one `SCAN_MODE_LOW_LATENCY` scan (Android blocks the sixth
-  start within 30 s, so starts are spaced). `core/analysis/Proximity` smooths the signal (median of 5,
+  start within 30 s, so `RingScanner` counts the starts of `find` and `watch` together and spaces them). `core/analysis/Proximity` smooths the signal (median of 5,
   then 35 % follow), bands at -84, -72 and -60 dBm with 4 dB hysteresis, and the click interval. While
   the ring is connected (this app or another) it does not advertise; the screen says so.
 * Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from
   `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the
-  strongest one. Phase 2 (walked mini map) adds steps to the same record.
+  strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard. Phase 2 (walked mini map) adds steps to the same record.
 
 ## Known limits
 
