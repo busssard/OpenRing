@@ -268,22 +268,23 @@ public final class ScreenTime {
      * Time each app was in front, from log entries sorted by time: {@link #APP_ON} opens the app's
      * range, {@link #APP_OFF} closes it, a screen {@link #OFF}, {@link #SHUTDOWN} or {@link #STARTUP}
      * closes every open app. A second "on" of an open app is ignored (another screen of the same app).
-     * An "off" with no "on" before it within {@link #LEAD_MAX_S} of {@code from} means the app was in
-     * front since {@code from}. Another app coming to the front closes the others (one app is in
-     * front at a time). Ranges still open end at {@code now}. Package names may be null only
-     * for screen entries.
+     * When the very first app entry of the read is an "off" within {@link #LEAD_MAX_S} of
+     * {@code from}, that app was in front since {@code from}; a later "off" without its "on" is
+     * ignored (another app or the screen going off already ended that app, issue #71). Another app
+     * coming to the front closes the others (one app is in front at a time). Ranges still open end
+     * at {@code now}. Package names may be null only for screen entries.
      */
     public static Map<String, List<double[]>> appSessions(double[] times, int[] kinds, String[] pkgs, double from, double now) {
         Map<String, List<double[]>> out = new LinkedHashMap<String, List<double[]>>();
         Map<String, Double> open = new LinkedHashMap<String, Double>();
-        java.util.HashSet<String> seen = new java.util.HashSet<String>();
+        boolean first = true;
         for (int i = 0; i < times.length; i++) {
             int k = kinds[i];
             double t = times[i];
             if (k == OFF || k == SHUTDOWN || k == STARTUP) {
                 for (Map.Entry<String, Double> e : open.entrySet()) add(out, e.getKey(), e.getValue(), t);
-                seen.addAll(open.keySet());
                 open.clear();
+                first = false;
                 continue;
             }
             String p = pkgs[i];
@@ -299,12 +300,12 @@ public final class ScreenTime {
                     it.remove();
                 }
                 if (!open.containsKey(p)) open.put(p, t);
-                seen.add(p);
+                first = false;
             } else if (k == APP_OFF) {
                 Double o = open.remove(p);
                 if (o != null) add(out, p, o, t);
-                else if (!seen.contains(p) && t > from && t - from <= LEAD_MAX_S) add(out, p, from, t);
-                seen.add(p);
+                else if (first && t > from && t - from <= LEAD_MAX_S) add(out, p, from, t);
+                first = false;
             }
         }
         for (Map.Entry<String, Double> e : open.entrySet()) add(out, e.getKey(), e.getValue(), now);
@@ -351,20 +352,137 @@ public final class ScreenTime {
         return out;
     }
 
+    // ------------------------------------------------- reading the log again (issue #71)
+
+    /**
+     * Where the app part of a read of the usage log starts: {@code back} on the first read, else the
+     * start of the newest stored app range (never before {@code back}). The app still in front at
+     * the last read is the one that came to the front last, so the read sees it come to the front
+     * again and gives its whole range; reading time already stored again changes nothing because
+     * ranges are merged when stored ({@link #store}). Without any stored range: {@code screenFrom}.
+     */
+    public static double appsReadFrom(boolean firstRead, double back, double screenFrom, double newestAppStart) {
+        if (firstRead) return back;
+        if (newestAppStart < 0) return screenFrom;
+        return Math.max(back, newestAppStart);
+    }
+
+    /** The ranges sorted, with ranges that overlap or touch joined into one. */
+    public static List<double[]> mergeRanges(List<double[]> ranges) {
+        List<double[]> s = new ArrayList<double[]>();
+        for (double[] r : ranges) if (r[1] > r[0]) s.add(new double[] {r[0], r[1]});
+        Collections.sort(s, BY_START);
+        List<double[]> out = new ArrayList<double[]>();
+        for (double[] r : s) {
+            double[] last = out.isEmpty() ? null : out.get(out.size() - 1);
+            if (last != null && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+            else out.add(r);
+        }
+        return out;
+    }
+
+    /** Each app's ranges merged ({@link #mergeRanges}), so no moment counts twice for one app. */
+    public static Map<String, List<double[]>> merge(Map<String, List<double[]>> apps) {
+        Map<String, List<double[]>> out = new LinkedHashMap<String, List<double[]>>();
+        for (Map.Entry<String, List<double[]>> e : apps.entrySet()) {
+            List<double[]> m = mergeRanges(e.getValue());
+            if (!m.isEmpty()) out.put(e.getKey(), m);
+        }
+        return out;
+    }
+
+    /**
+     * Adds the ranges of a read to the stored ones the way the database does: per app, a new range
+     * joins every stored range it overlaps or touches. Changes and returns {@code stored}.
+     */
+    public static Map<String, List<double[]>> store(Map<String, List<double[]>> stored, Map<String, List<double[]>> add) {
+        for (Map.Entry<String, List<double[]>> e : add.entrySet()) {
+            List<double[]> all = new ArrayList<double[]>();
+            List<double[]> old = stored.get(e.getKey());
+            if (old != null) all.addAll(old);
+            all.addAll(e.getValue());
+            List<double[]> m = mergeRanges(all);
+            if (!m.isEmpty()) stored.put(e.getKey(), m);
+        }
+        return stored;
+    }
+
+    /**
+     * One app in front at a time: where ranges of different apps overlap (old stored rows, issue #71),
+     * the app that came to the front later holds that time; the other keeps the rest of its range.
+     * Each app's ranges come out merged and sorted. For the list of apps and the touch readout.
+     */
+    public static Map<String, List<double[]>> oneAtATime(Map<String, List<double[]>> apps) {
+        Map<String, List<double[]>> merged = merge(apps);
+        final List<Object[]> all = new ArrayList<Object[]>();
+        java.util.TreeSet<Double> cuts = new java.util.TreeSet<Double>();
+        for (Map.Entry<String, List<double[]>> e : merged.entrySet()) {
+            for (double[] r : e.getValue()) {
+                all.add(new Object[] {e.getKey(), r});
+                cuts.add(r[0]);
+                cuts.add(r[1]);
+            }
+        }
+        Map<String, List<double[]>> out = new LinkedHashMap<String, List<double[]>>();
+        for (String p : merged.keySet()) out.put(p, new ArrayList<double[]>());
+        Collections.sort(all, new Comparator<Object[]>() {
+            @Override
+            public int compare(Object[] x, Object[] y) {
+                return Double.compare(((double[]) x[1])[0], ((double[]) y[1])[0]);
+            }
+        });
+        // walk the pieces between all range edges; the covering range that started last holds each piece
+        Double prev = null;
+        int startIdx = 0;
+        List<Object[]> active = new ArrayList<Object[]>();
+        for (Double t : cuts) {
+            if (prev != null) {
+                Object[] best = null;
+                for (Object[] a : active) {
+                    double[] r = (double[]) a[1];
+                    if (r[0] <= prev && r[1] >= t && (best == null || r[0] > ((double[]) best[1])[0]
+                            || r[0] == ((double[]) best[1])[0] && ((String) a[0]).compareTo((String) best[0]) < 0)) best = a;
+                }
+                if (best != null) {
+                    List<double[]> l = out.get((String) best[0]);
+                    double[] last = l.isEmpty() ? null : l.get(l.size() - 1);
+                    if (last != null && last[1] == prev) last[1] = t;
+                    else l.add(new double[] {prev, t});
+                }
+            }
+            // ranges that ended are dropped, ranges starting here join
+            for (java.util.Iterator<Object[]> it = active.iterator(); it.hasNext();) if (((double[]) it.next()[1])[1] <= t) it.remove();
+            while (startIdx < all.size() && ((double[]) all.get(startIdx)[1])[0] <= t) active.add(all.get(startIdx++));
+            prev = t;
+        }
+        Map<String, List<double[]>> clean = new LinkedHashMap<String, List<double[]>>();
+        for (Map.Entry<String, List<double[]>> e : out.entrySet()) if (!e.getValue().isEmpty()) clean.put(e.getKey(), e.getValue());
+        return clean;
+    }
+
     /**
      * Minutes each app was in front while the screen was on within [from, to), most used first;
-     * apps under half a minute are left out.
+     * apps under half a minute are left out (the list of apps to leave out).
      */
     public static List<Map.Entry<String, Double>> perApp(Map<String, List<double[]>> apps, List<double[]> screen, double from, double to) {
+        return perApp(apps, screen, from, to, 30);
+    }
+
+    /**
+     * As above with apps under {@code minS} seconds left out; with 0 every app with any time on
+     * screen is in. An app's ranges are merged first, so it never counts a moment twice (issue #71).
+     */
+    public static List<Map.Entry<String, Double>> perApp(Map<String, List<double[]>> apps, List<double[]> screen, double from, double to, double minS) {
         List<Map.Entry<String, Double>> out = new ArrayList<Map.Entry<String, Double>>();
+        List<double[]> scr = mergeRanges(screen);
         for (Map.Entry<String, List<double[]>> e : apps.entrySet()) {
             double s = 0;
-            for (double[] a : e.getValue()) {
+            for (double[] a : mergeRanges(e.getValue())) {
                 double a0 = Math.max(a[0], from), a1 = Math.min(a[1], to);
                 if (a1 <= a0) continue;
-                for (double[] x : screen) s += overlap(x[0], x[1], a0, a1);
+                for (double[] x : scr) s += overlap(x[0], x[1], a0, a1);
             }
-            if (s >= 30) out.add(new java.util.AbstractMap.SimpleEntry<String, Double>(e.getKey(), s / 60.0));
+            if (s > 0 && s >= minS) out.add(new java.util.AbstractMap.SimpleEntry<String, Double>(e.getKey(), s / 60.0));
         }
         Collections.sort(out, new Comparator<Map.Entry<String, Double>>() {
             @Override
@@ -373,6 +491,136 @@ public final class ScreenTime {
                 return c != 0 ? c : x.getKey().compareTo(y.getKey());
             }
         });
+        return out;
+    }
+
+    /** Apps with a row of their own in the list (the most used ones counted; apps left out always get one). */
+    public static final int LIST_APPS = 8;
+    /** An app counted needs at least this much time that day for a row of its own; less goes to "Other apps". */
+    public static final double LIST_MIN_S = 30;
+
+    /** One row of the list of apps on the Screen tab. */
+    public static final class AppRow {
+        public static final int APP = 0, OTHER = 1, NO_APP = 2;
+        public final int kind;
+        /** Package name for {@link #APP}, null otherwise. */
+        public final String pkg;
+        /** Left out of screen time by the person. */
+        public final boolean excluded;
+        /** How many apps the "Other apps" row holds (1 for an app, 0 for no app in front). */
+        public final int apps;
+        public final double exactMin;
+        /** Whole minutes shown, rounded together with the other rows of its group so they add up. */
+        public long shownMin;
+
+        AppRow(int kind, String pkg, boolean excluded, int apps, double exactMin) {
+            this.kind = kind;
+            this.pkg = pkg;
+            this.excluded = excluded;
+            this.apps = apps;
+            this.exactMin = exactMin;
+        }
+    }
+
+    /**
+     * The rows of the list of apps (issue #71): up to {@link #LIST_APPS} most used apps counted with
+     * {@link #LIST_MIN_S} or more, then every app left out (always shown), then "Other apps" (the rest
+     * together) and "No app in front" ({@code countedMin} minus all apps counted). Minutes are rounded
+     * per group (largest remainder): the counted rows add up to the rounded {@code countedMin}, the
+     * rows left out to their rounded sum. "Other apps" and "No app in front" are dropped when they
+     * round to 0. {@code perApp} holds every app's exact minutes, most used first.
+     */
+    public static List<AppRow> appRows(List<Map.Entry<String, Double>> perApp, Set<String> excluded, double countedMin) {
+        return appRows(perApp, excluded, countedMin, Double.NaN);
+    }
+
+    /**
+     * As above; when the rows left out add up to {@code excludedMin} (the "Not counted" number, always
+     * so unless old stored rows overlap), they are rounded to exactly its rounded value.
+     */
+    public static List<AppRow> appRows(List<Map.Entry<String, Double>> perApp, Set<String> excluded, double countedMin, double excludedMin) {
+        List<AppRow> counted = new ArrayList<AppRow>(), out = new ArrayList<AppRow>();
+        double other = 0, appsCounted = 0;
+        int others = 0, own = 0;
+        for (Map.Entry<String, Double> e : perApp) {
+            double v = e.getValue();
+            if (excluded.contains(e.getKey())) {
+                out.add(new AppRow(AppRow.APP, e.getKey(), true, 1, v));
+                continue;
+            }
+            appsCounted += v;
+            if (own < LIST_APPS && v * 60 >= LIST_MIN_S - 1e-9) {
+                counted.add(new AppRow(AppRow.APP, e.getKey(), false, 1, v));
+                own++;
+            } else {
+                other += v;
+                others++;
+            }
+        }
+        if (others > 0) counted.add(new AppRow(AppRow.OTHER, null, false, others, other));
+        double none = Double.isNaN(countedMin) ? 0 : Math.max(0, countedMin - appsCounted);
+        if (none > 0) counted.add(new AppRow(AppRow.NO_APP, null, false, 0, none));
+        // with time left for "No app in front" the counted rows add up to countedMin exactly: round to
+        // the very number shown as the day's total (a sum of parts could round the other way at .5)
+        roundRows(counted, none > 0 ? Math.round(countedMin) : -1);
+        double left = 0;
+        for (AppRow r : out) left += r.exactMin;
+        roundRows(out, !out.isEmpty() && Math.abs(left - excludedMin) < 0.01 ? Math.round(excludedMin) : -1);
+        List<AppRow> rows = new ArrayList<AppRow>();
+        for (AppRow r : counted) if (r.kind == AppRow.APP || r.shownMin > 0) rows.add(r);
+        rows.addAll(out);
+        return rows;
+    }
+
+    private static void roundRows(List<AppRow> rows, long target) {
+        double[] v = new double[rows.size()];
+        for (int i = 0; i < v.length; i++) v[i] = rows.get(i).exactMin;
+        long[] r = target < 0 ? roundTogether(v) : roundTogether(v, target);
+        for (int i = 0; i < v.length; i++) rows.get(i).shownMin = r[i];
+    }
+
+    /**
+     * Whole numbers that add up to the rounded sum of {@code v} (largest remainder: each value rounded
+     * down, the missing ones go to the largest remainders, the earlier value on a tie). Negative
+     * values count as 0.
+     */
+    public static long[] roundTogether(double[] v) {
+        double sum = 0;
+        for (double x : v) sum += Math.max(0, x);
+        return roundTogether(v, Math.round(sum));
+    }
+
+    /**
+     * As above, adding up to {@code target} (which must be within one per value of their sum): missing
+     * ones go to the largest remainders, extra ones come off the smallest remainders.
+     */
+    public static long[] roundTogether(double[] v, long target) {
+        long[] out = new long[v.length];
+        double[] rest = new double[v.length];
+        long given = 0;
+        for (int i = 0; i < v.length; i++) {
+            double x = Math.max(0, v[i]);
+            out[i] = (long) Math.floor(x);
+            rest[i] = x - out[i];
+            given += out[i];
+        }
+        boolean[] used = new boolean[v.length];
+        while (given < target) {
+            int best = -1;
+            for (int i = 0; i < v.length; i++) if (!used[i] && (best < 0 || rest[i] > rest[best])) best = i;
+            if (best < 0) break;
+            out[best]++;
+            used[best] = true;
+            given++;
+        }
+        while (given > target) {
+            int best = -1;
+            for (int i = 0; i < v.length; i++) if (!used[i] && out[i] > 0 && (best < 0 || rest[i] < rest[best])) best = i;
+            if (best < 0) break;
+            out[best]--;
+            used[best] = true;
+            given--;
+        }
         return out;
     }
 

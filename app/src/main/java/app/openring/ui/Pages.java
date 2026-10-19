@@ -986,34 +986,28 @@ public final class Pages {
         java.util.Set<String> ex = Prefs.of(c).screenExcluded();
         if (!in.appsKnown) {
             card.addView(Ui.body(c, "Times per app start with version 1.15, from about a week before it was installed."));
-        } else if (in.apps.isEmpty()) {
-            card.addView(Ui.body(c, "No app was in front for more than half a minute."));
+        } else if (in.appRows.isEmpty()) {
+            card.addView(Ui.body(c, "No app was in front on this day."));
         } else {
-            int shown = 0;
-            for (java.util.Map.Entry<String, Double> e : in.apps) {
-                boolean out = ex.contains(e.getKey());
-                // the 8 most used, plus every app left out so it never disappears silently
-                if (shown >= 8 && !out) continue;
-                shown++;
+            // whole minutes rounded together, so the rows add up to the total and to Not counted (issue #71)
+            for (app.openring.core.analysis.ScreenTime.AppRow r : in.appRows) {
+                boolean out = r.excluded;
+                String name = r.kind == app.openring.core.analysis.ScreenTime.AppRow.APP ? app.openring.data.ScreenUse.label(c, r.pkg)
+                        : r.kind == app.openring.core.analysis.ScreenTime.AppRow.OTHER ? "Other apps (" + r.apps + ")" : "No app in front";
+                boolean plain = r.kind == app.openring.core.analysis.ScreenTime.AppRow.APP && !out;
                 LinearLayout row = Ui.hbox(c);
                 row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
-                row.addView(Ui.text(c, app.openring.data.ScreenUse.label(c, e.getKey()), 14, out ? Ui.TEXT_3 : Ui.TEXT, Ui.REGULAR), Ui.weight(1));
-                row.addView(Ui.text(c, (out ? "not counted, " : "") + span(e.getValue()), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
-                card.addView(row);
-            }
-            if (in.noAppMin >= 1) {
-                LinearLayout row = Ui.hbox(c);
-                row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
-                row.addView(Ui.text(c, "No app in front", 14, Ui.TEXT_2, Ui.REGULAR), Ui.weight(1));
-                row.addView(Ui.text(c, span(in.noAppMin), 14, Ui.TEXT_2, Ui.REGULAR));
+                row.addView(Ui.text(c, name, 14, out ? Ui.TEXT_3 : plain ? Ui.TEXT : Ui.TEXT_2, Ui.REGULAR), Ui.weight(1));
+                row.addView(Ui.text(c, (out ? "not counted, " : "") + span(r.shownMin), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
                 card.addView(row);
             }
         }
         card.addView(Ui.gap(c, 8));
-        card.addView(Ui.text(c, "Time each app was in front while you used the phone. No app in front: uses shorter than half a minute "
-                + "and screens Android does not name. Apps you leave out (for example maps while you "
-                + "navigate) do not count for the total, the clock, the days or the score. Phone use at night still counts as awake "
-                + "for your sleep.", 12, Ui.TEXT_2, Ui.REGULAR));
+        card.addView(Ui.text(c, "Time each app was in front while you used the phone, rounded so the rows add up to the day's total "
+                + "(and the ones not counted to Not counted). Other apps: apps used less than half a minute that day and those "
+                + "beyond the eight most used. No app in front: time Android names no app for, for example some system screens. "
+                + "Apps you leave out (for example maps while you navigate) do not count for the total, the clock, the days or the "
+                + "score. Phone use at night still counts as awake for your sleep.", 12, Ui.TEXT_2, Ui.REGULAR));
         TextView pick = Ui.smallButton(c, ex.isEmpty() ? "Choose apps not to count" : "Apps not counted: " + ex.size(), Ui.OXY);
         pick.setOnClickListener(new View.OnClickListener() {
             @Override

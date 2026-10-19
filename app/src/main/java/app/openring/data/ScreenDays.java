@@ -108,15 +108,17 @@ public final class ScreenDays {
         public double[] dial = new double[DIAL_STEPS];
         /** Nights {start, end} that touch this day, for the dial. */
         public final List<double[]> nights = new ArrayList<double[]>();
-        /** Minutes per app this day (screen on and app in front), most used first; empty when the split is unknown. */
+        /** Minutes per app this day (screen on and app in front), every app, most used first; empty when the split is unknown. */
         public List<Map.Entry<String, Double>> apps = Collections.emptyList();
+        /** The rows of the list of apps, rounded so they add up (issue #71). */
+        public List<ScreenTime.AppRow> appRows = Collections.emptyList();
         /** Whether app times are stored for this day (they start with version 1.15, about a week back). */
         public boolean appsKnown;
         public Row[] rows = new Row[0];
         /** Counted sessions and apps in front touching this day, for reading the clock by touch. */
         public List<double[]> sessions = Collections.emptyList();
         public Map<String, List<double[]>> dayApps = Collections.emptyMap();
-        /** Screen on time with no app in front (home screen, system screens), minutes. */
+        /** Counted screen time with no app counted in front (time Android names no app for), minutes. */
         public double noAppMin;
     }
 
@@ -181,7 +183,9 @@ public final class ScreenDays {
             in.dial = app.openring.core.analysis.DialMath.fill(shown, in.from, in.to, zone, DIAL_STEPS);
             in.sessions = new ArrayList<double[]>();
             for (double[] x : counted) if (x[1] > in.from && x[0] < in.to) in.sessions.add(x);
-            in.dayApps = apps;
+            // one app in front at a time for the list and the readout (old stored rows could overlap, issue #71)
+            Map<String, List<double[]>> front = ScreenTime.oneAtATime(apps);
+            in.dayApps = front;
             if (night != null) in.firstLook = ScreenTime.firstAfter(counted, Math.max(in.from, night[1]), in.to);
             if (night != null && night[0] - ScreenScore.BEDTIME_WINDOW_S >= first) {
                 in.bedMin = ScreenTime.minutes(counted, night[0] - ScreenScore.BEDTIME_WINDOW_S, night[0]);
@@ -190,10 +194,11 @@ public final class ScreenDays {
             in.score = ScreenScore.of(in.day.totalMin, goalMin, in.bedMin, in.nightMin);
             in.appsKnown = appsFrom >= 0 && in.to > appsFrom;
             if (in.appsKnown) {
-                in.apps = ScreenTime.perApp(apps, raw, in.from, in.to);
+                in.apps = ScreenTime.perApp(front, raw, in.from, in.to, 0);
                 double sum = 0;
-                for (Map.Entry<String, Double> e : in.apps) sum += e.getValue();
-                in.noAppMin = Math.max(0, in.rawMin - sum);
+                for (Map.Entry<String, Double> e : in.apps) if (!excluded.contains(e.getKey())) sum += e.getValue();
+                in.noAppMin = Math.max(0, in.day.totalMin - sum);
+                in.appRows = ScreenTime.appRows(in.apps, excluded, in.day.totalMin, in.excludedMin);
             }
         }
 

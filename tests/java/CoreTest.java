@@ -403,6 +403,7 @@ public class CoreTest {
         screenAwakeGrid();
         screenApps();
         screenUnlock();
+        screenAppReads();
         screenScore();
         decoders();
         requests();
@@ -614,6 +615,307 @@ public class CoreTest {
         java.util.Map<String, List<double[]>> m = ScreenTime.appSessions(new double[] {10, 50, 80}, new int[] {ScreenTime.APP_ON, ScreenTime.APP_ON, ScreenTime.APP_OFF},
                 new String[] {a, b, b}, 0, 1000);
         check("apps: next app closes the previous one", near(m.get(a).get(0)[1], 50) && m.get(a).size() == 1 && near(m.get(b).get(0)[0], 50));
+    }
+
+    // ------------------------------------------------------- issue #71, apps read more than once
+
+    /** Android usage event types the way data/ScreenUse maps them (copied here, that class needs Android). */
+    static int screenKind(int type) {
+        switch (type) {
+            case 15: return ScreenTime.ON;
+            case 16: return ScreenTime.OFF;
+            case 26: return ScreenTime.SHUTDOWN;
+            case 27: return ScreenTime.STARTUP;
+            case 17: return ScreenTime.LOCKED;
+            case 18: return ScreenTime.UNLOCKED;
+            case 1: case 7: return ScreenTime.ALIVE;
+            default: return 0;
+        }
+    }
+
+    static int appKind(int type) {
+        switch (type) {
+            case 1: return ScreenTime.APP_ON;
+            case 2: return ScreenTime.APP_OFF;
+            case 16: return ScreenTime.OFF;
+            case 26: return ScreenTime.SHUTDOWN;
+            case 27: return ScreenTime.STARTUP;
+            default: return 0;
+        }
+    }
+
+    /**
+     * Reads a log the way ScreenUse.collect does, once at each of {@code reads}: screen sessions from
+     * the newest stored session start (a session with a known start replaces the stored one), apps
+     * from {@link ScreenTime#appsReadFrom}, stored with {@link ScreenTime#store}. Returns {apps, screen}.
+     */
+    @SuppressWarnings("unchecked")
+    static Object[] readLog(double[] t, int[] type, String[] pkg, double[] reads, double back) {
+        Map<String, List<double[]>> apps = new LinkedHashMap<String, List<double[]>>();
+        TreeMap<Double, double[]> screen = new TreeMap<Double, double[]>();
+        boolean first = true;
+        for (double now : reads) {
+            double screenFrom = screen.isEmpty() ? back : screen.lastKey();
+            double newest = -1;
+            for (List<double[]> l : apps.values()) for (double[] r : l) newest = Math.max(newest, r[0]);
+            double appFrom = ScreenTime.appsReadFrom(first, back, screenFrom, newest);
+            List<Double> at = new ArrayList<Double>(), st = new ArrayList<Double>();
+            List<Integer> ak = new ArrayList<Integer>(), sk = new ArrayList<Integer>();
+            List<String> ap = new ArrayList<String>();
+            for (int i = 0; i < t.length && t[i] < now; i++) {
+                int a = appKind(type[i]), k = screenKind(type[i]);
+                if (a != 0 && t[i] >= appFrom) {
+                    at.add(t[i]);
+                    ak.add(a);
+                    ap.add(a == ScreenTime.APP_ON || a == ScreenTime.APP_OFF ? pkg[i] : null);
+                }
+                if (k != 0 && t[i] >= screenFrom) {
+                    st.add(t[i]);
+                    sk.add(k);
+                }
+            }
+            double[] atA = new double[at.size()], stA = new double[st.size()];
+            int[] akA = new int[ak.size()], skA = new int[sk.size()];
+            for (int i = 0; i < atA.length; i++) {
+                atA[i] = at.get(i);
+                akA[i] = ak.get(i);
+            }
+            for (int i = 0; i < stA.length; i++) {
+                stA[i] = st.get(i);
+                skA[i] = sk.get(i);
+            }
+            ScreenTime.store(apps, ScreenTime.appSessions(atA, akA, ap.toArray(new String[0]), appFrom, now));
+            for (double[] s : ScreenTime.sessions(stA, skA, screenFrom, now)) screen.put(s[0], s);
+            first = false;
+        }
+        return new Object[] {apps, new ArrayList<double[]>(screen.values())};
+    }
+
+    static double appMin(Map<String, List<double[]>> apps, List<double[]> screen, String p) {
+        for (Map.Entry<String, Double> e : ScreenTime.perApp(apps, screen, -1e12, 1e12, 0)) if (e.getKey().equals(p)) return e.getValue();
+        return 0;
+    }
+
+    static boolean sameApps(Map<String, List<double[]>> a, Map<String, List<double[]>> b) {
+        if (!a.keySet().equals(b.keySet())) return false;
+        for (String p : a.keySet()) {
+            List<double[]> x = a.get(p), y = b.get(p);
+            if (x.size() != y.size()) return false;
+            for (int i = 0; i < x.size(); i++) if (!near(x.get(i)[0], y.get(i)[0]) || !near(x.get(i)[1], y.get(i)[1])) return false;
+        }
+        return true;
+    }
+
+    /** Issue #71: reading the log twice gives the apps the same time as reading it once; rows add up. */
+    @SuppressWarnings("unchecked")
+    static void screenAppReads() {
+        // the issue's case: a call over the lock screen while a background sync reads the log at 1100
+        double[] t = {900, 900.5, 1000, 1005, 1010, 1200, 1201, 1201.5};
+        int[] ty = {16, 17, 15, 1, 18, 2, 16, 17};
+        String d = "dialer";
+        String[] pk = {null, null, null, d, null, d, null, null};
+        Object[] once = readLog(t, ty, pk, new double[] {1300}, 890);
+        Object[] twice = readLog(t, ty, pk, new double[] {1100, 1300}, 890);
+        Map<String, List<double[]>> a1 = (Map<String, List<double[]>>) once[0], a2 = (Map<String, List<double[]>>) twice[0];
+        List<double[]> s1 = (List<double[]>) once[1];
+        check("issue 71: one read gives the dialer 3.2 min", Math.abs(appMin(a1, s1, d) - 190 / 60.0) < 1e-9);
+        check("issue 71: two reads store one dialer row, the same as one read", sameApps(a1, a2) && a2.get(d).size() == 1
+                && near(a2.get(d).get(0)[0], 1005) && near(a2.get(d).get(0)[1], 1200));
+        check("issue 71: two reads give the dialer 3.2 min, not 4.7", Math.abs(appMin(a2, (List<double[]>) twice[1], d) - 190 / 60.0) < 1e-9);
+        // the phone logs no "went to the back": screen off ends the dialer, nothing goes to "no app in front"
+        double[] tn = {900, 900.5, 1000, 1005, 1010, 1201, 1201.5};
+        int[] tyn = {16, 17, 15, 1, 18, 16, 17};
+        String[] pkn = {null, null, null, d, null, null, null};
+        Object[] twiceN = readLog(tn, tyn, pkn, new double[] {1100, 1300}, 890);
+        check("issue 71: without its back entry the dialer keeps its time (not 1.5 min)",
+                Math.abs(appMin((Map<String, List<double[]>>) twiceN[0], (List<double[]>) twiceN[1], d) - 191 / 60.0) < 1e-9);
+        // rows stored twice by older versions count once: per app, and when left out of the total
+        Map<String, List<double[]>> old = new LinkedHashMap<String, List<double[]>>();
+        old.put(d, new ArrayList<double[]>(Arrays.asList(new double[] {1005, 1100}, new double[] {1010, 1200})));
+        List<double[]> scr = new ArrayList<double[]>();
+        scr.add(new double[] {1010, 1201});
+        check("old doubled rows: the dialer counts 3.2 min", Math.abs(appMin(old, scr, d) - 190 / 60.0) < 1e-9);
+        Set<String> ex = new HashSet<String>(Arrays.asList(d));
+        check("old doubled rows: the total does not change by merging", near(ScreenTime.minutes(ScreenTime.subtract(scr, ScreenTime.ranges(old, ex)), 0, 2000),
+                ScreenTime.minutes(ScreenTime.subtract(scr, ScreenTime.ranges(ScreenTime.merge(old), ex)), 0, 2000)));
+        check("old doubled rows: merged into one", ScreenTime.merge(old).get(d).size() == 1 && near(ScreenTime.merge(old).get(d).get(0)[1], 1200));
+
+        // the lead rule: only the first app entry of a read counts from the read start
+        Map<String, List<double[]>> lead = ScreenTime.appSessions(new double[] {10, 20, 30}, new int[] {ScreenTime.APP_OFF, ScreenTime.APP_ON, ScreenTime.APP_OFF},
+                new String[] {"a", "b", "c"}, 0, 100);
+        check("lead: the first back entry counts from the read start", near(lead.get("a").get(0)[0], 0) && near(lead.get("a").get(0)[1], 10));
+        check("lead: a later back entry without its front entry is ignored", lead.get("c") == null && near(lead.get("b").get(0)[1], 100));
+        Map<String, List<double[]>> afterOff = ScreenTime.appSessions(new double[] {10, 30}, new int[] {ScreenTime.OFF, ScreenTime.APP_OFF},
+                new String[] {null, "c"}, 0, 100);
+        check("lead: not after the screen went off", afterOff.isEmpty());
+
+        // where the next read starts
+        check("read from: first read goes back", near(ScreenTime.appsReadFrom(true, 100, 500, 400), 100));
+        check("read from: the newest app", near(ScreenTime.appsReadFrom(false, 100, 500, 400), 400));
+        check("read from: never before back", near(ScreenTime.appsReadFrom(false, 100, 500, 50), 100));
+        check("read from: no app yet", near(ScreenTime.appsReadFrom(false, 100, 500, -1), 500));
+
+        // merging and storing
+        List<double[]> m = ScreenTime.mergeRanges(Arrays.asList(new double[] {30, 40}, new double[] {0, 10}, new double[] {10, 20}, new double[] {35, 50}, new double[] {5, 5}));
+        check("merge: touching and overlapping ranges join, empty ones go", m.size() == 2 && near(m.get(0)[1], 20) && near(m.get(1)[0], 30) && near(m.get(1)[1], 50));
+        Map<String, List<double[]>> st = new LinkedHashMap<String, List<double[]>>();
+        Map<String, List<double[]>> add = new LinkedHashMap<String, List<double[]>>();
+        add.put("a", new ArrayList<double[]>(Arrays.asList(new double[] {0, 10})));
+        ScreenTime.store(st, add);
+        ScreenTime.store(st, add);
+        check("store: the same range twice is one row", st.get("a").size() == 1);
+        add.put("a", new ArrayList<double[]>(Arrays.asList(new double[] {5, 15}, new double[] {20, 30})));
+        ScreenTime.store(st, add);
+        check("store: an overlapping range extends the row", st.get("a").size() == 2 && near(st.get("a").get(0)[1], 15));
+
+        // one app in front at a time: the app that came to the front later holds the overlap
+        Map<String, List<double[]>> ov = new LinkedHashMap<String, List<double[]>>();
+        ov.put("a", new ArrayList<double[]>(Arrays.asList(new double[] {0, 100})));
+        ov.put("b", new ArrayList<double[]>(Arrays.asList(new double[] {40, 60})));
+        ov.put("c", new ArrayList<double[]>(Arrays.asList(new double[] {200, 210})));
+        ov.put("e", new ArrayList<double[]>(Arrays.asList(new double[] {200, 205})));
+        ov.put("f", new ArrayList<double[]>(Arrays.asList(new double[] {300, 300})));
+        Map<String, List<double[]>> one = ScreenTime.oneAtATime(ov);
+        check("one at a time: the earlier app keeps both sides", one.get("a").size() == 2 && near(one.get("a").get(0)[1], 40) && near(one.get("a").get(1)[0], 60)
+                && near(one.get("a").get(1)[1], 100));
+        check("one at a time: the later app holds its time", one.get("b").size() == 1 && near(one.get("b").get(0)[0], 40) && near(one.get("b").get(0)[1], 60));
+        check("one at a time: same start, the first name wins, the other keeps the rest", near(one.get("c").get(0)[0], 200) && near(one.get("c").get(0)[1], 210)
+                && one.get("e") == null && one.get("f") == null);
+
+        // randomized: logs read 1 to 4 extra times at random moments give exactly the rows of one read
+        Random rnd = new Random(71);
+        int differ = 0, longer = 0, overRaw = 0;
+        String[] names = {"a", "b", "c", "d", "dialer"};
+        for (int run = 0; run < 2000; run++) {
+            List<Double> lt = new ArrayList<Double>();
+            List<Integer> lty = new ArrayList<Integer>();
+            List<String> lp = new ArrayList<String>();
+            double x = 50;
+            int sessions = 2 + rnd.nextInt(10);
+            for (int i = 0; i < sessions; i++) {
+                x += 5 + rnd.nextDouble() * 2000;
+                logAdd(lt, lty, lp, x, 15, null);
+                String cur = null;
+                if (rnd.nextDouble() < 0.2) {
+                    cur = "dialer"; // a call or the camera over the lock screen
+                    x += 0.5 + rnd.nextDouble();
+                    logAdd(lt, lty, lp, x, 1, cur);
+                }
+                if (rnd.nextDouble() < 0.9) {
+                    x += 0.5 + rnd.nextDouble() * 5;
+                    logAdd(lt, lty, lp, x, 18, null);
+                }
+                int n = rnd.nextInt(4);
+                for (int j = 0; j < n; j++) {
+                    String next = names[rnd.nextInt(names.length)];
+                    x += 1 + rnd.nextDouble() * 300;
+                    if (cur != null && !next.equals(cur) && rnd.nextDouble() < 0.8) {
+                        logAdd(lt, lty, lp, x, 2, cur);
+                        x += 0.01 + rnd.nextDouble() * 0.5;
+                    }
+                    logAdd(lt, lty, lp, x, rnd.nextDouble() < 0.1 ? 7 : 1, next);
+                    if (lty.get(lty.size() - 1) == 1) cur = next;
+                }
+                x += 1 + rnd.nextDouble() * 600;
+                if (rnd.nextDouble() < 0.03) {
+                    logAdd(lt, lty, lp, x, 26, null); // the phone died or restarted
+                    x += 20 + rnd.nextDouble() * 60;
+                    logAdd(lt, lty, lp, x, 27, null);
+                    continue;
+                }
+                if (cur != null && rnd.nextDouble() < 0.7) {
+                    logAdd(lt, lty, lp, x, 2, cur);
+                    x += 0.01 + rnd.nextDouble() * 0.5;
+                }
+                logAdd(lt, lty, lp, x, 16, null);
+                x += 0.1 + rnd.nextDouble();
+                logAdd(lt, lty, lp, x, 17, null);
+            }
+            double end = x + 100;
+            double[] rt = new double[lt.size()];
+            int[] rty = new int[rt.length];
+            for (int i = 0; i < rt.length; i++) {
+                rt[i] = lt.get(i);
+                rty[i] = lty.get(i);
+            }
+            String[] rp = lp.toArray(new String[0]);
+            int k = 1 + rnd.nextInt(4);
+            double[] reads = new double[k + 1];
+            for (int i = 0; i < k; i++) reads[i] = 40 + rnd.nextDouble() * (end - 40);
+            Arrays.sort(reads, 0, k);
+            reads[k] = end;
+            Object[] r1 = readLog(rt, rty, rp, new double[] {end}, 0);
+            Object[] rk = readLog(rt, rty, rp, reads, 0);
+            Map<String, List<double[]>> one1 = (Map<String, List<double[]>>) r1[0], many = (Map<String, List<double[]>>) rk[0];
+            List<double[]> screen = (List<double[]>) r1[1];
+            boolean same = sameApps(one1, many);
+            double raw = ScreenTime.minutes(screen, -1e12, 1e12), sum = 0;
+            for (String p : names) {
+                double v1 = appMin(one1, screen, p), vk = appMin(many, screen, p);
+                same &= Math.abs(v1 - vk) < 1e-9;
+                if (vk > raw + 1e-9) longer++;
+            }
+            for (Map.Entry<String, Double> e : ScreenTime.perApp(ScreenTime.oneAtATime(many), screen, -1e12, 1e12, 0)) sum += e.getValue();
+            if (sum > raw + 1e-9) overRaw++;
+            if (!same) differ++;
+        }
+        eq("random logs: reading 2 to 5 times gives the same app rows and minutes as once (of 2000)", differ, 0);
+        eq("random logs: no app has more minutes than the phone use", longer, 0);
+        eq("random logs: apps together never more than the phone use", overRaw, 0);
+
+        // rows that add up: the demo case of the issue, 52.35 min shown as 54m when rounded one by one
+        List<Map.Entry<String, Double>> per = new ArrayList<Map.Entry<String, Double>>();
+        double[] mins = {15.6, 15.55, 14.6, 2.6, 2.6, 1.4};
+        for (int i = 0; i < mins.length; i++) per.add(new AbstractMap.SimpleEntry<String, Double>("app" + i, mins[i]));
+        List<ScreenTime.AppRow> rows = ScreenTime.appRows(per, new HashSet<String>(), 52.35);
+        long shown = 0, single = 0;
+        for (ScreenTime.AppRow r : rows) shown += r.shownMin;
+        for (double v : mins) single += Math.round(v);
+        check("rounding: one by one the rows add up to 54", single == 54);
+        check("rounding: together they add up to the total of 52", shown == 52 && rows.size() == 6);
+        check("rounding: largest remainder", Arrays.equals(ScreenTime.roundTogether(new double[] {1.4, 1.4, 1.2}), new long[] {2, 1, 1}));
+        check("rounding: a tie goes to the earlier row", Arrays.equals(ScreenTime.roundTogether(new double[] {0.5, 0.5}), new long[] {1, 0}));
+        check("rounding: down to a smaller target", Arrays.equals(ScreenTime.roundTogether(new double[] {2.0, 1.1}, 2), new long[] {1, 1}));
+        check("rounding: negative counts as 0", Arrays.equals(ScreenTime.roundTogether(new double[] {-3, 2.6}), new long[] {0, 3}));
+
+        // the list: 8 apps of their own, small and further apps in Other apps, apps left out always shown
+        per.clear();
+        for (int i = 0; i < 10; i++) per.add(new AbstractMap.SimpleEntry<String, Double>("p" + i, 20.0 - i));
+        per.add(new AbstractMap.SimpleEntry<String, Double>("small", 0.3));
+        per.add(new AbstractMap.SimpleEntry<String, Double>("out", 0.2));
+        Set<String> leftOut = new HashSet<String>(Arrays.asList("p1", "out"));
+        double counted = 0;
+        for (Map.Entry<String, Double> e : per) if (!leftOut.contains(e.getKey())) counted += e.getValue();
+        counted += 3.27; // time with no app in front
+        rows = ScreenTime.appRows(per, leftOut, counted, 19.2);
+        int own = 0, outRows = 0;
+        long countedShown = 0, outShown = 0;
+        ScreenTime.AppRow other = null, none = null;
+        for (ScreenTime.AppRow r : rows) {
+            if (r.kind == ScreenTime.AppRow.APP && !r.excluded) own++;
+            if (r.excluded) {
+                outRows++;
+                outShown += r.shownMin;
+            } else countedShown += r.shownMin;
+            if (r.kind == ScreenTime.AppRow.OTHER) other = r;
+            if (r.kind == ScreenTime.AppRow.NO_APP) none = r;
+        }
+        check("list: the 8 most used apps counted get a row", own == 8);
+        check("list: apps left out always get a row, even a tiny one", outRows == 2);
+        check("list: Other apps holds the 9th app counted and the small one", other != null && other.apps == 2 && Math.abs(other.exactMin - 11.3) < 1e-9);
+        check("list: no app in front is the rest of the total", none != null && Math.abs(none.exactMin - 3.27) < 1e-9);
+        check("list: counted rows add up to the day's total", countedShown == Math.round(counted));
+        check("list: rows left out add up to Not counted", outShown == 19);
+        check("list: order is apps, Other apps, No app in front, then the ones left out", rows.get(8) == other && rows.get(9) == none && rows.get(10).excluded);
+        check("list: an empty Other apps and no app in front are left out",
+                ScreenTime.appRows(per.subList(0, 3), new HashSet<String>(), 20 + 19 + 18).size() == 3);
+        check("list: unknown total gives no row for no app in front", ScreenTime.appRows(per.subList(0, 1), new HashSet<String>(), Double.NaN).size() == 1);
+    }
+
+    static void logAdd(List<Double> t, List<Integer> ty, List<String> p, double at, int type, String pkg) {
+        t.add(at);
+        ty.add(type);
+        p.add(pkg);
     }
 
     /** Screen score (1.15): amount against the goal, before bed and during the night. */
