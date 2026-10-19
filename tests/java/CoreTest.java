@@ -1090,6 +1090,8 @@ public class CoreTest {
         eq("activity: one training day is singular", part(Scores.activity(activityIn(3, 2, 1, 400)), "frequency").detail, "1 training day in 3 days");
         eq("activity 3 days: weekly parts join", Scores.activity(activityIn(3, 2, 1, 400)).contributors.size(), 5);
         eq("activity: day count above 7 is a week", part(Scores.activity(activityIn(9, 9, 2, 800)), "frequency").detail, "2 training days");
+    }
+
     /** Ring sleep state every 5 minutes from {@code from} to {@code to} (hours after midnight UTC), awake in {@code awake} (hours), no samples in {@code off}. */
     static TS ringState(double from, double to, double[] awake, double[] off) {
         TS st = new TS();
