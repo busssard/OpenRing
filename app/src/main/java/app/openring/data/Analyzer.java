@@ -658,15 +658,9 @@ public final class Analyzer {
             }
         }
         if (beats.size() > 0) {
-            // the line: one point per quarter hour (100 on a 25 hour day, none merged); Lowest, Average and
-            // Highest come from the stored line itself, so they match the chart (issue #72). The Body tab works
-            // them out from the line again, so days stored before keep matching too.
-            JSONArray line = Json.series(DayHeart.curve(beats, ds, de), DayHeart.maxPoints(ds, de));
-            Json.put(out, "hr_day", line);
-            DayHeart sum = DayHeart.of(Json.series(line), ds, de);
-            Json.put(out, "hr_day_low", sum.low);
-            Json.put(out, "hr_day_high", sum.high);
-            Json.put(out, "hr_day_avg", sum.avg);
+            // the line: one point per quarter hour (100 on a 25 hour day, none merged). The Body tab takes
+            // Lowest, Average and Highest from this stored line (issue #72), so they are not stored apart.
+            Json.put(out, "hr_day", Json.series(DayHeart.curve(beats, ds, de), DayHeart.maxPoints(ds, de)));
         }
         db.putDay(key, out.toString());
     }

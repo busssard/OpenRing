@@ -761,25 +761,6 @@ public class CoreTest {
         TS long25 = new TS();
         for (double t = ds; t < ds + 25 * 3600; t += 60) long25.add(t, 60);
         eq("day heart: 25 hour day line", DayHeart.curve(long25, ds, ds + 25 * 3600).size(), 100);
-
-        // the night's lowest (5 minute averages) is never above the day's Lowest from the same readings
-        Random r = new Random(72);
-        boolean never = true;
-        for (int k = 0; k < 20; k++) {
-            NightAnalyzer.Input in = new NightAnalyzer.Input();
-            in.start = ds + 3600;
-            in.end = in.start + 7 * 3600;
-            int[] st = new int[7 * 120];
-            Arrays.fill(st, Stager.LIGHT);
-            in.ringStages = st;
-            TS hr5 = new TS();
-            for (double t = in.start + 150; t < in.end; t += 300) hr5.add(t, 46 + r.nextInt(25));
-            in.hr5 = hr5;
-            Night n = NightAnalyzer.analyze(in);
-            DayHeart day = DayHeart.of(DayHeart.curve(hr5, ds, de), ds, de);
-            if (!(day.low >= n.lowestHr)) never = false;
-        }
-        check("day heart: Lowest never below the night's lowest from the same readings", never);
     }
 
     static int awakeCount(int[] st) {

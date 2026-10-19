@@ -1259,10 +1259,10 @@ public class PipelineTest {
                 + db.count("SELECT COUNT(*) FROM apps") + " apps";
     }
 
-    /** Counts the progress steps one call reports. */
     /**
      * Issue #72: on every demo day the Body tab's Lowest, Average and Highest are the stored line's own lowest point,
-     * mean and highest point, and the day's lowest stays near the night's lowest (5 minute averages).
+     * mean and highest point, with every stored point inside the day the chart draws, and the day's lowest stays near
+     * the night's lowest (5 minute averages).
      */
     static void dayHeartChecks(Db db) {
         int days = 0, matched = 0, nearNight = 0, withNight = 0;
@@ -1272,8 +1272,12 @@ public class PipelineTest {
             if (o == null || o.optJSONArray("hr_day") == null) continue;
             days++;
             app.openring.core.analysis.TS line = Json.series(o.optJSONArray("hr_day"));
-            double low = Json.d(o, "hr_day_low"), avg = Json.d(o, "hr_day_avg"), high = Json.d(o, "hr_day_high");
-            boolean ok = high >= line.max() - 1e-9 && Math.abs(high - line.max()) < 0.01 && Math.abs(low - line.min()) < 0.01
+            LocalDate day = LocalDate.parse(r[0]);
+            // what the Body tab shows: worked out from the stored line over the day the chart draws
+            app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line,
+                    day.atStartOfDay(ZoneId.systemDefault()).toEpochSecond(), day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toEpochSecond());
+            double low = dh.low, avg = dh.avg, high = dh.high;
+            boolean ok = dh.points == line.size() && high >= line.max() - 1e-9 && Math.abs(high - line.max()) < 0.01 && Math.abs(low - line.min()) < 0.01
                     && Math.abs(avg - line.mean()) < 0.01;
             for (int i = 0; i < line.size(); i++) if (line.v(i) > high + 1e-9 || line.v(i) < low - 1e-9) ok = false;
             if (ok) matched++;
@@ -1302,6 +1306,7 @@ public class PipelineTest {
                 && (hours <= 24 || last > ds + 24 * 3600), line.size() + " points, last at " + (last - ds) / 3600 + " h");
     }
 
+    /** Counts the progress steps one call reports. */
     static final class Steps implements app.openring.data.Demo.Progress {
         final java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
 

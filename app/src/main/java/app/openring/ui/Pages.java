@@ -1100,10 +1100,12 @@ public final class Pages {
             hr.addView(Ui.text(c, "Each point of the line is a quarter hour average, midnight to midnight. Lowest and highest are its lowest and highest points. Touch the line to read any time.",
                     12, Ui.TEXT_3, Ui.REGULAR));
             double night = Json.d(day, "rhr");
-            if (!Double.isNaN(night)) hr.addView(Ui.text(c, "Lowest in last night's sleep: " + Ui.fmt(night, 0) + " bpm (5 minute averages, as on Today and the Sleep page).",
+            if (!Double.isNaN(night)) hr.addView(Ui.text(c, "Lowest in last night's sleep: " + Ui.fmt(night, 0) + " bpm (Resting HR on Today, from the ring's own 5 minute night readings, so it can differ by a beat or two from the line).",
                     12, Ui.TEXT_3, Ui.REGULAR));
         }
-        hr.addView(new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone), Ui.sized(c, -1, 140));
+        // the middle label at noon, also when the day has 23 or 25 hours
+        double noon = d.date.atTime(12, 0).atZone(d.zone).toEpochSecond();
+        hr.addView(new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon), Ui.sized(c, -1, 140));
         hr.addView(Ui.gap(c, 10));
         TextView live = Ui.button(c, "Measure live heart rate and HRV", Ui.HEART, false);
         live.setOnClickListener(new View.OnClickListener() {

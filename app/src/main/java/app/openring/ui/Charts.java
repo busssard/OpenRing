@@ -372,6 +372,7 @@ public final class Charts {
             return Charts.clock(t, zone);
         }
         private int maxDays;
+        private double midAt = Double.NaN;
 
         public LineChart(Context c, TS series, double from, double to, int color) {
             super(c);
@@ -425,6 +426,12 @@ public final class Charts {
 
         public LineChart empty(String text) {
             emptyText = text;
+            return this;
+        }
+
+        /** Put the middle time label at {@code t} (noon on a clock change day) instead of halfway along the axis. */
+        public LineChart midLabel(double t) {
+            midAt = t;
             return this;
         }
 
@@ -542,7 +549,8 @@ public final class Charts {
             txt.setTextAlign(Paint.Align.LEFT);
             cv.drawText(clockOrDate(daily ? from + 43200 : from), left, base, txt);
             txt.setTextAlign(Paint.Align.CENTER);
-            cv.drawText(clockOrDate((from + to) / 2), left + (w - left) / 2, base, txt);
+            double mid = Double.isNaN(midAt) || daily || midAt <= from || midAt >= to ? (from + to) / 2 : midAt;
+            cv.drawText(clockOrDate(mid), (float) (left + (mid - from) / (to - from) * (w - left)), base, txt);
             txt.setTextAlign(Paint.Align.RIGHT);
             cv.drawText(clockOrDate(daily ? to - 43200 : to), w, base, txt);
             txt.setTextAlign(Paint.Align.LEFT);
