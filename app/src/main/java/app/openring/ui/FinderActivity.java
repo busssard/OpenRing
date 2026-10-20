@@ -108,7 +108,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private MiniMap map;
     private TextView stepText, walkNote;
 
-    static final String UNUSABLE = "This phone receives the ring, but Bluetooth gives no usable signal strength for it right now.";
+    static final String UNUSABLE = "This phone receives the ring, so it is within Bluetooth range (about 10 m), "
+            + "but the phone gives no usable signal strength for it right now.";
 
     static final String HOLD = "Hold the phone upright, flat against your chest, screen towards you.";
 
@@ -642,6 +643,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
             int scanError = retry.error();
             issue(scanError == 6 ? "Android paused the Bluetooth scan for a moment. It starts again by itself within 30 s."
                     : "The Bluetooth scan stopped (error " + scanError + "). It starts again by itself within 30 s.", null, null);
+            return;
+        }
+        if (!demo && watch == null) {
+            // the start waits for Android's scan budget (shared with a sync): not listening yet, so "not heard" would mislead
+            bandText.setText("Not listening yet");
+            signalText.setText("It starts listening by itself in a moment.");
             return;
         }
         long heardAgo = prox.sinceLast(now);
