@@ -177,12 +177,8 @@ final class MiniMap extends View {
                         new float[] {0, 0.6f, 1}, Shader.TileMode.CLAMP));
                 cv.drawCircle(px, py, pr, fill);
                 cv.drawCircle(px, py, pr, circle);
-                txt.setColor(Ui.TEXT);
-                cv.drawText("Probably around here", px, Math.max(top + txt.getTextSize(), py - pr - Ui.dp(c, 4)), txt);
             } else if (spot.edge) {
                 cv.drawCircle(px, py, pr, edge);
-                txt.setColor(Ui.TEMP);
-                cv.drawText("Farther this way", px, Math.max(top + txt.getTextSize(), py - pr - Ui.dp(c, 4)), txt);
             }
         }
 
@@ -256,6 +252,25 @@ final class MiniMap extends View {
             txt.setTextAlign(Paint.Align.LEFT);
             cv.drawText(hi, gx1 + Ui.dp(c, 6), ly + Ui.dp(c, 1), txt);
             cv.drawText(lo, gx0 - Ui.dp(c, 6) - loW, ly + Ui.dp(c, 1), txt);
+        }
+
+        // the circle's name, bottom right next to the scale bar: on the map it would cover the trail
+        if (sr > 0) {
+            String key = spot.clear ? "Probably around here" : "Farther this way";
+            float kr = Ui.dp(c, 5), kw = txt.measureText(key);
+            float kx = w - Ui.dp(c, 4) - kw, ky = by + Ui.dp(c, 3);
+            float cx0 = kx - Ui.dp(c, 6) - kr, cy0 = by - Ui.dp(c, 1);
+            if (spot.clear) {
+                dot.setColor(Ui.alpha(Ui.HEART, 0.35f));
+                cv.drawCircle(cx0, cy0, kr, dot);
+                cv.drawCircle(cx0, cy0, kr, circle);
+            } else {
+                cv.drawCircle(cx0, cy0, kr, edge);
+            }
+            txt.setTextAlign(Paint.Align.LEFT);
+            txt.setColor(spot.clear ? Ui.TEXT : Ui.TEMP);
+            cv.drawText(key, kx, ky, txt);
+            txt.setColor(Ui.TEXT_2);
         }
 
         // the readout of the touched dot or circle
