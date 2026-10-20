@@ -561,17 +561,46 @@ public final class Db extends SQLiteOpenHelper {
         return out;
     }
 
-    /** Store the ranges each app was in front; a range with a known start replaces the stored one. */
+    /**
+     * Store the ranges each app was in front. A range joins every stored range of the same app it
+     * overlaps or touches into one row, so reading the same time twice stores the same rows as reading
+     * it once (issue #71, as {@code ScreenTime.store}).
+     */
     public void putApps(java.util.Map<String, List<double[]>> apps) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
             for (java.util.Map.Entry<String, List<double[]>> e : apps.entrySet()) {
                 for (double[] s : e.getValue()) {
+                    if (!(s[1] > s[0])) continue;
+                    double a = s[0], b = s[1];
+                    // grow the range over every row it reaches (old rows may overlap each other too); the
+                    // index on stop keeps this to the rows since the range starts, not the app's whole history
+                    boolean grew = true;
+                    while (grew) {
+                        grew = false;
+                        Cursor c = db.rawQuery("SELECT start, stop FROM apps INDEXED BY apps_stop WHERE stop >= ? AND pkg = ? AND start <= ?",
+                                new String[] {String.valueOf(a), e.getKey(), String.valueOf(b)});
+                        try {
+                            while (c.moveToNext()) {
+                                if (c.getDouble(0) < a) {
+                                    a = c.getDouble(0);
+                                    grew = true;
+                                }
+                                if (c.getDouble(1) > b) {
+                                    b = c.getDouble(1);
+                                    grew = true;
+                                }
+                            }
+                        } finally {
+                            c.close();
+                        }
+                    }
+                    db.execSQL("DELETE FROM apps INDEXED BY apps_stop WHERE stop >= ? AND pkg = ? AND start <= ?", new Object[] {a, e.getKey(), b});
                     ContentValues cv = new ContentValues();
                     cv.put("pkg", e.getKey());
-                    cv.put("start", s[0]);
-                    cv.put("stop", s[1]);
+                    cv.put("start", a);
+                    cv.put("stop", b);
                     db.insertWithOnConflict("apps", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
                 }
             }
@@ -581,8 +610,17 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
-    /** Ranges of apps in front that overlap [from, to), per package name, oldest first. */
+    /**
+     * Ranges of apps in front that overlap [from, to), per package name, oldest first. Rows of one app
+     * stored overlapping by older versions are merged here (issue #71), so no moment counts twice;
+     * the stored rows stay as they are.
+     */
     public java.util.Map<String, List<double[]>> apps(double from, double to) {
+        return app.openring.core.analysis.ScreenTime.merge(appRows(from, to));
+    }
+
+    /** The stored rows as they are, for {@link #apps} and the tests. */
+    java.util.Map<String, List<double[]>> appRows(double from, double to) {
         java.util.Map<String, List<double[]>> out = new java.util.LinkedHashMap<String, List<double[]>>();
         Cursor c = getReadableDatabase().rawQuery("SELECT pkg, start, stop FROM apps WHERE stop > ? AND start < ? ORDER BY start",
                 new String[] {String.valueOf(from), String.valueOf(to)});
@@ -607,6 +645,16 @@ public final class Db extends SQLiteOpenHelper {
     /** Start of the oldest stored app range, or -1 (days before it have screen time but no app split). */
     public double appsStart() {
         Cursor c = getReadableDatabase().rawQuery("SELECT MIN(start) FROM apps", null);
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getDouble(0) : -1;
+        } finally {
+            c.close();
+        }
+    }
+
+    /** Start of the newest stored app range, or -1: the next read of the app log starts there (issue #71). */
+    public double appsNewest() {
+        Cursor c = getReadableDatabase().rawQuery("SELECT MAX(start) FROM apps", null);
         try {
             return c.moveToFirst() && !c.isNull(0) ? c.getDouble(0) : -1;
         } finally {

@@ -516,7 +516,16 @@ public class PipelineTest {
                     && wide.score.value == di.score.value, Math.round(exactMin) + " -> " + Math.round(wideMin) + " min shown");
             check("touch readout data: sessions and apps of the day", !wide.sessions.isEmpty() && !wide.dayApps.isEmpty()
                     && app.openring.core.analysis.ScreenTime.at(wide.sessions, wide.sessions.get(0)[0] + 1) != null, null);
-            check("no app in front is small in the demo", wide.noAppMin >= 0 && wide.noAppMin < 5, wide.noAppMin);
+            long noApp = 0;
+            for (ScreenTime.AppRow r : wide.appRows) if (r.kind == ScreenTime.AppRow.NO_APP) noApp += r.shownMin;
+            check("no app in front is small in the demo", noApp < 5, noApp);
+            long rowsCounted = 0, rowsLeft = 0;
+            for (ScreenTime.AppRow r : di.appRows) {
+                if (r.excluded) rowsLeft += r.shownMin;
+                else rowsCounted += r.shownMin;
+            }
+            check("demo app rows add up to the total and to Not counted (#71)", rowsCounted == Math.round(di.day.totalMin)
+                    && rowsLeft == Math.round(di.excludedMin), rowsCounted + " / " + rowsLeft);
             check("with every app counted nothing is left out", everyApp.excludedMin < 0.01 && Math.abs(everyApp.day.totalMin - di.rawMin) < 0.01, everyApp.excludedMin);
         }
         app.openring.data.ScreenDays.Info old = app.openring.data.ScreenDays.info(demo, LocalDate.now().minusDays(60), z, 180, dp.screenExcluded());
@@ -572,6 +581,7 @@ public class PipelineTest {
         rebuildSameAsOld();
         longHistoryTiming();
         dialClockChange();
+        appRowsStored();
         activityGap();
         zoneTable();
         travelZones();
@@ -976,6 +986,71 @@ public class PipelineTest {
         int covered = 0;
         for (double v : row.nightFill) if (v > 0) covered++;
         check("a night inside the repeated hour keeps its width on the row", row.nights.size() == 1 && covered == 8, covered + " steps of 5 minutes");
+    }
+
+    /** Issue #71: app rows of one app merge when stored and when read, the list adds up, totals stay. */
+    static void appRowsStored() throws Exception {
+        Db db = Db.get(freshDb("openring-apps"));
+        ZoneId z = ZoneId.of("UTC");
+        LocalDate day = LocalDate.parse("2026-10-14");
+        double t0 = day.atStartOfDay(z).toEpochSecond() + 10 * 3600;
+        String d = "com.dialer", m = "com.maps";
+        // the two reads of the issue: [1005, 1100] then [1010, 1200]
+        java.util.Map<String, List<double[]>> r1 = new java.util.LinkedHashMap<String, List<double[]>>();
+        r1.put(d, new ArrayList<double[]>(java.util.Arrays.asList(new double[] {t0 + 1005, t0 + 1100})));
+        java.util.Map<String, List<double[]>> r2 = new java.util.LinkedHashMap<String, List<double[]>>();
+        r2.put(d, new ArrayList<double[]>(java.util.Arrays.asList(new double[] {t0 + 1010, t0 + 1200})));
+        db.putApps(r1);
+        db.putApps(r2);
+        db.putApps(r2);
+        java.util.Map<String, List<double[]>> core = ScreenTime.store(ScreenTime.store(new java.util.LinkedHashMap<String, List<double[]>>(), r1), r2);
+        check("stored twice: one dialer row, as the core stores it", db.count("SELECT COUNT(*) FROM apps") == 1
+                && db.count("SELECT MIN(start) FROM apps") == (long) (t0 + 1005) && db.count("SELECT MAX(stop) FROM apps") == (long) (t0 + 1200)
+                && core.get(d).size() == 1 && core.get(d).get(0)[1] == t0 + 1200, db.count("SELECT COUNT(*) FROM apps"));
+        check("newest app start for the next read", db.appsNewest() == t0 + 1005, db.appsNewest());
+        android.database.Cursor plan = db.getReadableDatabase().rawQuery("EXPLAIN QUERY PLAN SELECT start, stop FROM apps INDEXED BY apps_stop WHERE stop >= ? AND pkg = ? AND start <= ?",
+                new String[] {"1", d, "2"});
+        String how = "";
+        while (plan.moveToNext()) how += plan.getString(3);
+        plan.close();
+        check("merging looks only at rows since the new range starts (index on stop)", how.contains("apps_stop") && how.contains("stop>?"), how);
+        // rows stored doubled by an older version: read merged, stored rows untouched until new ones join
+        db.getWritableDatabase().execSQL("DELETE FROM apps");
+        db.getWritableDatabase().execSQL("INSERT INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {d, t0 + 1005, t0 + 1100});
+        db.getWritableDatabase().execSQL("INSERT INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {d, t0 + 1010, t0 + 1200});
+        db.getWritableDatabase().execSQL("INSERT INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {m, t0 + 1300, t0 + 1400});
+        List<double[]> s = new ArrayList<double[]>();
+        s.add(new double[] {t0 + 1010, t0 + 1201});
+        s.add(new double[] {t0 + 1300, t0 + 1400});
+        db.putScreen(s);
+        check("old doubled rows are read as one", db.apps(0, Double.MAX_VALUE).get(d).size() == 1 && db.count("SELECT COUNT(*) FROM apps") == 3, null);
+        java.util.Set<String> none = new java.util.HashSet<String>(), outD = new java.util.HashSet<String>(java.util.Arrays.asList(d));
+        app.openring.data.ScreenDays.Info a = app.openring.data.ScreenDays.info(db, day, z, 180, none);
+        app.openring.data.ScreenDays.Info b = app.openring.data.ScreenDays.info(db, day, z, 180, outD);
+        double dial = -1;
+        for (java.util.Map.Entry<String, Double> e : a.apps) if (e.getKey().equals(d)) dial = e.getValue();
+        check("the dialer shows 3.2 min, not more than the phone use", Math.abs(dial - 190 / 60.0) < 1e-6 && dial <= a.rawMin, dial);
+        long shown = 0;
+        for (ScreenTime.AppRow r : a.appRows) shown += r.shownMin;
+        check("the rows add up to the total", shown == Math.round(a.day.totalMin), shown + " of " + a.day.totalMin);
+        long counted = 0, left = 0;
+        for (ScreenTime.AppRow r : b.appRows) {
+            if (r.excluded) left += r.shownMin;
+            else counted += r.shownMin;
+        }
+        check("left out: the rows add up to the total and to Not counted", counted == Math.round(b.day.totalMin) && left == Math.round(b.excludedMin)
+                && left == 3, counted + " / " + left);
+        // a new read that joins the old rows: totals, score and the list stay the same
+        java.util.Map<String, List<double[]>> r3 = new java.util.LinkedHashMap<String, List<double[]>>();
+        r3.put(d, new ArrayList<double[]>(java.util.Arrays.asList(new double[] {t0 + 1150, t0 + 1160})));
+        db.putApps(r3);
+        check("a new range joins every old row it reaches", db.count("SELECT COUNT(*) FROM apps WHERE pkg = '" + d + "'") == 1, null);
+        app.openring.data.ScreenDays.Info a2 = app.openring.data.ScreenDays.info(db, day, z, 180, none);
+        app.openring.data.ScreenDays.Info b2 = app.openring.data.ScreenDays.info(db, day, z, 180, outD);
+        check("totals and score stay the same after merging", a2.day.totalMin == a.day.totalMin && b2.day.totalMin == b.day.totalMin
+                && b2.excludedMin == b.excludedMin && a2.score.value == a.score.value && b2.score.value == b.score.value
+                && a2.rawMin == a.rawMin, b.day.totalMin + " / " + b2.day.totalMin);
+        check("with no app left out the total is all phone use", Math.abs(a.day.totalMin - a.rawMin) < 1e-9 && Math.abs(a.day.totalMin - 291 / 60.0) < 1e-9, a.day.totalMin);
     }
 
     /** The zone history: rows extend and open, a gap counts for the later zone. */

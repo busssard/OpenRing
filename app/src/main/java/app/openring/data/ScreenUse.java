@@ -62,6 +62,11 @@ public final class ScreenUse {
     private static long lastRun;
     /** Version of the counting rules; 2 counts from unlocking (1.20). */
     static final int RULE = 2;
+    /**
+     * Version of reading the apps in front; 2 reads each time from the newest stored app and merges
+     * (issue #71). On the change the app log Android still keeps is read once more and merged in.
+     */
+    static final int APPS_RULE = 2;
 
     /** As {@link #collect(Context)}; without {@code force} it reads at most once a minute (stepping through days). */
     public static synchronized int collect(Context c, boolean force) {
@@ -83,10 +88,15 @@ public final class ScreenUse {
         // the run that changes the rules starts right where the kept (older) sessions end, so the
         // newest kept one is not read again under the new rule and stored a second time
         if (db.kvLong("screen_rule", 1) < RULE) screenFrom = back;
+        // apps read again once with the rules of issue #71: stored rows stay, the new ones merge in
+        boolean appsRule = db.kvLong("apps_rule", 1) < APPS_RULE;
         // the first read of a version with apps (1.15) goes back as far as Android keeps the log, for
         // the apps only: screen sessions keep starting at the newest stored one, so none is stored twice
-        boolean firstApps = db.kvLong("apps_read", 0) == 0;
-        long from = firstApps ? Math.min(screenFrom, back) : screenFrom;
+        boolean firstApps = appsRule || db.kvLong("apps_read", 0) == 0;
+        // later reads start at the newest stored app, so the app still in front at the last read is
+        // seen coming to the front again and its time is neither counted twice nor lost (issue #71)
+        long appFrom = (long) Math.floor(ScreenTime.appsReadFrom(firstApps, back / 1000.0, screenFrom / 1000.0, db.appsNewest(), now / 1000.0) * 1000);
+        long from = Math.min(screenFrom, appFrom);
         List<Double> times = new ArrayList<Double>();
         List<Integer> kinds = new ArrayList<Integer>();
         // apps in front (their own list: an app's "in front" also counts as a sign of use above)
@@ -101,7 +111,7 @@ public final class ScreenUse {
                 ev.getNextEvent(e);
                 double at = e.getTimeStamp() / 1000.0;
                 int type = e.getEventType();
-                int app = appKind(type);
+                int app = e.getTimeStamp() < appFrom ? 0 : appKind(type);
                 if (app != 0) {
                     aTimes.add(at);
                     aKinds.add(app);
@@ -121,8 +131,9 @@ public final class ScreenUse {
             at[i] = aTimes.get(i);
             ak[i] = aKinds.get(i);
         }
-        db.putApps(ScreenTime.appSessions(at, ak, aPkgs.toArray(new String[0]), from / 1000.0, now / 1000.0));
+        db.putApps(ScreenTime.appSessions(at, ak, aPkgs.toArray(new String[0]), appFrom / 1000.0, now / 1000.0));
         if (firstApps) db.put("apps_read", 1);
+        if (appsRule) db.put("apps_rule", APPS_RULE);
         double[] t = new double[times.size()];
         int[] k = new int[kinds.size()];
         for (int i = 0; i < t.length; i++) {
