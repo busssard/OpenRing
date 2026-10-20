@@ -43,6 +43,7 @@ import java.util.Random;
 
 import app.openring.ble.RingManager;
 import app.openring.ble.RingScanner;
+import app.openring.core.Texts;
 import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.LastWorn;
 import app.openring.core.analysis.Proximity;
@@ -819,7 +820,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             b.append("\nWorking out where the ring probably is.");
         } else if (spot == null && walk.covered()) {
             // enough of the room, but the ring was hardly heard
-            b.append("\nThe ring was heard for only ").append((long) Math.floor(walk.heardSeconds())).append(" seconds of the walk; the circle needs ")
+            b.append("\nThe ring was heard for only ").append(Texts.count((long) Math.floor(walk.heardSeconds()), "second", "seconds")).append(" of the walk; the circle needs ")
                     .append(SearchWalk.MIN_BINS / 2).append(". While a sync, Live or another app is connected to the ring, it sends no signal.");
             if (linked()) b.append(" It is connected to this phone right now.");
             else if (prox.band() == Proximity.NOT_HEARD) b.append(" This phone does not hear it right now.");

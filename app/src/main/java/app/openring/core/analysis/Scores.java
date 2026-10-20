@@ -61,7 +61,7 @@ public final class Scores {
         double restless = Stats.curve(n.restlessPct, new double[][] {{0, 100}, {10, 92}, {25, 72}, {40, 48}, {60, 20}});
         double rest = Stats.mean(new double[] {waso, wakes, restless});
         add(sc, "restfulness", "Restfulness", rest, 15,
-            Double.isNaN(n.wasoMin) ? "" : String.format(Locale.US, "%d wake ups, %s awake", n.awakenings, hm(n.wasoMin)));
+            Double.isNaN(n.wasoMin) ? "" : app.openring.core.Texts.count(n.awakenings, "wake up", "wake ups") + ", " + hm(n.wasoMin) + " awake");
 
         boolean staged = "ring".equals(n.stageSource) || "signals".equals(n.stageSource);
         if (staged) {
@@ -160,7 +160,7 @@ public final class Scores {
             Double.isNaN(in.inactiveMin) ? "" : hm(in.inactiveMin) + " inactive");
         if (in.longInactiveStreaks >= 0) {
             add(sc, "move_hourly", "Move every hour", Stats.curve(in.longInactiveStreaks, new double[][] {{0, 100}, {1, 90}, {2, 75}, {3, 55}, {5, 25}}), 33,
-                in.longInactiveStreaks + " long sitting periods");
+                app.openring.core.Texts.count(in.longInactiveStreaks, "long sitting period", "long sitting periods"));
         }
         // the weekly parts look at the worn days only: targets as a share of them, training scaled
         // up to a week; with fewer than MIN_WEEK_DAYS they are left out (issue #44)

@@ -153,6 +153,8 @@ public class PipelineTest {
         System.out.println("after interrupted sync:");
         for (DataCheck.Step s : r1.steps) System.out.println("    " + s.state + " " + s.title + ": " + s.detail);
         check("interrupted sync is reported, not silent", r1.steps.get(2).state == 2, r1.steps.get(2).title);
+        // the word agrees with the number (issue #92)
+        check("data check: one boot segment is singular", r1.steps.get(2).detail.contains("(0 time records in 1 boot segment)"), r1.steps.get(2).detail);
 
         // ---- sync 2: resumes, drains to the present, phone anchor written by the sink ----
         for (int i = cut; i < all.size(); i += 4096) db.insertBatch(all.subList(i, Math.min(all.size(), i + 4096)), 1, now);
@@ -169,6 +171,8 @@ public class PipelineTest {
         DataCheck.Report r2 = DataCheck.run(ctx);
         System.out.println(r2.text);
         for (DataCheck.Step s : r2.steps) check("data check: " + s.title, s.state == 0, s.detail);
+        check("data check: one of one boot segment is singular", r2.steps.get(2).detail.endsWith("1 of 1 boot segment with a time record"), r2.steps.get(2).detail);
+        check("data check: plurals for several nights", r2.steps.get(3).detail.startsWith("3 sleep periods (3 main nights), 4 days computed"), r2.steps.get(3).detail);
 
         for (int d = 0; d < 3; d++) {
             String key = day0.plusDays(d).toString();

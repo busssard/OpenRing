@@ -576,7 +576,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
     @Override
     public void live() {
         if (Prefs.of(this).demo()) {
-            android.widget.Toast.makeText(this, "Live measurements need a real ring. Leave the demo in Settings to connect yours.", android.widget.Toast.LENGTH_LONG).show();
+            android.widget.Toast.makeText(this, "Live needs a real ring. Leave the demo in Settings first.", android.widget.Toast.LENGTH_LONG).show();
             return;
         }
         startActivity(new Intent(this, LiveActivity.class));
@@ -585,7 +585,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
     @Override
     public void sync() {
         if (Prefs.of(this).demo()) {
-            android.widget.Toast.makeText(this, "Demo mode shows made up data. Leave the demo in Settings to use your ring.", android.widget.Toast.LENGTH_LONG).show();
+            android.widget.Toast.makeText(this, "This is demo data. Leave the demo in Settings to sync.", android.widget.Toast.LENGTH_LONG).show();
             return;
         }
         if (!Permissions.granted(this)) {

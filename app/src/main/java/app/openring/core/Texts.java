@@ -1,0 +1,31 @@
+package app.openring.core;
+
+/**
+ * Small helpers for screen texts: a number with its word in singular or plural (issue #92), the
+ * length a toast can show in full, and the sentence for a file that could not be saved (issue #89).
+ */
+public final class Texts {
+    private Texts() {}
+
+    /**
+     * Android 12 and newer cut a text toast after two lines. Two lines of 30 characters fit even with a
+     * larger font; longer texts go into a small dialog instead (issue #89).
+     */
+    public static final int TOAST_MAX = 60;
+
+    /** "1 wake up", "0 wake ups", "3 wake ups": the word agrees with the number. */
+    public static String count(long n, String one, String many) {
+        return n + " " + (n == 1 ? one : many);
+    }
+
+    /** True when a toast shows {@code text} in full. */
+    public static boolean fitsToast(String text) {
+        return text != null && text.length() <= TOAST_MAX;
+    }
+
+    /** The sentence after an export or backup file could not be written; the raw reason goes to the log. */
+    public static String saveFailed(boolean backup) {
+        return "The " + (backup ? "backup" : "export") + " could not be saved. Pick another place, or free some space, and try again. "
+                + SyncError.DETAILS;
+    }
+}
