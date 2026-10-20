@@ -76,7 +76,7 @@ public final class DataCheck {
         if (total == 0) {
             r.steps.add(new Step("Ring link", 2, "No events stored yet. Run a sync with the ring on its charger next to the phone."));
         } else {
-            r.steps.add(new Step("Ring link", 0, String.format(Locale.US, "%,d events copied from the ring", total)));
+            r.steps.add(new Step("Ring link", 0, String.format(Locale.US, "%,d %s copied from the ring", total, Texts.word(total, "event", "events"))));
         }
 
         // 2. decoding: the streams the analysis needs

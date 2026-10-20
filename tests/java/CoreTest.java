@@ -523,6 +523,8 @@ public class CoreTest {
         eq("count: two", Texts.count(2, "second", "seconds"), "2 seconds");
         eq("count: minus one is plural", Texts.count(-1, "day", "days"), "-1 days");
         eq("count: long values", Texts.count(12345678901L, "event", "events"), "12345678901 events");
+        eq("word: one", Texts.word(1, "event", "events"), "event");
+        eq("word: many", Texts.word(5353, "event", "events"), "events");
 
         String sixty = new String(new char[Texts.TOAST_MAX]).replace('\0', 'a');
         check("toast: 60 characters fit", Texts.fitsToast(sixty));
@@ -578,6 +580,26 @@ public class CoreTest {
             }
         }
         check("toast scan: toast texts found", toasts > 0);
+
+        // raw exception text built anywhere on a screen, also into a variable shown later (as the export and
+        // repair messages did before #89): only log lines and the SyncError mapping may use it
+        java.util.regex.Pattern rawE = java.util.regex.Pattern.compile("\"\\s*\\+\\s*e(\\.toString\\(\\))?\\s*[;),]");
+        int uiFiles = 0, rawLines = 0;
+        for (java.io.File f : files) {
+            if (!f.getPath().replace('\\', '/').contains("/ui/")) continue;
+            uiFiles++;
+            String[] lines = new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8").split("\n");
+            for (int i = 0; i < lines.length; i++) {
+                String l = lines[i];
+                if (l.contains("log(") || l.contains("SyncError.")) continue;
+                if (l.contains("getMessage()") || rawE.matcher(l).find()) {
+                    rawLines++;
+                    System.out.println("  raw error text on screen: " + f.getName() + ":" + (i + 1) + " " + l.trim());
+                }
+            }
+        }
+        check("raw error scan: screen sources found", uiFiles > 0);
+        eq("no raw error text built on any screen", rawLines, 0);
     }
 
     static void javaFiles(java.io.File dir, List<java.io.File> out) {

@@ -15,7 +15,12 @@ public final class Texts {
 
     /** "1 wake up", "0 wake ups", "3 wake ups": the word agrees with the number. */
     public static String count(long n, String one, String many) {
-        return n + " " + (n == 1 ? one : many);
+        return n + " " + word(n, one, many);
+    }
+
+    /** Only the word for {@code n}, when the number is written with its own format (for example 5,353 events). */
+    public static String word(long n, String one, String many) {
+        return n == 1 ? one : many;
     }
 
     /** True when a toast shows {@code text} in full. */

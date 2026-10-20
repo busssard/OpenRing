@@ -867,7 +867,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             @Override
             protected void onPostExecute(Boolean ok) {
                 if (ok) toast("Analysis updated");
-                else problem("The analysis failed. Data check and log (in Help and diagnostics) shows why.");
+                else problem("The analysis failed. " + app.openring.core.SyncError.DETAILS);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
@@ -891,7 +891,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                                     return;
                                 }
                                 // Settings closes now, so a dialog would vanish: a short toast, Setup is where it is paired again
-                                toast("The ring was reset, its old key no longer works.");
+                                toast(message);
                                 startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
                                 finish();
                             }
