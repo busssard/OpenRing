@@ -166,8 +166,8 @@ public final class NightAnalyzer {
         int waso = 0;
         for (int i = onset; i <= last; i++) if (st[i] == 4) waso++;
         n.wasoMin = waso * epochMin;
-        int minWake = Math.max(1, (int) Math.ceil(1.0 / epochMin));
-        n.awakenings = countBouts(st, onset, last + 1, 4, minWake);
+        // one definition for every screen (issue #70): awake for a minute or more inside the night
+        n.awakenings = WakeUps.count(st, epochMin * 60);
         for (int i = onset; i < len; i++) {
             if (st[i] == 3) { n.remLatencyMin = (i - onset) * epochMin; break; }
         }
@@ -184,20 +184,6 @@ public final class NightAnalyzer {
             if (in.motion.v(i) >= 2) moving++;
         }
         if (total >= 10) n.restlessPct = 100.0 * moving / total;
-    }
-
-    static int countBouts(int[] seq, int from, int to, int code, int minLen) {
-        int count = 0, run = 0;
-        for (int i = from; i < to; i++) {
-            if (seq[i] == code) {
-                run++;
-            } else {
-                if (run >= minLen) count++;
-                run = 0;
-            }
-        }
-        if (run >= minLen) count++;
-        return count;
     }
 
     static int countPeriods(int[] seq, int from, int to, int code, int mergeGap, int minLen) {

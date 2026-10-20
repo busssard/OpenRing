@@ -207,6 +207,107 @@ public class CoreTest {
         eq("random nights: Balanced counts the same wake ups as Detailed", balancedDiffers, 0);
     }
 
+    /** Issue #70: the Settings preview, the Sleep page and the night timeline count wake ups the same way. */
+    static void wakeUps() {
+        int L = Stager.LIGHT, W = Stager.WAKE;
+        int B = StageFilter.BALANCED, C = StageFilter.CALM;
+        // the issue's example: two 30 s pieces and one 1.5 minute wake up
+        int[] ex = runs(L, 20, W, 1, L, 20, W, 1, L, 20, W, 3, L, 20);
+        eq("example Detailed: 1 wake up", WakeUps.count(ex, 30), 1);
+        eq("example Detailed: 2 pieces under a minute", WakeUps.shortOnes(ex, 30), 2);
+        eq("example Detailed: wake up listed at its steps", Arrays.toString(WakeUps.list(ex, 30).get(0)), "[62, 65]");
+        eq("example Balanced: 1 wake up, no short pieces", WakeUps.count(StageFilter.filter(ex, B), 30) * 10
+                + WakeUps.shortOnes(StageFilter.filter(ex, B), 30), 10);
+        eq("example Calm: the 1.5 minute wake up is folded", WakeUps.count(StageFilter.filter(ex, C), 30)
+                + WakeUps.shortOnes(StageFilter.filter(ex, C), 30), 0);
+        for (int lv = 0; lv < 3; lv++) {
+            eq("example level " + lv + ": preview count equals the night's wake ups",
+                    WakeUps.count(StageFilter.filter(ex, lv), 30), metricsOnly(ex, lv).awakenings);
+        }
+        // awake before falling asleep and after waking up is not a wake up, nor a short piece
+        int[] edges = runs(W, 10, L, 20, W, 1, L, 20, W, 10);
+        eq("edges are not wake ups", WakeUps.count(edges, 30), 0);
+        eq("awake at the edges is not a short piece either, only the 30 s inside counts", WakeUps.shortOnes(edges, 30), 1);
+        eq("no sleep, no wake ups", WakeUps.count(runs(W, 10, 0, 5), 30) + WakeUps.shortOnes(runs(W, 10), 30), 0);
+        eq("empty night", WakeUps.count(new int[0], 30), 0);
+        // missing data splits awake runs; each part is judged on its own
+        eq("missing data inside awake", WakeUps.count(runs(L, 5, W, 1, 0, 2, W, 2, L, 5), 30), 1);
+        // other step lengths: a minute is 1 step of 60 s, 4 steps of 15 s; rounding in the step does not add one
+        eq("60 s steps: one step is a wake up", WakeUps.count(runs(L, 5, W, 1, L, 5), 60), 1);
+        eq("15 s steps: 3 steps are not", WakeUps.count(runs(L, 5, W, 3, L, 5), 15), 0);
+        eq("15 s steps: 4 steps are", WakeUps.count(runs(L, 5, W, 4, L, 5), 15), 1);
+        eq("a step a little under 30 s still needs 2", WakeUps.minSteps(29.99999999), 2);
+        eq("a step a little over 30 s still needs 2", WakeUps.minSteps(30.00000001), 2);
+        eq("odd step length", WakeUps.minSteps(25), 3);
+        eq("no step length", WakeUps.minSteps(0), 1);
+
+        // shown times (display only): clock times and minutes come from the same whole minutes
+        double t0 = 1_700_000_000 - 1_700_000_000 % 60; // a whole minute
+        eq("rounds down under half a minute", WakeUps.roundMin(t0 + 29), t0);
+        eq("rounds up from half a minute", WakeUps.roundMin(t0 + 30), t0 + 60);
+        // the review's demo case: 23:41:40 to 23:44:10 showed "Awake for 4 min, back asleep 23:44" after "23:41"
+        double a = t0 + 100, b = t0 + 250;
+        eq("minutes match the rounded clocks", WakeUps.shownMinutes(a, b), (long) ((WakeUps.roundMin(b) - WakeUps.roundMin(a)) / 60));
+        eq("demo case shows 2 min (23:42 to 23:44)", WakeUps.shownMinutes(a, b), 2L);
+        eq("a one minute wake up never shows 0 min", WakeUps.shownMinutes(t0 + 29, t0 + 89), 1L);
+        eq("under a minute may show 0", WakeUps.shownMinutes(t0 + 31, t0 + 89), 0L);
+        Random rr = new Random(83);
+        int unordered = 0, mismatch = 0;
+        for (int k = 0; k < 20000; k++) {
+            double x = t0 + rr.nextDouble() * 86400, y = x + rr.nextDouble() * 7200;
+            if (WakeUps.roundMin(y) < WakeUps.roundMin(x)) unordered++;
+            long m = WakeUps.shownMinutes(x, y), diff = Math.round((WakeUps.roundMin(y) - WakeUps.roundMin(x)) / 60);
+            if (m != diff || y - x >= 60 && m < 1) mismatch++;
+        }
+        eq("random spans: rounded times keep their order", unordered, 0);
+        eq("random spans: shown minutes equal the clock difference", mismatch, 0);
+        // the level's rule in the texts: only Calm folds wake ups of a minute or more
+        eq("Detailed adds nothing", WakeUps.levelNote(StageFilter.DETAILED), null);
+        eq("Balanced adds nothing", WakeUps.levelNote(B), null);
+        eq("Calm names its rule", WakeUps.levelNote(C), "Calm stage detail folds being awake under 2 minutes into sleep.");
+        eq("shortest kept: Balanced 1 min, Calm 2 min", WakeUps.shortestKeptMin(B) * 10 + WakeUps.shortestKeptMin(C), 12);
+
+        // random nights: for every level, preview count = night count = timeline rows, and the old rule agrees
+        Random rnd = new Random(70);
+        int previewDiffers = 0, listDiffers = 0, oldRuleDiffers = 0, partsMissing = 0, nights = 20000;
+        for (int t = 0; t < nights; t++) {
+            int len = 20 + rnd.nextInt(200);
+            int[] s = new int[len];
+            for (int i = 0; i < len; ) {
+                int code = rnd.nextInt(12) == 0 ? 0 : 1 + rnd.nextInt(4);
+                int run = 1 + rnd.nextInt(rnd.nextBoolean() ? 3 : 12);
+                for (int k = 0; k < run && i < len; k++) s[i++] = code;
+            }
+            for (int lv = 0; lv < 3; lv++) {
+                Night n = metricsOnly(s, lv);
+                // what Settings draws: the stored raw stages with this level
+                int[] f = StageFilter.filter(n.stagesRaw, lv);
+                if (WakeUps.count(f, 30) != n.awakenings) previewDiffers++;
+                if (WakeUps.list(n.stages, 30).size() != n.awakenings) listDiffers++;
+                if (oldRule(f) != n.awakenings) oldRuleDiffers++;
+                if (WakeUps.count(f, 30) + WakeUps.shortOnes(f, 30) != StageFilter.wakeRuns(f)) partsMissing++;
+            }
+        }
+        eq("random nights: preview count equals the night's wake ups at every level", previewDiffers, 0);
+        eq("random nights: timeline lists exactly the counted wake ups", listDiffers, 0);
+        eq("random nights: same count as the rule before", oldRuleDiffers, 0);
+        eq("random nights: wake ups and short pieces are all awake runs", partsMissing, 0);
+    }
+
+    /** The wake up count before issue #70 (NightAnalyzer.countBouts with 2 steps), as the reference. */
+    static int oldRule(int[] st) {
+        int onset = -1, last = -1;
+        for (int i = 0; i < st.length; i++) if (st[i] >= 1 && st[i] <= 3) { if (onset < 0) onset = i; last = i; }
+        if (onset < 0) return 0;
+        int count = 0, run = 0;
+        for (int i = onset; i <= last; i++) {
+            if (st[i] == Stager.WAKE) run++;
+            else { if (run >= 2) count++; run = 0; }
+        }
+        if (run >= 2) count++;
+        return count;
+    }
+
     static Night metricsOnly(int[] stages, int level) {
         NightAnalyzer.Input in = new NightAnalyzer.Input();
         in.start = 1_700_000_000;
@@ -397,6 +498,7 @@ public class CoreTest {
         clockChange();
         dialMath();
         stageFilter();
+        wakeUps();
         stageShare();
         syncError();
         screenTime();
