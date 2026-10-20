@@ -93,7 +93,24 @@ public final class Prefs {
     public void setHardware(String s) { sp.edit().putString("hardware", s).apply(); }
     public int battery() { return sp.getInt("battery", -1); }
     public long batteryAt() { return sp.getLong("battery_at", 0); }
-    public void setBattery(int pct, long at) { sp.edit().putInt("battery", pct).putLong("battery_at", at).apply(); }
+    /**
+     * Saves a battery read. The read before is kept when it is at least 10 minutes older, so the
+     * ring finder can tell whether the ring was charging in between (issue #74).
+     */
+    public void setBattery(int pct, long at) {
+        SharedPreferences.Editor e = sp.edit();
+        long before = batteryAt();
+        if (before > 0 && at - before >= 600) e.putInt("battery_prev", battery()).putLong("battery_prev_at", before);
+        e.putInt("battery", pct).putLong("battery_at", at).apply();
+    }
+    public int batteryBefore() { return sp.getInt("battery_prev", -1); }
+    public long batteryBeforeAt() { return sp.getLong("battery_prev_at", 0); }
+    /** The ring finder clicks and vibrates faster when closer; this switches both (issue #74). */
+    public boolean finderSound() { return sp.getBoolean("finder_sound", true); }
+    public void setFinderSound(boolean b) { sp.edit().putBoolean("finder_sound", b).apply(); }
+    /** When this phone last heard the ring (a scan saw it or a connection opened), unix seconds, 0 never. */
+    public long lastHeard() { return sp.getLong("last_heard", 0); }
+    public void setLastHeard(long t) { sp.edit().putLong("last_heard", t).apply(); }
     public long lastSync() { return sp.getLong("last_sync", 0); }
     public long lastAttempt() { return sp.getLong("last_attempt", 0); }
     public void setLastAttempt(long t) { sp.edit().putLong("last_attempt", t).apply(); }

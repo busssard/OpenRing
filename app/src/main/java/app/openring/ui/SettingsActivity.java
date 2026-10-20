@@ -183,6 +183,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 SyncService.start(SettingsActivity.this);
             }
         });
+        small(ring, "Find my ring", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, FinderActivity.class));
+            }
+        });
         Switch sw = new Switch(this);
         sw.setText("Sync about every 3 hours when the ring is nearby");
         sw.setTextColor(Ui.TEXT);

@@ -53,12 +53,13 @@ public final class RingScanner {
      * Scan up to {@code timeoutMs}. Returns the preferred address as soon as it is seen, otherwise
      * the strongest Oura ring after a short settle time. Addresses in {@code exclude} are skipped.
      */
-    public static BluetoothDevice find(Context c, final String preferred, final Set<String> exclude, long timeoutMs, GattLink.Log log)
+    public static BluetoothDevice find(final Context c, final String preferred, final Set<String> exclude, long timeoutMs, GattLink.Log log)
             throws IOException, InterruptedException {
         BluetoothAdapter a = adapter(c);
         if (a == null || !a.isEnabled()) throw new IOException("Bluetooth is off");
         BluetoothLeScanner s = a.getBluetoothLeScanner();
         if (s == null) throw new IOException("Bluetooth LE scanner unavailable");
+        final String saved = app.openring.data.Prefs.of(c).address();
         final Map<String, ScanResult> seen = new HashMap<String, ScanResult>();
         final long[] firstSeen = {0};
         final int[] failed = {0};
@@ -72,6 +73,7 @@ public final class RingScanner {
             public void onScanResult(int type, ScanResult r) {
                 if (!isOura(r)) return;
                 String addr = r.getDevice().getAddress();
+                if (addr.equals(saved)) heard(c, addr);
                 if (exclude != null && exclude.contains(addr)) return;
                 synchronized (seen) {
                     if (seen.isEmpty()) firstSeen[0] = SystemClock.elapsedRealtime();
@@ -85,6 +87,7 @@ public final class RingScanner {
         filters.add(new ScanFilter.Builder().setManufacturerData(Protocol.COMPANY_ID, new byte[0]).build());
         filters.add(new ScanFilter.Builder().setServiceUuid(new ParcelUuid(Protocol.SERVICE)).build());
         log.log("scanning for a ring");
+        waitForStart();
         s.startScan(filters, settings, cb);
         boolean unfiltered = false;
         long started = SystemClock.elapsedRealtime();
@@ -100,6 +103,7 @@ public final class RingScanner {
                 if (!unfiltered && empty && SystemClock.elapsedRealtime() - started > timeoutMs / 2) {
                     // some rings only advertise a name; widen the scan for the second half
                     s.stopScan(cb);
+                    waitForStart();
                     s.startScan(null, settings, cb);
                     unfiltered = true;
                 }
@@ -119,5 +123,116 @@ public final class RingScanner {
             }
         }
         return null;
+    }
+
+    private static long heardSaved;
+
+    /** Scan starts of this app in the last 30 s: Android silently blocks the sixth one (issue #74). */
+    private static final java.util.ArrayDeque<Long> starts = new java.util.ArrayDeque<Long>();
+    static final int MAX_STARTS = 4;
+    static final long START_WINDOW_MS = 30000;
+
+    /** Milliseconds until another scan may start, 0 when one may start now. */
+    public static synchronized long startWaitMs() {
+        long now = SystemClock.elapsedRealtime();
+        while (!starts.isEmpty() && now - starts.peekFirst() > START_WINDOW_MS) starts.pollFirst();
+        return starts.size() < MAX_STARTS ? 0 : START_WINDOW_MS - (now - starts.peekFirst()) + 200;
+    }
+
+    /** Takes one start from the budget, or returns how long to wait first. */
+    static synchronized long reserveStart() {
+        long w = startWaitMs();
+        if (w == 0) starts.addLast(SystemClock.elapsedRealtime());
+        return w;
+    }
+
+    /** Waits (on a background thread) until a scan may start, and takes it. */
+    private static void waitForStart() throws InterruptedException {
+        long w;
+        while ((w = reserveStart()) > 0) Thread.sleep(w);
+    }
+
+    /** Notes that this phone heard the saved ring now (for the ring finder, issue #74), at most every 10 s. */
+    static void heard(Context c, String addr) {
+        long now = System.currentTimeMillis() / 1000;
+        synchronized (RingScanner.class) {
+            if (now - heardSaved < 10) return;
+            heardSaved = now;
+        }
+        if (addr.equals(app.openring.data.Prefs.of(c).address())) app.openring.data.Prefs.of(c).setLastHeard(now);
+    }
+
+    /** What a continuous scan hears; called on a Bluetooth thread. */
+    public interface Heard {
+        /** One advertisement: {@code ours} when it is the saved ring, otherwise another Oura ring. */
+        void onHeard(boolean ours, int rssi, long elapsedMs);
+
+        /** Android refused or stopped the scan (error code from {@code ScanCallback}). */
+        void onScanFailed(int code);
+    }
+
+    /** A running continuous scan; stop it when the screen pauses. */
+    public static final class Watch {
+        private final BluetoothLeScanner scanner;
+        private final ScanCallback cb;
+        private boolean stopped;
+
+        Watch(BluetoothLeScanner scanner, ScanCallback cb) {
+            this.scanner = scanner;
+            this.cb = cb;
+        }
+
+        public synchronized void stop() {
+            if (stopped) return;
+            stopped = true;
+            try {
+                scanner.stopScan(cb);
+            } catch (RuntimeException ignored) {
+                // Bluetooth was switched off meanwhile: the scan is gone already
+            }
+        }
+    }
+
+    /**
+     * Starts one continuous low latency scan for the ring with {@code address} (issue #74). It also
+     * reports other Oura rings, so the finder can say when it hears a ring that is not the saved
+     * one. Returns null when Bluetooth is off or has no scanner. Android blocks an app that starts
+     * more than 5 scans in 30 seconds, so the caller keeps one scan running while its screen is open;
+     * starts are counted together with {@link #find}'s, and a start that would exceed the budget does
+     * not happen (null; {@link #startWaitMs} says when to try again).
+     */
+    public static Watch watch(final Context c, final String address, final Heard l) {
+        BluetoothAdapter a = adapter(c);
+        if (a == null || !a.isEnabled()) return null;
+        BluetoothLeScanner s = a.getBluetoothLeScanner();
+        if (s == null) return null;
+        if (reserveStart() > 0) return null;
+        ScanCallback cb = new ScanCallback() {
+            @Override
+            public void onScanFailed(int errorCode) {
+                l.onScanFailed(errorCode);
+            }
+
+            @Override
+            public void onScanResult(int type, ScanResult r) {
+                String addr = r.getDevice().getAddress();
+                boolean ours = addr.equals(address);
+                if (!ours && !isOura(r)) return;
+                if (ours) heard(c, addr);
+                l.onHeard(ours, r.getRssi(), SystemClock.elapsedRealtime());
+            }
+
+            @Override
+            public void onBatchScanResults(List<ScanResult> results) {
+                for (ScanResult r : results) onScanResult(0, r);
+            }
+        };
+        ScanSettings settings = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
+        List<ScanFilter> filters = new ArrayList<ScanFilter>();
+        filters.add(new ScanFilter.Builder().setDeviceAddress(address).build());
+        filters.add(new ScanFilter.Builder().setManufacturerData(Protocol.COMPANY_ID, new byte[0]).build());
+        filters.add(new ScanFilter.Builder().setServiceUuid(new ParcelUuid(Protocol.SERVICE)).build());
+        s.startScan(filters, settings, cb);
+        return new Watch(s, cb);
     }
 }

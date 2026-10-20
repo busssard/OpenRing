@@ -124,6 +124,23 @@ stays true until that analysis is done, so screens reload only then, and the sta
 (restore, pairing a different ring) first waits for a running analysis (`synchronized
 (Analyzer.class)`), except "Delete all local data" in Settings, which runs on the screen thread. Analysis and database reads in the UI run in AsyncTasks.
 
+## Ring finder (issue #74)
+
+`ui/FinderActivity` (Today under the score rings, Settings, Ring) never connects to the ring, so a sync
+can run meanwhile. Everything below stops in `onPause`.
+
+* Where was it last: `RightNow.lastWorn` reads 7 days of skin temperature and heart rate, and
+  `core/analysis/LastWorn` finds when the ring came off (below 27 °C to the end, no heart rate more than
+  5 minutes after the first cool reading). `Prefs.lastHeard` is saved when a connection opens or closes
+  and when any scan hears the saved address; `Prefs` keeps the battery read before the newest one.
+* Hot and cold: `RingScanner.watch` runs one `SCAN_MODE_LOW_LATENCY` scan (Android blocks the sixth
+  start within 30 s, so `RingScanner` counts the starts of `find` and `watch` together and spaces them). `core/analysis/Proximity` smooths the signal (median of 5,
+  then 35 % follow), bands at -84, -72 and -60 dBm with 4 dB hysteresis, and the click interval. While
+  the ring is connected (this app or another) it does not advertise; the screen says so.
+* Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from
+  `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the
+  strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard. Phase 2 (walked mini map) adds steps to the same record.
+
 ## Known limits
 
 * Scores are close to Oura's but not identical (Oura's tables and models are not public).

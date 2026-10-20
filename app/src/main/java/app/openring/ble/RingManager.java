@@ -127,6 +127,11 @@ public final class RingManager {
         return busy || syncs.get() > 0;
     }
 
+    /** This app holds a Bluetooth connection to the ring right now (the ring then stops advertising). */
+    public boolean linked() {
+        return current != null;
+    }
+
     /** Sync progress 0..1, or -1 when unknown. */
     public double progress() {
         return progress;
@@ -225,6 +230,7 @@ public final class RingManager {
             s.link = GattLink.open(ctx, d, glog, 20000);
             s.scanned = true;
         }
+        Prefs.of(ctx).setLastHeard(System.currentTimeMillis() / 1000); // for the ring finder (issue #74)
         s.client = new RingClient(s.link);
         s.client.setLog(new RingClient.Log() {
             @Override
@@ -238,7 +244,10 @@ public final class RingManager {
 
     private void close(Session s) {
         current = null;
-        if (s != null && s.link != null) s.link.close();
+        if (s != null && s.link != null) {
+            Prefs.of(ctx).setLastHeard(System.currentTimeMillis() / 1000);
+            s.link.close();
+        }
     }
 
     /** Stop whatever is running (sync, live HR). */

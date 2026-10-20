@@ -4,5 +4,6 @@ set -e
 cd "$(dirname "$0")/.."
 OUT=${TEST_OUT:-$(mktemp -d)}
 mkdir -p "$OUT"
-javac -source 8 -target 8 -Xlint:-options -d "$OUT" $(find app/src/main/java/app/openring/core -name '*.java') tests/java/CoreTest.java
+javac -source 8 -target 8 -Xlint:-options -d "$OUT" $(find app/src/main/java/app/openring/core -name '*.java') tests/java/CoreTest.java tests/java/FinderTest.java
 java $JAVA_OPTS -cp "$OUT" CoreTest
+java $JAVA_OPTS -cp "$OUT" FinderTest

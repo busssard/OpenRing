@@ -46,8 +46,8 @@ tl = sum(v[0] for v in pk.values()); tm = sum(v[1] for v in pk.values())
 tb = sum(v[2] for v in pk.values()); tbm = sum(v[3] for v in pk.values())
 passed = failed = 0
 for f in ("core.txt", "pipeline.txt"):
-    m = re.search(r"(\d+) passed, (\d+) failed", open(os.path.join(c, f)).read())
-    passed += int(m.group(1)); failed += int(m.group(2))
+    for m in re.finditer(r"(\d+) passed, (\d+) failed", open(os.path.join(c, f)).read()):
+        passed += int(m.group(1)); failed += int(m.group(2))
 # lines of Android only code that the JVM tests cannot reach (for an honest overall picture)
 android_only = 0
 for d in ("ui", "ble", "sync"):
