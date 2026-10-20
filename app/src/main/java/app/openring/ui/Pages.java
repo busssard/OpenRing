@@ -508,7 +508,7 @@ public final class Pages {
                 fillAnalysis(c, d, body);
             }
         });
-        fillAnalysis(c, d, body);
+        fillAnalysis(c, d, body, true);
         return card;
     }
 
@@ -522,6 +522,15 @@ public final class Pages {
     private static final Object CALCULATING = new Object();
 
     static void fillAnalysis(final Context c, final DayData d, final LinearLayout body) {
+        fillAnalysis(c, d, body, false);
+    }
+
+    /**
+     * {@code reserve}: the card is rebuilt with the page (another day, a sync), so keep the height of
+     * the last result while calculating; the page then keeps its length and its scroll position. Not
+     * when the person opens the card with its header, where nothing below would move.
+     */
+    static void fillAnalysis(final Context c, final DayData d, final LinearLayout body, boolean reserve) {
         body.removeAllViews();
         if (!analysisOpen) return;
         body.addView(Ui.gap(c, 12));
@@ -545,6 +554,8 @@ public final class Pages {
                     // screen does not jump
                     for (int j = 0; j < chip.length; j++) Ui.outline(c, chip[j], j == k ? Ui.SLEEP : Ui.TEXT_3);
                     result.setAlpha(0.4f);
+                    // the faded old chart must not answer touch: its values belong to the old period
+                    setTouchable(result, false);
                     loadAnalysis(c, d, result);
                 }
             });
@@ -555,7 +566,7 @@ public final class Pages {
         body.addView(chips);
         result.addView(Ui.gap(c, 10));
         result.addView(Ui.text(c, "Calculating", 13, Ui.TEXT_3, Ui.REGULAR));
-        result.setMinimumHeight(lastResultHeight);
+        if (reserve) result.setMinimumHeight(lastResultHeight);
         result.setTag(CALCULATING);
         result.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
@@ -567,6 +578,15 @@ public final class Pages {
         });
         body.addView(result);
         loadAnalysis(c, d, result);
+    }
+
+    /** Enables or disables a view and everything inside it (charts ignore touch while disabled). */
+    static void setTouchable(View v, boolean on) {
+        v.setEnabled(on);
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) setTouchable(g.getChildAt(i), on);
+        }
     }
 
     /** Loads the averages for the selected period in the background and shows them in {@code result}. */
@@ -589,6 +609,7 @@ public final class Pages {
                 // the old views go and the new ones come in the same step, before the next layout
                 showAnalysis(c, h, result, period);
                 result.setAlpha(1f);
+                setTouchable(result, true);
                 result.setMinimumHeight(0);
                 result.setTag(null);
             }
