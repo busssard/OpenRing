@@ -395,7 +395,8 @@ public final class Pages {
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
         root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz),
-                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : Charts.clock(Json.d(n, "lowest_hr_time"), nz))));
+                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : Charts.clock(Json.d(n, "lowest_hr_time"), nz)
+                        + app.openring.core.analysis.ClockChange.repeatNote(nz, Json.d(n, "lowest_hr_time")))));
         root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz),
                 "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
         JSONArray sp = n.optJSONArray("spo2_series");

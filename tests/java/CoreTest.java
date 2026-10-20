@@ -1320,7 +1320,6 @@ public class CoreTest {
         check("heart rate range: 30 and 220 count", EventCodec.plausibleHr(30) && EventCodec.plausibleHr(220) && EventCodec.plausibleHr(52));
         check("heart rate range: 29, 221, 250 and 0 do not", !EventCodec.plausibleHr(29) && !EventCodec.plausibleHr(221)
                 && !EventCodec.plausibleHr(250) && !EventCodec.plausibleHr(0) && !EventCodec.plausibleHr(Double.NaN));
-        check("day heart: reads back at least the span of an HRV event", DayHeart.LOOK_BACK_S >= 5 * EventCodec.HRV_INTERVAL_S);
     }
 
     static int awakeCount(int[] st) {

@@ -605,6 +605,7 @@ public class PipelineTest {
         oldNights();
         lastWornOldSync();
         dayHeartLimits();
+        dayHeartVersion();
         todayHeartTime();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
@@ -1597,12 +1598,6 @@ public class PipelineTest {
         app.openring.core.analysis.DayHeart ch = app.openring.core.analysis.DayHeart.of(c8, d8, d9);
         double c0007 = pointAt(c9, d9 + 450), c2352 = pointAt(c8, d9 - 450);
         check("day heart control: Highest in the evening, not in the night (#97)", ch.points > 0 && ch.high < 100, ch.high);
-        // reanalysis once: a database from before the rules version gets its days analysed again
-        control.putDay("2026-10-07", "{}");
-        control.put("day_heart", 1);
-        Analyzer.run(analysedCtx, null);
-        check("days analysed again once for the new heart rate rules (#97)", dayLine(control, "2026-10-07").size() > 0
-                && control.kvLong("day_heart", 0) == app.openring.core.analysis.DayHeart.VERSION, control.kvLong("day_heart", 0));
 
         Db bad = analysed("openring-dayheart-250", base,
                 new RingEvent(EventCodec.HRV_EVENT, ds(at0330), new byte[] {(byte) 250, 40, 52, 40, 52, 40, 52, 40, 52, 40, 52, 40}));
@@ -1619,6 +1614,24 @@ public class PipelineTest {
                 l0007 + ", without the event " + c0007);
         check("and its values before midnight still for the old day (#97)", !Double.isNaN(l2352) && l2352 > (Double.isNaN(c2352) ? 0 : c2352) + 5,
                 l2352 + ", without the event " + c2352);
+    }
+
+    /**
+     * Issue #97: a database from the older heart rate rules has its days analysed again once. Six days, so the first
+     * lies outside the window a normal run analyses again (the last two days); a blanked first day stays blank with
+     * the current rules version and is filled again with the old one.
+     */
+    static void dayHeartVersion() throws Exception {
+        Db db = analysed("openring-dayheart-version", history(6));
+        boolean filled = dayLine(db, "2026-10-07").size() > 0;
+        db.putDay("2026-10-07", "{}");
+        Analyzer.run(analysedCtx, null);
+        check("day heart: a normal run leaves the first of six days alone", filled && dayLine(db, "2026-10-07").size() == 0,
+                filled + " " + dayLine(db, "2026-10-07").size());
+        db.put("day_heart", 1);
+        Analyzer.run(analysedCtx, null);
+        check("days analysed again once for the new heart rate rules (#97)", dayLine(db, "2026-10-07").size() > 0
+                && db.kvLong("day_heart", 0) == app.openring.core.analysis.DayHeart.VERSION, db.kvLong("day_heart", 0));
     }
 
     static String hm(double unix) {
