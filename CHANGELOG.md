@@ -1,25 +1,5 @@
 # Changelog
 
-## 1.31
-* Screen tab: on the days the clocks change, phone use and your night sit at their right hour on the clock
-  and the day rows. Before, they could be drawn up to an hour away from the hour mark (#46)
-* Each line on the clock is again exactly 5 minutes. On the day the clocks go back, the hour that happens twice
-  shows on the same part of the clock; on the day they go forward the skipped hour stays empty. An orange arc
-  on the clock and a line under it mark that hour (#46)
-## 1.30
-* When a sync fails, the main screen says in plain words what happened and what to try (for example "The ring could
-  not be reached. Keep it close to the phone and sync again.") instead of a technical Bluetooth message. The
-  technical text stays in Settings, Help and diagnostics, Data check and log (#47)
-* More numbers have a short line saying what they are: Sleep details, Goal progress and the intensity chart on
-  Activity, Heart rate today on Body, and the example score on the first setup screen (#47)
-* Body: the latest readings say "Blood oxygen" instead of "SpO2", like the rest of the app (#47)
-
-## 1.29
-* The activity score no longer counts days without the ring as missed goals. In the first week and after days
-  the ring was off, daily targets and training look at the days you wore it (a day counts with at least an hour
-  of wear), and training is scaled up to a week. With fewer than 3 such days they wait, and a note on the
-  Activity tab says how many days the score is based on. Older days keep their score until you analyse
-  everything again in Settings, Help (#44)
 Versions after 1.28: one file per change in [changes/](changes/), and the release notes on the
 [Releases page](https://github.com/busssard/OpenRing/releases).
 
