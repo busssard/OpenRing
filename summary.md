@@ -9,7 +9,7 @@
 | `core` | 88% (759/858) | 73% |
 | `core.analysis` | 97% (1457/1509) | 85% |
 | `data` | 91% (1673/1830) | 75% |
-| **core and data** | **93%** (3889/4197) | **79%** |
+| **core and data** | **93%** (3889/4197) | **78%** |
 
 Not counted: about 6767 lines in `ui/`, `ble/` and `sync/` need Android. The emulator test opens every
 screen with demo data and fails on crashes; Bluetooth is tested with real rings. Counting those lines as
