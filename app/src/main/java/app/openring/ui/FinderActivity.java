@@ -404,7 +404,10 @@ public final class FinderActivity extends Activity implements SensorEventListene
         if (r.state == LastWorn.WORN) {
             s = "The newest reading (" + when(r.at) + ") was from a finger (";
             if (Double.isNaN(r.skinC)) s += "a heart rate, with cool skin).";
-            else if (r.confirmed) s += "skin " + Ui.fmt(r.skinC, 1) + " °C, heart rate until " + when(r.lastHr) + ").";
+            else if (r.confirmed) s += "skin " + Ui.fmt(r.skinC, 1) + " °C"
+                    // the newest sign can be a heart rate long after the newest temperature: give each its own time
+                    + (Math.abs(r.newest - r.at) >= 60 ? " " + when(r.newest) : "")
+                    + ", heart rate until " + when(r.lastHr) + ").";
             else if (r.justOn) s += "skin " + Ui.fmt(r.skinC, 1) + " °C, no heart rate stored yet, so it was probably just put on).";
             else if (!r.hasHr) s += "skin " + Ui.fmt(r.skinC, 1) + " °C, no heart rate in the synced data to confirm it).";
             else s += "skin " + Ui.fmt(r.skinC, 1) + " °C, the ring stored too little daytime heart rate to confirm it).";
