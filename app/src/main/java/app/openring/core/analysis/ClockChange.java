@@ -91,6 +91,32 @@ public final class ClockChange {
                 + c.from + " to " + c.to + ", marked in orange, stays empty.";
     }
 
+    /**
+     * The line under the day's heart rate on a day the clocks went back (issue #97), for example "The clocks
+     * went back one hour on this day (03:00 became 02:00), so 02:00 to 03:00 happened twice. ...", or null on
+     * other days (the hour the clocks skip needs no note: no time in it is shown).
+     */
+    public static String repeatText(Change c) {
+        if (c == null || c.minutes >= 0) return null;
+        return "The clocks went back " + amount(-c.minutes) + " on this day (" + c.from + " became " + c.to + "), so " + c.to + " to "
+                + c.from + " happened twice. Times in it say first or second time.";
+    }
+
+    /**
+     * " (first time)" or " (second time)" after a clock time in the hour that happens twice when the clocks go
+     * back (issue #97), so two moments that read "02:22" can be told apart; "" at every other moment.
+     */
+    public static String repeatNote(ZoneId zone, double unix) {
+        if (zone == null || Double.isNaN(unix)) return "";
+        Instant t = Instant.ofEpochSecond((long) Math.floor(unix));
+        java.util.List<java.time.ZoneOffset> offs = zone.getRules().getValidOffsets(java.time.LocalDateTime.ofInstant(t, zone));
+        if (offs.size() < 2) return "";
+        int first = Integer.MIN_VALUE;
+        // the first pass is the one with the larger offset (summer time before the clocks go back)
+        for (java.time.ZoneOffset o : offs) first = Math.max(first, o.getTotalSeconds());
+        return zone.getRules().getOffset(t).getTotalSeconds() == first ? " (first time)" : " (second time)";
+    }
+
     /** The zone, or null when the id is empty or unknown on this phone. */
     public static ZoneId zone(String id) {
         if (id == null || id.isEmpty()) return null;

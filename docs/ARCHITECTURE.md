@@ -110,7 +110,14 @@ file in the cache. Histories are never merged.
    every reading from midnight to midnight in the day's zone (one point per quarter hour, 92 to 100 on a clock
    change day), stored as `hr_day`. Lowest, Average and Highest are that line's lowest point, mean and highest
    point; the Body tab works them out from the stored line (they are not stored apart), so days analysed before
-   show matching numbers without a re analysis. On a clock change day the chart's middle label stays at noon. The night's lowest heart rate (5 minute averages inside the sleep) stays a separate number.
+   show matching numbers without a re analysis. On a clock change day the chart's middle label stays at noon, and
+   times in the hour that happens twice when the clocks go back say "(first time)" or "(second time)"
+   (`ClockChange.repeatNote`, issue #97). The night's lowest heart rate (5 minute averages inside the sleep) stays a separate number.
+   Heart rate from every ring source (HRV, always on HR, sleep period average) counts only from 30 to 220 bpm
+   (`EventCodec.plausibleHr`, also for Today's heart rate and the ring finder; the night's own numbers keep 30 to 140).
+   The day reads events from 30 minutes before midnight, so the values after midnight of an HRV event begun before it
+   (six values, start + 0 to 25 minutes) count for the new day. kv `day_heart` holds the rules version
+   (`DayHeart.VERSION`); a change analyses everything again once.
 
 ## Threading
 

@@ -131,6 +131,21 @@ public final class EventCodec {
     }
 
     public static final int HRV_INTERVAL_S = 300;
+    /** Seconds between the values of an always on HR event. */
+    public static final double AOHR_INTERVAL_S = 1.92;
+
+    /**
+     * The one plausibility range for a heart rate from the ring (HRV, always on HR, sleep period average,
+     * issue #97): 30 to 220 bpm. Nobody's heart beats faster than 220 (the top of the "220 minus age"
+     * rule) or, awake or asleep, slower than 30; values outside are bytes the ring got wrong. The night's
+     * own numbers use a narrower range of their own ({@code NightAnalyzer}).
+     */
+    public static final int HR_MIN = 30, HR_MAX = 220;
+
+    /** True for a heart rate inside {@link #HR_MIN} to {@link #HR_MAX}. */
+    public static boolean plausibleHr(double bpm) {
+        return bpm >= HR_MIN && bpm <= HR_MAX;
+    }
 
     /** green_ibi_quality_event: ibi = b0<<3 | b1&7, quality = (b1>>3)&3 (1 = clean beat). */
     public static int[][] greenIbi(byte[] b) {

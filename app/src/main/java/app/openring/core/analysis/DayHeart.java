@@ -9,6 +9,13 @@ package app.openring.core.analysis;
 public final class DayHeart {
     /** Width of one point of the line: a quarter hour. */
     public static final double STEP_S = 900;
+    /**
+     * Rules version of the stored line (kv {@code day_heart}): 2 since issue #97 (one plausibility range, values
+     * after midnight from an event begun before it). A database from older rules has its days analysed again once.
+     */
+    public static final int VERSION = 2;
+    /** How far before midnight the day reads events: an HRV event's six values span 25 minutes after its start. */
+    public static final double LOOK_BACK_S = 1800;
 
     /** Lowest, average and highest point of the line, NaN when it has no point. */
     public double low = Double.NaN, avg = Double.NaN, high = Double.NaN;

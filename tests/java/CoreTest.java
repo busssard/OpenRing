@@ -1315,6 +1315,12 @@ public class CoreTest {
         TS long25 = new TS();
         for (double t = ds; t < ds + 25 * 3600; t += 60) long25.add(t, 60);
         eq("day heart: 25 hour day line", DayHeart.curve(long25, ds, ds + 25 * 3600).size(), 100);
+
+        // issue #97: one plausibility range for heart rate from every ring source
+        check("heart rate range: 30 and 220 count", EventCodec.plausibleHr(30) && EventCodec.plausibleHr(220) && EventCodec.plausibleHr(52));
+        check("heart rate range: 29, 221, 250 and 0 do not", !EventCodec.plausibleHr(29) && !EventCodec.plausibleHr(221)
+                && !EventCodec.plausibleHr(250) && !EventCodec.plausibleHr(0) && !EventCodec.plausibleHr(Double.NaN));
+        check("day heart: reads back at least the span of an HRV event", DayHeart.LOOK_BACK_S >= 5 * EventCodec.HRV_INTERVAL_S);
     }
 
     static int awakeCount(int[] st) {
@@ -1992,6 +1998,18 @@ public class CoreTest {
         eq("dial text forward", ClockChange.dialText(ClockChange.find(z, fFrom, fTo)), "The clocks went forward one hour on this day (02:00 became 03:00), "
                 + "so the part of the clock from 02:00 to 03:00, marked in orange, stays empty.");
         check("no dial text without a change", ClockChange.dialText(null) == null);
+        // issue #97: a time in the repeated hour says which pass it is in
+        eq("repeat note: 02:22 summer time is the first time", ClockChange.repeatNote(z, java.time.Instant.parse("2026-10-25T00:22:00Z").getEpochSecond()), " (first time)");
+        eq("repeat note: 02:22 winter time is the second time", ClockChange.repeatNote(z, java.time.Instant.parse("2026-10-25T01:22:00Z").getEpochSecond() + 0.7), " (second time)");
+        eq("repeat note: 01:59 has none", ClockChange.repeatNote(z, zurich("2026-10-25T01:59:00")), "");
+        eq("repeat note: 03:00 has none", ClockChange.repeatNote(z, java.time.Instant.parse("2026-10-25T02:00:00Z").getEpochSecond()), "");
+        eq("repeat note: last second of the second pass", ClockChange.repeatNote(z, java.time.Instant.parse("2026-10-25T01:59:59Z").getEpochSecond()), " (second time)");
+        eq("repeat note: none on the spring day and a normal day", ClockChange.repeatNote(z, zurich("2026-03-29T03:30:00"))
+                + ClockChange.repeatNote(z, zurich("2026-10-14T02:22:00")), "");
+        check("repeat note: none without a zone or time", ClockChange.repeatNote(null, bFrom).isEmpty() && ClockChange.repeatNote(z, Double.NaN).isEmpty());
+        eq("repeat text back", ClockChange.repeatText(ClockChange.find(z, bFrom, bTo)), "The clocks went back one hour on this day (03:00 became 02:00), "
+                + "so 02:00 to 03:00 happened twice. Times in it say first or second time.");
+        check("no repeat text going forward or without a change", ClockChange.repeatText(ClockChange.find(z, fFrom, fTo)) == null && ClockChange.repeatText(null) == null);
         java.time.ZoneId lh = java.time.ZoneId.of("Australia/Lord_Howe");
         java.time.LocalDate lhd = java.time.LocalDate.parse("2026-04-05");
         ClockChange.Change half = ClockChange.find(lh, lhd.atStartOfDay(lh).toEpochSecond(), lhd.plusDays(1).atStartOfDay(lh).toEpochSecond());

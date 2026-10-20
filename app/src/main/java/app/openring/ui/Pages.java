@@ -1122,12 +1122,17 @@ public final class Pages {
         // the tiles come from the points the chart draws, also for days analysed before (issue #72)
         app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line, ds, de);
         boolean has = dh.points > 0;
-        hr.addView(Ui.statRow(c, Ui.stat(c, "Lowest", Ui.fmt(dh.low, 0), "bpm", 0, has ? "at " + clock(dh.lowAt, d.zone) : null),
+        // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
+        hr.addView(Ui.statRow(c, Ui.stat(c, "Lowest", Ui.fmt(dh.low, 0), "bpm", 0, has ? "at " + clock(dh.lowAt, d.zone)
+                        + app.openring.core.analysis.ClockChange.repeatNote(d.zone, dh.lowAt) : null),
                 Ui.stat(c, "Average", Ui.fmt(dh.avg, 0), "bpm", 0, has ? "of all quarter hours" : null),
-                Ui.stat(c, "Highest", Ui.fmt(dh.high, 0), "bpm", 0, has ? "at " + clock(dh.highAt, d.zone) : null)));
+                Ui.stat(c, "Highest", Ui.fmt(dh.high, 0), "bpm", 0, has ? "at " + clock(dh.highAt, d.zone)
+                        + app.openring.core.analysis.ClockChange.repeatNote(d.zone, dh.highAt) : null)));
         if (has) {
             hr.addView(Ui.text(c, "Each point of the line is a quarter hour average, midnight to midnight. Lowest and highest are its lowest and highest points. Touch the line to read any time.",
                     12, Ui.TEXT_3, Ui.REGULAR));
+            String twice = app.openring.core.analysis.ClockChange.repeatText(app.openring.core.analysis.ClockChange.find(d.zone, ds, de));
+            if (twice != null) hr.addView(Ui.text(c, twice, 12, Ui.TEXT_3, Ui.REGULAR));
             double night = Json.d(day, "rhr");
             if (!Double.isNaN(night)) hr.addView(Ui.text(c, "Lowest in last night's sleep: " + Ui.fmt(night, 0) + " bpm (Resting HR on Today, from the ring's own 5 minute night readings, so it can differ by a beat or two from the line).",
                     12, Ui.TEXT_3, Ui.REGULAR));

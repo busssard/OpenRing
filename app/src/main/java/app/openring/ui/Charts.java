@@ -584,7 +584,9 @@ public final class Charts {
                 int best = 0;
                 for (int k = 1; k < shown; k++) if (Math.abs(xs[k] - scrubX) < Math.abs(xs[best] - scrubX)) best = k;
                 double t = series.t(idx[best]);
-                String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t) : clock(t);
+                // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
+                String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t)
+                        : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, t);
                 cv.drawCircle(xs[best], ys[best], Ui.dp(getContext(), 4.5f), dot);
                 drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit);
             }

@@ -604,6 +604,8 @@ public class PipelineTest {
         demoTwice();
         oldNights();
         lastWornOldSync();
+        dayHeartLimits();
+        todayHeartTime();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
         longHistoryTiming();
@@ -1522,6 +1524,107 @@ public class PipelineTest {
                 == app.openring.core.analysis.LastWorn.NO_DATA, null);
     }
 
+    /** The synthetic history plus {@code extra}, analysed in a database of its own (TZ Europe/Zurich, as {@code main}). */
+    static Context analysedCtx;
+
+    static Db analysed(String name, List<RingEvent> base, RingEvent... extra) throws Exception {
+        Context ctx = analysedCtx = freshDb(name);
+        Db db = Db.get(ctx);
+        List<RingEvent> ev = new ArrayList<RingEvent>(base);
+        ev.addAll(Arrays.asList(extra));
+        java.util.Collections.sort(ev, new java.util.Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        long lastDs = ev.get(ev.size() - 1).ds, lastUnix = T0 + (lastDs - DS0) / 10;
+        db.insertBatch(ev, 1, lastUnix + 600);
+        db.insertPhoneAnchor(1, lastDs, lastUnix);
+        Analyzer.run(ctx, null);
+        return db;
+    }
+
+    /** The stored heart rate line of {@code day}. */
+    static app.openring.core.analysis.TS dayLine(Db db, String day) {
+        JSONObject o = Json.parse(db.dayJson(day));
+        return Json.series(o == null ? null : o.optJSONArray("hr_day"));
+    }
+
+    /** The value of the line's point at {@code t} (the middle of its quarter hour), NaN without one. */
+    static double pointAt(app.openring.core.analysis.TS line, double t) {
+        for (int i = 0; i < line.size(); i++) if (Math.abs(line.t(i) - t) < 1) return line.v(i);
+        return Double.NaN;
+    }
+
+    /**
+     * Issue #97, reproduced with the synthetic history: one HRV value of 250 does not become the day's Highest,
+     * the values after midnight of an HRV event begun at 23:50 count for the new day, and a database analysed with
+     * the older rules has its days analysed again once.
+     */
+    static void dayHeartLimits() throws Exception {
+        List<RingEvent> base = history(3);
+        double at0330 = java.time.LocalDateTime.parse("2026-10-08T03:30:00").atZone(ZONE).toEpochSecond();
+        double at2350 = java.time.LocalDateTime.parse("2026-10-08T23:50:00").atZone(ZONE).toEpochSecond();
+        Db control = analysed("openring-dayheart-control", base,
+                new RingEvent(EventCodec.HRV_EVENT, ds(at0330), new byte[] {52, 40, 52, 40, 52, 40, 52, 40, 52, 40, 52, 40}));
+        double d8 = LocalDate.parse("2026-10-08").atStartOfDay(ZONE).toEpochSecond(), d9 = LocalDate.parse("2026-10-09").atStartOfDay(ZONE).toEpochSecond();
+        app.openring.core.analysis.TS c8 = dayLine(control, "2026-10-08"), c9 = dayLine(control, "2026-10-09");
+        app.openring.core.analysis.DayHeart ch = app.openring.core.analysis.DayHeart.of(c8, d8, d9);
+        double c0007 = pointAt(c9, d9 + 450), c2352 = pointAt(c8, d9 - 450);
+        check("day heart control: Highest in the evening, not in the night (#97)", ch.points > 0 && ch.high < 100, ch.high);
+        // reanalysis once: a database from before the rules version gets its days analysed again
+        control.putDay("2026-10-07", "{}");
+        control.put("day_heart", 1);
+        Analyzer.run(analysedCtx, null);
+        check("days analysed again once for the new heart rate rules (#97)", dayLine(control, "2026-10-07").size() > 0
+                && control.kvLong("day_heart", 0) == app.openring.core.analysis.DayHeart.VERSION, control.kvLong("day_heart", 0));
+
+        Db bad = analysed("openring-dayheart-250", base,
+                new RingEvent(EventCodec.HRV_EVENT, ds(at0330), new byte[] {(byte) 250, 40, 52, 40, 52, 40, 52, 40, 52, 40, 52, 40}));
+        app.openring.core.analysis.TS b8 = dayLine(bad, "2026-10-08");
+        app.openring.core.analysis.DayHeart bh = app.openring.core.analysis.DayHeart.of(b8, d8, d9);
+        check("one HRV value of 250 is not the day's Highest (#97)", Math.abs(bh.high - ch.high) < 0.01 && Math.abs(bh.highAt - ch.highAt) < 1,
+                bh.high + " at " + hm(bh.highAt) + ", control " + ch.high + " at " + hm(ch.highAt));
+        check("no point of the line above 220 (#97)", b8.max() <= 220, b8.max());
+
+        Db late = analysed("openring-dayheart-midnight", base,
+                new RingEvent(EventCodec.HRV_EVENT, ds(at2350), new byte[] {100, 40, 100, 40, 100, 40, 100, 40, 100, 40, 100, 40}));
+        double l0007 = pointAt(dayLine(late, "2026-10-09"), d9 + 450), l2352 = pointAt(dayLine(late, "2026-10-08"), d9 - 450);
+        check("HRV values after midnight count for the new day (#97)", !Double.isNaN(l0007) && l0007 > (Double.isNaN(c0007) ? 0 : c0007) + 5,
+                l0007 + ", without the event " + c0007);
+        check("and its values before midnight still for the old day (#97)", !Double.isNaN(l2352) && l2352 > (Double.isNaN(c2352) ? 0 : c2352) + 5,
+                l2352 + ", without the event " + c2352);
+    }
+
+    static String hm(double unix) {
+        return Double.isNaN(unix) ? "--" : java.time.Instant.ofEpochSecond((long) unix).atZone(ZONE).toLocalTime().toString();
+    }
+
+    /**
+     * Issue #97: Today's heart rate time is the shown value's own time (an HRV event's fifth value is 20 minutes
+     * after its start), the newest by that time wins over an event that began later, and a 250 is skipped.
+     */
+    static void todayHeartTime() throws Exception {
+        Context ctx = freshDb("openring-today-hr");
+        Db db = Db.get(ctx);
+        long now = System.currentTimeMillis() / 1000, start = now - 3600, base = 1000;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        byte[] ts = new byte[4];
+        Protocol.Le.putU32(ts, 0, start);
+        ev.add(new RingEvent(EventCodec.TIME_SYNC, base, ts));
+        // HRV at start + 10 minutes: 60 61 62 63 64 then 250 (dropped), so 64 at start + 30 minutes
+        ev.add(new RingEvent(EventCodec.HRV_EVENT, base + 6000, new byte[] {60, 40, 61, 40, 62, 40, 63, 40, 64, 40, (byte) 250, 40}));
+        // a clean beat (1000 ms, 60 bpm) at start + 20 minutes: begins later, but measured before the 64
+        int ibi = 1000;
+        ev.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, base + 12000, new byte[] {(byte) (ibi >> 3), (byte) ((ibi & 7) | (1 << 3))}));
+        db.insertBatch(ev, 1, now);
+        db.rebuildTime(now);
+        app.openring.data.RightNow r = app.openring.data.RightNow.load(ctx);
+        check("Today's heart rate: the newest plausible value (#97)", r.hr == 64, r.hr);
+        check("Today's heart rate: at its own time, not the event start (#97)", Math.abs(r.hrAt - (start + 1800)) <= 1, (r.hrAt - start) / 60 + " min after start");
+    }
+
     /** A context with a database of its own ({@code Db.get} keeps one open instance). */
     static Context freshDb(String name) throws Exception {
         java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
@@ -1798,6 +1901,7 @@ public class PipelineTest {
         db.put("screen_awake", 1);
         db.put("night_finder", app.openring.core.analysis.NightFinder.VERSION);
         db.put("phone_awake", app.openring.core.analysis.ScreenTime.AWAKE_RULE);
+        db.put("day_heart", app.openring.core.analysis.DayHeart.VERSION);
         t = System.nanoTime();
         Analyzer.run(c, null);
         long incMs = (System.nanoTime() - t) / 1000000;

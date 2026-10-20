@@ -23,35 +23,36 @@ public final class RightNow {
     static final int[] HR_TAGS = {EventCodec.GREEN_IBI_QUALITY, EventCodec.AOHR_EVENT, EventCodec.HRV_EVENT};
     static final int[] TEMP_TAGS = {EventCodec.TEMP_EVENT, EventCodec.SLEEP_TEMP_EVENT};
 
-    /** The newest plausible heart rate in one stored event, NaN if none. */
-    static double bpm(Db.Row row) {
+    /**
+     * The newest plausible heart rate in one stored event and when it was measured, {bpm, unix}, or null if
+     * none. Dated like {@code Analyzer}: an HRV event holds six values 5 minutes apart, an AOHR event values
+     * 1.92 s apart, a green IBI event counts at its start (issues #94, #97). One plausibility range for all
+     * ({@link EventCodec#plausibleHr}).
+     */
+    static double[] newest(Db.Row row) {
         if (row.tag == EventCodec.GREEN_IBI_QUALITY) {
             int[][] g = EventCodec.greenIbi(row.body);
-            if (g != null) for (int i = g[0].length - 1; i >= 0; i--) if (g[1][i] == 1 && g[0][i] >= 300 && g[0][i] <= 2000) return 60000.0 / g[0][i];
+            if (g != null) for (int i = g[0].length - 1; i >= 0; i--) if (g[1][i] == 1 && g[0][i] >= 300 && g[0][i] <= 2000) return new double[] {60000.0 / g[0][i], row.unix};
         } else if (row.tag == EventCodec.AOHR_EVENT) {
             int[][] a = EventCodec.aohr(row.body);
-            if (a != null) for (int i = a[0].length - 1; i >= 0; i--) if (a[0][i] >= 30 && a[0][i] <= 220) return a[0][i];
+            if (a != null) for (int i = a[0].length - 1; i >= 0; i--) if (EventCodec.plausibleHr(a[0][i])) return new double[] {a[0][i], row.unix + i * EventCodec.AOHR_INTERVAL_S};
         } else {
             int[][] h = EventCodec.hrv(row.body);
-            if (h != null) for (int i = h[0].length - 1; i >= 0; i--) if (h[0][i] >= 30) return h[0][i];
+            if (h != null) for (int i = h[0].length - 1; i >= 0; i--) if (EventCodec.plausibleHr(h[0][i])) return new double[] {h[0][i], row.unix + i * EventCodec.HRV_INTERVAL_S};
         }
-        return Double.NaN;
+        return null;
     }
 
-    /**
-     * The times of the plausible heart rates in one stored event, dated like {@code Analyzer}: an HRV
-     * event holds six values 5 minutes apart, an AOHR event values 1.92 s apart, a green IBI event
-     * counts at its start (issue #94). Same plausibility checks as {@link #bpm}.
-     */
+    /** The times of the plausible heart rates in one stored event, dated and checked like {@link #newest}. */
     static void beatTimes(Db.Row row, List<Double> out) {
         if (row.tag == EventCodec.GREEN_IBI_QUALITY) {
-            if (!Double.isNaN(bpm(row))) out.add(row.unix);
+            if (newest(row) != null) out.add(row.unix);
         } else if (row.tag == EventCodec.AOHR_EVENT) {
             int[][] a = EventCodec.aohr(row.body);
-            if (a != null) for (int i = 0; i < a[0].length; i++) if (a[0][i] >= 30 && a[0][i] <= 220) out.add(row.unix + i * 1.92);
+            if (a != null) for (int i = 0; i < a[0].length; i++) if (EventCodec.plausibleHr(a[0][i])) out.add(row.unix + i * EventCodec.AOHR_INTERVAL_S);
         } else {
             int[][] h = EventCodec.hrv(row.body);
-            if (h != null) for (int i = 0; i < h[0].length; i++) if (h[0][i] >= 30) out.add(row.unix + i * EventCodec.HRV_INTERVAL_S);
+            if (h != null) for (int i = 0; i < h[0].length; i++) if (EventCodec.plausibleHr(h[0][i])) out.add(row.unix + i * EventCodec.HRV_INTERVAL_S);
         }
     }
 
@@ -102,12 +103,13 @@ public final class RightNow {
                 if (System.currentTimeMillis() / 1000.0 - r.skinTempAt < 20 * 60) r.worn = t[0] >= WORN_MIN_C ? 1 : 0;
             }
         }
+        // the newest value by its own time, not its event's start (an HRV event's last value is 25 minutes
+        // after it, issue #97), so an event that began earlier but reaches later can win
         for (Db.Row row : db.latest(HR_TAGS, since, 60)) {
-            double v = bpm(row);
-            if (!Double.isNaN(v)) {
-                r.hr = Math.round(v);
-                r.hrAt = row.unix;
-                break;
+            double[] v = newest(row);
+            if (v != null && (Double.isNaN(r.hrAt) || v[1] > r.hrAt)) {
+                r.hr = Math.round(v[0]);
+                r.hrAt = v[1];
             }
         }
         for (Db.Row row : db.latest(new int[] {EventCodec.SPO2_EVENT}, since, 30)) {
