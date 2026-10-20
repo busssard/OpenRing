@@ -39,7 +39,10 @@ final class MiniMap extends View {
     private SearchWalk.Spot spot;
     private double hereX, hereY, facing = Double.NaN;
     private long wallOffsetMs;
+    private double timeScale = 1;
+    /** The touched dot, -1 for none, {@link #CIRCLE} for the circle. */
     private int picked = -1;
+    static final int CIRCLE = -2;
     private float downX, downY;
     private boolean dragging;
     // the current view transform, from the last draw
@@ -75,10 +78,11 @@ final class MiniMap extends View {
     }
 
     /**
-     * New walk data. {@code wallOffsetMs} turns the walk's times (elapsed realtime) into wall clock
-     * times for the readout; {@code facing} is the heading now (relative to the start).
+     * New walk data. A walk time t becomes the wall clock time {@code wallOffsetMs + t × timeScale}
+     * for the readout; {@code facing} is the heading now (relative to the start).
      */
-    void set(SearchWalk w, SearchWalk.Spot spot, double facing, long wallOffsetMs) {
+    void set(SearchWalk w, SearchWalk.Spot spot, double facing, long wallOffsetMs, double timeScale) {
+        this.timeScale = timeScale;
         points = w == null ? Collections.<SearchWalk.Point>emptyList() : w.path();
         bins = w == null ? Collections.<double[]>emptyList() : w.bins();
         hereX = w == null ? 0 : w.x();
@@ -86,8 +90,16 @@ final class MiniMap extends View {
         this.spot = spot;
         this.facing = facing;
         this.wallOffsetMs = wallOffsetMs;
-        if (picked >= bins.size()) picked = -1;
+        if (picked >= bins.size() || picked == CIRCLE && shown(spot) == 0) picked = -1;
         invalidate();
+    }
+
+    /** The radius to draw: the circle when clear, a dashed one (at most 3 m) when at the edge, else 0. */
+    static double shown(SearchWalk.Spot s) {
+        if (s == null) return 0;
+        if (s.clear) return s.radius;
+        if (s.edge) return Math.min(s.radius, SearchWalk.CLEAR_RADIUS_M);
+        return 0;
     }
 
     /** Signal range for the colours: the walk's weakest and strongest dot, at least 6 dB apart. */
@@ -124,7 +136,7 @@ final class MiniMap extends View {
     protected void onDraw(Canvas cv) {
         Context c = getContext();
         float w = getWidth(), h = getHeight();
-        float top = Ui.dp(c, 18), bottom = Ui.dp(c, 30);
+        float top = Ui.dp(c, 18), bottom = Ui.dp(c, 44);
         // what to fit: the path, the dots and the circle, plus a margin; at least 3 m across
         double x0 = 0, x1 = 0, y0 = 0, y1 = 0;
         for (SearchWalk.Point p : points) {
@@ -133,11 +145,12 @@ final class MiniMap extends View {
             y0 = Math.min(y0, p.y);
             y1 = Math.max(y1, p.y);
         }
-        if (spot != null && spot.radius <= SearchWalk.CLEAR_RADIUS_M) {
-            x0 = Math.min(x0, spot.x - spot.radius);
-            x1 = Math.max(x1, spot.x + spot.radius);
-            y0 = Math.min(y0, spot.y - spot.radius);
-            y1 = Math.max(y1, spot.y + spot.radius);
+        double sr = shown(spot);
+        if (sr > 0) {
+            x0 = Math.min(x0, spot.x - sr);
+            x1 = Math.max(x1, spot.x + sr);
+            y0 = Math.min(y0, spot.y - sr);
+            y1 = Math.max(y1, spot.y + sr);
         }
         x0 -= 0.5;
         x1 += 0.5;
@@ -157,8 +170,8 @@ final class MiniMap extends View {
         cv.drawText("Up is the way you faced at Start", w / 2, Ui.dp(c, 11), txt);
 
         // the likely area under everything else
-        if (spot != null && spot.radius <= SearchWalk.CLEAR_RADIUS_M) {
-            float px = sx(spot.x), py = sy(spot.y), pr = (float) (spot.radius * scale);
+        if (sr > 0) {
+            float px = sx(spot.x), py = sy(spot.y), pr = (float) (sr * scale);
             if (spot.clear) {
                 fill.setShader(new RadialGradient(px, py, pr, new int[] {Ui.alpha(Ui.HEART, 0.38f), Ui.alpha(Ui.HEART, 0.18f), Ui.alpha(Ui.HEART, 0.04f)},
                         new float[] {0, 0.6f, 1}, Shader.TileMode.CLAMP));
@@ -236,21 +249,32 @@ final class MiniMap extends View {
             float hiW = txt.measureText(hi), loW = txt.measureText(lo);
             float gx1 = w - Ui.dp(c, 4) - hiW - Ui.dp(c, 6), gx0 = gx1 - gw;
             legend.setShader(new LinearGradient(gx0, 0, gx1, 0, new int[] {color(0), color(0.5), color(1)}, null, Shader.TileMode.CLAMP));
-            r.set(gx0, by - gh, gx1, by);
+            // its own line above the scale bar, so the two never meet on a narrow screen
+            float ly = by - Ui.dp(c, 16);
+            r.set(gx0, ly - gh, gx1, ly);
             cv.drawRoundRect(r, gh / 2, gh / 2, legend);
             txt.setTextAlign(Paint.Align.LEFT);
-            cv.drawText(hi, gx1 + Ui.dp(c, 6), by + Ui.dp(c, 1), txt);
-            cv.drawText(lo, gx0 - Ui.dp(c, 6) - loW, by + Ui.dp(c, 1), txt);
+            cv.drawText(hi, gx1 + Ui.dp(c, 6), ly + Ui.dp(c, 1), txt);
+            cv.drawText(lo, gx0 - Ui.dp(c, 6) - loW, ly + Ui.dp(c, 1), txt);
         }
 
-        // the readout of the touched dot
+        // the readout of the touched dot or circle
+        String tip = null;
+        float px = 0;
         if (picked >= 0 && picked < bins.size()) {
             double[] b = bins.get(picked);
-            float px = sx(b[0]), py = sy(b[1]);
+            px = sx(b[0]);
+            float py = sy(b[1]);
             mark.setColor(Ui.TEXT);
             cv.drawCircle(px, py, Ui.dp(c, 8), mark);
-            String tip = Charts.clock((b[4] + wallOffsetMs) / 1000.0) + secs(b[4] + wallOffsetMs) + ", " + Math.round(b[3]) + " dBm, "
-                    + Ui.fmt(Math.hypot(b[0], b[1]), 1) + " m from the start";
+            double wall = wallOffsetMs + b[4] * timeScale;
+            tip = Charts.clock(wall / 1000.0) + secs(wall) + ", " + Math.round(b[3]) + " dBm, " + Ui.fmt(Math.hypot(b[0], b[1]), 1) + " m from the start";
+        } else if (picked == CIRCLE && sr > 0) {
+            px = sx(spot.x);
+            tip = (spot.clear ? "Probably around here: " : "Farther this way: ") + compact(spot.x, spot.y)
+                    + (spot.clear ? " (radius " + Ui.fmt(spot.radius, 1) + " m)" : "");
+        }
+        if (tip != null) {
             float pad = Ui.dp(c, 6), tw = tipTxt.measureText(tip), bw2 = tw + pad * 2, bh = tipTxt.getTextSize() + pad * 1.4f;
             float left = Math.max(0, Math.min(w - bw2, px - bw2 / 2));
             r.set(left, 0, left + bw2, bh);
@@ -259,14 +283,30 @@ final class MiniMap extends View {
         }
     }
 
+    /** "2.1 m ahead, 0.8 m right" from the start (short, for the readout bubble). */
+    static String compact(double x, double y) {
+        String a = Ui.fmt(Math.abs(y), 1) + " m " + (y >= 0 ? "ahead" : "behind");
+        String b = Ui.fmt(Math.abs(x), 1) + " m " + (x >= 0 ? "right" : "left");
+        return a + ", " + b;
+    }
+
     /** ":05", the seconds after the clock's minutes. */
     static String secs(double ms) {
         long s = Math.floorMod((long) Math.floor(ms / 1000), 60L);
         return String.format(Locale.getDefault(), ":%02d", s);
     }
 
-    /** The dot nearest to a touch, or -1 when none is within 28 dp. */
+    /** The dot nearest to a touch; else the circle when the touch is inside it; else -1. */
     int nearest(float x, float y) {
+        int d = nearestDot(x, y);
+        if (d >= 0) return d;
+        double sr = shown(spot);
+        if (sr > 0 && Math.hypot(x - sx(spot.x), y - sy(spot.y)) <= sr * scale) return CIRCLE;
+        return -1;
+    }
+
+    /** The dot nearest to a touch, or -1 when none is within 28 dp. */
+    int nearestDot(float x, float y) {
         int best = -1;
         double bd = Ui.dp(getContext(), 28);
         for (int i = 0; i < bins.size(); i++) {
@@ -300,7 +340,7 @@ final class MiniMap extends View {
                 }
                 if (dragging) {
                     int n = nearest(e.getX(), e.getY());
-                    if (n >= 0) picked = n;
+                    if (n != -1) picked = n;
                     invalidate();
                 }
                 return true;

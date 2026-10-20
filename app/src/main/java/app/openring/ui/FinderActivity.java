@@ -95,6 +95,10 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private long spotAt;
     /** Turns the walk's times (elapsed realtime, or the demo's own clock) into wall clock times. */
     private long wallOffset;
+    /** Walk milliseconds per real millisecond for the readout (0.5 while the demo replays at twice its speed). */
+    private double timeScale = 1;
+    /** The circle is being worked out on another thread. */
+    private boolean locating;
     private List<double[]> demoEvents;
     private int demoIndex;
     private long demoStart;
@@ -723,11 +727,13 @@ public final class FinderActivity extends Activity implements SensorEventListene
             recording = true;
             demoHeading = 0;
             wallOffset = System.currentTimeMillis() - SystemClock.elapsedRealtime();
+            timeScale = 1;
             if (demo && !demoTurnOnly) {
                 demoEvents = DemoWalk.events();
                 demoIndex = 0;
                 demoStart = SystemClock.elapsedRealtime();
                 wallOffset = System.currentTimeMillis();
+                timeScale = 0.5;
             }
             if (!demo && sm != null && accel != null) sm.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME);
         }
@@ -739,14 +745,33 @@ public final class FinderActivity extends Activity implements SensorEventListene
         return StepDetector.stepLength(demo ? 175 : Prefs.of(this).heightCm());
     }
 
-    /** The circle is worked out again every 3 s while walking, and at once when the walk ends. */
+    /**
+     * The circle is worked out again every 3 s while walking, and at once when the walk ends. The fit
+     * grows with the walk, so it runs on its own thread on a copy of the record and posts back.
+     */
     void updateSpot() {
-        if (walk == null || !spotDirty) return;
+        if (walk == null || !spotDirty || locating) return;
         long now = SystemClock.elapsedRealtime();
         if (recording && now - spotAt < 3000) return;
         spotAt = now;
         spotDirty = false;
-        spot = walk.locate();
+        locating = true;
+        final SearchWalk of = walk, copy = walk.snapshot();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final SearchWalk.Spot s = copy.locate();
+                h.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        locating = false;
+                        if (walk != of || isFinishing()) return;
+                        spot = s;
+                        showTurn();
+                    }
+                });
+            }
+        }, "finder-spot").start();
     }
 
     void showTurn() {
@@ -763,7 +788,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         }
         if (walked) {
             updateSpot();
-            map.set(walk, spot, facing, wallOffset);
+            map.set(walk, spot, walk.relative(facing), wallOffset, timeScale);
             showWalk();
             return;
         }
@@ -787,38 +812,39 @@ public final class FinderActivity extends Activity implements SensorEventListene
     /** The walk's text: how far, how much of the room, and where the ring probably is. */
     void showWalk() {
         StringBuilder b = new StringBuilder();
-        b.append("Walked ").append(Ui.fmt(walk.distance(), 1)).append(" m (").append(walk.steps()).append(walk.steps() == 1 ? " step" : " steps")
+        long moved = Math.round(walk.distance() / walk.stepLength());
+        b.append("Walked ").append(Ui.fmt(walk.distance(), 1)).append(" m (").append(moved).append(moved == 1 ? " step" : " steps")
                 .append(" of ").append(Ui.fmt(walk.stepLength(), 2)).append(" m).");
-        if (spot == null) {
+        if (spot == null && walk.mapReady()) {
+            b.append("\nWorking out where the ring probably is.");
+        } else if (spot == null && walk.covered()) {
+            // enough of the room, but the ring was hardly heard
+            b.append("\nThe ring was heard for only ").append((long) Math.floor(walk.heardSeconds())).append(" seconds of the walk; the circle needs ")
+                    .append(SearchWalk.MIN_BINS / 2).append(". While a sync, Live or another app is connected to the ring, it sends no signal.");
+            if (linked()) b.append(" It is connected to this phone right now.");
+            else if (prox.band() == Proximity.NOT_HEARD) b.append(" This phone does not hear it right now.");
+        } else if (spot == null) {
             double[] c = walk.cover();
             double across = c[1] >= SearchWalk.WIDTH_M ? c[0] : c[1];
             b.append(" Across ").append(Ui.fmt(Math.min(across, SearchWalk.COVER_M), 1)).append(" of ").append(Math.round(SearchWalk.COVER_M))
                     .append(" m in two directions (the circle needs ").append(Math.round(SearchWalk.COVER_M)).append(" m both ways).");
             b.append("\nWalk a bit more, across the room.");
         } else if (spot.clear) {
-            b.append("\nProbably within the circle: ").append(where(spot.x, spot.y)).append(" (radius ").append(Ui.fmt(spot.radius, 1))
+            b.append("\nProbably within the circle: ").append(SearchWalk.where(spot.x, spot.y)).append(" (radius ").append(Ui.fmt(spot.radius, 1))
                     .append(" m). Start looking there.");
             if (spot.beyond) b.append(" It lies at the edge of where you walked, so the ring may also be a bit farther that way.");
         } else if (spot.edge) {
-            b.append("\nThe signal gets stronger towards the edge of where you walked (the dashed circle), so the ring is probably farther that way. "
+            b.append("\nThe signal gets stronger towards the edge of where you walked (the dashed circle, ").append(SearchWalk.where(spot.x, spot.y))
+                    .append("), so the ring is probably farther that way. "
                     + "Walk on in that direction and look again.");
         } else {
-            b.append("\nThe signal gave no clear spot (the circle would be wider than ").append(Math.round(SearchWalk.CLEAR_RADIUS_M))
-                    .append(" m, or the signal hardly changed). The ring may be in another room, upstairs or downstairs, or under something thick.");
+            b.append("\nThe signal gave no clear spot yet (the circle would be wider than ").append(Math.round(SearchWalk.CLEAR_RADIUS_M))
+                    .append(" m, or the signal hardly changed). Walk more of the room; if that does not help, the ring may be in another room, "
+                    + "upstairs or downstairs, or under something thick.");
         }
         if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted, steps keep your last direction.");
         if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the walk needs the ring to be heard.");
         turnText.setText(b.toString());
-    }
-
-    /** "about 2.1 m ahead and 0.8 m to the right of where you started". */
-    static String where(double x, double y) {
-        String ahead = Math.abs(y) < 0.3 ? null : Ui.fmt(Math.abs(y), 1) + " m " + (y > 0 ? "ahead" : "behind");
-        String side = Math.abs(x) < 0.3 ? null : Ui.fmt(Math.abs(x), 1) + " m to the " + (x > 0 ? "right" : "left");
-        if (ahead == null && side == null) return "right around where you started";
-        if (ahead == null) return "about " + side + " of where you started";
-        if (side == null) return "about " + ahead + " of where you started";
-        return "about " + ahead + " and " + side + " of where you started";
     }
 
     void showStepLength() {
@@ -989,8 +1015,10 @@ public final class FinderActivity extends Activity implements SensorEventListene
             tipBg.setColor(Ui.BG);
         }
 
+        /** Where the person faces now, in the walk's terms (relative to the start once a walk began). */
         float facingNow() {
-            return Double.isNaN(facing) ? 0 : (float) facing;
+            if (Double.isNaN(facing)) return 0;
+            return (float) (walk == null ? facing : walk.relative(facing));
         }
 
         private float downX, downY;

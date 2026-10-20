@@ -10,7 +10,9 @@ package app.openring.core.analysis;
  * signal fell below {@link #FALL} since the step before. Walking has a steady rhythm, shaking does
  * not: a step counts only with a gap of {@link #MIN_GAP_MS} to {@link #MAX_GAP_MS} to the one before,
  * and a swing above {@link #MAX_PEAK} (a shaken phone) throws the run away. The first step of a run
- * is only counted once the second one confirms the rhythm, then both count.
+ * is only counted once the second one confirms the rhythm, then both count. A foot lands in two
+ * bumps (heel, then toe): a rise within {@link #BUMP_MS} of a step belongs to it and is skipped, as
+ * long as the next step comes at least 3 times that late (fast shaking does not).
  */
 public final class StepDetector {
     /** Rise above the gravity average that makes a step (m/s²). Slow walking with the phone on the chest swings about 1 to 3. */
@@ -21,6 +23,8 @@ public final class StepDetector {
     public static final long MIN_GAP_MS = 300;
     /** A longer pause ends the run; the next step waits for a confirming one again. */
     public static final long MAX_GAP_MS = 1500;
+    /** A second rise this soon after a step is the same footfall (heel, then toe). */
+    public static final long BUMP_MS = 250;
     /** A swing above this (m/s²) is shaking or a bump, not a step: the run starts over. */
     public static final double MAX_PEAK = 7;
     /** Smoothing of the signal (time constant, ms) and of the gravity average (ms). */
@@ -29,6 +33,8 @@ public final class StepDetector {
     private double gravity = Double.NaN, smooth;
     private long lastT = Long.MIN_VALUE, lastStep = Long.MIN_VALUE, pending = Long.MIN_VALUE;
     private boolean armed = true;
+    /** How long after the step before its skipped second bump came (ms), 0 for none. */
+    private long bump;
     private int steps;
 
     /**
@@ -44,6 +50,7 @@ public final class StepDetector {
             armed = true;
             pending = Long.MIN_VALUE;
             lastStep = Long.MIN_VALUE;
+            bump = 0;
             return 0;
         }
         double dt = tMs - lastT;
@@ -55,6 +62,7 @@ public final class StepDetector {
             // shaking: forget the run
             pending = Long.MIN_VALUE;
             lastStep = Long.MIN_VALUE;
+            bump = 0;
             armed = false;
             return 0;
         }
@@ -63,7 +71,13 @@ public final class StepDetector {
         armed = false;
         long prev = lastStep != Long.MIN_VALUE ? lastStep : pending;
         long gap = prev == Long.MIN_VALUE ? -1 : tMs - prev;
-        if (gap >= 0 && gap < MIN_GAP_MS) {
+        if (gap >= 0 && gap < BUMP_MS && bump == 0) {
+            bump = gap; // the second bump of the same footfall
+            return 0;
+        }
+        long bumped = bump;
+        bump = 0;
+        if (gap >= 0 && (gap < MIN_GAP_MS || gap < 3 * bumped)) {
             // too fast for walking: the run starts over from here
             pending = tMs;
             lastStep = Long.MIN_VALUE;
