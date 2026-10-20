@@ -459,6 +459,7 @@ public class PipelineTest {
         check("demo notes no time zones, so its nights look as before (#22)", demo.zones().isEmpty()
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
+        dayHeartChecks(demo);
         // issue #44: the first demo days count the worn days so far, later ones a full week as before
         int firstWorn = -1, fullWeek = 0, weekDays = 0;
         boolean weekTexts = true;
@@ -560,6 +561,7 @@ public class PipelineTest {
         long fallNow = java.time.LocalDateTime.parse("2025-11-09T00:30:00").atZone(zz).toEpochSecond();
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2025-11-09"), fallNow);
         dstChecks(Db.get(phone3), "back", "2025-10-26", "2025-10-26T01:00:00Z", -60, "03:00", "02:00");
+        dayHeartLine(Db.get(phone3), "2025-10-26", 25);
         List<String> fallMain = Db.get(phone3).nightsJson("2000-01-01", "2100-01-01", true);
         JSONObject fallNewest = Json.parse(fallMain.get(fallMain.size() - 1));
         check("newest demo night has a phone check at 00:30", Json.d(fallNewest, "phone_min") >= 1, fallNewest.optString("day"));
@@ -1330,6 +1332,53 @@ public class PipelineTest {
         return db.count("SELECT COUNT(*) FROM events") + " events, " + db.count("SELECT COUNT(*) FROM nights WHERE main = 1") + " nights, "
                 + db.count("SELECT COUNT(*) FROM days") + " days, " + db.count("SELECT COUNT(*) FROM screen") + " screen, "
                 + db.count("SELECT COUNT(*) FROM apps") + " apps";
+    }
+
+    /**
+     * Issue #72: on every demo day the Body tab's Lowest, Average and Highest are the stored line's own lowest point,
+     * mean and highest point, with every stored point inside the day the chart draws, and the day's lowest stays near
+     * the night's lowest (5 minute averages).
+     */
+    static void dayHeartChecks(Db db) {
+        int days = 0, matched = 0, nearNight = 0, withNight = 0;
+        String bad = "";
+        for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o == null || o.optJSONArray("hr_day") == null) continue;
+            days++;
+            app.openring.core.analysis.TS line = Json.series(o.optJSONArray("hr_day"));
+            LocalDate day = LocalDate.parse(r[0]);
+            // what the Body tab shows: worked out from the stored line over the day the chart draws
+            app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line,
+                    day.atStartOfDay(ZoneId.systemDefault()).toEpochSecond(), day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toEpochSecond());
+            double low = dh.low, avg = dh.avg, high = dh.high;
+            boolean ok = dh.points == line.size() && high >= line.max() - 1e-9 && Math.abs(high - line.max()) < 0.01 && Math.abs(low - line.min()) < 0.01
+                    && Math.abs(avg - line.mean()) < 0.01;
+            for (int i = 0; i < line.size(); i++) if (line.v(i) > high + 1e-9 || line.v(i) < low - 1e-9) ok = false;
+            if (ok) matched++;
+            else bad += r[0] + " ";
+            double night = Json.d(o, "rhr");
+            if (!Double.isNaN(night)) {
+                withNight++;
+                if (Math.abs(low - night) <= 3) nearNight++;
+            }
+        }
+        check("demo days: Highest and Lowest are the drawn line's highest and lowest point, Average its mean (#72)",
+                days >= 28 && matched == days, matched + " of " + days + " " + bad);
+        check("demo days: the day's lowest within 3 bpm of the night's lowest (#72)", withNight >= 28 && nearNight == withNight,
+                nearNight + " of " + withNight);
+    }
+
+    /** Issue #72: a day of {@code hours} keeps one point per quarter hour (none merged), so nothing is cut off. */
+    static void dayHeartLine(Db db, String day, int hours) {
+        JSONObject o = Json.parse(db.dayJson(day));
+        app.openring.core.analysis.TS line = Json.series(o == null ? null : o.optJSONArray("hr_day"));
+        double ds = LocalDate.parse(day).atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        boolean quarter = line.size() > 0;
+        for (int i = 0; i < line.size(); i++) if (Math.abs((line.t(i) - ds) % 900 - 450) > 1) quarter = false;
+        double last = line.size() == 0 ? 0 : line.t(line.size() - 1);
+        check(day + ": heart rate line in quarter hours over " + hours + " hours (#72)", quarter && last < ds + hours * 3600
+                && (hours <= 24 || last > ds + 24 * 3600), line.size() + " points, last at " + (last - ds) / 3600 + " h");
     }
 
     /** Counts the progress steps one call reports. */

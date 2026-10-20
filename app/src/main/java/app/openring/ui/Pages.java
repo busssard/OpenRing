@@ -1106,12 +1106,25 @@ public final class Pages {
         root.addView(rightNow(c, d.now));
         LinearLayout hr = Ui.card(c);
         hr.addView(Ui.caption(c, "Heart rate today"));
-        hr.addView(Ui.statRow(c, Ui.stat(c, "Lowest", Ui.fmt(Json.d(day, "hr_day_low"), 0), "bpm", 0),
-                Ui.stat(c, "Average", Ui.fmt(Json.d(day, "hr_day_avg"), 0), "bpm", 0),
-                Ui.stat(c, "Highest", Ui.fmt(Json.d(day, "hr_day_high"), 0), "bpm", 0)));
-        // the day's own 24 hours, as the analysis counted them (issue #22)
-        double ds = d.date.atStartOfDay(d.zone).toEpochSecond();
-        hr.addView(new Charts.LineChart(c, Json.series(day == null ? null : day.optJSONArray("hr_day")), ds, ds + 86400, Ui.HEART).zone(d.zone), Ui.sized(c, -1, 140));
+        // the day's own hours, midnight to midnight as the analysis counted them (23 or 25 on a clock change, issue #22)
+        double ds = d.date.atStartOfDay(d.zone).toEpochSecond(), de = d.date.plusDays(1).atStartOfDay(d.zone).toEpochSecond();
+        TS line = Json.series(day == null ? null : day.optJSONArray("hr_day"));
+        // the tiles come from the points the chart draws, also for days analysed before (issue #72)
+        app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line, ds, de);
+        boolean has = dh.points > 0;
+        hr.addView(Ui.statRow(c, Ui.stat(c, "Lowest", Ui.fmt(dh.low, 0), "bpm", 0, has ? "at " + clock(dh.lowAt, d.zone) : null),
+                Ui.stat(c, "Average", Ui.fmt(dh.avg, 0), "bpm", 0, has ? "of all quarter hours" : null),
+                Ui.stat(c, "Highest", Ui.fmt(dh.high, 0), "bpm", 0, has ? "at " + clock(dh.highAt, d.zone) : null)));
+        if (has) {
+            hr.addView(Ui.text(c, "Each point of the line is a quarter hour average, midnight to midnight. Lowest and highest are its lowest and highest points. Touch the line to read any time.",
+                    12, Ui.TEXT_3, Ui.REGULAR));
+            double night = Json.d(day, "rhr");
+            if (!Double.isNaN(night)) hr.addView(Ui.text(c, "Lowest in last night's sleep: " + Ui.fmt(night, 0) + " bpm (Resting HR on Today, from the ring's own 5 minute night readings, so it can differ by a beat or two from the line).",
+                    12, Ui.TEXT_3, Ui.REGULAR));
+        }
+        // the middle label at noon, also when the day has 23 or 25 hours
+        double noon = d.date.atTime(12, 0).atZone(d.zone).toEpochSecond();
+        hr.addView(new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon), Ui.sized(c, -1, 140));
         hr.addView(Ui.gap(c, 10));
         TextView live = Ui.button(c, "Measure live heart rate and HRV", Ui.HEART, false);
         live.setOnClickListener(new View.OnClickListener() {
