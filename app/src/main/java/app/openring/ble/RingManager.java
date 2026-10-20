@@ -27,6 +27,7 @@ import app.openring.core.HistoryBatch;
 import app.openring.core.Protocol;
 import app.openring.core.RingClient;
 import app.openring.core.RingEvent;
+import app.openring.core.SyncError;
 import app.openring.data.Analyzer;
 import app.openring.data.Db;
 import app.openring.data.Prefs;
@@ -514,7 +515,7 @@ public final class RingManager {
      * only works on a factory reset ring.
      */
     public void pair(final byte[] existingKey, final boolean install, final Callback cb) {
-        runOp(cb, new Op() {
+        runOp(SyncError.Task.PAIR, cb, new Op() {
             @Override
             public String run() throws Exception {
                 Prefs prefs = Prefs.of(ctx);
@@ -572,7 +573,7 @@ public final class RingManager {
 
     /** Reads feature modes; message is "id:mode,id:mode". */
     public void readFeatures(final Callback cb) {
-        runOp(cb, new Op() {
+        runOp(SyncError.Task.ACTION, cb, new Op() {
             @Override
             public String run() throws Exception {
                 Session s = open(false, null);
@@ -598,7 +599,7 @@ public final class RingManager {
     }
 
     public void setFeature(final int feature, final int mode, final Callback cb) {
-        runOp(cb, new Op() {
+        runOp(SyncError.Task.ACTION, cb, new Op() {
             @Override
             public String run() throws Exception {
                 Session s = open(false, null);
@@ -616,7 +617,7 @@ public final class RingManager {
     // ------------------------------------------------------------------ factory reset
 
     public void factoryReset(final String confirmSerial, final Callback cb) {
-        runOp(cb, new Op() {
+        runOp(SyncError.Task.ACTION, cb, new Op() {
             @Override
             public String run() throws Exception {
                 Prefs prefs = Prefs.of(ctx);
@@ -624,6 +625,10 @@ public final class RingManager {
                 try {
                     String serial = s.client.serial();
                     if (!serial.equalsIgnoreCase(confirmSerial.trim())) {
+                        // the saved serial typed correctly means another ring answered, not a typo (issue #60)
+                        if (prefs.serial() != null && prefs.serial().equalsIgnoreCase(confirmSerial.trim())) {
+                            throw new IOException(SyncError.OTHER_RING_PREFIX + " (" + serial + "), not the saved " + prefs.serial());
+                        }
                         throw new IOException("Refusing: the ring that answered is " + serial + ", not " + confirmSerial);
                     }
                     s.client.authenticate(prefs.loadKey());
@@ -918,7 +923,9 @@ public final class RingManager {
                     log("live: " + beats + " beats, " + frames + " live frames, " + s.link.sideSummary());
                     post(beats > 0 ? "Stopped" : "Stopped without a pulse. Diagnostics, Log tab, shows what the ring sent.");
                 } catch (Exception e) {
-                    post("Live heart rate stopped: " + e.getMessage());
+                    String raw = e.getMessage() == null ? e.toString() : e.getMessage();
+                    log("live: stopped by " + raw);
+                    post("Live heart rate stopped. " + SyncError.plain(raw, SyncError.Task.LIVE));
                 } finally {
                     try {
                         if (s != null && s.link.isConnected()) {
@@ -1046,7 +1053,9 @@ public final class RingManager {
                     }
                     log("motion: " + frames + " frames in " + (System.currentTimeMillis() - started) / 1000 + " s");
                 } catch (Exception e) {
-                    motionState("Motion stream stopped: " + e.getMessage(), false);
+                    String raw = e.getMessage() == null ? e.toString() : e.getMessage();
+                    log("motion: stopped by " + raw);
+                    motionState(SyncError.game(raw), false);
                 } finally {
                     try {
                         if (s != null && s.link.isConnected()) s.client.request(Protocol.realtimeOff(), null, 500);
@@ -1121,14 +1130,19 @@ public final class RingManager {
         String run() throws Exception;
     }
 
-    private void runOp(final Callback cb, final Op o) {
+    /**
+     * Runs a ring task of Setup or Settings. A failure reaches the callback and the status line as a plain
+     * sentence; the raw text goes to the Bluetooth log (issue #60).
+     */
+    private void runOp(final SyncError.Task task, final Callback cb, final Op o) {
         worker.execute(new Runnable() {
             @Override
             public void run() {
                 boolean ok = false;
                 String msg;
                 if (!op.tryLock()) {
-                    reply(cb, false, "The ring is busy with another task");
+                    log("not started: the ring is busy with another task");
+                    reply(cb, false, SyncError.plain("The ring is busy with another task", task));
                     return;
                 }
                 cancelRequested = false;
@@ -1138,8 +1152,9 @@ public final class RingManager {
                     msg = o.run();
                     ok = true;
                 } catch (Exception e) {
-                    msg = e.getMessage() == null ? e.toString() : e.getMessage();
-                    log("failed: " + msg);
+                    String raw = e.getMessage() == null ? e.toString() : e.getMessage();
+                    log("failed: " + raw);
+                    msg = SyncError.plain(raw, task);
                 } finally {
                     busy = false;
                     op.unlock();

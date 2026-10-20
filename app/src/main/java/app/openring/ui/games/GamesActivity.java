@@ -261,20 +261,9 @@ public final class GamesActivity extends Activity implements RingManager.MotionL
 
         void drawRingState(Canvas c, float w, float h) {
             sub.setTextSize(w * 0.034f);
-            // wrap the ring status into up to three short lines at the bottom
-            String[] words = ringState.split(" ");
-            java.util.List<String> lines = new java.util.ArrayList<String>();
-            StringBuilder cur = new StringBuilder();
-            for (String wd : words) {
-                if (cur.length() > 0 && cur.length() + wd.length() > 44) {
-                    lines.add(cur.toString());
-                    cur.setLength(0);
-                }
-                if (cur.length() > 0) cur.append(' ');
-                cur.append(wd);
-            }
-            if (cur.length() > 0) lines.add(cur.toString());
-            int nl = Math.min(3, lines.size());
+            // wrap the ring status into up to three short lines at the bottom (SyncError.game texts fit, issue #60)
+            java.util.List<String> lines = app.openring.core.SyncError.wrap(ringState, app.openring.core.SyncError.GAME_LINE);
+            int nl = Math.min(app.openring.core.SyncError.GAME_LINES, lines.size());
             for (int i = 0; i < nl; i++) c.drawText(lines.get(i), w / 2, h * 0.86f + i * sub.getTextSize() * 1.35f, sub);
         }
 
