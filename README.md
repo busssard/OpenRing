@@ -18,17 +18,34 @@ Not affiliated with Oura, not a medical device.
 <p>
 <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/today.png" width="45%" alt="Today">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/sleep.png" width="45%" alt="Sleep">
 <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/sleep-analysis.png" width="45%" alt="Average night">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/body-trends.png" width="45%" alt="Body trends">
+<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/finder.png" width="45%" alt="Find my ring: hot and cold">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/finder-walk.png" width="45%" alt="Find my ring: search walk map">
 </p>
 <sub>Demo data on an Android emulator, updated automatically from the main branch.</sub>
 
 ## What it does
 
-* Sleep stages, night timeline, your last nights and your average night
+* Sleep stages, night timeline, your last nights and your average night. You choose how detailed
+  the sleep chart is; the numbers stay the same
 * Readiness, activity, heart rate, HRV, temperature, blood oxygen
 * Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be left out.
   It also helps tell sleep from lying still with the phone
-* Live heart rate and blood oxygen on demand
+* Live heart rate, HRV and blood oxygen on demand
+* Find my ring, when the ring is lost at home (see below)
+* Backups of the key and all history, and a CSV export, all as files on your phone
 * A demo mode, so you can look around without a ring
+
+### Find my ring
+
+Lost the ring at home? Find my ring (on Today, and in Settings, Ring) shows when it was last on a
+finger and when this phone last heard it. Then walk around: a ring fills and the phone clicks faster
+as you get closer. Turn on the spot with the phone against your chest and an arrow points to the
+strongest signal. Or walk slowly through the room: a small map shows your path with the signal at
+each spot, and a circle marks where to start looking.
+
+It uses the ring's Bluetooth signal, so it tells warmer or colder, not metres; walls, blankets and
+your body change it. The circle is an area of about a couple of metres, not a pin. The ring makes
+no sound itself (the clicks come from the phone), and it only works while the ring has battery and
+is within Bluetooth range.
 
 ## Install
 
@@ -49,7 +66,7 @@ Updates install over the old version and keep your data.
   its checksum, signing certificate and a link to the build, and it has a
   [provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
   (`gh attestation verify OpenRing-x.y.apk -R busssard/OpenRing`).
-* Each change runs about 200 automated tests ([results and coverage](https://github.com/busssard/OpenRing/blob/badges/summary.md)),
+* Each change runs more than 800 automated tests ([results and coverage](https://github.com/busssard/OpenRing/blob/badges/summary.md)),
   is tested on an Android 14 emulator ([runs](https://github.com/busssard/OpenRing/actions/workflows/emulator.yml))
   and scanned by [CodeQL](https://github.com/busssard/OpenRing/actions/workflows/codeql.yml).
 * All releases share one signing key, so nobody else can push an update to your phone.
