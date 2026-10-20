@@ -1516,8 +1516,32 @@ public class PipelineTest {
         double lastHrv = start + (base + 1 + (12 * 12 - 6) * 3000L + 1 - base) / 10.0 + 5 * 300;
         check("ring finder: a sync 10 days old still reads as taken off (#94)", r.state == app.openring.core.analysis.LastWorn.OFF
                 && Math.abs(r.at - (start + 12 * 3600)) <= 300 && Math.abs(r.roomC - 21) < 0.01, r.state + " " + (r.at - start) / 3600.0);
-        check("ring finder: its newest reading is 10 days old", Math.abs(now - r.newest - (9 * 86400 + 300)) <= 600, (now - r.newest) / 86400.0);
+        check("ring finder: its newest reading is from the sync 10 days ago (9 days and 5 minutes old)", Math.abs(now - r.newest - (9 * 86400 + 300)) <= 600, (now - r.newest) / 86400.0);
+        check("ring finder: night heart rate only, so temperature decides", !r.hrRule && r.hasHr, r.hrRule);
         check("ring finder: HRV heart rates dated by their 5 minute steps (#94)", Math.abs(r.lastHr - lastHrv) <= 1, r.lastHr - lastHrv);
+        // a 10 C reading 8 days before the newest is outside the 7 days, so the room temperature and the time stay
+        List<RingEvent> older = new ArrayList<RingEvent>();
+        byte[] ts2 = new byte[4];
+        Protocol.Le.putU32(ts2, 0, start - 8 * 86400);
+        older.add(new RingEvent(EventCodec.TIME_SYNC, 500000, ts2));
+        older.add(new RingEvent(EventCodec.TEMP_EVENT, 500001, le16(1000, 1000, 1000)));
+        db.insertBatch(older, 2, start - 8 * 86400);
+        db.rebuildTime(start + 86400);
+        check("ring finder: the reading 8 days earlier is dated", db.count("SELECT COUNT(*) FROM events WHERE unix < " + (start - 7 * 86400)) == 2,
+                db.count("SELECT COUNT(*) FROM events WHERE unix < " + (start - 7 * 86400)));
+        app.openring.core.analysis.LastWorn.Result r8 = app.openring.data.RightNow.lastWorn(db, now);
+        check("ring finder: the 7 days count back from the newest reading (one 8 days before it is left out)", r8.state == app.openring.core.analysis.LastWorn.OFF
+                && Math.abs(r8.at - r.at) < 1 && Math.abs(r8.roomC - 21) < 0.01, r8.roomC);
+        // a reading dated more than an hour in the future (a broken clock) does not become the newest
+        List<RingEvent> future = new ArrayList<RingEvent>();
+        future.add(new RingEvent(EventCodec.TEMP_EVENT, 900001, le16(3400, 3300, 2900)));
+        db.insertBatch(future, 3, now);
+        db.getWritableDatabase().execSQL("UPDATE events SET unix = " + (now + 5 * 86400) + " WHERE epoch = 3 AND ds = 900001");
+        check("ring finder: the future reading is dated in the future", db.count("SELECT COUNT(*) FROM events WHERE tag = " + EventCodec.TEMP_EVENT
+                + " AND unix > " + (now + 3600)) == 1, null);
+        app.openring.core.analysis.LastWorn.Result rf = app.openring.data.RightNow.lastWorn(db, now);
+        check("ring finder: a reading dated in the future is not the newest", rf.state == app.openring.core.analysis.LastWorn.OFF
+                && Math.abs(rf.newest - r.newest) < 1, (rf.newest - now) / 86400.0);
         check("ring finder: an empty history has no data", app.openring.data.RightNow.lastWorn(Db.get(freshDb("openring-lastworn-empty")), now).state
                 == app.openring.core.analysis.LastWorn.NO_DATA, null);
     }
