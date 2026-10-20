@@ -81,7 +81,7 @@ review. When you add a screen or a state worth seeing, add it to
 `.github/scripts/screens.sh`. The main screen accepts these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
 (boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd),
-`settings` (opens Settings at a card: `top`, `stages`, `screen` or `games`), `finder` (boolean, opens Find my ring).
+`settings` (opens Settings at a card: `top`, `stages`, `screen` or `games`), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.

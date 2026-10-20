@@ -36,6 +36,8 @@ public final class Prefs {
     public int sex() { return sp.getInt("sex", 2); } // 0 male, 1 female, 2 unspecified
     public int weightKg() { return sp.getInt("weight", 72); }
     public int heightCm() { return sp.getInt("height", 175); }
+    /** Whether a height was ever entered (the finder's step length says so when it uses 175 cm). */
+    public boolean hasHeight() { return sp.contains("height"); }
     /** Active calorie target; 0 means automatic. */
     public int targetKcal() { return sp.getInt("target_kcal", 0); }
 
