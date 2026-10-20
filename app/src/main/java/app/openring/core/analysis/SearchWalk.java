@@ -12,8 +12,9 @@ import java.util.List;
  * step moves the person one step length along the heading, every reading keeps where it was taken,
  * and {@link #locate()} fits a signal loss model to say where the ring probably is.
  *
- * Headings come from the phone's gyroscope based orientation ({@code GAME_ROTATION_VECTOR}), so
- * they are relative to where the person started, not to north.
+ * Headings come from the phone's gyroscope based orientation ({@code GAME_ROTATION_VECTOR}), whose
+ * zero is arbitrary: the first upright heading after Start becomes 0, so every heading, direction
+ * and map position here is relative to the way the person faced at Start (0 ahead, 90 to the right).
  */
 public final class SearchWalk {
     public static final int SECTORS = 12;
@@ -72,7 +73,10 @@ public final class SearchWalk {
     private final List<Sample> samples = new ArrayList<Sample>();
     private final List<Point> path = new ArrayList<Point>();
     private final boolean[] faced = new boolean[SECTORS];
-    private double heading = Double.NaN, walkHeading = Double.NaN;
+    private double heading = Double.NaN, walkHeading = Double.NaN, start = Double.NaN;
+    /** Heading of the step before, and a step taken while turning that waits for the next one. */
+    private double lastStepHeading = Double.NaN, pendingHeading = Double.NaN;
+    private long pendingAt;
     private boolean upright;
     private long headingAt = Long.MIN_VALUE;
     private double stepLength = StepDetector.stepLength(175), x, y;
@@ -94,7 +98,11 @@ public final class SearchWalk {
 
     /** The newest orientation: heading in degrees and whether the phone is upright enough. */
     public void heading(long atMs, double degrees, boolean upright) {
-        heading = norm(degrees);
+        if (Double.isNaN(start)) {
+            if (!upright) return; // nothing counts before the first upright heading
+            start = norm(degrees);
+        }
+        heading = norm(degrees - start);
         this.upright = upright;
         headingAt = atMs;
         if (upright) {
@@ -110,19 +118,51 @@ public final class SearchWalk {
         return upright;
     }
 
+    /** A step that turned more than this (degrees) from the step before only counts if the next one goes straight on. */
+    public static final double TURN_STEP_DEG = 25;
+
     /**
      * {@code n} steps were taken: the person moves one step length each along the newest upright
      * heading (while the phone tilts, the last upright heading is kept). Without any heading yet the
-     * steps are counted but go nowhere.
+     * steps are counted but go nowhere. Shuffling while turning on the spot is not walking: a step
+     * that turned more than {@link #TURN_STEP_DEG} from the step before waits, and moves only when the
+     * next step goes straight on (a corner); if the next step turns again, it is dropped.
      */
     public void steps(long atMs, int n) {
         if (n <= 0) return;
         steps += n;
         if (Double.isNaN(walkHeading)) return;
-        double a = Math.toRadians(walkHeading);
-        x += n * stepLength * Math.sin(a);
-        y += n * stepLength * Math.cos(a);
+        for (int i = 0; i < n; i++) {
+            double turned = Double.isNaN(lastStepHeading) ? 0 : diff(walkHeading, lastStepHeading);
+            lastStepHeading = walkHeading;
+            if (turned > TURN_STEP_DEG) {
+                pendingHeading = walkHeading;
+                pendingAt = atMs;
+                continue;
+            }
+            if (!Double.isNaN(pendingHeading)) {
+                move(pendingAt, pendingHeading);
+                pendingHeading = Double.NaN;
+            }
+            move(atMs, walkHeading);
+        }
+    }
+
+    private void move(long atMs, double h) {
+        double a = Math.toRadians(h);
+        x += stepLength * Math.sin(a);
+        y += stepLength * Math.cos(a);
         path.add(new Point(atMs, x, y));
+    }
+
+    /** The first upright heading after Start in the sensor's own terms (NaN before); all headings here are relative to it. */
+    public double start() {
+        return start;
+    }
+
+    /** A heading in the sensor's own terms, made relative to the start (unchanged before the start is known). */
+    public double relative(double degrees) {
+        return Double.isNaN(start) ? degrees : norm(degrees - start);
     }
 
     public int steps() {
@@ -143,9 +183,20 @@ public final class SearchWalk {
         return y;
     }
 
-    /** Metres walked (steps times step length). */
+    /** Metres walked (the steps that moved the person, times step length). */
     public double distance() {
-        return steps * stepLength;
+        return (path.size() - 1) * stepLength;
+    }
+
+    /** Seconds in which the ring was heard with the phone upright (half seconds with readings / 2). */
+    public double heardSeconds() {
+        return bins().size() / 2.0;
+    }
+
+    /** The walk spans enough of the room for the circle (whether or not the ring was heard enough). */
+    public boolean covered() {
+        double[] c = cover();
+        return c[0] >= COVER_M && c[1] >= WIDTH_M;
     }
 
     /** The farthest the person got from the start (metres): under {@link #SPOT_M} it is a turn on the spot. */
@@ -303,9 +354,9 @@ public final class SearchWalk {
     public static final long BIN_MS = 500;
     /**
      * The circle's radius: this many times the spread of the likely spots, at least {@link #MIN_RADIUS_M}.
-     * Set from simulated walks (FinderTest) so the circle holds the ring in about 9 of 10 walks.
+     * Set on simulated walks (FinderTest, tuning seeds); on fresh seeds the circle held the ring in 84 to 91 % of walks.
      */
-    public static final double RADIUS_K = 1.5, MIN_RADIUS_M = 1.0;
+    public static final double RADIUS_K = 1.8, MIN_RADIUS_M = 1.0;
     /** Best spots closer than this to the outer edge of the searched area count as "beyond the walk". */
     public static final double EDGE_M = 0.5;
     /**
@@ -369,8 +420,49 @@ public final class SearchWalk {
      * {@link #WIDTH_M} wide (not a straight line), and {@link #MIN_BINS} half seconds heard.
      */
     public boolean mapReady() {
-        double[] c = cover();
-        return c[0] >= COVER_M && c[1] >= WIDTH_M && bins().size() >= MIN_BINS;
+        return covered() && bins().size() >= MIN_BINS;
+    }
+
+    /** A copy of the record so far, for working out the circle on another thread while the walk goes on. */
+    public SearchWalk snapshot() {
+        SearchWalk c = new SearchWalk();
+        c.samples.addAll(samples);
+        c.path.clear();
+        c.path.addAll(path);
+        c.stepLength = stepLength;
+        c.x = x;
+        c.y = y;
+        c.steps = steps;
+        c.start = start;
+        c.heading = heading;
+        c.walkHeading = walkHeading;
+        System.arraycopy(faced, 0, c.faced, 0, SECTORS);
+        return c;
+    }
+
+    /** The fit uses at most this many points; a longer walk merges neighbouring half seconds (time stays even). */
+    public static final int MAX_BINS = 240;
+
+    /** Merges consecutive bins in groups so at most {@code max} are left (headings averaged as directions). */
+    public static List<double[]> merged(List<double[]> b, int max) {
+        if (b.size() <= max) return b;
+        int g = (b.size() + max - 1) / max;
+        List<double[]> out = new ArrayList<double[]>();
+        for (int i = 0; i < b.size(); i += g) {
+            double sx = 0, sy = 0, sc = 0, ss = 0, sr = 0, st = 0;
+            int k = 0;
+            for (int j = i; j < Math.min(b.size(), i + g); j++, k++) {
+                double[] q = b.get(j);
+                sx += q[0];
+                sy += q[1];
+                sc += Math.cos(Math.toRadians(q[2]));
+                ss += Math.sin(Math.toRadians(q[2]));
+                sr += q[3];
+                st += q[4];
+            }
+            out.add(bin(sx, sy, sc, ss, sr, st, k));
+        }
+        return out;
     }
 
     /** Counted readings averaged per half second: {x, y, heading, dBm, time ms} (the map's dots). */
@@ -414,7 +506,7 @@ public final class SearchWalk {
      */
     public Spot locate() {
         if (!mapReady()) return null;
-        List<double[]> b = bins();
+        List<double[]> b = merged(bins(), MAX_BINS);
         int m = b.size();
         double x0 = Double.POSITIVE_INFINITY, x1 = Double.NEGATIVE_INFINITY, y0 = Double.POSITIVE_INFINITY, y1 = Double.NEGATIVE_INFINITY;
         for (Point p : path) {
@@ -532,6 +624,16 @@ public final class SearchWalk {
             e += d * d;
         }
         return new double[] {level, shadow, e};
+    }
+
+    /** "about 2.1 m ahead and 0.8 m to the right of where you started" (x right, y ahead, metres). */
+    public static String where(double x, double y) {
+        String ahead = Math.abs(y) < 0.3 ? null : String.format(java.util.Locale.getDefault(), "%.1f", Math.abs(y)) + " m " + (y > 0 ? "ahead" : "behind");
+        String side = Math.abs(x) < 0.3 ? null : String.format(java.util.Locale.getDefault(), "%.1f", Math.abs(x)) + " m to the " + (x > 0 ? "right" : "left");
+        if (ahead == null && side == null) return "right around where you started";
+        if (ahead == null) return "about " + side + " of where you started";
+        if (side == null) return "about " + ahead + " of where you started";
+        return "about " + ahead + " and " + side + " of where you started";
     }
 
     /** The direction (0 to 11) a heading falls in. */

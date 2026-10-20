@@ -31,7 +31,8 @@ public final class DemoWalk {
             double dh = ((Math.toDegrees(Math.atan2(bx, by)) - hd) % 360 + 540) % 360 - 180;
             boolean turning = Math.abs(dh) > 5;
             if (turning) hd += Math.signum(dh) * Math.min(Math.abs(dh), 90 * 0.04);
-            out.add(new double[] {t, HEADING, SearchWalk.norm(hd + r.nextGaussian() * 2)});
+            // the first heading is exact, so the ring lies at RING_X, RING_Y in the walk's own frame
+            out.add(new double[] {t, HEADING, SearchWalk.norm(hd + (t == 0 ? 0 : r.nextGaussian() * 2))});
             if (!turning && t >= nextStep) {
                 nextStep = t + 1200;
                 double step = Math.min(0.72, Math.hypot(bx, by));

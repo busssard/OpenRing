@@ -222,7 +222,8 @@ public class FinderTest {
                     worst = 999;
                     continue;
                 }
-                double e = SearchWalk.diff(d.degrees, ring);
+                // directions are relative to the first heading after Start
+                double e = SearchWalk.diff(d.degrees, w.relative(ring));
                 sum += e;
                 worst = Math.max(worst, e);
                 if (!d.clear) unclear++;
@@ -238,12 +239,13 @@ public class FinderTest {
                 double sum = 0, worst = 0;
                 int unclear = 0, runs = 40;
                 for (int s = 0; s < runs; s++) {
-                    SearchWalk.Direction d = turn(ring, 2000 + s, 0, within).direction();
+                    SearchWalk tw = turn(ring, 2000 + s, 0, within);
+                    SearchWalk.Direction d = tw.direction();
                     if (d == null) {
                         worst = 999;
                         continue;
                     }
-                    double e = SearchWalk.diff(d.degrees, ring);
+                    double e = SearchWalk.diff(d.degrees, tw.relative(ring));
                     sum += e;
                     worst = Math.max(worst, e);
                     if (!d.clear) unclear++;
@@ -254,8 +256,10 @@ public class FinderTest {
             }
         }
         // starting the turn facing another way changes nothing: headings are relative to the start
-        SearchWalk.Direction d = turn(90, 5, 170).direction();
-        check("turn starting at 170 degrees", d != null && SearchWalk.diff(d.degrees, 90) <= 30, d == null ? null : d.degrees);
+        SearchWalk t170 = turn(90, 5, 170);
+        SearchWalk.Direction d = t170.direction();
+        check("turn starting at 170 degrees: the start is 0", Math.abs(t170.start() - 170) < 20 && d != null
+                && SearchWalk.diff(d.degrees, SearchWalk.norm(90 - t170.start())) <= 30, d == null ? null : d.degrees);
         // no body shadow and a flat signal: no clear direction
         Random r = new Random(3);
         SearchWalk flat = new SearchWalk();
@@ -271,10 +275,11 @@ public class FinderTest {
         SearchWalk w = new SearchWalk();
         check("no heading yet: reading not counted", !w.rssi(0, -60) && w.samples().isEmpty() && Double.isNaN(w.heading()));
         w.heading(0, 10, true);
-        check("fresh heading: counted", w.rssi(100, -60) && w.samples().size() == 1 && w.samples().get(0).heading == 10);
+        check("fresh heading: counted", w.rssi(100, -60) && w.samples().size() == 1 && w.samples().get(0).heading == 0 && w.start() == 10);
         check("old heading: not counted", !w.rssi(1000, -60) && w.samples().size() == 1);
         w.heading(1000, 40, false);
-        check("tilted: kept but not counted", !w.rssi(1100, -50) && w.samples().size() == 2 && !w.upright() && !w.samples().get(1).upright);
+        check("tilted: kept but not counted", !w.rssi(1100, -50) && w.samples().size() == 2 && !w.upright() && !w.samples().get(1).upright
+                && w.samples().get(1).heading == 30);
         check("tilted heading does not count as faced", w.sectorsFaced() == 1 && w.coveredDegrees() == 30);
         check("not ready after one direction", !w.ready() && w.direction() == null);
         // facing 11 of 12 directions, but readings from only 2: not ready
@@ -346,6 +351,11 @@ public class FinderTest {
         StepDetector hard = new StepDetector();
         int nh = trace(hard, r, 0, 20000, 2.5, 12, 0.5, 0);
         check("shaking hard in a walking rhythm: no steps", nh <= 1, nh);
+        for (double hz : new double[] {4.5, 6}) {
+            StepDetector mid = new StepDetector();
+            int nm = trace(mid, r, 0, 20000, hz, 3, 0.3, 0);
+            check("shaking at " + hz + " Hz under the shake limit: not walking (the bump rule does not let it through)", nm <= 2, nm);
+        }
         // a walk with a pause: the pause adds nothing, the second run starts after a confirming step
         StepDetector pause = new StepDetector();
         int a = trace(pause, r, 0, 10000, 1.5, 1.5, 0.2, 0);
@@ -355,6 +365,22 @@ public class FinderTest {
         // a gap in the samples (sensor paused) starts over without a step
         StepDetector gap = new StepDetector();
         check("first sample and a sample after a long gap add nothing", gap.add(0, 0, 9.81, 0) == 0 && gap.add(5000, 0, 15, 0) == 0);
+        // heel strike: each step lands with two bumps 150 ms apart (the second dips below the fall line in between)
+        for (double hz : new double[] {1.2, 1.8}) {
+            StepDetector heel = new StepDetector();
+            Random hr = new Random(13);
+            int nh2 = 0;
+            for (long t = 0; t < 30000; t += 10) {
+                double ph = (t * hz / 1000.0) % 1.0, v = 0;
+                double t1 = ph / hz * 1000; // ms into this step
+                v += 2.5 * Math.exp(-Math.pow((t1 - 60) / 35, 2));  // heel
+                v += 2.5 * Math.exp(-Math.pow((t1 - 210) / 35, 2)); // toe, 150 ms later
+                v -= 3.5 * Math.exp(-Math.pow((t1 - 135) / 25, 2)); // the dip between them
+                v += 0.6 * Math.cos(2 * Math.PI * ph); // the body sways up at the footfall, down in between
+                nh2 += heel.add(t, hr.nextGaussian() * 0.1, 9.81 + v, 0);
+            }
+            check("heel strike double bump at " + hz + " steps a second: one step per stride", Math.abs(nh2 - 30 * hz) <= 2, nh2 + " of " + 30 * hz);
+        }
         check("step length 0.41 x height", Math.abs(StepDetector.stepLength(175) - 0.7175) < 1e-9);
     }
 
@@ -381,17 +407,28 @@ public class FinderTest {
         check("then 6 to the right: 3 m right", Math.abs(w.x() - 3) < 1e-9 && Math.abs(w.y() - 3) < 1e-9, w.x() + "," + w.y());
         t = walkLeg(w, t, 180, 6);
         t = walkLeg(w, t, 270, 6);
-        check("a square comes back to the start", Math.hypot(w.x(), w.y()) < 1e-9 && Math.abs(w.reach() - Math.sqrt(18)) < 1e-9 && Math.abs(w.distance() - 13) < 1e-9);
+        check("a square comes back to the start", Math.hypot(w.x(), w.y()) < 1e-9 && Math.abs(w.reach() - Math.sqrt(18)) < 1e-9 && Math.abs(w.distance() - 12) < 1e-9 && w.steps() == 26);
         double[] c = w.cover();
         check("a 3 m square covers 3 m or more in two directions and is 3 m wide", c[0] >= 3 && Math.abs(c[1] - 3) < 0.01, Arrays.toString(c));
-        check("readings keep where they were taken", w.samples().get(6).y == 3 && w.samples().get(6).x == 0 && w.samples().get(7).x == 0.5);
+        check("readings keep where they were taken", w.samples().get(6).y == 3 && w.samples().get(6).x == 0 && w.samples().get(8).x == 1.0);
         check("a covered square is ready for the map", w.mapReady());
         // tilted: the step keeps the last upright heading
         SearchWalk tl = new SearchWalk().stepLength(1);
         tl.heading(0, 90, true);
-        tl.heading(10, 200, false);
+        tl.heading(5, 180, true);
+        tl.heading(10, 300, false);
         tl.steps(20, 1);
-        check("a step while tilted keeps the last upright heading", Math.abs(tl.x() - 1) < 1e-9 && Math.abs(tl.y()) < 1e-9);
+        check("a step while tilted keeps the last upright heading (relative to the start)", Math.abs(tl.x() - 1) < 1e-9 && Math.abs(tl.y()) < 1e-9, tl.x() + "," + tl.y());
+        SearchWalk notYet = new SearchWalk();
+        notYet.heading(0, 50, false);
+        check("a tilted first heading does not set the start", Double.isNaN(notYet.start()) && Double.isNaN(notYet.heading()) && notYet.relative(50) == 50);
+        // MUST from review: the sensor's zero is arbitrary; the first leg goes ahead whatever it reads at Start
+        SearchWalk at70 = new SearchWalk().stepLength(0.5);
+        long t70 = walkLeg(at70, 0, 70, 6);
+        walkLeg(at70, t70, 160, 6);
+        check("start facing 70 degrees: the first leg goes ahead, the second to the right", Math.abs(at70.path().get(6).y - 3) < 1e-9
+                && Math.abs(at70.path().get(6).x) < 1e-9 && Math.abs(at70.x() - 3) < 1e-9, at70.x() + "," + at70.y());
+        check("start facing 70: the text says ahead", SearchWalk.where(at70.path().get(6).x, at70.path().get(6).y).matches("about 3.0 m ahead of where you started") && SearchWalk.where(-1, -2).equals("about 2.0 m behind and 1.0 m to the left of where you started") && SearchWalk.where(0.1, 0.2).equals("right around where you started") && SearchWalk.where(2, 0).equals("about 2.0 m to the right of where you started"));
         // a long straight line, even diagonal, is not enough
         SearchWalk line = new SearchWalk().stepLength(0.7);
         walkLeg(line, 0, 45, 30);
@@ -432,7 +469,9 @@ public class FinderTest {
      * 6 degrees a minute, plus 3 degrees of noise. Returns {error m, radius m, 1 if inside, 1 if a spot, 1 if clear}.
      */
     static double[] searchWalk(long seed, double[][] legs, double noise, double shadowDb, boolean drift) {
-        Random r = new Random(seed);
+        // neighbouring seeds give java.util.Random nearly the same first numbers (the ring would sit in
+        // almost the same spot in every walk); mix the seed first so the walks are really different
+        Random r = new Random(mix(seed));
         double rx = 0.3 + r.nextDouble() * 4.4, ry = 0.3 + r.nextDouble() * 4.4;
         double hz = 0.3 + r.nextDouble(), nTrue = 2 + r.nextDouble() * 1.5, p0 = -58 - r.nextDouble() * 6;
         double[] kx = new double[4], ky = new double[4], ph = new double[4];
@@ -478,8 +517,17 @@ public class FinderTest {
         SearchWalk.Spot s = w.locate();
         if (s == null) return new double[] {Double.NaN, 0, 0, 0, 0};
         // the map starts at the first waypoint facing ahead (+y), like the room
-        double e = Math.hypot(s.x - (rx - wp[0][0]), s.y - (ry - wp[0][1]));
+        // the map's up is the first heading after Start: turn the truth into that frame
+        double b = Math.toDegrees(Math.atan2(rx - wp[0][0], ry - wp[0][1])) - w.start(), dist = Math.hypot(rx - wp[0][0], ry - wp[0][1]);
+        double e = Math.hypot(s.x - dist * Math.sin(Math.toRadians(b)), s.y - dist * Math.cos(Math.toRadians(b)));
         return new double[] {e, s.radius, e <= s.radius ? 1 : 0, 1, s.clear ? 1 : 0};
+    }
+
+    /** A 64 bit mixer (SplitMix64's finaliser). */
+    static long mix(long z) {
+        z = (z ^ (z >>> 30)) * 0xbf58476d1ce4e5b9L;
+        z = (z ^ (z >>> 27)) * 0x94d049bb133111ebL;
+        return z ^ (z >>> 31);
     }
 
     /** Around the room 0.8 m from the walls, then across it. */
@@ -487,13 +535,19 @@ public class FinderTest {
     /** An L over part of the room: 3.5 m along one wall, 3 m along the next. */
     static final double[][] PART = {{0.8, 0.8}, {0.8, 4.3}, {3.8, 4.3}};
 
-    /** Runs {@code runs} walks; prints and returns {median, worst, share inside, share with a spot}. */
+    /**
+     * Seeds for the walks below. RADIUS_K and the other numbers were set on other seeds (bases 100,
+     * 500, 7400, 20000 and 55555); these walks were never used for tuning, so they measure the promise.
+     */
+    static final long FRESH = 300000;
+
+    /** Runs {@code runs} walks; prints and returns {median, 90th percentile, worst, share inside, share with a spot, share not clear}. */
     static double[] walkStats(String name, double[][] legs, double noise, double shadow, boolean drift, int runs) {
         List<Double> errs = new ArrayList<Double>();
         double inside = 0;
         int unclear = 0;
         for (int i = 0; i < runs; i++) {
-            double[] o = searchWalk(7400 + i, legs, noise, shadow, drift);
+            double[] o = searchWalk(FRESH + i, legs, noise, shadow, drift);
             if (o[3] == 0) continue;
             if (o[4] == 0) unclear++;
             errs.add(o[0]);
@@ -501,34 +555,33 @@ public class FinderTest {
         }
         Collections.sort(errs);
         int n = errs.size();
-        double median = n == 0 ? 99 : errs.get(n / 2), worst = n == 0 ? 99 : errs.get(n - 1);
-        System.out.printf(Locale.US, "  search walk, %s, noise %.0f dB, shadow %.0f dB%s: median error %.2f m, worst %.2f m, circle held the ring in %.0f %%, a spot in %d of %d (%d not clear)%n",
-                name, noise, shadow, drift ? ", drift" : "", median, worst, n == 0 ? 0 : 100 * inside / n, n, runs, unclear);
-        return new double[] {median, worst, n == 0 ? 0 : inside / n, n / (double) runs, unclear / (double) runs};
+        double median = n == 0 ? 99 : errs.get(n / 2), p90 = n == 0 ? 99 : errs.get((int) (n * 0.9)), worst = n == 0 ? 99 : errs.get(n - 1);
+        System.out.printf(Locale.US, "  search walk, %s, noise %.0f dB, shadow %.0f dB%s: median error %.2f m, 90th percentile %.2f m, worst %.2f m, circle held the ring in %.0f %%, a spot in %d of %d (%d not clear)%n",
+                name, noise, shadow, drift ? ", drift" : "", median, p90, worst, n == 0 ? 0 : 100 * inside / n, n, runs, unclear);
+        return new double[] {median, p90, worst, n == 0 ? 0 : inside / n, n / (double) runs, unclear / (double) runs};
     }
 
     static void walks() {
-        double worstMedian = 0, worstAll = 0, leastInside = 1;
+        // limits written down before running the fresh seeds, from what the tuning seeds showed
         for (double noise : new double[] {4, 6}) {
             for (double shadow : new double[] {0, 10}) {
-                double[] s = walkStats("around and across", AROUND, noise, shadow, true, 60);
-                worstMedian = Math.max(worstMedian, s[0]);
-                worstAll = Math.max(worstAll, s[1]);
-                leastInside = Math.min(leastInside, s[2]);
-                check("walk around the room (noise " + noise + ", shadow " + shadow + "): a spot every time", s[3] == 1, s[3]);
-                check("walk around the room (noise " + noise + ", shadow " + shadow + "): a clear circle in at least 9 of 10", s[4] <= 0.1, s[4]);
+                String k = "walk around the room (noise " + noise + ", shadow " + shadow + "): ";
+                double[] s = walkStats("around and across", AROUND, noise, shadow, true, 200);
+                check(k + "a spot every time", s[4] == 1, s[4]);
+                check(k + "median error under 1 m", s[0] < 1.0, s[0]);
+                check(k + "90th percentile under 2.5 m", s[1] < 2.5, s[1]);
+                check(k + "worst under 4.5 m", s[2] < 4.5, s[2]);
+                check(k + "the circle holds the ring in at least 8 of 10 walks", s[3] >= 0.8, s[3]);
+                check(k + "a clear circle in at least 9 of 10", s[5] <= 0.1, s[5]);
             }
         }
-        double[] clean = walkStats("around and across", AROUND, 4, 10, false, 60);
-        // the promise in the pull request comes from these numbers
-        check("walk around the room: median error under 1 m", worstMedian < 1.0, worstMedian);
-        check("walk around the room: worst error under 3.5 m", worstAll < 3.5, worstAll);
-        check("walk around the room: the circle holds the ring in at least 8 of 10 walks", leastInside >= 0.8, leastInside);
+        double[] clean = walkStats("around and across", AROUND, 4, 10, false, 200);
         check("no drift: median under 1 m", clean[0] < 1.0, clean[0]);
-        double[] part = walkStats("L over part of the room", PART, 5, 10, true, 60);
-        check("L walk: a spot every time", part[3] == 1, part[3]);
-        check("L walk: median error under 2 m", part[0] < 2.0, part[0]);
-        check("L walk: worst error under 4 m", part[1] < 4.0, part[1]);
+        double[] part = walkStats("L over part of the room", PART, 5, 10, true, 200);
+        check("L walk: a spot every time", part[4] == 1, part[4]);
+        check("L walk: median error under 1.5 m", part[0] < 1.5, part[0]);
+        check("L walk: worst under 6.5 m", part[2] < 6.5, part[2]);
+        check("L walk: the circle holds the ring in at least 8 of 10", part[3] >= 0.8, part[3]);
         // a flat signal everywhere (ring in another room, the same faint signal): no clear spot
         Random r = new Random(5);
         SearchWalk flat = new SearchWalk().stepLength(0.7);
@@ -584,6 +637,24 @@ public class FinderTest {
         }
         SearchWalk.Spot bs = big.locate();
         check("a 12 m walk: ring found within 1.5 m", bs != null && Math.hypot(bs.x - 9, bs.y - 4) < 1.5 && bs.clear && bs.bins > 100, bs == null ? null : bs.x + "," + bs.y);
+        // the circle is worked out on a copy of the record (another thread on the phone): same answer
+        SearchWalk copy = big.snapshot();
+        SearchWalk.Spot cs = copy.locate();
+        check("a snapshot gives the same circle and keeps the record", cs != null && cs.x == bs.x && cs.y == bs.y && cs.radius == bs.radius
+                && copy.steps() == big.steps() && copy.stepLength() == 1 && copy.x() == big.x() && copy.start() == big.start()
+                && copy.heardSeconds() == big.heardSeconds() && copy.sectorsFaced() == big.sectorsFaced());
+        // a long walk is merged to at most MAX_BINS points for the fit, keeping the averages
+        List<double[]> many = new ArrayList<double[]>();
+        double sum = 0;
+        for (int i = 0; i < 1000; i++) {
+            many.add(new double[] {i * 0.01, 0, 90, -60 - i % 7, i * 500});
+            sum += -60 - i % 7;
+        }
+        List<double[]> fewer = SearchWalk.merged(many, SearchWalk.MAX_BINS);
+        double sum2 = 0;
+        for (double[] q : fewer) sum2 += q[3];
+        check("long walks are merged for the fit", fewer.size() <= SearchWalk.MAX_BINS && fewer.size() >= SearchWalk.MAX_BINS / 2
+                && Math.abs(sum2 / fewer.size() - sum / 1000) < 0.1 && Math.abs(fewer.get(0)[2] - 90) < 1e-6 && SearchWalk.merged(fewer, 1000) == fewer, fewer.size());
         // the demo walk (screenshots) shows a clear circle over its made up ring
         List<double[]> ev = DemoWalk.events();
         SearchWalk demo = new SearchWalk().stepLength(0.72);
@@ -593,6 +664,23 @@ public class FinderTest {
         SearchWalk.Spot ds = demo.locate();
         check("demo walk: a clear circle holding its ring", ds != null && ds.clear && Math.hypot(ds.x - DemoWalk.RING_X, ds.y - DemoWalk.RING_Y) <= ds.radius
                 && ev.get(ev.size() - 1)[0] < 70000, ds == null ? null : ds.x + "," + ds.y + " r " + ds.radius + " t " + ev.get(ev.size() - 1)[0]);
+        // review: turning on the spot while shuffling (8 steps in 20 s) stays a turn, not a walk
+        SearchWalk shuffle = new SearchWalk().stepLength(0.72);
+        Random sr = new Random(21);
+        for (long st = 0; st <= 20000; st += 20) {
+            double faced = 360.0 * st / 20000;
+            shuffle.heading(st, faced + sr.nextGaussian() * 3, true);
+            if (st % 120 == 0) shuffle.rssi(st, -66 - 10 * (1 - Math.cos(Math.toRadians(faced - 90))) / 2 + sr.nextGaussian() * 4);
+            if (st > 0 && st % 2500 == 0) shuffle.steps(st, 1);
+        }
+        check("shuffling while turning: 8 steps counted, no map, still a direction", shuffle.steps() == 8 && shuffle.reach() < SearchWalk.SPOT_M
+                && shuffle.direction() != null, shuffle.steps() + " steps, reach " + shuffle.reach());
+        // a corner taken in one step still counts that step (it waits for the next straight one)
+        SearchWalk corner = new SearchWalk().stepLength(1);
+        walkLeg(corner, walkLeg(corner, 0, 0, 3), 90, 1);
+        check("a corner step waits", corner.path().size() == 4 && Math.abs(corner.y() - 3) < 1e-9 && corner.x() == 0);
+        corner.steps(9000, 1);
+        check("and moves with the next straight step", Math.abs(corner.x() - 2) < 1e-9 && corner.distance() == 5);
         // turning on the spot: no steps, no map; the phase 1 direction still works
         SearchWalk spin = turn(90, 3, 0);
         check("turning on the spot: no map, a direction", spin.reach() == 0 && !spin.mapReady() && spin.locate() == null && spin.direction() != null);

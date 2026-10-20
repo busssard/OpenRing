@@ -136,13 +136,16 @@ can run meanwhile. Everything below stops in `onPause`.
   `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the
   strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard.
 * Search walk (phase 2): `core/analysis/StepDetector` counts steps from the accelerometer (registered
-  only while recording; no activity recognition permission), each step moves the person 0.41 × height
-  along the last upright heading, and every reading keeps its place. Once the walk spans 2 m in two
+  only while recording; no activity recognition permission; a second bump within 250 ms is the same
+  footfall), each step moves the person 0.41 × height along the last upright heading (relative to the
+  first upright heading after Start, since the sensor's zero is arbitrary; a step that turned more than
+  25° only moves if the next one goes straight on, so shuffling while turning stays a turn), and every
+  reading keeps its place. Once the walk spans 2 m in two
   directions (at least 1 m wide, 6 s of readings), `SearchWalk.locate` fits signal = level −
   10 n log10(distance) − body shadow over a 0.2 m grid (walk plus 2 m), n 2 to 3.5, and gives a
-  likelihood weighted centre and radius (1.5 × spread, at least 1 m; none above 3 m, at the grid's edge
+  likelihood weighted centre and radius (1.8 × spread, at least 1 m; none above 3 m, at the grid's edge
   or when the model explains under 15 % of the signal's changes). `ui/MiniMap` draws it; under 1 m
-  from the start the turn dial stays. `DemoWalk` is the made up walk for demo mode.
+  from the start the turn dial stays. The fit runs on its own thread on `SearchWalk.snapshot()` (at most 240 points). `DemoWalk` is the made up walk for demo mode.
 
 ## Known limits
 
