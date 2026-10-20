@@ -27,6 +27,13 @@ public final class Proximity {
     public static final double EMPTY = -100, FULL = -45;
     /** Time between clicks: slowest when the meter is empty, fastest when full. */
     public static final long CLICK_SLOW_MS = 1200, CLICK_FAST_MS = 70;
+    /**
+     * Readings outside {@link #MIN_DBM} to {@link #MAX_DBM} cannot be real (issue #95): 127 is the
+     * Bluetooth controller's "not available" and -127 Android's lowest placeholder; phone receivers
+     * stop decoding at about -100 to -105 dBm, and a received signal never reaches the ring's own
+     * sending power (about 0 dBm).
+     */
+    public static final double MIN_DBM = -120, MAX_DBM = -1;
 
     private final double[] last = new double[MEDIAN_N];
     private int count;
@@ -34,8 +41,17 @@ public final class Proximity {
     private long lastAt = Long.MIN_VALUE;
     private int band = NOT_HEARD;
 
-    /** Adds one reading at {@code atMs} (any monotonic clock) and returns the smoothed value. */
+    /** Whether {@code dBm} can be a real signal strength (see {@link #MIN_DBM}). */
+    public static boolean plausible(double dBm) {
+        return dBm >= MIN_DBM && dBm <= MAX_DBM; // false for NaN too
+    }
+
+    /**
+     * Adds one reading at {@code atMs} (any monotonic clock) and returns the smoothed value. A reading
+     * that is not {@link #plausible} is ignored: it changes nothing and does not count as heard.
+     */
     public double add(long atMs, double rssi) {
+        if (!plausible(rssi)) return value;
         if (lastAt != Long.MIN_VALUE && atMs - lastAt >= LOST_MS) reset();
         lastAt = atMs;
         last[count % MEDIAN_N] = rssi;

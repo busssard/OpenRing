@@ -111,8 +111,9 @@ public final class SearchWalk {
         }
     }
 
-    /** Records a signal reading; returns whether it counts (a fresh heading, phone upright). */
+    /** Records a signal reading; returns whether it counts (a fresh heading, phone upright, a {@link Proximity#plausible} value). */
     public boolean rssi(long atMs, double dBm) {
+        if (!Proximity.plausible(dBm)) return false; // 127 means "not available" (issue #95)
         if (Double.isNaN(heading) || atMs - headingAt > HEADING_MAX_AGE_MS || atMs < headingAt - HEADING_MAX_AGE_MS) return false;
         samples.add(new Sample(atMs, heading, dBm, upright, x, y));
         return upright;

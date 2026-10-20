@@ -136,7 +136,13 @@ can run meanwhile. Everything below stops in `onPause`.
 * Hot and cold: `RingScanner.watch` runs one `SCAN_MODE_LOW_LATENCY` scan (Android blocks the sixth
   start within 30 s, so `RingScanner` counts the starts of `find` and `watch` together and spaces them). `core/analysis/Proximity` smooths the signal (median of 5,
   then 35 % follow), bands at -84, -72 and -60 dBm with 4 dB hysteresis, and the click interval. While
-  the ring is connected (this app or another) it does not advertise; the screen says so.
+  the ring is connected (this app or another) it does not advertise; the screen says so. Readings outside
+  -120 to -1 dBm (`Proximity.plausible`; 127 is the controller's "not available") are dropped in
+  `FinderActivity.heard` and again in `Proximity.add` and `SearchWalk.rssi`, and do not count as heard
+  (issue #95). After a scan failure `core/analysis/ScanRetry` holds the 30 s wait; Bluetooth off or a
+  missing permission ends it, so the screen shows the real reason and starts again (issue #96).
+* The screen is locked to portrait (the walk assumes an upright phone, and turning on the spot would
+  otherwise rotate the screen and lose the walk) and handles size changes itself (issue #96).
 * Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from
   `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the
   strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard.
