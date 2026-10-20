@@ -357,6 +357,8 @@ public final class Charts {
         private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG), area = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint(Paint.ANTI_ALIAS_FLAG), dot = new Paint(Paint.ANTI_ALIAS_FLAG);
         private boolean markMin;
+        private boolean ago;
+        private double minSpan = Double.NaN;
         private boolean daily;
         private String emptyText = "No data";
         private java.time.LocalDate dayEnd;
@@ -433,6 +435,16 @@ public final class Charts {
             return this;
         }
 
+        /**
+         * A live chart (the ring finder, issue #74): the time axis reads "2 min ago" to "now" and the
+         * readout says how long ago; the automatic y range spans at least {@code minSpan}.
+         */
+        public LineChart ago(double minSpan) {
+            ago = true;
+            this.minSpan = minSpan;
+            return this;
+        }
+
         /** New data for a live chart; a touch readout stays where it is (the ring finder, issue #74). */
         public void data(TS s, double from, double to) {
             series = s.sort();
@@ -452,11 +464,17 @@ public final class Charts {
             }
             double lo = yMin, hi = yMax;
             if (Double.isNaN(lo) || Double.isNaN(hi)) {
-                lo = series.min();
-                hi = series.max();
-                double padY = Math.max(1, (hi - lo) * 0.15);
-                lo -= padY;
-                hi += padY;
+                if (!Double.isNaN(minSpan)) {
+                    double[] r = app.openring.core.analysis.Proximity.chartRange(series.min(), series.max(), minSpan);
+                    lo = r[0];
+                    hi = r[1];
+                } else {
+                    lo = series.min();
+                    hi = series.max();
+                    double padY = Math.max(1, (hi - lo) * 0.15);
+                    lo -= padY;
+                    hi += padY;
+                }
             }
             if (hi - lo < 1e-6) hi = lo + 1;
             if (daily) {
@@ -558,7 +576,7 @@ public final class Charts {
                 int best = 0;
                 for (int k = 1; k < shown; k++) if (Math.abs(xs[k] - scrubX) < Math.abs(xs[best] - scrubX)) best = k;
                 double t = series.t(idx[best]);
-                String when = daily ? dayLabel(t) : clock(t);
+                String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t) : clock(t);
                 cv.drawCircle(xs[best], ys[best], Ui.dp(getContext(), 4.5f), dot);
                 drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit);
             }
@@ -570,6 +588,7 @@ public final class Charts {
         }
 
         private String clockOrDate(double t) {
+            if (ago) return app.openring.core.analysis.Proximity.ago(to - t);
             if (daily || to - from > 3 * 86400) {
                 ZonedDateTime z = Instant.ofEpochSecond((long) t).atZone(zone);
                 return z.getDayOfMonth() + "." + z.getMonthValue() + ".";

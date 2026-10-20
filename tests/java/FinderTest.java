@@ -26,6 +26,7 @@ public class FinderTest {
         smoothing();
         bands();
         clicks();
+        chartAxis();
         headings();
         turns();
         turnRules();
@@ -120,6 +121,18 @@ public class FinderTest {
                 Proximity.label(Proximity.FAR), Proximity.label(Proximity.NOT_HEARD)};
         check("labels from the plan", labels[0].equals("Very close (within an arm)") && labels[1].equals("In this room")
                 && labels[2].equals("Nearby") && labels[3].equals("Far or behind walls") && labels[4].equals("Not heard for 10 seconds"));
+    }
+
+    static void chartAxis() {
+        check("ago: now", Proximity.ago(0).equals("now") && Proximity.ago(2.4).equals("now") && Proximity.ago(-5).equals("now"));
+        check("ago: seconds", Proximity.ago(35).equals("35 s ago") && Proximity.ago(59.4).equals("59 s ago"), Proximity.ago(35));
+        check("ago: minutes", Proximity.ago(60).equals("1 min ago") && Proximity.ago(120).equals("2 min ago") && Proximity.ago(90).equals("1 min 30 s ago"), Proximity.ago(90));
+        double[] narrow = Proximity.chartRange(-62, -60, Proximity.CHART_MIN_SPAN);
+        check("chart range: at least 20 dB around the middle", narrow[0] == -71 && narrow[1] == -51, Arrays.toString(narrow));
+        double[] wide = Proximity.chartRange(-90, -50, Proximity.CHART_MIN_SPAN);
+        check("chart range: a wide signal keeps its own range with room", wide[0] == -96 && wide[1] == -44, Arrays.toString(wide));
+        double[] one = Proximity.chartRange(-60, -60, Proximity.CHART_MIN_SPAN);
+        check("chart range: one value", one[1] - one[0] == 20 && one[0] == -70, Arrays.toString(one));
     }
 
     static void clicks() {

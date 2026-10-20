@@ -216,7 +216,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         hot.addView(Ui.caption(this, "Signal, last 2 minutes"));
         trailBox = Ui.vbox(this);
         double now0 = System.currentTimeMillis() / 1000.0;
-        trailChart = new Charts.LineChart(this, new TS(), now0 - 120, now0, Ui.OXY).noFill().unit(" dBm").empty("No signal yet");
+        trailChart = new Charts.LineChart(this, new TS(), now0 - 120, now0, Ui.OXY).noFill().unit(" dBm").empty("No signal yet").ago(Proximity.CHART_MIN_SPAN);
         trailBox.addView(trailChart, Ui.sized(this, -1, 130));
         hot.addView(trailBox, Ui.sized(this, -1, 130));
         hot.addView(Ui.gap(this, 6));
@@ -274,6 +274,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
 
         if (demo && demoTurnOnly) demoTurn();
         else if (demo) demoWalk();
+        if (demo) demoTrail();
         loadLast();
         showTurn();
     }
@@ -872,6 +873,20 @@ public final class FinderActivity extends Activity implements SensorEventListene
         wallOffset = System.currentTimeMillis() - 60000 - (long) ev.get(ev.size() - 1)[0];
         spot = walk.locate();
         facing = walk.heading();
+    }
+
+    /** Demo: the last 2 minutes of the made up signal, so the chart shows a trail from the start. */
+    void demoTrail() {
+        Proximity p = new Proximity();
+        Random r = new Random(75);
+        double now = System.currentTimeMillis() / 1000.0;
+        for (int i = 800; i > 0; i--) {
+            double t = now - i * 0.15;
+            double v = -60 + 3 * Math.sin(t / 7.0) - 8 * (1 - Math.cos(Math.toRadians(DEMO_RING_AT))) / 2 + r.nextGaussian() * 2.5;
+            p.add((long) (t * 1000), Math.round(v));
+            trail.addLast(new double[] {t, p.value()});
+        }
+        drawTrail();
     }
 
     /** Demo (extra demo_turn): a finished turn (the ring at 300 degrees) so the dial shows petals and an arrow. */
