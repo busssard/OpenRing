@@ -28,6 +28,14 @@ public final class LastWorn {
     public static final double NEAR_S = 1800;
     /** Warm for longer than this without any heart rate is not trusted as a finger (1 hour). */
     public static final double NO_HR_S = 3600;
+    /**
+     * The heart rate rule needs proof that the ring stores daytime heart rate: at least this many warm
+     * readings outside sleep (up to the newest daytime heart rate), of which {@link #DAY_COVER} have one
+     * within {@link #NEAR_S}. A ring with only night heart rate (or sparse daytime heart rate) is judged
+     * by temperature, as before issue #94.
+     */
+    public static final int MIN_DAY_READINGS = 12;
+    public static final double DAY_COVER = 0.7;
 
     public static final int NO_DATA = 0, WORN = 1, OFF = 2, UNSURE = 3;
 
@@ -47,6 +55,10 @@ public final class LastWorn {
         public double newest = Double.NaN;
         /** The newest heart rate that counts (unix seconds), NaN when none. */
         public double lastHr = Double.NaN;
+        /** Whether the heart rate rule applied (the ring stores daytime heart rate, see {@link #DAY_COVER}). */
+        public boolean hrRule;
+        /** WORN: the newest warm stretch has a heart rate near it. */
+        public boolean confirmed;
         /** WORN: warm for under an hour with no heart rate near yet, so probably just put on. */
         public boolean justOn;
         /** Whether the history holds any heart rate; without one, temperature alone decides. */
@@ -64,12 +76,18 @@ public final class LastWorn {
         public double strayHrAt = Double.NaN;
     }
 
-    /**
-     * @param tempT times of the skin temperature readings (unix seconds, any order)
-     * @param tempC the readings in C
-     * @param hrT   times of valid heart rate readings (any order), may be empty
-     */
+    /** All heart rates count as daytime ones (see {@link #find(double[], double[], double[], double[])}). */
     public static Result find(double[] tempT, double[] tempC, double[] hrT) {
+        return find(tempT, tempC, new double[0], hrT);
+    }
+
+    /**
+     * @param tempT   times of the skin temperature readings (unix seconds, any order)
+     * @param tempC   the readings in C
+     * @param nightT  times of heart rates the ring stores while asleep (HRV events), any order, may be empty
+     * @param dayT    times of the other valid heart rates (daytime measurement), any order, may be empty
+     */
+    public static Result find(double[] tempT, double[] tempC, double[] nightT, double[] dayT) {
         Result r = new Result();
         int n = tempT.length;
         if (n == 0) return r;
@@ -90,21 +108,65 @@ public final class LastWorn {
             warm[i] = c[i] >= WORN_MIN_C;
         }
         r.newest = t[n - 1];
-        double[] hr = hrT.clone();
+        double[] night = nightT.clone(), day = dayT.clone();
+        Arrays.sort(night);
+        Arrays.sort(day);
+        double[] hr = new double[night.length + day.length];
+        System.arraycopy(night, 0, hr, 0, night.length);
+        System.arraycopy(day, 0, hr, night.length, day.length);
         Arrays.sort(hr);
         r.hasHr = hr.length > 0;
 
-        // 1. heart rates that count: another heart rate or a warm reading near, or newer than every temperature
+        // 1. does this ring store daytime heart rate? Only then is warmth without one suspicious.
+        int eligible = 0, covered = 0;
+        double lastDay = day.length > 0 ? day[day.length - 1] : Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < n && t[i] <= lastDay; i++) {
+            if (!warm[i] || hasNear(night, t[i], NEAR_S)) continue;
+            eligible++;
+            if (hasNear(day, t[i], NEAR_S)) covered++;
+        }
+        r.hrRule = eligible >= MIN_DAY_READINGS && covered >= DAY_COVER * eligible;
+
+        // 2. heart rates with another heart rate near (a lone one is judged in step 4)
+        boolean[] paired = new boolean[hr.length];
+        int pairs = 0;
+        for (int j = 0; j < hr.length; j++) {
+            paired[j] = (j > 0 && hr[j] - hr[j - 1] <= NEAR_S) || (j + 1 < hr.length && hr[j + 1] - hr[j] <= NEAR_S);
+            if (paired[j]) pairs++;
+        }
+        double[] pairedT = new double[pairs];
+        for (int j = 0, g = 0; j < hr.length; j++) if (paired[j]) pairedT[g++] = hr[j];
+
+        // 3. warm stretches: one with a heart rate near any of its readings is a finger as a whole (the
+        // heart rate may stop while the hand moves); one without counts only when the ring stores too
+        // little daytime heart rate to check it (then temperature decides, as before issue #94)
+        boolean[] finger = new boolean[n];
+        boolean[] stretchHr = new boolean[n];
+        for (int s = 0; s < n; ) {
+            if (!warm[s]) {
+                s++;
+                continue;
+            }
+            int e = s;
+            while (e + 1 < n && warm[e + 1]) e++;
+            boolean near = false;
+            for (int i = s; i <= e && !near; i++) near = hasNear(pairedT, t[i], NEAR_S);
+            for (int i = s; i <= e; i++) {
+                finger[i] = near || !r.hrRule;
+                stretchHr[i] = near;
+            }
+            s = e + 1;
+        }
+
+        // 4. a lone heart rate counts next to a finger reading, or after the newest reading when that one is warm
         boolean[] hrOk = new boolean[hr.length];
         int hrCount = 0;
         for (int j = 0; j < hr.length; j++) {
-            boolean ok = hr[j] > t[n - 1]
-                    || (j > 0 && hr[j] - hr[j - 1] <= NEAR_S) || (j + 1 < hr.length && hr[j + 1] - hr[j] <= NEAR_S);
+            boolean ok = paired[j] || (hr[j] > t[n - 1] && warm[n - 1]);
             if (!ok) {
-                // a warm reading within NEAR_S on either side
                 int i = nearest(t, hr[j]);
-                for (int q = i; q >= 0 && Math.abs(hr[j] - t[q]) <= NEAR_S && !ok; q--) ok = warm[q];
-                for (int q = i; q < n && Math.abs(t[q] - hr[j]) <= NEAR_S && !ok; q++) ok = warm[q];
+                for (int q = i; q >= 0 && Math.abs(hr[j] - t[q]) <= NEAR_S && !ok; q--) ok = finger[q];
+                for (int q = i; q < n && Math.abs(t[q] - hr[j]) <= NEAR_S && !ok; q++) ok = finger[q];
             }
             hrOk[j] = ok;
             if (ok) hrCount++;
@@ -113,21 +175,18 @@ public final class LastWorn {
         for (int j = 0, g = 0; j < hr.length; j++) if (hrOk[j]) good[g++] = hr[j];
         if (good.length > 0) r.lastHr = good[good.length - 1];
 
-        // 2. warm readings that count: a heart rate near (or no heart rate at all to check against)
-        boolean[] finger = new boolean[n];
-        for (int i = 0; i < n; i++) finger[i] = warm[i] && (!r.hasHr || hasNear(good, t[i], NEAR_S));
-
-        // 3. the newest warm stretch
+        // 5. the newest warm stretch
         if (warm[n - 1]) {
             int s = n - 1;
             while (s > 0 && warm[s - 1]) s--;
             double lastHr = r.lastHr;
-            boolean hrNear = !Double.isNaN(lastHr) && lastHr >= t[s] - NEAR_S;
-            if (!r.hasHr || (hrNear && t[n - 1] - lastHr <= NO_HR_S) || (!hrNear && t[n - 1] - t[s] <= NO_HR_S)) {
+            boolean hrNear = stretchHr[n - 1] || (!Double.isNaN(lastHr) && lastHr >= t[s] - NEAR_S);
+            if (!r.hrRule || (hrNear && t[n - 1] - lastHr <= NO_HR_S) || (!hrNear && t[n - 1] - t[s] <= NO_HR_S)) {
                 r.state = WORN;
                 r.at = Double.isNaN(lastHr) ? t[n - 1] : Math.max(t[n - 1], lastHr);
                 r.skinC = c[n - 1];
-                r.justOn = r.hasHr && !hrNear;
+                r.confirmed = hrNear;
+                r.justOn = r.hrRule && !hrNear;
                 return r;
             }
             if (hrNear) {

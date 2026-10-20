@@ -82,11 +82,17 @@ public final class RightNow {
             tc[n++] = t[0];
         }
         List<Db.Row> beats = db.events(HR_TAGS, since, end);
-        List<Double> times = new java.util.ArrayList<Double>();
-        for (Db.Row row : beats) beatTimes(row, times);
-        double[] ht = new double[times.size()];
-        for (int i = 0; i < ht.length; i++) ht[i] = times.get(i);
-        return app.openring.core.analysis.LastWorn.find(java.util.Arrays.copyOf(tt, n), java.util.Arrays.copyOf(tc, n), ht);
+        // HRV events come from sleep; the others from the daytime measurement, which tells whether
+        // missing heart rate while warm means anything (LastWorn.hrRule)
+        List<Double> night = new java.util.ArrayList<Double>(), day = new java.util.ArrayList<Double>();
+        for (Db.Row row : beats) beatTimes(row, row.tag == EventCodec.HRV_EVENT ? night : day);
+        return app.openring.core.analysis.LastWorn.find(java.util.Arrays.copyOf(tt, n), java.util.Arrays.copyOf(tc, n), array(night), array(day));
+    }
+
+    static double[] array(List<Double> l) {
+        double[] out = new double[l.size()];
+        for (int i = 0; i < out.length; i++) out[i] = l.get(i);
+        return out;
     }
 
     public static RightNow load(Context c) {
