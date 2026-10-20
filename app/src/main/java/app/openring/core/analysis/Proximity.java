@@ -113,6 +113,33 @@ public final class Proximity {
         return Math.round(CLICK_SLOW_MS * Math.pow((double) CLICK_FAST_MS / CLICK_SLOW_MS, f));
     }
 
+    /** The signal chart shows at least this many dB, so a 1 dB wobble looks like the noise it is. */
+    public static final double CHART_MIN_SPAN = 20;
+
+    /**
+     * The y range {lo, hi} of the signal chart for values between {@code min} and {@code max}: a
+     * little room above and below, and at least {@code minSpan} dB around their middle.
+     */
+    public static double[] chartRange(double min, double max, double minSpan) {
+        double pad = Math.max(1, (max - min) * 0.15);
+        double lo = min - pad, hi = max + pad;
+        if (hi - lo < minSpan) {
+            double mid = (min + max) / 2;
+            lo = mid - minSpan / 2;
+            hi = mid + minSpan / 2;
+        }
+        return new double[] {lo, hi};
+    }
+
+    /** "now", "35 s ago", "1 min ago", "1 min 30 s ago": the time axis of the signal chart. */
+    public static String ago(double seconds) {
+        long s = Math.round(Math.max(0, seconds));
+        if (s < 3) return "now";
+        if (s < 60) return s + " s ago";
+        long m = s / 60, rest = s % 60;
+        return rest == 0 ? m + " min ago" : m + " min " + rest + " s ago";
+    }
+
     /** The label of a band, as shown under the meter. */
     public static String label(int band) {
         switch (band) {
