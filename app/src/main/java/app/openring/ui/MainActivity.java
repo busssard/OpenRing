@@ -191,7 +191,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * and for a new intent, not when a turned screen is recreated:
      * demo (boolean) starts demo mode, tab (int) opens a tab, analysis (boolean) unfolds
      * Further analysis on the Sleep page, period (int) picks its range, day (yyyy-mm-dd) a date,
-     * finder (boolean) opens Find my ring.
+     * finder (boolean) opens Find my ring, finder_turn (boolean) with it shows the demo's turn on the
+     * spot instead of its walk.
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -211,7 +212,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         String section = i.getStringExtra("settings");
         if (section != null) startActivity(new Intent(this, SettingsActivity.class).putExtra("section", section));
         // screen test: open Find my ring (issue #74)
-        if (i.getBooleanExtra("finder", false)) startActivity(new Intent(this, FinderActivity.class));
+        if (i.getBooleanExtra("finder", false)) {
+            startActivity(new Intent(this, FinderActivity.class).putExtra("demo_turn", i.getBooleanExtra("finder_turn", false)));
+        }
     }
 
     @Override

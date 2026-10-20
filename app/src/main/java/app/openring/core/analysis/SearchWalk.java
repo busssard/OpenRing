@@ -8,7 +8,9 @@ import java.util.List;
  * A search for the ring with the phone held upright against the chest (issue #74): every signal
  * reading is recorded with the heading the person faced at that moment. Phase 1 uses it for
  * "turn on the spot": the body blocks the signal from behind, so the readings are strongest while
- * the person faces the ring. Phase 2 adds steps to the same record for the walked mini map.
+ * the person faces the ring. Phase 2 adds steps to the same record for the walked mini map: each
+ * step moves the person one step length along the heading, every reading keeps where it was taken,
+ * and {@link #locate()} fits a signal loss model to say where the ring probably is.
  *
  * Headings come from the phone's gyroscope based orientation ({@code GAME_ROTATION_VECTOR}), so
  * they are relative to where the person started, not to north.
@@ -29,17 +31,31 @@ public final class SearchWalk {
     /** A reading takes the heading of the newest orientation sample, if it is at most this old. */
     public static final long HEADING_MAX_AGE_MS = 300;
 
-    /** One signal reading with where the person faced. */
+    /** One signal reading with where the person faced and stood (metres from the start, y ahead, x right). */
     public static final class Sample {
         public final long t;
-        public final double heading, rssi;
+        public final double heading, rssi, x, y;
         public final boolean upright;
 
-        Sample(long t, double heading, double rssi, boolean upright) {
+        Sample(long t, double heading, double rssi, boolean upright, double x, double y) {
             this.t = t;
             this.heading = heading;
             this.rssi = rssi;
             this.upright = upright;
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    /** A point of the walked path: time, metres right of and ahead of the start. */
+    public static final class Point {
+        public final long t;
+        public final double x, y;
+
+        Point(long t, double x, double y) {
+            this.t = t;
+            this.x = x;
+            this.y = y;
         }
     }
 
@@ -54,24 +70,89 @@ public final class SearchWalk {
     }
 
     private final List<Sample> samples = new ArrayList<Sample>();
+    private final List<Point> path = new ArrayList<Point>();
     private final boolean[] faced = new boolean[SECTORS];
-    private double heading = Double.NaN;
+    private double heading = Double.NaN, walkHeading = Double.NaN;
     private boolean upright;
     private long headingAt = Long.MIN_VALUE;
+    private double stepLength = StepDetector.stepLength(175), x, y;
+    private int steps;
+
+    public SearchWalk() {
+        path.add(new Point(0, 0, 0));
+    }
+
+    /** Metres per step (from the person's height, see {@link StepDetector#stepLength}). */
+    public SearchWalk stepLength(double metres) {
+        stepLength = metres;
+        return this;
+    }
+
+    public double stepLength() {
+        return stepLength;
+    }
 
     /** The newest orientation: heading in degrees and whether the phone is upright enough. */
     public void heading(long atMs, double degrees, boolean upright) {
         heading = norm(degrees);
         this.upright = upright;
         headingAt = atMs;
-        if (upright) faced[sector(heading)] = true;
+        if (upright) {
+            faced[sector(heading)] = true;
+            walkHeading = heading;
+        }
     }
 
     /** Records a signal reading; returns whether it counts (a fresh heading, phone upright). */
     public boolean rssi(long atMs, double dBm) {
         if (Double.isNaN(heading) || atMs - headingAt > HEADING_MAX_AGE_MS || atMs < headingAt - HEADING_MAX_AGE_MS) return false;
-        samples.add(new Sample(atMs, heading, dBm, upright));
+        samples.add(new Sample(atMs, heading, dBm, upright, x, y));
         return upright;
+    }
+
+    /**
+     * {@code n} steps were taken: the person moves one step length each along the newest upright
+     * heading (while the phone tilts, the last upright heading is kept). Without any heading yet the
+     * steps are counted but go nowhere.
+     */
+    public void steps(long atMs, int n) {
+        if (n <= 0) return;
+        steps += n;
+        if (Double.isNaN(walkHeading)) return;
+        double a = Math.toRadians(walkHeading);
+        x += n * stepLength * Math.sin(a);
+        y += n * stepLength * Math.cos(a);
+        path.add(new Point(atMs, x, y));
+    }
+
+    public int steps() {
+        return steps;
+    }
+
+    /** The walked path, starting at 0, 0 (metres, x right of the start heading, y ahead). */
+    public List<Point> path() {
+        return Collections.unmodifiableList(path);
+    }
+
+    /** Where the person is now (metres from the start). */
+    public double x() {
+        return x;
+    }
+
+    public double y() {
+        return y;
+    }
+
+    /** Metres walked (steps times step length). */
+    public double distance() {
+        return steps * stepLength;
+    }
+
+    /** The farthest the person got from the start (metres): under {@link #SPOT_M} it is a turn on the spot. */
+    public double reach() {
+        double r = 0;
+        for (Point p : path) r = Math.max(r, Math.hypot(p.x, p.y));
+        return r;
     }
 
     public List<Sample> samples() {
@@ -198,6 +279,259 @@ public final class SearchWalk {
         r.weakest = mean - amp;
         r.spread = 2 * amp;
         return r;
+    }
+
+    // ------------------------------------------------------------------ the walked map (phase 2)
+
+    /** Under this distance from the start the walk counts as a turn on the spot (the arrow, not the map). */
+    public static final double SPOT_M = 1.0;
+    /** The circle needs the walk to stretch this many metres in two directions at right angles. */
+    public static final double COVER_M = 2.0;
+    /** ... and be at least this wide at its narrowest, so a long straight line does not count. */
+    public static final double WIDTH_M = 1.0;
+    /** ... and this many half seconds with counted readings (6 s). */
+    public static final int MIN_BINS = 12;
+    /** Height between phone and ring the model assumes (phone at the chest, ring on a table, bed or floor). */
+    public static final double HEIGHT_M = 0.7;
+    /** The ring is searched over the walked area plus this margin, in squares of {@link #GRID_M}. */
+    public static final double MARGIN_M = 2.0, GRID_M = 0.2;
+    /** Loss exponents tried: 2 is open space, 3.5 a room full of furniture and bodies. */
+    public static final double N_MIN = 2.0, N_MAX = 3.5, N_STEP = 0.25;
+    /** The body's shadow (signal lost with the ring behind the person) is fitted from 0 to this (dB). */
+    public static final double SHADOW_MAX = 15;
+    /** Readings are averaged per half second (the ring sends several, they are not independent). */
+    public static final long BIN_MS = 500;
+    /**
+     * The circle's radius: this many times the spread of the likely spots, at least {@link #MIN_RADIUS_M}.
+     * Set from simulated walks (FinderTest) so the circle holds the ring in about 9 of 10 walks.
+     */
+    public static final double RADIUS_K = 1.5, MIN_RADIUS_M = 1.0;
+    /** Best spots closer than this to the outer edge of the searched area count as "beyond the walk". */
+    public static final double EDGE_M = 0.5;
+    /**
+     * The model has to explain at least this share of the signal's ups and downs along the walk; a
+     * signal that stays the same everywhere (the ring in another room) points to no spot at all.
+     */
+    public static final double MIN_EXPLAINED = 0.15;
+    /** A circle wider than this (radius, m) is no clear spot: the map then shows only the trail. */
+    public static final double CLEAR_RADIUS_M = 3.0;
+
+    /** Where the ring probably is (metres from the start, like the path), with the circle's radius. */
+    public static final class Spot {
+        public double x, y, radius;
+        /** The best fitting values: signal at 1 m (dBm), loss exponent, body shadow (dB). */
+        public double level, exponent, shadow;
+        /** How far the readings are from the fitted model on average (dB). */
+        public double rms;
+        /** Half seconds with readings used. */
+        public int bins;
+        /** Share of the signal's ups and downs along the walk that the model explains (0 to 1). */
+        public double explained;
+        /**
+         * True when the best spots lie at the outer edge of the searched area ({@link #MARGIN_M} past
+         * the walk): the signal grows towards there, so the ring is probably farther that way.
+         */
+        public boolean edge;
+        /**
+         * True when the middle of the circle lies outside the area the walk spans (its bounding box):
+         * the ring may then also be farther that way, the model cannot tell far from a bit beyond.
+         */
+        public boolean beyond;
+        /** A circle to show: not wider than {@link #CLEAR_RADIUS_M}, not at the edge, and the model explains enough. */
+        public boolean clear;
+    }
+
+    /**
+     * How the walk spreads out, in metres: {across, width}. "Across" is the most it stretches in two
+     * directions at right angles at once (the smaller of the two, for the best pair of directions);
+     * "width" is its narrowest side, so a straight line (even a long diagonal one) has almost none.
+     */
+    public double[] cover() {
+        double across = 0, width = Double.POSITIVE_INFINITY;
+        double[] range = new double[36];
+        for (int k = 0; k < 36; k++) {
+            double a = Math.toRadians(k * 5), ux = Math.sin(a), uy = Math.cos(a);
+            double lo = Double.POSITIVE_INFINITY, hi = Double.NEGATIVE_INFINITY;
+            for (Point p : path) {
+                double v = p.x * ux + p.y * uy;
+                lo = Math.min(lo, v);
+                hi = Math.max(hi, v);
+            }
+            range[k] = hi - lo;
+            width = Math.min(width, range[k]);
+        }
+        for (int k = 0; k < 18; k++) across = Math.max(across, Math.min(range[k], range[k + 18]));
+        return new double[] {across, width};
+    }
+
+    /**
+     * Enough walking for the circle: {@link #COVER_M} in two directions at right angles, at least
+     * {@link #WIDTH_M} wide (not a straight line), and {@link #MIN_BINS} half seconds heard.
+     */
+    public boolean mapReady() {
+        double[] c = cover();
+        return c[0] >= COVER_M && c[1] >= WIDTH_M && bins().size() >= MIN_BINS;
+    }
+
+    /** Counted readings averaged per half second: {x, y, heading, dBm, time ms} (the map's dots). */
+    public List<double[]> bins() {
+        List<double[]> out = new ArrayList<double[]>();
+        long bin = Long.MIN_VALUE;
+        double sx = 0, sy = 0, sc = 0, ss = 0, sr = 0, st = 0;
+        int k = 0;
+        for (Sample s : samples) {
+            if (!s.upright) continue;
+            long b = Math.floorDiv(s.t, BIN_MS);
+            if (b != bin && k > 0) {
+                out.add(bin(sx, sy, sc, ss, sr, st, k));
+                sx = sy = sc = ss = sr = st = 0;
+                k = 0;
+            }
+            bin = b;
+            sx += s.x;
+            sy += s.y;
+            sc += Math.cos(Math.toRadians(s.heading));
+            ss += Math.sin(Math.toRadians(s.heading));
+            sr += s.rssi;
+            st += s.t;
+            k++;
+        }
+        if (k > 0) out.add(bin(sx, sy, sc, ss, sr, st, k));
+        return out;
+    }
+
+    private static double[] bin(double sx, double sy, double sc, double ss, double sr, double st, int k) {
+        return new double[] {sx / k, sy / k, norm(Math.toDegrees(Math.atan2(ss, sc))), sr / k, st / k};
+    }
+
+    /**
+     * Where the ring probably is, or null until {@link #mapReady()}. The model: signal = level at 1 m
+     * minus 10 × exponent × log10(distance) minus the body's shadow (full when the ring is behind the
+     * person, none when they face it). For every spot of a grid over the walked area plus a margin and
+     * every exponent from 2 to 3.5, the level and shadow are fitted by least squares; how well each spot
+     * fits gives it a weight. The answer is the weighted middle of the spots, the circle's radius
+     * {@link #RADIUS_K} times their weighted spread (at least {@link #MIN_RADIUS_M}).
+     */
+    public Spot locate() {
+        if (!mapReady()) return null;
+        List<double[]> b = bins();
+        int m = b.size();
+        double x0 = Double.POSITIVE_INFINITY, x1 = Double.NEGATIVE_INFINITY, y0 = Double.POSITIVE_INFINITY, y1 = Double.NEGATIVE_INFINITY;
+        for (Point p : path) {
+            x0 = Math.min(x0, p.x);
+            x1 = Math.max(x1, p.x);
+            y0 = Math.min(y0, p.y);
+            y1 = Math.max(y1, p.y);
+        }
+        x0 -= MARGIN_M;
+        y0 -= MARGIN_M;
+        x1 += MARGIN_M;
+        y1 += MARGIN_M;
+        double grid = Math.max(GRID_M, Math.max(x1 - x0, y1 - y0) / 60);
+        int nx = (int) Math.ceil((x1 - x0) / grid) + 1, ny = (int) Math.ceil((y1 - y0) / grid) + 1;
+        double[] r = new double[m], hx = new double[m], hy = new double[m];
+        double rMean = 0;
+        for (int i = 0; i < m; i++) {
+            double[] q = b.get(i);
+            r[i] = q[3];
+            rMean += r[i];
+            double a = Math.toRadians(q[2]);
+            hx[i] = Math.sin(a);
+            hy[i] = Math.cos(a);
+        }
+        rMean /= m;
+        double[] lg = new double[m], sh = new double[m];
+        double[][] sse = new double[nx][ny];
+        double best = Double.POSITIVE_INFINITY;
+        Spot out = new Spot();
+        for (int ix = 0; ix < nx; ix++) {
+            for (int iy = 0; iy < ny; iy++) {
+                double gx = x0 + ix * grid, gy = y0 + iy * grid;
+                for (int i = 0; i < m; i++) {
+                    double[] q = b.get(i);
+                    double dx = gx - q[0], dy = gy - q[1], d = Math.sqrt(dx * dx + dy * dy + HEIGHT_M * HEIGHT_M);
+                    lg[i] = Math.log10(d);
+                    double flat = Math.hypot(dx, dy);
+                    // 0 facing the ring, 1 with the ring behind; right above the ring there is no shadow
+                    sh[i] = flat < 1e-6 ? 0 : (1 - (dx * hx[i] + dy * hy[i]) / flat) / 2;
+                }
+                double cellBest = Double.POSITIVE_INFINITY;
+                for (double n = N_MIN; n <= N_MAX + 1e-9; n += N_STEP) {
+                    double[] fit = fit(r, lg, sh, n);
+                    if (fit[2] < cellBest) cellBest = fit[2];
+                    if (fit[2] < best) {
+                        best = fit[2];
+                        out.level = fit[0];
+                        out.shadow = fit[1];
+                        out.exponent = n;
+                    }
+                }
+                sse[ix][iy] = cellBest;
+            }
+        }
+        // each spot weighs by how likely its fit is (Gaussian errors with the spread the best fit left)
+        double var = Math.max(best / Math.max(1, m - 4), 1.0);
+        double ws = 0, wx = 0, wy = 0;
+        double[][] w = new double[nx][ny];
+        for (int ix = 0; ix < nx; ix++) {
+            for (int iy = 0; iy < ny; iy++) {
+                w[ix][iy] = Math.exp(-(sse[ix][iy] - best) / (2 * var));
+                ws += w[ix][iy];
+                wx += w[ix][iy] * (x0 + ix * grid);
+                wy += w[ix][iy] * (y0 + iy * grid);
+            }
+        }
+        out.x = wx / ws;
+        out.y = wy / ws;
+        double spread = 0;
+        for (int ix = 0; ix < nx; ix++) {
+            for (int iy = 0; iy < ny; iy++) {
+                double dx = x0 + ix * grid - out.x, dy = y0 + iy * grid - out.y;
+                spread += w[ix][iy] * (dx * dx + dy * dy);
+            }
+        }
+        out.radius = Math.max(MIN_RADIUS_M, RADIUS_K * Math.sqrt(spread / ws));
+        out.beyond = out.x < x0 + MARGIN_M || out.x > x1 - MARGIN_M || out.y < y0 + MARGIN_M || out.y > y1 - MARGIN_M;
+        double inX = Math.min(out.x - x0, x0 + (nx - 1) * grid - out.x), inY = Math.min(out.y - y0, y0 + (ny - 1) * grid - out.y);
+        out.edge = Math.min(inX, inY) < EDGE_M;
+        out.rms = Math.sqrt(best / m);
+        double flat = 0;
+        for (double v : r) flat += (v - rMean) * (v - rMean);
+        out.explained = flat <= 0 ? 0 : Math.max(0, 1 - best / flat);
+        out.clear = out.radius <= CLEAR_RADIUS_M && !out.edge && out.explained >= MIN_EXPLAINED;
+        out.bins = m;
+        return out;
+    }
+
+    /**
+     * Least squares for r = level − 10 n log10(d) − shadow × s with the shadow kept between 0 and
+     * {@link #SHADOW_MAX}. Returns {level, shadow, sum of squared errors}.
+     */
+    public static double[] fit(double[] r, double[] lg, double[] s, double n) {
+        int m = r.length;
+        // y = r + 10 n log10 d = level − shadow × s
+        double my = 0, ms = 0;
+        for (int i = 0; i < m; i++) {
+            my += r[i] + 10 * n * lg[i];
+            ms += s[i];
+        }
+        my /= m;
+        ms /= m;
+        double sxy = 0, sxx = 0;
+        for (int i = 0; i < m; i++) {
+            double yi = r[i] + 10 * n * lg[i] - my, si = s[i] - ms;
+            sxy += si * yi;
+            sxx += si * si;
+        }
+        double shadow = sxx < 1e-12 ? 0 : -sxy / sxx;
+        shadow = Math.max(0, Math.min(SHADOW_MAX, shadow));
+        double level = my + shadow * ms;
+        double e = 0;
+        for (int i = 0; i < m; i++) {
+            double d = r[i] + 10 * n * lg[i] - level + shadow * s[i];
+            e += d * d;
+        }
+        return new double[] {level, shadow, e};
     }
 
     /** The direction (0 to 11) a heading falls in. */

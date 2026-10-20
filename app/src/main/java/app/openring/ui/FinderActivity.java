@@ -37,23 +37,27 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayDeque;
+import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 
 import app.openring.ble.RingManager;
 import app.openring.ble.RingScanner;
+import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.LastWorn;
 import app.openring.core.analysis.Proximity;
 import app.openring.core.analysis.SearchWalk;
+import app.openring.core.analysis.StepDetector;
 import app.openring.core.analysis.TS;
 import app.openring.data.Db;
 import app.openring.data.Prefs;
 import app.openring.data.RightNow;
 
 /**
- * Find my ring (issue #74, phase 1): where it was last (from the stored history), hot and cold
- * from the ring's Bluetooth signal with clicks and vibration, and turning on the spot for the
- * strongest direction. Everything that listens (scan, sensors, sound) runs only while the screen
+ * Find my ring (issue #74, phases 1 and 2): where it was last (from the stored history), hot and
+ * cold from the ring's Bluetooth signal with clicks and vibration, and the search walk: turning on
+ * the spot gives the strongest direction, walking through the room draws the path with the signal
+ * on a mini map and the circle where the ring probably is. Everything that listens (scan, sensors, sound) runs only while the screen
  * is in front and stops in {@link #onPause}. The ring itself is never connected here, so a sync
  * can run meanwhile.
  */
@@ -83,8 +87,28 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private final Random demoNoise = new Random(74);
     private boolean askedPermission, permissionBlocked;
     private Charts.LineChart trailChart;
+    // the search walk (phase 2): steps from the accelerometer, only while recording
+    private Sensor accel;
+    private StepDetector stepper;
+    private SearchWalk.Spot spot;
+    private boolean spotDirty, demoTurnOnly;
+    private long spotAt;
+    /** Turns the walk's times (elapsed realtime, or the demo's own clock) into wall clock times. */
+    private long wallOffset;
+    private List<double[]> demoEvents;
+    private int demoIndex;
+    private long demoStart;
+    private MiniMap map;
+    private TextView stepText, walkNote;
 
     static final String HOLD = "Hold the phone upright, flat against your chest, screen towards you.";
+
+    static final String WALK = "Tap Start. Walk slowly, cover the room, take your time. To get only a direction, turn once around on the spot instead.";
+    static final String TURN_NOTE = "Your body blocks the signal from behind, so it is strongest while you face the ring. "
+            + "The arrow turns with you and keeps pointing the same way. The petals show the signal you measured in each direction; touch one to read it.";
+    static final String WALK_NOTE = "Steps and direction come from the phone's own sensors and drift by about 5 to 10 % of the distance walked: "
+            + "fine in a flat, not across a house. The circle is where to start looking (a couple of metres), not a spot. Floors are not known: "
+            + "a ring upstairs or downstairs shows as a weak trail everywhere. Dots: blue is weak, warm is strong; touch one to read it.";
 
     private TextView lastText, heardText, batteryText, bandText, signalText, issueText, turnText, turnButton, soundHint;
     private LinearLayout issueBox, trailBox;
@@ -103,6 +127,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
         address = p.address();
         sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         rotation = sm == null ? null : sm.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+        accel = sm == null ? null : sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        demoTurnOnly = demo && getIntent().getBooleanExtra("demo_turn", false);
         vib = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
 
         ScrollView sv = new ScrollView(this);
@@ -198,20 +224,29 @@ public final class FinderActivity extends Activity implements SensorEventListene
                 + "farther away than it is. Walk slowly and follow the trend.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(hot);
 
-        // ---- turn on the spot ----
+        // ---- search walk: turn on the spot or walk through the room ----
         LinearLayout turn = Ui.card(this);
-        turn.addView(Ui.caption(this, "Turn on the spot"));
+        turn.addView(Ui.caption(this, "Search walk"));
         turn.addView(Ui.gap(this, 4));
         turn.addView(Ui.body(this, "1. " + HOLD + "\n"
-                + "2. Tap Start and turn slowly once around, about 20 seconds.\n"
+                + "2. " + WALK + "\n"
                 + "3. Tap Stop when you are done."));
         dial = new Dial(this);
         LinearLayout.LayoutParams dl = Ui.sized(this, -1, 250);
         dl.setMargins(0, Ui.dp(this, 10), 0, Ui.dp(this, 6));
         turn.addView(dial, dl);
+        map = new MiniMap(this);
+        LinearLayout.LayoutParams mpl = Ui.sized(this, -1, 320);
+        mpl.setMargins(0, Ui.dp(this, 10), 0, Ui.dp(this, 6));
+        turn.addView(map, mpl);
+        map.setVisibility(View.GONE);
         turnText = Ui.text(this, "", 14, Ui.TEXT_2, Ui.REGULAR);
         turnText.setLineSpacing(0, 1.15f);
         turn.addView(turnText);
+        stepText = Ui.text(this, "", 12, Ui.TEXT_3, Ui.REGULAR);
+        LinearLayout.LayoutParams stl = Ui.matchWrap();
+        stl.setMargins(0, Ui.dp(this, 4), 0, 0);
+        turn.addView(stepText, stl);
         turnButton = Ui.button(this, "Start", Ui.ACTIVE, true);
         turnButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -223,9 +258,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
         tl.setMargins(0, Ui.dp(this, 10), 0, 0);
         turn.addView(turnButton, tl);
         turn.addView(Ui.gap(this, 6));
-        turn.addView(Ui.text(this, "Your body blocks the signal from behind, so it is strongest while you face the ring. "
-                + "The arrow turns with you and keeps pointing the same way. The petals show the signal you measured in each direction; "
-                + "touch one to read it.", 12, Ui.TEXT_3, Ui.REGULAR));
+        walkNote = Ui.text(this, TURN_NOTE, 12, Ui.TEXT_3, Ui.REGULAR);
+        turn.addView(walkNote);
         root.addView(turn);
 
         TextView done = Ui.button(this, "Done", Ui.TEXT_2, false);
@@ -238,8 +272,10 @@ public final class FinderActivity extends Activity implements SensorEventListene
         root.addView(done, Ui.matchWrap());
         setContentView(sv);
 
-        if (demo) demoTurn();
+        if (demo && demoTurnOnly) demoTurn();
+        else if (demo) demoWalk();
         loadLast();
+        showTurn();
     }
 
     // ------------------------------------------------------------------ lifecycle
@@ -277,7 +313,9 @@ public final class FinderActivity extends Activity implements SensorEventListene
         }
         if (vib != null) vib.cancel();
         if (recording) {
-            recording = false; // a turn needs the screen; what was recorded stays
+            // a walk needs the screen; what was recorded stays and gets its circle (both sensors are released above)
+            recording = false;
+            spotDirty = true;
             showTurn();
         }
     }
@@ -452,7 +490,10 @@ public final class FinderActivity extends Activity implements SensorEventListene
         double t = System.currentTimeMillis() / 1000.0;
         trail.addLast(new double[] {t, prox.value()});
         while (!trail.isEmpty() && trail.peekFirst()[0] < t - 125) trail.pollFirst();
-        if (recording && walk != null) walk.rssi(at, rssi);
+        if (recording && walk != null && !demo) {
+            walk.rssi(at, rssi);
+            spotDirty = true;
+        }
     }
 
     /** The ring is connected to this phone (this app or another one): it stops advertising then. */
@@ -642,6 +683,16 @@ public final class FinderActivity extends Activity implements SensorEventListene
 
     @Override
     public void onSensorChanged(SensorEvent e) {
+        if (e.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+            if (!recording || walk == null || stepper == null) return;
+            // the sensor's own time stamps keep the rhythm right when Android delivers samples in bursts
+            int n = stepper.add(e.timestamp / 1000000L, e.values[0], e.values[1], e.values[2]);
+            if (n > 0) {
+                walk.steps(SystemClock.elapsedRealtime(), n);
+                spotDirty = true;
+            }
+            return;
+        }
         SensorManager.getRotationMatrixFromVector(rot, e.values);
         double[] o = SearchWalk.headingOf(rot);
         facing = o[0];
@@ -657,26 +708,66 @@ public final class FinderActivity extends Activity implements SensorEventListene
     void toggleTurn() {
         if (recording) {
             recording = false;
+            if (sm != null && accel != null) sm.unregisterListener(this, accel);
+            spotDirty = true;
         } else {
             if (rotation == null && !demo) {
-                turnText.setText("This phone has no rotation sensor, so turning on the spot does not work on it. Hot and cold above still does.");
+                turnText.setText("This phone has no rotation sensor, so the search walk does not work on it. Hot and cold above still does.");
                 return;
             }
-            walk = new SearchWalk();
+            walk = new SearchWalk().stepLength(stepLength());
+            stepper = new StepDetector();
+            spot = null;
+            spotDirty = false;
             recording = true;
             demoHeading = 0;
+            wallOffset = System.currentTimeMillis() - SystemClock.elapsedRealtime();
+            if (demo && !demoTurnOnly) {
+                demoEvents = DemoWalk.events();
+                demoIndex = 0;
+                demoStart = SystemClock.elapsedRealtime();
+                wallOffset = System.currentTimeMillis();
+            }
+            if (!demo && sm != null && accel != null) sm.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME);
         }
         showTurn();
     }
 
+    /** Metres per step: 0.41 × the height from the profile (175 cm when none was entered, and in the demo). */
+    double stepLength() {
+        return StepDetector.stepLength(demo ? 175 : Prefs.of(this).heightCm());
+    }
+
+    /** The circle is worked out again every 3 s while walking, and at once when the walk ends. */
+    void updateSpot() {
+        if (walk == null || !spotDirty) return;
+        long now = SystemClock.elapsedRealtime();
+        if (recording && now - spotAt < 3000) return;
+        spotAt = now;
+        spotDirty = false;
+        spot = walk.locate();
+    }
+
     void showTurn() {
         turnButton.setText(recording ? "Stop" : walk == null ? "Start" : "Start again");
+        boolean walked = walk != null && walk.reach() >= SearchWalk.SPOT_M;
+        dial.setVisibility(walked ? View.GONE : View.VISIBLE);
+        map.setVisibility(walked ? View.VISIBLE : View.GONE);
+        walkNote.setText(walked ? WALK_NOTE : TURN_NOTE);
+        showStepLength();
         dial.invalidate();
         if (walk == null) {
-            turnText.setText(rotation == null && !demo ? "This phone has no rotation sensor, so turning on the spot does not work on it." : "");
+            turnText.setText(rotation == null && !demo ? "This phone has no rotation sensor, so the search walk does not work on it." : "");
+            return;
+        }
+        if (walked) {
+            updateSpot();
+            map.set(walk, spot, facing, wallOffset);
+            showWalk();
             return;
         }
         StringBuilder b = new StringBuilder();
+        if (!demo && accel == null) b.append("This phone has no accelerometer, so steps are not counted; turning on the spot still works.\n");
         SearchWalk.Direction d = walk.direction();
         if (d == null) {
             b.append("Covered ").append(walk.coveredDegrees()).append(" of 360 degrees (the directions you faced with the phone upright).");
@@ -692,6 +783,55 @@ public final class FinderActivity extends Activity implements SensorEventListene
         turnText.setText(b.toString());
     }
 
+    /** The walk's text: how far, how much of the room, and where the ring probably is. */
+    void showWalk() {
+        StringBuilder b = new StringBuilder();
+        b.append("Walked ").append(Ui.fmt(walk.distance(), 1)).append(" m (").append(walk.steps()).append(walk.steps() == 1 ? " step" : " steps")
+                .append(" of ").append(Ui.fmt(walk.stepLength(), 2)).append(" m).");
+        if (spot == null) {
+            double[] c = walk.cover();
+            double across = c[1] >= SearchWalk.WIDTH_M ? c[0] : c[1];
+            b.append(" Across ").append(Ui.fmt(Math.min(across, SearchWalk.COVER_M), 1)).append(" of ").append(Math.round(SearchWalk.COVER_M))
+                    .append(" m in two directions (the circle needs ").append(Math.round(SearchWalk.COVER_M)).append(" m both ways).");
+            b.append("\nWalk a bit more, across the room.");
+        } else if (spot.clear) {
+            b.append("\nProbably within the circle: ").append(where(spot.x, spot.y)).append(" (radius ").append(Ui.fmt(spot.radius, 1))
+                    .append(" m). Start looking there.");
+            if (spot.beyond) b.append(" It lies at the edge of where you walked, so the ring may also be a bit farther that way.");
+        } else if (spot.edge) {
+            b.append("\nThe signal gets stronger towards the edge of where you walked (the dashed circle), so the ring is probably farther that way. "
+                    + "Walk on in that direction and look again.");
+        } else {
+            b.append("\nThe signal gave no clear spot (the circle would be wider than ").append(Math.round(SearchWalk.CLEAR_RADIUS_M))
+                    .append(" m, or the signal hardly changed). The ring may be in another room, upstairs or downstairs, or under something thick.");
+        }
+        if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted, steps keep your last direction.");
+        if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the walk needs the ring to be heard.");
+        turnText.setText(b.toString());
+    }
+
+    /** "about 2.1 m ahead and 0.8 m to the right of where you started". */
+    static String where(double x, double y) {
+        String ahead = Math.abs(y) < 0.3 ? null : Ui.fmt(Math.abs(y), 1) + " m " + (y > 0 ? "ahead" : "behind");
+        String side = Math.abs(x) < 0.3 ? null : Ui.fmt(Math.abs(x), 1) + " m to the " + (x > 0 ? "right" : "left");
+        if (ahead == null && side == null) return "right around where you started";
+        if (ahead == null) return "about " + side + " of where you started";
+        if (side == null) return "about " + ahead + " of where you started";
+        return "about " + ahead + " and " + side + " of where you started";
+    }
+
+    void showStepLength() {
+        if (walk == null || walk.reach() < SearchWalk.SPOT_M) {
+            stepText.setVisibility(View.GONE);
+            return;
+        }
+        stepText.setVisibility(View.VISIBLE);
+        String len = "Steps of " + Ui.fmt(walk.stepLength(), 2) + " m: 0.41 × ";
+        if (demo) stepText.setText(len + "175 cm, a usual height (demo).");
+        else if (Prefs.of(this).hasHeight()) stepText.setText(len + "your height of " + Prefs.of(this).heightCm() + " cm from the profile.");
+        else stepText.setText(len + "175 cm, a usual height. Enter yours in Settings, Profile and goals for a truer map.");
+    }
+
     // ------------------------------------------------------------------ demo
 
     /** Demo: a made up signal wandering around -62 dBm, and a made up heading while turning. */
@@ -700,7 +840,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
         public void run() {
             if (!resumed) return;
             long now = SystemClock.elapsedRealtime();
-            if (recording) {
+            if (recording && !demoTurnOnly) {
+                // replay the made up walk at twice its speed
+                demoIndex = DemoWalk.feed(walk, demoEvents, demoIndex, (now - demoStart) * 2);
+                facing = walk.heading();
+                spotDirty = true;
+            } else if (recording) {
                 demoHeading += 360.0 * 0.15 / 20;
                 facing = SearchWalk.norm(demoHeading);
                 walk.heading(now, facing, true);
@@ -710,6 +855,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             double toward = Math.toRadians(SearchWalk.diff(facing, DEMO_RING_AT));
             double v = -60 + 3 * Math.sin(now / 7000.0) - 8 * (1 - Math.cos(toward)) / 2 + demoNoise.nextGaussian() * 2.5;
             heard(true, (int) Math.round(v), now);
+            if (recording && demoTurnOnly) walk.rssi(now, Math.round(v));
             dial.invalidate();
             h.postDelayed(this, 150);
         }
@@ -717,7 +863,18 @@ public final class FinderActivity extends Activity implements SensorEventListene
 
     static final double DEMO_RING_AT = 300;
 
-    /** Demo: a finished turn (the ring at 300 degrees) so the dial shows petals and an arrow. */
+    /** Demo: a finished made up walk around a room (ring at a known spot), so the map shows the path, dots and the circle. */
+    void demoWalk() {
+        walk = new SearchWalk().stepLength(stepLength());
+        List<double[]> ev = DemoWalk.events();
+        DemoWalk.feed(walk, ev, 0, Long.MAX_VALUE);
+        // the walk ended a minute ago
+        wallOffset = System.currentTimeMillis() - 60000 - (long) ev.get(ev.size() - 1)[0];
+        spot = walk.locate();
+        facing = walk.heading();
+    }
+
+    /** Demo (extra demo_turn): a finished turn (the ring at 300 degrees) so the dial shows petals and an arrow. */
     void demoTurn() {
         walk = new SearchWalk();
         Random r = new Random(4);

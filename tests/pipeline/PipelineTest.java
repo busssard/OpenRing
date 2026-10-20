@@ -418,6 +418,7 @@ public class PipelineTest {
         fp.setFinderSound(false);
         check("ring finder: clicks on by default, can be switched off", soundDefault && !fp.finderSound(), null);
         fp.setFinderSound(true);
+        boolean heightBefore = fp.hasHeight();
 
         // ---- sleep history: average night over all analysed nights ----
         app.openring.data.SleepHistory sh = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", java.time.ZoneId.of("Europe/Zurich"));
@@ -433,6 +434,7 @@ public class PipelineTest {
         byte[] keyBytes = app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a");
         pr.saveKey(keyBytes);
         pr.setProfile(41, 1, 63, 168, 0);
+        check("ring finder: knows when a height was entered (step length)", !heightBefore && pr.hasHeight() && pr.heightCm() == 168, heightBefore);
         pr.setScreenGoalMin(120);
         pr.setScreenExcluded(java.util.Arrays.asList("com.google.android.apps.maps", " ", "org.osmand"));
         pr.setGamesOn(true);
