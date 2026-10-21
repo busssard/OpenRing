@@ -860,7 +860,7 @@ public final class RingManager {
                                     int counter = p.u8(5) | (p.u8(6) << 8);
                                     int sp = p.u8(10), hr = p.u8(11);
                                     if (sp >= 70 && sp <= 100 && counter != spo2Counter) value("spo2", sp);
-                                    if (hr >= 30 && hr <= 220 && counter != spo2Counter) value("spo2_hr", hr);
+                                    if (app.openring.core.EventCodec.plausibleHr(hr) && counter != spo2Counter) value("spo2_hr", hr);
                                     spo2Counter = counter;
                                 }
                             }

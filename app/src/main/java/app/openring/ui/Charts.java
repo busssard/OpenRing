@@ -292,8 +292,8 @@ public final class Charts {
                 while (b < n && stages[b] == stages[k]) b++;
                 double ep = (end - start) / n;
                 double ta = start + a * ep, tb = start + b * ep;
-                String label = clock(start + (k + 0.5) * ep) + "  " + name(stages[k]) + ", " + clock(ta) + " to " + clock(tb)
-                        + " (" + Math.round((tb - ta) / 60) + " min)";
+                // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
+                String label = app.openring.core.analysis.ClockChange.stageTip(zone, start + (k + 0.5) * ep, name(stages[k]), ta, tb);
                 drawTip(cv, labelW + (k + 0.5f) * cw, Ui.dp(getContext(), 20), bottom, label);
             }
             // time axis

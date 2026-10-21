@@ -36,6 +36,11 @@ public final class LastWorn {
      */
     public static final int MIN_DAY_READINGS = 12;
     public static final double DAY_COVER = 0.7;
+    /**
+     * Only the last 48 hours before the newest reading show whether the ring stores daytime heart rate
+     * now: when it stopped days ago (switched off, low battery), warmth without one means nothing.
+     */
+    public static final double DAY_RULE_S = 2 * 86400;
 
     public static final int NO_DATA = 0, WORN = 1, OFF = 2, UNSURE = 3;
 
@@ -76,18 +81,26 @@ public final class LastWorn {
         public double strayHrAt = Double.NaN;
     }
 
-    /** All heart rates count as daytime ones (see {@link #find(double[], double[], double[], double[])}). */
+    /** All heart rates count as daytime ones, each from an event of its own. */
     public static Result find(double[] tempT, double[] tempC, double[] hrT) {
-        return find(tempT, tempC, new double[0], hrT);
+        return find(tempT, tempC, new double[0], null, hrT, null);
+    }
+
+    /** Each heart rate from an event of its own. */
+    public static Result find(double[] tempT, double[] tempC, double[] nightT, double[] dayT) {
+        return find(tempT, tempC, nightT, null, dayT, null);
     }
 
     /**
      * @param tempT   times of the skin temperature readings (unix seconds, any order)
      * @param tempC   the readings in C
      * @param nightT  times of heart rates the ring stores while asleep (HRV events), any order, may be empty
+     * @param nightId the stored event each night heart rate comes from (0 or more, different events have
+     *                different numbers, also across both lists); null: each heart rate is an event of its own
      * @param dayT    times of the other valid heart rates (daytime measurement), any order, may be empty
+     * @param dayId   the same for the daytime heart rates
      */
-    public static Result find(double[] tempT, double[] tempC, double[] nightT, double[] dayT) {
+    public static Result find(double[] tempT, double[] tempC, double[] nightT, int[] nightId, double[] dayT, int[] dayId) {
         Result r = new Result();
         int n = tempT.length;
         if (n == 0) return r;
@@ -111,27 +124,49 @@ public final class LastWorn {
         double[] night = nightT.clone(), day = dayT.clone();
         Arrays.sort(night);
         Arrays.sort(day);
-        double[] hr = new double[night.length + day.length];
-        System.arraycopy(night, 0, hr, 0, night.length);
-        System.arraycopy(day, 0, hr, night.length, day.length);
-        Arrays.sort(hr);
+        // all heart rates in time order, each with the number of its event (an HRV event holds six values
+        // 5 minutes apart, an AOHR event a burst seconds apart: they are one measurement, not several)
+        final double[] allT = new double[nightT.length + dayT.length];
+        int[] allId = new int[allT.length];
+        for (int j = 0; j < nightT.length; j++) {
+            allT[j] = nightT[j];
+            allId[j] = nightId != null ? nightId[j] : -1 - j;
+        }
+        for (int j = 0; j < dayT.length; j++) {
+            allT[nightT.length + j] = dayT[j];
+            allId[nightT.length + j] = dayId != null ? dayId[j] : -1 - nightT.length - j;
+        }
+        Integer[] hOrder = new Integer[allT.length];
+        for (int j = 0; j < hOrder.length; j++) hOrder[j] = j;
+        Arrays.sort(hOrder, new java.util.Comparator<Integer>() {
+            @Override
+            public int compare(Integer a, Integer b) {
+                return Double.compare(allT[a], allT[b]);
+            }
+        });
+        double[] hr = new double[allT.length];
+        int[] hrId = new int[allT.length];
+        for (int j = 0; j < hr.length; j++) {
+            hr[j] = allT[hOrder[j]];
+            hrId[j] = allId[hOrder[j]];
+        }
         r.hasHr = hr.length > 0;
 
-        // 1. does this ring store daytime heart rate? Only then is warmth without one suspicious.
+        // 1. does this ring store daytime heart rate now? Only then is warmth without one suspicious.
         int eligible = 0, covered = 0;
         double lastDay = day.length > 0 ? day[day.length - 1] : Double.NEGATIVE_INFINITY;
         for (int i = 0; i < n && t[i] <= lastDay; i++) {
-            if (!warm[i] || hasNear(night, t[i], NEAR_S)) continue;
+            if (!warm[i] || t[i] < r.newest - DAY_RULE_S || hasNear(night, t[i], NEAR_S)) continue;
             eligible++;
             if (hasNear(day, t[i], NEAR_S)) covered++;
         }
         r.hrRule = eligible >= MIN_DAY_READINGS && covered >= DAY_COVER * eligible;
 
-        // 2. heart rates with another heart rate near (a lone one is judged in step 4)
+        // 2. heart rates with a heart rate of another event near (a lone one is judged in step 4)
         boolean[] paired = new boolean[hr.length];
         int pairs = 0;
         for (int j = 0; j < hr.length; j++) {
-            paired[j] = (j > 0 && hr[j] - hr[j - 1] <= NEAR_S) || (j + 1 < hr.length && hr[j + 1] - hr[j] <= NEAR_S);
+            paired[j] = otherEventNear(hr, hrId, j, NEAR_S);
             if (paired[j]) pairs++;
         }
         double[] pairedT = new double[pairs];
@@ -185,7 +220,8 @@ public final class LastWorn {
                 r.state = WORN;
                 r.at = Double.isNaN(lastHr) ? t[n - 1] : Math.max(t[n - 1], lastHr);
                 r.skinC = c[n - 1];
-                r.confirmed = hrNear;
+                // a heart rate many hours old (from the night) confirms nothing about now
+                r.confirmed = hrNear && t[n - 1] - lastHr <= NO_HR_S;
                 r.justOn = r.hrRule && !hrNear;
                 return r;
             }
@@ -200,7 +236,7 @@ public final class LastWorn {
             for (int i = s; i < n; i++) finger[i] = false;
         }
 
-        // 4. the final stretch without a sign of a finger (cool readings and warm ones that did not count)
+        // 6. the final stretch without a sign of a finger (cool readings and warm ones that did not count)
         int k = n;
         while (k > 0 && !finger[k - 1]) k--;
         double lastHr = r.lastHr;
@@ -248,6 +284,74 @@ public final class LastWorn {
             r.roomC = cool % 2 == 1 ? room[cool / 2] : (room[cool / 2 - 1] + room[cool / 2]) / 2;
         }
         return r;
+    }
+
+    /** Writes a time for the card, like "today at 22:14" (the app passes its own, tests a fixed one). */
+    public interface Clock {
+        String when(double unix);
+    }
+
+    /**
+     * The "where was it last" text with its evidence (issues #74, #94), followed by a line on how old the
+     * newest reading is when that is more than 6 hours.
+     */
+    public static String text(Result r, double nowUnix, Clock clock) {
+        String s = sentence(r, clock);
+        double newest = Double.isNaN(r.lastHr) ? r.newest : Math.max(r.newest, r.lastHr);
+        double age = nowUnix - newest;
+        if (r.state != NO_DATA && age > 6 * 3600) {
+            s += "\nThe newest synced reading is " + (age < 2 * 86400 ? Math.round(age / 3600) + " hours" : (long) Math.floor(age / 86400) + " days")
+                    + " old, so this is how it was then.";
+        }
+        return s;
+    }
+
+    static String sentence(Result r, Clock clock) {
+        String s;
+        if (r.state == WORN) {
+            s = "The newest reading (" + clock.when(r.at) + ") was from a finger (";
+            if (Double.isNaN(r.skinC)) s += "a heart rate, with cool skin).";
+            else if (r.confirmed) s += "skin " + one(r.skinC) + " °C"
+                    // the newest sign can be a heart rate long after the newest temperature: give each its own time
+                    + (Math.abs(r.newest - r.at) >= 60 ? " " + clock.when(r.newest) : "")
+                    + ", heart rate until " + clock.when(r.lastHr) + ").";
+            else if (r.justOn) s += "skin " + one(r.skinC) + " °C, no heart rate stored yet, so it was probably just put on).";
+            else if (!r.hasHr) s += "skin " + one(r.skinC) + " °C, no heart rate in the synced data to confirm it).";
+            else s += "skin " + one(r.skinC) + " °C, the ring stored too little daytime heart rate to confirm it).";
+        } else if (r.state == UNSURE) {
+            s = "Not sure. It still read warm at its newest reading (" + one(r.skinC) + " °C, " + clock.when(r.newest) + "), but stored no heart rate after "
+                    + clock.when(r.at) + ", so it was probably taken off around then and lay somewhere warm (the charger, under a duvet, in the sun).";
+        } else if (r.state == OFF) {
+            if (!Double.isNaN(r.at)) {
+                s = "Taken off " + clock.when(r.at) + (Double.isNaN(r.roomC) ? "." : " (then it lay at room temperature, about " + Math.round(r.roomC) + " °C).");
+            } else {
+                s = "Not worn in the last 7 days of synced data" + (Double.isNaN(r.roomC) ? "" : " (it reads room temperature, about " + Math.round(r.roomC) + " °C)") + ".";
+            }
+            if (r.warmNoHrNow) {
+                s += " Since " + clock.when(r.warmNoHrAt) + " it reads warm" + (Double.isNaN(r.at) ? "" : " again") + " (up to " + one(r.warmNoHrC)
+                        + " °C) but without heart rate, so it is probably not on a finger (the charger, the sun or something warm).";
+            } else if (r.warmNoHrCount == 1) {
+                s += " A warm reading " + clock.when(r.warmNoHrAt) + " (" + one(r.warmNoHrC) + " °C) had no heart rate, so it does not count.";
+            } else if (r.warmNoHrCount > 1) {
+                s += " Warm readings from " + clock.when(r.warmNoHrAt) + " (up to " + one(r.warmNoHrC) + " °C) had no heart rate, so they do not count.";
+            }
+            if (!Double.isNaN(r.strayHrAt)) s += " A lone heart rate " + clock.when(r.strayHrAt) + " with no warm reading near it does not count.";
+        } else {
+            s = "No temperature readings yet. Sync once to fill this in.";
+        }
+        return s;
+    }
+
+    /** One decimal in the phone's language, like the rest of the app ({@code Ui.fmt}). */
+    static String one(double v) {
+        return String.format(java.util.Locale.getDefault(), "%.1f", v);
+    }
+
+    /** Whether heart rate {@code j} has one from another event within {@code w} (times sorted). */
+    static boolean otherEventNear(double[] t, int[] id, int j, double w) {
+        for (int q = j - 1; q >= 0 && t[j] - t[q] <= w; q--) if (id[q] != id[j]) return true;
+        for (int q = j + 1; q < t.length && t[q] - t[j] <= w; q++) if (id[q] != id[j]) return true;
+        return false;
     }
 
     /** Index of the reading nearest to {@code x} in the sorted times. */

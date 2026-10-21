@@ -117,6 +117,25 @@ public final class ClockChange {
         return zone.getRules().getOffset(t).getTotalSeconds() == first ? " (first time)" : " (second time)";
     }
 
+    /**
+     * The touch readout of the sleep stages timeline: "02:22 Deep, 02:15 to 02:40 (25 min)" in {@code zone}.
+     * In the hour that happens twice (issue #97) the touched time gets its {@link #repeatNote}; an end of the
+     * stretch gets one only when its pass differs from the touched time's, so the usual case stays short:
+     * "02:22 (second time)  Deep, 02:15 to 02:40 (25 min)", but "02:50 (first time)  Deep, 02:40 to 02:05
+     * (second time) (35 min)".
+     */
+    public static String stageTip(ZoneId zone, double at, String stage, double from, double to) {
+        String note = repeatNote(zone, at), a = repeatNote(zone, from), b = repeatNote(zone, to);
+        return hm(zone, at) + note + "  " + stage + ", " + hm(zone, from) + (a.equals(note) ? "" : a) + " to " + hm(zone, to)
+                + (b.equals(note) ? "" : b) + " (" + Math.round((to - from) / 60) + " min)";
+    }
+
+    /** "07:42" in {@code zone} (the system zone without one), as the charts write it. */
+    static String hm(ZoneId zone, double unix) {
+        java.time.ZonedDateTime z = Instant.ofEpochSecond((long) unix).atZone(zone == null ? ZoneId.systemDefault() : zone);
+        return String.format(java.util.Locale.getDefault(), "%02d:%02d", z.getHour(), z.getMinute());
+    }
+
     /** The zone, or null when the id is empty or unknown on this phone. */
     public static ZoneId zone(String id) {
         if (id == null || id.isEmpty()) return null;

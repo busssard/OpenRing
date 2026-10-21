@@ -2006,6 +2006,16 @@ public class CoreTest {
         eq("repeat note: none on the spring day and a normal day", ClockChange.repeatNote(z, zurich("2026-03-29T03:30:00"))
                 + ClockChange.repeatNote(z, zurich("2026-10-14T02:22:00")), "");
         check("repeat note: none without a zone or time", ClockChange.repeatNote(null, bFrom).isEmpty() && ClockChange.repeatNote(z, Double.NaN).isEmpty());
+        // the sleep stages readout (review of #104): note on the touched time, on an end only when its pass differs
+        double s1 = java.time.Instant.parse("2026-10-25T00:00:00Z").getEpochSecond();
+        eq("stage tip: normal night unchanged", ClockChange.stageTip(z, zurich("2026-10-14T02:22:00"), "Deep", zurich("2026-10-14T02:15:00"),
+                zurich("2026-10-14T02:40:00")), "02:22  Deep, 02:15 to 02:40 (25 min)");
+        eq("stage tip: inside the second pass the touched time says it once", ClockChange.stageTip(z, s1 + 3600 + 22 * 60, "Deep", s1 + 3600 + 15 * 60,
+                s1 + 3600 + 40 * 60), "02:22 (second time)  Deep, 02:15 to 02:40 (25 min)");
+        eq("stage tip: a stretch across the change marks the other pass", ClockChange.stageTip(z, s1 + 50 * 60, "Light", s1 + 40 * 60, s1 + 65 * 60),
+                "02:50 (first time)  Light, 02:40 to 02:05 (second time) (25 min)");
+        eq("stage tip: touched after the hour, start in it", ClockChange.stageTip(z, s1 + 2 * 3600 + 600, "REM", s1 + 3600 + 50 * 60, s1 + 2 * 3600 + 1200),
+                "03:10  REM, 02:50 (second time) to 03:20 (30 min)");
         eq("repeat text back", ClockChange.repeatText(ClockChange.find(z, bFrom, bTo)), "The clocks went back one hour on this day (03:00 became 02:00), "
                 + "so 02:00 to 03:00 happened twice. Times in it say first or second time.");
         check("no repeat text going forward or without a change", ClockChange.repeatText(ClockChange.find(z, fFrom, fTo)) == null && ClockChange.repeatText(null) == null);

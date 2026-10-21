@@ -43,8 +43,13 @@ public final class RightNow {
         return null;
     }
 
-    /** The times of the plausible heart rates in one stored event, dated and checked like {@link #newest}. */
-    static void beatTimes(Db.Row row, List<Double> out) {
+    /**
+     * The times of the plausible heart rates in one stored event, dated and checked like {@link #newest}
+     * (issues #94, #97). Each time gets the event's number {@code id} in {@code ids}, so values of one
+     * event never vouch for each other.
+     */
+    static void beatTimes(Db.Row row, int id, List<Double> out, List<Integer> ids) {
+        int before = out.size();
         if (row.tag == EventCodec.GREEN_IBI_QUALITY) {
             if (newest(row) != null) out.add(row.unix);
         } else if (row.tag == EventCodec.AOHR_EVENT) {
@@ -54,6 +59,7 @@ public final class RightNow {
             int[][] h = EventCodec.hrv(row.body);
             if (h != null) for (int i = 0; i < h[0].length; i++) if (EventCodec.plausibleHr(h[0][i])) out.add(row.unix + i * EventCodec.HRV_INTERVAL_S);
         }
+        for (int i = before; i < out.size(); i++) ids.add(id);
     }
 
     /**
@@ -62,14 +68,9 @@ public final class RightNow {
      * has its history, issue #94).
      */
     public static app.openring.core.analysis.LastWorn.Result lastWorn(Db db, double nowUnix) {
-        double end = nowUnix + 3600, newest = Double.NaN;
+        double end = nowUnix + 3600;
         // the newest reading up to now (a reading dated in the future by a broken clock does not count)
-        for (Db.Row row : db.latest(TEMP_TAGS, 0, 50)) {
-            if (row.unix < end) {
-                newest = row.unix;
-                break;
-            }
-        }
+        double newest = db.newestBefore(TEMP_TAGS, end);
         if (Double.isNaN(newest)) return new app.openring.core.analysis.LastWorn.Result();
         double since = newest - 7 * 86400;
         List<Db.Row> temps = db.events(TEMP_TAGS, since, end);
@@ -85,12 +86,24 @@ public final class RightNow {
         // HRV events come from sleep; the others from the daytime measurement, which tells whether
         // missing heart rate while warm means anything (LastWorn.hrRule)
         List<Double> night = new java.util.ArrayList<Double>(), day = new java.util.ArrayList<Double>();
-        for (Db.Row row : beats) beatTimes(row, row.tag == EventCodec.HRV_EVENT ? night : day);
-        return app.openring.core.analysis.LastWorn.find(java.util.Arrays.copyOf(tt, n), java.util.Arrays.copyOf(tc, n), array(night), array(day));
+        List<Integer> nightId = new java.util.ArrayList<Integer>(), dayId = new java.util.ArrayList<Integer>();
+        int id = 0;
+        for (Db.Row row : beats) {
+            boolean asleep = row.tag == EventCodec.HRV_EVENT;
+            beatTimes(row, id++, asleep ? night : day, asleep ? nightId : dayId);
+        }
+        return app.openring.core.analysis.LastWorn.find(java.util.Arrays.copyOf(tt, n), java.util.Arrays.copyOf(tc, n),
+                array(night), ints(nightId), array(day), ints(dayId));
     }
 
     static double[] array(List<Double> l) {
         double[] out = new double[l.size()];
+        for (int i = 0; i < out.length; i++) out[i] = l.get(i);
+        return out;
+    }
+
+    static int[] ints(List<Integer> l) {
+        int[] out = new int[l.size()];
         for (int i = 0; i < out.length; i++) out[i] = l.get(i);
         return out;
     }

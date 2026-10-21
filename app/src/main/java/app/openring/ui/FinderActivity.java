@@ -372,14 +372,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
     }
 
     void showLast(LastWorn.Result r) {
-        String s = lastSentence(r);
-        double newest = Double.isNaN(r.lastHr) ? r.newest : Math.max(r.newest, r.lastHr);
-        double age = System.currentTimeMillis() / 1000.0 - newest;
-        if (r.state != LastWorn.NO_DATA && age > 6 * 3600) {
-            s += "\nThe newest synced reading is " + (age < 2 * 86400 ? Math.round(age / 3600) + " hours" : (long) Math.floor(age / 86400) + " days")
-                    + " old, so this is how it was then.";
-        }
-        lastText.setText(s);
+        lastText.setText(LastWorn.text(r, System.currentTimeMillis() / 1000.0, new LastWorn.Clock() {
+            @Override
+            public String when(double unix) {
+                return FinderActivity.when(unix);
+            }
+        }));
         Prefs p = Prefs.of(this);
         if (demo) {
             heardText.setText("In the demo the signal below is made up.");
@@ -396,44 +394,6 @@ public final class FinderActivity extends Activity implements SensorEventListene
         if (ch == 1) bt += " It went up since the read before (" + p.batteryBefore() + "%), so it was probably on the charger then.";
         else if (ch == 0) bt += " It went down since the read before (" + p.batteryBefore() + "%), so it was not charging then.";
         batteryText.setText(bt);
-    }
-
-    /** The "where was it last" sentence with its evidence (issues #74, #94). */
-    static String lastSentence(LastWorn.Result r) {
-        String s;
-        if (r.state == LastWorn.WORN) {
-            s = "The newest reading (" + when(r.at) + ") was from a finger (";
-            if (Double.isNaN(r.skinC)) s += "a heart rate, with cool skin).";
-            else if (r.confirmed) s += "skin " + Ui.fmt(r.skinC, 1) + " °C"
-                    // the newest sign can be a heart rate long after the newest temperature: give each its own time
-                    + (Math.abs(r.newest - r.at) >= 60 ? " " + when(r.newest) : "")
-                    + ", heart rate until " + when(r.lastHr) + ").";
-            else if (r.justOn) s += "skin " + Ui.fmt(r.skinC, 1) + " °C, no heart rate stored yet, so it was probably just put on).";
-            else if (!r.hasHr) s += "skin " + Ui.fmt(r.skinC, 1) + " °C, no heart rate in the synced data to confirm it).";
-            else s += "skin " + Ui.fmt(r.skinC, 1) + " °C, the ring stored too little daytime heart rate to confirm it).";
-        } else if (r.state == LastWorn.UNSURE) {
-            s = "Not sure. It still read warm at its newest reading (" + Ui.fmt(r.skinC, 1) + " °C, " + when(r.newest) + "), but stored no heart rate after "
-                    + when(r.at) + ", so it was probably taken off around then and lay somewhere warm (the charger, under a duvet, in the sun).";
-        } else if (r.state == LastWorn.OFF) {
-            String room = Double.isNaN(r.roomC) ? "" : " (it reads room temperature, about " + Math.round(r.roomC) + " °C)";
-            if (!Double.isNaN(r.at)) {
-                s = "Taken off " + when(r.at) + (Double.isNaN(r.roomC) ? "." : " (then it lay at room temperature, about " + Math.round(r.roomC) + " °C).");
-            } else {
-                s = "Not worn in the last 7 days of synced data" + room + ".";
-            }
-            if (r.warmNoHrNow) {
-                s += " Since " + when(r.warmNoHrAt) + " it reads warm" + (Double.isNaN(r.at) ? "" : " again") + " (up to " + Ui.fmt(r.warmNoHrC, 1)
-                        + " °C) but without heart rate, so it is probably not on a finger (the charger, the sun or something warm).";
-            } else if (r.warmNoHrCount == 1) {
-                s += " A warm reading " + when(r.warmNoHrAt) + " (" + Ui.fmt(r.warmNoHrC, 1) + " °C) had no heart rate, so it does not count.";
-            } else if (r.warmNoHrCount > 1) {
-                s += " Warm readings from " + when(r.warmNoHrAt) + " (up to " + Ui.fmt(r.warmNoHrC, 1) + " °C) had no heart rate, so they do not count.";
-            }
-            if (!Double.isNaN(r.strayHrAt)) s += " A lone heart rate " + when(r.strayHrAt) + " with no warm reading near it does not count.";
-        } else {
-            s = "No temperature readings yet. Sync once to fill this in.";
-        }
-        return s;
     }
 
     /** The "last heard" line: right now while the meter hears the ring, else the saved time. */
