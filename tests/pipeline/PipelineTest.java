@@ -604,6 +604,7 @@ public class PipelineTest {
         demoTwice();
         oldNights();
         lastWornOldSync();
+        lastWornStrayEvents();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
         longHistoryTiming();
@@ -1542,8 +1543,63 @@ public class PipelineTest {
         app.openring.core.analysis.LastWorn.Result rf = app.openring.data.RightNow.lastWorn(db, now);
         check("ring finder: a reading dated in the future is not the newest", rf.state == app.openring.core.analysis.LastWorn.OFF
                 && Math.abs(rf.newest - r.newest) < 1, (rf.newest - now) / 86400.0);
+        // more than 50 readings dated in the future (review of #103: the newest one before them was missed)
+        List<RingEvent> many = new ArrayList<RingEvent>();
+        for (int i = 0; i < 60; i++) many.add(new RingEvent(EventCodec.TEMP_EVENT, 910001 + i, le16(3400, 3300, 2900)));
+        db.insertBatch(many, 4, now);
+        db.getWritableDatabase().execSQL("UPDATE events SET unix = " + (now + 6 * 86400) + " + ds WHERE epoch = 4");
+        app.openring.core.analysis.LastWorn.Result rm = app.openring.data.RightNow.lastWorn(db, now);
+        check("ring finder: 60 readings dated in the future do not hide the history", rm.state == app.openring.core.analysis.LastWorn.OFF
+                && Math.abs(rm.newest - r.newest) < 1 && db.count("SELECT COUNT(*) FROM events WHERE unix > " + (now + 3600)) >= 60, rm.state + " " + (rm.newest - now) / 86400.0);
         check("ring finder: an empty history has no data", app.openring.data.RightNow.lastWorn(Db.get(freshDb("openring-lastworn-empty")), now).state
                 == app.openring.core.analysis.LastWorn.NO_DATA, null);
+    }
+
+    /**
+     * Review of PR #103: one stored event with several heart rates (six HRV values 5 minutes apart, an
+     * AOHR burst 1.92 s apart) is one measurement, so its values do not vouch for each other. A ring
+     * worn 10 hours with daytime heart rate (one AOHR value every 5 minutes), then on a table, with one
+     * stray HRV event and one stray AOHR burst, in the middle of the cool readings or at their end.
+     */
+    static void lastWornStrayEvents() throws Exception {
+        long now = System.currentTimeMillis() / 1000;
+        long start = now - 2 * 86400;
+        String[][] cases = {{"(HRV and AOHR) in the middle", "20", "14", "16"}, {"(HRV) at the end", "14.5", "14", ""}, {"(AOHR burst) at the end", "14", "", "14"}};
+        for (String[] c : cases) {
+            Db db = Db.get(freshDb("openring-lastworn-stray"));
+            long base = 1000;
+            List<RingEvent> ev = new ArrayList<RingEvent>();
+            byte[] ts = new byte[4];
+            Protocol.Le.putU32(ts, 0, start);
+            ev.add(new RingEvent(EventCodec.TIME_SYNC, base, ts));
+            int steps = (int) Math.round(Double.parseDouble(c[1]) * 12);
+            for (int k = 0; k < steps; k++) {
+                long d = base + 1 + k * 3000L;
+                boolean worn = k < 10 * 12;
+                ev.add(new RingEvent(EventCodec.TEMP_EVENT, d, worn ? le16(3400, 3300, 2900) : le16(2100, 2100, 2000)));
+                if (worn) ev.add(new RingEvent(EventCodec.AOHR_EVENT, d + 2, new byte[] {0, 0, 1, 70, 1}));
+            }
+            if (!c[2].isEmpty()) {
+                long d = base + 1 + (long) (Double.parseDouble(c[2]) * 12) * 3000L + 5;
+                ev.add(new RingEvent(EventCodec.HRV_EVENT, d, new byte[] {60, 40, 61, 40, 62, 40, 61, 40, 60, 40, 59, 40}));
+            }
+            if (!c[3].isEmpty()) {
+                long d = base + 1 + (long) (Double.parseDouble(c[3]) * 12) * 3000L + 6;
+                byte[] burst = new byte[3 + 2 * 20];
+                burst[2] = 20;
+                for (int i = 0; i < 20; i++) {
+                    burst[3 + 2 * i] = 72;
+                    burst[4 + 2 * i] = 1;
+                }
+                ev.add(new RingEvent(EventCodec.AOHR_EVENT, d, burst));
+            }
+            db.insertBatch(ev, 1, start + 86400);
+            db.rebuildTime(start + 86400);
+            app.openring.core.analysis.LastWorn.Result r = app.openring.data.RightNow.lastWorn(db, now);
+            check("ring finder: a stray multi value heart rate event " + c[0] + " does not move the time off at 10 h (review of #103)",
+                    r.state == app.openring.core.analysis.LastWorn.OFF && r.hrRule && Math.abs(r.at - (start + 10 * 3600)) <= 300
+                    && !Double.isNaN(r.strayHrAt), r.state + " " + (r.at - start) / 3600.0 + " rule " + r.hrRule);
+        }
     }
 
     /** A context with a database of its own ({@code Db.get} keeps one open instance). */
