@@ -1096,6 +1096,45 @@ public class FinderTest {
             LastWorn.Result re = LastWorn.find(e[0], e[1], beats(new double[] {0, 10}));
             String te = LastWorn.text(re, e[0][e[0].length - 1], clock);
             check("E as text", te.startsWith("Taken off T" + Math.round((re.at - BASE) / 60) + " (then it lay at room temperature, about 21 °C). A warm reading T900 (28.0 °C) had no heart rate"), te);
+
+            // review of 415e889: warm 57 h to 59 h with one daytime heart rate event at 58 h. The one event cannot
+            // vouch for the warm readings, but the card must not say they had no heart rate.
+            double[] day = beats(new double[] {0, 50});
+            double[] dayL = Arrays.copyOf(day, day.length + 3);
+            int[] dayLId = Arrays.copyOf(ids(day.length, 0), dayL.length);
+            for (int k = 0; k < 3; k++) {
+                dayL[day.length + k] = BASE + 58 * H + k * 1.92;
+                dayLId[day.length + k] = 9000;
+            }
+            double[][] mid = tempsC(62, new double[] {0, 50, 34}, new double[] {57, 59, 30});
+            LastWorn.Result rm = LastWorn.find(mid[0], mid[1], new double[0], null, dayL, dayLId);
+            String tm = LastWorn.text(rm, mid[0][mid[0].length - 1], clock);
+            check("one heart rate event inside warm readings: they do not count, off at 50 h", rm.state == LastWorn.OFF && rm.hrRule
+                    && Math.abs(rm.at - (BASE + 50 * H)) <= 300 && rm.warmNoHrCount == 24 && !rm.warmNoHrNow && rm.warmLoneHr == 1
+                    && rm.warmLoneHrAt == BASE + 58 * H + 2 * 1.92, rm.state + " " + (rm.at - BASE) / H + " " + rm.warmLoneHr);
+            check("card text: warm readings with a single heart rate in the middle", tm.endsWith(" Warm readings from T3420 (up to 30.0 °C) had only a single heart rate (T3480), "
+                    + "which is not enough to count them.") && !tm.contains("no heart rate") && !tm.contains("lone heart rate"), tm);
+            double[][] end = tempsC(59, new double[] {0, 50, 34}, new double[] {57, 59, 30});
+            LastWorn.Result rw = LastWorn.find(end[0], end[1], new double[0], null, dayL, dayLId);
+            String tw = LastWorn.text(rw, end[0][end[0].length - 1], clock);
+            check("card text: warm to the end with a single heart rate", rw.state == LastWorn.OFF && rw.warmNoHrNow && tw.endsWith(" Since T3420 it reads warm again "
+                    + "(up to 30.0 °C) with only a single heart rate (T3480), which is not enough, so it is probably not on a finger (the charger, the sun or something warm).")
+                    && !tw.contains("lone heart rate"), tw);
+            LastWorn.Result o2 = new LastWorn.Result();
+            o2.state = LastWorn.OFF;
+            o2.at = BASE + 600;
+            o2.newest = BASE + 3000;
+            o2.warmNoHrAt = BASE + 1800;
+            o2.warmNoHrC = 29;
+            o2.warmNoHrCount = 1;
+            o2.warmLoneHr = 1;
+            o2.warmLoneHrAt = o2.strayHrAt = BASE + 1860;
+            text("one warm reading with a single heart rate", o2, BASE + 3000, clock, "Taken off T10. A warm reading T30 (29.0 °C) had only a single heart rate (T31), which is not enough to count it.");
+            o2.warmNoHrCount = 30;
+            o2.warmLoneHr = 2;
+            o2.strayHrAt = BASE + 2.5 * H;
+            text("warm readings with two lone heart rates, and a stray after them", o2, BASE + 3 * H, clock, "Taken off T10. Warm readings from T30 (up to 29.0 °C) had only 2 lone heart rates, "
+                    + "which is not enough to count them. A lone heart rate T150 with no warm reading near it does not count.");
         } finally {
             Locale.setDefault(before);
         }

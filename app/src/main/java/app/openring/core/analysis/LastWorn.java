@@ -70,13 +70,19 @@ public final class LastWorn {
         public boolean hasHr;
         /**
          * OFF: the first of the newest warm readings after the time it came off that did not count
-         * (no heart rate near them), NaN when none. {@link #warmNoHrC} is their highest temperature,
+         * (no counted heart rate near them), NaN when none. {@link #warmNoHrC} is their highest temperature,
          * {@link #warmNoHrCount} how many there were and {@link #warmNoHrNow} whether they last to the
          * newest reading (then it lies somewhere warm right now).
          */
         public double warmNoHrAt = Double.NaN, warmNoHrC = Double.NaN;
         public int warmNoHrCount;
         public boolean warmNoHrNow;
+        /**
+         * OFF: how many stored heart rate events that did not count lie within {@link #NEAR_S} of those
+         * warm readings (one event alone cannot vouch for them), and the newest of their times (NaN when none).
+         */
+        public int warmLoneHr;
+        public double warmLoneHrAt = Double.NaN;
         /** OFF: the newest heart rate after the time it came off that did not count (a stray), NaN when none. */
         public double strayHrAt = Double.NaN;
     }
@@ -257,10 +263,11 @@ public final class LastWorn {
         r.at = off;
         // what was left out after it came off, so the card can show it
         double from = Double.isNaN(off) ? Double.NEGATIVE_INFINITY : off;
-        int runEnd = -1;
+        int runEnd = -1, runStart = -1;
         for (int i = n - 1; i >= 0 && t[i] > from; i--) {
             if (warm[i] && !finger[i]) {
                 if (runEnd < 0) runEnd = i;
+                runStart = i;
                 r.warmNoHrAt = t[i];
                 r.warmNoHrC = Double.isNaN(r.warmNoHrC) ? c[i] : Math.max(r.warmNoHrC, c[i]);
                 r.warmNoHrCount++;
@@ -269,6 +276,16 @@ public final class LastWorn {
             }
         }
         r.warmNoHrNow = runEnd == n - 1;
+        if (runEnd >= 0) {
+            // heart rates that did not count during those warm readings: the card must not say they had none
+            java.util.Set<Integer> events = new java.util.HashSet<Integer>();
+            for (int j = 0; j < hr.length; j++) {
+                if (hrOk[j] || hr[j] < t[runStart] - NEAR_S || hr[j] > t[runEnd] + NEAR_S) continue;
+                events.add(hrId[j]);
+                r.warmLoneHrAt = hr[j];
+            }
+            r.warmLoneHr = events.size();
+        }
         for (int j = hr.length - 1; j >= 0 && hr[j] > from; j--) {
             if (!hrOk[j]) {
                 r.strayHrAt = hr[j];
@@ -327,15 +344,23 @@ public final class LastWorn {
             } else {
                 s = "Not worn in the last 7 days of synced data" + (Double.isNaN(r.roomC) ? "" : " (it reads room temperature, about " + Math.round(r.roomC) + " °C)") + ".";
             }
+            // "without heart rate", or the lone heart rates it had, which are not enough on their own
+            String hrs = r.warmLoneHr == 0 ? null : r.warmLoneHr == 1 ? "only a single heart rate (" + clock.when(r.warmLoneHrAt) + ")"
+                    : "only " + r.warmLoneHr + " lone heart rates";
             if (r.warmNoHrNow) {
-                s += " Since " + clock.when(r.warmNoHrAt) + " it reads warm" + (Double.isNaN(r.at) ? "" : " again") + " (up to " + one(r.warmNoHrC)
-                        + " °C) but without heart rate, so it is probably not on a finger (the charger, the sun or something warm).";
+                s += " Since " + clock.when(r.warmNoHrAt) + " it reads warm" + (Double.isNaN(r.at) ? "" : " again") + " (up to " + one(r.warmNoHrC) + " °C) "
+                        + (hrs == null ? "but without heart rate" : "with " + hrs + ", which is not enough")
+                        + ", so it is probably not on a finger (the charger, the sun or something warm).";
             } else if (r.warmNoHrCount == 1) {
-                s += " A warm reading " + clock.when(r.warmNoHrAt) + " (" + one(r.warmNoHrC) + " °C) had no heart rate, so it does not count.";
+                s += " A warm reading " + clock.when(r.warmNoHrAt) + " (" + one(r.warmNoHrC) + " °C) "
+                        + (hrs == null ? "had no heart rate, so it does not count." : "had " + hrs + ", which is not enough to count it.");
             } else if (r.warmNoHrCount > 1) {
-                s += " Warm readings from " + clock.when(r.warmNoHrAt) + " (up to " + one(r.warmNoHrC) + " °C) had no heart rate, so they do not count.";
+                s += " Warm readings from " + clock.when(r.warmNoHrAt) + " (up to " + one(r.warmNoHrC) + " °C) "
+                        + (hrs == null ? "had no heart rate, so they do not count." : "had " + hrs + ", which is not enough to count them.");
             }
-            if (!Double.isNaN(r.strayHrAt)) s += " A lone heart rate " + clock.when(r.strayHrAt) + " with no warm reading near it does not count.";
+            if (!Double.isNaN(r.strayHrAt) && r.strayHrAt != r.warmLoneHrAt) {
+                s += " A lone heart rate " + clock.when(r.strayHrAt) + " with no warm reading near it does not count.";
+            }
         } else {
             s = "No temperature readings yet. Sync once to fill this in.";
         }
