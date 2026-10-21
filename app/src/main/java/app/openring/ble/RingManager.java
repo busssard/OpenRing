@@ -649,7 +649,7 @@ public final class RingManager {
                     Db.get(ctx).put("cursor", 0);
                     Db.get(ctx).put("epoch", Db.get(ctx).kvLong("epoch", 1) + 1);
                     log(serial + " was reset");
-                    return "The ring was reset, its old key no longer works."; // a toast, Settings closes right after
+                    return Texts.RING_RESET_DONE; // a toast, Settings closes right after
                 } finally {
                     close(s);
                 }

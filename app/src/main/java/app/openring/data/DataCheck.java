@@ -103,14 +103,14 @@ public final class DataCheck {
         if (total > 0) {
             if (dated == 0) {
                 r.steps.add(new Step("Placing data in time", 2, String.format(Locale.US,
-                        "0 of %,d events could be dated (%s in %s). The ring clock is a counter "
+                        "0 of %,d %s could be dated (%s in %s). The ring clock is a counter "
                                 + "that only becomes a date through a time record. Sync again and let it finish completely "
-                                + "with the ring nearby; the end of a finished sync adds one.", total,
+                                + "with the ring nearby; the end of a finished sync adds one.", total, Texts.word(total, "event", "events"),
                         Texts.count(anchors, "time record", "time records"), Texts.count(segs, "boot segment", "boot segments"))));
             } else {
                 int st = dated * 10 < total * 9 ? 1 : 0;
                 r.steps.add(new Step("Placing data in time", st, String.format(Locale.US,
-                        "%,d of %,d events dated (%.0f%%), %d of %s with a time record%s", dated, total,
+                        "%,d of %,d %s dated (%.0f%%), %d of %s with a time record%s", dated, total, Texts.word(total, "event", "events"),
                         100.0 * dated / total, datedSegs, Texts.count(segs, "boot segment", "boot segments"),
                         st == 1 ? ". Undated parts are from ring restarts without a time record and are skipped." : "")));
             }

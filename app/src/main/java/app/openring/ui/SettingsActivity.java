@@ -929,7 +929,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     return backup ? "Backup saved" : "Exported";
                 } catch (Exception e) {
                     // the raw reason goes to the log, the screen gets a sentence that says what to do (issue #89)
-                    RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " failed: " + e);
+                    RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " failed: " + android.util.Log.getStackTraceString(e));
                     return null;
                 }
             }

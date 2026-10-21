@@ -614,10 +614,36 @@ public class PipelineTest {
         zoneTable();
         travelZones();
         zoneStorage(full.toByteArray());
+        oneEventCheck();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
+    /** Issue #92, code review of PR #100: a history of a single event says "1 event", also in the timing line. */
+    static void oneEventCheck() throws Exception {
+        long now = T0 + 3600;
+        Context c = freshDb("openring-one");
+        Db db = Db.get(c);
+        List<RingEvent> one = new ArrayList<RingEvent>();
+        one.add(new RingEvent(EventCodec.MOTION_EVENT, DS0 + 600, new byte[] {1, 1, 2, 3}));
+        db.insertBatch(one, 1, now);
+        Analyzer.run(c, null);
+        DataCheck.Report r = DataCheck.run(c);
+        check("data check: one event copied", r.steps.get(0).detail.equals("1 event copied from the ring"), r.steps.get(0).detail);
+        check("data check: zero of one event dated", r.steps.get(2).detail.startsWith("0 of 1 event could be dated (0 time records in 1 boot segment)"),
+                r.steps.get(2).detail);
+
+        c = freshDb("openring-one-dated");
+        db = Db.get(c);
+        one.clear();
+        // the ring's own time record (u32 seconds, no "phone" mark) is the only event and dates itself
+        one.add(new RingEvent(EventCodec.TIME_SYNC, DS0 + 600, Arrays.copyOf(app.openring.core.TimeLine.phoneAnchorBody(now), 4)));
+        db.insertBatch(one, 1, now);
+        Analyzer.run(c, null);
+        r = DataCheck.run(c);
+        check("data check: one of one event dated", r.steps.get(2).detail.startsWith("1 of 1 event dated (100%), 1 of 1 boot segment"), r.steps.get(2).detail);
+    }
+
     static JSONObject activityPart(JSONObject score, String key) {
         org.json.JSONArray cs = score == null ? null : score.optJSONArray("contributors");
         for (int i = 0; cs != null && i < cs.length(); i++) if (key.equals(cs.optJSONObject(i).optString("key"))) return cs.optJSONObject(i);

@@ -531,6 +531,8 @@ public class CoreTest {
         check("toast: 61 characters go into the dialog", !Texts.fitsToast(sixty + "a"));
         check("toast: no text is not a toast", !Texts.fitsToast(null));
         check("toast: short confirmations fit", Texts.fitsToast("Backup saved") && Texts.fitsToast("Exported"));
+        // passed to the toast through a variable (RingManager, then Settings), so the source scan below cannot see it
+        check("toast: factory reset text fits", Texts.fitsToast(Texts.RING_RESET_DONE));
 
         for (boolean backup : new boolean[] {false, true}) {
             String t = Texts.saveFailed(backup);
@@ -571,6 +573,9 @@ public class CoreTest {
                     check("no raw error text: " + where, !args.contains("getMessage()") && !args.matches("(?s).*\\+\\s*e\\s*$")
                             && !args.contains("failed: \""));
                     if (call.equals("say(") || call.equals("problem(")) continue;
+                    // each literal is measured alone, so a toast built from parts ("..." + x + "...") could be longer
+                    // than all of them: such texts must be built before and go through say(), or be a constant measured below
+                    check("toast text is not built from parts: " + where, literal.matcher(args).replaceAll("\"\"").indexOf('+') < 0);
                     java.util.regex.Matcher m = literal.matcher(args);
                     while (m.find()) {
                         toasts++;

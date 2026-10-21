@@ -13,6 +13,9 @@ public final class Texts {
      */
     public static final int TOAST_MAX = 60;
 
+    /** The toast after a factory reset (RingManager); Settings closes right after, so it must fit a toast. */
+    public static final String RING_RESET_DONE = "The ring was reset, its old key no longer works.";
+
     /** "1 wake up", "0 wake ups", "3 wake ups": the word agrees with the number. */
     public static String count(long n, String one, String many) {
         return n + " " + word(n, one, many);
