@@ -99,7 +99,7 @@ public final class ClockChange {
     public static String repeatText(Change c) {
         if (c == null || c.minutes >= 0) return null;
         return "The clocks went back " + amount(-c.minutes) + " on this day (" + c.from + " became " + c.to + "), so " + c.to + " to "
-                + c.from + " happened twice. Times in it say first or second time.";
+                + c.from + " happened twice. Times in that hour show (first time) or (second time).";
     }
 
     /**
@@ -122,7 +122,7 @@ public final class ClockChange {
      * In the hour that happens twice (issue #97) the touched time gets its {@link #repeatNote}; an end of the
      * stretch gets one only when its pass differs from the touched time's, so the usual case stays short:
      * "02:22 (second time)  Deep, 02:15 to 02:40 (25 min)", but "02:50 (first time)  Deep, 02:40 to 02:05
-     * (second time) (35 min)".
+     * (second time) (25 min)".
      */
     public static String stageTip(ZoneId zone, double at, String stage, double from, double to) {
         String note = repeatNote(zone, at), a = repeatNote(zone, from), b = repeatNote(zone, to);

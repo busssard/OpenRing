@@ -2017,7 +2017,7 @@ public class CoreTest {
         eq("stage tip: touched after the hour, start in it", ClockChange.stageTip(z, s1 + 2 * 3600 + 600, "REM", s1 + 3600 + 50 * 60, s1 + 2 * 3600 + 1200),
                 "03:10  REM, 02:50 (second time) to 03:20 (30 min)");
         eq("repeat text back", ClockChange.repeatText(ClockChange.find(z, bFrom, bTo)), "The clocks went back one hour on this day (03:00 became 02:00), "
-                + "so 02:00 to 03:00 happened twice. Times in it say first or second time.");
+                + "so 02:00 to 03:00 happened twice. Times in that hour show (first time) or (second time).");
         check("no repeat text going forward or without a change", ClockChange.repeatText(ClockChange.find(z, fFrom, fTo)) == null && ClockChange.repeatText(null) == null);
         java.time.ZoneId lh = java.time.ZoneId.of("Australia/Lord_Howe");
         java.time.LocalDate lhd = java.time.LocalDate.parse("2026-04-05");
