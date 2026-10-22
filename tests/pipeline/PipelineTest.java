@@ -153,6 +153,8 @@ public class PipelineTest {
         System.out.println("after interrupted sync:");
         for (DataCheck.Step s : r1.steps) System.out.println("    " + s.state + " " + s.title + ": " + s.detail);
         check("interrupted sync is reported, not silent", r1.steps.get(2).state == 2, r1.steps.get(2).title);
+        // the word agrees with the number (issue #92)
+        check("data check: one boot segment is singular", r1.steps.get(2).detail.contains("(0 time records in 1 boot segment)"), r1.steps.get(2).detail);
 
         // ---- sync 2: resumes, drains to the present, phone anchor written by the sink ----
         for (int i = cut; i < all.size(); i += 4096) db.insertBatch(all.subList(i, Math.min(all.size(), i + 4096)), 1, now);
@@ -169,6 +171,9 @@ public class PipelineTest {
         DataCheck.Report r2 = DataCheck.run(ctx);
         System.out.println(r2.text);
         for (DataCheck.Step s : r2.steps) check("data check: " + s.title, s.state == 0, s.detail);
+        check("data check: one of one boot segment is singular", r2.steps.get(2).detail.endsWith("1 of 1 boot segment with a time record"), r2.steps.get(2).detail);
+        check("data check: events keep their grouping", r2.steps.get(0).detail.equals("5,353 events copied from the ring"), r2.steps.get(0).detail);
+        check("data check: plurals for several nights", r2.steps.get(3).detail.startsWith("3 sleep periods (3 main nights), 4 days computed"), r2.steps.get(3).detail);
 
         for (int d = 0; d < 3; d++) {
             String key = day0.plusDays(d).toString();
@@ -617,10 +622,36 @@ public class PipelineTest {
         zoneTable();
         travelZones();
         zoneStorage(full.toByteArray());
+        oneEventCheck();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
+    /** Issue #92, code review of PR #100: a history of a single event says "1 event", also in the timing line. */
+    static void oneEventCheck() throws Exception {
+        long now = T0 + 3600;
+        Context c = freshDb("openring-one");
+        Db db = Db.get(c);
+        List<RingEvent> one = new ArrayList<RingEvent>();
+        one.add(new RingEvent(EventCodec.MOTION_EVENT, DS0 + 600, new byte[] {1, 1, 2, 3}));
+        db.insertBatch(one, 1, now);
+        Analyzer.run(c, null);
+        DataCheck.Report r = DataCheck.run(c);
+        check("data check: one event copied", r.steps.get(0).detail.equals("1 event copied from the ring"), r.steps.get(0).detail);
+        check("data check: zero of one event dated", r.steps.get(2).detail.startsWith("0 of 1 event could be dated (0 time records in 1 boot segment)"),
+                r.steps.get(2).detail);
+
+        c = freshDb("openring-one-dated");
+        db = Db.get(c);
+        one.clear();
+        // the ring's own time record (u32 seconds, no "phone" mark) is the only event and dates itself
+        one.add(new RingEvent(EventCodec.TIME_SYNC, DS0 + 600, Arrays.copyOf(app.openring.core.TimeLine.phoneAnchorBody(now), 4)));
+        db.insertBatch(one, 1, now);
+        Analyzer.run(c, null);
+        r = DataCheck.run(c);
+        check("data check: one of one event dated", r.steps.get(2).detail.startsWith("1 of 1 event dated (100%), 1 of 1 boot segment"), r.steps.get(2).detail);
+    }
+
     static JSONObject activityPart(JSONObject score, String key) {
         org.json.JSONArray cs = score == null ? null : score.optJSONArray("contributors");
         for (int i = 0; cs != null && i < cs.length(); i++) if (key.equals(cs.optJSONObject(i).optString("key"))) return cs.optJSONObject(i);

@@ -112,8 +112,20 @@ public final class Charts {
             cursor.setStrokeWidth(Ui.dp(c, 1));
         }
 
+        /** A disabled chart (an old result shown faded while a new one loads) hides its readout and ignores touch. */
+        @Override
+        public void setEnabled(boolean enabled) {
+            super.setEnabled(enabled);
+            if (!enabled && !Float.isNaN(scrubX)) {
+                scrubX = Float.NaN;
+                invalidate();
+            }
+        }
+
         @Override
         public boolean onTouchEvent(MotionEvent e) {
+            // View calls onTouchEvent even when disabled, so check here (issue #93)
+            if (!isEnabled()) return false;
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = e.getX();

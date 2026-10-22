@@ -144,7 +144,7 @@ public final class LogActivity extends Activity {
     }
 
     void repair() {
-        Toast.makeText(this, "Repairing. With a long history this can take a few minutes.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "Repairing, this can take a few minutes.", Toast.LENGTH_LONG).show();
         new AsyncTask<Void, Void, String>() {
             @Override
             protected String doInBackground(Void... v) {
@@ -158,7 +158,7 @@ public final class LogActivity extends Activity {
                     return "Done";
                 } catch (RuntimeException e) {
                     RingManager.get(LogActivity.this).log("repair failed: " + android.util.Log.getStackTraceString(e));
-                    return "Repair failed: " + e;
+                    return "The repair did not finish. The Log tab above shows why."; // raw text logged above (issue #89)
                 }
             }
 

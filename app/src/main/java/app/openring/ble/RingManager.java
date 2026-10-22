@@ -28,6 +28,7 @@ import app.openring.core.Protocol;
 import app.openring.core.RingClient;
 import app.openring.core.RingEvent;
 import app.openring.core.SyncError;
+import app.openring.core.Texts;
 import app.openring.data.Analyzer;
 import app.openring.data.Db;
 import app.openring.data.Prefs;
@@ -483,8 +484,8 @@ public final class RingManager {
                 if (quiet) return true;
                 if (firstLeft < 0 && left > 0) firstLeft = left;
                 progress = firstLeft > 0 ? Math.max(0, Math.min(1, 1 - left / (double) firstLeft)) : -1;
-                status = left > 0 ? String.format(Locale.US, "Syncing, %d events, %.0f KB left", total, left / 1024.0)
-                        : String.format(Locale.US, "Syncing, %d events", total);
+                status = left > 0 ? String.format(Locale.US, "Syncing, %s, %.0f KB left", Texts.count(total, "event", "events"), left / 1024.0)
+                        : "Syncing, " + Texts.count(total, "event", "events");
                 notifyListeners();
                 return true;
             }
@@ -647,7 +648,8 @@ public final class RingManager {
                     prefs.setSetupDone(false);
                     Db.get(ctx).put("cursor", 0);
                     Db.get(ctx).put("epoch", Db.get(ctx).kvLong("epoch", 1) + 1);
-                    return serial + " was reset. Its old key no longer works; pair it again.";
+                    log(serial + " was reset");
+                    return Texts.RING_RESET_DONE; // a toast, Settings closes right after
                 } finally {
                     close(s);
                 }
