@@ -176,12 +176,22 @@ public final class Ui {
         b.setGravity(Gravity.CENTER);
         int ph = dp(c, 20), pv = dp(c, 12);
         b.setPadding(ph, pv, ph, pv);
-        GradientDrawable bg = rounded(filled ? color : 0x00000000, dp(c, 24));
-        if (!filled) bg.setStroke(dp(c, 1.2f), alpha(color, 0.6f));
-        b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(color, 0.25f)), bg, null));
+        if (filled) {
+            b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(color, 0.25f)), rounded(color, dp(c, 24)), null));
+        } else {
+            outline(c, b, color);
+        }
         b.setClickable(true);
         b.setFocusable(true);
         return b;
+    }
+
+    /** Gives an outlined button (or chip) another colour in place, without rebuilding it. */
+    public static void outline(Context c, TextView b, int color) {
+        b.setTextColor(color);
+        GradientDrawable bg = rounded(0x00000000, dp(c, 24));
+        bg.setStroke(dp(c, 1.2f), alpha(color, 0.6f));
+        b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(color, 0.25f)), bg, null));
     }
 
     /** A smaller outlined pill for secondary actions (13 sp); wraps to more lines instead of overlapping. */
