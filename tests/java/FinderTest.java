@@ -755,21 +755,394 @@ public class FinderTest {
         double[][] table = temps(6);
         LastWorn.Result tb = LastWorn.find(table[0], table[1], new double[0]);
         check("never worn: off with no time", tb.state == LastWorn.OFF && Double.isNaN(tb.at) && tb.roomC == 21);
-        // never warm but a heart rate in the first minutes: off since then
+        // never warm, one lone heart rate in the first minutes: a stray since issue #94, so not worn
         LastWorn.Result tb2 = LastWorn.find(table[0], table[1], new double[] {BASE + 100});
-        check("only a heart rate at the start", tb2.state == LastWorn.OFF && tb2.at == BASE, tb2.at - BASE);
+        check("a lone heart rate at the start is a stray", tb2.state == LastWorn.OFF && Double.isNaN(tb2.at) && tb2.strayHrAt == BASE + 100, tb2.at - BASE);
 
         // readings out of order are sorted, and an even number of cool readings gives a middle value
         LastWorn.Result un = LastWorn.find(new double[] {BASE + 600, BASE, BASE + 300, BASE + 1200, BASE + 900}, new double[] {20, 33, 22, 24, 23}, new double[0]);
         check("unsorted input", un.state == LastWorn.OFF && un.at == BASE && un.roomC == 22.5, un.roomC);
         // only heart rate tells it was worn (all temperatures cool, beats until the end)
-        LastWorn.Result hr = LastWorn.find(new double[] {BASE, BASE + 300}, new double[] {25, 25}, new double[] {BASE + 1000});
+        LastWorn.Result hr = LastWorn.find(new double[] {BASE, BASE + 300}, new double[] {25, 25}, new double[] {BASE + 700, BASE + 1000});
         check("cool all along but beats to the end: worn, no skin value", hr.state == LastWorn.WORN && Double.isNaN(hr.skinC) && hr.at == BASE + 1000);
+
+        lastWornWarmth();
 
         check("charging: up", LastWorn.charging(40, 54) == 1);
         check("charging: down", LastWorn.charging(60, 54) == 0);
         check("charging: about the same is unknown", LastWorn.charging(100, 100) == -1 && LastWorn.charging(55, 54) == -1);
         check("charging: no earlier read", LastWorn.charging(-1, 54) == -1);
+    }
+
+    /** Temperature every 5 minutes: {from hour, to hour, C} ranges, 21 C outside them (later ranges win). */
+    static double[][] tempsC(double hours, double[]... ranges) {
+        int n = (int) Math.round(hours * 12);
+        double[] t = new double[n], c = new double[n];
+        for (int i = 0; i < n; i++) {
+            t[i] = BASE + i * 300;
+            double h = i / 12.0;
+            c[i] = 21;
+            for (double[] w : ranges) if (h >= w[0] - 1e-9 && h < w[1] - 1e-9) c[i] = w[2];
+        }
+        return new double[][] {t, c};
+    }
+
+    /** Warm readings need a heart rate near, single odd readings do not move the time (issue #94). */
+    static void lastWornWarmth() {
+        // A: worn with heart rate every 10 minutes until 22 h, then 8 h at 30 C without heart rate (charger)
+        double[][] a = tempsC(30, new double[] {0, 22, 34}, new double[] {22, 30, 30});
+        double[] hrA = new double[22 * 6];
+        for (int i = 0; i < hrA.length; i++) hrA[i] = BASE + i * 600 + 60;
+        LastWorn.Result ra = LastWorn.find(a[0], a[1], hrA);
+        check("A: warm on the charger without heart rate is not worn, not sure since the last heart rate",
+                ra.state == LastWorn.UNSURE && ra.at == hrA[hrA.length - 1] && ra.skinC == 30 && ra.newest == a[0][a[0].length - 1], ra.state + " " + (ra.at - BASE) / H);
+        // A2: taken off at 22 h, 4 h at 21 C, then 28 C from 26 h (sunny window) until 30 h
+        double[][] a2 = tempsC(30, new double[] {0, 22, 34}, new double[] {26, 30, 28});
+        LastWorn.Result r2 = LastWorn.find(a2[0], a2[1], beats(new double[] {0, 22}));
+        check("A2: warm again without heart rate, still taken off at 22 h", r2.state == LastWorn.OFF && Math.abs(r2.at - (BASE + 22 * H)) <= 300, r2.state + " " + (r2.at - BASE) / H);
+        check("A2: the warm stretch is reported", r2.warmNoHrNow && r2.warmNoHrAt == BASE + 26 * H && r2.warmNoHrC == 28 && r2.warmNoHrCount == 48, r2.warmNoHrAt);
+        check("A2: room temperature from the cool readings only", r2.roomC == 21, r2.roomC);
+        // A2 half an hour into the warmth: still reads as worn (could be put back on), the honest limit
+        double[][] a2early = tempsC(26.5, new double[] {0, 22, 34}, new double[] {26, 26.5, 28});
+        LastWorn.Result r2e = LastWorn.find(a2early[0], a2early[1], beats(new double[] {0, 22}));
+        check("A2 half an hour in: just put on", r2e.state == LastWorn.WORN && r2e.justOn, r2e.state);
+        // E: taken off at 10 h (21 C), one 28 C reading at 15 h, cool until 20 h
+        double[][] e = tempsC(20, new double[] {0, 10, 34}, new double[] {15, 15 + 1 / 12.0, 28});
+        LastWorn.Result re = LastWorn.find(e[0], e[1], beats(new double[] {0, 10}));
+        check("E: one warm reading does not move the time", re.state == LastWorn.OFF && Math.abs(re.at - (BASE + 10 * H)) <= 300, (re.at - BASE) / H);
+        check("E: the warm reading is reported", !re.warmNoHrNow && re.warmNoHrCount == 1 && re.warmNoHrAt == BASE + 15 * H && re.warmNoHrC == 28, re.warmNoHrAt);
+        // C: taken off at 10 h, one stray heart rate at 14 h
+        double[][] cc = tempsC(20, new double[] {0, 10, 34});
+        double[] hrC = beats(new double[] {0, 10});
+        hrC = Arrays.copyOf(hrC, hrC.length + 1);
+        hrC[hrC.length - 1] = BASE + 14 * H;
+        LastWorn.Result rc = LastWorn.find(cc[0], cc[1], hrC);
+        check("C: one stray heart rate does not move the time", rc.state == LastWorn.OFF && Math.abs(rc.at - (BASE + 10 * H)) <= 300, (rc.at - BASE) / H);
+        check("C: the stray heart rate is reported", rc.strayHrAt == BASE + 14 * H && rc.warmNoHrCount == 0, rc.strayHrAt);
+        // two heart rates 10 minutes apart while cool still mean cold fingers
+        double[] hrC2 = Arrays.copyOf(hrC, hrC.length + 1);
+        hrC2[hrC2.length - 1] = BASE + 14 * H + 600;
+        LastWorn.Result rc2 = LastWorn.find(cc[0], cc[1], hrC2);
+        check("two heart rates while cool are not strays", rc2.state == LastWorn.OFF && Math.abs(rc2.at - (BASE + 14 * H + 600)) <= 300 && Double.isNaN(rc2.strayHrAt), (rc2.at - BASE) / H);
+        // worn, with a 50 minute gap in the heart rate (a walk), newest reading inside the gap: still worn
+        double[][] g = tempsC(12, new double[] {0, 12, 33});
+        LastWorn.Result rg = LastWorn.find(g[0], g[1], beats(new double[] {0, 11.1}));
+        check("a heart rate gap under an hour while warm: worn", rg.state == LastWorn.WORN && !rg.justOn && rg.skinC == 33, rg.state);
+        // the same gap in the middle of the day does not end the wearing
+        LastWorn.Result rg2 = LastWorn.find(g[0], g[1], beats(new double[] {0, 5}, new double[] {6.5, 12}));
+        check("a heart rate gap in the middle: still worn", rg2.state == LastWorn.WORN, rg2.state);
+        // charger right after taking off (no cool reading between), then the table: one warm stretch, so the
+        // time is when it left the charger (the honest limit; an active afternoon without heart rate looks the same)
+        double[][] ch = tempsC(24, new double[] {0, 18, 34}, new double[] {18, 20, 30});
+        LastWorn.Result rch = LastWorn.find(ch[0], ch[1], beats(new double[] {0, 18}));
+        check("charger after wearing, then the table: the end of the warm stretch", rch.state == LastWorn.OFF
+                && Math.abs(rch.at - (BASE + 20 * H)) <= 300 && rch.warmNoHrCount == 0, (rch.at - BASE) / H);
+        // review of PR #103: worn all day, heart rate in the morning only (an active afternoon), off at 17 h, an hour on the table
+        double[][] aa = tempsC(18, new double[] {0, 17, 33});
+        LastWorn.Result raa = LastWorn.find(aa[0], aa[1], beats(new double[] {0, 12}));
+        check("active afternoon without heart rate: off when taken off, not in the morning", raa.state == LastWorn.OFF
+                && Math.abs(raa.at - (BASE + 17 * H)) <= 300 && raa.hrRule, (raa.at - BASE) / H);
+        // no heart rate at all in the history: temperature decides on its own, as before
+        double[][] nh = tempsC(30, new double[] {0, 22, 34}, new double[] {22, 30, 30});
+        LastWorn.Result rnh = LastWorn.find(nh[0], nh[1], new double[0]);
+        check("no heart rate at all: warm reads as worn", rnh.state == LastWorn.WORN && !rnh.hasHr && !rnh.justOn, rnh.state);
+        // just put on: one warm reading after hours on the table, heart rate only from earlier
+        double[][] po = tempsC(20.1, new double[] {0, 10, 34}, new double[] {20, 21, 32});
+        LastWorn.Result rpo = LastWorn.find(po[0], po[1], beats(new double[] {0, 10}));
+        check("just put on: worn", rpo.state == LastWorn.WORN && rpo.justOn && rpo.skinC == 32, rpo.state);
+        // a lone heart rate after the newest temperature: a stray while the ring reads cool ...
+        double[][] nw = tempsC(5, new double[] {0, 3, 34});
+        LastWorn.Result rnw = LastWorn.find(nw[0], nw[1], new double[] {BASE + 5 * H + 120});
+        check("a lone heart rate after a cool newest reading is a stray", rnw.state == LastWorn.OFF && Math.abs(rnw.at - (BASE + 3 * H)) <= 300
+                && rnw.strayHrAt == BASE + 5 * H + 120, rnw.state);
+        // ... but counts while it reads warm
+        double[][] nw2 = tempsC(5, new double[] {0, 5, 34});
+        LastWorn.Result rnw2 = LastWorn.find(nw2[0], nw2[1], new double[] {BASE + 5 * H + 120});
+        check("a lone heart rate after a warm newest reading counts", rnw2.state == LastWorn.WORN && rnw2.at == BASE + 5 * H + 120 && rnw2.lastHr == BASE + 5 * H + 120, rnw2.state);
+        // warm without heart rate where too few daytime heart rates exist to check: temperature decides
+        LastWorn.Result rw = LastWorn.find(new double[] {BASE + 3 * H, BASE + 4 * H, BASE + 5 * H}, new double[] {30, 30, 30}, new double[] {BASE, BASE + 600});
+        check("too little daytime heart rate to check: warm reads as worn", rw.state == LastWorn.WORN && !rw.hrRule && !rw.confirmed && !rw.justOn, rw.state + " " + rw.at);
+        // review of PR #103: only night heart rate (HRV, 0 to 7 h), worn to 18 h, on the table to 22 h
+        double[][] nt = tempsC(22, new double[] {0, 18, 33});
+        LastWorn.Result rnt = LastWorn.find(nt[0], nt[1], beats(new double[] {0, 7}), new double[0]);
+        check("night heart rate only: off at 18 h, not in the morning", rnt.state == LastWorn.OFF && !rnt.hrRule
+                && Math.abs(rnt.at - (BASE + 18 * H)) <= 300, (rnt.at - BASE) / H);
+        LastWorn.Result rnt2 = LastWorn.find(nt[0], nt[1], new double[0], beats(new double[] {0, 18}));
+        check("daytime heart rate every 5 minutes: off at 18 h", rnt2.state == LastWorn.OFF && rnt2.hrRule
+                && Math.abs(rnt2.at - (BASE + 18 * H)) <= 300, (rnt2.at - BASE) / H);
+        // night heart rate only, still worn at 15 h: worn, not "not sure" all day
+        double[][] nt3 = tempsC(15, new double[] {0, 15, 33});
+        LastWorn.Result rnt3 = LastWorn.find(nt3[0], nt3[1], beats(new double[] {0, 7}), new double[0]);
+        check("night heart rate only, worn all day: worn, but the night heart rate 8 hours ago confirms nothing", rnt3.state == LastWorn.WORN
+                && !rnt3.hrRule && !rnt3.confirmed && !rnt3.justOn && rnt3.lastHr < BASE + 7.1 * H, rnt3.state);
+        // review of PR #103: the newest heart rate exactly an hour before the newest reading still confirms, a second more does not
+        double[][] nt4 = tempsC(15, new double[] {0, 15, 33});
+        double lastT = nt4[0][nt4[0].length - 1];
+        LastWorn.Result rc1 = LastWorn.find(nt4[0], nt4[1], new double[] {lastT - 3600 - 600, lastT - 3600}, new double[0]);
+        LastWorn.Result rc0 = LastWorn.find(nt4[0], nt4[1], new double[] {lastT - 3601 - 600, lastT - 3601}, new double[0]);
+        check("a heart rate exactly an hour before the newest reading confirms it", rc1.state == LastWorn.WORN && rc1.confirmed
+                && !rc0.confirmed && rc0.state == LastWorn.WORN, rc1.confirmed + " " + rc0.confirmed);
+        // sparse daytime heart rate (one every 2 hours): too little to check, temperature decides
+        double[] sparse = new double[8];
+        for (int i = 0; i < sparse.length; i++) sparse[i] = BASE + i * 2 * H + 60;
+        LastWorn.Result rsp = LastWorn.find(nt3[0], nt3[1], new double[0], sparse);
+        check("sparse daytime heart rate: worn", rsp.state == LastWorn.WORN && !rsp.hrRule, rsp.state);
+        // a lone heart rate and a single warm reading do not confirm each other (off at 10 h, 14:00 and 28 C at 14:10)
+        double[][] lc = tempsC(20, new double[] {0, 10, 34}, new double[] {14 + 2 / 12.0, 14 + 3 / 12.0, 28});
+        double[] hrL = beats(new double[] {0, 10});
+        hrL = Arrays.copyOf(hrL, hrL.length + 1);
+        hrL[hrL.length - 1] = BASE + 14 * H;
+        LastWorn.Result rlc = LastWorn.find(lc[0], lc[1], hrL);
+        check("a lone heart rate does not confirm a lone warm reading", rlc.state == LastWorn.OFF && Math.abs(rlc.at - (BASE + 10 * H)) <= 300
+                && rlc.strayHrAt == BASE + 14 * H && rlc.warmNoHrCount == 1, (rlc.at - BASE) / H);
+
+        lastWornEvents();
+        lastWornBoundaries();
+        lastWornText();
+    }
+
+    /** Daytime heart rate every 5 minutes in the ranges, each value an event of its own (ids from 0). */
+    static int[] ids(int n, int from) {
+        int[] out = new int[n];
+        for (int i = 0; i < n; i++) out[i] = from + i;
+        return out;
+    }
+
+    /** {@code count} heart rates of one event from {@code at}, {@code step} seconds apart. */
+    static double[] burst(double at, int count, double step) {
+        double[] out = new double[count];
+        for (int i = 0; i < count; i++) out[i] = at + i * step;
+        return out;
+    }
+
+    static int[] same(int n, int id) {
+        int[] out = new int[n];
+        Arrays.fill(out, id);
+        return out;
+    }
+
+    /**
+     * Review of PR #103: the values of one stored event (six HRV values 5 minutes apart, an AOHR burst
+     * 1.92 s apart) are one measurement and do not vouch for each other. Daytime heart rate is stored,
+     * so the heart rate rule applies.
+     */
+    static void lastWornEvents() {
+        double[] day = beats(new double[] {0, 10});
+        int[] dayId = ids(day.length, 0);
+        // a stray HRV event at 14 h, in the middle of the cool readings
+        double[][] cc = tempsC(20, new double[] {0, 10, 34});
+        double[] hrv = burst(BASE + 14 * H, 6, 300);
+        LastWorn.Result rh = LastWorn.find(cc[0], cc[1], hrv, same(6, 1000), day, dayId);
+        check("a stray six value HRV event does not move the time", rh.state == LastWorn.OFF && rh.hrRule
+                && Math.abs(rh.at - (BASE + 10 * H)) <= 300, rh.state + " " + (rh.at - BASE) / H);
+        check("the stray HRV event is reported", rh.strayHrAt >= BASE + 14 * H && rh.strayHrAt <= BASE + 14 * H + 1500, (rh.strayHrAt - BASE) / H);
+        // without event numbers its values would vouch for each other (the bug the review found)
+        LastWorn.Result old = LastWorn.find(cc[0], cc[1], hrv, day);
+        check("without event numbers the six values pair up (why the numbers are needed)", old.state == LastWorn.OFF
+                && old.at > BASE + 14 * H, (old.at - BASE) / H);
+        // the same HRV event at the end of the history (its values reach past the newest reading)
+        double[][] ce = tempsC(14.5, new double[] {0, 10, 34});
+        LastWorn.Result rhe = LastWorn.find(ce[0], ce[1], hrv, same(6, 1000), day, dayId);
+        check("a stray HRV event at the end: not worn, off at 10 h", rhe.state == LastWorn.OFF
+                && Math.abs(rhe.at - (BASE + 10 * H)) <= 300 && !Double.isNaN(rhe.strayHrAt), rhe.state + " " + (rhe.at - BASE) / H);
+        // an AOHR burst (20 values 1.92 s apart) at 14 h, in the middle and at the end
+        double[] aohr = burst(BASE + 14 * H, 20, 1.92);
+        double[] dayA = Arrays.copyOf(day, day.length + aohr.length);
+        System.arraycopy(aohr, 0, dayA, day.length, aohr.length);
+        int[] dayAId = Arrays.copyOf(dayId, dayA.length);
+        Arrays.fill(dayAId, day.length, dayA.length, 2000);
+        LastWorn.Result ra = LastWorn.find(cc[0], cc[1], new double[0], null, dayA, dayAId);
+        check("a stray AOHR burst does not move the time", ra.state == LastWorn.OFF && Math.abs(ra.at - (BASE + 10 * H)) <= 300
+                && ra.strayHrAt == aohr[aohr.length - 1], ra.state + " " + (ra.at - BASE) / H);
+        double[][] ca = tempsC(14, new double[] {0, 10, 34});
+        LastWorn.Result rae = LastWorn.find(ca[0], ca[1], new double[0], null, dayA, dayAId);
+        check("a stray AOHR burst after the newest cool reading: not worn", rae.state == LastWorn.OFF
+                && Math.abs(rae.at - (BASE + 10 * H)) <= 300, rae.state + " " + (rae.at - BASE) / H);
+        // two HRV events half an hour apart while cool still pair across events: cold fingers until the last value
+        double[] two = Arrays.copyOf(hrv, 12);
+        System.arraycopy(burst(BASE + 14.5 * H, 6, 300), 0, two, 6, 6);
+        int[] twoId = same(12, 1000);
+        Arrays.fill(twoId, 6, 12, 1001);
+        LastWorn.Result rt = LastWorn.find(cc[0], cc[1], two, twoId, day, dayId);
+        check("two HRV events while cool are not strays", rt.state == LastWorn.OFF && Double.isNaN(rt.strayHrAt)
+                && Math.abs(rt.at - two[11]) <= 300, (rt.at - BASE) / H);
+    }
+
+    /** The borders "at most an hour" and "within 30 minutes" are inclusive (review of PR #103). */
+    static void lastWornBoundaries() {
+        double[] day = beats(new double[] {0, 10});
+        // warm without heart rate for exactly an hour (readings 20:00 to 21:00): just put on
+        double[][] w60 = tempsC(21 + 1 / 12.0, new double[] {0, 10, 34}, new double[] {20, 22, 30});
+        LastWorn.Result r60 = LastWorn.find(w60[0], w60[1], day);
+        check("warm for exactly 3600 s without heart rate: just put on", r60.state == LastWorn.WORN && r60.justOn && r60.hrRule
+                && w60[0][w60[0].length - 1] - (BASE + 20 * H) == 3600, r60.state);
+        // one reading more (3900 s): not on a finger, off at 10 h
+        double[][] w65 = tempsC(21 + 2 / 12.0, new double[] {0, 10, 34}, new double[] {20, 22, 30});
+        LastWorn.Result r65 = LastWorn.find(w65[0], w65[1], day);
+        check("warm for 3900 s without heart rate: off at 10 h", r65.state == LastWorn.OFF && r65.warmNoHrNow
+                && Math.abs(r65.at - (BASE + 10 * H)) <= 300, r65.state);
+        // two heart rates (separate events) ending exactly 1800 s before a warm stretch of two hours: near it
+        double[][] w2 = tempsC(22, new double[] {0, 10, 34}, new double[] {20, 22, 30});
+        double edge = BASE + 20 * H - 1800;
+        double[] at = Arrays.copyOf(day, day.length + 2);
+        at[day.length] = edge - 60;
+        at[day.length + 1] = edge;
+        LastWorn.Result rn = LastWorn.find(w2[0], w2[1], at);
+        check("a heart rate exactly 1800 s from a warm reading is near it: not sure since then", rn.state == LastWorn.UNSURE && rn.at == edge, rn.state);
+        at[day.length] = edge - 61;
+        at[day.length + 1] = edge - 1;
+        LastWorn.Result rf = LastWorn.find(w2[0], w2[1], at);
+        check("1801 s away it is not: the warm stretch does not count", rf.state == LastWorn.OFF && rf.warmNoHrNow, rf.state);
+        // the heart rate rule looks at the last 48 hours only: daytime heart rate that stopped 3 days ago does not switch it on
+        double[][] longer = tempsC(4 * 24, new double[] {0, 96, 33});
+        LastWorn.Result rl = LastWorn.find(longer[0], longer[1], new double[0], beats(new double[] {0, 20}));
+        check("daytime heart rate that stopped 3 days ago: temperature decides", rl.state == LastWorn.WORN && !rl.hrRule, rl.state);
+        LastWorn.Result rl2 = LastWorn.find(longer[0], longer[1], new double[0], beats(new double[] {0, 60}));
+        check("daytime heart rate within the last 48 hours: the rule applies", rl2.hrRule && rl2.state == LastWorn.UNSURE, rl2.state);
+    }
+
+    /** Each sentence of the card (issues #74, #94), with a fixed time format: minutes after BASE. */
+    static void lastWornText() {
+        Locale before = Locale.getDefault();
+        Locale.setDefault(Locale.US);
+        try {
+            LastWorn.Clock clock = new LastWorn.Clock() {
+                @Override
+                public String when(double unix) {
+                    return "T" + Math.round((unix - BASE) / 60);
+                }
+            };
+            double now = BASE + H;
+            LastWorn.Result w = new LastWorn.Result();
+            w.state = LastWorn.WORN;
+            w.at = BASE + 600;
+            w.newest = BASE + 600;
+            w.skinC = 33.14;
+            w.lastHr = BASE + 480;
+            w.hasHr = true;
+            w.confirmed = true;
+            text("worn", w, now, clock, "The newest reading (T10) was from a finger (skin 33.1 °C, heart rate until T8).");
+            w.lastHr = w.at = BASE + 1200;
+            text("worn, heart rate newer than the skin reading", w, now, clock,
+                    "The newest reading (T20) was from a finger (skin 33.1 °C T10, heart rate until T20).");
+            w.confirmed = false;
+            w.justOn = true;
+            w.at = BASE + 600;
+            text("just put on", w, now, clock, "The newest reading (T10) was from a finger (skin 33.1 °C, no heart rate stored yet, so it was probably just put on).");
+            w.justOn = false;
+            text("too little daytime heart rate", w, now, clock,
+                    "The newest reading (T10) was from a finger (skin 33.1 °C, the ring stored too little daytime heart rate to confirm it).");
+            w.hasHr = false;
+            text("no heart rate at all", w, now, clock, "The newest reading (T10) was from a finger (skin 33.1 °C, no heart rate in the synced data to confirm it).");
+            w.skinC = Double.NaN;
+            text("cold fingers", w, now, clock, "The newest reading (T10) was from a finger (a heart rate, with cool skin).");
+
+            LastWorn.Result u = new LastWorn.Result();
+            u.state = LastWorn.UNSURE;
+            u.at = BASE + 300;
+            u.newest = BASE + 7200;
+            u.skinC = 30;
+            text("not sure", u, BASE + 7200, clock, "Not sure. It still read warm at its newest reading (30.0 °C, T120), but stored no heart rate after T5, "
+                    + "so it was probably taken off around then and lay somewhere warm (the charger, under a duvet, in the sun).");
+
+            LastWorn.Result o = new LastWorn.Result();
+            o.state = LastWorn.OFF;
+            o.at = BASE + 600;
+            o.newest = BASE + 3000;
+            o.roomC = 21.4;
+            text("taken off", o, now, clock, "Taken off T10 (then it lay at room temperature, about 21 °C).");
+            o.warmNoHrAt = BASE + 1800;
+            o.warmNoHrC = 28;
+            o.warmNoHrCount = 5;
+            o.warmNoHrNow = true;
+            text("warm again", o, now, clock, "Taken off T10 (then it lay at room temperature, about 21 °C). Since T30 it reads warm again (up to 28.0 °C) "
+                    + "but without heart rate, so it is probably not on a finger (the charger, the sun or something warm).");
+            o.warmNoHrNow = false;
+            o.warmNoHrCount = 1;
+            text("one warm reading without heart rate", o, now, clock,
+                    "Taken off T10 (then it lay at room temperature, about 21 °C). A warm reading T30 (28.0 °C) had no heart rate, so it does not count.");
+            o.warmNoHrCount = 3;
+            o.strayHrAt = BASE + 2400;
+            text("warm readings and a lone heart rate", o, now, clock, "Taken off T10 (then it lay at room temperature, about 21 °C). Warm readings from T30 "
+                    + "(up to 28.0 °C) had no heart rate, so they do not count. A lone heart rate T40 with no warm reading near it does not count.");
+            o.roomC = Double.NaN;
+            o.warmNoHrCount = 0;
+            o.strayHrAt = Double.NaN;
+            text("taken off, no cool reading", o, now, clock, "Taken off T10.");
+
+            LastWorn.Result nw = new LastWorn.Result();
+            nw.state = LastWorn.OFF;
+            nw.newest = BASE;
+            nw.roomC = 20.6;
+            text("not worn", nw, BASE + 600, clock, "Not worn in the last 7 days of synced data (it reads room temperature, about 21 °C).");
+            nw.warmNoHrAt = BASE - 600;
+            nw.warmNoHrC = 29;
+            nw.warmNoHrCount = 3;
+            nw.warmNoHrNow = true;
+            text("not worn, warm now", nw, BASE + 600, clock, "Not worn in the last 7 days of synced data (it reads room temperature, about 21 °C). "
+                    + "Since T-10 it reads warm (up to 29.0 °C) but without heart rate, so it is probably not on a finger (the charger, the sun or something warm).");
+
+            text("no data", new LastWorn.Result(), now, clock, "No temperature readings yet. Sync once to fill this in.");
+            // how old the newest reading is: from 6 hours on, hours below 2 days, then days
+            text("6 hours old: no age line", o, o.newest + 6 * H, clock, "Taken off T10.");
+            text("9 hours old", o, o.newest + 9 * H, clock, "Taken off T10.\nThe newest synced reading is 9 hours old, so this is how it was then.");
+            text("10 days old", o, o.newest + 10 * 86400 + 5 * H, clock, "Taken off T10.\nThe newest synced reading is 10 days old, so this is how it was then.");
+            w.lastHr = BASE + 20 * H;
+            text("the age counts from the newest heart rate when it is newer", w, BASE + 25 * H, clock, "The newest reading (T10) was from a finger (a heart rate, with cool skin).");
+            text("no age line without data", new LastWorn.Result(), BASE + 1000 * H, clock, "No temperature readings yet. Sync once to fill this in.");
+
+            // the texts of the issue's cases, straight from find
+            double[][] e = tempsC(20, new double[] {0, 10, 34}, new double[] {15, 15 + 1 / 12.0, 28});
+            LastWorn.Result re = LastWorn.find(e[0], e[1], beats(new double[] {0, 10}));
+            String te = LastWorn.text(re, e[0][e[0].length - 1], clock);
+            check("E as text", te.startsWith("Taken off T" + Math.round((re.at - BASE) / 60) + " (then it lay at room temperature, about 21 °C). A warm reading T900 (28.0 °C) had no heart rate"), te);
+
+            // review of 415e889: warm 57 h to 59 h with one daytime heart rate event at 58 h. The one event cannot
+            // vouch for the warm readings, but the card must not say they had no heart rate.
+            double[] day = beats(new double[] {0, 50});
+            double[] dayL = Arrays.copyOf(day, day.length + 3);
+            int[] dayLId = Arrays.copyOf(ids(day.length, 0), dayL.length);
+            for (int k = 0; k < 3; k++) {
+                dayL[day.length + k] = BASE + 58 * H + k * 1.92;
+                dayLId[day.length + k] = 9000;
+            }
+            double[][] mid = tempsC(62, new double[] {0, 50, 34}, new double[] {57, 59, 30});
+            LastWorn.Result rm = LastWorn.find(mid[0], mid[1], new double[0], null, dayL, dayLId);
+            String tm = LastWorn.text(rm, mid[0][mid[0].length - 1], clock);
+            check("one heart rate event inside warm readings: they do not count, off at 50 h", rm.state == LastWorn.OFF && rm.hrRule
+                    && Math.abs(rm.at - (BASE + 50 * H)) <= 300 && rm.warmNoHrCount == 24 && !rm.warmNoHrNow && rm.warmLoneHr == 1
+                    && rm.warmLoneHrAt == BASE + 58 * H + 2 * 1.92, rm.state + " " + (rm.at - BASE) / H + " " + rm.warmLoneHr);
+            check("card text: warm readings with a single heart rate in the middle", tm.endsWith(" Warm readings from T3420 (up to 30.0 °C) had only a single heart rate (T3480), "
+                    + "which is not enough to count them.") && !tm.contains("no heart rate") && !tm.contains("lone heart rate"), tm);
+            double[][] end = tempsC(59, new double[] {0, 50, 34}, new double[] {57, 59, 30});
+            LastWorn.Result rw = LastWorn.find(end[0], end[1], new double[0], null, dayL, dayLId);
+            String tw = LastWorn.text(rw, end[0][end[0].length - 1], clock);
+            check("card text: warm to the end with a single heart rate", rw.state == LastWorn.OFF && rw.warmNoHrNow && tw.endsWith(" Since T3420 it reads warm again "
+                    + "(up to 30.0 °C) with only a single heart rate (T3480), which is not enough, so it is probably not on a finger (the charger, the sun or something warm).")
+                    && !tw.contains("lone heart rate"), tw);
+            LastWorn.Result o2 = new LastWorn.Result();
+            o2.state = LastWorn.OFF;
+            o2.at = BASE + 600;
+            o2.newest = BASE + 3000;
+            o2.warmNoHrAt = BASE + 1800;
+            o2.warmNoHrC = 29;
+            o2.warmNoHrCount = 1;
+            o2.warmLoneHr = 1;
+            o2.warmLoneHrAt = o2.strayHrAt = BASE + 1860;
+            text("one warm reading with a single heart rate", o2, BASE + 3000, clock, "Taken off T10. A warm reading T30 (29.0 °C) had only a single heart rate (T31), which is not enough to count it.");
+            o2.warmNoHrCount = 30;
+            o2.warmLoneHr = 2;
+            o2.strayHrAt = BASE + 2.5 * H;
+            text("warm readings with two lone heart rates, and a stray after them", o2, BASE + 3 * H, clock, "Taken off T10. Warm readings from T30 (up to 29.0 °C) had only 2 lone heart rates, "
+                    + "which is not enough to count them. A lone heart rate T150 with no warm reading near it does not count.");
+        } finally {
+            Locale.setDefault(before);
+        }
+    }
+
+    static void text(String name, LastWorn.Result r, double now, LastWorn.Clock clock, String want) {
+        String got = LastWorn.text(r, now, clock);
+        check("card text: " + name, got.equals(want), got);
     }
 
     // ------------------------------------------------------------------ impossible signal values (issue #95)

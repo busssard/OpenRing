@@ -179,7 +179,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
         batteryText = Ui.body(this, "");
         last.addView(batteryText);
         last.addView(Ui.gap(this, 6));
-        last.addView(Ui.text(this, "From the ring's stored skin temperature and heart rate, as far as the last sync reaches.", 12, Ui.TEXT_3, Ui.REGULAR));
+        last.addView(Ui.text(this, "From the ring's stored skin temperature (27 °C or more is a finger) and heart rate, as far as the last sync reaches. "
+                + "When the ring stores daytime heart rate, warm without one for over an hour (charger, sun, duvet) does not count as worn.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(last);
 
         // ---- hot and cold ----
@@ -372,18 +373,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
     }
 
     void showLast(LastWorn.Result r) {
-        String s;
-        if (r.state == LastWorn.WORN) {
-            s = "The newest reading (" + when(r.at) + ") was from a finger ("
-                    + (Double.isNaN(r.skinC) ? "a heart rate" : "skin " + Ui.fmt(r.skinC, 1) + " °C") + ").";
-        } else if (r.state == LastWorn.OFF && !Double.isNaN(r.at)) {
-            s = "Taken off " + when(r.at) + " (then it lay at room temperature, about " + Math.round(r.roomC) + " °C).";
-        } else if (r.state == LastWorn.OFF) {
-            s = "Not worn in the last 7 days of synced data (it reads room temperature, about " + Math.round(r.roomC) + " °C).";
-        } else {
-            s = "No temperature readings yet. Sync once to fill this in.";
-        }
-        lastText.setText(s);
+        lastText.setText(LastWorn.text(r, System.currentTimeMillis() / 1000.0, new LastWorn.Clock() {
+            @Override
+            public String when(double unix) {
+                return FinderActivity.when(unix);
+            }
+        }));
         Prefs p = Prefs.of(this);
         if (demo) {
             heardText.setText("In the demo the signal below is made up.");

@@ -477,6 +477,9 @@ public class PipelineTest {
         app.openring.data.Demo.enter(phone2, null);
         Db demo = Db.get(phone2);
         check("demo uses its own database", demo.fileName.equals(Db.DEMO), demo.fileName);
+        app.openring.core.analysis.LastWorn.Result demoLast = app.openring.data.RightNow.lastWorn(demo, System.currentTimeMillis() / 1000.0);
+        check("ring finder: the demo ring reads as worn, confirmed by heart rate (#94)", demoLast.state == app.openring.core.analysis.LastWorn.WORN
+                && !Double.isNaN(demoLast.skinC) && !demoLast.justOn && !Double.isNaN(demoLast.lastHr), demoLast.state + " " + demoLast.skinC + " " + demoLast.lastHr);
         long demoNights = demo.count("SELECT COUNT(*) FROM nights WHERE main = 1");
         check("demo has about five weeks of nights", demoNights >= 28 && demoNights <= 36, demoNights + " nights in " + (System.currentTimeMillis() - t) + " ms");
         app.openring.data.SleepHistory dh = app.openring.data.SleepHistory.load(demo, "2000-01-01", "2100-01-01", java.time.ZoneId.systemDefault());
@@ -605,6 +608,8 @@ public class PipelineTest {
         longWakeChecks();
         demoTwice();
         oldNights();
+        lastWornOldSync();
+        lastWornStrayEvents();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
         longHistoryTiming();
@@ -1516,6 +1521,117 @@ public class PipelineTest {
     }
 
     // ---------------------------------------------------------------- issue #21, dating
+
+    /**
+     * Issue #94: a ring last synced 10 days ago (worn 12 hours with heart rate every 30 minutes as HRV
+     * events, then 12 hours at room temperature) still has its history: the window counts back from
+     * the newest stored reading, and HRV heart rates are dated by their 5 minute offsets.
+     */
+    static void lastWornOldSync() throws Exception {
+        Db db = Db.get(freshDb("openring-lastworn"));
+        long now = System.currentTimeMillis() / 1000;
+        long start = now - 10 * 86400;
+        long base = 1000;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        byte[] ts = new byte[4];
+        Protocol.Le.putU32(ts, 0, start);
+        ev.add(new RingEvent(EventCodec.TIME_SYNC, base, ts));
+        for (int k = 0; k < 24 * 12; k++) { // every 5 minutes for a day
+            long d = base + 1 + k * 3000L;
+            boolean worn = k < 12 * 12;
+            ev.add(new RingEvent(EventCodec.TEMP_EVENT, d, worn ? le16(3400, 3300, 2900) : le16(2100, 2100, 2000)));
+            if (worn && k % 6 == 0) ev.add(new RingEvent(EventCodec.HRV_EVENT, d + 1, new byte[] {60, 40, 61, 40, 62, 40, 61, 40, 60, 40, 59, 40}));
+        }
+        db.insertBatch(ev, 1, start + 86400);
+        db.rebuildTime(start + 86400);
+        app.openring.core.analysis.LastWorn.Result r = app.openring.data.RightNow.lastWorn(db, now);
+        double lastHrv = start + (base + 1 + (12 * 12 - 6) * 3000L + 1 - base) / 10.0 + 5 * 300;
+        check("ring finder: a sync 10 days old still reads as taken off (#94)", r.state == app.openring.core.analysis.LastWorn.OFF
+                && Math.abs(r.at - (start + 12 * 3600)) <= 300 && Math.abs(r.roomC - 21) < 0.01, r.state + " " + (r.at - start) / 3600.0);
+        check("ring finder: its newest reading is from the sync 10 days ago (9 days and 5 minutes old)", Math.abs(now - r.newest - (9 * 86400 + 300)) <= 600, (now - r.newest) / 86400.0);
+        check("ring finder: night heart rate only, so temperature decides", !r.hrRule && r.hasHr, r.hrRule);
+        check("ring finder: HRV heart rates dated by their 5 minute steps (#94)", Math.abs(r.lastHr - lastHrv) <= 1, r.lastHr - lastHrv);
+        // a 10 C reading 8 days before the newest is outside the 7 days, so the room temperature and the time stay
+        List<RingEvent> older = new ArrayList<RingEvent>();
+        byte[] ts2 = new byte[4];
+        Protocol.Le.putU32(ts2, 0, start - 8 * 86400);
+        older.add(new RingEvent(EventCodec.TIME_SYNC, 500000, ts2));
+        older.add(new RingEvent(EventCodec.TEMP_EVENT, 500001, le16(1000, 1000, 1000)));
+        db.insertBatch(older, 2, start - 8 * 86400);
+        db.rebuildTime(start + 86400);
+        check("ring finder: the reading 8 days earlier is dated", db.count("SELECT COUNT(*) FROM events WHERE unix < " + (start - 7 * 86400)) == 2,
+                db.count("SELECT COUNT(*) FROM events WHERE unix < " + (start - 7 * 86400)));
+        app.openring.core.analysis.LastWorn.Result r8 = app.openring.data.RightNow.lastWorn(db, now);
+        check("ring finder: the 7 days count back from the newest reading (one 8 days before it is left out)", r8.state == app.openring.core.analysis.LastWorn.OFF
+                && Math.abs(r8.at - r.at) < 1 && Math.abs(r8.roomC - 21) < 0.01, r8.roomC);
+        // a reading dated more than an hour in the future (a broken clock) does not become the newest
+        List<RingEvent> future = new ArrayList<RingEvent>();
+        future.add(new RingEvent(EventCodec.TEMP_EVENT, 900001, le16(3400, 3300, 2900)));
+        db.insertBatch(future, 3, now);
+        db.getWritableDatabase().execSQL("UPDATE events SET unix = " + (now + 5 * 86400) + " WHERE epoch = 3 AND ds = 900001");
+        check("ring finder: the future reading is dated in the future", db.count("SELECT COUNT(*) FROM events WHERE tag = " + EventCodec.TEMP_EVENT
+                + " AND unix > " + (now + 3600)) == 1, null);
+        app.openring.core.analysis.LastWorn.Result rf = app.openring.data.RightNow.lastWorn(db, now);
+        check("ring finder: a reading dated in the future is not the newest", rf.state == app.openring.core.analysis.LastWorn.OFF
+                && Math.abs(rf.newest - r.newest) < 1, (rf.newest - now) / 86400.0);
+        // more than 50 readings dated in the future (review of #103: the newest one before them was missed)
+        List<RingEvent> many = new ArrayList<RingEvent>();
+        for (int i = 0; i < 60; i++) many.add(new RingEvent(EventCodec.TEMP_EVENT, 910001 + i, le16(3400, 3300, 2900)));
+        db.insertBatch(many, 4, now);
+        db.getWritableDatabase().execSQL("UPDATE events SET unix = " + (now + 6 * 86400) + " + ds WHERE epoch = 4");
+        app.openring.core.analysis.LastWorn.Result rm = app.openring.data.RightNow.lastWorn(db, now);
+        check("ring finder: 60 readings dated in the future do not hide the history", rm.state == app.openring.core.analysis.LastWorn.OFF
+                && Math.abs(rm.newest - r.newest) < 1 && db.count("SELECT COUNT(*) FROM events WHERE unix > " + (now + 3600)) >= 60, rm.state + " " + (rm.newest - now) / 86400.0);
+        check("ring finder: an empty history has no data", app.openring.data.RightNow.lastWorn(Db.get(freshDb("openring-lastworn-empty")), now).state
+                == app.openring.core.analysis.LastWorn.NO_DATA, null);
+    }
+
+    /**
+     * Review of PR #103: one stored event with several heart rates (six HRV values 5 minutes apart, an
+     * AOHR burst 1.92 s apart) is one measurement, so its values do not vouch for each other. A ring
+     * worn 10 hours with daytime heart rate (one AOHR value every 5 minutes), then on a table, with one
+     * stray HRV event and one stray AOHR burst, in the middle of the cool readings or at their end.
+     */
+    static void lastWornStrayEvents() throws Exception {
+        long now = System.currentTimeMillis() / 1000;
+        long start = now - 2 * 86400;
+        String[][] cases = {{"(HRV and AOHR) in the middle", "20", "14", "16"}, {"(HRV) at the end", "14.5", "14", ""}, {"(AOHR burst) at the end", "14", "", "14"}};
+        for (String[] c : cases) {
+            Db db = Db.get(freshDb("openring-lastworn-stray"));
+            long base = 1000;
+            List<RingEvent> ev = new ArrayList<RingEvent>();
+            byte[] ts = new byte[4];
+            Protocol.Le.putU32(ts, 0, start);
+            ev.add(new RingEvent(EventCodec.TIME_SYNC, base, ts));
+            int steps = (int) Math.round(Double.parseDouble(c[1]) * 12);
+            for (int k = 0; k < steps; k++) {
+                long d = base + 1 + k * 3000L;
+                boolean worn = k < 10 * 12;
+                ev.add(new RingEvent(EventCodec.TEMP_EVENT, d, worn ? le16(3400, 3300, 2900) : le16(2100, 2100, 2000)));
+                if (worn) ev.add(new RingEvent(EventCodec.AOHR_EVENT, d + 2, new byte[] {0, 0, 1, 70, 1}));
+            }
+            if (!c[2].isEmpty()) {
+                long d = base + 1 + (long) (Double.parseDouble(c[2]) * 12) * 3000L + 5;
+                ev.add(new RingEvent(EventCodec.HRV_EVENT, d, new byte[] {60, 40, 61, 40, 62, 40, 61, 40, 60, 40, 59, 40}));
+            }
+            if (!c[3].isEmpty()) {
+                long d = base + 1 + (long) (Double.parseDouble(c[3]) * 12) * 3000L + 6;
+                byte[] burst = new byte[3 + 2 * 20];
+                burst[2] = 20;
+                for (int i = 0; i < 20; i++) {
+                    burst[3 + 2 * i] = 72;
+                    burst[4 + 2 * i] = 1;
+                }
+                ev.add(new RingEvent(EventCodec.AOHR_EVENT, d, burst));
+            }
+            db.insertBatch(ev, 1, start + 86400);
+            db.rebuildTime(start + 86400);
+            app.openring.core.analysis.LastWorn.Result r = app.openring.data.RightNow.lastWorn(db, now);
+            check("ring finder: a stray multi value heart rate event " + c[0] + " does not move the time off at 10 h (review of #103)",
+                    r.state == app.openring.core.analysis.LastWorn.OFF && r.hrRule && Math.abs(r.at - (start + 10 * 3600)) <= 300
+                    && !Double.isNaN(r.strayHrAt), r.state + " " + (r.at - start) / 3600.0 + " rule " + r.hrRule);
+        }
+    }
 
     /** A context with a database of its own ({@code Db.get} keeps one open instance). */
     static Context freshDb(String name) throws Exception {

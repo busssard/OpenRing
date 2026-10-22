@@ -363,6 +363,22 @@ public final class Db extends SQLiteOpenHelper {
         return out;
     }
 
+    /** The time of the newest dated event of the given types before {@code beforeUnix}, NaN when there is none. */
+    public double newestBefore(int[] tags, double beforeUnix) {
+        StringBuilder in = new StringBuilder();
+        for (int t : tags) {
+            if (in.length() > 0) in.append(',');
+            in.append(t);
+        }
+        Cursor c = getReadableDatabase().rawQuery("SELECT unix FROM events WHERE tag IN (" + in
+                + ") AND unix < ? ORDER BY unix DESC LIMIT 1", new String[] {String.valueOf(beforeUnix)});
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getDouble(0) : Double.NaN;
+        } finally {
+            c.close();
+        }
+    }
+
     /** {tag, total, dated, first unix, last unix} per event type, most frequent first. */
     public List<double[]> tagStats() {
         List<double[]> out = new ArrayList<double[]>();

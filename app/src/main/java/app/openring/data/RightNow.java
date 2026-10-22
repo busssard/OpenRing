@@ -39,12 +39,37 @@ public final class RightNow {
     }
 
     /**
-     * When the ring came off the finger (issue #74), from the last 7 days of stored skin
-     * temperature and heart rate before {@code nowUnix}.
+     * The times of the plausible heart rates in one stored event, dated like {@code Analyzer}: an HRV
+     * event holds six values 5 minutes apart, an AOHR event values 1.92 s apart, a green IBI event
+     * counts at its start (issue #94). Same plausibility checks as {@link #bpm}. Each time gets the
+     * event's number {@code id} in {@code ids}, so values of one event never vouch for each other.
+     */
+    static void beatTimes(Db.Row row, int id, List<Double> out, List<Integer> ids) {
+        int before = out.size();
+        if (row.tag == EventCodec.GREEN_IBI_QUALITY) {
+            if (!Double.isNaN(bpm(row))) out.add(row.unix);
+        } else if (row.tag == EventCodec.AOHR_EVENT) {
+            int[][] a = EventCodec.aohr(row.body);
+            if (a != null) for (int i = 0; i < a[0].length; i++) if (a[0][i] >= 30 && a[0][i] <= 220) out.add(row.unix + i * 1.92);
+        } else {
+            int[][] h = EventCodec.hrv(row.body);
+            if (h != null) for (int i = 0; i < h[0].length; i++) if (h[0][i] >= 30) out.add(row.unix + i * EventCodec.HRV_INTERVAL_S);
+        }
+        for (int i = before; i < out.size(); i++) ids.add(id);
+    }
+
+    /**
+     * When the ring came off the finger (issue #74), from 7 days of stored skin temperature and heart
+     * rate up to the newest temperature reading (not up to now: a ring last synced 10 days ago still
+     * has its history, issue #94).
      */
     public static app.openring.core.analysis.LastWorn.Result lastWorn(Db db, double nowUnix) {
-        double since = nowUnix - 7 * 86400;
-        List<Db.Row> temps = db.events(TEMP_TAGS, since, nowUnix + 3600);
+        double end = nowUnix + 3600;
+        // the newest reading up to now (a reading dated in the future by a broken clock does not count)
+        double newest = db.newestBefore(TEMP_TAGS, end);
+        if (Double.isNaN(newest)) return new app.openring.core.analysis.LastWorn.Result();
+        double since = newest - 7 * 86400;
+        List<Db.Row> temps = db.events(TEMP_TAGS, since, end);
         double[] tt = new double[temps.size()], tc = new double[temps.size()];
         int n = 0;
         for (Db.Row row : temps) {
@@ -53,11 +78,30 @@ public final class RightNow {
             tt[n] = row.unix;
             tc[n++] = t[0];
         }
-        List<Db.Row> beats = db.events(HR_TAGS, since, nowUnix + 3600);
-        double[] ht = new double[beats.size()];
-        int m = 0;
-        for (Db.Row row : beats) if (!Double.isNaN(bpm(row))) ht[m++] = row.unix;
-        return app.openring.core.analysis.LastWorn.find(java.util.Arrays.copyOf(tt, n), java.util.Arrays.copyOf(tc, n), java.util.Arrays.copyOf(ht, m));
+        List<Db.Row> beats = db.events(HR_TAGS, since, end);
+        // HRV events come from sleep; the others from the daytime measurement, which tells whether
+        // missing heart rate while warm means anything (LastWorn.hrRule)
+        List<Double> night = new java.util.ArrayList<Double>(), day = new java.util.ArrayList<Double>();
+        List<Integer> nightId = new java.util.ArrayList<Integer>(), dayId = new java.util.ArrayList<Integer>();
+        int id = 0;
+        for (Db.Row row : beats) {
+            boolean asleep = row.tag == EventCodec.HRV_EVENT;
+            beatTimes(row, id++, asleep ? night : day, asleep ? nightId : dayId);
+        }
+        return app.openring.core.analysis.LastWorn.find(java.util.Arrays.copyOf(tt, n), java.util.Arrays.copyOf(tc, n),
+                array(night), ints(nightId), array(day), ints(dayId));
+    }
+
+    static double[] array(List<Double> l) {
+        double[] out = new double[l.size()];
+        for (int i = 0; i < out.length; i++) out[i] = l.get(i);
+        return out;
+    }
+
+    static int[] ints(List<Integer> l) {
+        int[] out = new int[l.size()];
+        for (int i = 0; i < out.length; i++) out[i] = l.get(i);
+        return out;
     }
 
     public static RightNow load(Context c) {

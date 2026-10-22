@@ -129,9 +129,24 @@ stays true until that analysis is done, so screens reload only then, and the sta
 `ui/FinderActivity` (Today under the score rings, Settings, Ring) never connects to the ring, so a sync
 can run meanwhile. Everything below stops in `onPause`.
 
-* Where was it last: `RightNow.lastWorn` reads 7 days of skin temperature and heart rate, and
-  `core/analysis/LastWorn` finds when the ring came off (below 27 °C to the end, no heart rate more than
-  5 minutes after the first cool reading). `Prefs.lastHeard` is saved when a connection opens or closes
+* Where was it last: `RightNow.lastWorn` reads 7 days of skin temperature and heart rate back from the
+  newest stored temperature reading (not from now, so an old sync still has its history), dating heart
+  rates like `Analyzer` (HRV value i at start + i × 300 s, AOHR at + i × 1.92 s). `core/analysis/LastWorn`
+  finds when the ring came off (below 27 °C to the end, no heart rate more than 5 minutes after the first
+  cool reading). Warmth alone is not trusted (issue #94): heart rates are split into night (HRV events)
+  and daytime (green IBI, AOHR). The heart rate rule applies only when the ring stores daytime heart rate
+  (`hrRule`: at least 12 warm readings outside sleep in the 48 hours before the newest reading, up to the
+  newest daytime heart rate, 70 % of them with one within 30 minutes); otherwise temperature decides, as before. A warm stretch with a heart rate
+  within 30 minutes of any of its readings is a finger as a whole (heart rate may stop while the hand
+  moves); one without counts only when `hrRule` is off. A heart rate needs one from another stored event within 30 minutes
+  (the values of one HRV event or AOHR burst never vouch for each other, so `lastWorn` passes an event
+  number per heart rate); a lone one counts only next to a finger reading or after a warm newest reading (else it is a stray).
+  Uncounted warm readings neither end nor start a cool stretch. At the end: warm with heart rate in the
+  last hour (only such a heart rate confirms it on the card), or warm for under an hour with no heart rate yet (just put on), is worn; warm with heart rate
+  at first but none for over an hour is `UNSURE` (charger, duvet) at the last heart rate; warm for over an
+  hour without any heart rate near is ignored and the cool readings before decide. A charger right after
+  taking it off (no cool reading between) reads as worn until it leaves the charger. The card text (`LastWorn.text`, the app passes its time format) lists what
+  was left out (warm readings, a stray heart rate) and how old the newest reading is. `Prefs.lastHeard` is saved when a connection opens or closes
   and when any scan hears the saved address; `Prefs` keeps the battery read before the newest one.
 * Hot and cold: `RingScanner.watch` runs one `SCAN_MODE_LOW_LATENCY` scan (Android blocks the sixth
   start within 30 s, so `RingScanner` counts the starts of `find` and `watch` together and spaces them). `core/analysis/Proximity` smooths the signal (median of 5,
