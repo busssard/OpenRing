@@ -1288,8 +1288,10 @@ public final class Pages {
                 + "temperature (room temperature when not worn). Blood oxygen is the share of oxygen in your blood. ");
         if (!Double.isNaN(now.hrAt)) when.append("Heart rate at ").append(Charts.clock(now.hrAt))
                 .append(app.openring.core.analysis.ClockChange.repeatNote(java.time.ZoneId.systemDefault(), now.hrAt)).append(". ");
-        if (!Double.isNaN(now.skinTempAt)) when.append("Temperature at ").append(Charts.clock(now.skinTempAt)).append(". ");
-        if (!Double.isNaN(now.spo2At)) when.append("Blood oxygen at ").append(Charts.clock(now.spo2At)).append(". ");
+        if (!Double.isNaN(now.skinTempAt)) when.append("Temperature at ").append(Charts.clock(now.skinTempAt))
+                .append(app.openring.core.analysis.ClockChange.repeatNote(java.time.ZoneId.systemDefault(), now.skinTempAt)).append(". ");
+        if (!Double.isNaN(now.spo2At)) when.append("Blood oxygen at ").append(Charts.clock(now.spo2At))
+                .append(app.openring.core.analysis.ClockChange.repeatNote(java.time.ZoneId.systemDefault(), now.spo2At)).append(". ");
         when.append("The ring measures on its own schedule, every few minutes when you are still. Sync to update.");
         card.addView(Ui.text(c, when.toString(), 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
