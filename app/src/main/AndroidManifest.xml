@@ -50,7 +50,9 @@
         <activity android:name="app.openring.ui.SettingsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name="app.openring.ui.LiveActivity" android:exported="false" />
         <activity android:name="app.openring.ui.LogActivity" android:exported="false" />
-        <activity android:name="app.openring.ui.FinderActivity" android:exported="false" />
+        <!-- the finder assumes an upright phone held against the chest, and turning on the spot must not rebuild it (issue #96) -->
+        <activity android:name="app.openring.ui.FinderActivity" android:exported="false" android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name="app.openring.ui.games.GamesActivity" android:exported="false" android:screenOrientation="portrait" />
 
         <service

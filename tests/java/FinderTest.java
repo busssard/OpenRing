@@ -34,6 +34,8 @@ public class FinderTest {
         paths();
         walks();
         lastWorn();
+        impossibleValues();
+        scanRetry();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -768,5 +770,85 @@ public class FinderTest {
         check("charging: down", LastWorn.charging(60, 54) == 0);
         check("charging: about the same is unknown", LastWorn.charging(100, 100) == -1 && LastWorn.charging(55, 54) == -1);
         check("charging: no earlier read", LastWorn.charging(-1, 54) == -1);
+    }
+
+    // ------------------------------------------------------------------ impossible signal values (issue #95)
+
+    static void impossibleValues() {
+        check("plausible range", Proximity.plausible(-1) && Proximity.plausible(-50) && Proximity.plausible(-120)
+                && !Proximity.plausible(127) && !Proximity.plausible(0) && !Proximity.plausible(22) && !Proximity.plausible(-121)
+                && !Proximity.plausible(-127) && !Proximity.plausible(Double.NaN));
+        // the issue's sequence: before the fix the meter jumped to "Very close" with the fastest clicks
+        Proximity p = new Proximity();
+        long t = 0;
+        double lo = 0, hi = -200;
+        boolean close = false;
+        for (double v : new double[] {-75, -76, 127, -74, 127, 127, -75}) {
+            p.add(t += 200, v);
+            lo = Math.min(lo, p.value());
+            hi = Math.max(hi, p.value());
+            close |= p.band() == Proximity.CLOSE;
+        }
+        check("127 among real readings: the value stays between -77 and -73 dBm", lo >= -77 && hi <= -73, lo + " to " + hi);
+        check("127 among real readings: never very close, clicks as slow as at -73 dBm", !close && Proximity.clickIntervalMs(p.value()) >= Proximity.clickIntervalMs(-73), Proximity.clickIntervalMs(p.value()));
+        check("an ignored reading keeps the time of the last real one", p.sinceLast(t) == 0 && p.sinceLast(t + 50) == 50);
+        // a ring that only delivers 127 is not heard
+        Proximity only = new Proximity();
+        for (long u = 0; u < 12000; u += 200) {
+            only.add(u, 127);
+            only.tick(u);
+        }
+        check("only 127 for 12 s: not heard", only.band() == Proximity.NOT_HEARD && Double.isNaN(only.value()) && only.sinceLast(12000) == -1);
+        Proximity late = new Proximity();
+        late.add(0, -70);
+        for (long u = 200; u <= 10000; u += 200) late.add(u, 127);
+        late.tick(10000);
+        check("only 127 after a real reading: not heard after 10 s", late.band() == Proximity.NOT_HEARD, late.value());
+
+        // a walk with a clear circle keeps it when one 127 arrives (before the fix: no circle, +22 dBm)
+        Random r = new Random(95);
+        SearchWalk w = new SearchWalk().stepLength(0.5);
+        t = 0;
+        for (int leg = 0; leg < 4; leg++) {
+            for (int i = 0; i < 8; i++) {
+                for (int k = 0; k < 8; k++) {
+                    w.heading(t, leg * 90, true);
+                    double d = Math.sqrt((2.6 - w.x()) * (2.6 - w.x()) + (2.2 - w.y()) * (2.2 - w.y()) + 0.49);
+                    w.rssi(t + 10, -60 - 25 * Math.log10(d) + r.nextGaussian() * 3);
+                    t += 150;
+                }
+                w.steps(t, 1);
+            }
+        }
+        SearchWalk.Spot before = w.locate();
+        int n = w.samples().size();
+        w.heading(t + 50, 0, true);
+        boolean counted = w.rssi(t + 60, 127);
+        SearchWalk.Spot after = w.locate();
+        check("walk: a clear circle near the ring", before != null && before.clear && Math.hypot(before.x - 2.6, before.y - 2.2) < 1.5,
+                before == null ? null : before.x + "," + before.y + " clear " + before.clear);
+        check("walk: 127 is not recorded", !counted && w.samples().size() == n && !w.rssi(t + 70, 0) && !w.rssi(t + 80, Double.NaN));
+        check("walk: the same circle after a 127", after != null && after.clear && after.x == before.x && after.y == before.y && after.radius == before.radius);
+    }
+
+    // ------------------------------------------------------------------ scan retry (issue #96)
+
+    static void scanRetry() {
+        ScanRetry s = new ScanRetry();
+        check("retry: fresh, starts when Bluetooth is on", s.shouldStart(0, true, false) && !s.waiting(0) && !s.shouldStart(0, false, false) && !s.shouldStart(0, true, true));
+        check("retry: a failure waits 30 s", s.failed(1000, 6) == 30000 && s.error() == 6 && s.waiting(1000) && !s.shouldStart(2000, true, false));
+        // the issue's case: the retry 30 s later finds Bluetooth off and gives up
+        s.blocked();
+        check("retry: Bluetooth off at the retry ends the wait (the screen says Bluetooth is off)", !s.waiting(31000) && !s.shouldStart(31250, false, false));
+        check("retry: Bluetooth on again, the scan starts", s.shouldStart(40000, true, false));
+        s.failed(50000, 2);
+        check("retry: still waiting after 34.9 s", s.waiting(84900) && s.error() == 2);
+        check("retry: the message never stays longer than 35 s", !s.waiting(85000) && s.shouldStart(85000, true, false));
+        s.failed(90000, 6);
+        s.started();
+        check("retry: a started scan clears it", !s.waiting(90100) && !s.shouldStart(90100, true, true));
+        ScanRetry z = new ScanRetry();
+        z.failed(0, 6);
+        check("retry: a failure at clock 0 still waits", z.waiting(0) && z.waiting(34999) && !z.waiting(35000));
     }
 }

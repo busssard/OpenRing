@@ -47,6 +47,7 @@ import app.openring.core.Texts;
 import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.LastWorn;
 import app.openring.core.analysis.Proximity;
+import app.openring.core.analysis.ScanRetry;
 import app.openring.core.analysis.SearchWalk;
 import app.openring.core.analysis.StepDetector;
 import app.openring.core.analysis.TS;
@@ -71,9 +72,11 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private boolean recording, resumed, demo;
     private String address;
     private RingScanner.Watch watch;
-    private long scanFailedAt = -1;
-    private int scanError;
+    /** When the scan starts again after Android stopped it (issue #96). */
+    private final ScanRetry retry = new ScanRetry();
     private long otherAt = Long.MIN_VALUE, listenSince;
+    /** When the paired ring was last received with no usable signal strength (127 and the like, issue #95). */
+    private long unusableAt = Long.MIN_VALUE;
     private boolean systemLinked;
     private long linkCheckedAt;
     private SensorManager sm;
@@ -105,6 +108,9 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private long demoStart;
     private MiniMap map;
     private TextView stepText, walkNote;
+
+    static final String UNUSABLE = "This phone receives the ring, so it is within Bluetooth range (about 10 m), "
+            + "but the phone gives no usable signal strength for it right now.";
 
     static final String HOLD = "Hold the phone upright, flat against your chest, screen towards you.";
 
@@ -423,9 +429,16 @@ public final class FinderActivity extends Activity implements SensorEventListene
 
     void startScan() {
         if (!resumed || demo || watch != null || address == null) return;
-        if (!Permissions.granted(this)) return;
+        // not a failure to wait out any more: the screen says why, and tick starts the scan once it is solved
+        if (!Permissions.granted(this)) {
+            retry.blocked();
+            return;
+        }
         BluetoothAdapter a = RingScanner.adapter(this);
-        if (a == null || !a.isEnabled()) return;
+        if (a == null || !a.isEnabled()) {
+            retry.blocked();
+            return;
+        }
         long now = SystemClock.elapsedRealtime();
         // the start budget is shared with a sync's own scan (RingScanner counts both)
         long wait = RingScanner.startWaitMs();
@@ -434,7 +447,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             h.postDelayed(retryScan, wait);
             return;
         }
-        scanFailedAt = -1;
+        retry.started();
         try {
             watch = RingScanner.watch(this, address, new RingScanner.Heard() {
                 @Override
@@ -479,17 +492,21 @@ public final class FinderActivity extends Activity implements SensorEventListene
 
     void scanFailed(int code) {
         stopScan();
-        scanError = code;
-        scanFailedAt = SystemClock.elapsedRealtime();
         // 6 is "scanning too frequently": Android lets it start again after 30 s
+        long wait = retry.failed(SystemClock.elapsedRealtime(), code);
         h.removeCallbacks(retryScan);
-        if (resumed) h.postDelayed(retryScan, 30000);
+        if (resumed) h.postDelayed(retryScan, wait);
     }
 
     void heard(boolean ours, int rssi, long at) {
         if (!resumed) return;
         if (!ours) {
             otherAt = at;
+            return;
+        }
+        if (!Proximity.plausible(rssi)) {
+            // 127 means "not available": not a reading, so the meter, chart and walk never see it
+            unusableAt = at;
             return;
         }
         prox.add(at, rssi);
@@ -534,8 +551,13 @@ public final class FinderActivity extends Activity implements SensorEventListene
             // Bluetooth switched on or off while the screen is open
             BluetoothAdapter a = demo ? null : RingScanner.adapter(FinderActivity.this);
             boolean on = a != null && a.isEnabled();
-            if (!demo && !on && watch != null) stopScan();
-            if (!demo && on && watch == null && scanFailedAt < 0) startScan();
+            if (!demo && !on) {
+                if (watch != null) stopScan();
+                // nothing to wait out while Bluetooth is off; the scan starts below once it is on again
+                retry.blocked();
+                h.removeCallbacks(retryScan);
+            }
+            if (!demo && retry.shouldStart(now, on, watch != null)) startScan();
             showSignal(now, on);
             showHeard();
             showSoundHint();
@@ -617,10 +639,17 @@ public final class FinderActivity extends Activity implements SensorEventListene
                     + "about 10 m. While connected it stops sending the signal this meter listens to; the meter carries on when the connection ends.", null, null);
             return;
         }
-        if (scanFailedAt >= 0) {
+        if (retry.waiting(now)) {
             bandText.setText("Not listening");
+            int scanError = retry.error();
             issue(scanError == 6 ? "Android paused the Bluetooth scan for a moment. It starts again by itself within 30 s."
                     : "The Bluetooth scan stopped (error " + scanError + "). It starts again by itself within 30 s.", null, null);
+            return;
+        }
+        if (!demo && watch == null) {
+            // the start waits for Android's scan budget (shared with a sync): not listening yet, so "not heard" would mislead
+            bandText.setText("Not listening yet");
+            signalText.setText("It starts listening by itself in a moment.");
             return;
         }
         long heardAgo = prox.sinceLast(now);
@@ -632,6 +661,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         bandText.setText(Proximity.label(Proximity.NOT_HEARD));
         String why = "The ring is out of range, its battery is empty, or a thick wall or metal is in the way.";
         if (otherAt != Long.MIN_VALUE && now - otherAt < Proximity.LOST_MS) why = "This phone hears an Oura ring, but not the one paired with this app.";
+        if (unusableAt != Long.MIN_VALUE && now - unusableAt < Proximity.LOST_MS) why = UNUSABLE;
         signalText.setText(why);
     }
 
