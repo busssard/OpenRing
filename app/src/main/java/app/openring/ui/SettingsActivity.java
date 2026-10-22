@@ -26,6 +26,7 @@ import java.util.Locale;
 import app.openring.ble.RingManager;
 import app.openring.core.Hex;
 import app.openring.core.Protocol;
+import app.openring.core.Texts;
 import org.json.JSONObject;
 
 import app.openring.core.analysis.StageFilter;
@@ -274,7 +275,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                                 problem(message);
                                 return;
                             }
-                            toast(message);
+                            say(message);
                             featureModes[k] = mode;
                             build();
                         }
@@ -311,7 +312,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             public void run() {
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                 cm.setPrimaryClip(ClipData.newPlainText("Ring key", Hex.encode(p.loadKey())));
-                toast("Copied");
+                say("Copied");
             }
         });
         key.addView(Ui.gap(this, 10));
@@ -397,7 +398,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     @Override
                     public void run() {
                         Db.get(SettingsActivity.this).resetAll();
-                        toast("Deleted");
+                        say("Deleted");
                         build();
                     }
                 });
@@ -473,7 +474,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             @Override
             public void run() {
                 p.setScreenGoalMin(SetupActivity.num(goal, 180, 0, 1440));
-                toast("Goal saved");
+                say("Goal saved");
             }
         });
         Switch sw = new Switch(this);
@@ -496,7 +497,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /** Reads new screen time and analyses the nights it touches, in the background. */
     void updateNights(final String message) {
-        if (message != null) toast(message);
+        if (message != null) say(message);
         new AsyncTask<Void, Void, Void>() {
             @Override
             protected Void doInBackground(Void... v) {
@@ -636,12 +637,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
             double stepS = st.length == 0 ? 30 : (Json.d(night, "end") - Json.d(night, "start")) / st.length;
             int wakes = app.openring.core.analysis.WakeUps.count(st, stepS);
             int brief = app.openring.core.analysis.WakeUps.shortOnes(st, stepS);
-            card.addView(Ui.text(this, String.format(Locale.getDefault(), "%d stage changes, %d %s on this chart.",
-                    StageFilter.changes(st), wakes, wakes == 1 ? "wake up" : "wake ups"), 13, Ui.TEXT, Ui.MEDIUM));
+            card.addView(Ui.text(this, Texts.count(StageFilter.changes(st), "stage change", "stage changes") + ", "
+                    + Texts.count(wakes, "wake up", "wake ups") + " on this chart.", 13, Ui.TEXT, Ui.MEDIUM));
             card.addView(Ui.text(this, "Stage changes: how often the chart switches between deep, light, REM and awake. "
                     + "Wake ups: awake for a minute or more between falling asleep and waking up, counted as on the Sleep page."
-                    + (brief > 0 ? String.format(Locale.getDefault(), " Awake under a minute (%d %s here) is drawn but not counted.",
-                            brief, brief == 1 ? "time" : "times") : ""), 11, Ui.TEXT_3, Ui.REGULAR));
+                    + (brief > 0 ? " Awake under a minute (" + Texts.count(brief, "time", "times") + " here) is drawn but not counted." : ""),
+                    11, Ui.TEXT_3, Ui.REGULAR));
         }
         final boolean changed = detailChoice != p.stageDetail();
         action(card, changed ? "Save and update all nights" : "Saved: " + StageFilter.NAMES[p.stageDetail()],
@@ -696,7 +697,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES)));
                 } catch (android.content.ActivityNotFoundException e) {
-                    toast("No browser found. The releases are at " + RELEASES);
+                    say("No browser found. The releases are at " + RELEASES);
                 }
             }
         });
@@ -811,14 +812,33 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return DateUtils.getRelativeTimeSpanString(unix * 1000, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString();
     }
 
+    /**
+     * A toast, with the application context so it still shows when Settings was closed or turned meanwhile.
+     * Only for short texts: Android 12 and newer cut toasts after two lines (issue #89), use {@link #say}.
+     */
     void toast(String m) {
-        Toast.makeText(this, m, Toast.LENGTH_LONG).show();
+        Toast.makeText(getApplicationContext(), m, Toast.LENGTH_LONG).show();
     }
 
-    /** A failed ring action: its plain sentence says what to do, which a toast would cut after two lines (issue #60). */
+    /** A note: a toast when it fits in two lines, otherwise the small dialog so nothing is cut (issue #89). */
+    void say(String m) {
+        if (Texts.fitsToast(m)) toast(m);
+        else dialog(null, m);
+    }
+
+    /** A failed action: its plain sentence says what to do, which a toast would cut after two lines (issues #60, #89). */
     void problem(String m) {
-        if (isFinishing() || isDestroyed()) return;
-        new AlertDialog.Builder(this).setTitle("Not done").setMessage(m).setPositiveButton("OK", null).show();
+        dialog("Not done", m);
+    }
+
+    void dialog(String title, String m) {
+        if (isFinishing() || isDestroyed()) {
+            toast(m); // Settings was closed or recreated meanwhile: a toast rather than nothing (code review of #82)
+            return;
+        }
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setMessage(m).setPositiveButton("OK", null);
+        if (title != null) b.setTitle(title);
+        b.show();
     }
 
     void confirm(String title, String msg, final Runnable yes) {
@@ -832,21 +852,22 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     void reanalyse() {
-        toast("Re analysing all nights. With a long history this can take a few minutes.");
-        new AsyncTask<Void, Void, String>() {
+        toast("Re analysing all nights, this can take a few minutes.");
+        new AsyncTask<Void, Void, Boolean>() {
             @Override
-            protected String doInBackground(Void... v) {
+            protected Boolean doInBackground(Void... v) {
                 try {
                     Analyzer.runAll(SettingsActivity.this, null);
-                    return "Analysis updated";
+                    return true;
                 } catch (RuntimeException e) {
-                    return "The analysis failed. Data check and log (in Help and diagnostics) shows why.";
+                    return false; // the analysis stores its own error for the data check
                 }
             }
 
             @Override
-            protected void onPostExecute(String r) {
-                toast(r);
+            protected void onPostExecute(Boolean ok) {
+                if (ok) toast("Analysis updated");
+                else problem("The analysis failed. " + app.openring.core.SyncError.DETAILS);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
@@ -869,6 +890,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                                     problem(message);
                                     return;
                                 }
+                                // Settings closes now, so a dialog would vanish: a short toast, Setup is where it is paired again
                                 toast(message);
                                 startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
                                 finish();
@@ -890,11 +912,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
     protected void onActivityResult(final int code, int result, Intent data) {
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         final Uri uri = data.getData();
+        final boolean backup = code == BACKUP_KEY || code == BACKUP_FULL;
         new AsyncTask<Void, Void, String>() {
             @Override
             protected String doInBackground(Void... v) {
                 try {
                     OutputStream os = getContentResolver().openOutputStream(uri);
+                    if (os == null) throw new java.io.IOException("Android gave no file to write to");
                     try {
                         if (code == EXPORT_CSV) Exporter.dailyCsv(SettingsActivity.this, os);
                         else if (code == BACKUP_KEY || code == BACKUP_FULL) app.openring.data.Backup.write(SettingsActivity.this, os, code == BACKUP_FULL);
@@ -902,15 +926,18 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     } finally {
                         os.close();
                     }
-                    return code == BACKUP_KEY || code == BACKUP_FULL ? "Backup saved" : "Exported";
+                    return backup ? "Backup saved" : "Exported";
                 } catch (Exception e) {
-                    return "Export failed: " + e.getMessage();
+                    // the raw reason goes to the log, the screen gets a sentence that says what to do (issue #89)
+                    RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " failed: " + android.util.Log.getStackTraceString(e));
+                    return null;
                 }
             }
 
             @Override
             protected void onPostExecute(String r) {
-                toast(r);
+                if (r == null) problem(Texts.saveFailed(backup));
+                else say(r);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }

@@ -502,6 +502,7 @@ public class CoreTest {
         wakeUps();
         stageShare();
         syncError();
+        texts();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -513,6 +514,122 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
+    static void texts() throws IOException {
+        eq("count: one", Texts.count(1, "wake up", "wake ups"), "1 wake up");
+        eq("count: zero is plural", Texts.count(0, "wake up", "wake ups"), "0 wake ups");
+        eq("count: two", Texts.count(2, "second", "seconds"), "2 seconds");
+        eq("count: minus one is plural", Texts.count(-1, "day", "days"), "-1 days");
+        eq("count: long values", Texts.count(12345678901L, "event", "events"), "12345678901 events");
+        eq("word: one", Texts.word(1, "event", "events"), "event");
+        eq("word: many", Texts.word(5353, "event", "events"), "events");
+
+        String sixty = new String(new char[Texts.TOAST_MAX]).replace('\0', 'a');
+        check("toast: 60 characters fit", Texts.fitsToast(sixty));
+        check("toast: 61 characters go into the dialog", !Texts.fitsToast(sixty + "a"));
+        check("toast: no text is not a toast", !Texts.fitsToast(null));
+        check("toast: short confirmations fit", Texts.fitsToast("Backup saved") && Texts.fitsToast("Exported"));
+        // passed to the toast through a variable (RingManager, then Settings), so the source scan below cannot see it
+        check("toast: factory reset text fits", Texts.fitsToast(Texts.RING_RESET_DONE));
+
+        for (boolean backup : new boolean[] {false, true}) {
+            String t = Texts.saveFailed(backup);
+            check("save failed " + backup + ": names what failed", t.startsWith(backup ? "The backup could not be saved." : "The export could not be saved."));
+            check("save failed " + backup + ": says what to do", t.contains("Pick another place") && t.contains("try again"));
+            check("save failed " + backup + ": points to the log", t.endsWith(SyncError.DETAILS));
+            check("save failed " + backup + ": no raw text", !t.contains("null") && !t.contains("Exception") && !t.contains("failed:"));
+            check("save failed " + backup + ": no dash as punctuation", !t.contains(" - ") && !t.contains("–") && !t.contains("—"));
+        }
+
+        // Restfulness and Move every hour (Scores)
+        Night n = new Night();
+        n.wasoMin = 3;
+        n.awakenings = 1;
+        eq("restfulness: one wake up", part(Scores.sleep(n, 0, 40), "restfulness").detail, "1 wake up, 0h 3m awake");
+        n.awakenings = 2;
+        eq("restfulness: two wake ups", part(Scores.sleep(n, 0, 40), "restfulness").detail, "2 wake ups, 0h 3m awake");
+        n.awakenings = 0;
+        eq("restfulness: no wake ups", part(Scores.sleep(n, 0, 40), "restfulness").detail, "0 wake ups, 0h 3m awake");
+        Scores.ActivityInput in = activityIn(7, 5, 2, 800);
+        eq("move every hour: one long sit", part(Scores.activity(in), "move_hourly").detail, "1 long sitting period");
+        in.longInactiveStreaks = 3;
+        eq("move every hour: three long sits", part(Scores.activity(in), "move_hourly").detail, "3 long sitting periods");
+
+        // every toast in the app: literal texts fit in two lines, no raw error text on any message (issue #89)
+        java.util.regex.Pattern literal = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
+        int toasts = 0;
+        List<java.io.File> files = new ArrayList<java.io.File>();
+        javaFiles(new java.io.File("app/src/main/java/app/openring"), files);
+        check("toast scan: app sources found", files.size() > 0);
+        for (java.io.File f : files) {
+            String src = new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8");
+            for (String call : new String[] {"toast(", "Toast.makeText(", "say(", "problem("}) {
+                for (int i = src.indexOf(call); i >= 0; i = src.indexOf(call, i + 1)) {
+                    if (i > 0 && Character.isJavaIdentifierPart(src.charAt(i - 1)) && !call.startsWith("Toast")) continue;
+                    String args = callArgs(src, i + call.length());
+                    String where = f.getName() + " " + call + args;
+                    check("no raw error text: " + where, !args.contains("getMessage()") && !args.matches("(?s).*\\+\\s*e\\s*$")
+                            && !args.contains("failed: \""));
+                    if (call.equals("say(") || call.equals("problem(")) continue;
+                    // each literal is measured alone, so a toast built from parts ("..." + x + "...") could be longer
+                    // than all of them: such texts must be built before and go through say(), or be a constant measured below
+                    check("toast text is not built from parts: " + where, literal.matcher(args).replaceAll("\"\"").indexOf('+') < 0);
+                    java.util.regex.Matcher m = literal.matcher(args);
+                    while (m.find()) {
+                        toasts++;
+                        check("toast fits in two lines: " + m.group(1), Texts.fitsToast(m.group(1)));
+                    }
+                }
+            }
+        }
+        check("toast scan: toast texts found", toasts > 0);
+
+        // raw exception text built anywhere on a screen, also into a variable shown later (as the export and
+        // repair messages did before #89): only log lines and the SyncError mapping may use it
+        java.util.regex.Pattern rawE = java.util.regex.Pattern.compile("\"\\s*\\+\\s*e(\\.toString\\(\\))?\\s*[;),]");
+        int uiFiles = 0, rawLines = 0;
+        for (java.io.File f : files) {
+            if (!f.getPath().replace('\\', '/').contains("/ui/")) continue;
+            uiFiles++;
+            String[] lines = new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8").split("\n");
+            for (int i = 0; i < lines.length; i++) {
+                String l = lines[i];
+                if (l.contains("log(") || l.contains("SyncError.")) continue;
+                if (l.contains("getMessage()") || rawE.matcher(l).find()) {
+                    rawLines++;
+                    System.out.println("  raw error text on screen: " + f.getName() + ":" + (i + 1) + " " + l.trim());
+                }
+            }
+        }
+        check("raw error scan: screen sources found", uiFiles > 0);
+        eq("no raw error text built on any screen", rawLines, 0);
+    }
+
+    static void javaFiles(java.io.File dir, List<java.io.File> out) {
+        java.io.File[] list = dir.listFiles();
+        if (list == null) return;
+        for (java.io.File f : list) {
+            if (f.isDirectory()) javaFiles(f, out);
+            else if (f.getName().endsWith(".java")) out.add(f);
+        }
+    }
+
+    /** The argument text of a call whose opening bracket ends at {@code from}, up to the matching closing bracket. */
+    static String callArgs(String src, int from) {
+        int depth = 1;
+        boolean str = false;
+        for (int i = from; i < src.length(); i++) {
+            char c = src.charAt(i);
+            if (str) {
+                if (c == '\\') i++;
+                else if (c == '"') str = false;
+            } else if (c == '"') str = true;
+            else if (c == '(') depth++;
+            else if (c == ')' && --depth == 0) return src.substring(from, i);
+        }
+        return src.substring(from);
     }
 
     /** Stage percentages: REM, light and deep of time asleep add up to 100, awake of time in bed (issue #32). */

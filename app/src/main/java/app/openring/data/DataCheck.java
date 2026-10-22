@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 
 import app.openring.core.EventCodec;
+import app.openring.core.Texts;
 
 /**
  * Walks the data pipeline (ring link, decoding, timing, analysis, display) and says where it
@@ -75,7 +76,7 @@ public final class DataCheck {
         if (total == 0) {
             r.steps.add(new Step("Ring link", 2, "No events stored yet. Run a sync with the ring on its charger next to the phone."));
         } else {
-            r.steps.add(new Step("Ring link", 0, String.format(Locale.US, "%,d events copied from the ring", total)));
+            r.steps.add(new Step("Ring link", 0, String.format(Locale.US, "%,d %s copied from the ring", total, Texts.word(total, "event", "events"))));
         }
 
         // 2. decoding: the streams the analysis needs
@@ -102,21 +103,23 @@ public final class DataCheck {
         if (total > 0) {
             if (dated == 0) {
                 r.steps.add(new Step("Placing data in time", 2, String.format(Locale.US,
-                        "0 of %,d events could be dated (%d time records in %d boot segments). The ring clock is a counter "
+                        "0 of %,d %s could be dated (%s in %s). The ring clock is a counter "
                                 + "that only becomes a date through a time record. Sync again and let it finish completely "
-                                + "with the ring nearby; the end of a finished sync adds one.", total, anchors, segs)));
+                                + "with the ring nearby; the end of a finished sync adds one.", total, Texts.word(total, "event", "events"),
+                        Texts.count(anchors, "time record", "time records"), Texts.count(segs, "boot segment", "boot segments"))));
             } else {
                 int st = dated * 10 < total * 9 ? 1 : 0;
                 r.steps.add(new Step("Placing data in time", st, String.format(Locale.US,
-                        "%,d of %,d events dated (%.0f%%), %d of %d boot segments have a time record%s", dated, total,
-                        100.0 * dated / total, datedSegs, segs,
+                        "%,d of %,d %s dated (%.0f%%), %d of %s with a time record%s", dated, total, Texts.word(total, "event", "events"),
+                        100.0 * dated / total, datedSegs, Texts.count(segs, "boot segment", "boot segments"),
                         st == 1 ? ". Undated parts are from ring restarts without a time record and are skipped." : "")));
             }
         }
 
         // 4. analysis
         if (dated > 0) {
-            String detail = String.format(Locale.US, "%d sleep periods (%d main nights), %d days computed%s", nights, mainNights, days,
+            String detail = String.format(Locale.US, "%s (%s), %s computed%s", Texts.count(nights, "sleep period", "sleep periods"),
+                    Texts.count(mainNights, "main night", "main nights"), Texts.count(days, "day", "days"),
                     r.latestDay == null ? "" : ", latest day " + r.latestDay);
             int st = err != null ? 2 : (days == 0 ? 2 : (mainNights == 0 ? 1 : 0));
             if (err != null) detail += ". Analysis error: " + err;
