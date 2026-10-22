@@ -11,6 +11,6 @@
 | `data` | 92% (1725/1875) | 76% |
 | **core and data** | **94%** (4709/5007) | **82%** |
 
-Not counted: about 8210 lines in `ui/`, `ble/` and `sync/` need Android. The emulator test opens every
+Not counted: about 8260 lines in `ui/`, `ble/` and `sync/` need Android. The emulator test opens every
 screen with demo data and fails on crashes; Bluetooth is tested with real rings. Counting those lines as
-untested, the JVM tests reach about 36% of all app code.
+untested, the JVM tests reach about 35% of all app code.
