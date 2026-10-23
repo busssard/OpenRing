@@ -503,6 +503,7 @@ public class CoreTest {
         stageShare();
         syncError();
         texts();
+        oneRun();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -514,6 +515,26 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Issue #130: one repair at a time, reported to the screen shown now (a turned phone builds a new one). */
+    static void oneRun() {
+        OneRun<String> r = new OneRun<String>();
+        check("one run: idle at first", !r.running());
+        r.attach("first screen");
+        check("one run: first start", r.start());
+        check("one run: running", r.running());
+        check("one run: second start while running is refused", !r.start());
+        r.attach("turned screen");
+        r.detach("first screen"); // the old screen is destroyed after the new one is built
+        check("one run: still running after turning", r.running() && !r.start());
+        eq("one run: tells the screen shown now", r.finish(), "turned screen");
+        check("one run: ended", !r.running());
+        check("one run: a new start after the end", r.start());
+        r.detach("turned screen");
+        check("one run: no screen left", r.finish() == null);
+        r.detach("never attached");
+        check("one run: detaching a stranger changes nothing", !r.running() && r.finish() == null);
     }
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */

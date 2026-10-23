@@ -19,6 +19,7 @@ import java.util.List;
 
 import app.openring.ble.RingManager;
 import app.openring.core.EventCodec;
+import app.openring.core.OneRun;
 import app.openring.data.Analyzer;
 import app.openring.data.DataCheck;
 import app.openring.data.Db;
@@ -28,13 +29,21 @@ import app.openring.data.Db;
  * newest raw ring events.
  */
 public final class LogActivity extends Activity {
+    /**
+     * The repair runs on after the phone is turned or the screen is left, and only once at a time
+     * (issue #130). Static, so a turned or reopened screen sees it; it ends with the app.
+     */
+    static final OneRun<LogActivity> REPAIR = new OneRun<LogActivity>();
+
     private LinearLayout content;
+    private TextView repairButton, repairNote;
     private String copyText = "";
     private int view; // 0 check, 1 log, 2 raw
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        REPAIR.attach(this);
         getWindow().setStatusBarColor(Ui.BG);
         getWindow().setNavigationBarColor(Ui.BG);
         LinearLayout root = Ui.vbox(this);
@@ -80,8 +89,15 @@ public final class LogActivity extends Activity {
         refresh();
     }
 
+    @Override
+    protected void onDestroy() {
+        REPAIR.detach(this);
+        super.onDestroy();
+    }
+
     void refresh() {
         content.removeAllViews();
+        repairButton = null;
         if (view == 1) {
             StringBuilder sb = new StringBuilder();
             for (String l : RingManager.get(this).logLines()) sb.append(l).append('\n');
@@ -131,44 +147,71 @@ public final class LogActivity extends Activity {
             card.addView(Ui.body(this, s.detail));
             content.addView(card);
         }
-        TextView repair = Ui.button(this, "Repair: re-date and re-analyse everything", Ui.READY, true);
-        repair.setOnClickListener(new View.OnClickListener() {
+        repairNote = Ui.text(this, "Repairing, this can take a few minutes.", 14, Ui.TEMP, Ui.MEDIUM);
+        repairNote.setPadding(0, 0, 0, Ui.dp(this, 6));
+        content.addView(repairNote);
+        repairButton = Ui.button(this, "Repair: re-date and re-analyse everything", Ui.READY, true);
+        repairButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 repair();
             }
         });
-        content.addView(repair, Ui.matchWrap());
+        content.addView(repairButton, Ui.matchWrap());
+        showRepairState();
         content.addView(Ui.gap(this, 14));
         content.addView(mono(r.text));
     }
 
-    void repair() {
-        Toast.makeText(this, "Repairing, this can take a few minutes.", Toast.LENGTH_LONG).show();
-        new AsyncTask<Void, Void, String>() {
-            @Override
-            protected String doInBackground(Void... v) {
-                try {
-                    Analyzer.runAll(LogActivity.this, new Analyzer.Log() {
-                        @Override
-                        public void log(String m) {
-                            RingManager.get(LogActivity.this).log(m);
-                        }
-                    });
-                    return "Done";
-                } catch (RuntimeException e) {
-                    RingManager.get(LogActivity.this).log("repair failed: " + android.util.Log.getStackTraceString(e));
-                    return "The repair did not finish. The Log tab above shows why."; // raw text logged above (issue #89)
-                }
-            }
+    /** While a repair runs (also one started before the phone was turned) Repair is faded and off. */
+    void showRepairState() {
+        if (repairButton == null) return;
+        boolean on = REPAIR.running();
+        repairNote.setVisibility(on ? View.VISIBLE : View.GONE);
+        repairButton.setEnabled(!on);
+        repairButton.setAlpha(on ? 0.4f : 1f);
+    }
 
-            @Override
-            protected void onPostExecute(String s) {
-                Toast.makeText(LogActivity.this, s, Toast.LENGTH_LONG).show();
-                view = 0;
-                refresh();
+    void repair() {
+        if (!REPAIR.start()) return; // one repair at a time, a second tap is ignored (issue #130)
+        Toast.makeText(this, "Repairing, this can take a few minutes.", Toast.LENGTH_LONG).show();
+        showRepairState();
+        new RepairTask(getApplicationContext()).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** Holds only the application, never a screen, so a turned screen can go (issue #130). */
+    private static final class RepairTask extends AsyncTask<Void, Void, String> {
+        private final Context ctx;
+
+        RepairTask(Context ctx) {
+            this.ctx = ctx;
+        }
+
+        @Override
+        protected String doInBackground(Void... v) {
+            try {
+                Analyzer.runAll(ctx, new Analyzer.Log() {
+                    @Override
+                    public void log(String m) {
+                        RingManager.get(ctx).log(m);
+                    }
+                });
+                return "Repair done.";
+            } catch (RuntimeException e) {
+                RingManager.get(ctx).log("repair failed: " + android.util.Log.getStackTraceString(e));
+                return "The repair did not finish. The Log tab above shows why."; // raw text logged above (issue #89)
             }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        }
+
+        @Override
+        protected void onPostExecute(String s) {
+            LogActivity a = REPAIR.finish();
+            // the application's toast shows on whatever screen is open now
+            Toast.makeText(ctx, s, Toast.LENGTH_LONG).show();
+            if (a == null || a.isDestroyed()) return;
+            a.view = 0;
+            a.refresh();
+        }
     }
 
     TextView mono(String s) {
