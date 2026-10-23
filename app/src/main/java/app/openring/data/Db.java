@@ -7,8 +7,11 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.database.sqlite.SQLiteStatement;
 
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import app.openring.core.EventCodec;
 import app.openring.core.RingEvent;
@@ -476,9 +479,32 @@ public final class Db extends SQLiteOpenHelper {
 
     /** Deletes the stored nights that end at or after {@code from} and start before {@code to}, then stores {@code rows}. */
     public void replaceNights(double from, double to, List<Object[]> rows) {
+        replaceNights(from, to, rows, null);
+    }
+
+    /**
+     * As {@link #replaceNights(double, double, List)}, and in the same transaction sets the main flag
+     * (column and JSON) of stored nights that stay, by start ({@code keptMain} may be null; issue #132).
+     */
+    public void replaceNights(double from, double to, List<Object[]> rows, Map<Double, Boolean> keptMain) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            if (keptMain != null) {
+                for (Map.Entry<Double, Boolean> e : keptMain.entrySet()) {
+                    Cursor c = db.rawQuery("SELECT json FROM nights WHERE start = ?", new String[] {String.valueOf(e.getKey())});
+                    String js;
+                    try {
+                        js = c.moveToFirst() ? c.getString(0) : null;
+                    } finally {
+                        c.close();
+                    }
+                    JSONObject o = js == null ? null : Json.parse(js);
+                    if (o == null) continue;
+                    Json.put(o, "main", e.getValue().booleanValue());
+                    db.execSQL("UPDATE nights SET main = ?, json = ? WHERE start = ?", new Object[] {e.getValue() ? 1 : 0, o.toString(), e.getKey()});
+                }
+            }
             db.execSQL("DELETE FROM nights WHERE stop >= ? AND start < ?", new Object[] {from, to});
             for (Object[] r : rows) {
                 ContentValues cv = new ContentValues();
@@ -508,6 +534,22 @@ public final class Db extends SQLiteOpenHelper {
         } finally {
             c.close();
         }
+    }
+
+    /** Stored nights of {@code day} that end before {@code unix}: {start, asleep minutes, main 1 or 0} (issue #132). */
+    public List<double[]> nightsOfDayBefore(String day, double unix) {
+        List<double[]> out = new ArrayList<double[]>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT start, main, json FROM nights WHERE day = ? AND stop < ? ORDER BY start",
+                new String[] {day, String.valueOf(unix)});
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = Json.parse(c.getString(2));
+                out.add(new double[] {c.getDouble(0), o == null ? 0 : o.optDouble("asleep_min", 0), c.getInt(1)});
+            }
+        } finally {
+            c.close();
+        }
+        return out;
     }
 
     /** The earliest day of a stored night ending at or after {@code unix}, null when there is none. */

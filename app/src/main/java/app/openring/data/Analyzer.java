@@ -315,12 +315,28 @@ public final class Analyzer {
             }
             days.put(n, d);
         }
-        // main sleep per day = the longest one
+        // main sleep per day = the longest one, also against stored sleeps of the same day that stay (they
+        // end before lo, issue #132), so a day keeps exactly one main sleep; earlier sleeps win a tie
         Map<String, Night> main = new HashMap<String, Night>();
+        Map<String, double[]> keptBest = new HashMap<String, double[]>();
+        Map<String, List<double[]>> kept = new HashMap<String, List<double[]>>();
+        for (String d : new java.util.TreeSet<String>(days.values())) {
+            List<double[]> k = db.nightsOfDayBefore(d, lo);
+            kept.put(d, k);
+            for (double[] x : k) if (keptBest.get(d) == null || x[1] > keptBest.get(d)[1]) keptBest.put(d, x);
+        }
         for (Night n : nights) {
             String d = days.get(n);
             Night m = main.get(d);
-            if (m == null || n.asleepMin > m.asleepMin) main.put(d, n);
+            double[] kb = keptBest.get(d);
+            if ((m == null || n.asleepMin > m.asleepMin) && (kb == null || n.asleepMin > kb[1])) main.put(d, n);
+        }
+        Map<Double, Boolean> keptMain = new HashMap<Double, Boolean>();
+        for (Map.Entry<String, List<double[]>> e : kept.entrySet()) {
+            for (double[] x : e.getValue()) {
+                boolean m = main.get(e.getKey()) == null && keptBest.get(e.getKey()) == x;
+                if ((x[2] == 1) != m) keptMain.put(x[0], m);
+            }
         }
         List<Object[]> out = new ArrayList<Object[]>();
         for (Night n : nights) {
@@ -345,7 +361,11 @@ public final class Analyzer {
         }
         String changed = db.firstNightDay(lo);
         for (Object[] r : out) if (changed == null || ((String) r[2]).compareTo(changed) < 0) changed = (String) r[2];
-        db.replaceNights(lo, Double.MAX_VALUE, out);
+        // sleeps the old rule left in place (ending before from) that are replaced now: rare, worth a line
+        long pulled = lo < from ? db.count("SELECT COUNT(*) FROM nights WHERE stop >= " + lo + " AND stop < " + from) : 0;
+        if (pulled > 0) log.log("replaced " + pulled + " stored sleep" + (pulled == 1 ? "" : "s") + " from before " + clock(from, zoneAt(from))
+                + " that a sleep across it overlapped");
+        db.replaceNights(lo, Double.MAX_VALUE, out, keptMain);
         log.log(nights.size() + " sleep periods");
         return changed;
     }
@@ -376,7 +396,6 @@ public final class Analyzer {
                 moved = true;
             }
         }
-        if (lo < from) log.log("sleeps analysed again from " + clock(lo, zoneAt(lo)) + ", a sleep crossed the start");
         return lo;
     }
 
