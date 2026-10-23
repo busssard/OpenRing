@@ -24,6 +24,7 @@ import java.io.OutputStream;
 import java.util.Locale;
 
 import app.openring.ble.RingManager;
+import app.openring.core.Drafts;
 import app.openring.core.Hex;
 import app.openring.core.Protocol;
 import app.openring.core.Texts;
@@ -65,7 +66,37 @@ public final class SettingsActivity extends Activity implements RingManager.List
         root.setPadding(p, Ui.dp(this, 8), p, p);
         s.addView(root);
         setContentView(s);
+        if (b != null) { // the phone was turned: typed numbers and choices come back (issue #133)
+            drafts = Drafts.fromArray(b.getStringArray("drafts"));
+            sexChoice = b.getInt("sex", -1);
+            detailChoice = b.getInt("detail", -1);
+            int[] modes = b.getIntArray("modes");
+            if (modes != null && modes.length == featureModes.length) System.arraycopy(modes, 0, featureModes, 0, modes.length);
+        }
         build();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        keepTyped();
+        out.putStringArray("drafts", drafts.toArray());
+        out.putInt("sex", sexChoice);
+        out.putInt("detail", detailChoice);
+        out.putIntArray("modes", featureModes);
+    }
+
+    /** Typed but unsaved numbers, kept while the page is rebuilt or the phone turns (issue #133). */
+    private Drafts drafts = new Drafts();
+    private EditText ageIn, weightIn, heightIn, kcalIn, goalIn;
+
+    /** Copies what the inputs show now into {@link #drafts}, before they are replaced. */
+    void keepTyped() {
+        if (ageIn != null) drafts.keep("age", ageIn.getText());
+        if (weightIn != null) drafts.keep("weight", weightIn.getText());
+        if (heightIn != null) drafts.keep("height", heightIn.getText());
+        if (kcalIn != null) drafts.keep("kcal", kcalIn.getText());
+        if (goalIn != null) drafts.keep("screen_goal", goalIn.getText());
     }
 
     @Override
@@ -75,7 +106,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // back from Android's usage access page: show the new state, and read the screen log the first time
         Prefs p = Prefs.of(this);
         boolean allowedNow = ScreenUse.allowed(this);
-        if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // keeps a goal being typed otherwise
+        if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
         if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !ScreenDays.any(Db.get(this))) {
             screenRead = true;
@@ -99,7 +130,22 @@ public final class SettingsActivity extends Activity implements RingManager.List
      * the middle, rare and risky actions last. Each card's main action is a big button, the rest small.
      */
     void build() {
+        keepTyped();
+        final boolean again = root.getChildCount() > 0;
+        final int y = scroll.getScrollY();
         root.removeAllViews();
+        buildPage();
+        if (again) { // a ring action rebuilt the page: stay where the person was, after layout
+            scroll.post(new Runnable() {
+                @Override
+                public void run() {
+                    scroll.scrollTo(0, y);
+                }
+            });
+        }
+    }
+
+    private void buildPage() {
         final Prefs p = Prefs.of(this);
         LinearLayout top = Ui.hbox(this);
         top.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -212,9 +258,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
         prof.addView(Ui.text(this, "Used for calories, goals and the sleep you need at your age.", 12, Ui.TEXT_3, Ui.REGULAR));
         LinearLayout body = Ui.hbox(this);
         body.setGravity(android.view.Gravity.BOTTOM); // inputs stay level when a label wraps
-        final EditText age = num(column(body, 0), "Age", p.age());
-        final EditText weight = num(column(body, 1), "Weight (kg)", p.weightKg());
-        final EditText height = num(column(body, 2), "Height (cm)", p.heightCm());
+        // typed but unsaved numbers stay through a rebuild (issue #133)
+        final EditText age = ageIn = num(column(body, 0), "Age", drafts.text("age", p.age()));
+        final EditText weight = weightIn = num(column(body, 1), "Weight (kg)", drafts.text("weight", p.weightKg()));
+        final EditText height = heightIn = num(column(body, 2), "Height (cm)", drafts.text("height", p.heightCm()));
         prof.addView(body, Ui.matchWrap());
         if (sexChoice < 0) sexChoice = p.sex();
         prof.addView(Ui.gap(this, 8));
@@ -222,12 +269,17 @@ public final class SettingsActivity extends Activity implements RingManager.List
         final LinearLayout sexRow = Ui.hbox(this);
         fillSex(sexRow);
         prof.addView(sexRow, Ui.matchWrap());
-        final EditText target = num(prof, "Daily active calorie goal (0 = automatic)", p.targetKcal());
+        final EditText target = kcalIn = num(prof, "Daily active calorie goal (0 = automatic)", drafts.text("kcal", p.targetKcal()));
         action(prof, "Save and re analyse", Ui.ACTIVE, new Runnable() {
             @Override
             public void run() {
                 p.setProfile(SetupActivity.num(age, 35, 10, 100), sexChoice, SetupActivity.num(weight, 72, 30, 250),
                         SetupActivity.num(height, 175, 100, 230), SetupActivity.num(target, 0, 0, 3000));
+                // show what was really saved (a number out of range is saved at its limit)
+                age.setText(String.valueOf(p.age()));
+                weight.setText(String.valueOf(p.weightKg()));
+                height.setText(String.valueOf(p.heightCm()));
+                target.setText(String.valueOf(p.targetKcal()));
                 reanalyse();
             }
         });
@@ -446,6 +498,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     void fillScreenCard(final Prefs p) {
         final LinearLayout card = screenCard;
         if (card == null) return;
+        keepTyped(); // a goal being typed stays when the card is filled again (issue #133)
         card.removeAllViews();
         card.addView(Ui.caption(this, "Screen time"));
         card.addView(Ui.body(this, "When you used this phone (from unlocking until the screen goes off). It has its own tab (Screen) and helps the sleep analysis. "
@@ -469,11 +522,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
             });
         }
-        final EditText goal = num(card, "Daily goal in minutes (0 for no goal, the score then uses 3 hours)", p.screenGoalMin());
+        final EditText goal = goalIn = num(card, "Daily goal in minutes (0 for no goal, the score then uses 3 hours)", drafts.text("screen_goal", p.screenGoalMin()));
         small(card, "Save goal", Ui.OXY, new Runnable() {
             @Override
             public void run() {
                 p.setScreenGoalMin(SetupActivity.num(goal, 180, 0, 1440));
+                goal.setText(String.valueOf(p.screenGoalMin())); // what was really saved
                 say("Goal saved");
             }
         });
@@ -726,11 +780,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return r;
     }
 
-    EditText num(LinearLayout parent, String label, int value) {
+    EditText num(LinearLayout parent, String label, String text) {
         parent.addView(Ui.gap(this, 8));
         parent.addView(Ui.text(this, label, 12, Ui.TEXT_3, Ui.REGULAR));
         EditText e = new EditText(this);
-        e.setText(String.valueOf(value));
+        e.setText(text);
         e.setTextColor(Ui.TEXT);
         e.setInputType(InputType.TYPE_CLASS_NUMBER);
         e.setBackground(Ui.input(this));
