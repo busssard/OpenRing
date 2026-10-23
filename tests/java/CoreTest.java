@@ -1099,24 +1099,28 @@ public class CoreTest {
         check("read start: older and nothing returned, a week back", near(ScreenTime.readStart(now - 20 * day, Double.NaN, now), now - 7 * day));
         check("read start: a late oldest event still trusts the week", near(ScreenTime.readStart(now - 20 * day, now - day, now), now - 7 * day));
         check("read start: never before the asked start", near(ScreenTime.readStart(now - 8 * day, now - 9 * day, now), now - 8 * day));
+        double today = 12.6 * day; // the moment of the coverage checks: day 12 is today
         List<double[]> rd = Arrays.asList(new double[] {1.5 * day, 3.6 * day}, new double[] {9.9 * day, 12.5 * day});
-        check("coverage: no reads is before the data", ScreenTime.coverage(new ArrayList<double[]>(), 0, day) == ScreenTime.BEFORE_READS);
-        check("coverage: a day before the first read", ScreenTime.coverage(rd, 0, day) == ScreenTime.BEFORE_READS
-                && ScreenTime.coverage(rd, 0.5 * day, 1.5 * day) == ScreenTime.BEFORE_READS);
-        check("coverage: the first day counts from the first read", ScreenTime.coverage(rd, day, 2 * day) == ScreenTime.COVERED);
-        check("coverage: a day inside a read", ScreenTime.coverage(rd, 2 * day, 3 * day) == ScreenTime.COVERED);
-        check("coverage: a day a gap starts in", ScreenTime.coverage(rd, 3 * day, 4 * day) == ScreenTime.READ_GAP);
-        check("coverage: a day inside the gap", ScreenTime.coverage(rd, 6 * day, 7 * day) == ScreenTime.READ_GAP);
-        check("coverage: a day the gap ends in", ScreenTime.coverage(rd, 9 * day, 10 * day) == ScreenTime.READ_GAP);
-        check("coverage: after the gap", ScreenTime.coverage(rd, 10 * day, 11 * day) == ScreenTime.COVERED);
-        check("coverage: the last day counts up to the last read", ScreenTime.coverage(rd, 12 * day, 13 * day) == ScreenTime.COVERED);
-        check("coverage: after the last read", ScreenTime.coverage(rd, 12.5 * day, 13.5 * day) == ScreenTime.AFTER_READS);
-        check("coverage: touching reads leave no gap", ScreenTime.coverage(Arrays.asList(new double[] {0, 5}, new double[] {5, 20}), 1, 10) == ScreenTime.COVERED);
+        check("coverage: no reads is before the data", ScreenTime.coverage(new ArrayList<double[]>(), 0, day, today) == ScreenTime.BEFORE_READS);
+        check("coverage: a day before the first read", ScreenTime.coverage(rd, 0, day, today) == ScreenTime.BEFORE_READS
+                && ScreenTime.coverage(rd, 0.5 * day, 1.5 * day, today) == ScreenTime.BEFORE_READS);
+        check("coverage: the first day counts from the first read", ScreenTime.coverage(rd, day, 2 * day, today) == ScreenTime.COVERED);
+        check("coverage: a day inside a read", ScreenTime.coverage(rd, 2 * day, 3 * day, today) == ScreenTime.COVERED);
+        check("coverage: a day a gap starts in", ScreenTime.coverage(rd, 3 * day, 4 * day, today) == ScreenTime.READ_GAP);
+        check("coverage: a day inside the gap", ScreenTime.coverage(rd, 6 * day, 7 * day, today) == ScreenTime.READ_GAP);
+        check("coverage: a day the gap ends in", ScreenTime.coverage(rd, 9 * day, 10 * day, today) == ScreenTime.READ_GAP);
+        check("coverage: after the gap", ScreenTime.coverage(rd, 10 * day, 11 * day, today) == ScreenTime.COVERED);
+        check("coverage: the last day counts up to the last read", ScreenTime.coverage(rd, 12 * day, 13 * day, today) == ScreenTime.COVERED);
+        check("coverage: a past day read only part way at its end is not known (access switched off that day)",
+                ScreenTime.coverage(rd, 12 * day, 13 * day, 14 * day) == ScreenTime.AFTER_READS
+                && ScreenTime.coverage(rd, 11 * day, 12 * day, 14 * day) == ScreenTime.COVERED);
+        check("coverage: after the last read", ScreenTime.coverage(rd, 12.5 * day, 13.5 * day, today) == ScreenTime.AFTER_READS);
+        check("coverage: touching reads leave no gap", ScreenTime.coverage(Arrays.asList(new double[] {0, 5}, new double[] {5, 20}), 1, 10, today) == ScreenTime.COVERED);
         check("coverage: a read open to the end (no reads stored yet)",
-                ScreenTime.coverage(Arrays.asList(new double[] {5, Double.POSITIVE_INFINITY}), 1e6, 2e6) == ScreenTime.COVERED);
+                ScreenTime.coverage(Arrays.asList(new double[] {5, Double.POSITIVE_INFINITY}), 1e6, 2e6, today) == ScreenTime.COVERED);
 
         // merging and storing
-        List<double[]> m =ScreenTime.mergeRanges(Arrays.asList(new double[] {30, 40}, new double[] {0, 10}, new double[] {10, 20}, new double[] {35, 50}, new double[] {5, 5}));
+        List<double[]> m = ScreenTime.mergeRanges(Arrays.asList(new double[] {30, 40}, new double[] {0, 10}, new double[] {10, 20}, new double[] {35, 50}, new double[] {5, 5}));
         check("merge: touching and overlapping ranges join, empty ones go", m.size() == 2 && near(m.get(0)[1], 20) && near(m.get(1)[0], 30) && near(m.get(1)[1], 50));
         Map<String, List<double[]>> st = new LinkedHashMap<String, List<double[]>>();
         Map<String, List<double[]>> add = new LinkedHashMap<String, List<double[]>>();

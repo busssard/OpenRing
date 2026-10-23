@@ -562,7 +562,7 @@ public class PipelineTest {
         check("days before the screen data are unknown", old.day == null && old.score == null && Double.isNaN(old.rows[13].totalMin), null);
         check("the demo's usage log counts as read from its first day, so no day is a gap (#131)", demo.screenReads().size() == 1
                 && ScreenTime.coverage(demo.screenReads(), LocalDate.now().minusDays(30).atStartOfDay(z).toEpochSecond(),
-                LocalDate.now().atStartOfDay(z).toEpochSecond()) == ScreenTime.COVERED, demo.screenReads().size());
+                LocalDate.now().atStartOfDay(z).toEpochSecond(), System.currentTimeMillis() / 1000.0) == ScreenTime.COVERED, demo.screenReads().size());
         long before = demo.count("SELECT COUNT(*) FROM screen");
         demo.deleteScreenSince(System.currentTimeMillis() / 1000.0 - 3 * 86400);
         long after = demo.count("SELECT COUNT(*) FROM screen");
@@ -1307,24 +1307,32 @@ public class PipelineTest {
         db.putScreenRead(day1 + 8 * 86400 + 23 * 3600, day1 + 10 * 86400);
         db.putScreenRead(day1 + 10 * 86400, day1 + 11 * 86400 + 20 * 3600); // touches the read before: one range
         check("reads that touch are one range", db.screenReads().size() == 2, db.screenReads().size());
-        double[] w = app.openring.data.ScreenDays.lastDays(db, d1.plusDays(11), 12, z);
+        // looked at on the evening of day 12, so day 12 is today and counts up to the last read
+        double eve = day1 + 11 * 86400 + 21 * 3600;
+        double[] w = app.openring.data.ScreenDays.lastDays(db, d1.plusDays(11), 12, z, eve);
         boolean gap = true, known = true;
         for (int i = 3; i <= 8; i++) gap &= Double.isNaN(w[i]);
         for (int i : new int[] {0, 1, 2, 9, 10, 11}) known &= Math.abs(w[i] - 20) < 0.01;
         check("days 4 to 9, not read, are unknown, not 0", gap, Arrays.toString(w));
         check("days 1 to 3 and 10 to 12 keep their minutes (first and last day up to the reads)", known, Arrays.toString(w));
-        check("a day in the gap has no screen day", app.openring.data.ScreenDays.day(db, d1.plusDays(5), z) == null
-                && app.openring.data.ScreenDays.day(db, d1.plusDays(1), z) != null, null);
-        app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(db, d1.plusDays(5), z, 180, new java.util.HashSet<String>());
+        check("a day in the gap has no screen day", app.openring.data.ScreenDays.day(db, d1.plusDays(5), z, eve) == null
+                && app.openring.data.ScreenDays.day(db, d1.plusDays(1), z, eve) != null, null);
+        app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(db, d1.plusDays(5), z, 180, new java.util.HashSet<String>(), 0, eve);
         check("a gap day has no score and says why", in.day == null && in.score == null && in.coverage == ScreenTime.READ_GAP, in.coverage);
         int nanRows = 0;
         for (app.openring.data.ScreenDays.Row r : in.rows) if (Double.isNaN(r.totalMin)) nanRows++;
         // rows: 14 days ending on day 6, so 8 days before day 1 and days 4 to 6
         check("the day rows show the gap as unknown", nanRows == 8 + 3 && Math.abs(in.rows[13 - 4].totalMin - 20) < 0.01, nanRows);
-        app.openring.data.ScreenDays.Info later = app.openring.data.ScreenDays.info(db, d1.plusDays(13), z, 180, new java.util.HashSet<String>());
+        app.openring.data.ScreenDays.Info later = app.openring.data.ScreenDays.info(db, d1.plusDays(13), z, 180, new java.util.HashSet<String>(), 0, eve);
         check("a day after the last read is not read yet", later.day == null && later.score == null && later.coverage == ScreenTime.AFTER_READS, later.coverage);
-        app.openring.data.ScreenDays.Info ok = app.openring.data.ScreenDays.info(db, d1.plusDays(10), z, 180, new java.util.HashSet<String>());
+        app.openring.data.ScreenDays.Info ok = app.openring.data.ScreenDays.info(db, d1.plusDays(10), z, 180, new java.util.HashSet<String>(), 0, eve);
         check("a read day still has its score", ok.day != null && ok.score != null && ok.coverage == ScreenTime.COVERED, ok.coverage);
+        // a day later, with usage access switched off since: day 12, read only until 20:00, gets no number or score
+        app.openring.data.ScreenDays.Info part = app.openring.data.ScreenDays.info(db, d1.plusDays(11), z, 180, new java.util.HashSet<String>(), 0, eve + 86400);
+        check("a past day read only part way is not known", part.day == null && part.score == null && part.coverage == ScreenTime.AFTER_READS
+                && Double.isNaN(app.openring.data.ScreenDays.lastDays(db, d1.plusDays(11), 1, z, eve + 86400)[0]), part.coverage);
+        check("the same day while it is today counts up to the last read",
+                Math.abs(app.openring.data.ScreenDays.info(db, d1.plusDays(11), z, 180, new java.util.HashSet<String>(), 0, eve).day.totalMin - 20) < 0.01, null);
         db.resetAll();
         check("delete all local data deletes the reads", db.screenReads().isEmpty(), db.screenReads().size());
 
@@ -1345,14 +1353,14 @@ public class PipelineTest {
         List<double[]> seeded = old.screenReads();
         check("a schema 5 database gets one read from its oldest to its newest session", old.getReadableDatabase().getVersion() == 6
                 && seeded.size() == 1 && seeded.get(0)[0] == s.get(0)[0] && seeded.get(0)[1] == s.get(s.size() - 1)[1], seeded.size());
-        double[] ow = app.openring.data.ScreenDays.lastDays(old, d1.plusDays(11), 12, z);
+        double[] ow = app.openring.data.ScreenDays.lastDays(old, d1.plusDays(11), 12, z, eve);
         boolean oldKnown = !Double.isNaN(ow[0]) && Math.abs(ow[5]) < 0.01 && Math.abs(ow[11] - 20) < 0.01;
         check("its days are shown as before (old gaps cannot be found any more)", oldKnown, Arrays.toString(ow));
         // the first read after the update, two weeks later: Android has only the last 9 days
         double now = d1.plusDays(25).atStartOfDay(z).toEpochSecond() + 10 * 3600;
         double start = ScreenTime.readStart(s.get(s.size() - 1)[0], now - 9 * 86400, now);
         old.putScreenRead(start, now);
-        double[] nw = app.openring.data.ScreenDays.lastDays(old, d1.plusDays(25), 26, z);
+        double[] nw = app.openring.data.ScreenDays.lastDays(old, d1.plusDays(25), 26, z, now);
         boolean between = true;
         for (int i = 11; i <= 16; i++) between &= Double.isNaN(nw[i]);
         check("time between the old data and what Android still had is unknown", between && Math.abs(nw[10] - 20) < 0.01

@@ -52,8 +52,8 @@ public final class ScreenUse {
 
     /**
      * Reads the log from the start of the newest stored session (so a session that was still running
-     * gets its end) or from 10 days back the first time, and notes the time really read (issue #131). Returns how many sessions were stored; 0 in
-     * demo mode, without access or on Android 8.
+     * gets its end) or from 10 days back the first time, and notes the time really read (issue #131).
+     * Returns how many sessions were stored; 0 in demo mode, without access or on Android 8.
      */
     public static int collect(Context c) {
         return collect(c, false);
@@ -148,11 +148,15 @@ public final class ScreenUse {
             db.put("screen_rule", RULE);
             if (p.screenAwake()) db.reanalyseFrom(back / 1000.0);
         }
-        // the time really read; what Android no longer had stays unknown instead of counting as 0 (issue #131)
-        db.putScreenRead(ScreenTime.readStart(screenFrom / 1000.0, oldest == Long.MAX_VALUE ? Double.NaN : oldest / 1000.0, now / 1000.0),
-                now / 1000.0);
-        if (sessions.isEmpty()) return 0;
+        // the time really read, noted after its sessions are stored; what Android no longer had stays
+        // unknown instead of counting as 0 (issue #131)
+        double readFrom = ScreenTime.readStart(screenFrom / 1000.0, oldest == Long.MAX_VALUE ? Double.NaN : oldest / 1000.0, now / 1000.0);
+        if (sessions.isEmpty()) {
+            db.putScreenRead(readFrom, now / 1000.0);
+            return 0;
+        }
         db.putScreen(sessions);
+        db.putScreenRead(readFrom, now / 1000.0);
         // phone use for nights already analysed: the next analysis looks at them again
         if (p.screenAwake()) db.reanalyseFrom(sessions.get(0)[0]);
         return sessions.size();

@@ -408,11 +408,14 @@ public final class ScreenTime {
      * from the first read start (or {@code a}) to the last read end (or {@code b}) was read, so the first
      * day and today count up to where reading starts or stops; {@link #BEFORE_READS} when it ends at or
      * before the first read (or there is none), {@link #AFTER_READS} when it starts at or after the
-     * last read end, {@link #READ_GAP} when time between two reads was never read.
+     * last read end, {@link #READ_GAP} when time between two reads was never read. A day that is over at
+     * {@code now} and was read only part way at its end is {@link #AFTER_READS} too (usage access
+     * switched off in the middle of it); only today counts up to the last read.
      */
-    public static int coverage(List<double[]> reads, double a, double b) {
+    public static int coverage(List<double[]> reads, double a, double b, double now) {
         if (reads.isEmpty() || b <= reads.get(0)[0]) return BEFORE_READS;
-        if (a >= reads.get(reads.size() - 1)[1]) return AFTER_READS;
+        double lastEnd = reads.get(reads.size() - 1)[1];
+        if (a >= lastEnd || b <= now && b > lastEnd) return AFTER_READS;
         double t = Math.max(a, reads.get(0)[0]), end = Math.min(b, reads.get(reads.size() - 1)[1]);
         for (double[] r : reads) {
             if (t >= end) break;
