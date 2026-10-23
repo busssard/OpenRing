@@ -20,6 +20,7 @@ import java.util.List;
 import app.openring.ble.RingManager;
 import app.openring.core.EventCodec;
 import app.openring.core.OneRun;
+import app.openring.core.Texts;
 import app.openring.data.Analyzer;
 import app.openring.data.DataCheck;
 import app.openring.data.Db;
@@ -37,6 +38,8 @@ public final class LogActivity extends Activity {
 
     private LinearLayout content;
     private TextView repairButton, repairNote;
+    /** Counts refresh calls; a result from an older call is dropped, so it cannot cover a newer one. */
+    private int refreshGen;
     private String copyText = "";
     private int view; // 0 check, 1 log, 2 raw
 
@@ -90,12 +93,27 @@ public final class LogActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // two Data check screens can be open (Settings and the main screen both open one): the one
+        // shown now is told when the repair ends, and catches up if it ended while it was covered
+        REPAIR.attach(this);
+        if (repairNote != null && repairNote.getVisibility() == View.VISIBLE && !REPAIR.running()) {
+            view = 0;
+            refresh();
+        } else {
+            showRepairState();
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         REPAIR.detach(this);
         super.onDestroy();
     }
 
     void refresh() {
+        final int gen = ++refreshGen;
         content.removeAllViews();
         repairButton = null;
         if (view == 1) {
@@ -122,7 +140,7 @@ public final class LogActivity extends Activity {
 
             @Override
             protected void onPostExecute(Object o) {
-                if (isFinishing()) return;
+                if (isFinishing() || isDestroyed() || gen != refreshGen) return;
                 content.removeAllViews();
                 if (o instanceof String) {
                     copyText = (String) o;
@@ -173,7 +191,12 @@ public final class LogActivity extends Activity {
     }
 
     void repair() {
-        if (!REPAIR.start()) return; // one repair at a time, a second tap is ignored (issue #130)
+        if (!REPAIR.start()) {
+            // one repair at a time (issue #130); this screen was covered while another one started it
+            Toast.makeText(this, "A repair is already running.", Toast.LENGTH_LONG).show();
+            showRepairState();
+            return;
+        }
         Toast.makeText(this, "Repairing, this can take a few minutes.", Toast.LENGTH_LONG).show();
         showRepairState();
         new RepairTask(getApplicationContext()).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
@@ -199,7 +222,7 @@ public final class LogActivity extends Activity {
                 return "Repair done.";
             } catch (RuntimeException e) {
                 RingManager.get(ctx).log("repair failed: " + android.util.Log.getStackTraceString(e));
-                return "The repair did not finish. The Log tab above shows why."; // raw text logged above (issue #89)
+                return Texts.REPAIR_FAILED; // raw text logged above (issue #89); may show on any screen
             }
         }
 

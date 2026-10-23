@@ -554,6 +554,8 @@ public class CoreTest {
         check("toast: short confirmations fit", Texts.fitsToast("Backup saved") && Texts.fitsToast("Exported"));
         // passed to the toast through a variable (RingManager, then Settings), so the source scan below cannot see it
         check("toast: factory reset text fits", Texts.fitsToast(Texts.RING_RESET_DONE));
+        check("toast: repair failed text fits", Texts.fitsToast(Texts.REPAIR_FAILED));
+        check("repair failed: says where to look, not above", Texts.REPAIR_FAILED.contains("Data check") && !Texts.REPAIR_FAILED.contains("above"));
 
         for (boolean backup : new boolean[] {false, true}) {
             String t = Texts.saveFailed(backup);
