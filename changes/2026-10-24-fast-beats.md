@@ -1,0 +1,1 @@
+* Heart rate: very fast beats (200 to 220 bpm, hard exercise) from the ring's beat to beat readings now count like every other heart rate, so on such days the day's heart rate line and Highest can be a little higher.

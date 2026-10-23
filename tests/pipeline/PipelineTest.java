@@ -611,6 +611,7 @@ public class PipelineTest {
         lastWornOldSync();
         lastWornStrayEvents();
         dayHeartLimits();
+        dayHeartFastBeat();
         dayHeartVersion();
         todayHeartTime();
         restoreSafety(full.toByteArray(), keyBytes);
@@ -1654,6 +1655,27 @@ public class PipelineTest {
                 l0007 + ", without the event " + c0007);
         check("and its values before midnight still for the old day (#97)", !Double.isNaN(l2352) && l2352 > (Double.isNaN(c2352) ? 0 : c2352) + 5,
                 l2352 + ", without the event " + c2352);
+    }
+
+    /**
+     * Issue #148: a green IBI beat of 280 ms (214 bpm) reaches the day's heart rate line like any heart rate up to
+     * 220 bpm; one of 270 ms (222 bpm) does not. One beat at 15:05 on the synthetic history, against a control run.
+     */
+    static void dayHeartFastBeat() throws Exception {
+        List<RingEvent> base = history(3);
+        double at1505 = java.time.LocalDateTime.parse("2026-10-08T15:05:00").atZone(ZONE).toEpochSecond();
+        double mid = java.time.LocalDateTime.parse("2026-10-08T15:07:30").atZone(ZONE).toEpochSecond();
+        double control = pointAt(dayLine(analysed("openring-dayheart-ibi-control", base), "2026-10-08"), mid);
+        int[] ibis = {280, 270};
+        double[] got = new double[2];
+        for (int k = 0; k < 2; k++) {
+            int ibi = ibis[k];
+            got[k] = pointAt(dayLine(analysed("openring-dayheart-ibi-" + ibi, base, new RingEvent(EventCodec.GREEN_IBI_QUALITY, ds(at1505),
+                    new byte[] {(byte) (ibi >> 3), (byte) ((ibi & 7) | (1 << 3))})), "2026-10-08"), mid);
+        }
+        check("a green IBI beat of 280 ms (214 bpm) reaches the day's heart rate line (#148)", !Double.isNaN(control) && got[0] > control + 5,
+                got[0] + ", without the beat " + control);
+        check("a green IBI beat of 270 ms (222 bpm) does not (#148)", Math.abs(got[1] - control) < 1e-9, got[1] + ", without the beat " + control);
     }
 
     /**

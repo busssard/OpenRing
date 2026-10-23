@@ -17,7 +17,9 @@ public final class LiveHrv {
     }
 
     public void add(int ibiMs) {
-        if (ibiMs < 300 || ibiMs > 2000) return;
+        // the one beat range (issue #148), only to drop impossible values; artefacts (a missed or doubled
+        // beat) are rejected by the 20 % rule in rmssd(), so no stricter floor of its own here
+        if (!app.openring.core.EventCodec.plausibleIbi(ibiMs)) return;
         ibis.addLast(ibiMs);
         while (ibis.size() > window) ibis.removeFirst();
     }
