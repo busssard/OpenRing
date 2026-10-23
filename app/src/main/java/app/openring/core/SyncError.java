@@ -148,6 +148,6 @@ public final class SyncError {
         String answered = (cut < 0 ? rest : rest.substring(0, cut)).trim();
         String typed = cut < 0 ? "" : rest.substring(cut + 5).trim();
         return "Nothing was erased: the ring that answered is " + (answered.isEmpty() ? "another one" : answered)
-                + ", but you typed " + (typed.isEmpty() ? "nothing" : typed) + ". Start the reset again and type the serial it shows.";
+                + ", but you typed " + (typed.isEmpty() ? "nothing" : typed) + ". Start the reset again and type the serial the reset message shows.";
     }
 }

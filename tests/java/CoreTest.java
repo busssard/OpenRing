@@ -270,6 +270,10 @@ public class CoreTest {
         eq("rule: Detailed", WakeUps.rule(StageFilter.DETAILED), "a minute or more");
         eq("rule: Balanced", WakeUps.rule(B), "a minute or more");
         eq("rule: Calm", WakeUps.rule(C), "2 min or more with Calm");
+        eq("average line: Calm", WakeUps.averageLine(C), "Wake ups of 2 min or more with Calm");
+        eq("average line: Balanced", WakeUps.averageLine(B), "Wake ups of a minute or more");
+        eq("average line: mixed levels still name the rule", WakeUps.averageLine(-1),
+                "Wake ups of a minute or more (2 min with Calm), each night at its own detail level");
         eq("rule: out of range levels are clamped", WakeUps.rule(-3) + " / " + WakeUps.rule(9), "a minute or more / 2 min or more with Calm");
 
         // random nights: for every level, preview count = night count = timeline rows, and the old rule agrees
@@ -760,13 +764,13 @@ public class CoreTest {
         }
         // the texts the issue lists
         eq("ring error: serial mismatch", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not 3A1B2D", A),
-                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3A1B2D. Start the reset again and type the serial it shows.");
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3A1B2D. Start the reset again and type the serial the reset message shows.");
         eq("ring error: serial mismatch, nothing typed", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not ", A),
-                "Nothing was erased: the ring that answered is 3A1B2C, but you typed nothing. Start the reset again and type the serial it shows.");
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed nothing. Start the reset again and type the serial the reset message shows.");
         eq("ring error: serial mismatch, typed with spaces", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not  3a1b2d ", A),
-                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3a1b2d. Start the reset again and type the serial it shows.");
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3a1b2d. Start the reset again and type the serial the reset message shows.");
         eq("ring error: serial mismatch without a typed part", SyncError.plain("Refusing: the ring that answered is ", A),
-                "Nothing was erased: the ring that answered is another one, but you typed nothing. Start the reset again and type the serial it shows.");
+                "Nothing was erased: the ring that answered is another one, but you typed nothing. Start the reset again and type the serial the reset message shows.");
         String reach = "The ring could not be reached. Keep it close to the phone (on its charger is best) and try again.";
         eq("ring error: GATT 133 in Settings", SyncError.plain("connection failed (GATT status 133)", A), reach);
         eq("ring error: not in time in Settings", SyncError.plain("ring did not accept the connection in time", A), reach);
