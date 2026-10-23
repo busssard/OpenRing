@@ -91,6 +91,51 @@ public final class ClockChange {
                 + c.from + " to " + c.to + ", marked in orange, stays empty.";
     }
 
+    /**
+     * The line under the day's heart rate on a day the clocks went back (issue #97), for example "The clocks
+     * went back one hour on this day (03:00 became 02:00), so 02:00 to 03:00 happened twice. ...", or null on
+     * other days (the hour the clocks skip needs no note: no time in it is shown).
+     */
+    public static String repeatText(Change c) {
+        if (c == null || c.minutes >= 0) return null;
+        return "The clocks went back " + amount(-c.minutes) + " on this day (" + c.from + " became " + c.to + "), so " + c.to + " to "
+                + c.from + " happened twice. Times in that hour show (first time) or (second time).";
+    }
+
+    /**
+     * " (first time)" or " (second time)" after a clock time in the hour that happens twice when the clocks go
+     * back (issue #97), so two moments that read "02:22" can be told apart; "" at every other moment.
+     */
+    public static String repeatNote(ZoneId zone, double unix) {
+        if (zone == null || Double.isNaN(unix)) return "";
+        Instant t = Instant.ofEpochSecond((long) Math.floor(unix));
+        java.util.List<java.time.ZoneOffset> offs = zone.getRules().getValidOffsets(java.time.LocalDateTime.ofInstant(t, zone));
+        if (offs.size() < 2) return "";
+        int first = Integer.MIN_VALUE;
+        // the first pass is the one with the larger offset (summer time before the clocks go back)
+        for (java.time.ZoneOffset o : offs) first = Math.max(first, o.getTotalSeconds());
+        return zone.getRules().getOffset(t).getTotalSeconds() == first ? " (first time)" : " (second time)";
+    }
+
+    /**
+     * The touch readout of the sleep stages timeline: "02:22 Deep, 02:15 to 02:40 (25 min)" in {@code zone}.
+     * In the hour that happens twice (issue #97) the touched time gets its {@link #repeatNote}; an end of the
+     * stretch gets one only when its pass differs from the touched time's, so the usual case stays short:
+     * "02:22 (second time)  Deep, 02:15 to 02:40 (25 min)", but "02:50 (first time)  Deep, 02:40 to 02:05
+     * (second time) (25 min)".
+     */
+    public static String stageTip(ZoneId zone, double at, String stage, double from, double to) {
+        String note = repeatNote(zone, at), a = repeatNote(zone, from), b = repeatNote(zone, to);
+        return hm(zone, at) + note + "  " + stage + ", " + hm(zone, from) + (a.equals(note) ? "" : a) + " to " + hm(zone, to)
+                + (b.equals(note) ? "" : b) + " (" + Math.round((to - from) / 60) + " min)";
+    }
+
+    /** "07:42" in {@code zone} (the system zone without one), as the charts write it. */
+    static String hm(ZoneId zone, double unix) {
+        java.time.ZonedDateTime z = Instant.ofEpochSecond((long) unix).atZone(zone == null ? ZoneId.systemDefault() : zone);
+        return String.format(java.util.Locale.getDefault(), "%02d:%02d", z.getHour(), z.getMinute());
+    }
+
     /** The zone, or null when the id is empty or unknown on this phone. */
     public static ZoneId zone(String id) {
         if (id == null || id.isEmpty()) return null;

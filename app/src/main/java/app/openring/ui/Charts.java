@@ -304,8 +304,8 @@ public final class Charts {
                 while (b < n && stages[b] == stages[k]) b++;
                 double ep = (end - start) / n;
                 double ta = start + a * ep, tb = start + b * ep;
-                String label = clock(start + (k + 0.5) * ep) + "  " + name(stages[k]) + ", " + clock(ta) + " to " + clock(tb)
-                        + " (" + Math.round((tb - ta) / 60) + " min)";
+                // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
+                String label = app.openring.core.analysis.ClockChange.stageTip(zone, start + (k + 0.5) * ep, name(stages[k]), ta, tb);
                 drawTip(cv, labelW + (k + 0.5f) * cw, Ui.dp(getContext(), 20), bottom, label);
             }
             // time axis
@@ -596,7 +596,9 @@ public final class Charts {
                 int best = 0;
                 for (int k = 1; k < shown; k++) if (Math.abs(xs[k] - scrubX) < Math.abs(xs[best] - scrubX)) best = k;
                 double t = series.t(idx[best]);
-                String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t) : clock(t);
+                // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
+                String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t)
+                        : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, t);
                 cv.drawCircle(xs[best], ys[best], Ui.dp(getContext(), 4.5f), dot);
                 drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit);
             }

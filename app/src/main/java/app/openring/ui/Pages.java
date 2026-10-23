@@ -395,7 +395,8 @@ public final class Pages {
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
         root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz),
-                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : Charts.clock(Json.d(n, "lowest_hr_time"), nz))));
+                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : Charts.clock(Json.d(n, "lowest_hr_time"), nz)
+                        + app.openring.core.analysis.ClockChange.repeatNote(nz, Json.d(n, "lowest_hr_time")))));
         root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz),
                 "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
         JSONArray sp = n.optJSONArray("spo2_series");
@@ -1179,12 +1180,17 @@ public final class Pages {
         // the tiles come from the points the chart draws, also for days analysed before (issue #72)
         app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line, ds, de);
         boolean has = dh.points > 0;
-        hr.addView(Ui.statRow(c, Ui.stat(c, "Lowest", Ui.fmt(dh.low, 0), "bpm", 0, has ? "at " + clock(dh.lowAt, d.zone) : null),
+        // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
+        hr.addView(Ui.statRow(c, Ui.stat(c, "Lowest", Ui.fmt(dh.low, 0), "bpm", 0, has ? "at " + clock(dh.lowAt, d.zone)
+                        + app.openring.core.analysis.ClockChange.repeatNote(d.zone, dh.lowAt) : null),
                 Ui.stat(c, "Average", Ui.fmt(dh.avg, 0), "bpm", 0, has ? "of all quarter hours" : null),
-                Ui.stat(c, "Highest", Ui.fmt(dh.high, 0), "bpm", 0, has ? "at " + clock(dh.highAt, d.zone) : null)));
+                Ui.stat(c, "Highest", Ui.fmt(dh.high, 0), "bpm", 0, has ? "at " + clock(dh.highAt, d.zone)
+                        + app.openring.core.analysis.ClockChange.repeatNote(d.zone, dh.highAt) : null)));
         if (has) {
             hr.addView(Ui.text(c, "Each point of the line is a quarter hour average, midnight to midnight. Lowest and highest are its lowest and highest points. Touch the line to read any time.",
                     12, Ui.TEXT_3, Ui.REGULAR));
+            String twice = app.openring.core.analysis.ClockChange.repeatText(app.openring.core.analysis.ClockChange.find(d.zone, ds, de));
+            if (twice != null) hr.addView(Ui.text(c, twice, 12, Ui.TEXT_3, Ui.REGULAR));
             double night = Json.d(day, "rhr");
             if (!Double.isNaN(night)) hr.addView(Ui.text(c, "Lowest in last night's sleep: " + Ui.fmt(night, 0) + " bpm (Resting HR on Today, from the ring's own 5 minute night readings, so it can differ by a beat or two from the line).",
                     12, Ui.TEXT_3, Ui.REGULAR));
@@ -1280,9 +1286,12 @@ public final class Pages {
                 Ui.stat(c, "Blood oxygen", Ui.fmt(now.spo2, 0), "%", Ui.OXY)));
         StringBuilder when = new StringBuilder("Heart rate is the newest reading. Sensor temp is the ring's own reading, lower than body "
                 + "temperature (room temperature when not worn). Blood oxygen is the share of oxygen in your blood. ");
-        if (!Double.isNaN(now.hrAt)) when.append("Heart rate at ").append(Charts.clock(now.hrAt)).append(". ");
-        if (!Double.isNaN(now.skinTempAt)) when.append("Temperature at ").append(Charts.clock(now.skinTempAt)).append(". ");
-        if (!Double.isNaN(now.spo2At)) when.append("Blood oxygen at ").append(Charts.clock(now.spo2At)).append(". ");
+        if (!Double.isNaN(now.hrAt)) when.append("Heart rate at ").append(Charts.clock(now.hrAt))
+                .append(app.openring.core.analysis.ClockChange.repeatNote(java.time.ZoneId.systemDefault(), now.hrAt)).append(". ");
+        if (!Double.isNaN(now.skinTempAt)) when.append("Temperature at ").append(Charts.clock(now.skinTempAt))
+                .append(app.openring.core.analysis.ClockChange.repeatNote(java.time.ZoneId.systemDefault(), now.skinTempAt)).append(". ");
+        if (!Double.isNaN(now.spo2At)) when.append("Blood oxygen at ").append(Charts.clock(now.spo2At))
+                .append(app.openring.core.analysis.ClockChange.repeatNote(java.time.ZoneId.systemDefault(), now.spo2At)).append(". ");
         when.append("The ring measures on its own schedule, every few minutes when you are still. Sync to update.");
         card.addView(Ui.text(c, when.toString(), 12, Ui.TEXT_3, Ui.REGULAR));
         return card;

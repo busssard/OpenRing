@@ -82,6 +82,9 @@ public final class Analyzer {
         // the rules for finding nights changed (issue #42, long wake ups): nights from older rules are
         // analysed again once; databases from before the version existed read as version 1
         if (db.kvLong("night_finder", 1) != NightFinder.VERSION) db.put("analyzed_until", 0);
+        // the day's heart rate line changed (issue #97, plausibility range, readings after midnight): days from
+        // older rules are analysed again once; databases from before the version existed read as version 1
+        if (db.kvLong("day_heart", 1) != DayHeart.VERSION) db.put("analyzed_until", 0);
         // "count phone use as awake" switched (issue #13): only nights since the first screen data change
         long screenAwake = prefs.screenAwake() ? 1 : 0;
         double firstScreen = db.screenStart(true);
@@ -108,6 +111,7 @@ public final class Analyzer {
         db.put("stage_detail", detail);
         db.put("stage_filter", StageFilter.VERSION);
         db.put("night_finder", NightFinder.VERSION);
+        db.put("day_heart", DayHeart.VERSION);
         db.put("screen_awake", screenAwake);
         db.put("phone_awake", ScreenTime.AWAKE_RULE);
         db.put("last_analysis", now);
@@ -389,7 +393,7 @@ public final class Analyzer {
                 case EventCodec.AOHR_EVENT: {
                     int[][] a = EventCodec.aohr(r.body);
                     if (a == null) break;
-                    for (int i = 0; i < a[0].length; i++) if (a[0][i] >= 30 && a[0][i] <= 220) in.beats.add(r.unix + i * 1.92, a[0][i]);
+                    for (int i = 0; i < a[0].length; i++) if (EventCodec.plausibleHr(a[0][i])) in.beats.add(r.unix + i * EventCodec.AOHR_INTERVAL_S, a[0][i]);
                     break;
                 }
                 case EventCodec.SLEEP_TEMP_EVENT: {
@@ -641,20 +645,24 @@ public final class Analyzer {
         }
 
         // ---- daytime heart rate ----
+        // one plausibility range for every source (issue #97). Events from up to 30 minutes before midnight
+        // are read too: an HRV event holds six values 5 minutes apart, so one starting at 23:50 has three after
+        // midnight; the quarter hours keep only the values inside the day.
         TS beats = new TS();
-        for (Db.Row r : db.events(new int[] {EventCodec.GREEN_IBI_QUALITY, EventCodec.AOHR_EVENT, EventCodec.HRV_EVENT, EventCodec.SLEEP_PERIOD_INFO_2}, ds, de)) {
+        for (Db.Row r : db.events(new int[] {EventCodec.GREEN_IBI_QUALITY, EventCodec.AOHR_EVENT, EventCodec.HRV_EVENT, EventCodec.SLEEP_PERIOD_INFO_2},
+                ds - DayHeart.LOOK_BACK_S, de)) {
             if (r.tag == EventCodec.GREEN_IBI_QUALITY) {
                 int[][] g = EventCodec.greenIbi(r.body);
                 if (g != null) for (int i = 0; i < g[0].length; i++) if (g[1][i] == 1 && g[0][i] >= 300 && g[0][i] <= 2000) beats.add(r.unix, 60000.0 / g[0][i]);
             } else if (r.tag == EventCodec.AOHR_EVENT) {
                 int[][] a = EventCodec.aohr(r.body);
-                if (a != null) for (int i = 0; i < a[0].length; i++) if (a[0][i] >= 30 && a[0][i] <= 220) beats.add(r.unix + i * 1.92, a[0][i]);
+                if (a != null) for (int i = 0; i < a[0].length; i++) if (EventCodec.plausibleHr(a[0][i])) beats.add(r.unix + i * EventCodec.AOHR_INTERVAL_S, a[0][i]);
             } else if (r.tag == EventCodec.HRV_EVENT) {
                 int[][] h = EventCodec.hrv(r.body);
-                if (h != null) for (int i = 0; i < h[0].length; i++) if (h[0][i] >= 30) beats.add(r.unix + i * 300, h[0][i]);
+                if (h != null) for (int i = 0; i < h[0].length; i++) if (EventCodec.plausibleHr(h[0][i])) beats.add(r.unix + i * EventCodec.HRV_INTERVAL_S, h[0][i]);
             } else {
                 EventCodec.SleepPeriod sp = EventCodec.sleepPeriod(r.body);
-                if (sp != null && sp.avgHr >= 30) beats.add(r.unix, sp.avgHr);
+                if (sp != null && EventCodec.plausibleHr(sp.avgHr)) beats.add(r.unix, sp.avgHr);
             }
         }
         if (beats.size() > 0) {
