@@ -52,7 +52,7 @@ public final class ScreenUse {
 
     /**
      * Reads the log from the start of the newest stored session (so a session that was still running
-     * gets its end) or from 10 days back the first time. Returns how many sessions were stored; 0 in
+     * gets its end) or from 10 days back the first time, and notes the time really read (issue #131). Returns how many sessions were stored; 0 in
      * demo mode, without access or on Android 8.
      */
     public static int collect(Context c) {
@@ -103,12 +103,15 @@ public final class ScreenUse {
         List<Double> aTimes = new ArrayList<Double>();
         List<Integer> aKinds = new ArrayList<Integer>();
         List<String> aPkgs = new ArrayList<String>();
+        // the oldest event Android still returned: where its log really begins (issue #131)
+        long oldest = Long.MAX_VALUE;
         try {
             UsageStatsManager um = (UsageStatsManager) c.getSystemService(Context.USAGE_STATS_SERVICE);
             UsageEvents ev = um.queryEvents(from, now);
             UsageEvents.Event e = new UsageEvents.Event();
             while (ev != null && ev.hasNextEvent()) {
                 ev.getNextEvent(e);
+                oldest = Math.min(oldest, e.getTimeStamp());
                 double at = e.getTimeStamp() / 1000.0;
                 int type = e.getEventType();
                 int app = e.getTimeStamp() < appFrom ? 0 : appKind(type);
@@ -145,6 +148,9 @@ public final class ScreenUse {
             db.put("screen_rule", RULE);
             if (p.screenAwake()) db.reanalyseFrom(back / 1000.0);
         }
+        // the time really read; what Android no longer had stays unknown instead of counting as 0 (issue #131)
+        db.putScreenRead(ScreenTime.readStart(screenFrom / 1000.0, oldest == Long.MAX_VALUE ? Double.NaN : oldest / 1000.0, now / 1000.0),
+                now / 1000.0);
         if (sessions.isEmpty()) return 0;
         db.putScreen(sessions);
         // phone use for nights already analysed: the next analysis looks at them again

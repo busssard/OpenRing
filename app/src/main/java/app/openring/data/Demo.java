@@ -91,6 +91,8 @@ public final class Demo {
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
         db.putScreen(screen);
+        // the made up usage log was "read" from the first demo day to now, so no day is a gap (issue #131)
+        db.putScreenRead(t0, now);
         db.putApps(apps);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);

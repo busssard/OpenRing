@@ -20,7 +20,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 5;
+    static final int VERSION = 6;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -80,6 +80,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo3(db);
         upgradeTo4(db);
         upgradeTo5(db);
+        upgradeTo6(db);
     }
 
     @Override
@@ -88,6 +89,18 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 3) upgradeTo3(db);
         if (oldV < 4) upgradeTo4(db);
         if (oldV < 5) upgradeTo5(db);
+        if (oldV < 6) upgradeTo6(db);
+    }
+
+    /**
+     * v6: the time ranges of Android's usage log that were really read (issue #131), so days the log
+     * no longer had when it was read count as unknown, not as 0. Older databases (and restored older
+     * backups) get one range from their oldest to their newest stored screen session: what was shown
+     * before stays, a gap after it shows at the next read.
+     */
+    private static void upgradeTo6(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS screen_reads (start REAL PRIMARY KEY, stop REAL NOT NULL)");
+        db.execSQL("INSERT OR REPLACE INTO screen_reads(start, stop) SELECT MIN(start), MAX(stop) FROM screen HAVING COUNT(*) > 0");
     }
 
     /** v5: the phone's time zone over time (issue #22), so each night keeps the zone it was slept in. */
@@ -678,6 +691,39 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * Note that Android's usage log was read from {@code from} to {@code to} (issue #131); ranges that
+     * overlap or touch become one row, so the table only grows by one row per real gap.
+     */
+    public void putScreenRead(double from, double to) {
+        if (!(to > from)) return;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            List<double[]> all = screenReads();
+            all.add(new double[] {from, to});
+            db.execSQL("DELETE FROM screen_reads");
+            for (double[] r : app.openring.core.analysis.ScreenTime.mergeRanges(all)) {
+                db.execSQL("INSERT INTO screen_reads(start, stop) VALUES (?, ?)", new Object[] {r[0], r[1]});
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** The ranges of Android's usage log that were read, oldest first (merged; empty before any read). */
+    public List<double[]> screenReads() {
+        List<double[]> out = new ArrayList<double[]>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT start, stop FROM screen_reads ORDER BY start", null);
+        try {
+            while (c.moveToNext()) out.add(new double[] {c.getDouble(0), c.getDouble(1)});
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     /** Start of the newest (first = false) or oldest (first = true) stored screen session, or -1. */
     public double screenStart(boolean first) {
         Cursor c = getReadableDatabase().rawQuery("SELECT " + (first ? "MIN" : "MAX") + "(start) FROM screen", null);
@@ -980,7 +1026,7 @@ public final class Db extends SQLiteOpenHelper {
     /** Wipe everything (keeps nothing). */
     public void resetAll() {
         SQLiteDatabase db = getWritableDatabase();
-        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones"}) db.execSQL("DELETE FROM " + t);
+        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones", "screen_reads"}) db.execSQL("DELETE FROM " + t);
     }
 
     /** Forget computed results so the next analysis rebuilds everything from raw events. */

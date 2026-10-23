@@ -892,6 +892,18 @@ public final class Pages {
 
     // ======================================================================== SCREEN
 
+    /** Why a day has no screen time (issue #131): before the data, a gap in reading Android's log, or not read yet. */
+    static String unknownScreenText(int coverage) {
+        if (coverage == app.openring.core.analysis.ScreenTime.READ_GAP) {
+            return "No screen time known for this day. Android keeps its usage log for about a week, and Open Ring did not read it "
+                    + "in time (the app was not opened, or usage access was off).";
+        }
+        if (coverage == app.openring.core.analysis.ScreenTime.AFTER_READS) {
+            return "No screen time read for this day yet. Open Ring reads it each time you open the app.";
+        }
+        return "No screen time known for this day. Open Ring has screen time from about a week before you allowed usage access.";
+    }
+
     /** True when screen time can be read: demo mode, or Android 9 or newer with usage access. */
     static boolean screenReady(Context c) {
         return Prefs.of(c).demo() || app.openring.data.ScreenUse.supported() && app.openring.data.ScreenUse.allowed(c);
@@ -933,8 +945,7 @@ public final class Pages {
         final app.openring.data.ScreenDays.Info in = d.screen;
         boolean today = d.date.equals(java.time.LocalDate.now());
         if (in == null || in.day == null) {
-            root.addView(infoCard(c, "Screen time", "No screen time known for this day. Open Ring has screen time from about a week "
-                    + "before you allowed usage access."));
+            root.addView(infoCard(c, "Screen time", unknownScreenText(in == null ? app.openring.core.analysis.ScreenTime.BEFORE_READS : in.coverage)));
             if (in != null) root.addView(screenRows(c, in, nav));
             return root;
         }
