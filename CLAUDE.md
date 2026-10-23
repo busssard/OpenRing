@@ -89,12 +89,19 @@ Check every plan and PR against these before showing it:
     it notices outside its issues become new `[EXP]` issues (at most 5 a night), not fixes in passing.
     It skips every issue whose title starts with `[EXP]`: the owner reviews those and releases one by
     removing `[EXP]` from its title.
-    Before new issues it fixes open PRs that got owner feedback or a code review with Must fix or
-    Should fix items, and answers with a "Fixed after review" comment.
+    Before new issues it brings its open PRs up to date with `main` and works through all feedback on
+    them: conversation comments, comments on code lines and reviews, from anyone. The owner's points
+    and the code review's Must fix and Should fix are fixed; points from others are checked in the code
+    first. Fixes go on the same branch as extra commits, each point gets an answer, and one
+    "Fixed after review" comment lists them all. Problems reported on PRs merged in the last 14 days
+    get a "Follow up to #n" PR.
   * **Nightly PR review (about 01:00):** reviews every open pull request that changed since its last
     review and leaves one comment starting "Code review of <commit>" with a verdict and findings
     (Must fix, Should fix, Could improve). It never changes code. When you work on a PR, read such a
     comment and fix what it lists under Must fix.
+    Every night it also audits merged PRs (each once, marked with an "Audit after merge" comment) for
+    feedback nobody acted on, checks whether the problem is still in `main`, and files each real one
+    as an issue labelled `review-followup` (without `[EXP]`), which the build run fixes the next night.
 * Never implement an issue whose title starts with `[EXP]`, whichever session you are.
 
 ## Rules
