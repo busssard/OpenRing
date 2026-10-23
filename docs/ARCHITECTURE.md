@@ -131,6 +131,9 @@ stays true until that analysis is done, so screens reload only then, and the sta
 "Analysing" (other ring tasks then only write to the log). Code that replaces or wipes the database
 (restore, pairing a different ring) first waits for a running analysis (`synchronized
 (Analyzer.class)`), except "Delete all local data" in Settings, which runs on the screen thread. Analysis and database reads in the UI run in AsyncTasks.
+A task that must outlive a turned phone (screens are rebuilt, no `configChanges`) holds only the
+application context and reports through a holder to the screen attached now: `DemoRun` in
+`MainActivity` (#29) and the repair in Data check (`LogActivity.REPAIR`, a `core/OneRun`, #130).
 
 ## Ring finder (issue #74)
 
