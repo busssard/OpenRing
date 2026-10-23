@@ -62,6 +62,15 @@ public final class WakeUps {
         return StageFilter.NAMES[lv] + " stage detail folds being awake under " + (sec / 60) + " minutes into sleep.";
     }
 
+    /**
+     * The wake up rule of a level for short lines (issue #128): "a minute or more" (Detailed, Balanced)
+     * or "2 min or more with Calm", so a line under a wake up count says what it counted.
+     */
+    public static String rule(int level) {
+        int min = shortestKeptMin(level);
+        return min <= 1 ? "a minute or more" : min + " min or more with " + StageFilter.NAMES[StageFilter.clampLevel(level)];
+    }
+
     /** Shortest wake up a level keeps, in whole minutes, for short labels. */
     public static int shortestKeptMin(int level) {
         return Math.max(1, StageFilter.minWakeEpochs(StageFilter.clampLevel(level)) * 30 / 60);

@@ -433,6 +433,18 @@ public class PipelineTest {
         check("average night has an in bed peak", peak > 0.5 && peak <= 1.0001, peak);
         check("typical asleep minutes", sh.asleepMin > 120 && sh.asleepMin < 720, sh.asleepMin);
         check("typical wake time in the morning", sh.wakeMin > 4 * 60 && sh.wakeMin < 11 * 60, sh.wakeMin);
+        // issue #128: the Wake ups line names the detail level the nights were counted with
+        List<JSONObject> calm = new ArrayList<JSONObject>(), mixed = new ArrayList<JSONObject>(), noLevel = new ArrayList<JSONObject>();
+        for (int i = 0; i < 3; i++) {
+            calm.add(Json.parse("{\"day\":\"2026-10-0" + (i + 1) + "\",\"awakenings\":" + (4 + i) + ",\"stage_detail\":2}"));
+            mixed.add(Json.parse("{\"day\":\"2026-10-0" + (i + 1) + "\",\"awakenings\":5,\"stage_detail\":" + (i == 2 ? 1 : 2) + "}"));
+            noLevel.add(Json.parse("{\"day\":\"2026-10-0" + (i + 1) + "\",\"awakenings\":5}"));
+        }
+        app.openring.data.SleepHistory hc = app.openring.data.SleepHistory.of(calm, ZoneId.of("UTC"));
+        check("history: nights all at Calm say Calm, wake ups unchanged", hc.stageDetail == 2 && Math.abs(hc.wakeUps - 5) < 1e-9, hc.stageDetail + " " + hc.wakeUps);
+        check("history: mixed levels say so", app.openring.data.SleepHistory.of(mixed, ZoneId.of("UTC")).stageDetail == -1, null);
+        check("history: nights without a level count as Detailed", app.openring.data.SleepHistory.of(noLevel, ZoneId.of("UTC")).stageDetail == 0, null);
+        check("history: nights stored by the analysis carry the chosen level", sh.stageDetail == app.openring.data.Prefs.of(ctx).stageDetail(), sh.stageDetail);
 
         // ---- backup: save everything, wipe, restore on a "new phone" ----
         app.openring.data.Prefs pr = app.openring.data.Prefs.of(ctx);
@@ -528,10 +540,11 @@ public class PipelineTest {
             check("before bed and night minutes", di.bedMin >= 0 && di.nightMin >= 0, di.bedMin + " / " + di.nightMin);
             double dialMin = 0;
             // a dial step is 5 minutes of clock time (#46); on the day the clocks go back the repeated hour
-            // shares its steps, so the dial can show less than the total then
+            // shares its steps, so the dial can show less than the total then, but at most 60 minutes less (#129)
             for (double v : di.dial) dialMin += v * 5;
             boolean longDay = di.to - di.from > 86400 + 1;
-            check("dial adds up to the day", longDay ? dialMin <= di.day.totalMin + 1 : Math.abs(dialMin - di.day.totalMin) < 1,
+            check("dial adds up to the day", longDay ? dialMin <= di.day.totalMin + 1 && dialMin >= di.day.totalMin - 60
+                    : Math.abs(dialMin - di.day.totalMin) < 1,
                     dialMin + " vs " + di.day.totalMin);
             check("apps of the day known and sorted", di.appsKnown && di.apps.size() >= 3 && di.apps.get(0).getValue() >= di.apps.get(1).getValue(), di.apps.size());
             check("14 day rows, last is the day", di.rows.length == 14 && di.rows[13].date.equals(di.date) && Math.abs(di.rows[13].totalMin - di.day.totalMin) < 0.01, null);
@@ -1037,6 +1050,19 @@ public class PipelineTest {
         check("clocks back: a use at 03:30 is on the 03:30 line of the clock", lit == 42 && in.day.totalMin > 4.9, lit);
         app.openring.data.ScreenDays.Row row = in.rows[in.rows.length - 1];
         check("and on the 03:30 part of the day row", row.fill[14] > 0 && row.fill[13] == 0 && row.zone.equals(z), null);
+        // issue #129: uses in both passes of the repeated hour share the dial there, so it shows less than the
+        // total, but never more than an hour less (an empty dial must fail)
+        List<double[]> both = new ArrayList<double[]>();
+        both.add(new double[] {java.time.Instant.parse("2026-10-25T00:10:00Z").getEpochSecond(), java.time.Instant.parse("2026-10-25T00:20:00Z").getEpochSecond()});
+        both.add(new double[] {java.time.Instant.parse("2026-10-25T01:10:00Z").getEpochSecond(), java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond()});
+        both.add(new double[] {java.time.LocalDateTime.parse("2026-10-25T09:00:00").atZone(z).toEpochSecond(), java.time.LocalDateTime.parse("2026-10-25T10:00:00").atZone(z).toEpochSecond()});
+        db.putScreen(both);
+        app.openring.data.ScreenDays.Info lng = app.openring.data.ScreenDays.info(db, LocalDate.parse("2026-10-25"), z, 180, new java.util.HashSet<String>());
+        double dialMin = 0;
+        for (double v : lng.dial) dialMin += v * 5;
+        check("clocks back: the dial shows the day less the shared steps, at most an hour less",
+                lng.to - lng.from > 86400 + 1 && dialMin >= lng.day.totalMin - 60 && dialMin < lng.day.totalMin - 1 && Math.abs(lng.day.totalMin - 85) < 0.01,
+                dialMin + " vs " + lng.day.totalMin);
         // a night through the repeated hour, 02:40 summer time to 02:20 winter time: the row keeps its width
         db.replaceNights(0, Double.MAX_VALUE, java.util.Collections.singletonList(new Object[] {
             (double) java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond(), (double) java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond(),
@@ -1266,6 +1292,7 @@ public class PipelineTest {
             bare.add(x);
         }
         app.openring.data.SleepHistory hb = app.openring.data.SleepHistory.of(bare, ZoneId.systemDefault());
+        check("trip " + when + ": all nights at one detail level", h.stageDetail == main.get(0).optInt("stage_detail", -9) && h.stageDetail >= 0, h.stageDetail);
         check("trip " + when + ": typical bedtime uses each night's clock", h.bedtimeMin > 21 * 60 && h.bedtimeMin < 24 * 60
                 && h.bedtimeSdMin < 60 && hb.bedtimeSdMin > 120, Math.round(h.bedtimeMin) + " min, spread " + Math.round(h.bedtimeSdMin)
                 + " (without zones " + Math.round(hb.bedtimeSdMin) + ")");
