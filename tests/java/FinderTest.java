@@ -1052,7 +1052,45 @@ public class FinderTest {
         LastWorn.Result rdc = LastWorn.find(ch[0], ch[1], every(1, 12, 10));
         check("dense daytime heart rate, then the charger: not sure", rdc.state == LastWorn.UNSURE && rdc.hrRule, rdc.state);
 
-        // MIN_DAY_READINGS: 12 warm readings up to the newest paired daytime heart rate switch the rule on, 11 do not
+        // review of PR #141: a dense day, then a day with one value every 40 minutes. The rule must look at
+        // today's sparse readings too, and lone values of different events vouch for a warm stretch.
+        double[][] twoDays = tempsC(36, new double[] {0, 1, 21}, new double[] {1, 12, 33}, new double[] {12, 24, 21}, new double[] {24, 36, 33});
+        double[] dense = every(1, 12, 10), sparse = every(24, 36, 40);
+        double[] both = Arrays.copyOf(dense, dense.length + sparse.length);
+        System.arraycopy(sparse, 0, both, dense.length, sparse.length);
+        LastWorn.Result r2d = LastWorn.find(twoDays[0], twoDays[1], both);
+        check("dense day, then a sparse day worn: worn, the rule judged on both days", r2d.state == LastWorn.WORN && !r2d.hrRule
+                && r2d.confirmed && r2d.lastHr == sparse[sparse.length - 1], r2d.state + " rule " + r2d.hrRule);
+        // a short sparse stretch after a long dense day: the rule stays on, the lone values of different events count
+        double[][] shortS = tempsC(27, new double[] {0, 1, 21}, new double[] {1, 12, 33}, new double[] {12, 24, 21}, new double[] {24, 27, 33});
+        double[] sparse3 = every(24, 27, 40);
+        double[] both3 = Arrays.copyOf(dense, dense.length + sparse3.length);
+        System.arraycopy(sparse3, 0, both3, dense.length, sparse3.length);
+        LastWorn.Result r3 = LastWorn.find(shortS[0], shortS[1], both3);
+        check("dense day, then 3 h worn with a value every 40 min: worn and confirmed", r3.state == LastWorn.WORN && r3.hrRule && r3.confirmed, r3.state + " rule " + r3.hrRule);
+        // the charger after a dense day (cool between) with two stray values 2 hours apart: still not a finger
+        double[][] chg = tempsC(30, new double[] {0, 1, 21}, new double[] {1, 12, 33}, new double[] {12, 24, 21}, new double[] {24, 30, 30});
+        double[] strays = Arrays.copyOf(dense, dense.length + 2);
+        strays[dense.length] = BASE + 25 * H;
+        strays[dense.length + 1] = BASE + 27 * H;
+        LastWorn.Result rcs = LastWorn.find(chg[0], chg[1], strays);
+        check("charger with two stray values 2 h apart: off at 12 h, both named", rcs.state == LastWorn.OFF && rcs.hrRule && rcs.warmNoHrNow
+                && rcs.warmLoneHr == 2 && Math.abs(rcs.at - (BASE + 12 * H)) <= 300, rcs.state + " " + (rcs.at - BASE) / H);
+        // the honest limit: two separate values within an hour of each other on the charger read as a finger
+        strays[dense.length + 1] = BASE + 25 * H + 40 * 60;
+        LastWorn.Result rcl = LastWorn.find(chg[0], chg[1], strays);
+        check("charger with two stray values 40 min apart: reads as a finger (the limit)", rcl.state != LastWorn.OFF, rcl.state);
+        // one event (an AOHR burst) on the charger still does not vouch for itself
+        double[] burstOn = Arrays.copyOf(dense, dense.length + 20);
+        int[] burstId = Arrays.copyOf(ids(dense.length, 0), burstOn.length);
+        for (int k = 0; k < 20; k++) {
+            burstOn[dense.length + k] = BASE + 25 * H + k * 1.92;
+            burstId[dense.length + k] = 5000;
+        }
+        LastWorn.Result rb = LastWorn.find(chg[0], chg[1], new double[0], null, burstOn, burstId);
+        check("charger with one AOHR burst: off at 12 h", rb.state == LastWorn.OFF && Math.abs(rb.at - (BASE + 12 * H)) <= 300, rb.state);
+
+        // MIN_DAY_READINGS: 12 warm readings up to the newest daytime heart rate switch the rule on, 11 do not
         double[][] w = tempsC(2, new double[] {0, 2, 33});
         LastWorn.Result r12 = LastWorn.find(w[0], w[1], new double[] {BASE + 10, BASE + 70, BASE + 11 * 300 - 50, BASE + 11 * 300 + 10});
         LastWorn.Result r11 = LastWorn.find(w[0], w[1], new double[] {BASE + 10, BASE + 70, BASE + 10 * 300 - 50, BASE + 10 * 300 + 10});

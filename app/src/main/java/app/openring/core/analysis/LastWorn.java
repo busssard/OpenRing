@@ -30,7 +30,7 @@ public final class LastWorn {
     public static final double NO_HR_S = 3600;
     /**
      * The heart rate rule needs proof that the ring stores daytime heart rate: at least this many warm
-     * readings outside sleep (up to the newest paired daytime heart rate), of which {@link #DAY_COVER} have
+     * readings outside sleep (up to the newest daytime heart rate), of which {@link #DAY_COVER} have
      * a paired daytime heart rate (one with a heart rate of another event within {@link #NEAR_S}) within
      * {@link #NEAR_S}. A ring with only night heart rate, or sparse daytime heart rate (one value every 35
      * minutes pairs with nothing, issue #124), is judged by temperature, as before issue #94.
@@ -183,7 +183,10 @@ public final class LastWorn {
         // paired daytime heart rates count, the same evidence step 3 asks for: a single value every 35 to 45
         // minutes pairs with nothing, so it would switch the rule on and then never vouch for a finger (issue #124)
         int eligible = 0, covered = 0;
-        double lastDay = pairedDay.length > 0 ? pairedDay[pairedDay.length - 1] : Double.NEGATIVE_INFINITY;
+        // the window ends at the newest daytime heart rate of any kind: sparse values today must count as
+        // readings without a paired one, or yesterday's dense data alone would decide (review of PR #141)
+        double lastDay = Double.NEGATIVE_INFINITY;
+        for (double x : dayT) lastDay = Math.max(lastDay, x);
         for (int i = 0; i < n && t[i] <= lastDay; i++) {
             if (!warm[i] || t[i] < r.newest - DAY_RULE_S || hasNear(night, t[i], NEAR_S)) continue;
             eligible++;
@@ -191,8 +194,9 @@ public final class LastWorn {
         }
         r.hrRule = eligible >= MIN_DAY_READINGS && covered >= DAY_COVER * eligible;
 
-        // 3. warm stretches: one with a heart rate near any of its readings is a finger as a whole (the
-        // heart rate may stop while the hand moves); one without counts only when the ring stores too
+        // 3. warm stretches: one with a paired heart rate near any of its readings, or lone heart rates of two
+        // events at most an hour apart near it, is a finger as a whole (the heart rate may stop while the
+        // hand moves); one without counts only when the ring stores too
         // little daytime heart rate to check it (then temperature decides, as before issue #94)
         boolean[] finger = new boolean[n];
         boolean[] stretchHr = new boolean[n];
@@ -205,6 +209,7 @@ public final class LastWorn {
             while (e + 1 < n && warm[e + 1]) e++;
             boolean near = false;
             for (int i = s; i <= e && !near; i++) near = hasNear(pairedT, t[i], NEAR_S);
+            if (!near) near = loneEvents(hr, hrId, t[s] - NEAR_S, t[e] + NEAR_S);
             for (int i = s; i <= e; i++) {
                 finger[i] = near || !r.hrRule;
                 stretchHr[i] = near;
@@ -390,6 +395,22 @@ public final class LastWorn {
     static boolean otherEventNear(double[] t, int[] id, int j, double w) {
         for (int q = j - 1; q >= 0 && t[j] - t[q] <= w; q--) if (id[q] != id[j]) return true;
         for (int q = j + 1; q < t.length && t[q] - t[j] <= w; q++) if (id[q] != id[j]) return true;
+        return false;
+    }
+
+    /**
+     * Whether heart rates between {@code from} and {@code to} (times sorted) come from two different events
+     * at most {@link #NO_HR_S} apart: sparse daytime heart rate (one value every 35 to 60 minutes) on a warm
+     * finger, which a charger, duvet or sunny window does not store (review of PR #141). One event never
+     * vouches for itself (review of PR #103).
+     */
+    static boolean loneEvents(double[] t, int[] id, double from, double to) {
+        int j = Arrays.binarySearch(t, from);
+        if (j < 0) j = -j - 1;
+        while (j > 0 && t[j - 1] >= from) j--;
+        for (; j < t.length && t[j] <= to; j++) {
+            for (int q = j + 1; q < t.length && t[q] <= to && t[q] - t[j] <= NO_HR_S; q++) if (id[q] != id[j]) return true;
+        }
         return false;
     }
 

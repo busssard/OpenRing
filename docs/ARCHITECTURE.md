@@ -144,11 +144,12 @@ can run meanwhile. Everything below stops in `onPause`.
   cool reading). Warmth alone is not trusted (issue #94): heart rates are split into night (HRV events)
   and daytime (green IBI, AOHR). The heart rate rule applies only when the ring stores daytime heart rate
   (`hrRule`: at least 12 warm readings outside sleep in the 48 hours before the newest reading, up to the
-  newest paired daytime heart rate, 70 % of them with a paired daytime heart rate within 30 minutes, issue #124:
+  newest daytime heart rate, 70 % of them with a paired daytime heart rate within 30 minutes, issue #124:
   a single value every 35 to 45 minutes pairs with nothing, so it switches the rule off instead of making
-  every warm stretch fail); otherwise temperature decides, as before. A warm stretch with a heart rate
-  within 30 minutes of any of its readings is a finger as a whole (heart rate may stop while the hand
-  moves); one without counts only when `hrRule` is off. A heart rate needs one from another stored event within 30 minutes
+  every warm stretch fail); otherwise temperature decides, as before. A warm stretch with a paired heart rate
+  within 30 minutes of any of its readings, or with lone heart rates of two different events at most an hour
+  apart within 30 minutes of it (`loneEvents`, sparse daytime heart rate after a dense day), is a finger as a
+  whole (heart rate may stop while the hand moves); one without counts only when `hrRule` is off. A heart rate needs one from another stored event within 30 minutes
   (the values of one HRV event or AOHR burst never vouch for each other, so `lastWorn` passes an event
   number per heart rate, and pairing is worked out first because the rule uses it); a lone one counts only next to a finger reading or after a warm newest reading (else it is a stray).
   Uncounted warm readings neither end nor start a cool stretch. At the end: warm with heart rate in the
