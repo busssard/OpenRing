@@ -71,9 +71,20 @@ public final class SettingsActivity extends Activity implements RingManager.List
             sexChoice = b.getInt("sex", -1);
             detailChoice = b.getInt("detail", -1);
             int[] modes = b.getIntArray("modes");
-            if (modes != null && modes.length == featureModes.length) System.arraycopy(modes, 0, featureModes, 0, modes.length);
+            // what the ring said holds only for a turn of the phone, not after Android ended the app hours ago
+            if (modes != null && modes.length == featureModes.length && Drafts.recent(b.getLong("modes_at", 0), System.currentTimeMillis()))
+                System.arraycopy(modes, 0, featureModes, 0, modes.length);
         }
         build();
+        if (b != null) { // back where the person was (turning there and back gives the same layout)
+            final int y = b.getInt("scroll", 0);
+            scroll.post(new Runnable() {
+                @Override
+                public void run() {
+                    scroll.scrollTo(0, y);
+                }
+            });
+        }
     }
 
     @Override
@@ -84,6 +95,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         out.putInt("sex", sexChoice);
         out.putInt("detail", detailChoice);
         out.putIntArray("modes", featureModes);
+        out.putLong("modes_at", System.currentTimeMillis());
+        out.putInt("scroll", scroll.getScrollY());
     }
 
     /** Typed but unsaved numbers, kept while the page is rebuilt or the phone turns (issue #133). */

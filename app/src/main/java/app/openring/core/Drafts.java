@@ -28,6 +28,17 @@ public final class Drafts {
         return texts.containsKey(name);
     }
 
+    /** How long state read from the ring stays true after the screen was saved: 10 minutes. */
+    public static final long RECENT_MS = 10 * 60 * 1000L;
+
+    /**
+     * True when state saved at {@code savedAt} (milliseconds) is recent enough to show again at {@code now}:
+     * a turn of the phone, not a return hours after Android ended the app. A clock set back counts as old.
+     */
+    public static boolean recent(long savedAt, long now) {
+        return savedAt > 0 && now >= savedAt && now - savedAt < RECENT_MS;
+    }
+
     /** Names and texts in turn, for Android's saved state. */
     public String[] toArray() {
         String[] out = new String[texts.size() * 2];

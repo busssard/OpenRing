@@ -541,6 +541,13 @@ public class CoreTest {
         check("drafts: no saved state gives none", !Drafts.fromArray(null).has("age"));
         Drafts broken = Drafts.fromArray(new String[] {"age", "42", "weight"});
         check("drafts: a broken list gives none", !broken.has("age") && broken.toArray().length == 0);
+        long t = 1_800_000_000_000L;
+        check("drafts: saved a second ago is recent", Drafts.recent(t, t + 1000));
+        check("drafts: saved just under 10 minutes ago is recent", Drafts.recent(t, t + Drafts.RECENT_MS - 1));
+        check("drafts: saved 10 minutes ago is old", !Drafts.recent(t, t + Drafts.RECENT_MS));
+        check("drafts: saved hours ago is old", !Drafts.recent(t, t + 5 * 3600_000L));
+        check("drafts: no save time is old", !Drafts.recent(0, t));
+        check("drafts: a clock set back counts as old", !Drafts.recent(t, t - 1000));
         eq("drafts: a null text in the list counts as not kept", Drafts.fromArray(new String[] {"kcal", null}).text("kcal", 0), "0");
     }
 
