@@ -514,11 +514,18 @@ public final class Pages {
     }
 
     /**
-     * Height in pixels of the last analysis result shown. A freshly built card (another day, a sync)
-     * reserves it while it calculates, so the page keeps its length and the kept scroll position
-     * still fits (issues #6 and #93).
+     * Height in pixels of the last analysis result shown, per screen layout. A freshly built card
+     * (another day, a sync) reserves it while it calculates, so the page keeps its length and the kept
+     * scroll position still fits (issues #6 and #93). A height from before turning the phone or
+     * changing the font size is not used (issue #127).
      */
-    static int lastResultHeight;
+    static final app.openring.core.KeptHeight lastResultHeight = new app.openring.core.KeptHeight();
+
+    /** The screen layout of {@code c}, the key for {@link #lastResultHeight}. */
+    static String layoutKey(Context c) {
+        android.content.res.Configuration cfg = c.getResources().getConfiguration();
+        return app.openring.core.KeptHeight.layout(cfg.screenWidthDp, cfg.fontScale, cfg.densityDpi);
+    }
     /** Tag of the analysis result area until its first result is shown. */
     private static final Object CALCULATING = new Object();
 
@@ -567,14 +574,14 @@ public final class Pages {
         body.addView(chips);
         result.addView(Ui.gap(c, 10));
         result.addView(Ui.text(c, "Calculating", 13, Ui.TEXT_3, Ui.REGULAR));
-        if (reserve) result.setMinimumHeight(lastResultHeight);
+        if (reserve) result.setMinimumHeight(lastResultHeight.get(layoutKey(c)));
         result.setTag(CALCULATING);
         result.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View v, int left, int top, int right, int bottom,
                                        int oldLeft, int oldTop, int oldRight, int oldBottom) {
                 // remember real results only, not the "Calculating" line or the space kept for it
-                if (v.getTag() == null) lastResultHeight = bottom - top;
+                if (v.getTag() == null) lastResultHeight.remember(layoutKey(v.getContext()), bottom - top);
             }
         });
         body.addView(result);
