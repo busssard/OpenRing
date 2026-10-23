@@ -474,6 +474,7 @@ public final class Db extends SQLiteOpenHelper {
 
     // ---------------------------------------------------------------------- nights, days
 
+    /** Deletes the stored nights that end at or after {@code from} and start before {@code to}, then stores {@code rows}. */
     public void replaceNights(double from, double to, List<Object[]> rows) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
@@ -492,6 +493,30 @@ public final class Db extends SQLiteOpenHelper {
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
+        }
+    }
+
+    /**
+     * The earliest start of a stored night that begins before {@code unix} and ends at or after it
+     * (so {@link #replaceNights} from {@code unix} would delete it), NaN when none does (issue #132).
+     */
+    public double nightAcross(double unix) {
+        String u = String.valueOf(unix);
+        Cursor c = getReadableDatabase().rawQuery("SELECT MIN(start) FROM nights WHERE start < ? AND stop >= ?", new String[] {u, u});
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getDouble(0) : Double.NaN;
+        } finally {
+            c.close();
+        }
+    }
+
+    /** The earliest day of a stored night ending at or after {@code unix}, null when there is none. */
+    public String firstNightDay(double unix) {
+        Cursor c = getReadableDatabase().rawQuery("SELECT MIN(day) FROM nights WHERE stop >= ?", new String[] {String.valueOf(unix)});
+        try {
+            return c.moveToFirst() ? c.getString(0) : null;
+        } finally {
+            c.close();
         }
     }
 

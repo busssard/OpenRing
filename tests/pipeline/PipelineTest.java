@@ -606,6 +606,7 @@ public class PipelineTest {
         app.openring.data.Demo.leave(phone3);
 
         longWakeChecks();
+        nightTwice();
         demoTwice();
         oldNights();
         lastWornOldSync();
@@ -2206,5 +2207,107 @@ public class PipelineTest {
         check("#42 nap after getting up at 04:00 stays a nap", morning.size() == 2 && early != null
                 && early.optDouble("asleep_min") > 250 && early.optDouble("asleep_min") < 310, morning.size() + " sleeps, " + describe(early));
         freshDb("openring42-done"); // the next test opens its own phone
+    }
+
+    /** Every sleep stored for days [from, to] as {start, stop} from the table (not the JSON). */
+    static List<double[]> storedSleeps(Db db, String from, String to) {
+        List<double[]> out = new ArrayList<double[]>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start, stop FROM nights WHERE day >= ? AND day <= ? ORDER BY start",
+                new String[] {from, to});
+        try {
+            while (c.moveToNext()) out.add(new double[] {c.getDouble(0), c.getDouble(1)});
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    static String when(double unix) {
+        return java.time.Instant.ofEpochSecond((long) unix).atZone(ZoneId.systemDefault()).toLocalDateTime().toString();
+    }
+
+    static String spans(List<double[]> l) {
+        StringBuilder b = new StringBuilder();
+        for (double[] x : l) b.append(b.length() == 0 ? "" : ", ").append(when(x[0])).append(" to ").append(when(x[1]));
+        return l.size() + " sleeps: " + b;
+    }
+
+    /**
+     * Issue #132: a sleep that ends just after midnight, with phone use from just before it, is
+     * stored ending before midnight. A later run whose chunk starts at that midnight analyses it
+     * again; with another start it must replace the stored row, not add a second one.
+     */
+    static void nightTwice() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        Context c = freshDb("openring132");
+        Db db = Db.get(c);
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        List<double[]> none = new ArrayList<double[]>();
+        wornSleep(ev, at(d, 16), at(d, 17.5), none, t0, ds0);      // an afternoon nap
+        wornSleep(ev, at(d, 19), at(d, 24.5), none, t0, ds0);      // asleep on the sofa until 00:30
+        for (int k = 2; k <= 4; k++) wornSleep(ev, at(d.plusDays(k), -1), at(d.plusDays(k), 7), none, t0, ds0);
+        java.util.Collections.sort(ev, new java.util.Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        double now = at(d.plusDays(4), 7.5);
+        db.insertBatch(ev, 1, (long) now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - ds0) / 10);
+        List<double[]> phone = new ArrayList<double[]>();
+        phone.add(new double[] {at(d, 23 + 50 / 60.0), at(d, 24.75)}); // phone from 23:50, into the end of the sleep
+        db.putScreen(phone);
+        Analyzer.run(c, null);
+        String day = d.toString();
+        List<double[]> first = storedSleeps(db, day, day);
+        double midnight = at(d, 24);
+        double[] evening = first.isEmpty() ? null : first.get(first.size() - 1);
+        boolean setUp = first.size() == 2 && evening != null && evening[1] < midnight && Math.abs(evening[1] - at(d, 23 + 50 / 60.0)) < 1;
+        check("#132 set up: nap and an evening sleep that ends at 23:50 (phone use)", setUp, spans(first));
+        if (!setUp) return;
+        double napStart = first.get(0)[0], napStop = first.get(0)[1];
+        double asleepBefore = Json.parse(db.dayJson(day)).optDouble("asleep_min");
+
+        // the next run sees phone use at the start it did not see before, and its first chunk starts at
+        // the midnight inside the sleep (an incremental run two days later)
+        List<double[]> start = new ArrayList<double[]>();
+        start.add(new double[] {at(d, 18.9), at(d, 19.5)});
+        db.putScreen(start);
+        double from = at(d.plusDays(2), 18);
+        db.put("analyzed_until", (long) (from + 2 * 86400));
+        Analyzer.run(c, null);
+        List<double[]> second = storedSleeps(db, day, day);
+        check("#132 the evening sleep is stored once, with its new start", second.size() == 2
+                && Math.abs(second.get(1)[0] - at(d, 19.5)) < 1 && Math.abs(second.get(1)[1] - evening[1]) < 1, spans(second));
+        check("#132 the nap before it stays as it was", second.size() >= 1 && second.get(0)[0] == napStart && second.get(0)[1] == napStop, spans(second));
+        JSONObject dayJ = Json.parse(db.dayJson(day));
+        List<String> mainN = db.nightsJson(day, day, true);
+        double asleepAfter = mainN.isEmpty() ? Double.NaN : Json.parse(mainN.get(mainN.size() - 1)).optDouble("asleep_min");
+        check("#132 the day is computed again from the new sleep", dayJ != null && mainN.size() == 1 && asleepAfter < asleepBefore - 10
+                && Math.abs(dayJ.optDouble("asleep_min") - asleepAfter) < 0.01,
+                asleepBefore + " before, day " + (dayJ == null ? null : dayJ.opt("asleep_min")) + ", main nights " + mainN.size() + ", new " + asleepAfter);
+
+        // an older run had joined the nap and the evening sleep (#62); the new run splits them again
+        // at the same boundary: the joined row goes, both pieces stay
+        List<Object[]> joined = new ArrayList<Object[]>();
+        joined.add(new Object[] {napStart, evening[1], day, 1, 50, "{\"start\":" + napStart + ",\"end\":" + evening[1] + ",\"day\":\"" + day + "\"}"});
+        db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {day});
+        db.replaceNights(napStart, napStart + 1, joined);
+        db.put("analyzed_until", (long) (from + 2 * 86400));
+        Analyzer.run(c, null);
+        List<double[]> third = storedSleeps(db, day, day);
+        check("#132 a joined row split again: both pieces stored, no overlap", third.size() == 2
+                && third.get(0)[0] == napStart && third.get(0)[1] == napStop
+                && Math.abs(third.get(1)[0] - at(d, 19.5)) < 1 && third.get(0)[1] <= third.get(1)[0], spans(third));
+        // the nights after midnight are as before: one each
+        for (int k = 2; k <= 4; k++) {
+            String dk = d.plusDays(k).toString();
+            check("#132 night " + (k - 1) + " after it stored once", storedSleeps(db, dk, dk).size() == 1, spans(storedSleeps(db, dk, dk)));
+        }
+        freshDb("openring132-done"); // the next test opens its own phone
     }
 }
