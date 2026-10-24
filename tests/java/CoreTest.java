@@ -503,6 +503,8 @@ public class CoreTest {
         stageShare();
         syncError();
         texts();
+        oneRun();
+        keptHeight();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -514,6 +516,54 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Issue #130: one repair at a time, reported to the screen shown now (a turned phone builds a new one). */
+    static void oneRun() {
+        OneRun<String> r = new OneRun<String>();
+        check("one run: idle at first", !r.running());
+        r.attach("first screen");
+        check("one run: first start", r.start());
+        check("one run: running", r.running());
+        check("one run: second start while running is refused", !r.start());
+        r.attach("turned screen");
+        r.detach("first screen"); // Back from the screen that started it: the one below attaches before this one goes
+        check("one run: still running after turning", r.running() && !r.start());
+        eq("one run: tells the screen shown now", r.finish(), "turned screen");
+        check("one run: ended", !r.running());
+        check("one run: a new start after the end", r.start());
+        r.detach("turned screen");
+        check("one run: no screen left", r.finish() == null);
+        r.detach("never attached");
+        check("one run: detaching a stranger changes nothing", !r.running() && r.finish() == null);
+        // a turned phone: Android destroys the old screen before it builds the new one
+        r.attach("old screen");
+        check("one run: start before turning", r.start());
+        r.detach("old screen");
+        r.attach("new screen");
+        eq("one run: the rebuilt screen is told", r.finish(), "new screen");
+    }
+
+    /** Issue #127: the space kept for Further analysis belongs to one screen layout. */
+    static void keptHeight() {
+        String portrait = KeptHeight.layout(411, 1.0f, 420);
+        String landscape = KeptHeight.layout(914, 1.0f, 420);
+        String bigFont = KeptHeight.layout(411, 1.3f, 420);
+        String otherDensity = KeptHeight.layout(411, 1.0f, 480);
+        KeptHeight k = new KeptHeight();
+        eq("kept height: nothing known keeps no space", k.get(portrait), 0);
+        k.remember(portrait, 1800);
+        eq("kept height: same layout", k.get(portrait), 1800);
+        eq("kept height: same values make the same layout", k.get(KeptHeight.layout(411, 1.0f, 420)), 1800);
+        eq("kept height: turned phone keeps no space", k.get(landscape), 0);
+        eq("kept height: larger font keeps no space", k.get(bigFont), 0);
+        eq("kept height: other density keeps no space", k.get(otherDensity), 0);
+        k.remember(landscape, 1100);
+        eq("kept height: landscape has its own", k.get(landscape), 1100);
+        eq("kept height: portrait kept after turning back", k.get(portrait), 1800);
+        k.remember(portrait, 1500);
+        eq("kept height: newer result replaces older", k.get(portrait), 1500);
+        eq("kept height: other layout untouched", k.get(landscape), 1100);
     }
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
@@ -533,6 +583,8 @@ public class CoreTest {
         check("toast: short confirmations fit", Texts.fitsToast("Backup saved") && Texts.fitsToast("Exported"));
         // passed to the toast through a variable (RingManager, then Settings), so the source scan below cannot see it
         check("toast: factory reset text fits", Texts.fitsToast(Texts.RING_RESET_DONE));
+        check("toast: repair failed text fits", Texts.fitsToast(Texts.REPAIR_FAILED));
+        check("repair failed: says where to look, not above", Texts.REPAIR_FAILED.contains("Data check and log") && !Texts.REPAIR_FAILED.contains("above"));
 
         for (boolean backup : new boolean[] {false, true}) {
             String t = Texts.saveFailed(backup);
