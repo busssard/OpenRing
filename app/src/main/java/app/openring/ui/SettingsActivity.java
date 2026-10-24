@@ -49,6 +49,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
     private LinearLayout root;
     private TextView status;
     private final int[] featureModes = {-1, -1, -1};
+    /** A measurement switch or read is running; its result reaches only this page (code review of #149). */
+    private boolean ringPending;
     /** Detail level picked in the Sleep stage detail card, saved only with its button. */
     private int detailChoice = -1;
     private LinearLayout stagesCard;
@@ -94,8 +96,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         out.putStringArray("drafts", drafts.toArray());
         out.putInt("sex", sexChoice);
         out.putInt("detail", detailChoice);
-        out.putIntArray("modes", featureModes);
-        out.putLong("modes_at", System.currentTimeMillis());
+        // a switch or read still running would leave the saved states wrong: the new page shows "?" then
+        if (!ringPending) {
+            out.putIntArray("modes", featureModes);
+            out.putLong("modes_at", System.currentTimeMillis());
+        }
         out.putInt("scroll", scroll.getScrollY());
     }
 
@@ -333,9 +338,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         return;
                     }
                     final int mode = featureModes[k] > 0 ? Protocol.MODE_OFF : Protocol.MODE_AUTOMATIC;
+                    ringPending = true;
                     RingManager.get(SettingsActivity.this).setFeature(RingManager.FEATURES[k], mode, new RingManager.Callback() {
                         @Override
                         public void done(boolean ok, String message) {
+                            ringPending = false;
                             if (!ok) {
                                 problem(message);
                                 return;
@@ -581,9 +588,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /** Reads which measurements are switched on and shows them. */
     void readFromRing() {
+        ringPending = true;
         RingManager.get(this).readFeatures(new RingManager.Callback() {
             @Override
             public void done(boolean ok, String message) {
+                ringPending = false;
                 if (!ok) {
                     problem(message);
                     return;
