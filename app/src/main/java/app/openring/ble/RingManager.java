@@ -787,7 +787,7 @@ public final class RingManager {
                                     if (g != null) for (int i = 0; i < g[0].length; i++) if (g[1][i] == 1 && app.openring.core.EventCodec.plausibleIbi(g[0][i])) newIbis.add(g[0][i]);
                                 } else if (e.tag == app.openring.core.EventCodec.AOHR_EVENT) {
                                     int[][] a = app.openring.core.EventCodec.aohr(e.body);
-                                    if (a != null) for (int i = 0; i < a[0].length; i++) if (app.openring.core.EventCodec.plausibleHr(a[0][i])) newIbis.add(60000 / a[0][i]);
+                                    if (a != null) for (int i = 0; i < a[0].length; i++) if (app.openring.core.EventCodec.plausibleHr(a[0][i])) newIbis.add((int) Math.round(60000.0 / a[0][i]));
                                 }
                             }
                         }
