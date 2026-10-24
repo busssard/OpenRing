@@ -11,9 +11,10 @@ public final class DayHeart {
     public static final double STEP_S = 900;
     /**
      * Rules version of the stored line (kv {@code day_heart}): 2 since issue #97 (one plausibility range, values
-     * after midnight from an event begun before it). A database from older rules has its days analysed again once.
+     * after midnight from an event begun before it), 3 since issue #148 (green IBI beats in the same range, 273 to
+     * 2000 ms instead of 300 to 2000). A database from older rules has its days analysed again once.
      */
-    public static final int VERSION = 2;
+    public static final int VERSION = 3;
     /** How far before midnight the day reads events: an HRV event's six values span 25 minutes after its start. */
     public static final double LOOK_BACK_S = 1800;
 

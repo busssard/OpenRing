@@ -27,12 +27,12 @@ public final class RightNow {
      * The newest plausible heart rate in one stored event and when it was measured, {bpm, unix}, or null if
      * none. Dated like {@code Analyzer}: an HRV event holds six values 5 minutes apart, an AOHR event values
      * 1.92 s apart, a green IBI event counts at its start (issues #94, #97). One plausibility range for all
-     * ({@link EventCodec#plausibleHr}).
+     * ({@link EventCodec#plausibleHr}, for beat intervals {@link EventCodec#plausibleIbi}, issue #148).
      */
     static double[] newest(Db.Row row) {
         if (row.tag == EventCodec.GREEN_IBI_QUALITY) {
             int[][] g = EventCodec.greenIbi(row.body);
-            if (g != null) for (int i = g[0].length - 1; i >= 0; i--) if (g[1][i] == 1 && g[0][i] >= 300 && g[0][i] <= 2000) return new double[] {60000.0 / g[0][i], row.unix};
+            if (g != null) for (int i = g[0].length - 1; i >= 0; i--) if (g[1][i] == 1 && EventCodec.plausibleIbi(g[0][i])) return new double[] {60000.0 / g[0][i], row.unix};
         } else if (row.tag == EventCodec.AOHR_EVENT) {
             int[][] a = EventCodec.aohr(row.body);
             if (a != null) for (int i = a[0].length - 1; i >= 0; i--) if (EventCodec.plausibleHr(a[0][i])) return new double[] {a[0][i], row.unix + i * EventCodec.AOHR_INTERVAL_S};

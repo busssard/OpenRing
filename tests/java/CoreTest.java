@@ -1437,6 +1437,28 @@ public class CoreTest {
         check("heart rate range: 30 and 220 count", EventCodec.plausibleHr(30) && EventCodec.plausibleHr(220) && EventCodec.plausibleHr(52));
         check("heart rate range: 29, 221, 250 and 0 do not", !EventCodec.plausibleHr(29) && !EventCodec.plausibleHr(221)
                 && !EventCodec.plausibleHr(250) && !EventCodec.plausibleHr(0) && !EventCodec.plausibleHr(Double.NaN));
+
+        // issue #148: beat intervals share that range, 60000 / 220 to 60000 / 30 ms
+        check("beat range: 280 ms (214 bpm), 300 ms and 2000 ms (30 bpm) count", EventCodec.plausibleIbi(280)
+                && EventCodec.plausibleIbi(300) && EventCodec.plausibleIbi(2000) && EventCodec.plausibleIbi(273));
+        check("beat range: 270 ms (222 bpm), 272 ms, 2001 ms, 0 and NaN do not", !EventCodec.plausibleIbi(270) && !EventCodec.plausibleIbi(272)
+                && !EventCodec.plausibleIbi(2001) && !EventCodec.plausibleIbi(0) && !EventCodec.plausibleIbi(Double.NaN));
+        // 280 ms = 0x118: low byte 0x18, high nibble 1 with validity 1
+        int[] fast = RingClient.parseLiveHr(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x00, 0x02, 0x00, 0x00, 0x18, 0x11});
+        check("live beat of 280 ms gives 214 bpm (#148)", fast != null && fast[0] == 214 && fast[1] == 280);
+        // 273 ms = 0x111 is 219.8 bpm: rounded to 220 on every live path (stored batch, live indication, live HR)
+        int[] edge = RingClient.parseLiveHr(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x00, 0x02, 0x00, 0x00, 0x11, 0x11});
+        check("live beat of 273 ms shows 220 bpm (#148)", edge != null && edge[0] == 220 && edge[1] == 273);
+        eq("live indication with a 273 ms beat shows 220 bpm (#148)", RingClient.parseLive(Packet.parse(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x01, 0x01, 0x00, 0x00, 0x11, 0x11})).bpm, 220);
+        check("live beat of 270 ms is dropped (#148)", RingClient.parseLiveHr(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x00, 0x02, 0x00, 0x00, 0x0e, 0x11}) == null);
+        eq("live indication with a 280 ms beat (#148)", RingClient.parseLive(Packet.parse(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x01, 0x01, 0x00, 0x00, 0x18, 0x11})).bpm, 214);
+        app.openring.core.analysis.LiveHrv fastHrv = new app.openring.core.analysis.LiveHrv(30), tooFast = new app.openring.core.analysis.LiveHrv(30);
+        for (int i = 0; i < 12; i++) {
+            fastHrv.add(i % 2 == 0 ? 280 : 285);
+            tooFast.add(i % 2 == 0 ? 265 : 270);
+        }
+        check("live HRV keeps 280 ms beats (#148)", Math.abs(fastHrv.rmssd() - 5) < 1e-9);
+        check("live HRV drops 270 ms beats (#148)", Double.isNaN(tooFast.rmssd()));
     }
 
     static int awakeCount(int[] st) {

@@ -784,10 +784,10 @@ public final class RingManager {
                                     if (v != null) for (int x : v) if (x >= 70 && x <= 100) { fresh[1] = x; newSpo2.add(x); }
                                 } else if (e.tag == app.openring.core.EventCodec.GREEN_IBI_QUALITY) {
                                     int[][] g = app.openring.core.EventCodec.greenIbi(e.body);
-                                    if (g != null) for (int i = 0; i < g[0].length; i++) if (g[1][i] == 1 && g[0][i] >= 300 && g[0][i] <= 2000) newIbis.add(g[0][i]);
+                                    if (g != null) for (int i = 0; i < g[0].length; i++) if (g[1][i] == 1 && app.openring.core.EventCodec.plausibleIbi(g[0][i])) newIbis.add(g[0][i]);
                                 } else if (e.tag == app.openring.core.EventCodec.AOHR_EVENT) {
                                     int[][] a = app.openring.core.EventCodec.aohr(e.body);
-                                    if (a != null) for (int i = 0; i < a[0].length; i++) if (app.openring.core.EventCodec.plausibleHr(a[0][i])) newIbis.add(60000 / a[0][i]);
+                                    if (a != null) for (int i = 0; i < a[0].length; i++) if (app.openring.core.EventCodec.plausibleHr(a[0][i])) newIbis.add((int) Math.round(60000.0 / a[0][i]));
                                 }
                             }
                         }
@@ -902,7 +902,7 @@ public final class RingManager {
                                 }
                                 if (p.payload.length >= 9) {
                                     int ibi = (p.u8(7) | (p.u8(8) << 8)) & 0x0fff;
-                                    if (ibi >= 300 && ibi <= 2000) beat(60000 / ibi, 0);
+                                    if (app.openring.core.EventCodec.plausibleIbi(ibi)) beat((int) Math.round(60000.0 / ibi), 0);
                                 }
                             }
                         }
