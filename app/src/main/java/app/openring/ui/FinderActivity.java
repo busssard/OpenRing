@@ -644,7 +644,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
         if (!demo && watch == null) {
             // the start waits for Android's scan budget (shared with a sync): not listening yet, so "not heard" would mislead
             bandText.setText("Not listening yet");
-            signalText.setText("It starts listening by itself in a moment.");
+            // RingScanner allows 4 starts in 30 s, so the wait is at most 30.2 s (longer only if a sync starts more meanwhile)
+            signalText.setText("It starts listening by itself within about half a minute.");
             return;
         }
         long heardAgo = prox.sinceLast(now);
@@ -653,10 +654,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
             signalText.setText("Waiting for the ring's signal");
             return;
         }
-        bandText.setText(Proximity.label(Proximity.NOT_HEARD));
+        // label and line from the same check, so they never disagree (issue #125)
+        boolean unusable = unusableAt != Long.MIN_VALUE && now - unusableAt < Proximity.LOST_MS;
+        bandText.setText(Proximity.label(Proximity.NOT_HEARD, unusable));
         String why = "The ring is out of range, its battery is empty, or a thick wall or metal is in the way.";
         if (otherAt != Long.MIN_VALUE && now - otherAt < Proximity.LOST_MS) why = "This phone hears an Oura ring, but not the one paired with this app.";
-        if (unusableAt != Long.MIN_VALUE && now - unusableAt < Proximity.LOST_MS) why = UNUSABLE;
+        if (unusable) why = UNUSABLE;
         signalText.setText(why);
     }
 
