@@ -383,6 +383,49 @@ public final class ScreenTime {
         return out;
     }
 
+    /** Android's usage log surely still holds this much time back (it keeps about a week, issue #131). */
+    public static final double LOG_SURE_S = 7 * 86400;
+
+    /**
+     * Where a read of the usage log asked to start at {@code from} really covers from (issue #131).
+     * Within {@link #LOG_SURE_S} of {@code now} Android still has everything, so from {@code from}.
+     * Earlier, only as far back as Android returned anything: its oldest event ({@code oldest}, NaN
+     * when none came), or {@link #LOG_SURE_S} back when that is earlier, never before {@code from}.
+     */
+    public static double readStart(double from, double oldest, double now) {
+        double sure = now - LOG_SURE_S;
+        if (from >= sure) return from;
+        double r = Double.isNaN(oldest) ? sure : Math.min(oldest, sure);
+        return Math.max(from, r);
+    }
+
+    /** How much of a day the reads of the usage log cover, see {@link #coverage}. */
+    public static final int COVERED = 0, BEFORE_READS = 1, READ_GAP = 2, AFTER_READS = 3;
+
+    /**
+     * Whether the time from {@code a} to {@code b} was read from the usage log (issue #131), given the
+     * {@code reads} merged and oldest first ({@link #mergeRanges}). {@link #COVERED} when every moment
+     * from the first read start (or {@code a}) to the last read end (or {@code b}) was read, so the first
+     * day and today count up to where reading starts or stops; {@link #BEFORE_READS} when it ends at or
+     * before the first read (or there is none), {@link #AFTER_READS} when it starts at or after the
+     * last read end, {@link #READ_GAP} when time between two reads was never read. A day that is over at
+     * {@code now} and was read only part way at its end is {@link #AFTER_READS} too (usage access
+     * switched off in the middle of it); only today counts up to the last read.
+     */
+    public static int coverage(List<double[]> reads, double a, double b, double now) {
+        if (reads.isEmpty() || b <= reads.get(0)[0]) return BEFORE_READS;
+        double lastEnd = reads.get(reads.size() - 1)[1];
+        if (a >= lastEnd || b <= now && b > lastEnd) return AFTER_READS;
+        double t = Math.max(a, reads.get(0)[0]), end = Math.min(b, reads.get(reads.size() - 1)[1]);
+        for (double[] r : reads) {
+            if (t >= end) break;
+            if (r[1] <= t) continue;
+            if (r[0] > t) return READ_GAP;
+            t = r[1];
+        }
+        return t >= end ? COVERED : READ_GAP;
+    }
+
     /** Each app's ranges merged ({@link #mergeRanges}), so no moment counts twice for one app. */
     public static Map<String, List<double[]>> merge(Map<String, List<double[]>> apps) {
         Map<String, List<double[]>> out = new LinkedHashMap<String, List<double[]>>();

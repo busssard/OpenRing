@@ -40,26 +40,51 @@ public final class ScreenDays {
         return h;
     }
 
-    /** One day's screen time, or null for a day before the first stored session (nothing known). */
-    public static ScreenTime.Day day(Db db, LocalDate day, ZoneId zone) {
-        double[] edges = hourEdges(day, zone);
+    /**
+     * The ranges of Android's usage log that were read (issue #131). A database without any (a demo or
+     * test built by hand) counts everything from its oldest stored session on as read, the rule before.
+     */
+    static List<double[]> reads(Db db) {
+        List<double[]> r = db.screenReads();
+        if (!r.isEmpty()) return r;
         double first = db.screenStart(true);
-        if (first < 0 || edges[edges.length - 1] <= first) return null;
+        if (first >= 0) r.add(new double[] {first, Double.POSITIVE_INFINITY});
+        return r;
+    }
+
+    static double nowS() {
+        return System.currentTimeMillis() / 1000.0;
+    }
+
+    /** One day's screen time, or null when it is not known (before the data, or the log was not read then). */
+    public static ScreenTime.Day day(Db db, LocalDate day, ZoneId zone) {
+        return day(db, day, zone, nowS());
+    }
+
+    /** As above at the moment {@code now} (unix seconds): a past day read only part way is not known. */
+    public static ScreenTime.Day day(Db db, LocalDate day, ZoneId zone, double now) {
+        double[] edges = hourEdges(day, zone);
+        if (ScreenTime.coverage(reads(db), edges[0], edges[edges.length - 1], now) != ScreenTime.COVERED) return null;
         return ScreenTime.day(db.screen(edges[0], edges[edges.length - 1]), edges);
     }
 
     /** Minutes of screen time for the {@code n} days ending at {@code last}, oldest first (NaN when unknown). */
     public static double[] lastDays(Db db, LocalDate last, int n, ZoneId zone) {
+        return lastDays(db, last, n, zone, nowS());
+    }
+
+    /** As above at the moment {@code now} (unix seconds). */
+    public static double[] lastDays(Db db, LocalDate last, int n, ZoneId zone, double now) {
         double from = last.minusDays(n - 1).atStartOfDay(zone).toEpochSecond();
         double to = last.plusDays(1).atStartOfDay(zone).toEpochSecond();
         List<double[]> s = db.screen(from, to);
-        double first = db.screenStart(true);
+        List<double[]> reads = reads(db);
         double[] out = new double[n];
         for (int i = 0; i < n; i++) {
             LocalDate d = last.minusDays(n - 1 - i);
             double a = d.atStartOfDay(zone).toEpochSecond(), b = d.plusDays(1).atStartOfDay(zone).toEpochSecond();
-            // days before the first stored session are unknown, not zero
-            out[i] = first < 0 || b <= first ? Double.NaN : ScreenTime.minutes(s, a, b);
+            // days the usage log was not read for (before the data, or a gap) are unknown, not zero
+            out[i] = ScreenTime.coverage(reads, a, b, now) != ScreenTime.COVERED ? Double.NaN : ScreenTime.minutes(s, a, b);
         }
         return out;
     }
@@ -78,7 +103,7 @@ public final class ScreenDays {
     public static final class Row {
         public LocalDate date;
         public double from, to;
-        /** Counted screen time, NaN before the first stored session (unknown, not zero). */
+        /** Counted screen time, NaN when unknown (before the data or a gap in reading the log), not zero. */
         public double totalMin = Double.NaN;
         public double[] fill = new double[ROW_STEPS];
         /** Main nights {sleep start, sleep end} that touch this day. */
@@ -98,6 +123,8 @@ public final class ScreenDays {
         public double from, to;
         /** Counted screen time of the day (apps not counted are left out); null when nothing is known. */
         public ScreenTime.Day day;
+        /** Why the day is known or not: {@link ScreenTime#COVERED}, {@code BEFORE_READS}, {@code READ_GAP} or {@code AFTER_READS} (issue #131). */
+        public int coverage = ScreenTime.BEFORE_READS;
         /** Screen on time with every app counted, and the part left out. */
         public double rawMin = Double.NaN, excludedMin;
         public ScreenScore.Result score;
@@ -131,13 +158,18 @@ public final class ScreenDays {
      * totals never change).
      */
     public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded, double minShowS) {
+        return info(db, date, zone, goalMin, excluded, minShowS, nowS());
+    }
+
+    /** As above at the moment {@code now} (unix seconds): a past day read only part way is not known. */
+    public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded, double minShowS, double now) {
         Info in = new Info();
         in.date = date;
         in.zone = zone;
         in.goalMin = goalMin;
         in.from = date.atStartOfDay(zone).toEpochSecond();
         in.to = date.plusDays(1).atStartOfDay(zone).toEpochSecond();
-        double first = db.screenStart(true);
+        List<double[]> reads = reads(db);
         LocalDate firstRow = date.minusDays(ROWS - 1);
         double qFrom = firstRow.atStartOfDay(zone).toEpochSecond() - 2 * 3600, qTo = in.to;
         // main nights touching the rows, by the day they belong to
@@ -167,8 +199,8 @@ public final class ScreenDays {
             in.sleepEnd = night[1];
         }
         for (double[] n : nights) if (n[1] > in.from && n[0] < in.to) in.nights.add(n);
-        boolean known = first >= 0 && in.to > first;
-        if (known) {
+        in.coverage = ScreenTime.coverage(reads, in.from, in.to, now);
+        if (in.coverage == ScreenTime.COVERED) {
             // how often the screen was turned on comes from the screen itself: leaving an app out of a
             // session must not split it into two; total, per hour and longest only count what counts
             double[] edges = hourEdges(date, zone);
@@ -185,7 +217,9 @@ public final class ScreenDays {
             Map<String, List<double[]>> front = ScreenTime.oneAtATime(apps);
             in.dayApps = front;
             if (night != null) in.firstLook = ScreenTime.firstAfter(counted, Math.max(in.from, night[1]), in.to);
-            if (night != null && night[0] - ScreenScore.BEDTIME_WINDOW_S >= first) {
+            // the hours before bed and the night only count when the log was read for all of them
+            double bed = night == null ? Double.NaN : night[0] - ScreenScore.BEDTIME_WINDOW_S;
+            if (night != null && bed >= reads.get(0)[0] && ScreenTime.coverage(reads, bed, night[1], now) == ScreenTime.COVERED) {
                 in.bedMin = ScreenTime.minutes(counted, night[0] - ScreenScore.BEDTIME_WINDOW_S, night[0]);
                 in.nightMin = ScreenTime.minutes(counted, night[0], night[1]);
             }
@@ -207,7 +241,7 @@ public final class ScreenDays {
             r.to = r.date.plusDays(1).atStartOfDay(zone).toEpochSecond();
             for (double[] n : nights) if (n[1] > r.from && n[0] < r.to) r.nights.add(n);
             r.nightFill = app.openring.core.analysis.DialMath.fill(r.nights, r.from, r.to, zone, DIAL_STEPS);
-            if (first >= 0 && r.to > first) {
+            if (ScreenTime.coverage(reads, r.from, r.to, now) == ScreenTime.COVERED) {
                 r.totalMin = ScreenTime.minutes(counted, r.from, r.to);
                 r.fill = app.openring.core.analysis.DialMath.fill(ScreenTime.widen(counted, minShowS), r.from, r.to, zone, ROW_STEPS);
                 double[] n = byDay.get(r.date.toString());
