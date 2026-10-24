@@ -35,6 +35,8 @@ public final class LogActivity extends Activity {
      * (issue #130). Static, so a turned or reopened screen sees it; it ends with the app.
      */
     static final OneRun<LogActivity> REPAIR = new OneRun<LogActivity>();
+    /** Shown while a repair runs, as a toast when it starts and as a line above Repair. */
+    private static final String REPAIRING = "Repairing, this can take a few minutes.";
 
     private LinearLayout content;
     private TextView repairButton, repairNote;
@@ -116,6 +118,7 @@ public final class LogActivity extends Activity {
         final int gen = ++refreshGen;
         content.removeAllViews();
         repairButton = null;
+        repairNote = null;
         if (view == 1) {
             StringBuilder sb = new StringBuilder();
             for (String l : RingManager.get(this).logLines()) sb.append(l).append('\n');
@@ -165,7 +168,7 @@ public final class LogActivity extends Activity {
             card.addView(Ui.body(this, s.detail));
             content.addView(card);
         }
-        repairNote = Ui.text(this, "Repairing, this can take a few minutes.", 14, Ui.TEMP, Ui.MEDIUM);
+        repairNote = Ui.text(this, REPAIRING, 14, Ui.TEMP, Ui.MEDIUM);
         repairNote.setPadding(0, 0, 0, Ui.dp(this, 6));
         content.addView(repairNote);
         repairButton = Ui.button(this, "Repair: re-date and re-analyse everything", Ui.READY, true);
@@ -197,7 +200,7 @@ public final class LogActivity extends Activity {
             showRepairState();
             return;
         }
-        Toast.makeText(this, "Repairing, this can take a few minutes.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, REPAIRING, Toast.LENGTH_LONG).show();
         showRepairState();
         new RepairTask(getApplicationContext()).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
