@@ -902,7 +902,7 @@ public final class RingManager {
                                 }
                                 if (p.payload.length >= 9) {
                                     int ibi = (p.u8(7) | (p.u8(8) << 8)) & 0x0fff;
-                                    if (app.openring.core.EventCodec.plausibleIbi(ibi)) beat(60000 / ibi, 0);
+                                    if (app.openring.core.EventCodec.plausibleIbi(ibi)) beat((int) Math.round(60000.0 / ibi), 0);
                                 }
                             }
                         }

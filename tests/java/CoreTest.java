@@ -1446,6 +1446,10 @@ public class CoreTest {
         // 280 ms = 0x118: low byte 0x18, high nibble 1 with validity 1
         int[] fast = RingClient.parseLiveHr(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x00, 0x02, 0x00, 0x00, 0x18, 0x11});
         check("live beat of 280 ms gives 214 bpm (#148)", fast != null && fast[0] == 214 && fast[1] == 280);
+        // 273 ms = 0x111 is 219.8 bpm: rounded to 220 on every live path (stored batch, live indication, live HR)
+        int[] edge = RingClient.parseLiveHr(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x00, 0x02, 0x00, 0x00, 0x11, 0x11});
+        check("live beat of 273 ms shows 220 bpm (#148)", edge != null && edge[0] == 220 && edge[1] == 273);
+        eq("live indication with a 273 ms beat shows 220 bpm (#148)", RingClient.parseLive(Packet.parse(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x01, 0x01, 0x00, 0x00, 0x11, 0x11})).bpm, 220);
         check("live beat of 270 ms is dropped (#148)", RingClient.parseLiveHr(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x00, 0x02, 0x00, 0x00, 0x0e, 0x11}) == null);
         eq("live indication with a 280 ms beat (#148)", RingClient.parseLive(Packet.parse(new byte[] {0x2f, 0x08, 0x28, 0x02, 0x01, 0x01, 0x00, 0x00, 0x18, 0x11})).bpm, 214);
         app.openring.core.analysis.LiveHrv fastHrv = new app.openring.core.analysis.LiveHrv(30), tooFast = new app.openring.core.analysis.LiveHrv(30);

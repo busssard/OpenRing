@@ -249,7 +249,7 @@ public final class RingClient {
         System.arraycopy(p.payload, 7, d, 0, d.length);
         if (feature == Protocol.FEATURE_DAYTIME_HR && d.length >= 2) {
             int ibi = Protocol.Le.u16(d, 0);
-            if (EventCodec.plausibleIbi(ibi)) out[0] = 60000 / ibi;
+            if (EventCodec.plausibleIbi(ibi)) out[0] = (int) Math.round(60000.0 / ibi);
         } else if (feature == Protocol.FEATURE_SPO2 && d.length >= 5) {
             if ((d[3] & 0xff) > 0) out[1] = d[3] & 0xff;
             if ((d[4] & 0xff) > 0) out[0] = d[4] & 0xff;
@@ -293,7 +293,7 @@ public final class RingClient {
             int ibi = ((hi & 0x0f) << 8) | lo;
             li.validity = (hi >> 4) & 0x0f;
             li.ibi = ibi;
-            if (li.validity == 1 && EventCodec.plausibleIbi(ibi)) li.bpm = 60000 / ibi;
+            if (li.validity == 1 && EventCodec.plausibleIbi(ibi)) li.bpm = (int) Math.round(60000.0 / ibi);
         }
         return li;
     }
@@ -320,7 +320,7 @@ public final class RingClient {
         int ibi = ((hi & 0x0f) << 8) | lo;
         int validity = (hi >> 4) & 0x0f;
         if (validity != 1 || !EventCodec.plausibleIbi(ibi)) return null;
-        return new int[] {60000 / ibi, ibi};
+        return new int[] {(int) Math.round(60000.0 / ibi), ibi};
     }
 
     // ---- history drain ------------------------------------------------------------------
