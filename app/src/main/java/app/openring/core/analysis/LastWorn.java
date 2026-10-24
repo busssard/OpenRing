@@ -180,8 +180,9 @@ public final class LastWorn {
         }
 
         // 2. does this ring store daytime heart rate now? Only then is warmth without one suspicious. Only
-        // paired daytime heart rates count, the same evidence step 3 asks for: a single value every 35 to 45
-        // minutes pairs with nothing, so it would switch the rule on and then never vouch for a finger (issue #124)
+        // paired daytime heart rates count, the same evidence step 3 asks for (step 3 also takes lone values of
+        // two events, see loneEvents): a single value every 35 to 45 minutes pairs with nothing, so it would
+        // switch the rule on and then never vouch for a finger (issue #124)
         int eligible = 0, covered = 0;
         // the window ends at the newest daytime heart rate of any kind: sparse values today must count as
         // readings without a paired one, or yesterday's dense data alone would decide (review of PR #141)
@@ -209,7 +210,13 @@ public final class LastWorn {
             while (e + 1 < n && warm[e + 1]) e++;
             boolean near = false;
             for (int i = s; i <= e && !near; i++) near = hasNear(pairedT, t[i], NEAR_S);
-            if (!near) near = loneEvents(hr, hrId, t[s] - NEAR_S, t[e] + NEAR_S);
+            if (!near) {
+                // only up to the neighbouring cool readings: a value from before the ring went cool must not
+                // vouch for a charger after it (review of afd266a)
+                double from = s > 0 ? Math.max(t[s] - NEAR_S, t[s - 1]) : t[s] - NEAR_S;
+                double to = e + 1 < n ? Math.min(t[e] + NEAR_S, t[e + 1]) : t[e] + NEAR_S;
+                near = loneEvents(hr, hrId, from, to);
+            }
             for (int i = s; i <= e; i++) {
                 finger[i] = near || !r.hrRule;
                 stretchHr[i] = near;

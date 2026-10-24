@@ -1080,6 +1080,24 @@ public class FinderTest {
         strays[dense.length + 1] = BASE + 25 * H + 40 * 60;
         LastWorn.Result rcl = LastWorn.find(chg[0], chg[1], strays);
         check("charger with two stray values 40 min apart: reads as a finger (the limit)", rcl.state != LastWorn.OFF, rcl.state);
+        // the border of loneEvents: two values 60 minutes apart count, 61 minutes apart do not
+        strays[dense.length] = BASE + 25 * H;
+        strays[dense.length + 1] = BASE + 26 * H;
+        LastWorn.Result r60 = LastWorn.find(chg[0], chg[1], strays);
+        strays[dense.length + 1] = BASE + 26 * H + 60;
+        LastWorn.Result r61 = LastWorn.find(chg[0], chg[1], strays);
+        check("lone values of two events 60 min apart count, 61 min apart do not", r60.state != LastWorn.OFF && r61.state == LastWorn.OFF, r60.state + " " + r61.state);
+        // review of afd266a: a lone finger value before the ring went cool and one phantom value on the charger
+        // after it do not vouch for the charger together (the window stops at the cool readings); the phantom
+        // stays a stray, and the newest heart rate that counts is the finger value (as on main)
+        double[][] cb = tempsC(13, new double[] {0, 12, 33}, new double[] {12, 12 + 20 / 60.0, 21}, new double[] {12 + 20 / 60.0, 13, 30});
+        double[] cbHr = every(0, 11, 10);
+        cbHr = Arrays.copyOf(cbHr, cbHr.length + 2);
+        cbHr[cbHr.length - 2] = BASE + 11 * H + 55 * 60;
+        cbHr[cbHr.length - 1] = BASE + 12 * H + 50 * 60;
+        LastWorn.Result rcb = LastWorn.find(cb[0], cb[1], cbHr);
+        check("a finger value before a cool gap and a phantom on the charger: not confirmed by the phantom", rcb.hrRule
+                && rcb.lastHr == cbHr[cbHr.length - 2] && rcb.at != cbHr[cbHr.length - 1], rcb.state + " at " + (rcb.at - BASE) / 60 + " last " + (rcb.lastHr - BASE) / 60);
         // one event (an AOHR burst) on the charger still does not vouch for itself
         double[] burstOn = Arrays.copyOf(dense, dense.length + 20);
         int[] burstId = Arrays.copyOf(ids(dense.length, 0), burstOn.length);

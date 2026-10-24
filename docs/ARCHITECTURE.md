@@ -148,7 +148,7 @@ can run meanwhile. Everything below stops in `onPause`.
   a single value every 35 to 45 minutes pairs with nothing, so it switches the rule off instead of making
   every warm stretch fail); otherwise temperature decides, as before. A warm stretch with a paired heart rate
   within 30 minutes of any of its readings, or with lone heart rates of two different events at most an hour
-  apart within 30 minutes of it (`loneEvents`, sparse daytime heart rate after a dense day), is a finger as a
+  apart within 30 minutes of it and not past its neighbouring cool readings (`loneEvents`, sparse daytime heart rate after a dense day), is a finger as a
   whole (heart rate may stop while the hand moves); one without counts only when `hrRule` is off. A heart rate needs one from another stored event within 30 minutes
   (the values of one HRV event or AOHR burst never vouch for each other, so `lastWorn` passes an event
   number per heart rate, and pairing is worked out first because the rule uses it); a lone one counts only next to a finger reading or after a warm newest reading (else it is a stray).
