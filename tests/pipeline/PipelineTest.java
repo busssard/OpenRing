@@ -626,6 +626,7 @@ public class PipelineTest {
         travelZones();
         zoneStorage(full.toByteArray());
         screenGaps(full.toByteArray());
+        sqlForOldPhones();
         oneEventCheck();
 
         System.out.println(passed + " passed, " + failed + " failed");
@@ -1284,6 +1285,45 @@ public class PipelineTest {
                 first.optString("zone"), (Json.d(first, "start") + Json.d(first, "end")) / 2);
         check("trip " + when + ": the first night away gets the orange line",
                 "Times this night are in New York time, 6 hours behind where you slept the night before.".equals(line), line);
+    }
+
+    /**
+     * The pipeline runs SQLite 3.41, but the app's minSdk 26 (Android 8.0) ships SQLite 3.18 and Android 13
+     * still 3.32 (code review of PR #145). Fail on SQL in the app's code that older phones refuse: HAVING
+     * without GROUP BY (3.39), UPSERT (3.24), window functions and RENAME COLUMN (3.25), NULLS FIRST or LAST
+     * (3.30), generated columns (3.31), IIF (3.32), RETURNING and DROP COLUMN (3.35), STRICT tables (3.37),
+     * JSON arrows and unixepoch (3.38).
+     */
+    static void sqlForOldPhones() throws Exception {
+        List<String> found = new ArrayList<String>();
+        List<java.nio.file.Path> files = new ArrayList<java.nio.file.Path>();
+        try (java.util.stream.Stream<java.nio.file.Path> w = Files.walk(java.nio.file.Paths.get("app/src/main/java"))) {
+            w.filter(x -> x.toString().endsWith(".java")).forEach(files::add);
+        }
+        for (java.nio.file.Path f : files) {
+            found.addAll(oldSqlProblems(f.getFileName().toString(), new String(Files.readAllBytes(f), java.nio.charset.StandardCharsets.UTF_8)));
+        }
+        check("SQL in the app runs on Android 8 to 13 (SQLite 3.18 and later)", found.isEmpty() && files.size() > 20, found);
+        // the check finds the statement the review found, split over two lines as in the code
+        List<String> bad = oldSqlProblems("x", "db.execSQL(\"INSERT OR REPLACE INTO screen_reads(start, stop) SELECT MIN(start), MAX(stop)\"\n"
+                + "    + \" FROM screen HAVING COUNT(*) > 0\");\nc = db.rawQuery(\"INSERT INTO t(a) VALUES (1) ON CONFLICT(a) DO NOTHING\", null);");
+        check("the check finds HAVING without GROUP BY and an UPSERT", bad.size() == 2, bad);
+        check("HAVING with GROUP BY is fine", oldSqlProblems("x", "db.rawQuery(\"SELECT a FROM t GROUP BY a HAVING COUNT(*) > 1\", null);").isEmpty(), null);
+    }
+
+    static List<String> oldSqlProblems(String name, String src) {
+        String[] newer = {"DO UPDATE", "DO NOTHING", " OVER (", " OVER(", "RENAME COLUMN", "NULLS FIRST", "NULLS LAST", "GENERATED ALWAYS",
+            "IIF(", "RETURNING", "DROP COLUMN", ") STRICT", "->>", "UNIXEPOCH("};
+        List<String> found = new ArrayList<String>();
+        // each Java statement on its own, so SQL split over concatenated lines is read as one
+        for (String st : src.split(";")) {
+            if (!st.contains("\"")) continue;
+            String u = st.toUpperCase(java.util.Locale.ROOT);
+            if (!u.contains("EXECSQL") && !u.contains("RAWQUERY") && !u.contains("SELECT ") && !u.contains("INSERT ")) continue;
+            if (u.contains("HAVING ") && !u.contains("GROUP BY")) found.add(name + ": HAVING without GROUP BY");
+            for (String n : newer) if (u.contains(n)) found.add(name + ": " + n.trim());
+        }
+        return found;
     }
 
     /**

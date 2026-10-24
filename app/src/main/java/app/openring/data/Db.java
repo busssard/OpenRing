@@ -100,7 +100,10 @@ public final class Db extends SQLiteOpenHelper {
      */
     private static void upgradeTo6(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS screen_reads (start REAL PRIMARY KEY, stop REAL NOT NULL)");
-        db.execSQL("INSERT OR REPLACE INTO screen_reads(start, stop) SELECT MIN(start), MAX(stop) FROM screen HAVING COUNT(*) > 0");
+        // no HAVING without GROUP BY: Android's SQLite accepts that only from 3.39 (Android 14); an
+        // aggregate over an empty table gives one row of NULLs, which the WHERE leaves out
+        db.execSQL("INSERT OR REPLACE INTO screen_reads(start, stop) SELECT a, b FROM (SELECT MIN(start) AS a, MAX(stop) AS b FROM screen)"
+                + " WHERE a IS NOT NULL AND b IS NOT NULL");
     }
 
     /** v5: the phone's time zone over time (issue #22), so each night keeps the zone it was slept in. */
