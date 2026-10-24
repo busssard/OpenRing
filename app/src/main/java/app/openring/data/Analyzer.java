@@ -194,17 +194,24 @@ public final class Analyzer {
         LocalDate d1 = LocalDate.parse(date(to)).plusDays(1);
         // a week at a time keeps memory flat on a long first sync; each week starts at midnight in
         // the zone valid then, so a day's nights are decided together also after a trip (issue #22)
+        LocalDate first = d0;
         for (LocalDate c = d0; !c.isAfter(d1); c = c.plusDays(7)) {
             double a = dayStartThen(c);
             if (a > to) break;
-            analyzeNights(a, Math.min(to + 1, dayStartThen(c.plusDays(7))));
+            String changed = analyzeNights(a, Math.min(to + 1, dayStartThen(c.plusDays(7))));
+            // a sleep across the first midnight is rebuilt as a whole (issue #132), its day too
+            if (changed != null && changed.compareTo(first.toString()) < 0) first = LocalDate.parse(changed);
         }
-        for (LocalDate d = d0; !d.isAfter(d1); d = d.plusDays(1)) analyzeDay(d);
+        for (LocalDate d = first; !d.isAfter(d1); d = d.plusDays(1)) analyzeDay(d);
     }
 
     // ---------------------------------------------------------------------------- nights
 
-    void analyzeNights(double from, double to) {
+    /**
+     * Finds, analyses and stores the sleeps from {@code from} on (from earlier when a sleep crosses it,
+     * see {@link #boundary}); returns the earliest day of a night it deleted or stored, null when none.
+     */
+    String analyzeNights(double from, double to) {
         // ring hypnogram pages: only sleep_phase_data (0x5a) is validated as numbered pages
         int[] tags = {EventCodec.BEDTIME_PERIOD, EventCodec.SLEEP_PHASE_DATA,
             EventCodec.SLEEP_PERIOD_INFO_2, EventCodec.HRV_EVENT, EventCodec.SLEEP_TEMP_EVENT, EventCodec.SLEEP_ACM_PERIOD};
@@ -261,9 +268,11 @@ public final class Analyzer {
             for (double[] s : db.screen(from - 36 * 3600, to + 3600)) if (s[1] - s[0] <= ScreenTime.MAX_NIGHT_SESSION_S) screen.add(s);
         }
 
+        // the stored nights from lo on are replaced; lo is moved back so no sleep crosses it (issue #132)
+        double lo = boundary(from, periods);
         List<Night> nights = new ArrayList<Night>();
         for (NightFinder.Period p : periods) {
-            if (p.end < from) continue;
+            if (p.end < lo) continue;
             double start = p.start, end = p.end;
             if (!screen.isEmpty()) {
                 double[] w = ScreenTime.trim(p.start, p.end, screen);
@@ -306,12 +315,32 @@ public final class Analyzer {
             }
             days.put(n, d);
         }
-        // main sleep per day = the longest one
+        // main sleep per day = the longest one, also against stored sleeps of the same day that stay (they
+        // end before lo, issue #132), so a day keeps exactly one main sleep; earlier sleeps win a tie. The
+        // days of stored sleeps deleted now count too: one whose sleep is not stored again (phone in use)
+        // gets its longest remaining sleep as the main one
         Map<String, Night> main = new HashMap<String, Night>();
+        Map<String, double[]> keptBest = new HashMap<String, double[]>();
+        Map<String, List<double[]>> kept = new HashMap<String, List<double[]>>();
+        java.util.Set<String> touched = new java.util.TreeSet<String>(days.values());
+        touched.addAll(db.nightDaysFrom(lo));
+        for (String d : touched) {
+            List<double[]> k = db.nightsOfDayBefore(d, lo);
+            kept.put(d, k);
+            for (double[] x : k) if (keptBest.get(d) == null || x[1] > keptBest.get(d)[1]) keptBest.put(d, x);
+        }
         for (Night n : nights) {
             String d = days.get(n);
             Night m = main.get(d);
-            if (m == null || n.asleepMin > m.asleepMin) main.put(d, n);
+            double[] kb = keptBest.get(d);
+            if ((m == null || n.asleepMin > m.asleepMin) && (kb == null || n.asleepMin > kb[1])) main.put(d, n);
+        }
+        Map<Double, Boolean> keptMain = new HashMap<Double, Boolean>();
+        for (Map.Entry<String, List<double[]>> e : kept.entrySet()) {
+            for (double[] x : e.getValue()) {
+                boolean m = main.get(e.getKey()) == null && keptBest.get(e.getKey()) == x;
+                if ((x[2] == 1) != m) keptMain.put(x[0], m);
+            }
         }
         List<Object[]> out = new ArrayList<Object[]>();
         for (Night n : nights) {
@@ -334,8 +363,53 @@ public final class Analyzer {
             log.log(String.format(java.util.Locale.US, "sleep for %s%s: %s to %s, %.0f min asleep, score %d, stages from %s",
                     d, n.main ? "" : " (nap)", clock(n.start, nz), clock(n.end, nz), n.asleepMin, n.score.value, n.stageSource));
         }
-        db.replaceNights(from, Double.MAX_VALUE, out);
+        String changed = db.firstNightDay(lo);
+        for (Object[] r : out) if (changed == null || ((String) r[2]).compareTo(changed) < 0) changed = (String) r[2];
+        // sleeps the old rule left in place (ending before from) that are deleted now: rare, worth a line
+        if (lo < from) {
+            int rebuilt = 0, removed = 0;
+            for (double[] x : db.nightSpans(lo, from)) {
+                boolean again = false;
+                for (Object[] r : out) again |= (Double) r[0] < x[1] && (Double) r[1] > x[0];
+                if (again) rebuilt++;
+                else removed++;
+            }
+            String at = clock(from, zoneAt(from)).substring(0, 5);
+            if (rebuilt > 0) log.log("rebuilt " + rebuilt + " stored sleep" + (rebuilt == 1 ? "" : "s") + " that ended just before " + at + " (it ran past midnight)");
+            if (removed > 0) log.log("removed " + removed + " stored sleep" + (removed == 1 ? "" : "s") + " that ended just before " + at + " (no sleep found there now)");
+        }
+        db.replaceNights(lo, Double.MAX_VALUE, out, keptMain);
         log.log(nights.size() + " sleep periods");
+        return changed;
+    }
+
+    /**
+     * Where this run replaces the stored nights (issue #132): {@code from}, moved back to the start of
+     * any sleep period found now or any stored night that begins before it and ends at or after it,
+     * until none does. A sleep moved past phone use is stored with its shortened end, so a night ending
+     * just after {@code from} could be stored ending before it; it is analysed again here, and without
+     * this its old row stayed next to the new one when the new start differed. No sleep crosses the
+     * result, so every stored night it deletes is analysed again from the same events, and nights
+     * before it (a nap ending before the night) are left alone. Each step moves it earlier, so it ends.
+     */
+    double boundary(double from, List<NightFinder.Period> periods) {
+        double lo = from;
+        boolean moved = true;
+        while (moved) {
+            moved = false;
+            for (NightFinder.Period p : periods) {
+                if (p.start < lo && p.end >= lo) {
+                    lo = p.start;
+                    moved = true;
+                }
+            }
+            double s = db.nightAcross(lo);
+            if (s < lo) {
+                lo = s;
+                moved = true;
+            }
+        }
+        return lo;
     }
 
     /** The zone of a noted id, the phone's zone when there is none (or the phone does not know it). */
