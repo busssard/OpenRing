@@ -232,7 +232,7 @@ public final class LogActivity extends Activity {
             // the application's toast shows on whatever screen is open now
             Toast.makeText(ctx, s, Toast.LENGTH_LONG).show();
             if (a == null || a.isDestroyed()) return;
-            a.view = 0;
+            a.view = s == Texts.REPAIR_FAILED ? 1 : 0; // after a failure show the Log the toast points to
             a.refresh();
         }
     }

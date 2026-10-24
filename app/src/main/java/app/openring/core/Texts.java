@@ -20,7 +20,7 @@ public final class Texts {
      * The toast when a repair in Data check fails; it can show on any screen of the app (issue #130),
      * so it names where to look instead of "above".
      */
-    public static final String REPAIR_FAILED = "Repair did not finish, the Log tab in Data check says why.";
+    public static final String REPAIR_FAILED = "Repair did not finish, see Log in Data check and log.";
 
     /** "1 wake up", "0 wake ups", "3 wake ups": the word agrees with the number. */
     public static String count(long n, String one, String many) {
