@@ -18,7 +18,9 @@ public final class LiveHrv {
 
     public void add(int ibiMs) {
         // the one beat range (issue #148), only to drop impossible values; artefacts (a missed or doubled
-        // beat) are rejected by the 20 % rule in rmssd(), so no stricter floor of its own here
+        // beat) are handled by the 20 % rule in rmssd(), so no stricter floor of its own here. The two
+        // halves of a doubled beat still form one pair with almost no difference, which reads RMSSD a
+        // little low (about 0.5 ms for one in 24 beats); the old 300 ms floor had the same effect
         if (!app.openring.core.EventCodec.plausibleIbi(ibiMs)) return;
         ibis.addLast(ibiMs);
         while (ibis.size() > window) ibis.removeFirst();
