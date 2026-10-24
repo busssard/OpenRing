@@ -443,6 +443,10 @@ public class PipelineTest {
         app.openring.data.SleepHistory hc = app.openring.data.SleepHistory.of(calm, ZoneId.of("UTC"));
         check("history: nights all at Calm say Calm, wake ups unchanged", hc.stageDetail == 2 && Math.abs(hc.wakeUps - 5) < 1e-9, hc.stageDetail + " " + hc.wakeUps);
         check("history: mixed levels say so", app.openring.data.SleepHistory.of(mixed, ZoneId.of("UTC")).stageDetail == -1, null);
+        List<JSONObject> sameRule = new ArrayList<JSONObject>();
+        for (int i = 0; i < 3; i++) sameRule.add(Json.parse("{\"day\":\"2026-10-0" + (i + 1) + "\",\"awakenings\":5,\"stage_detail\":" + (i == 1 ? 1 : 0) + "}"));
+        int sr = app.openring.data.SleepHistory.of(sameRule, ZoneId.of("UTC")).stageDetail;
+        check("history: Detailed and Balanced count the same wake ups, not a mix", sr >= 0 && app.openring.core.analysis.WakeUps.averageLine(sr).equals("Wake ups of a minute or more"), sr);
         check("history: nights without a level count as Detailed", app.openring.data.SleepHistory.of(noLevel, ZoneId.of("UTC")).stageDetail == 0, null);
         check("history: nights stored by the analysis carry the chosen level", sh.stageDetail == app.openring.data.Prefs.of(ctx).stageDetail(), sh.stageDetail);
 
