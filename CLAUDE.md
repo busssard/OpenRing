@@ -91,7 +91,7 @@ Check every plan and PR against these before showing it:
     removing `[EXP]` from its title.
     Before new issues it brings its open PRs up to date with `main` and works through all feedback on
     them: conversation comments, comments on code lines and reviews, from anyone. The owner's points
-    and the code review's Must fix and Should fix are fixed; points from others are checked in the code
+    and the code review's Must fix and Should fix are fixed (Should fix unless the answer explains why not); points from others are checked in the code
     first. Fixes go on the same branch as extra commits, each point gets an answer, and one
     "Fixed after review" comment lists them all. A problem that someone (the owner or anyone else)
     reports on a PR after it was merged, in the last 14 days, gets a "Follow up to #n" PR. Review points
