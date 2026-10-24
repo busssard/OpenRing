@@ -552,6 +552,31 @@ public final class Db extends SQLiteOpenHelper {
         return out;
     }
 
+    /** The days of stored nights ending at or after {@code unix} (issue #132). */
+    public List<String> nightDaysFrom(double unix) {
+        List<String> out = new ArrayList<String>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT DISTINCT day FROM nights WHERE stop >= ?", new String[] {String.valueOf(unix)});
+        try {
+            while (c.moveToNext()) out.add(c.getString(0));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** {start, stop} of stored nights ending in [from, to), by start (issue #132). */
+    public List<double[]> nightSpans(double from, double to) {
+        List<double[]> out = new ArrayList<double[]>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT start, stop FROM nights WHERE stop >= ? AND stop < ? ORDER BY start",
+                new String[] {String.valueOf(from), String.valueOf(to)});
+        try {
+            while (c.moveToNext()) out.add(new double[] {c.getDouble(0), c.getDouble(1)});
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     /** The earliest day of a stored night ending at or after {@code unix}, null when there is none. */
     public String firstNightDay(double unix) {
         Cursor c = getReadableDatabase().rawQuery("SELECT MIN(day) FROM nights WHERE stop >= ?", new String[] {String.valueOf(unix)});

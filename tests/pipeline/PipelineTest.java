@@ -2410,7 +2410,7 @@ public class PipelineTest {
                 && Json.parse(mainAfter.get(0)).optDouble("start") > napStart && storedSleeps(db, day, day).size() == 2,
                 mainAfter.size() + " main, " + spans(storedSleeps(db, day, day)));
         check("#132 the stored nap stays, now marked as a nap in its row and its JSON", napJ != null && !napJ.optBoolean("main"), napJ == null ? null : napJ.opt("main"));
-        check("#132 replacing the sleep the old rule left in place is logged", log.contains("replaced 1 stored sleep from before 00:00"), log);
+        check("#132 replacing the sleep the old rule left in place is logged", log.contains("rebuilt 1 stored sleep that ended just before 00:00 (it ran past midnight)"), log);
         // and back: with the phone use again the nap is the main sleep again
         List<double[]> again = new ArrayList<double[]>();
         again.add(new double[] {at(d, 18.95), at(d, 21.5)});
@@ -2419,6 +2419,28 @@ public class PipelineTest {
         mainAfter = db.nightsJson(day, day, true);
         check("#132 the nap is the main sleep again once the evening is shorter", mainAfter.size() == 1
                 && Json.parse(mainAfter.get(0)).optDouble("start") == napStart, mainAfter.size());
+
+        // code review of f2410ca: the rebuilt sleep is not stored again (phone in use nearly all evening):
+        // the nap that stays becomes the day's main sleep, so the day keeps a sleep total
+        sleeps = new ArrayList<double[]>();
+        sleeps.add(new double[] {at(d, 16), at(d, 17.5)});
+        sleeps.add(new double[] {at(d, 19), at(d, 24.5)});
+        for (int k = 2; k <= 4; k++) sleeps.add(new double[] {at(d.plusDays(k), -1), at(d.plusDays(k), 7)});
+        phone = new ArrayList<double[]>();
+        phone.add(new double[] {at(d, 23 + 50 / 60.0), at(d, 24.75)});
+        db = sleepsWithPhone("openring132d", d, sleeps, phone);
+        check("#132 review set up: nap and evening sleep, the evening one main", storedSleeps(db, day, day).size() == 2
+                && mains(db, day) == 1 && Json.parse(db.nightsJson(day, day, true).get(0)).optDouble("start") > at(d, 18), spans(storedSleeps(db, day, day)));
+        List<double[]> evening = new ArrayList<double[]>();
+        evening.add(new double[] {at(d, 18.9), at(d, 21.4)}); // two sessions (one of over 4 hours is not used)
+        evening.add(new double[] {at(d, 21.4), at(d, 23.8)});
+        db.putScreen(evening);
+        log = runFromMidnight(db, midnight);
+        JSONObject dayJ = Json.parse(db.dayJson(day));
+        check("#132 the evening sleep gone, the nap that stays is the main sleep", storedSleeps(db, day, day).size() == 1 && mains(db, day) == 1,
+                spans(storedSleeps(db, day, day)) + ", " + mains(db, day) + " main");
+        check("#132 the day keeps a sleep total from the nap", dayJ != null && dayJ.optDouble("asleep_min", 0) > 0, dayJ == null ? null : dayJ.opt("asleep_min"));
+        check("#132 the log says the stored sleep was removed", log.contains("removed 1 stored sleep that ended just before 00:00"), log);
         freshDb("openring132-review-done");
     }
 }

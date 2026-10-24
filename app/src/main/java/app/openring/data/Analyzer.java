@@ -316,11 +316,15 @@ public final class Analyzer {
             days.put(n, d);
         }
         // main sleep per day = the longest one, also against stored sleeps of the same day that stay (they
-        // end before lo, issue #132), so a day keeps exactly one main sleep; earlier sleeps win a tie
+        // end before lo, issue #132), so a day keeps exactly one main sleep; earlier sleeps win a tie. The
+        // days of stored sleeps deleted now count too: one whose sleep is not stored again (phone in use)
+        // gets its longest remaining sleep as the main one
         Map<String, Night> main = new HashMap<String, Night>();
         Map<String, double[]> keptBest = new HashMap<String, double[]>();
         Map<String, List<double[]>> kept = new HashMap<String, List<double[]>>();
-        for (String d : new java.util.TreeSet<String>(days.values())) {
+        java.util.Set<String> touched = new java.util.TreeSet<String>(days.values());
+        touched.addAll(db.nightDaysFrom(lo));
+        for (String d : touched) {
             List<double[]> k = db.nightsOfDayBefore(d, lo);
             kept.put(d, k);
             for (double[] x : k) if (keptBest.get(d) == null || x[1] > keptBest.get(d)[1]) keptBest.put(d, x);
@@ -361,10 +365,19 @@ public final class Analyzer {
         }
         String changed = db.firstNightDay(lo);
         for (Object[] r : out) if (changed == null || ((String) r[2]).compareTo(changed) < 0) changed = (String) r[2];
-        // sleeps the old rule left in place (ending before from) that are replaced now: rare, worth a line
-        long pulled = lo < from ? db.count("SELECT COUNT(*) FROM nights WHERE stop >= " + lo + " AND stop < " + from) : 0;
-        if (pulled > 0) log.log("replaced " + pulled + " stored sleep" + (pulled == 1 ? "" : "s") + " from before " + clock(from, zoneAt(from))
-                + " that a sleep across it overlapped");
+        // sleeps the old rule left in place (ending before from) that are deleted now: rare, worth a line
+        if (lo < from) {
+            int rebuilt = 0, removed = 0;
+            for (double[] x : db.nightSpans(lo, from)) {
+                boolean again = false;
+                for (Object[] r : out) again |= (Double) r[0] < x[1] && (Double) r[1] > x[0];
+                if (again) rebuilt++;
+                else removed++;
+            }
+            String at = clock(from, zoneAt(from)).substring(0, 5);
+            if (rebuilt > 0) log.log("rebuilt " + rebuilt + " stored sleep" + (rebuilt == 1 ? "" : "s") + " that ended just before " + at + " (it ran past midnight)");
+            if (removed > 0) log.log("removed " + removed + " stored sleep" + (removed == 1 ? "" : "s") + " that ended just before " + at + " (no sleep found there now)");
+        }
         db.replaceNights(lo, Double.MAX_VALUE, out, keptMain);
         log.log(nights.size() + " sleep periods");
         return changed;
