@@ -84,7 +84,7 @@ public final class ClockChange {
         if (c == null || c.minutes == 0) return null;
         String amount = amount(Math.abs(c.minutes));
         if (c.minutes < 0) {
-            return "The clocks went back " + amount + " on this day (" + c.from + " became " + c.to + "). The hour from " + c.to
+            return "The clocks went back " + amount + " on this day (" + c.from + " became " + c.to + "). The " + span(c.minutes) + " from " + c.to
                     + " to " + c.from + " happened twice, phone use in both shows on the same part of the clock, marked in orange.";
         }
         return "The clocks went forward " + amount + " on this day (" + c.from + " became " + c.to + "), so the part of the clock from "
@@ -99,7 +99,7 @@ public final class ClockChange {
     public static String repeatText(Change c) {
         if (c == null || c.minutes >= 0) return null;
         return "The clocks went back " + amount(-c.minutes) + " on this day (" + c.from + " became " + c.to + "), so " + c.to + " to "
-                + c.from + " happened twice. Times in that hour show (first time) or (second time).";
+                + c.from + " happened twice. Times in that " + span(c.minutes) + " show (first time) or (second time).";
     }
 
     /**
@@ -162,6 +162,12 @@ public final class ClockChange {
         if (s == 0) return "UTC";
         int m = Math.abs(s) / 60;
         return "UTC" + (s > 0 ? "+" : "-") + (m / 60) + (m % 60 == 0 ? "" : String.format(java.util.Locale.US, ":%02d", m % 60));
+    }
+
+    /** The word for the clock time a change repeats or skips (issue #129): "hour", "half hour" (Lord Howe), else "period". */
+    static String span(int minutes) {
+        int m = Math.abs(minutes);
+        return m == 60 ? "hour" : m == 30 ? "half hour" : "period";
     }
 
     /** "one hour", "2 hours", "30 minutes", "4 hours 30 minutes". */
