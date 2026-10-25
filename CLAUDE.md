@@ -117,6 +117,17 @@ Check every plan and PR against these before showing it:
 * The app must never get the INTERNET permission or networking, analytics or tracking code
   (`tests/check_privacy.sh` enforces it).
 * `core/` must stay free of Android imports so it runs in the JVM tests.
+* **Data safety (owner's rule).** Any change that touches stored data (sync cursor, dating, analysis
+  results, schema, backup, export, restore) must be strictly backwards compatible and must never lose
+  data: raw ring events are never deleted or changed; schema changes only add; every upgrade step is
+  safe to run twice and to resume; results are replaced only once the new ones are complete, and any
+  stop or failure rolls back to the old state with an error. Tests and understanding come before the
+  fix: a failing test that reproduces the problem, the data flow written down in the design comment,
+  and tests for an upgrade from an older database with history (same events and nights after), an
+  interrupted run, restoring a backup from this and an older version, and a large history. If anything
+  is unclear, post options and wait for the owner instead of building. The PR gets a "Data safety"
+  section (what happens to existing data, which tests prove nothing is lost, and "make a full backup
+  before installing").
 * User facing text: plain language, short, no dashes as punctuation (commas or brackets).
   Every number on screen gets a one line explanation (`ui/Explain.java` holds the longer texts).
 
