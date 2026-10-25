@@ -91,14 +91,18 @@ Check every plan and PR against these before showing it:
     removing `[EXP]` from its title.
     Before new issues it brings its open PRs up to date with `main` and works through all feedback on
     them: conversation comments, comments on code lines and reviews, from anyone. The owner's points
-    and the code review's Must fix and Should fix are fixed; points from others are checked in the code
+    and the code review's Must fix and Should fix are fixed (Should fix unless the answer explains why not); points from others are checked in the code
     first. Fixes go on the same branch as extra commits, each point gets an answer, and one
-    "Fixed after review" comment lists them all. Problems reported on PRs merged in the last 14 days
-    get a "Follow up to #n" PR.
+    "Fixed after review" comment lists them all. A problem that someone (the owner or anyone else)
+    reports on a PR after it was merged, in the last 14 days, gets a "Follow up to #n" PR. Review points
+    from before the merge that nobody acted on are not followed up here: the review run's audit files
+    them as `review-followup` issues, which this run builds like any other issue. Before building a
+    `review-followup` issue, it checks for an open "Follow up to #n" PR for the same point, and the
+    other way round, so one point never gets two PRs.
   * **Nightly PR review (about 01:00):** reviews every open pull request that changed since its last
     review and leaves one comment starting "Code review of <commit>" with a verdict and findings
     (Must fix, Should fix, Could improve). It never changes code. When you work on a PR, read such a
-    comment and fix what it lists under Must fix.
+    comment and fix what it lists under Must fix and Should fix (Should fix unless you explain why not).
     Every night it also audits merged PRs (each once, marked with an "Audit after merge" comment) for
     feedback nobody acted on, checks whether the problem is still in `main`, and files each real one
     as an issue labelled `review-followup` (without `[EXP]`), which the build run fixes the next night.
