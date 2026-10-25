@@ -512,6 +512,7 @@ public class CoreTest {
         stageShare();
         syncError();
         texts();
+        drafts();
         oneRun();
         keptHeight();
         screenTime();
@@ -525,6 +526,40 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Issue #133: typed but unsaved numbers in Settings survive a rebuild and a turn of the phone. */
+    static void drafts() {
+        Drafts d = new Drafts();
+        eq("drafts: nothing kept gives the saved number", d.text("age", 35), "35");
+        check("drafts: nothing kept is not kept", !d.has("age"));
+        d.keep("age", "41");
+        eq("drafts: a kept text wins over the saved number", d.text("age", 35), "41");
+        eq("drafts: other inputs keep their saved number", d.text("weight", 72), "72");
+        d.keep("weight", new StringBuilder(""));
+        eq("drafts: an emptied input stays empty", d.text("weight", 72), "");
+        check("drafts: an empty text is kept", d.has("weight"));
+        d.keep("age", "42");
+        eq("drafts: keeping again replaces", d.text("age", 35), "42");
+        d.keep("age", null);
+        eq("drafts: no text keeps the last one", d.text("age", 35), "42");
+        d.keep(null, "7");
+        eq("drafts: no name keeps nothing", d.toArray().length, 4);
+        Drafts back = Drafts.fromArray(d.toArray());
+        eq("drafts: round trip age", back.text("age", 0), "42");
+        eq("drafts: round trip empty weight", back.text("weight", 72), "");
+        eq("drafts: round trip keeps the order", Arrays.toString(back.toArray()), "[age, 42, weight, ]");
+        check("drafts: no saved state gives none", !Drafts.fromArray(null).has("age"));
+        Drafts broken = Drafts.fromArray(new String[] {"age", "42", "weight"});
+        check("drafts: a broken list gives none", !broken.has("age") && broken.toArray().length == 0);
+        long t = 1_800_000_000_000L;
+        check("drafts: saved a second ago is recent", Drafts.recent(t, t + 1000));
+        check("drafts: saved just under 10 minutes ago is recent", Drafts.recent(t, t + Drafts.RECENT_MS - 1));
+        check("drafts: saved 10 minutes ago is old", !Drafts.recent(t, t + Drafts.RECENT_MS));
+        check("drafts: saved hours ago is old", !Drafts.recent(t, t + 5 * 3600_000L));
+        check("drafts: no save time is old", !Drafts.recent(0, t));
+        check("drafts: a clock set back counts as old", !Drafts.recent(t, t - 1000));
+        eq("drafts: a null text in the list counts as not kept", Drafts.fromArray(new String[] {"kcal", null}).text("kcal", 0), "0");
     }
 
     /** Issue #130: one repair at a time, reported to the screen shown now (a turned phone builds a new one). */
