@@ -577,6 +577,9 @@ public class PipelineTest {
         }
         app.openring.data.ScreenDays.Info old = app.openring.data.ScreenDays.info(demo, LocalDate.now().minusDays(60), z, 180, dp.screenExcluded());
         check("days before the screen data are unknown", old.day == null && old.score == null && Double.isNaN(old.rows[13].totalMin), null);
+        check("the demo's usage log counts as read from its first day, so no day is a gap (#131)", demo.screenReads().size() == 1
+                && ScreenTime.coverage(demo.screenReads(), LocalDate.now().minusDays(30).atStartOfDay(z).toEpochSecond(),
+                LocalDate.now().atStartOfDay(z).toEpochSecond(), System.currentTimeMillis() / 1000.0) == ScreenTime.COVERED, demo.screenReads().size());
         long before = demo.count("SELECT COUNT(*) FROM screen");
         demo.deleteScreenSince(System.currentTimeMillis() / 1000.0 - 3 * 86400);
         long after = demo.count("SELECT COUNT(*) FROM screen");
@@ -639,6 +642,8 @@ public class PipelineTest {
         zoneTable();
         travelZones();
         zoneStorage(full.toByteArray());
+        screenGaps(full.toByteArray());
+        sqlForOldPhones();
         oneEventCheck();
 
         System.out.println(passed + " passed, " + failed + " failed");
@@ -1313,6 +1318,126 @@ public class PipelineTest {
                 "Times this night are in New York time, 6 hours behind where you slept the night before.".equals(line), line);
     }
 
+    /**
+     * The pipeline runs SQLite 3.41, but the app's minSdk 26 (Android 8.0) ships SQLite 3.18 and Android 13
+     * still 3.32 (code review of PR #145). Fail on SQL in the app's code that older phones refuse: HAVING
+     * without GROUP BY (3.39), UPSERT (3.24), window functions and RENAME COLUMN (3.25), NULLS FIRST or LAST
+     * (3.30), generated columns (3.31), IIF (3.32), RETURNING and DROP COLUMN (3.35), STRICT tables (3.37),
+     * JSON arrows and unixepoch (3.38).
+     */
+    static void sqlForOldPhones() throws Exception {
+        List<String> found = new ArrayList<String>();
+        List<java.nio.file.Path> files = new ArrayList<java.nio.file.Path>();
+        try (java.util.stream.Stream<java.nio.file.Path> w = Files.walk(java.nio.file.Paths.get("app/src/main/java"))) {
+            w.filter(x -> x.toString().endsWith(".java")).forEach(files::add);
+        }
+        for (java.nio.file.Path f : files) {
+            found.addAll(oldSqlProblems(f.getFileName().toString(), new String(Files.readAllBytes(f), java.nio.charset.StandardCharsets.UTF_8)));
+        }
+        check("SQL in the app runs on Android 8 to 13 (SQLite 3.18 and later)", found.isEmpty() && files.size() > 20, found);
+        // the check finds the statement the review found, split over two lines as in the code
+        List<String> bad = oldSqlProblems("x", "db.execSQL(\"INSERT OR REPLACE INTO screen_reads(start, stop) SELECT MIN(start), MAX(stop)\"\n"
+                + "    + \" FROM screen HAVING COUNT(*) > 0\");\nc = db.rawQuery(\"INSERT INTO t(a) VALUES (1) ON CONFLICT(a) DO NOTHING\", null);");
+        check("the check finds HAVING without GROUP BY and an UPSERT", bad.size() == 2, bad);
+        check("HAVING with GROUP BY is fine", oldSqlProblems("x", "db.rawQuery(\"SELECT a FROM t GROUP BY a HAVING COUNT(*) > 1\", null);").isEmpty(), null);
+    }
+
+    static List<String> oldSqlProblems(String name, String src) {
+        String[] newer = {"DO UPDATE", "DO NOTHING", " OVER (", " OVER(", "RENAME COLUMN", "NULLS FIRST", "NULLS LAST", "GENERATED ALWAYS",
+            "IIF(", "RETURNING", "DROP COLUMN", ") STRICT", "->>", "UNIXEPOCH("};
+        List<String> found = new ArrayList<String>();
+        // each Java statement on its own, so SQL split over concatenated lines is read as one
+        for (String st : src.split(";")) {
+            if (!st.contains("\"")) continue;
+            String u = st.toUpperCase(java.util.Locale.ROOT);
+            if (!u.contains("EXECSQL") && !u.contains("RAWQUERY") && !u.contains("SELECT ") && !u.contains("INSERT ")) continue;
+            if (u.contains("HAVING ") && !u.contains("GROUP BY")) found.add(name + ": HAVING without GROUP BY");
+            for (String n : newer) if (u.contains(n)) found.add(name + ": " + n.trim());
+        }
+        return found;
+    }
+
+    /**
+     * Issue #131: days the phone's usage log was not read for (the app not opened for longer than Android
+     * keeps it) are unknown, not 0, with no score; a database from before the change keeps its days.
+     */
+    static void screenGaps(byte[] full) throws Exception {
+        ZoneId z = ZONE;
+        LocalDate d1 = LocalDate.of(2026, 9, 1);
+        Db db = Db.get(freshDb("openring-screen-gaps"));
+        // 20 minutes at 12:00 on days 1 to 3 and 10 to 12
+        List<double[]> s = new ArrayList<double[]>();
+        for (int k : new int[] {1, 2, 3, 10, 11, 12}) {
+            double noon = d1.plusDays(k - 1).atStartOfDay(z).toEpochSecond() + 12 * 3600;
+            s.add(new double[] {noon, noon + 1200});
+        }
+        db.putScreen(s);
+        double day1 = d1.atStartOfDay(z).toEpochSecond();
+        // read from day 1 08:00 to day 4 10:00, then not before day 9 23:00 (Android no longer had the days between)
+        db.putScreenRead(day1 + 8 * 3600, day1 + 3 * 86400 + 10 * 3600);
+        db.putScreenRead(day1 + 8 * 86400 + 23 * 3600, day1 + 10 * 86400);
+        db.putScreenRead(day1 + 10 * 86400, day1 + 11 * 86400 + 20 * 3600); // touches the read before: one range
+        check("reads that touch are one range", db.screenReads().size() == 2, db.screenReads().size());
+        // looked at on the evening of day 12, so day 12 is today and counts up to the last read
+        double eve = day1 + 11 * 86400 + 21 * 3600;
+        double[] w = app.openring.data.ScreenDays.lastDays(db, d1.plusDays(11), 12, z, eve);
+        boolean gap = true, known = true;
+        for (int i = 3; i <= 8; i++) gap &= Double.isNaN(w[i]);
+        for (int i : new int[] {0, 1, 2, 9, 10, 11}) known &= Math.abs(w[i] - 20) < 0.01;
+        check("days 4 to 9, not read, are unknown, not 0", gap, Arrays.toString(w));
+        check("days 1 to 3 and 10 to 12 keep their minutes (first and last day up to the reads)", known, Arrays.toString(w));
+        check("a day in the gap has no screen day", app.openring.data.ScreenDays.day(db, d1.plusDays(5), z, eve) == null
+                && app.openring.data.ScreenDays.day(db, d1.plusDays(1), z, eve) != null, null);
+        app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(db, d1.plusDays(5), z, 180, new java.util.HashSet<String>(), 0, eve);
+        check("a gap day has no score and says why", in.day == null && in.score == null && in.coverage == ScreenTime.READ_GAP, in.coverage);
+        int nanRows = 0;
+        for (app.openring.data.ScreenDays.Row r : in.rows) if (Double.isNaN(r.totalMin)) nanRows++;
+        // rows: 14 days ending on day 6, so 8 days before day 1 and days 4 to 6
+        check("the day rows show the gap as unknown", nanRows == 8 + 3 && Math.abs(in.rows[13 - 4].totalMin - 20) < 0.01, nanRows);
+        app.openring.data.ScreenDays.Info later = app.openring.data.ScreenDays.info(db, d1.plusDays(13), z, 180, new java.util.HashSet<String>(), 0, eve);
+        check("a day after the last read is not read yet", later.day == null && later.score == null && later.coverage == ScreenTime.AFTER_READS, later.coverage);
+        app.openring.data.ScreenDays.Info ok = app.openring.data.ScreenDays.info(db, d1.plusDays(10), z, 180, new java.util.HashSet<String>(), 0, eve);
+        check("a read day still has its score", ok.day != null && ok.score != null && ok.coverage == ScreenTime.COVERED, ok.coverage);
+        // a day later, with usage access switched off since: day 12, read only until 20:00, gets no number or score
+        app.openring.data.ScreenDays.Info part = app.openring.data.ScreenDays.info(db, d1.plusDays(11), z, 180, new java.util.HashSet<String>(), 0, eve + 86400);
+        check("a past day read only part way is not known", part.day == null && part.score == null && part.coverage == ScreenTime.AFTER_READS
+                && Double.isNaN(app.openring.data.ScreenDays.lastDays(db, d1.plusDays(11), 1, z, eve + 86400)[0]), part.coverage);
+        check("the same day while it is today counts up to the last read",
+                Math.abs(app.openring.data.ScreenDays.info(db, d1.plusDays(11), z, 180, new java.util.HashSet<String>(), 0, eve).day.totalMin - 20) < 0.01, null);
+        db.resetAll();
+        check("delete all local data deletes the reads", db.screenReads().isEmpty(), db.screenReads().size());
+
+        // a database from before the change (schema 5): its stored days stay known
+        byte[] cur = zipEntry(full, "openring.db");
+        java.io.File f = Files.createTempFile("v5", ".db").toFile();
+        Files.write(f.toPath(), cur);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("DROP TABLE IF EXISTS screen_reads");
+            st.execute("DELETE FROM screen");
+            for (double[] x : s) st.execute("INSERT INTO screen(start, stop) VALUES (" + x[0] + ", " + x[1] + ")");
+            st.execute("PRAGMA user_version = 5");
+        }
+        Context c = freshDb("openring-v5");
+        Files.write(c.getDatabasePath(Db.REAL).toPath(), Files.readAllBytes(f.toPath()));
+        Db old = Db.get(c);
+        List<double[]> seeded = old.screenReads();
+        check("a schema 5 database gets one read from its oldest to its newest session", old.getReadableDatabase().getVersion() == 6
+                && seeded.size() == 1 && seeded.get(0)[0] == s.get(0)[0] && seeded.get(0)[1] == s.get(s.size() - 1)[1], seeded.size());
+        double[] ow = app.openring.data.ScreenDays.lastDays(old, d1.plusDays(11), 12, z, eve);
+        boolean oldKnown = !Double.isNaN(ow[0]) && Math.abs(ow[5]) < 0.01 && Math.abs(ow[11] - 20) < 0.01;
+        check("its days are shown as before (old gaps cannot be found any more)", oldKnown, Arrays.toString(ow));
+        // the first read after the update, two weeks later: Android has only the last 9 days
+        double now = d1.plusDays(25).atStartOfDay(z).toEpochSecond() + 10 * 3600;
+        double start = ScreenTime.readStart(s.get(s.size() - 1)[0], now - 9 * 86400, now);
+        old.putScreenRead(start, now);
+        double[] nw = app.openring.data.ScreenDays.lastDays(old, d1.plusDays(25), 26, z, now);
+        boolean between = true;
+        for (int i = 11; i <= 16; i++) between &= Double.isNaN(nw[i]);
+        check("time between the old data and what Android still had is unknown", between && Math.abs(nw[10] - 20) < 0.01
+                && Math.abs(nw[17]) < 0.01 && Math.abs(nw[25]) < 0.01, Arrays.toString(nw));
+    }
+
     /** Schema 4 to 5 (#22): an old database and an old full backup still open, with all rows and an empty zone table. */
     static void zoneStorage(byte[] full) throws Exception {
         byte[] v5 = zipEntry(full, "openring.db");
@@ -1321,6 +1446,7 @@ public class PipelineTest {
         try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
              java.sql.Statement st = cn.createStatement()) {
             st.execute("DROP TABLE zones");
+            st.execute("DROP TABLE IF EXISTS screen_reads");
             st.execute("PRAGMA user_version = 4");
         }
         byte[] v4 = Files.readAllBytes(f.toPath());
@@ -1333,7 +1459,7 @@ public class PipelineTest {
             db.count("SELECT COUNT(*) FROM screen"), db.count("SELECT COUNT(*) FROM kv")};
         check("a schema 4 database opens with all its rows", Arrays.equals(before, after) && before[0] > 0 && before[1] > 0,
                 Arrays.toString(before) + " -> " + Arrays.toString(after));
-        check("it becomes schema 5 with an empty zone table", db.getReadableDatabase().getVersion() == 5 && db.zones().isEmpty()
+        check("it becomes the current schema with an empty zone table", db.getReadableDatabase().getVersion() == 6 && db.zones().isEmpty()
                 && db.count("SELECT COUNT(*) FROM sqlite_master WHERE name = 'zones'") == 1, db.getReadableDatabase().getVersion());
         Analyzer.run(c, null);
         check("the first run after the update notes the zone from 0", db.zones().size() == 1 && (Double) db.zones().get(0)[0] == 0
@@ -1345,7 +1471,7 @@ public class PipelineTest {
         check("a schema 4 backup still restores", r.ok && r.history && rd.count("SELECT COUNT(*) FROM events") == before[0]
                 && rd.count("SELECT COUNT(*) FROM nights") == before[1] && rd.zones().isEmpty(), r.message);
         // and a backup from a newer schema is refused whole, as before
-        app.openring.data.Backup.Result rn = app.openring.data.Backup.read(freshDb("openring-v6"), new java.io.ByteArrayInputStream(withDb(full, withVersion(v5, 6))));
+        app.openring.data.Backup.Result rn = app.openring.data.Backup.read(freshDb("openring-v6"), new java.io.ByteArrayInputStream(withDb(full, withVersion(v5, 7))));
         check("a backup from a newer schema is refused", !rn.ok, rn.message);
     }
 
