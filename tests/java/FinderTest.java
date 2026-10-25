@@ -898,6 +898,7 @@ public class FinderTest {
 
         lastWornEvents();
         lastWornBoundaries();
+        lastWornSparse();
         lastWornText();
     }
 
@@ -999,6 +1000,159 @@ public class FinderTest {
         check("daytime heart rate that stopped 3 days ago: temperature decides", rl.state == LastWorn.WORN && !rl.hrRule, rl.state);
         LastWorn.Result rl2 = LastWorn.find(longer[0], longer[1], new double[0], beats(new double[] {0, 60}));
         check("daytime heart rate within the last 48 hours: the rule applies", rl2.hrRule && rl2.state == LastWorn.UNSURE, rl2.state);
+    }
+
+    /** Single value daytime heart rates every {@code minutes} from {@code fromH} to {@code toH}, each its own event. */
+    static double[] every(double fromH, double toH, double minutes) {
+        List<Double> l = new ArrayList<Double>();
+        for (double x = BASE + fromH * H + 60; x < BASE + toH * H; x += minutes * 60) l.add(x);
+        double[] out = new double[l.size()];
+        for (int i = 0; i < out.length; i++) out[i] = l.get(i);
+        return out;
+    }
+
+    /**
+     * Issue #124: the heart rate rule only counts paired daytime heart rates (one with a heart rate of
+     * another event within 30 minutes), the same evidence a warm stretch needs. Sparse daytime heart rate
+     * switches it off, so temperature decides.
+     */
+    static void lastWornSparse() {
+        // the issue's case: 1 h at 24 C, then 11 h at 33 C, one daytime value every 35, 45 or 25 minutes
+        double[][] d = tempsC(12, new double[] {0, 1, 24}, new double[] {1, 12, 33});
+        for (double every : new double[] {35, 45}) {
+            double[] hr = every(1, 12, every);
+            LastWorn.Result r = LastWorn.find(d[0], d[1], hr);
+            check("worn with daytime heart rate every " + (int) every + " min: worn, temperature decides", r.state == LastWorn.WORN
+                    && !r.hrRule && r.skinC == 33 && r.lastHr == hr[hr.length - 1], r.state + " rule " + r.hrRule);
+            check("every " + (int) every + " min: the last heart rate under an hour old confirms it", r.confirmed && !r.justOn, r.confirmed);
+        }
+        double[] hr25 = every(1, 12, 25);
+        LastWorn.Result r25 = LastWorn.find(d[0], d[1], hr25);
+        check("worn with daytime heart rate every 25 min: worn, the rule applies", r25.state == LastWorn.WORN && r25.hrRule && r25.confirmed, r25.state + " rule " + r25.hrRule);
+        Locale before = Locale.getDefault();
+        Locale.setDefault(Locale.US);
+        try {
+            LastWorn.Result r35 = LastWorn.find(d[0], d[1], every(1, 12, 35));
+            String t35 = LastWorn.text(r35, d[0][d[0].length - 1], new LastWorn.Clock() {
+                @Override
+                public String when(double unix) {
+                    return "T" + Math.round((unix - BASE) / 60);
+                }
+            });
+            check("card text every 35 min: from a finger, with heart rate", t35.equals("The newest reading (T715) was from a finger (skin 33.0 °C, heart rate until T691)."), t35);
+        } finally {
+            Locale.setDefault(before);
+        }
+        // the honest limit: with sparse daytime heart rate a warm charger cannot be told from a finger (as before #94)
+        double[][] ch = tempsC(18, new double[] {0, 1, 24}, new double[] {1, 12, 33}, new double[] {12, 18, 30});
+        LastWorn.Result rch = LastWorn.find(ch[0], ch[1], every(1, 12, 40));
+        check("sparse daytime heart rate, then 6 h on a warm charger: reads worn, not confirmed", rch.state == LastWorn.WORN && !rch.hrRule
+                && !rch.confirmed && rch.skinC == 30, rch.state + " rule " + rch.hrRule);
+        // dense daytime heart rate, then the charger: unchanged (issue #94)
+        LastWorn.Result rdc = LastWorn.find(ch[0], ch[1], every(1, 12, 10));
+        check("dense daytime heart rate, then the charger: not sure", rdc.state == LastWorn.UNSURE && rdc.hrRule, rdc.state);
+
+        // review of PR #141: a dense day, then a day with one value every 40 minutes. The rule must look at
+        // today's sparse readings too, and lone values of different events vouch for a warm stretch.
+        double[][] twoDays = tempsC(36, new double[] {0, 1, 21}, new double[] {1, 12, 33}, new double[] {12, 24, 21}, new double[] {24, 36, 33});
+        double[] dense = every(1, 12, 10), sparse = every(24, 36, 40);
+        double[] both = Arrays.copyOf(dense, dense.length + sparse.length);
+        System.arraycopy(sparse, 0, both, dense.length, sparse.length);
+        LastWorn.Result r2d = LastWorn.find(twoDays[0], twoDays[1], both);
+        check("dense day, then a sparse day worn: worn, the rule judged on both days", r2d.state == LastWorn.WORN && !r2d.hrRule
+                && r2d.confirmed && r2d.lastHr == sparse[sparse.length - 1], r2d.state + " rule " + r2d.hrRule);
+        // a short sparse stretch after a long dense day: the rule stays on, the lone values of different events count
+        double[][] shortS = tempsC(27, new double[] {0, 1, 21}, new double[] {1, 12, 33}, new double[] {12, 24, 21}, new double[] {24, 27, 33});
+        double[] sparse3 = every(24, 27, 40);
+        double[] both3 = Arrays.copyOf(dense, dense.length + sparse3.length);
+        System.arraycopy(sparse3, 0, both3, dense.length, sparse3.length);
+        LastWorn.Result r3 = LastWorn.find(shortS[0], shortS[1], both3);
+        check("dense day, then 3 h worn with a value every 40 min: worn and confirmed", r3.state == LastWorn.WORN && r3.hrRule && r3.confirmed, r3.state + " rule " + r3.hrRule);
+        // the charger after a dense day (cool between) with two stray values 2 hours apart: still not a finger
+        double[][] chg = tempsC(30, new double[] {0, 1, 21}, new double[] {1, 12, 33}, new double[] {12, 24, 21}, new double[] {24, 30, 30});
+        double[] strays = Arrays.copyOf(dense, dense.length + 2);
+        strays[dense.length] = BASE + 25 * H;
+        strays[dense.length + 1] = BASE + 27 * H;
+        LastWorn.Result rcs = LastWorn.find(chg[0], chg[1], strays);
+        check("charger with two stray values 2 h apart: off at 12 h, both named", rcs.state == LastWorn.OFF && rcs.hrRule && rcs.warmNoHrNow
+                && rcs.warmLoneHr == 2 && Math.abs(rcs.at - (BASE + 12 * H)) <= 300, rcs.state + " " + (rcs.at - BASE) / H);
+        // the honest limit: two separate values within an hour of each other on the charger read as a finger
+        strays[dense.length + 1] = BASE + 25 * H + 40 * 60;
+        LastWorn.Result rcl = LastWorn.find(chg[0], chg[1], strays);
+        check("charger with two stray values 40 min apart: reads as a finger (the limit)", rcl.state != LastWorn.OFF, rcl.state);
+        // the border of loneEvents: two values 60 minutes apart count, 61 minutes apart do not
+        strays[dense.length] = BASE + 25 * H;
+        strays[dense.length + 1] = BASE + 26 * H;
+        LastWorn.Result r60 = LastWorn.find(chg[0], chg[1], strays);
+        strays[dense.length + 1] = BASE + 26 * H + 60;
+        LastWorn.Result r61 = LastWorn.find(chg[0], chg[1], strays);
+        check("lone values of two events 60 min apart count, 61 min apart do not", r60.state != LastWorn.OFF && r61.state == LastWorn.OFF, r60.state + " " + r61.state);
+        // review of afd266a: a lone finger value before the ring went cool and one phantom value on the charger
+        // after it do not vouch for the charger together (the window stops at the cool readings); the phantom
+        // stays a stray, and the newest heart rate that counts is the finger value (as on main)
+        double[][] cb = tempsC(13, new double[] {0, 12, 33}, new double[] {12, 12 + 20 / 60.0, 21}, new double[] {12 + 20 / 60.0, 13, 30});
+        double[] cbHr = every(0, 11, 10);
+        cbHr = Arrays.copyOf(cbHr, cbHr.length + 2);
+        cbHr[cbHr.length - 2] = BASE + 11 * H + 55 * 60;
+        cbHr[cbHr.length - 1] = BASE + 12 * H + 50 * 60;
+        LastWorn.Result rcb = LastWorn.find(cb[0], cb[1], cbHr);
+        check("a finger value before a cool gap and a phantom on the charger: not confirmed by the phantom", rcb.hrRule
+                && rcb.lastHr == cbHr[cbHr.length - 2] && rcb.at != cbHr[cbHr.length - 1], rcb.state + " at " + (rcb.at - BASE) / 60 + " last " + (rcb.lastHr - BASE) / 60);
+        // one event (an AOHR burst) on the charger still does not vouch for itself
+        double[] burstOn = Arrays.copyOf(dense, dense.length + 20);
+        int[] burstId = Arrays.copyOf(ids(dense.length, 0), burstOn.length);
+        for (int k = 0; k < 20; k++) {
+            burstOn[dense.length + k] = BASE + 25 * H + k * 1.92;
+            burstId[dense.length + k] = 5000;
+        }
+        LastWorn.Result rb = LastWorn.find(chg[0], chg[1], new double[0], null, burstOn, burstId);
+        check("charger with one AOHR burst: off at 12 h", rb.state == LastWorn.OFF && Math.abs(rb.at - (BASE + 12 * H)) <= 300, rb.state);
+
+        // MIN_DAY_READINGS: 12 warm readings up to the newest daytime heart rate switch the rule on, 11 do not
+        double[][] w = tempsC(2, new double[] {0, 2, 33});
+        LastWorn.Result r12 = LastWorn.find(w[0], w[1], new double[] {BASE + 10, BASE + 70, BASE + 11 * 300 - 50, BASE + 11 * 300 + 10});
+        LastWorn.Result r11 = LastWorn.find(w[0], w[1], new double[] {BASE + 10, BASE + 70, BASE + 10 * 300 - 50, BASE + 10 * 300 + 10});
+        check("12 daytime readings with paired heart rate: the rule applies, 11: it does not", r12.hrRule && !r11.hrRule, r12.hrRule + " " + r11.hrRule);
+        check("MIN_DAY_READINGS is 12", LastWorn.MIN_DAY_READINGS == 12);
+        // DAY_COVER: 100 warm readings, 70 of them within 30 minutes of a paired daytime heart rate, then 69
+        double[][] hundred = tempsC(100 / 12.0, new double[] {0, 9, 33});
+        check("100 readings", hundred[0].length == 100, hundred[0].length);
+        for (int m : new int[] {56, 55}) {
+            // heart rates at readings 0 to m cover readings 0 to m + 6, the pair at reading 99 covers 93 to 99
+            double[] hr = new double[m + 3];
+            for (int i = 0; i <= m; i++) hr[i] = BASE + i * 300 + 10;
+            hr[m + 1] = BASE + 99 * 300 - 50;
+            hr[m + 2] = BASE + 99 * 300 + 10;
+            LastWorn.Result rc = LastWorn.find(hundred[0], hundred[1], hr);
+            boolean want = m == 56;
+            check((m + 14) + " % covered: the rule " + (want ? "applies" : "does not apply"), rc.hrRule == want, rc.hrRule);
+        }
+
+        // one HRV event reaching past uncounted warm readings is named once in the card, by event (not by time)
+        double[] day = beats(new double[] {0, 10});
+        int[] dayId = ids(day.length, 0);
+        double[][] cc = tempsC(20, new double[] {0, 10, 34}, new double[] {14, 14.5, 30});
+        double[] hrv = burst(BASE + 14 * H + 40 * 60, 6, 300); // 14:40 to 15:05, the warm readings end at 14:25
+        LastWorn.Result ro = LastWorn.find(cc[0], cc[1], hrv, same(6, 1000), day, dayId);
+        check("an HRV event past the warm readings: one lone heart rate, the stray is the same event", ro.state == LastWorn.OFF && ro.hrRule
+                && ro.warmLoneHr == 1 && ro.strayHrAt == hrv[5] && ro.warmLoneHrAt == hrv[3] && ro.strayInWarm, ro.warmLoneHr + " " + ro.strayInWarm);
+        LastWorn.Clock clock = new LastWorn.Clock() {
+            @Override
+            public String when(double unix) {
+                return "T" + Math.round((unix - BASE) / 60);
+            }
+        };
+        String to = LastWorn.text(ro, cc[0][cc[0].length - 1], clock);
+        check("card text: the HRV event is named once", to.contains("had only a single heart rate (T895)") && !to.contains("A lone heart rate"), to);
+        // a different event later is still a stray of its own
+        double[] two = Arrays.copyOf(hrv, 7);
+        two[6] = BASE + 17 * H;
+        int[] twoId = same(7, 1000);
+        twoId[6] = 1001;
+        LastWorn.Result rt = LastWorn.find(cc[0], cc[1], two, twoId, day, dayId);
+        String tt = LastWorn.text(rt, cc[0][cc[0].length - 1], clock);
+        check("card text: a later stray event is named", !rt.strayInWarm && rt.strayHrAt == BASE + 17 * H
+                && tt.endsWith(" A lone heart rate T1020 with no warm reading near it does not count."), tt);
     }
 
     /** Each sentence of the card (issues #74, #94), with a fixed time format: minutes after BASE. */
@@ -1129,10 +1283,12 @@ public class FinderTest {
             o2.warmNoHrCount = 1;
             o2.warmLoneHr = 1;
             o2.warmLoneHrAt = o2.strayHrAt = BASE + 1860;
+            o2.strayInWarm = true;
             text("one warm reading with a single heart rate", o2, BASE + 3000, clock, "Taken off T10. A warm reading T30 (29.0 °C) had only a single heart rate (T31), which is not enough to count it.");
             o2.warmNoHrCount = 30;
             o2.warmLoneHr = 2;
             o2.strayHrAt = BASE + 2.5 * H;
+            o2.strayInWarm = false;
             text("warm readings with two lone heart rates, and a stray after them", o2, BASE + 3 * H, clock, "Taken off T10. Warm readings from T30 (up to 29.0 °C) had only 2 lone heart rates, "
                     + "which is not enough to count them. A lone heart rate T150 with no warm reading near it does not count.");
         } finally {
@@ -1177,6 +1333,11 @@ public class FinderTest {
         for (long u = 200; u <= 10000; u += 200) late.add(u, 127);
         late.tick(10000);
         check("only 127 after a real reading: not heard after 10 s", late.band() == Proximity.NOT_HEARD, late.value());
+        // issue #125: when the phone receives the ring but only impossible values, the label says so
+        check("label: no usable signal", Proximity.label(Proximity.NOT_HEARD, true).equals("No usable signal")
+                && Proximity.label(Proximity.NOT_HEARD, false).equals("Not heard for 10 seconds"));
+        check("label: a heard band is not changed by the flag", Proximity.label(Proximity.ROOM, true).equals("In this room")
+                && Proximity.label(Proximity.FAR, true).equals(Proximity.label(Proximity.FAR)));
 
         // a walk with a clear circle keeps it when one 127 arrives (before the fix: no circle, +22 dBm)
         Random r = new Random(95);

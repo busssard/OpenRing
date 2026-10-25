@@ -156,6 +156,15 @@ public final class Proximity {
         return rest == 0 ? m + " min ago" : m + " min " + rest + " s ago";
     }
 
+    /**
+     * The label under the meter. {@code unusable}: the phone receives the ring but gives no usable signal
+     * strength (only impossible values in the last {@link #LOST_MS}); then "not heard" would contradict the
+     * line under it (issue #125).
+     */
+    public static String label(int band, boolean unusable) {
+        return band == NOT_HEARD && unusable ? "No usable signal" : label(band);
+    }
+
     /** The label of a band, as shown under the meter. */
     public static String label(int band) {
         switch (band) {

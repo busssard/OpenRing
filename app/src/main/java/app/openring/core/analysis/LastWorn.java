@@ -30,9 +30,10 @@ public final class LastWorn {
     public static final double NO_HR_S = 3600;
     /**
      * The heart rate rule needs proof that the ring stores daytime heart rate: at least this many warm
-     * readings outside sleep (up to the newest daytime heart rate), of which {@link #DAY_COVER} have one
-     * within {@link #NEAR_S}. A ring with only night heart rate (or sparse daytime heart rate) is judged
-     * by temperature, as before issue #94.
+     * readings outside sleep (up to the newest daytime heart rate), of which {@link #DAY_COVER} have
+     * a paired daytime heart rate (one with a heart rate of another event within {@link #NEAR_S}) within
+     * {@link #NEAR_S}. A ring with only night heart rate, or sparse daytime heart rate (one value every 35
+     * minutes pairs with nothing, issue #124), is judged by temperature, as before issue #94.
      */
     public static final int MIN_DAY_READINGS = 12;
     public static final double DAY_COVER = 0.7;
@@ -85,6 +86,11 @@ public final class LastWorn {
         public double warmLoneHrAt = Double.NaN;
         /** OFF: the newest heart rate after the time it came off that did not count (a stray), NaN when none. */
         public double strayHrAt = Double.NaN;
+        /**
+         * OFF: the stray heart rate comes from one of the events counted in {@link #warmLoneHr} (an HRV event
+         * reaching past the warm readings), so the card names it there and not again (issue #124).
+         */
+        public boolean strayInWarm;
     }
 
     /** All heart rates count as daytime ones, each from an event of its own. */
@@ -127,9 +133,8 @@ public final class LastWorn {
             warm[i] = c[i] >= WORN_MIN_C;
         }
         r.newest = t[n - 1];
-        double[] night = nightT.clone(), day = dayT.clone();
+        double[] night = nightT.clone();
         Arrays.sort(night);
-        Arrays.sort(day);
         // all heart rates in time order, each with the number of its event (an HRV event holds six values
         // 5 minutes apart, an AOHR event a burst seconds apart: they are one measurement, not several)
         final double[] allT = new double[nightT.length + dayT.length];
@@ -158,28 +163,41 @@ public final class LastWorn {
         }
         r.hasHr = hr.length > 0;
 
-        // 1. does this ring store daytime heart rate now? Only then is warmth without one suspicious.
+        // 1. heart rates with a heart rate of another event near (a lone one is judged in step 4)
+        boolean[] paired = new boolean[hr.length];
+        int pairs = 0, dayPairs = 0;
+        for (int j = 0; j < hr.length; j++) {
+            paired[j] = otherEventNear(hr, hrId, j, NEAR_S);
+            if (!paired[j]) continue;
+            pairs++;
+            if (hOrder[j] >= nightT.length) dayPairs++;
+        }
+        double[] pairedT = new double[pairs], pairedDay = new double[dayPairs];
+        for (int j = 0, g = 0, d = 0; j < hr.length; j++) {
+            if (!paired[j]) continue;
+            pairedT[g++] = hr[j];
+            if (hOrder[j] >= nightT.length) pairedDay[d++] = hr[j];
+        }
+
+        // 2. does this ring store daytime heart rate now? Only then is warmth without one suspicious. Only
+        // paired daytime heart rates count, the same evidence step 3 asks for (step 3 also takes lone values of
+        // two events, see loneEvents): a single value every 35 to 45 minutes pairs with nothing, so it would
+        // switch the rule on and then never vouch for a finger (issue #124)
         int eligible = 0, covered = 0;
-        double lastDay = day.length > 0 ? day[day.length - 1] : Double.NEGATIVE_INFINITY;
+        // the window ends at the newest daytime heart rate of any kind: sparse values today must count as
+        // readings without a paired one, or yesterday's dense data alone would decide (review of PR #141)
+        double lastDay = Double.NEGATIVE_INFINITY;
+        for (double x : dayT) lastDay = Math.max(lastDay, x);
         for (int i = 0; i < n && t[i] <= lastDay; i++) {
             if (!warm[i] || t[i] < r.newest - DAY_RULE_S || hasNear(night, t[i], NEAR_S)) continue;
             eligible++;
-            if (hasNear(day, t[i], NEAR_S)) covered++;
+            if (hasNear(pairedDay, t[i], NEAR_S)) covered++;
         }
         r.hrRule = eligible >= MIN_DAY_READINGS && covered >= DAY_COVER * eligible;
 
-        // 2. heart rates with a heart rate of another event near (a lone one is judged in step 4)
-        boolean[] paired = new boolean[hr.length];
-        int pairs = 0;
-        for (int j = 0; j < hr.length; j++) {
-            paired[j] = otherEventNear(hr, hrId, j, NEAR_S);
-            if (paired[j]) pairs++;
-        }
-        double[] pairedT = new double[pairs];
-        for (int j = 0, g = 0; j < hr.length; j++) if (paired[j]) pairedT[g++] = hr[j];
-
-        // 3. warm stretches: one with a heart rate near any of its readings is a finger as a whole (the
-        // heart rate may stop while the hand moves); one without counts only when the ring stores too
+        // 3. warm stretches: one with a paired heart rate near any of its readings, or lone heart rates of two
+        // events at most an hour apart near it, is a finger as a whole (the heart rate may stop while the
+        // hand moves); one without counts only when the ring stores too
         // little daytime heart rate to check it (then temperature decides, as before issue #94)
         boolean[] finger = new boolean[n];
         boolean[] stretchHr = new boolean[n];
@@ -192,6 +210,13 @@ public final class LastWorn {
             while (e + 1 < n && warm[e + 1]) e++;
             boolean near = false;
             for (int i = s; i <= e && !near; i++) near = hasNear(pairedT, t[i], NEAR_S);
+            if (!near) {
+                // only up to the neighbouring cool readings: a value from before the ring went cool must not
+                // vouch for a charger after it (review of afd266a)
+                double from = s > 0 ? Math.max(t[s] - NEAR_S, t[s - 1]) : t[s] - NEAR_S;
+                double to = e + 1 < n ? Math.min(t[e] + NEAR_S, t[e + 1]) : t[e] + NEAR_S;
+                near = loneEvents(hr, hrId, from, to);
+            }
             for (int i = s; i <= e; i++) {
                 finger[i] = near || !r.hrRule;
                 stretchHr[i] = near;
@@ -276,19 +301,20 @@ public final class LastWorn {
             }
         }
         r.warmNoHrNow = runEnd == n - 1;
+        java.util.Set<Integer> warmEvents = new java.util.HashSet<Integer>();
         if (runEnd >= 0) {
             // heart rates that did not count during those warm readings: the card must not say they had none
-            java.util.Set<Integer> events = new java.util.HashSet<Integer>();
             for (int j = 0; j < hr.length; j++) {
                 if (hrOk[j] || hr[j] < t[runStart] - NEAR_S || hr[j] > t[runEnd] + NEAR_S) continue;
-                events.add(hrId[j]);
+                warmEvents.add(hrId[j]);
                 r.warmLoneHrAt = hr[j];
             }
-            r.warmLoneHr = events.size();
+            r.warmLoneHr = warmEvents.size();
         }
         for (int j = hr.length - 1; j >= 0 && hr[j] > from; j--) {
             if (!hrOk[j]) {
                 r.strayHrAt = hr[j];
+                r.strayInWarm = warmEvents.contains(hrId[j]);
                 break;
             }
         }
@@ -358,7 +384,7 @@ public final class LastWorn {
                 s += " Warm readings from " + clock.when(r.warmNoHrAt) + " (up to " + one(r.warmNoHrC) + " °C) "
                         + (hrs == null ? "had no heart rate, so they do not count." : "had " + hrs + ", which is not enough to count them.");
             }
-            if (!Double.isNaN(r.strayHrAt) && r.strayHrAt != r.warmLoneHrAt) {
+            if (!Double.isNaN(r.strayHrAt) && !r.strayInWarm) {
                 s += " A lone heart rate " + clock.when(r.strayHrAt) + " with no warm reading near it does not count.";
             }
         } else {
@@ -376,6 +402,22 @@ public final class LastWorn {
     static boolean otherEventNear(double[] t, int[] id, int j, double w) {
         for (int q = j - 1; q >= 0 && t[j] - t[q] <= w; q--) if (id[q] != id[j]) return true;
         for (int q = j + 1; q < t.length && t[q] - t[j] <= w; q++) if (id[q] != id[j]) return true;
+        return false;
+    }
+
+    /**
+     * Whether heart rates between {@code from} and {@code to} (times sorted) come from two different events
+     * at most {@link #NO_HR_S} apart: sparse daytime heart rate (one value every 35 to 60 minutes) on a warm
+     * finger, which a charger, duvet or sunny window does not store (review of PR #141). One event never
+     * vouches for itself (review of PR #103).
+     */
+    static boolean loneEvents(double[] t, int[] id, double from, double to) {
+        int j = Arrays.binarySearch(t, from);
+        if (j < 0) j = -j - 1;
+        while (j > 0 && t[j - 1] >= from) j--;
+        for (; j < t.length && t[j] <= to; j++) {
+            for (int q = j + 1; q < t.length && t[q] <= to && t[q] - t[j] <= NO_HR_S; q++) if (id[q] != id[j]) return true;
+        }
         return false;
     }
 
