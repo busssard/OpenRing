@@ -266,6 +266,15 @@ public class CoreTest {
         eq("Balanced adds nothing", WakeUps.levelNote(B), null);
         eq("Calm names its rule", WakeUps.levelNote(C), "Calm stage detail folds being awake under 2 minutes into sleep.");
         eq("shortest kept: Balanced 1 min, Calm 2 min", WakeUps.shortestKeptMin(B) * 10 + WakeUps.shortestKeptMin(C), 12);
+        // issue #128: the line under a wake up count names the level's rule
+        eq("rule: Detailed", WakeUps.rule(StageFilter.DETAILED), "a minute or more");
+        eq("rule: Balanced", WakeUps.rule(B), "a minute or more");
+        eq("rule: Calm", WakeUps.rule(C), "2 min or more with Calm");
+        eq("average line: Calm", WakeUps.averageLine(C), "Wake ups of 2 min or more with Calm");
+        eq("average line: Balanced", WakeUps.averageLine(B), "Wake ups of a minute or more");
+        eq("average line: mixed levels still name the rule", WakeUps.averageLine(-1),
+                "Wake ups of a minute or more (2 min with Calm), each night at its own detail level");
+        eq("rule: out of range levels are clamped", WakeUps.rule(-3) + " / " + WakeUps.rule(9), "a minute or more / 2 min or more with Calm");
 
         // random nights: for every level, preview count = night count = timeline rows, and the old rule agrees
         Random rnd = new Random(70);
@@ -755,13 +764,13 @@ public class CoreTest {
         }
         // the texts the issue lists
         eq("ring error: serial mismatch", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not 3A1B2D", A),
-                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3A1B2D. Check the serial in the reset message and try again.");
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3A1B2D. Start the reset again and type the serial the reset message shows.");
         eq("ring error: serial mismatch, nothing typed", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not ", A),
-                "Nothing was erased: the ring that answered is 3A1B2C, but you typed nothing. Check the serial in the reset message and try again.");
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed nothing. Start the reset again and type the serial the reset message shows.");
         eq("ring error: serial mismatch, typed with spaces", SyncError.plain("Refusing: the ring that answered is 3A1B2C, not  3a1b2d ", A),
-                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3a1b2d. Check the serial in the reset message and try again.");
+                "Nothing was erased: the ring that answered is 3A1B2C, but you typed 3a1b2d. Start the reset again and type the serial the reset message shows.");
         eq("ring error: serial mismatch without a typed part", SyncError.plain("Refusing: the ring that answered is ", A),
-                "Nothing was erased: the ring that answered is another one, but you typed nothing. Check the serial in the reset message and try again.");
+                "Nothing was erased: the ring that answered is another one, but you typed nothing. Start the reset again and type the serial the reset message shows.");
         String reach = "The ring could not be reached. Keep it close to the phone (on its charger is best) and try again.";
         eq("ring error: GATT 133 in Settings", SyncError.plain("connection failed (GATT status 133)", A), reach);
         eq("ring error: not in time in Settings", SyncError.plain("ring did not accept the connection in time", A), reach);
@@ -1837,6 +1846,11 @@ public class CoreTest {
     }
 
     static void activityWeek() {
+        // issue #128: the note above the contributors (ui/Explain has no Android imports, run_tests.sh compiles it)
+        eq("activity note: 1 day", app.openring.ui.Explain.activityDays(1), "Only 1 day with the ring in the last 7 days (a day counts with "
+                + "at least an hour of wear). Daily targets and training count once you have worn the ring on 3 of these 7 days.");
+        eq("activity note: 4 days", app.openring.ui.Explain.activityDays(4), "Based on 4 days with the ring in the last 7 days (a day counts with "
+                + "at least an hour of wear). Daily targets and training are steadier after a full week.");
         // a full week: exactly the numbers and texts from before the change
         Scores.ActivityInput full = activityIn(7, 5, 2, 800);
         eq("activity: default is a full week", new Scores.ActivityInput().days7, 7);
@@ -2139,8 +2153,21 @@ public class CoreTest {
         java.time.ZoneId lh = java.time.ZoneId.of("Australia/Lord_Howe");
         java.time.LocalDate lhd = java.time.LocalDate.parse("2026-04-05");
         ClockChange.Change half = ClockChange.find(lh, lhd.atStartOfDay(lh).toEpochSecond(), lhd.plusDays(1).atStartOfDay(lh).toEpochSecond());
-        check("30 minute change: half an hour arc and text", DialMath.changeArc(half)[1] == 30 / 1440.0
-                && ClockChange.dialText(half).startsWith("The clocks went back 30 minutes on this day"));
+        check("30 minute change: half an hour arc", DialMath.changeArc(half)[1] == 30 / 1440.0);
+        // issue #129: a 30 minute change repeats a half hour, not an hour
+        eq("30 minute change: dial text", ClockChange.dialText(half), "The clocks went back 30 minutes on this day (02:00 became 01:30). "
+                + "The half hour from 01:30 to 02:00 happened twice, phone use in both shows on the same part of the clock, marked in orange.");
+        eq("30 minute change: repeat text", ClockChange.repeatText(half), "The clocks went back 30 minutes on this day (02:00 became 01:30), "
+                + "so 01:30 to 02:00 happened twice. Times in that half hour show (first time) or (second time).");
+        ClockChange.Change lhFwd = ClockChange.find(lh, java.time.LocalDate.parse("2026-10-04").atStartOfDay(lh).toEpochSecond(),
+                java.time.LocalDate.parse("2026-10-05").atStartOfDay(lh).toEpochSecond());
+        eq("30 minute change forward: dial text names no length", ClockChange.dialText(lhFwd), "The clocks went forward 30 minutes on this day "
+                + "(02:00 became 02:30), so the part of the clock from 02:00 to 02:30, marked in orange, stays empty.");
+        java.time.ZoneId troll = java.time.ZoneId.of("Antarctica/Troll");
+        ClockChange.Change twoH = ClockChange.find(troll, java.time.LocalDate.parse("2026-10-25").atStartOfDay(troll).toEpochSecond(),
+                java.time.LocalDate.parse("2026-10-26").atStartOfDay(troll).toEpochSecond());
+        check("2 hour change: a period, not an hour", twoH != null && twoH.minutes == -120 && ClockChange.dialText(twoH).contains(". The period from ")
+                && ClockChange.repeatText(twoH).endsWith("Times in that period show (first time) or (second time)."));
         // a night inside the repeated hour, 02:40 summer time to 02:20 winter time, keeps its 40 minutes
         List<double[]> inside = new ArrayList<double[]>();
         inside.add(new double[] {java.time.Instant.parse("2026-10-25T00:40:00Z").getEpochSecond(), java.time.Instant.parse("2026-10-25T01:20:00Z").getEpochSecond()});

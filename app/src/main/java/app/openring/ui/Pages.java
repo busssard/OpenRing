@@ -276,11 +276,7 @@ public final class Pages {
 
     /** The line under Wake ups; names the level's rule when it folds short wake ups (Calm). */
     static String wakeUpsLine(JSONObject n) {
-        int lv = n.optInt("stage_detail", 0);
-        int min = WakeUps.shortestKeptMin(lv);
-        return min <= 1 ? "Awake a minute or more, each one is in the timeline"
-                : "Awake " + min + " min or more with " + app.openring.core.analysis.StageFilter.NAMES[app.openring.core.analysis.StageFilter.clampLevel(lv)]
-                        + ", each one is in the timeline";
+        return "Awake " + WakeUps.rule(n.optInt("stage_detail", 0)) + ", each one is in the timeline";
     }
 
     /** Clock time rounded to the nearest minute, as every row of the timeline shows it. */
@@ -390,7 +386,7 @@ public final class Pages {
         stats.addView(Ui.statRow(c, Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0, "Breaths per minute while asleep"),
                 Ui.stat(c, "Blood oxygen", Ui.fmt(Json.d(n, "spo2"), 0), "%", 0, "Average while asleep")));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Cycles", String.valueOf(n.optInt("cycles")), "", 0, "Rounds of light, deep and REM, about 90 min each"),
-                Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0, "Average at night, lower than body temperature")));
+                Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0, "Steady level at night, lower than body temperature")));
         root.addView(stats);
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
@@ -655,7 +651,8 @@ public final class Pages {
         out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(h.lightMin), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
                 Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", Ui.STAGE_AWAKE, StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
         out.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(h.efficiency, 0), "%", 0, "Share of time in bed asleep"),
-                Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0, "Wake ups of a minute or more")));
+                Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0,
+                        WakeUps.averageLine(h.stageDetail))));
         out.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(h.lowestHr, 0), "bpm", Ui.HEART, "Average lowest heart rate"),
                 Ui.stat(c, "Average HRV", Ui.fmt(h.hrv, 0), "ms", Ui.READY, "Average while asleep")));
         if (!Double.isNaN(h.bedtimeSdMin)) {
@@ -860,8 +857,8 @@ public final class Pages {
             pc.addView(new Charts.BarChart(c, hourly, labels, Ui.ACTIVE).valueFormat("%.1f").highlight(peak), Ui.sized(c, -1, 120));
             pc.addView(Ui.gap(c, 6));
             // the bands of Wellness.day (issue #47)
-            pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. Under 1.5 counts as inactive, 1.5 to 3 low, 3 to 6 medium, "
-                    + "6 or more high (the bands of Daily movement).", 12, Ui.TEXT_3, Ui.REGULAR));
+            pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. While awake, under 1.5 counts as inactive, 1.5 to 3 low, "
+                    + "3 to 6 medium, 6 or more high (the bands of Daily movement); time asleep counts as rest.", 12, Ui.TEXT_3, Ui.REGULAR));
             root.addView(pc);
         }
 

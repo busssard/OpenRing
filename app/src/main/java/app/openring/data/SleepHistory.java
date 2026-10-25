@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import app.openring.core.analysis.SleepPattern;
+import app.openring.core.analysis.StageFilter;
+import app.openring.core.analysis.WakeUps;
 import app.openring.core.analysis.Stats;
 
 /** Averages over the main nights of a period: the average night pattern plus typical values. */
@@ -23,6 +25,12 @@ public final class SleepHistory {
     public double bedtimeMin = Double.NaN, wakeMin = Double.NaN;
     /** Spread of the sleep start, minutes (a measure of how regular bedtimes are). */
     public double bedtimeSdMin = Double.NaN;
+    /**
+     * Stage detail level all nights were analysed with, so the Wake ups line can say what was counted
+     * (issue #128); nights stored without one count as Detailed (as on the night), -1 when their wake up
+     * rules differ (Calm and another level; Detailed and Balanced count the same wake ups).
+     */
+    public int stageDetail = StageFilter.DETAILED;
 
     /** Main nights whose day lies in [fromDay, toDay] (ISO dates; "0000-01-01" for all time). */
     public static SleepHistory load(Db db, String fromDay, String toDay, ZoneId zone) {
@@ -47,6 +55,10 @@ public final class SleepHistory {
                 wakes = new double[n], bed = new double[n], wake = new double[n];
         for (int i = 0; i < n; i++) {
             JSONObject o = nights.get(i);
+            int lv = StageFilter.clampLevel(o.optInt("stage_detail", StageFilter.DETAILED));
+            // Detailed and Balanced keep the same wake ups (a minute or more): only a different rule is a mix
+            if (i == 0) h.stageDetail = lv;
+            else if (h.stageDetail >= 0 && WakeUps.shortestKeptMin(h.stageDetail) != WakeUps.shortestKeptMin(lv)) h.stageDetail = -1;
             asleep[i] = Json.d(o, "asleep_min");
             inBed[i] = Json.d(o, "in_bed_min");
             deep[i] = Json.d(o, "deep_min");

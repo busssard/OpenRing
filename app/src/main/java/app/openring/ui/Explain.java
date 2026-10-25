@@ -20,9 +20,10 @@ public final class Explain {
     /** The note above the activity contributors while fewer than 7 days of the last week were worn (issue #44). */
     public static String activityDays(int n) {
         String days = n == 1 ? "1 day" : n + " days";
-        String rule = " with the ring in the last 7 (a day counts with at least an hour of wear). ";
+        String rule = " with the ring in the last 7 days (a day counts with at least an hour of wear). ";
         if (n >= app.openring.core.analysis.Scores.MIN_WEEK_DAYS) return "Based on " + days + rule + "Daily targets and training are steadier after a full week.";
-        return "Only " + days + rule + "Daily targets and training join the score from " + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " days.";
+        return "Only " + days + rule + "Daily targets and training count once you have worn the ring on "
+                + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " of these 7 days.";
     }
 
     public static final String SCREEN = "The screen score looks at your phone use: how long the screen was on compared with your "
