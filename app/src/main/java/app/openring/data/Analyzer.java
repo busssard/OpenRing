@@ -460,7 +460,7 @@ public final class Analyzer {
                     int[][] g = EventCodec.greenIbi(r.body);
                     if (g == null) break;
                     for (int i = 0; i < g[0].length; i++) {
-                        if (g[1][i] == 1 && g[0][i] >= 300 && g[0][i] <= 2000) in.beats.add(r.unix, 60000.0 / g[0][i]);
+                        if (g[1][i] == 1 && EventCodec.plausibleIbi(g[0][i])) in.beats.add(r.unix, 60000.0 / g[0][i]);
                     }
                     break;
                 }
@@ -727,7 +727,7 @@ public final class Analyzer {
                 ds - DayHeart.LOOK_BACK_S, de)) {
             if (r.tag == EventCodec.GREEN_IBI_QUALITY) {
                 int[][] g = EventCodec.greenIbi(r.body);
-                if (g != null) for (int i = 0; i < g[0].length; i++) if (g[1][i] == 1 && g[0][i] >= 300 && g[0][i] <= 2000) beats.add(r.unix, 60000.0 / g[0][i]);
+                if (g != null) for (int i = 0; i < g[0].length; i++) if (g[1][i] == 1 && EventCodec.plausibleIbi(g[0][i])) beats.add(r.unix, 60000.0 / g[0][i]);
             } else if (r.tag == EventCodec.AOHR_EVENT) {
                 int[][] a = EventCodec.aohr(r.body);
                 if (a != null) for (int i = 0; i < a[0].length; i++) if (EventCodec.plausibleHr(a[0][i])) beats.add(r.unix + i * EventCodec.AOHR_INTERVAL_S, a[0][i]);

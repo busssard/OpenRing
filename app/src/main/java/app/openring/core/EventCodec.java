@@ -135,16 +135,28 @@ public final class EventCodec {
     public static final double AOHR_INTERVAL_S = 1.92;
 
     /**
-     * The one plausibility range for a heart rate from the ring (HRV, always on HR, sleep period average,
-     * issue #97): 30 to 220 bpm. Nobody's heart beats faster than 220 (the top of the "220 minus age"
-     * rule) or, awake or asleep, slower than 30; values outside are bytes the ring got wrong. The night's
-     * own numbers use a narrower range of their own ({@code NightAnalyzer}).
+     * The one plausibility range for a heart rate from the ring (HRV, always on HR, green IBI beats through
+     * {@link #plausibleIbi}, sleep period average, issues #97 and #148): 30 to 220 bpm. Nobody's heart beats
+     * faster than 220 (the top of the "220 minus age" rule) or, awake or asleep, slower than 30; values outside
+     * are bytes the ring got wrong. The night's own numbers use a narrower range of their own
+     * ({@code NightAnalyzer}).
      */
     public static final int HR_MIN = 30, HR_MAX = 220;
 
     /** True for a heart rate inside {@link #HR_MIN} to {@link #HR_MAX}. */
     public static boolean plausibleHr(double bpm) {
         return bpm >= HR_MIN && bpm <= HR_MAX;
+    }
+
+    /**
+     * The same range for a beat interval (green IBI, live beats; issue #148): 60000 / 220 to 60000 / 30 ms,
+     * about 273 to 2000 ms, so a beat counts exactly when its heart rate would.
+     */
+    public static final double IBI_MIN_MS = 60000.0 / HR_MAX, IBI_MAX_MS = 60000.0 / HR_MIN;
+
+    /** True for a beat interval in ms inside {@link #IBI_MIN_MS} to {@link #IBI_MAX_MS}. */
+    public static boolean plausibleIbi(double ms) {
+        return ms >= IBI_MIN_MS && ms <= IBI_MAX_MS;
     }
 
     /** green_ibi_quality_event: ibi = b0<<3 | b1&7, quality = (b1>>3)&3 (1 = clean beat). */
