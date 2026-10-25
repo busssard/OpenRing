@@ -103,7 +103,10 @@ Check every plan and PR against these before showing it:
     review and leaves one comment starting "Code review of <commit>" with a verdict and findings
     (Must fix, Should fix, Could improve). It never changes code. When you work on a PR, read such a
     comment and fix what it lists under Must fix and Should fix (Should fix unless you explain why not).
-    Every night it also audits merged PRs (each once, marked with an "Audit after merge" comment) for
+    It comments only when there is something new: a PR whose points were all fixed gets no new
+    comment, its earlier review is edited with an "Update" line instead. Its bookkeeping lives in the
+    closed issue #167, never in comments.
+    Every night it also audits merged PRs (each once, listed in #167) for
     feedback nobody acted on, checks whether the problem is still in `main`, and files each real one
     as an issue labelled `review-followup` (without `[EXP]`), which the build run fixes the next night.
 * Never implement an issue whose title starts with `[EXP]`, whichever session you are.
