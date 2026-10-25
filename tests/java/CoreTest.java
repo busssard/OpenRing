@@ -512,6 +512,7 @@ public class CoreTest {
         stageShare();
         syncError();
         texts();
+        keptHeight();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -523,6 +524,28 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Issue #127: the space kept for Further analysis belongs to one screen layout. */
+    static void keptHeight() {
+        String portrait = KeptHeight.layout(411, 1.0f, 420);
+        String landscape = KeptHeight.layout(914, 1.0f, 420);
+        String bigFont = KeptHeight.layout(411, 1.3f, 420);
+        String otherDensity = KeptHeight.layout(411, 1.0f, 480);
+        KeptHeight k = new KeptHeight();
+        eq("kept height: nothing known keeps no space", k.get(portrait), 0);
+        k.remember(portrait, 1800);
+        eq("kept height: same layout", k.get(portrait), 1800);
+        eq("kept height: same values make the same layout", k.get(KeptHeight.layout(411, 1.0f, 420)), 1800);
+        eq("kept height: turned phone keeps no space", k.get(landscape), 0);
+        eq("kept height: larger font keeps no space", k.get(bigFont), 0);
+        eq("kept height: other density keeps no space", k.get(otherDensity), 0);
+        k.remember(landscape, 1100);
+        eq("kept height: landscape has its own", k.get(landscape), 1100);
+        eq("kept height: portrait kept after turning back", k.get(portrait), 1800);
+        k.remember(portrait, 1500);
+        eq("kept height: newer result replaces older", k.get(portrait), 1500);
+        eq("kept height: other layout untouched", k.get(landscape), 1100);
     }
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */

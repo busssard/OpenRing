@@ -1,0 +1,1 @@
+* Further analysis on the Sleep page keeps its place when you step to another day after turning the phone or changing the font size (it can still move once, the first time the app sees that screen layout)
