@@ -512,6 +512,7 @@ public class CoreTest {
         stageShare();
         syncError();
         texts();
+        oneRun();
         keptHeight();
         screenTime();
         screenAwakeGrid();
@@ -524,6 +525,32 @@ public class CoreTest {
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Issue #130: one repair at a time, reported to the screen shown now (a turned phone builds a new one). */
+    static void oneRun() {
+        OneRun<String> r = new OneRun<String>();
+        check("one run: idle at first", !r.running());
+        r.attach("first screen");
+        check("one run: first start", r.start());
+        check("one run: running", r.running());
+        check("one run: second start while running is refused", !r.start());
+        r.attach("turned screen");
+        r.detach("first screen"); // Back from the screen that started it: the one below attaches before this one goes
+        check("one run: still running after turning", r.running() && !r.start());
+        eq("one run: tells the screen shown now", r.finish(), "turned screen");
+        check("one run: ended", !r.running());
+        check("one run: a new start after the end", r.start());
+        r.detach("turned screen");
+        check("one run: no screen left", r.finish() == null);
+        r.detach("never attached");
+        check("one run: detaching a stranger changes nothing", !r.running() && r.finish() == null);
+        // a turned phone: Android destroys the old screen before it builds the new one
+        r.attach("old screen");
+        check("one run: start before turning", r.start());
+        r.detach("old screen");
+        r.attach("new screen");
+        eq("one run: the rebuilt screen is told", r.finish(), "new screen");
     }
 
     /** Issue #127: the space kept for Further analysis belongs to one screen layout. */
@@ -565,6 +592,8 @@ public class CoreTest {
         check("toast: short confirmations fit", Texts.fitsToast("Backup saved") && Texts.fitsToast("Exported"));
         // passed to the toast through a variable (RingManager, then Settings), so the source scan below cannot see it
         check("toast: factory reset text fits", Texts.fitsToast(Texts.RING_RESET_DONE));
+        check("toast: repair failed text fits", Texts.fitsToast(Texts.REPAIR_FAILED));
+        check("repair failed: says where to look, not above", Texts.REPAIR_FAILED.contains("Data check and log") && !Texts.REPAIR_FAILED.contains("above"));
 
         for (boolean backup : new boolean[] {false, true}) {
             String t = Texts.saveFailed(backup);

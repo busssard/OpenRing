@@ -16,6 +16,12 @@ public final class Texts {
     /** The toast after a factory reset (RingManager); Settings closes right after, so it must fit a toast. */
     public static final String RING_RESET_DONE = "The ring was reset, its old key no longer works.";
 
+    /**
+     * The toast when a repair in Data check fails; it can show on any screen of the app (issue #130),
+     * so it names where to look instead of "above".
+     */
+    public static final String REPAIR_FAILED = "Repair did not finish, see Log in Data check and log.";
+
     /** "1 wake up", "0 wake ups", "3 wake ups": the word agrees with the number. */
     public static String count(long n, String one, String many) {
         return n + " " + word(n, one, many);
