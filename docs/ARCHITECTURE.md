@@ -107,6 +107,10 @@ file in the cache. Histories are never merged.
 6. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
    when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
    age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes.
+   Each week replaces the stored nights from its start, moved back to the start of any sleep (found now or
+   stored) that crosses it, so a sleep stored with an end shortened by phone use is replaced, never doubled
+   (`Analyzer.boundary`, issue #132); the days of the nights it replaced are analysed again too, and the main
+   sleep of such a day is chosen also against its stored sleeps that stay (their flag is updated).
 7. The day's heart rate (Body tab, `core/analysis/DayHeart`, issue #72) is one line of quarter hour averages of
    every reading from midnight to midnight in the day's zone (one point per quarter hour, 92 to 100 on a clock
    change day), stored as `hr_day`. Lowest, Average and Highest are that line's lowest point, mean and highest
