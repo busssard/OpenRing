@@ -265,7 +265,7 @@ public final class Analyzer {
         List<double[]> screen = new ArrayList<double[]>();
         if (prefs.screenAwake()) {
             // a session of many hours is most likely a lost "off" (or a video left playing): not used for sleep
-            for (double[] s : db.screen(from - 36 * 3600, to + 3600)) if (s[1] - s[0] <= ScreenTime.MAX_NIGHT_SESSION_S) screen.add(s);
+            screen = ScreenTime.forNight(db.screen(from - 36 * 3600, to + 3600), from - 36 * 3600, to + 3600);
         }
 
         // the stored nights from lo on are replaced; lo is moved back so no sleep crosses it (issue #132)
@@ -418,6 +418,19 @@ public final class Analyzer {
         return z == null ? zone : z;
     }
 
+    /**
+     * The stages a stored night gets with detail {@code level} (the Settings preview, issue #30): its raw
+     * stages through the same {@link NightAnalyzer#detailStages} as the analysis, with the phone use the
+     * analysis would take now ({@code phoneAwake}: Count phone use as awake, {@link ScreenTime#forNight})
+     * and the ring's own wake ups stored with the night (none for nights analysed before this was stored).
+     */
+    public static int[] preview(Db db, boolean phoneAwake, JSONObject night, int level) {
+        double start = Json.d(night, "start"), end = Json.d(night, "end");
+        List<double[]> screen = new ArrayList<double[]>();
+        if (phoneAwake && end > start) screen = ScreenTime.forNight(db.screen(start, end), start, end);
+        return NightAnalyzer.detailStages(Json.stagesRaw(night), level, start, end, screen, Json.ringAwake(night));
+    }
+
     /** Analyses the sleep window [start, end) of period {@code p} (its edges may have moved past phone use). */
     Night analyzeNight(NightFinder.Period p, double start, double end, List<double[]> screen) {
         int[] tags = {EventCodec.HRV_EVENT, EventCodec.MOTION_EVENT, EventCodec.SLEEP_PERIOD_INFO_2, EventCodec.GREEN_IBI_QUALITY,
@@ -426,7 +439,7 @@ public final class Analyzer {
         NightAnalyzer.Input in = new NightAnalyzer.Input();
         in.start = start;
         in.end = end;
-        for (double[] s : screen) if (s[1] > start && s[0] < end) in.screen.add(s);
+        in.screen.addAll(ScreenTime.forNight(screen, start, end));
         in.ringAwake.addAll(p.awake);
         TS spHr = new TS();
         TS motionFromSp = new TS();

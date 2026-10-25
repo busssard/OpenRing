@@ -215,6 +215,20 @@ public final class ScreenTime {
     public static final int AWAKE_RULE = 2;
 
     /**
+     * The phone use a sleep window [start, end) counts as awake: the sessions that overlap it, without
+     * those longer than {@link #MAX_NIGHT_SESSION_S}. The analysis and the Settings preview both choose
+     * with this, so they mark the same steps (issue #30).
+     */
+    public static List<double[]> forNight(List<double[]> sessions, double start, double end) {
+        List<double[]> out = new ArrayList<double[]>();
+        for (double[] s : sessions) {
+            if (s[1] - s[0] > MAX_NIGHT_SESSION_S) continue;
+            if (s[1] > start && s[0] < end) out.add(s);
+        }
+        return out;
+    }
+
+    /**
      * Marks steps of {@code stages} (equal steps over [start, end)) as awake (4) where the phone was
      * in use. A step is awake when the screen was on for at least {@link #AWAKE_MIN_S} seconds of
      * it (all sessions added up; half of a step of another length). A session of at least that long

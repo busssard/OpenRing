@@ -261,6 +261,34 @@ public class PipelineTest {
             }
             check("the detail filter keeps phone use awake", shownAwake, null);
 
+            // issue #30: the stage detail preview is the night saving produces, phone use included. A 90 s
+            // check is added that Calm (2 minutes) would fold into sleep without marking it awake again.
+            List<double[]> check90 = new ArrayList<double[]>();
+            check90.add(new double[] {s0 + 6 * 3600, s0 + 6 * 3600 + 90});
+            db.putScreen(check90);
+            db.reanalyseFrom(check90.get(0)[0]);
+            Analyzer.run(ctx, null);
+            int lostByFilter = 0;
+            for (int lv = 0; lv < 3; lv++) {
+                JSONObject cur = Json.parse(db.nightsJson(key, key, true).get(0));
+                int[] pv = Analyzer.preview(db, sp.screenAwake(), cur, lv);
+                if (!Arrays.equals(app.openring.core.analysis.StageFilter.filter(Json.stagesRaw(cur), lv), pv)) lostByFilter++;
+                sp.setStageDetail(lv);
+                Analyzer.run(ctx, null);
+                JSONObject saved = Json.parse(db.nightsJson(key, key, true).get(0));
+                double stepS = (saved.optDouble("end") - saved.optDouble("start")) / Json.stages(saved).length;
+                check("#30 level " + lv + ": the preview is the night saving produces", Arrays.equals(pv, Json.stages(saved))
+                        && app.openring.core.analysis.WakeUps.count(pv, stepS) == saved.optInt("awakenings"), saved.opt("awakenings"));
+                int[] after90 = Json.stages(saved);
+                int i90 = (int) ((s0 + 6 * 3600 + 30 - saved.optDouble("start")) / stepS);
+                check("#30 level " + lv + ": the 90 s check stays awake", after90[i90] == 4 && after90[i90 + 1] == 4, after90[i90] + " " + after90[i90 + 1]);
+            }
+            check("#30 the filter alone would hide phone use at some level", lostByFilter > 0, lostByFilter);
+            sp.setStageDetail(1);
+            db.getWritableDatabase().execSQL("DELETE FROM screen WHERE start = ?", new Object[] {check90.get(0)[0]});
+            db.reanalyseFrom(check90.get(0)[0]);
+            Analyzer.run(ctx, null);
+
             // a session read while the screen was still on gets its real end later
             List<double[]> longer = new ArrayList<double[]>();
             longer.add(new double[] {s0 + 4 * 3600, s0 + 4 * 3600 + 420});
@@ -287,6 +315,8 @@ public class PipelineTest {
             Analyzer.run(ctx, null);
             JSONObject off = Json.parse(db.nightsJson(key, key, true).get(0));
             check("switch off: night as without screen data", Math.abs(off.optDouble("start") - s0) < 1 && !off.has("phone_min"), off.opt("phone_min"));
+            check("#30 switch off: the preview leaves phone use out like the night", Arrays.equals(Analyzer.preview(db, false, off, 1), Json.stages(off))
+                    && Arrays.equals(Analyzer.preview(db, sp.screenAwake(), off, 1), Json.stages(off)), null);
             sp.setScreenAwake(true);
             Analyzer.run(ctx, null);
             JSONObject on = Json.parse(db.nightsJson(key, key, true).get(0));
@@ -626,6 +656,8 @@ public class PipelineTest {
         app.openring.data.Demo.leave(phone3);
 
         longWakeChecks();
+        previewRingWake();
+        freshDb("openring30-done");
         nightTwice();
         nightAcrossChecks();
         demoTwice();
@@ -2265,7 +2297,88 @@ public class PipelineTest {
         long lastDs = ev.get(ev.size() - 1).ds;
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - ds0) / 10);
         Analyzer.run(c, null);
+        lastSynthetic = c;
         return db;
+    }
+
+    /** The phone of the last {@link #runSynthetic}, for tests that analyse it again. */
+    static Context lastSynthetic;
+
+    /**
+     * Issue #30: a night joined across a wake up the ring reports itself stores that wake up, and the
+     * stage detail preview marks it awake again like the analysis. Data safety: nights stored by an older
+     * version have no ring_awake; their preview still works, and analysing again keeps every event and
+     * the same nights and adds the field, also when run twice.
+     */
+    static void previewRingWake() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        Db db = longWakeNight(d, 75, false, false);
+        Context c = lastSynthetic;
+        app.openring.data.Prefs pr = app.openring.data.Prefs.of(c);
+        JSONObject n = mainNight(db, d);
+        check("#30 a joined night keeps the ring's own wake up", n != null && !Json.ringAwake(n).isEmpty(), n == null ? null : n.opt("ring_awake"));
+        if (n == null) return;
+        List<double[]> odd = Json.ringAwake(Json.parse("{\"ring_awake\":[[1,2],[3],\"x\",[5,4],[6,7]]}"));
+        check("#30 ring_awake read safely: odd entries left out", odd.size() == 2 && odd.get(1)[0] == 6, odd.size());
+        check("#30 ring_awake of no night is empty", Json.ringAwake(null).isEmpty() && Json.ringAwake(new JSONObject()).isEmpty(), null);
+        double w0 = at(d, 2.5);
+        boolean inside = false;
+        for (double[] w : Json.ringAwake(n)) inside |= w[0] < w0 + 75 * 60 && w[1] > w0 && w[1] > n.optDouble("start") && w[0] < n.optDouble("end");
+        check("#30 the stored wake up lies inside the night", inside, n.opt("ring_awake"));
+        for (int lv = 0; lv < 3; lv++) {
+            JSONObject cur = mainNight(db, d);
+            int[] pv = Analyzer.preview(db, pr.screenAwake(), cur, lv);
+            pr.setStageDetail(lv);
+            Analyzer.run(c, null);
+            JSONObject saved = mainNight(db, d);
+            check("#30 joined night, level " + lv + ": the preview is the night saving produces", Arrays.equals(pv, Json.stages(saved)), null);
+        }
+        pr.setStageDetail(1);
+        Analyzer.run(c, null);
+
+        // a database from an older version: the same nights without ring_awake
+        long events = db.count("SELECT COUNT(*) FROM events");
+        List<String> before = nightRows(db);
+        List<double[]> keys = storedSleeps(db, "0000", "9999");
+        for (double[] k : keys) {
+            android.database.Cursor cu = db.getReadableDatabase().rawQuery("SELECT json FROM nights WHERE start = ?", new String[] {String.valueOf(k[0])});
+            String js;
+            try {
+                cu.moveToNext();
+                js = cu.getString(0);
+            } finally {
+                cu.close();
+            }
+            JSONObject o = Json.parse(js);
+            o.remove("ring_awake");
+            db.getWritableDatabase().execSQL("UPDATE nights SET json = ? WHERE start = ?", new Object[] {o.toString(), k[0]});
+        }
+        check("#30 older nights: no ring_awake left", db.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%ring_awake%'") == 0, null);
+        boolean previewOk = true;
+        for (String js : db.nightsJson("0000", "9999", false)) {
+            JSONObject o = Json.parse(js);
+            int[] pv = Analyzer.preview(db, true, o, 1);
+            previewOk &= pv.length == Json.stagesRaw(o).length;
+        }
+        check("#30 older nights: the preview works without ring_awake", previewOk, null);
+        for (int run = 1; run <= 2; run++) {
+            db.put("analyzed_until", 0);
+            Analyzer.run(c, null);
+            check("#30 older nights, analysis " + run + ": every event kept", db.count("SELECT COUNT(*) FROM events") == events, events);
+            check("#30 older nights, analysis " + run + ": the same nights and stages", nightRows(db).equals(before), nightRows(db).size() + " vs " + before.size());
+            check("#30 older nights, analysis " + run + ": ring_awake stored again", !Json.ringAwake(mainNight(db, d)).isEmpty(), null);
+        }
+    }
+
+    /** Each stored sleep as start, stop, day, stages and raw stages, for before and after comparisons. */
+    static List<String> nightRows(Db db) {
+        List<String> out = new ArrayList<String>();
+        for (String js : db.nightsJson("0000", "9999", false)) {
+            JSONObject o = Json.parse(js);
+            out.add(o.optDouble("start") + " " + o.optDouble("end") + " " + o.optString("day") + " " + o.optString("stages")
+                    + " " + o.optString("stages_raw") + " " + o.optInt("awakenings"));
+        }
+        return out;
     }
 
     /**
