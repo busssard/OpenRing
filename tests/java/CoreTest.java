@@ -669,6 +669,7 @@ public class CoreTest {
         nightNumbers();
         timeline();
         activityWeek();
+        activityDay();
         live();
         motion();
         pattern();
@@ -2380,6 +2381,151 @@ public class CoreTest {
         double[] debt = Wellness.sleepDebt(new int[] {6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600}, new int[] {8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600});
         check("sleep debt", debt[0] > 0 && debt[1] == 1);
         eq("nightly temp short", Double.isNaN(NightAnalyzer.nightlyTemperature(new double[] {35, 35})), true);
+    }
+
+    // ------------------------------------------------- issues #114, #154, #120: one day of activity
+
+    static final java.time.ZoneId ZURICH = java.time.ZoneId.of("Europe/Zurich"), LORD_HOWE = java.time.ZoneId.of("Australia/Lord_Howe");
+
+    static double at(String local, java.time.ZoneId z) {
+        return java.time.LocalDateTime.parse(local).atZone(z).toEpochSecond();
+    }
+
+    /** Wellness.day the way Analyzer.analyzeDay calls it: the real day of {@code date} in {@code z}. */
+    static Wellness.Day actDay(String date, java.time.ZoneId z, TS met, List<double[]> sleeps) {
+        java.time.LocalDate d = java.time.LocalDate.parse(date);
+        return Wellness.day(date, d.atStartOfDay(z).toEpochSecond(), d.plusDays(1).atStartOfDay(z).toEpochSecond(), z, met, sleeps, 70, 1600);
+    }
+
+    /** MET per minute from {@code from} to {@code to}: {@code base}, and {@code v} inside each [a, b) of {@code spans}. */
+    static TS metRun(double from, double to, double base, double v, double... spans) {
+        TS t = new TS();
+        for (double m = from; m < to; m += 60) {
+            double x = base;
+            for (int k = 0; k + 1 < spans.length; k += 2) if (m >= spans[k] && m < spans[k + 1]) x = v;
+            t.add(m, x);
+        }
+        return t;
+    }
+
+    static void activityDay() {
+        List<double[]> none = new ArrayList<double[]>();
+        // #114: every real minute counts once, 23, 23.5, 24, 24.5 and 25 hour days
+        String[][] days = {{"2026-03-29", "Europe/Zurich", "1380"}, {"2026-10-04", "Australia/Lord_Howe", "1410"}, {"2026-06-10", "Europe/Zurich", "1440"},
+            {"2026-04-05", "Australia/Lord_Howe", "1470"}, {"2026-10-25", "Europe/Zurich", "1500"}};
+        for (String[] c : days) {
+            java.time.ZoneId z = java.time.ZoneId.of(c[1]);
+            java.time.LocalDate d = java.time.LocalDate.parse(c[0]);
+            double a = d.minusDays(1).atStartOfDay(z).toEpochSecond(), b = d.plusDays(2).atStartOfDay(z).toEpochSecond();
+            Wellness.Day w = actDay(c[0], z, metRun(a, b, 1.6, 1.6), none);
+            eq("activity day: " + c[0] + " " + c[1] + " counts its real minutes (#114)", w.coveredMin, Integer.parseInt(c[2]));
+            eq("activity day: " + c[0] + " real day length (#114)", w.dayMin, Integer.parseInt(c[2]));
+        }
+        // a walk late on the day the clocks go back belongs to that day
+        double a = at("2026-10-24T00:00:00", ZURICH), b = at("2026-10-27T00:00:00", ZURICH);
+        TS late = metRun(a, b, 1.6, 4.0, at("2026-10-25T23:15:00", ZURICH), at("2026-10-25T23:45:00", ZURICH));
+        Wellness.Day o25 = actDay("2026-10-25", ZURICH, late, none), o26 = actDay("2026-10-26", ZURICH, late, none);
+        check("activity day: a walk 23:15 to 23:45 on 25 October counts on 25 October (#114)", o25.mediumMin == 30 && o25.steps == 3150 && o26.mediumMin == 0);
+        // a walk after midnight on 30 March counts once, on 30 March
+        a = at("2026-03-28T00:00:00", ZURICH);
+        b = at("2026-03-31T00:00:00", ZURICH);
+        TS early = metRun(a, b, 1.6, 4.0, at("2026-03-30T00:15:00", ZURICH), at("2026-03-30T00:45:00", ZURICH));
+        Wellness.Day s29 = actDay("2026-03-29", ZURICH, early, none), s30 = actDay("2026-03-30", ZURICH, early, none);
+        check("activity day: a walk 00:15 to 00:45 on 30 March counts only on 30 March (#114)", s29.mediumMin == 0 && s30.mediumMin == 30 && s30.steps == 3150);
+        check("activity day: the two days add up to the real minutes (#114)", s29.coveredMin + s30.coveredMin == 1380 + 1440);
+        // the chart by clock time: a walk at 08:00 is in the 08:00 quarter hours on every day
+        String[] dates = {"2026-03-29", "2026-06-10", "2026-10-25"};
+        for (String date : dates) {
+            java.time.LocalDate d = java.time.LocalDate.parse(date);
+            double from = d.atStartOfDay(ZURICH).toEpochSecond(), to = d.plusDays(1).atStartOfDay(ZURICH).toEpochSecond();
+            Wellness.Day w = actDay(date, ZURICH, metRun(from, to, 1.2, 4.0, at(date + "T08:00:00", ZURICH), at(date + "T08:30:00", ZURICH)), none);
+            check("activity day: " + date + " walk at 08:00 drawn at 08:00 (#114)", Math.abs(w.metProfile[32] - 4) < 1e-9 && Math.abs(w.metProfile[33] - 4) < 1e-9
+                    && Math.abs(w.metProfile[31] - 1.2) < 1e-9 && Math.abs(w.metProfile[34] - 1.2) < 1e-9);
+        }
+        // clocks forward: 02:00 to 03:00 has no quarter hour; back: both passes on the same ones
+        Wellness.Day fw = actDay("2026-03-29", ZURICH, metRun(at("2026-03-29T00:00:00", ZURICH), at("2026-03-30T00:00:00", ZURICH), 1.2, 1.2), none);
+        check("activity day: 29 March, 02:00 to 03:00 empty, 01:45 and 03:00 filled (#114)", Double.isNaN(fw.metProfile[8]) && Double.isNaN(fw.metProfile[11])
+                && !Double.isNaN(fw.metProfile[7]) && !Double.isNaN(fw.metProfile[12]));
+        double first = java.time.Instant.parse("2026-10-25T00:00:00Z").getEpochSecond(), second = java.time.Instant.parse("2026-10-25T01:00:00Z").getEpochSecond();
+        Wellness.Day bk = actDay("2026-10-25", ZURICH, metRun(at("2026-10-25T00:00:00", ZURICH), at("2026-10-26T00:00:00", ZURICH), 1.2, 3.2, first, first + 3600), none);
+        check("activity day: 25 October, 02:00 to 03:00 holds both passes, their average (#114)", Math.abs(bk.metProfile[8] - 2.2) < 1e-9
+                && Math.abs(bk.metProfile[11] - 2.2) < 1e-9 && Math.abs(bk.metProfile[12] - 1.2) < 1e-9 && bk.mediumMin == 60);
+        check("activity day: the second pass starts at 02:00 by the clock (#114)", Wellness.clockMin(second, 0, ZURICH) == 120 && Wellness.clockMin(first, 0, ZURICH) == 120);
+        check("activity day: without a zone the clock counts from the start", Wellness.clockMin(1000 + 125 * 60, 1000, null) == 125 && Wellness.clockMin(1000 + 1500 * 60, 1000, null) == 1439);
+
+        // #154: a stretch counts when 60 minutes or more of its sitting lie between 08:00 and 22:00
+        String day = "2026-06-10";
+        double ds = at(day + "T00:00:00", ZURICH), de = at("2026-06-11T00:00:00", ZURICH);
+        String[][] sits = {
+            {"A sit 22:30 to 24:00, day ends sitting", "22:30", "24:00", "0"},
+            {"B sit 22:30 to 23:58", "22:30", "23:58", "0"},
+            {"C sit 14:00 to 15:30", "14:00", "15:30", "1"},
+            {"D sit 20:30 to 22:30, 90 min in the window", "20:30", "22:30", "1"},
+            {"E sit 06:30 to 08:05, 5 min in the window", "06:30", "08:05", "0"},
+            {"F sit 21:00 to 24:00, day ends sitting, 60 min in the window", "21:00", "24:00", "1"},
+            {"G sit 21:01 to 24:00, 59 min in the window", "21:01", "24:00", "0"},
+            {"H sit 07:00 to 09:00, 60 min in the window", "07:00", "09:00", "1"}};
+        for (String[] c : sits) {
+            double s0 = c[1].equals("24:00") ? de : at(day + "T" + c[1] + ":00", ZURICH), s1 = c[2].equals("24:00") ? de : at(day + "T" + c[2] + ":00", ZURICH);
+            Wellness.Day w = actDay(day, ZURICH, metRun(ds, de, 1.6, 1.2, s0, s1), none);
+            eq("long sitting " + c[0] + " (#154)", w.longInactiveStreaks, Integer.parseInt(c[3]));
+        }
+        // a stretch is ended by sleep and by a minute without data, like before
+        TS gap = metRun(ds, de, 1.6, 1.2, at(day + "T14:00:00", ZURICH), at(day + "T16:00:00", ZURICH));
+        TS cut = new TS();
+        for (int i = 0; i < gap.size(); i++) if (Math.abs(gap.t(i) - at(day + "T15:00:00", ZURICH)) > 1) cut.add(gap.t(i), gap.v(i));
+        eq("long sitting: a minute without data splits 14:00 to 16:00 into 60 and 59 minutes (#154)", actDay(day, ZURICH, cut, none).longInactiveStreaks, 1);
+        List<double[]> nap = new ArrayList<double[]>();
+        nap.add(new double[] {at(day + "T14:50:00", ZURICH), at(day + "T15:10:00", ZURICH)});
+        eq("long sitting: a nap splits it into 50 and 50 minutes (#154)", actDay(day, ZURICH, gap, nap).longInactiveStreaks, 0);
+        eq("long sitting: the same day without either has one (#154)", actDay(day, ZURICH, gap, none).longInactiveStreaks, 1);
+        // the window by the clock on 25 October: sitting 07:00 to 09:00 local still has 60 minutes from 08:00
+        eq("long sitting: 25 October 07:00 to 09:00 by the clock (#154, #114)", actDay("2026-10-25", ZURICH, metRun(at("2026-10-25T00:00:00", ZURICH),
+                at("2026-10-26T00:00:00", ZURICH), 1.6, 1.2, at("2026-10-25T07:00:00", ZURICH), at("2026-10-25T09:00:00", ZURICH)), none).longInactiveStreaks, 1);
+        eq("long sitting: 25 October 07:00 to 08:59, 59 minutes from 08:00 by the clock (#154, #114)", actDay("2026-10-25", ZURICH, metRun(at("2026-10-25T00:00:00", ZURICH),
+                at("2026-10-26T00:00:00", ZURICH), 1.6, 1.2, at("2026-10-25T07:00:00", ZURICH), at("2026-10-25T08:59:00", ZURICH)), none).longInactiveStreaks, 0);
+
+        // #120: a range for activity values
+        check("MET range: 0, 1.2 and 25 count", EventCodec.plausibleMet(0) && EventCodec.plausibleMet(1.2) && EventCodec.plausibleMet(25));
+        check("MET range: 25.2, 38.2, -0.1 and NaN do not", !EventCodec.plausibleMet(25.2) && !EventCodec.plausibleMet(38.2)
+                && !EventCodec.plausibleMet(-0.1) && !EventCodec.plausibleMet(Double.NaN));
+        check("MET range: the highest byte that counts is 0xbd (25.0)", EventCodec.plausibleMet(EventCodec.activityMet(b(0, 0xbd))[0])
+                && !EventCodec.plausibleMet(EventCodec.activityMet(b(0, 0xbe))[0]));
+        byte[] bad = new byte[61];
+        for (int i = 1; i < bad.length; i++) bad[i] = (byte) 0xff;
+        double[] raw = EventCodec.activityMet(bad);
+        int kept = 0;
+        for (double v : raw) if (EventCodec.plausibleMet(v)) kept++;
+        check("MET range: an hour of 0xff decodes to 38.2 and none of it counts (#120)", raw.length == 60 && Math.abs(raw[0] - 38.2) < 1e-9 && kept == 0);
+        // the day the way Analyzer builds it: the bad hour is left out, so it is missing, not 2604 kcal
+        double h14 = at(day + "T14:00:00", ZURICH);
+        TS kept14 = new TS(), control = new TS();
+        for (double t = ds; t < de; t += 60) {
+            if (t >= h14 && t < h14 + 3600) {
+                double v = raw[(int) ((t - h14) / 60)];
+                if (EventCodec.plausibleMet(v)) kept14.add(t, v);
+                continue;
+            }
+            kept14.add(t, 1.6);
+            control.add(t, 1.6);
+        }
+        Wellness.Day wb = actDay(day, ZURICH, kept14, none), wc = actDay(day, ZURICH, control, none);
+        check("MET range: the day with the bad hour equals the day without that hour (#120)", wb.highMin == 0 && wb.coveredMin == 1380
+                && wb.nonWearMin == 60 && Math.abs(wb.activeKcal - wc.activeKcal) < 1e-9 && wb.steps == wc.steps && Math.abs(wb.avgMet - 1.6) < 1e-9);
+
+        // the explanation states the rule, and the line under the chart on clock change days
+        eq("move every hour text (#154)", app.openring.ui.Explain.of("move_hourly"),
+                "Times you sat still for an hour or more between 08:00 and 22:00. Only the minutes in that window count, sleep never does.");
+        double z25 = at("2026-10-25T00:00:00", ZURICH), z26 = at("2026-10-26T00:00:00", ZURICH);
+        eq("activity chart line, clocks back (#114)", ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26)),
+                "The clocks went back one hour on this day (03:00 became 02:00), so 02:00 to 03:00 happened twice. The chart shows both at the same place, "
+                        + "the numbers above count every real minute once.");
+        eq("activity chart line, clocks forward (#114)", ClockChange.activityText(ClockChange.onDay(ZURICH, at("2026-03-29T00:00:00", ZURICH), at("2026-03-30T00:00:00", ZURICH))),
+                "The clocks went forward one hour on this day (02:00 became 03:00), so 02:00 to 03:00 did not happen and the chart has nothing there.");
+        check("activity chart line: none on other days", ClockChange.activityText(ClockChange.onDay(ZURICH, at("2026-06-10T00:00:00", ZURICH), at("2026-06-11T00:00:00", ZURICH))) == null
+                && ClockChange.activityText(null) == null);
+        check("activity chart line: Lord Howe's half hour", ClockChange.activityText(ClockChange.onDay(LORD_HOWE, at("2026-04-05T00:00:00", LORD_HOWE),
+                at("2026-04-06T00:00:00", LORD_HOWE))).startsWith("The clocks went back 30 minutes on this day (02:00 became 01:30), so 01:30 to 02:00 happened twice."));
     }
 
     /** Issue #44: the weekly parts of the activity score look at the worn days only. */

@@ -155,6 +155,16 @@ history had, before anything is written to the file the person picked; otherwise
    The day reads events from 30 minutes before midnight, so the values after midnight of an HRV event begun before it
    (six values, start + 0 to 25 minutes) count for the new day. kv `day_heart` holds the rules version
    (`DayHeart.VERSION`); a change analyses everything again once.
+8. The day's activity (`Wellness.day`, Activity tab) counts every real minute from midnight to midnight in the day's
+   zone once: 1440 minutes, 1380 or 1500 when the clocks change by an hour (1410 or 1470 for Lord Howe's half hour),
+   so neighbouring days never share or lose a minute (issue #114). The 96 quarter hours of "Intensity through the
+   day" and the 08:00 to 22:00 window go by each minute's clock time, like `DialMath.fill`: the repeated hour lands
+   twice on the same quarter hours (their average), the skipped one stays empty, and a line under the chart says so
+   (`ClockChange.activityText`). A sitting stretch (awake, under 1.5 MET, ended by sleep, a missing minute or more
+   movement) is a long sitting period when 60 or more of its own minutes lie between 08:00 and 22:00, also at the end
+   of the day (issue #154). Activity values count only from 0 to 25 MET (`EventCodec.plausibleMet`, issue #120);
+   higher ones are damaged bytes and count as missing minutes. These rules have no version of their own: stored days
+   keep their numbers until they are analysed again (the last two days after each sync, or Re analyse all).
 
 ## Threading
 

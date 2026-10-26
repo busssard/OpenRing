@@ -892,6 +892,10 @@ public final class Pages {
             // the bands of Wellness.day (issue #47)
             pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. While awake, under 1.5 counts as inactive, 1.5 to 3 low, "
                     + "3 to 6 medium, 6 or more high (the bands of Daily movement); time asleep counts as rest.", 12, Ui.TEXT_3, Ui.REGULAR));
+            // a clock change day: the bars go by clock time, the numbers by real minutes (issue #114)
+            String change = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(d.zone,
+                    d.date.atStartOfDay(d.zone).toEpochSecond(), d.date.plusDays(1).atStartOfDay(d.zone).toEpochSecond()));
+            if (change != null) pc.addView(Ui.text(c, change, 12, Ui.TEXT_3, Ui.REGULAR));
             root.addView(pc);
         }
 

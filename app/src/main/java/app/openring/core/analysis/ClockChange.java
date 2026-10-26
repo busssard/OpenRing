@@ -127,6 +127,21 @@ public final class ClockChange {
     }
 
     /**
+     * The line under the day's activity chart on a day the clocks changed (issue #114), for example "The clocks went
+     * back one hour on this day (03:00 became 02:00), so 02:00 to 03:00 happened twice. ...", or null without a change.
+     */
+    public static String activityText(Change c) {
+        if (c == null || c.minutes == 0) return null;
+        String amount = amount(Math.abs(c.minutes));
+        if (c.minutes < 0) {
+            return "The clocks went back " + amount + " on this day (" + c.from + " became " + c.to + "), so " + c.to + " to " + c.from
+                    + " happened twice. The chart shows both at the same place, the numbers above count every real minute once.";
+        }
+        return "The clocks went forward " + amount + " on this day (" + c.from + " became " + c.to + "), so " + c.from + " to " + c.to
+                + " did not happen and the chart has nothing there.";
+    }
+
+    /**
      * " (first time)" or " (second time)" after a clock time in the hour that happens twice when the clocks go
      * back (issue #97), so two moments that read "02:22" can be told apart; "" at every other moment.
      */

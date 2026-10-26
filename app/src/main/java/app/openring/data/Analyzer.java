@@ -588,11 +588,13 @@ public final class Analyzer {
         for (Db.Row r : db.events(new int[] {EventCodec.ACTIVITY_INFO}, ds - 3 * 3600, de)) {
             double[] m = EventCodec.activityMet(r.body);
             if (m == null) continue;
-            for (int i = 0; i < m.length; i++) met.add(r.unix + i * 60, m[i]);
+            // impossible values (a damaged byte) count as missing minutes (issue #120)
+            for (int i = 0; i < m.length; i++) if (EventCodec.plausibleMet(m[i])) met.add(r.unix + i * 60, m[i]);
         }
         List<double[]> sleeps = new ArrayList<double[]>();
         for (JSONObject o : past.nights(day.minusDays(1), day.plusDays(1), false)) sleeps.add(new double[] {o.optDouble("start"), o.optDouble("end")});
-        Wellness.Day d = Wellness.day(key, ds, met, sleeps, weight, bmr);
+        // every real minute of the day once, by its clock time in the day's zone (issue #114)
+        Wellness.Day d = Wellness.day(key, ds, de, dz, met, sleeps, weight, bmr);
 
         boolean anyHr = db.count("SELECT COUNT(*) FROM events WHERE tag IN (93, 128, 134, 106) AND unix >= " + (long) ds + " AND unix < " + (long) de) > 0;
         if (d.coveredMin == 0 && mainNight == null && !anyHr) {
