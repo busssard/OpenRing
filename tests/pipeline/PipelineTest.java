@@ -629,13 +629,13 @@ public class PipelineTest {
         nightTwice();
         nightAcrossChecks();
         demoTwice();
-        demoReopened();
         oldNights();
         lastWornOldSync();
         lastWornStrayEvents();
         dayHeartLimits();
         dayHeartFastBeat();
         dayHeartVersion();
+        demoReopened();
         todayHeartTime();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
@@ -1549,6 +1549,57 @@ public class PipelineTest {
     // ------------------------------------------------- issue #29, demo started twice at once
 
     /** Events, main nights, days, screen sessions and app rows of a demo database. */
+    /** Stops a demo build at its analysis step, the way Android ending the app would (issue #69). */
+    static final class EndApp implements app.openring.data.Demo.Progress {
+        @Override
+        public void step(String what) {
+            if (what.startsWith("Analysing")) throw new IllegalStateException("app ended");
+        }
+    }
+
+    /**
+     * Issue #69: the app was ended while the demo was prepared and is opened again from the launcher
+     * (no saved screen). The main screen must still finish the demo, not show it half built.
+     */
+    static void demoReopened() throws Exception {
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate day = LocalDate.parse("2026-03-04");
+        long now = java.time.LocalDateTime.parse("2026-03-04T09:41:00").atZone(z).toEpochSecond();
+        Context single = freshDb("openring-demo-whole");
+        app.openring.data.Demo.enter(single, null, day, now);
+        String want = demoCounts(Db.get(single));
+        app.openring.data.Demo.leave(single);
+
+        Context phone = freshDb("openring-demo-ended");
+        boolean ended = false;
+        try {
+            app.openring.data.Demo.enter(phone, new EndApp(), day, now);
+        } catch (IllegalStateException e) {
+            ended = true;
+        }
+        Db db = Db.get(phone);
+        boolean demoOn = app.openring.data.Prefs.of(phone).demo();
+        check("demo ended while prepared: demo mode stays on, no nights, no mark", ended && demoOn
+                && db.count("SELECT COUNT(*) FROM nights") == 0 && db.kv("demo_day", null) == null,
+                ended + ", demo " + demoOn + ", " + demoCounts(db));
+        check("demo reopened from the launcher: the main screen finishes it", app.openring.data.Demo.finishOnStart(demoOn, false, false), "");
+        check("demo reopened: not while a preparation runs", !app.openring.data.Demo.finishOnStart(demoOn, true, false), "");
+        check("demo reopened: not on a screen a turned phone handed over", !app.openring.data.Demo.finishOnStart(demoOn, false, true), "");
+        check("demo reopened: nothing to do outside demo mode", !app.openring.data.Demo.finishOnStart(false, false, false), "");
+        Steps resume = new Steps();
+        boolean built = app.openring.data.Demo.complete(phone, resume, day, now + 120);
+        String got = demoCounts(Db.get(phone));
+        check("demo reopened: finished with the same nights as a whole build", built && resume.n.get() == 2 && got.equals(want)
+                && day.toString().equals(Db.get(phone).kv("demo_day", null)), got + " (whole build: " + want + ")");
+        Steps again = new Steps();
+        boolean twice = app.openring.data.Demo.finishOnStart(app.openring.data.Prefs.of(phone).demo(), false, false)
+                && app.openring.data.Demo.complete(phone, again, day, now + 240);
+        check("demo reopened again: a finished demo returns at once", !twice && again.n.get() == 0 && demoCounts(Db.get(phone)).equals(want),
+                again.n.get() + " steps");
+        app.openring.data.Demo.leave(phone);
+        check("demo left: a new screen has nothing to finish", !app.openring.data.Demo.finishOnStart(app.openring.data.Prefs.of(phone).demo(), false, false), "");
+    }
+
     static String demoCounts(Db db) {
         return db.count("SELECT COUNT(*) FROM events") + " events, " + db.count("SELECT COUNT(*) FROM nights WHERE main = 1") + " nights, "
                 + db.count("SELECT COUNT(*) FROM days") + " days, " + db.count("SELECT COUNT(*) FROM screen") + " screen, "
@@ -1682,57 +1733,6 @@ public class PipelineTest {
         app.openring.data.Demo.enter(phone, empty, day.plusDays(1), nextNow + 120);
         check("an emptied demo is built again", empty.n.get() == 2 && Db.get(phone).count("SELECT COUNT(*) FROM events") > 0, empty.n.get() + " steps");
         app.openring.data.Demo.leave(phone);
-    }
-
-    /** Stops a demo build at its analysis step, the way Android ending the app would (issue #69). */
-    static final class EndApp implements app.openring.data.Demo.Progress {
-        @Override
-        public void step(String what) {
-            if (what.startsWith("Analysing")) throw new IllegalStateException("app ended");
-        }
-    }
-
-    /**
-     * Issue #69: the app was ended while the demo was prepared and is opened again from the launcher
-     * (no saved screen). The main screen must still finish the demo, not show it half built.
-     */
-    static void demoReopened() throws Exception {
-        ZoneId z = ZoneId.systemDefault();
-        LocalDate day = LocalDate.parse("2026-03-04");
-        long now = java.time.LocalDateTime.parse("2026-03-04T09:41:00").atZone(z).toEpochSecond();
-        Context single = freshDb("openring-demo-whole");
-        app.openring.data.Demo.enter(single, null, day, now);
-        String want = demoCounts(Db.get(single));
-        app.openring.data.Demo.leave(single);
-
-        Context phone = freshDb("openring-demo-ended");
-        boolean ended = false;
-        try {
-            app.openring.data.Demo.enter(phone, new EndApp(), day, now);
-        } catch (IllegalStateException e) {
-            ended = true;
-        }
-        Db db = Db.get(phone);
-        boolean demoOn = app.openring.data.Prefs.of(phone).demo();
-        check("demo ended while prepared: demo mode stays on, no nights, no mark", ended && demoOn
-                && db.count("SELECT COUNT(*) FROM nights") == 0 && db.kv("demo_day", null) == null,
-                ended + ", demo " + demoOn + ", " + demoCounts(db));
-        check("demo reopened from the launcher: the main screen finishes it", app.openring.data.Demo.finishOnStart(demoOn, false, false), "");
-        check("demo reopened: not while a preparation runs", !app.openring.data.Demo.finishOnStart(demoOn, true, false), "");
-        check("demo reopened: not on a screen a turned phone handed over", !app.openring.data.Demo.finishOnStart(demoOn, false, true), "");
-        check("demo reopened: nothing to do outside demo mode", !app.openring.data.Demo.finishOnStart(false, false, false), "");
-        Steps resume = new Steps();
-        boolean built = app.openring.data.Demo.complete(phone, resume, day, now + 120);
-        String got = demoCounts(Db.get(phone));
-        check("demo reopened: finished with the same nights as a whole build", built && resume.n.get() == 2 && got.equals(want)
-                && day.toString().equals(Db.get(phone).kv("demo_day", null)), got + " (whole build: " + want + ")");
-        Steps again = new Steps();
-        boolean twice = app.openring.data.Demo.finishOnStart(app.openring.data.Prefs.of(phone).demo(), false, false)
-                && app.openring.data.Demo.complete(phone, again, day, now + 240);
-        check("demo reopened again: a finished demo returns at once", !twice && again.n.get() == 0 && demoCounts(Db.get(phone)).equals(want),
-                again.n.get() + " steps");
-        app.openring.data.Demo.leave(phone);
-        check("demo left: a new screen has nothing to finish", !app.openring.data.Demo.finishOnStart(app.openring.data.Prefs.of(phone).demo(), false, false), "");
     }
 
     // ---------------------------------------------------------------- issue #21, dating
