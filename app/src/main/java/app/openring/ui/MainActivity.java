@@ -506,6 +506,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         TextView t = Ui.text(this, LABELS[i], 11, Ui.TEXT_3, Ui.MEDIUM);
         t.setGravity(Gravity.CENTER);
         t.setSingleLine(true);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
         t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, navTextPx(t.getPaint()));
         item.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         item.setOnClickListener(new View.OnClickListener() {
