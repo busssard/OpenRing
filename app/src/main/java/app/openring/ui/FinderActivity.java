@@ -43,6 +43,7 @@ import java.util.Random;
 
 import app.openring.ble.RingManager;
 import app.openring.ble.RingScanner;
+import app.openring.core.PermissionAsk;
 import app.openring.core.Texts;
 import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.LastWorn;
@@ -90,6 +91,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private double demoHeading;
     private final Random demoNoise = new Random(74);
     private boolean askedPermission, permissionBlocked;
+    /** The last request on this screen came back refused without Android's explanation (issue #140). */
+    private boolean quietDenial;
     private Charts.LineChart trailChart;
     // the search walk (phase 2): steps from the accelerometer, only while recording
     private Sensor accel;
@@ -298,6 +301,11 @@ public final class FinderActivity extends Activity implements SensorEventListene
         super.onResume();
         resumed = true;
         listenSince = SystemClock.elapsedRealtime();
+        if (!demo) {
+            // granted in the app's settings meanwhile: forget the refusal, Android asks afresh if it takes it back (#140)
+            if (Permissions.granted(this)) permissionBlocked = quietDenial = false;
+            Permissions.remember(this);
+        }
         if (rotation != null && !demo) sm.registerListener(this, rotation, SensorManager.SENSOR_DELAY_GAME);
         try {
             tone = new ToneGenerator(AudioManager.STREAM_MUSIC, 70);
@@ -336,14 +344,15 @@ public final class FinderActivity extends Activity implements SensorEventListene
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
-        if (askedPermission && !Permissions.granted(this)) {
-            // denied and Android will not ask again: only the app's settings can switch it on
-            boolean canAsk = false;
-            for (String p : Permissions.needed()) {
-                if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED && shouldShowRequestPermissionRationale(p)) canAsk = true;
-            }
-            permissionBlocked = !canAsk;
+        // refused again after an explicit refusal, Android no longer asks: only the app's settings can switch it
+        // on. A dialog closed without choosing (or an interrupted request) still asks next time (issue #140).
+        PermissionAsk.Answer a = PermissionAsk.answer(Permissions.granted(this), perms, results, Permissions.needed(),
+                Permissions.rationale(this), Prefs.of(this).permissionDenied(), quietDenial);
+        if (askedPermission) {
+            permissionBlocked = a.blocked;
+            quietDenial = a.quiet;
         }
+        Permissions.store(this, a.denied);
         if (resumed) startScan();
     }
 

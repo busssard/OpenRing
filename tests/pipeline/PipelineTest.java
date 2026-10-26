@@ -454,6 +454,11 @@ public class PipelineTest {
         fp.setFinderSound(false);
         check("ring finder: clicks on by default, can be switched off", soundDefault && !fp.finderSound(), null);
         fp.setFinderSound(true);
+        boolean deniedDefault = fp.permissionDenied();
+        fp.setPermissionDenied(true);
+        boolean deniedSet = fp.permissionDenied();
+        fp.setPermissionDenied(false);
+        check("ring finder: an explicit permission refusal is remembered, none by default (#140)", !deniedDefault && deniedSet && !fp.permissionDenied(), null);
         boolean heightBefore = fp.hasHeight();
 
         // ---- sleep history: average night over all analysed nights ----
@@ -684,6 +689,7 @@ public class PipelineTest {
         dayHeartLimits();
         dayHeartFastBeat();
         dayHeartVersion();
+        demoReopened();
         todayHeartTime();
         restoreSafety(full.toByteArray(), keyBytes);
         rebuildSameAsOld();
@@ -2066,6 +2072,59 @@ public class PipelineTest {
                 && from.equals(switchNight.optString("clock_change_from")) && to.equals(switchNight.optString("clock_change_to")),
                 switchNight == null ? null : switchNight.optString("clock_change_from") + " to " + switchNight.optString("clock_change_to"));
         check("only that demo night is marked", marked == 1, marked);
+    }
+
+    // ------------------------------------------------- issue #69, demo cut off by an ended app
+
+    /** Stops a demo build at its analysis step, the way Android ending the app would (issue #69). */
+    static final class EndApp implements app.openring.data.Demo.Progress {
+        @Override
+        public void step(String what) {
+            if (what.startsWith("Analysing")) throw new IllegalStateException("app ended");
+        }
+    }
+
+    /**
+     * Issue #69: the app was ended while the demo was prepared and is opened again from the launcher
+     * (no saved screen). The main screen must still finish the demo, not show it half built.
+     */
+    static void demoReopened() throws Exception {
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate day = LocalDate.parse("2026-03-04");
+        long now = java.time.LocalDateTime.parse("2026-03-04T09:41:00").atZone(z).toEpochSecond();
+        Context single = freshDb("openring-demo-whole");
+        app.openring.data.Demo.enter(single, null, day, now);
+        String want = demoCounts(Db.get(single));
+        app.openring.data.Demo.leave(single);
+
+        Context phone = freshDb("openring-demo-ended");
+        boolean ended = false;
+        try {
+            app.openring.data.Demo.enter(phone, new EndApp(), day, now);
+        } catch (IllegalStateException e) {
+            ended = true;
+        }
+        Db db = Db.get(phone);
+        boolean demoOn = app.openring.data.Prefs.of(phone).demo();
+        check("demo ended while prepared: demo mode stays on, no nights, no mark", ended && demoOn
+                && db.count("SELECT COUNT(*) FROM nights") == 0 && db.kv("demo_day", null) == null,
+                ended + ", demo " + demoOn + ", " + demoCounts(db));
+        check("demo reopened from the launcher: the main screen finishes it", app.openring.data.Demo.finishOnStart(demoOn, false, false), "");
+        check("demo reopened: not while a preparation runs", !app.openring.data.Demo.finishOnStart(demoOn, true, false), "");
+        check("demo reopened: not on a screen a turned phone handed over", !app.openring.data.Demo.finishOnStart(demoOn, false, true), "");
+        check("demo reopened: nothing to do outside demo mode", !app.openring.data.Demo.finishOnStart(false, false, false), "");
+        Steps resume = new Steps();
+        boolean built = app.openring.data.Demo.complete(phone, resume, day, now + 120);
+        String got = demoCounts(Db.get(phone));
+        check("demo reopened: finished with the same nights as a whole build", built && resume.n.get() == 2 && got.equals(want)
+                && day.toString().equals(Db.get(phone).kv("demo_day", null)), got + " (whole build: " + want + ")");
+        Steps again = new Steps();
+        boolean twice = app.openring.data.Demo.finishOnStart(app.openring.data.Prefs.of(phone).demo(), false, false)
+                && app.openring.data.Demo.complete(phone, again, day, now + 240);
+        check("demo reopened again: a finished demo returns at once", !twice && again.n.get() == 0 && demoCounts(Db.get(phone)).equals(want),
+                again.n.get() + " steps");
+        app.openring.data.Demo.leave(phone);
+        check("demo left: a new screen has nothing to finish", !app.openring.data.Demo.finishOnStart(app.openring.data.Prefs.of(phone).demo(), false, false), "");
     }
 
     // ------------------------------------------------- issue #29, demo started twice at once

@@ -19,6 +19,8 @@ import app.openring.ui.MainActivity;
 public final class SyncService extends Service implements RingManager.Listener {
     static final String CHANNEL = "sync";
     static final int ID = 7;
+    /** The notice after a failed sync; stays after the sync notification is gone (issue #91). */
+    static final int FAILED_ID = 8;
     private volatile boolean running;
 
     public static void start(Context c) {
@@ -42,10 +44,36 @@ public final class SyncService extends Service implements RingManager.Listener {
                 .setSmallIcon(R.drawable.ic_stat_ring)
                 .setContentTitle("Syncing your ring")
                 .setContentText(text)
+                // the plain sentences after a failed sync are longer than one line (issue #91)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setContentIntent(pi)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .build();
+    }
+
+    /**
+     * The sync notification goes away when the sync ends, so a failure gets a notice of its own with the whole plain
+     * sentence; a sync that worked removes an old one (issue #91).
+     */
+    void showResult(RingManager.SyncResult res) {
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        String text = res == null ? null : app.openring.core.SyncError.failureNotice(res.ok, res.message);
+        if (text == null) {
+            if (res != null && res.ok) nm.cancel(FAILED_ID);
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) return; // the main screen shows it anyway
+        PendingIntent pi = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
+        nm.notify(FAILED_ID, new Notification.Builder(this, CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_ring)
+                .setContentTitle("Sync did not finish")
+                .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build());
     }
 
     @Override
@@ -73,13 +101,19 @@ public final class SyncService extends Service implements RingManager.Listener {
                     android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
                     android.os.PowerManager.WakeLock wl = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "openring:sync");
                     wl.acquire(3 * 60 * 60 * 1000L);
+                    RingManager.SyncResult res = null;
                     try {
-                        RingManager.get(SyncService.this).syncBlocking();
+                        res = RingManager.get(SyncService.this).syncBlocking();
                     } finally {
                         if (wl.isHeld()) wl.release();
                         running = false;
                         RingManager.get(SyncService.this).removeListener(SyncService.this);
                         stopForeground(true);
+                        try {
+                            showResult(res);
+                        } catch (RuntimeException e) {
+                            RingManager.get(SyncService.this).log("sync result notice not shown: " + e);
+                        }
                         stopSelf();
                     }
                 }

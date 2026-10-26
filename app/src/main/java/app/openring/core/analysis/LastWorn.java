@@ -208,11 +208,16 @@ public final class LastWorn {
             }
             int e = s;
             while (e + 1 < n && warm[e + 1]) e++;
+            // a heart rate from before the cool readings before the stretch is from the time before the ring came
+            // off: it must not vouch for a charger after it (issue #135). One measured during those cool readings
+            // still counts (cold fingers, the heart kept beating). Only the older side is bounded: a heart rate after
+            // the stretch is newer, so the newer readings decide anyway
+            double after = s > 0 ? coolStart(t, warm, s) : Double.NEGATIVE_INFINITY;
             boolean near = false;
-            for (int i = s; i <= e && !near; i++) near = hasNear(pairedT, t[i], NEAR_S);
+            for (int i = s; i <= e && !near; i++) near = hasNear(pairedT, t[i], NEAR_S, after);
             if (!near) {
-                // only up to the neighbouring cool readings: a value from before the ring went cool must not
-                // vouch for a charger after it (review of afd266a)
+                // lone values only up to the neighbouring cool readings on both sides (review of afd266a): lone
+                // values are weaker evidence, so a stray during the cool readings does not count for them
                 double from = s > 0 ? Math.max(t[s] - NEAR_S, t[s - 1]) : t[s] - NEAR_S;
                 double to = e + 1 < n ? Math.min(t[e] + NEAR_S, t[e + 1]) : t[e] + NEAR_S;
                 near = loneEvents(hr, hrId, from, to);
@@ -246,7 +251,13 @@ public final class LastWorn {
             int s = n - 1;
             while (s > 0 && warm[s - 1]) s--;
             double lastHr = r.lastHr;
-            boolean hrNear = stretchHr[n - 1] || (!Double.isNaN(lastHr) && lastHr >= t[s] - NEAR_S);
+            // a heart rate before the stretch counts only when it is not older than the cool readings before it
+            // (issue #135); one measured during them still counts (cold fingers)
+            boolean hrBefore = !Double.isNaN(lastHr) && lastHr >= t[s] - NEAR_S;
+            boolean hrNear = stretchHr[n - 1] || (hrBefore && (s == 0 || lastHr >= coolStart(t, warm, s)));
+            // a single cool reading cannot be told from 5 minutes on a table or a cold hand: after an hour warm
+            // without heart rate it stays "not sure" since that heart rate, as before issue #135 (review of PR #179)
+            boolean oneCool = s > 0 && (s == 1 || warm[s - 2]);
             if (!r.hrRule || (hrNear && t[n - 1] - lastHr <= NO_HR_S) || (!hrNear && t[n - 1] - t[s] <= NO_HR_S)) {
                 r.state = WORN;
                 r.at = Double.isNaN(lastHr) ? t[n - 1] : Math.max(t[n - 1], lastHr);
@@ -256,7 +267,7 @@ public final class LastWorn {
                 r.justOn = r.hrRule && !hrNear;
                 return r;
             }
-            if (hrNear) {
+            if (hrNear || (hrBefore && oneCool)) {
                 // warm, with heart rate at first, then none for over an hour: charger, duvet, sun
                 r.state = UNSURE;
                 r.at = lastHr;
@@ -429,6 +440,22 @@ public final class LastWorn {
         if (i >= t.length) return t.length - 1;
         if (i > 0 && x - t[i - 1] < t[i] - x) return i - 1;
         return i;
+    }
+
+    /** The time of the first of the cool readings right before the warm stretch starting at {@code s} (s > 0). */
+    static double coolStart(double[] t, boolean[] warm, int s) {
+        int cs = s - 1;
+        while (cs > 0 && !warm[cs - 1]) cs--;
+        return t[cs];
+    }
+
+    /** Whether a sorted list holds a value within {@code w} of {@code x} that is not before {@code from}. */
+    static boolean hasNear(double[] sorted, double x, double w, double from) {
+        double lo = Math.max(x - w, from);
+        int i = Arrays.binarySearch(sorted, lo);
+        if (i < 0) i = -i - 1;
+        while (i > 0 && sorted[i - 1] >= lo) i--;
+        return i < sorted.length && sorted[i] <= x + w;
     }
 
     /** Whether a sorted list holds a value within {@code w} of {@code x}. */
