@@ -2643,7 +2643,17 @@ public class PipelineTest {
         return c;
     }
 
-    static final long T2_58 = T58 + 4 * 86400L;
+    static final long T2_58 = T58 + 4 * 86400L, T3_58 = T58 + 6 * 86400L;
+
+    static String date58(double unix) {
+        return java.time.Instant.ofEpochSecond((long) unix).atZone(Z58).toLocalDate().toString();
+    }
+
+    /** Zone history: the phone's zone, then Tokyo from 12 hours before boot 2. */
+    static void tokyo58(Db db) {
+        db.noteZone(T58 - 86400, Z58.getId());
+        db.noteZone(T2_58 - 12 * 3600, "Asia/Tokyo");
+    }
 
     static void add58(Db db, int epoch, long t0, int days, long shift) {
         long end = t0 + days * 86400L + 12 * 3600;
@@ -2828,11 +2838,14 @@ public class PipelineTest {
         Analyzer.run(c, null);
         check("#58 a second run changes nothing", days58(db).equals(refDays) && nights58(db).equals(refNights), diff(days58(db), refDays));
 
-        // 3. dating not complete yet: the newest boot's time record cannot be used for now (an interrupted
-        // sync, a phone clock set back), so its events wait undated. Their days are not removed.
+        // 3. dating not complete yet: the newest boot's time record cannot be used for now (a sync cut
+        // off before its phone anchor), so its events wait undated. Their days are not removed.
         c = twoBoots58("openring58-wait", 0);
         Analyzer.run(c, null);
         db = Db.get(c);
+        // review of #176: an empty day before the newest dated event still goes while boot 2 waits
+        String early = LocalDate.parse(refDays.firstKey()).minusDays(1).toString(); // the first day the analysis visits
+        staleCopy(db, refDays.firstKey(), early);
         moveAnchor(db, 2, T2_58, 1300000000L - T2_58); // dated in 2011: not usable, so boot 2 is undated
         StringBuilder log = new StringBuilder();
         Analyzer.run(c, collect(log));
@@ -2842,10 +2855,64 @@ public class PipelineTest {
         check("#58 events waiting for a time record: no stored day is removed or changed", all && db.undatedCount() > 0,
                 keys(waiting) + ", " + db.undatedCount() + " undated");
         check("#58 the log says why they are kept", log.indexOf("kept: events after it wait for a time record") >= 0, log);
+        check("#58 while boot 2 waits, an empty day before the newest dated event is still removed", !waiting.containsKey(early),
+                early + " in " + keys(waiting));
         moveAnchor(db, 2, T2_58, 0);
         Analyzer.run(c, null);
         check("#58 once dated again: the same days and nights as dated right at once", days58(db).equals(refDays) && nights58(db).equals(refNights),
                 diff(days58(db), refDays));
+        // a phone anchor that fits no boot stays undated for good; it must not keep stale days forever
+        db.insertPhoneAnchor(99, 5, T2_58 + 86400);
+        String after = LocalDate.parse(refLatest).plusDays(3).toString();
+        staleCopy(db, refLatest, after);
+        db.put("analyzed_until", 0);
+        Analyzer.run(c, null);
+        check("#58 an undated phone anchor that fits no boot does not keep a stale day", db.undatedCount() == 1 && days58(db).equals(refDays),
+                db.undatedCount() + " undated, differ: " + diff(days58(db), refDays));
+
+        // review of #176: an undated boot between two dated ones does not hold the fix back; its days have no
+        // data now and go, and come back once it is dated again
+        c = twoBoots58("openring58-three-ref", 0);
+        add58(Db.get(c), 3, T3_58, 1, 0);
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        java.util.TreeMap<String, String> ref3 = days58(db);
+        List<String> ref3Nights = nights58(db);
+        c = twoBoots58("openring58-three", 0);
+        add58(Db.get(c), 3, T3_58, 1, 0);
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        String newest3 = db.latestDay(), after3 = LocalDate.parse(newest3).plusDays(3).toString();
+        staleCopy(db, newest3, after3);
+        moveAnchor(db, 2, T2_58, 1300000000L - T2_58);
+        Analyzer.run(c, null);
+        java.util.TreeMap<String, String> mid3 = days58(db);
+        boolean outer = !mid3.containsKey(after3) && newest3.equals(db.latestDay());
+        for (String k : refDays.keySet()) if (k.compareTo(date58(T2_58)) < 0) outer &= ref3.get(k).equals(mid3.get(k));
+        check("#58 undated boot between two dated ones: the stale later day goes, the dated boots' days stay", outer, keys(mid3));
+        moveAnchor(db, 2, T2_58, 0);
+        Analyzer.run(c, null);
+        check("#58 the middle boot dated again: the same days and nights as dated right at once", days58(db).equals(ref3) && nights58(db).equals(ref3Nights),
+                diff(days58(db), ref3));
+
+        // review of #176: the newest boot in another zone than the phone's (Tokyo, 7 or 8 hours ahead)
+        c = twoBoots58("openring58-zone-ref", 0);
+        tokyo58(Db.get(c));
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        java.util.TreeMap<String, String> refZ = days58(db);
+        List<String> refZNights = nights58(db);
+        String refZLatest = db.latestDay();
+        c = twoBoots58("openring58-zone", 86400L);
+        tokyo58(Db.get(c));
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        String wrongZ = db.latestDay();
+        moveAnchor(db, 2, T2_58, 0);
+        Analyzer.run(c, null);
+        check("#58 in another zone: dated again, the same days and nights as dated right at once", !wrongZ.equals(refZLatest)
+                && days58(db).equals(refZ) && nights58(db).equals(refZNights) && refZLatest.equals(db.latestDay()),
+                wrongZ + " to " + db.latestDay() + ", differ: " + diff(days58(db), refZ));
 
         // 4. an older database with history and stale days left by an older version: same events,
         // nights and days after the update, except the stale ones

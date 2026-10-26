@@ -642,12 +642,14 @@ public final class Db extends SQLiteOpenHelper {
 
     /**
      * True when an undated event follows the newest dated one in the ring's order (row id): its boot has no
-     * usable time record yet (a sync cut off before its anchor, a phone clock set back), so it may belong
-     * to any time after the newest dated event (issue #58). Older undated boots (ring restarts without a
-     * time record) do not count. Walks back from the newest row only.
+     * usable time record yet (for example a sync cut off before its phone anchor), so it may belong to any
+     * time after the newest dated event (issue #58). Older undated boots (ring restarts without a time
+     * record) do not count, and neither do time records themselves (time_sync 66, rtc_beacon 133): they
+     * hold no data for a day, and a phone anchor that fits no boot stays undated for good. Walks back from
+     * the newest row only.
      */
     public boolean undatedAfterNewest() {
-        Cursor c = getReadableDatabase().rawQuery("SELECT EXISTS (SELECT 1 FROM events WHERE unix IS NULL AND id >"
+        Cursor c = getReadableDatabase().rawQuery("SELECT EXISTS (SELECT 1 FROM events WHERE unix IS NULL AND tag NOT IN (66, 133) AND id >"
                 + " (SELECT id FROM events WHERE unix IS NOT NULL ORDER BY id DESC LIMIT 1))", null);
         try {
             return c.moveToFirst() && c.getInt(0) == 1;

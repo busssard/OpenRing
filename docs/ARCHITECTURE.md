@@ -113,8 +113,8 @@ file in the cache. Histories are never merged.
    sleep of such a day is chosen also against its stored sleeps that stay (their flag is updated). A day the analysis
    visits that has no data left (no activity, heart rate or sleep, for example after its events were dated
    again) loses its stored summary in the same step, and stored days after the newest dated event are visited
-   for that too (issue #58). Not while an undated event follows the newest dated one in row order (its boot has no
-   usable time record yet): then only days that end by the newest dated event can go, and the log says the others
+   for that too (issue #58). Not while an undated event (other than a time record) follows the newest dated one in row
+   order (its boot has no usable time record yet): then only days that end by the newest dated event can go, and the log says the others
    were kept.
 7. The day's heart rate (Body tab, `core/analysis/DayHeart`, issue #72) is one line of quarter hour averages of
    every reading from midnight to midnight in the day's zone (one point per quarter hour, 92 to 100 on a clock
