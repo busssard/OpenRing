@@ -734,8 +734,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             int n = stepper.add(at, e.values[0], e.values[1], e.values[2]);
             if (n > 0) {
                 // each step at its own time on the walk's clock: the first of a run is reported with the second (issue #108)
-                long now = SystemClock.elapsedRealtime();
-                for (long t : stepper.lastTimes()) walk.step(now - (at - t));
+                for (long t : stepper.lastTimes()) walk.step(walkTime(t));
                 spotDirty = true;
             }
             return;
@@ -744,8 +743,21 @@ public final class FinderActivity extends Activity implements SensorEventListene
         double[] o = SearchWalk.headingOf(rot);
         facing = o[0];
         upright = o[1] <= SearchWalk.MAX_TILT_DEG;
-        if (recording && walk != null) walk.heading(SystemClock.elapsedRealtime(), facing, upright);
+        if (recording && walk != null) walk.heading(walkTime(e.timestamp / 1000000L), facing, upright);
         dial.invalidate();
+    }
+
+    /** Sensor time (ms) minus the walk's clock (elapsed realtime), the largest seen since Start (the event Android delivered fastest), so delivery delays are left out. */
+    private long sensorOffset = Long.MAX_VALUE;
+
+    /**
+     * A sensor time stamp on the walk's clock, the same for headings and steps (review of #182): both
+     * sensors' events are placed by when they were measured, not by when Android delivered them.
+     */
+    long walkTime(long sensorMs) {
+        long off = sensorMs - SystemClock.elapsedRealtime();
+        if (sensorOffset == Long.MAX_VALUE || off > sensorOffset) sensorOffset = off;
+        return sensorMs - sensorOffset;
     }
 
     @Override
@@ -766,6 +778,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             }
             walk = new SearchWalk().stepLength(stepLength());
             stepper = new StepDetector();
+            sensorOffset = Long.MAX_VALUE;
             spot = null;
             spotDirty = false;
             recording = true;
@@ -848,6 +861,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             b.append("No clear direction (").append(Math.round(d.spread)).append(" dB between strongest and weakest side, under ")
                     .append(Math.round(SearchWalk.CLEAR_DB)).append("). The ring may be very close, above or below you, or the signal bounced off walls.");
         }
+        appendWaiting(b);
         if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted.");
         if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the turn needs the ring to be heard.");
         turnText.setText(b.toString());
@@ -886,16 +900,25 @@ public final class FinderActivity extends Activity implements SensorEventListene
             if (spot.explained < spot.needed) {
                 // issue #136: on a short walk plain noise fits some spot, so more is needed there
                 b.append("its ups and downs could be plain noise: the model explains ").append(Math.round(spot.explained * 100))
-                        .append(" % of them, a walk with this few readings needs ").append(Math.round(spot.needed * 100)).append(" %");
+                        .append(" % of them, a walk this short needs ").append(Math.round(spot.needed * 100)).append(" %");
             } else {
                 b.append("the circle would be wider than ").append(Math.round(SearchWalk.CLEAR_RADIUS_M)).append(" m");
             }
             b.append("). Walk more of the room; if that does not help, the ring may be in another room, "
                     + "upstairs or downstairs, or under something thick.");
         }
+        appendWaiting(b);
         if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted, steps keep your last direction.");
         if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the walk needs the ring to be heard.");
         turnText.setText(b.toString());
+    }
+
+    /** Steps counted while turning wait until the turn ends; say so, so the step count and the map agree (issue #108). */
+    void appendWaiting(StringBuilder b) {
+        int n = walk.waiting();
+        if (n == 0) return;
+        b.append("\n").append(Texts.count(n, "step", "steps")).append(" counted while you turned ").append(n == 1 ? "waits" : "wait")
+                .append(": they move once you walk on, or stay if it was a turn on the spot.");
     }
 
     void showStepLength() {

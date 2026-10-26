@@ -172,6 +172,27 @@ public final class SearchWalk {
     public static final double SPIN_DEG = 150;
     /** ... and at least this many of them rotated (one step alone is a corner, however sharp). */
     public static final int SPIN_STEPS = 2;
+    /**
+     * ... and turned on average at least this much per rotating step (degrees) at {@link #SPIN_DEG},
+     * falling to {@link #SPIN_MEAN_FULL_DEG} at {@link #FULL_TURN_DEG} and beyond. From the heading
+     * alone a curve and a turn on the spot look the same; the farther a rotation goes, the less it
+     * needs per step: a wide half circle walked at 15 degrees a step still moves, a shuffling full
+     * turn (18 degrees a step for 20 steps a circle) or a U turn in 2 to 4 steps does not.
+     */
+    public static final double SPIN_MEAN_DEG = 20, SPIN_MEAN_FULL_DEG = 10, FULL_TURN_DEG = 300;
+
+    /** The mean turn per rotating step a rotation of {@code total} degrees needs to count as a turn on the spot. */
+    public static double spinNeeds(double total) {
+        double f = Math.max(0, Math.min(1, (total - SPIN_DEG) / (FULL_TURN_DEG - SPIN_DEG)));
+        return SPIN_MEAN_DEG + f * (SPIN_MEAN_FULL_DEG - SPIN_MEAN_DEG);
+    }
+
+    /**
+     * A step that does not turn on is allowed inside a rotation only while it has turned less than
+     * this (degrees). Later a straight step ends it: two corners the same way with one step between
+     * (the end of a bed) are two corners, not a turn on the spot.
+     */
+    public static final double PAUSE_MAX_DEG = 60;
 
     /**
      * One step at its own time (ms, the clock of {@link #heading}), with the upright heading of that
@@ -191,9 +212,10 @@ public final class SearchWalk {
      * the second of a pair cannot confirm the first. Shuffling while turning on the spot is not
      * walking: a step that turned at least {@link #ROTATE_DEG} from the step before (the first one
      * from the way the person faced at Start) waits. Further steps rotating the same way wait with
-     * it, one step that keeps the rotation no further is allowed in between. When the rotation
-     * ends, the waiting steps move along their own headings (a corner or a curve), unless they
-     * rotated {@link #SPIN_DEG} or more in all: then they were a turn on the spot and do not move.
+     * it, one step that keeps the rotation no further is allowed in between while it is under
+     * {@link #PAUSE_MAX_DEG}. When the rotation ends, the waiting steps move along their own headings
+     * (a corner or a curve), unless they rotated {@link #SPIN_DEG} or more in all, fast enough per
+     * step ({@link #spinNeeds}): then they were a turn on the spot and do not move.
      * A single waiting step (a corner taken in one step) moves with the next step that does not turn
      * on. The readings taken while steps waited get the places of those steps once they move.
      */
@@ -224,7 +246,7 @@ public final class SearchWalk {
             heldPause = false;
             return;
         }
-        if (!heldPause && rotatingHeld() >= 2) {
+        if (!heldPause && rotatingHeld() >= 2 && heldMost < PAUSE_MAX_DEG) {
             // one step that does not turn on is allowed (an uneven shuffle, the heading's own noise)
             held.add(new double[] {atMs, h, n, 0});
             heldTurn = sum;
@@ -252,7 +274,9 @@ public final class SearchWalk {
 
     /** The rotation ended: the waiting steps move (a corner or curve) or stay (a turn on the spot; a step after it still moves). */
     private void release() {
-        boolean spin = heldMost >= SPIN_DEG && rotatingHeld() >= SPIN_STEPS;
+        int rotated = 0;
+        for (double[] e : held) if (e[3] == 1) rotated += (int) e[2];
+        boolean spin = heldMost >= SPIN_DEG && rotatingHeld() >= SPIN_STEPS && heldMost / rotated >= spinNeeds(heldMost);
         int last = held.size() - 1;
         for (int i = 0; i <= last; i++) {
             double[] e = held.get(i);

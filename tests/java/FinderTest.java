@@ -779,6 +779,33 @@ public class FinderTest {
         return w;
     }
 
+    /**
+     * A walk of steps 700 ms apart with these true headings, the heading turning smoothly to the next
+     * one before each step (3 degrees of noise), ended with Stop. Returns {steps, moved, waiting before Stop, error of the end m}.
+     */
+    static double[] shape(long seed, double[] hs) {
+        SearchWalk w = new SearchWalk().stepLength(0.72);
+        Random r = new Random(seed);
+        long t = 0;
+        double prev = hs[0], tx = 0, ty = 0;
+        w.heading(-100, hs[0], true);
+        for (double h : hs) {
+            for (long u = t; u < t + 700; u += 20) {
+                double f = Math.min(1, (u - t) / 600.0);
+                w.heading(u, prev + SearchWalk.signed(h - prev) * f + r.nextGaussian() * 3, true);
+                if (u % 120 == 0) w.rssi(u, -70);
+            }
+            t += 700;
+            w.step(t);
+            tx += 0.72 * Math.sin(Math.toRadians(h - w.start()));
+            ty += 0.72 * Math.cos(Math.toRadians(h - w.start()));
+            prev = h;
+        }
+        int waiting = w.waiting();
+        w.finish();
+        return new double[] {w.steps(), w.path().size() - 1, waiting, Math.hypot(w.x() - tx, w.y() - ty)};
+    }
+
     static long[][] every(long first, long gap, int calls, int n) {
         long[][] out = new long[calls][];
         for (int i = 0; i < calls; i++) out[i] = new long[] {first + i * gap, n};
@@ -890,6 +917,58 @@ public class FinderTest {
         }
         check("a gentle curve is walked along its own headings", curve.path().size() == curveHeadings.length + 1 && Math.hypot(curve.x() - cx, curve.y() - cy) < 1e-6,
                 curve.x() + "," + curve.y() + " vs " + cx + "," + cy);
+        // review of #182: shapes of real walks, the heading turning smoothly before each step (a step every 700 ms)
+        double[] bed = shape(31, new double[] {0, 0, 0, 45, 90, 90, 135, 180, 180, 180, 180});
+        check("two corners the same way with one step between (the end of a bed): two corners, every step moves", bed[1] == 11 && bed[3] < 0.3, Arrays.toString(bed));
+        double[] wide = new double[17];
+        for (int i = 0; i < 17; i++) wide[i] = i < 2 ? 0 : i < 14 ? 15 * (i - 1) : 180;
+        double[] curve180 = shape(32, wide);
+        check("a wide half circle (15 degrees a step over 12 steps) is walked, not a turn on the spot", curve180[1] == 17 && curve180[3] < 0.3, Arrays.toString(curve180));
+        double[] u4 = shape(33, new double[] {0, 0, 0, 45, 90, 135, 180, 180, 180, 180});
+        double[] u2 = shape(34, new double[] {0, 0, 0, 90, 180, 180, 180, 180});
+        // decided: a U turn in 2 to 4 steps is a pivot, close to a turn on the spot; its steps stay (an error under a metre)
+        check("a U turn in 4 steps: its 4 turning steps stay, the walk before and after moves", u4[1] == 6 && u4[0] == 10, Arrays.toString(u4));
+        check("a U turn in 2 steps: its 2 turning steps stay", u2[1] == 5 && u2[0] == 8, Arrays.toString(u2));
+        check("spin needs: 20 degrees a step at 150, 10 from a full turn on", SearchWalk.spinNeeds(150) == 20 && SearchWalk.spinNeeds(300) == 10 && SearchWalk.spinNeeds(400) == 10
+                && Math.abs(SearchWalk.spinNeeds(225) - 15) < 1e-9 && SearchWalk.spinNeeds(100) == 20);
+        // Stop in the middle of a corner: the waiting steps move with finish()
+        SearchWalk stopped = new SearchWalk().stepLength(0.72);
+        stopped.heading(-100, 0, true);
+        for (int i = 0; i < 5; i++) {
+            stopped.heading(i * 1000L, 0, true);
+            stopped.step(i * 1000L + 900);
+        }
+        stopped.heading(5000, 30, true);
+        stopped.step(5900);
+        stopped.heading(6000, 60, true);
+        stopped.step(6900);
+        check("stopping in a corner: 2 steps wait", stopped.waiting() == 2 && stopped.path().size() == 6, stopped.waiting());
+        stopped.finish();
+        check("and move at Stop, along their own headings", stopped.waiting() == 0 && stopped.path().size() == 8
+                && Math.abs(stopped.x() - 0.72 * (Math.sin(Math.toRadians(30)) + Math.sin(Math.toRadians(60)))) < 1e-6, stopped.x() + "," + stopped.y());
+        // readings during a turn on the spot keep the place where it happened
+        SearchWalk then = new SearchWalk().stepLength(0.72);
+        then.heading(-100, 0, true);
+        long tt = 0;
+        for (int i = 0; i < 3; i++) {
+            then.heading(tt, 0, true);
+            then.rssi(tt + 10, -70);
+            tt += 1000;
+            then.step(tt);
+        }
+        int before = then.samples().size();
+        for (int i = 1; i <= 20; i++) {
+            for (long u = tt; u < tt + 1000; u += 20) {
+                then.heading(u, 18 * (i - 1) + 18.0 * (u - tt) / 1000, true);
+                if (u % 120 == 0) then.rssi(u, -70);
+            }
+            tt += 1000;
+            then.step(tt);
+        }
+        then.finish();
+        boolean kept = then.samples().size() > before + 100;
+        for (int k = before; k < then.samples().size(); k++) kept &= Math.abs(then.samples().get(k).y - 3 * 0.72) < 1e-9 && Math.abs(then.samples().get(k).x) < 1e-9;
+        check("readings during a turn on the spot keep their place (where the turn happened)", kept && Math.abs(then.y() - 3 * 0.72) < 1e-9 && then.steps() == 23, then.x() + "," + then.y());
         SearchWalk away = new SearchWalk().stepLength(0.72);
         away.heading(-500, 0, true);
         t = 0;

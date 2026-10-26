@@ -224,10 +224,15 @@ can run meanwhile. Everything below stops in `onPause`.
   (`SearchWalk.step`) and a step's heading comes from the last 5 s of headings; a pair passed as `steps(t, 2)` is
   judged as one, so the second cannot confirm the first (issue #108). Turning on the spot (issue #108): how far a
   step turned is judged on the mean heading of the 200 ms before it; a step that turned 5° or more from the step before
-  (the first from the Start heading) waits, further steps rotating the same way wait with it (once two rotated, one that does not turn
-  on is allowed in between). When the rotation ends (or at Stop, `finish`) the waiting steps move along their own
-  headings (a corner or curve), unless at least two of them rotated 150° or more in all: then they were a turn on the
-  spot and stay where they are. Readings taken while steps waited move to those steps' places. Every
+  (the first from the Start heading) waits, further steps rotating the same way wait with it (while the rotation is
+  under 60°, one step that does not turn on is allowed in between, so two corners with a step between stay two
+  corners). When the rotation ends (or at Stop, `finish`) the waiting steps move along their own headings (a corner
+  or curve), unless at least two of them rotated 150° or more in all and fast enough per step (`spinNeeds`: 20° a
+  step at 150°, falling to 10° at 300° and beyond): then they were a turn on the spot and stay where they are. The
+  app stamps headings and steps from the sensors' own time, on one clock. Limits: from the heading alone a curve and
+  a turn on the spot look the same. A U turn in 2 to 4 steps counts as a pivot and its steps stay (under a metre
+  off); a full loop around a table at 10° a step or more, or a slow turn on the spot at under 10° a step, is
+  judged wrongly. While steps wait the card says how many. Readings taken while steps waited move to those steps' places. Every
   reading keeps its place. Once the walk spans 2 m in two
   directions (at least 1 m wide, 6 s of readings), `SearchWalk.locate` fits signal = level −
   10 n log10(distance) − body shadow over a 0.2 m grid (walk plus 2 m), n 2 to 3.5, and gives a
