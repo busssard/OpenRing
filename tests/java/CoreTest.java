@@ -2251,7 +2251,8 @@ public class CoreTest {
         eq("sync end: a sync that never got the ring shows the line left behind", RingTasks.syncEndStatus(0, null, "Up to date"), "Up to date");
         eq("sync end: nothing to show", RingTasks.syncEndStatus(0, null, null), null);
         check("texts: busy and delete messages fit the rules", !Texts.SYNC_BUSY.contains(" - ") && !Texts.DELETE_BUSY.contains(" - ")
-                && Texts.DELETE_BUSY.startsWith("Nothing was deleted") && Texts.DELETE_FAILED.startsWith("Nothing was deleted"));
+                && Texts.DELETE_BUSY.startsWith("Nothing was deleted") && Texts.DELETE_FAILED.startsWith("Nothing was deleted")
+                && !Texts.LIVE_BUSY.contains(" - ") && !Texts.LIVE_BUSY.contains("syncing") && !Texts.SYNC_BUSY.contains("ring task"));
     }
 
     /** Issue #152: always on heart rate never becomes a beat interval, so it never feeds live HRV. */

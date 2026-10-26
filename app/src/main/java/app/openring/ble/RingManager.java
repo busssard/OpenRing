@@ -720,11 +720,6 @@ public final class RingManager {
 
     // ---------------------------------------------------------------------- live HR
 
-    /** A live session is queued or running (it may be one that was stopped and is still cleaning up). */
-    public boolean liveRunning() {
-        return liveSession.get() != 0;
-    }
-
     private volatile LiveListener liveListener;
 
     /**
@@ -772,7 +767,7 @@ public final class RingManager {
                     locked = false;
                 }
                 if (!locked) {
-                    post(token, "The ring is busy syncing, try again in a moment");
+                    post(token, Texts.LIVE_BUSY);
                     liveSession.compareAndSet(token, 0);
                     return;
                 }
