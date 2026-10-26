@@ -755,6 +755,19 @@ public class CoreTest {
         r.detach("old screen");
         r.attach("new screen");
         eq("one run: the rebuilt screen is told", r.finish(), "new screen");
+        // Settings ring actions (issue #59): only the screen shown now, no running state of their own
+        OneRun<String> shown = new OneRun<String>();
+        check("shown screen: none at first", shown.attached() == null);
+        shown.attach("settings");
+        eq("shown screen: the one resumed", shown.attached(), "settings");
+        shown.attach("turned settings");
+        shown.detach("settings"); // the old screen closing late changes nothing
+        eq("shown screen: the turned one after a turn", shown.attached(), "turned settings");
+        check("shown screen: asking starts nothing", !shown.running() && shown.start());
+        eq("shown screen: asking ends nothing", shown.attached(), "turned settings");
+        check("shown screen: the job still runs", shown.running());
+        shown.detach("turned settings");
+        check("shown screen: none after Back", shown.attached() == null);
     }
 
     /** Issue #127: the space kept for Further analysis belongs to one screen layout. */

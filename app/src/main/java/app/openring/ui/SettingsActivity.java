@@ -49,8 +49,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
     private LinearLayout root;
     private TextView status;
     private final int[] featureModes = {-1, -1, -1};
-    /** A measurement switch or read is running; its result reaches only this page (code review of #149). */
+    /** A measurement switch or read started on this page is running (code review of #149). */
     private boolean ringPending;
+    /**
+     * The Settings screen shown now (issue #59): a ring action's result goes there, also when the
+     * phone was turned meanwhile and Android built a new screen. Attached in onResume, detached
+     * only when the screen closes, so a turn hands over directly to the new one.
+     */
+    static final app.openring.core.OneRun<SettingsActivity> SHOWN = new app.openring.core.OneRun<SettingsActivity>();
     /** Detail level picked in the Sleep stage detail card, saved only with its button. */
     private int detailChoice = -1;
     private LinearLayout stagesCard;
@@ -121,9 +127,17 @@ public final class SettingsActivity extends Activity implements RingManager.List
     @Override
     protected void onResume() {
         super.onResume();
+        Prefs p = Prefs.of(this);
+        // the ring was factory reset while the app was in the background, or a turned screen stayed
+        // behind: Settings needs a ring with a key, the main screen opens Setup (issue #59)
+        if (!p.demo() && (!p.setupDone() || !p.hasKey())) {
+            toSetup(getApplicationContext());
+            finish();
+            return;
+        }
+        SHOWN.attach(this);
         RingManager.get(this).addListener(this);
         // back from Android's usage access page: show the new state, and read the screen log the first time
-        Prefs p = Prefs.of(this);
         boolean allowedNow = ScreenUse.allowed(this);
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
@@ -137,6 +151,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     protected void onPause() {
         super.onPause();
         RingManager.get(this).removeListener(this);
+        if (isFinishing()) SHOWN.detach(this); // a turn keeps it until the new screen attaches
     }
 
     @Override
@@ -349,13 +364,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         @Override
                         public void done(boolean ok, String message) {
                             ringPending = false;
-                            if (!ok) {
-                                problem(message);
-                                return;
-                            }
-                            say(message);
-                            featureModes[k] = mode;
-                            build();
+                            int[] modes = featureModes.clone(); // what this page knew, for a page built by a turn
+                            modes[k] = mode;
+                            ringDone(ok, message, ok ? modes : null, true);
                         }
                     });
                 }
@@ -598,15 +609,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
             public void done(boolean ok, String message) {
                 ringPending = false;
                 if (!ok) {
-                    problem(message);
+                    ringDone(false, message, null, false);
                     return;
                 }
+                int[] modes = featureModes.clone();
                 for (String part : message.split(",")) {
                     String[] kv = part.split(":");
                     int f = Integer.parseInt(kv[0]), m = Integer.parseInt(kv[1]);
-                    for (int i = 0; i < 3; i++) if (RingManager.FEATURES[i] == f) featureModes[i] = m;
+                    for (int i = 0; i < 3; i++) if (RingManager.FEATURES[i] == f) modes[i] = m;
                 }
-                build();
+                ringDone(true, null, modes, false);
             }
         });
     }
@@ -1024,17 +1036,60 @@ public final class SettingsActivity extends Activity implements RingManager.List
                             @Override
                             public void done(boolean ok, String message) {
                                 if (!ok) {
-                                    problem(message);
+                                    ringDone(false, message, null, false);
                                     return;
                                 }
-                                // Settings closes now, so a dialog would vanish: a short toast, Setup is where it is paired again
+                                // Settings closes now, so a dialog would vanish: a short toast, Setup is where it is paired again.
+                                // Not this page's own startActivity and finish: after a turn of the phone it is gone and the
+                                // new Settings screen would stay under Setup (issue #59)
                                 toast(message);
-                                startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
-                                finish();
+                                SettingsActivity s = shownNow();
+                                if (s != null) {
+                                    SHOWN.detach(s); // not kept as a closed screen
+                                    s.finish();
+                                }
+                                toSetup(getApplicationContext());
                             }
                         });
                     }
                 }).setNegativeButton("Cancel", null).show();
+    }
+
+    /** The Settings screen shown now, null when none is (closed, or closing). */
+    static SettingsActivity shownNow() {
+        SettingsActivity s = SHOWN.attached();
+        return s != null && !s.isFinishing() && !s.isDestroyed() ? s : null;
+    }
+
+    /**
+     * A measurement switch or read ended (issue #59): the Settings screen shown now takes the states
+     * ({@code modes}, from the page that started it) and the message, also when the phone was turned
+     * meanwhile. With Settings closed only a toast is left. {@code sayIt}: show a success message too.
+     */
+    void ringDone(boolean ok, String message, int[] modes, boolean sayIt) {
+        SettingsActivity s = shownNow();
+        if (s == null) {
+            if (message != null && (!ok || sayIt)) toast(message);
+            return;
+        }
+        if (!ok) {
+            s.problem(message);
+            return;
+        }
+        if (sayIt) s.say(message);
+        System.arraycopy(modes, 0, s.featureModes, 0, s.featureModes.length);
+        s.build();
+    }
+
+    /**
+     * Back to the main screen with every screen above it closed (Settings, also one built by turning
+     * the phone); without a key its onResume opens Setup. From the application context, so it does
+     * not depend on a screen that may be gone. Android ignores it while the app is in the background;
+     * then onResume here or on the main screen does it on return.
+     */
+    static void toSetup(Context app) {
+        app.startActivity(new Intent(app, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
     }
 
     void create(String name, String mime, int code) {
