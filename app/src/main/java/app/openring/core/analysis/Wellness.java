@@ -8,7 +8,7 @@ import java.util.TreeMap;
 
 /**
  * Daily activity, sleep debt, symptom radar and metabolic estimates. Ports of ecore functions via
- * open_oura ({@code sleep_debt_calculate}, Schofield BMR, Jackson VO2max, steps to meters) and
+ * open_oura ({@code sleep_debt_calculate}, Schofield BMR, steps to meters) and
  * open_health ({@code symptoms.rs}, the MET to steps and calories path).
  */
 public final class Wellness {
@@ -30,15 +30,18 @@ public final class Wellness {
         return r[1] * kg + r[2];
     }
 
-    /** Non exercise VO2max (Jackson), ecore's anthropometric estimate. */
-    public static double vo2maxJackson(double age, boolean female, double weightKg) {
-        return Math.max(0, 79.9 - 0.39 * age - 13.7 * (female ? 1 : 0) - 0.127 * weightKg * 2.20462);
-    }
-
     /** Heart rate ratio VO2max estimate (Uth 2004): 15.3 x HRmax / HRrest, HRmax = 208 - 0.7 age. */
     public static double vo2maxUth(double age, double restingHr) {
         if (Double.isNaN(restingHr) || restingHr < 30) return Double.NaN;
         return 15.3 * (208 - 0.7 * age) / restingHr;
+    }
+
+    /** The VO2 max range a person can have, ml/kg/min (issue #116); outside it a heart rate reading was off. */
+    public static final double VO2MAX_LOW = 10, VO2MAX_HIGH = 90;
+
+    /** {@code v} when it is a VO2 max a person can have, NaN otherwise. Only for display, stored values stay as they are. */
+    public static double vo2maxShown(double v) {
+        return v >= VO2MAX_LOW && v <= VO2MAX_HIGH ? v : Double.NaN;
     }
 
     public static double stepsToMeters(double steps) {

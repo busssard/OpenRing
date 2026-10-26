@@ -55,8 +55,7 @@ public final class DataCheck {
         t.append("Open Ring data check\n");
         t.append("Android ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append("), ")
                 .append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');
-        t.append("Ring ").append(mask(p.serial())).append(", hw ").append(p.hardware()).append(", fw ").append(p.firmware())
-                .append(", battery ").append(p.battery()).append("%\n");
+        t.append("Ring ").append(mask(p.serial())).append(", hw ").append(p.hardware()).append(", fw ").append(p.firmware()).append('\n');
         t.append("Last sync ").append(p.lastSync() == 0 ? "never"
                 : DateUtils.getRelativeTimeSpanString(p.lastSync() * 1000, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS))
                 .append(", last error: ").append(p.lastSyncError() == null ? "none" : p.lastSyncError()).append('\n');
@@ -138,25 +137,73 @@ public final class DataCheck {
         }
         t.append("\nTime records: ").append(anchors).append(", boot segments: ").append(segs).append(", sync epoch ")
                 .append(db.kvLong("epoch", 1)).append(", cursor ").append(db.kvLong("cursor", 0)).append('\n');
-        // the nights themselves: which day each belongs to is what the screens go by
-        List<String> ns = db.nightsJson(java.time.LocalDate.now().minusDays(14).toString(), "9999-12-31", false);
-        if (!ns.isEmpty()) {
-            t.append("\nSleep periods (day, from, to, asleep, score, stages)\n");
-            java.text.SimpleDateFormat hm = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.US);
-            for (String js : ns) {
-                org.json.JSONObject o = Json.parse(js);
-                if (o == null) continue;
-                org.json.JSONObject sc = o.optJSONObject("score");
-                t.append(String.format(Locale.US, "  %s %s  %s  %s  %4.0f min  %s  %s%n", o.optString("day"),
-                        o.optBoolean("main") ? "main" : "nap ",
-                        hm.format(new java.util.Date((long) (o.optDouble("start", 0) * 1000))),
-                        hm.format(new java.util.Date((long) (o.optDouble("end", 0) * 1000))),
-                        o.optDouble("asleep_min", 0),
-                        sc == null || !sc.has("value") ? "--" : String.valueOf(sc.optInt("value")),
-                        o.optString("source", "?")));
-            }
-        }
+        // the nights themselves, counts and dates only (issue #40): which day each sleep period was given
+        // to is what the screens go by; times, minutes and scores are health values and stay out
+        t.append(nightSummary(db.nightsJson(java.time.LocalDate.now().minusDays(14).toString(), "9999-12-31", false),
+                java.time.LocalDate.now(), 14));
         r.text = t.toString();
         return r;
+    }
+
+    /**
+     * The sleep periods of the last {@code days} days up to {@code today} as counts and dates only
+     * (issue #40): how many, which day each counts for, how their stages were found and whether phone
+     * use and a score reached them. No clock times, minutes, scores or stages, so the copy stays safe
+     * to post in a public bug report.
+     */
+    static String nightSummary(List<String> nights, java.time.LocalDate today, int days) {
+        java.util.TreeMap<String, int[]> perDay = new java.util.TreeMap<String, int[]>(); // main, naps
+        java.util.TreeMap<String, Integer> sources = new java.util.TreeMap<String, Integer>();
+        int all = 0, main = 0, phone = 0, scored = 0;
+        String newest = null;
+        for (String js : nights) {
+            org.json.JSONObject o = Json.parse(js);
+            if (o == null) continue;
+            String day = o.optString("day", "?");
+            int[] n = perDay.get(day);
+            if (n == null) perDay.put(day, n = new int[2]);
+            boolean m = o.optBoolean("main");
+            n[m ? 0 : 1]++;
+            all++;
+            if (m) main++;
+            if (newest == null || day.compareTo(newest) > 0) newest = day;
+            String src = o.optString("source", "unknown");
+            Integer k = sources.get(src);
+            sources.put(src, k == null ? 1 : k + 1);
+            if (o.has("phone_min")) phone++;
+            org.json.JSONObject sc = o.optJSONObject("score");
+            if (sc != null && sc.has("value")) scored++;
+        }
+        StringBuilder t = new StringBuilder();
+        t.append("\nSleep periods of the last ").append(days).append(" days (counts and dates only)\n");
+        if (all == 0) return t.append("  none\n").toString();
+        t.append("  ").append(Texts.count(all, "sleep period", "sleep periods")).append(" (")
+                .append(Texts.count(main, "main night", "main nights")).append(", ")
+                .append(Texts.count(all - main, "nap", "naps")).append("), newest on ").append(newest).append('\n');
+        t.append("  Stages from: ");
+        boolean first = true;
+        for (java.util.Map.Entry<String, Integer> e : sources.entrySet()) {
+            if (!first) t.append(", ");
+            first = false;
+            t.append(e.getKey()).append(' ').append(e.getValue());
+        }
+        t.append('\n');
+        t.append("  With phone use data: ").append(phone).append(" of ").append(all)
+                .append(", with a sleep score: ").append(scored).append(" of ").append(all).append('\n');
+        t.append("  Per day (the day a sleep period counts for):\n");
+        java.time.LocalDate from = today.minusDays(days);
+        for (java.time.LocalDate d = from; !d.isAfter(today); d = d.plusDays(1)) {
+            if (!perDay.containsKey(d.toString())) perDay.put(d.toString(), new int[2]);
+        }
+        for (java.util.Map.Entry<String, int[]> e : perDay.entrySet()) {
+            int[] n = e.getValue();
+            t.append("    ").append(e.getKey()).append("  ");
+            if (n[0] == 0 && n[1] == 0) t.append("none");
+            else if (n[1] == 0) t.append(Texts.count(n[0], "main night", "main nights"));
+            else if (n[0] == 0) t.append(Texts.count(n[1], "nap", "naps"));
+            else t.append(Texts.count(n[0], "main night", "main nights")).append(", ").append(Texts.count(n[1], "nap", "naps"));
+            t.append('\n');
+        }
+        return t.toString();
     }
 }
