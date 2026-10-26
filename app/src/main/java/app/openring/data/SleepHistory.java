@@ -65,7 +65,8 @@ public final class SleepHistory {
             rem[i] = Json.d(o, "rem_min");
             light[i] = Json.d(o, "light_min");
             awake[i] = Json.d(o, "awake_min");
-            eff[i] = Json.d(o, "efficiency");
+            // from the stored minutes, so nights analysed before issue #107 average the same way (StageShare.efficiency)
+            eff[i] = app.openring.core.analysis.StageShare.efficiency(asleep[i], inBed[i], Json.d(o, "efficiency"));
             JSONObject sc = o.optJSONObject("score");
             score[i] = sc != null && sc.has("value") && sc.optInt("value", -1) >= 0 ? sc.optInt("value") : Double.NaN;
             low[i] = Json.d(o, "lowest_hr");
