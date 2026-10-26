@@ -18,8 +18,8 @@ Nothing leaves the phone: the app has no internet permission.
 
 | Package | Responsibility |
 | --- | --- |
-| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
-| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveHrv`, `Stats`, `TS` (time series) |
+| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line; issues #43 and #153), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
+| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
 | `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours) |
@@ -49,7 +49,10 @@ Nothing leaves the phone: the app has no internet permission.
 ### Ring 4 firmware 2.6.7 (ORE_07) facts
 
 * No live stream on `98ed0003`. Live heart rate, HRV and SpO2 are read by draining the ring's stored
-  history every 4 seconds while the measurements are re armed every 30 seconds.
+  history every 4 seconds while the measurements are re armed every 30 seconds. Live HRV comes only from
+  real beat to beat intervals (clean green IBI beats, or a live indication's interval); always on heart rate
+  values are averages over a couple of seconds, so they give the heart rate number and chart only, and with
+  them alone the HRV tile says why it has no value (`LiveFeed`, `LiveHrv.note`, issue #152).
 * SpO2 "live" mode is refused, "requested" works. "Feature latest" returns zeros.
 * The ring falls back from live to automatic after about 48 seconds.
 * Accelerometer streaming (games) is unconfirmed; if no motion frame arrives within the first 15 seconds,
@@ -134,9 +137,25 @@ Anything that holds the ring (live, games) must release it when its screen pause
 (read or switch measurements, factory reset) fail at once with "The ring is busy". A sync releases the
 lock as soon as its download ends, before it reads the screen log and analyses (issue #21); `busy()`
 stays true until that analysis is done, so screens reload only then, and the status keeps saying
-"Analysing" (other ring tasks then only write to the log). Code that replaces or wipes the database
-(restore, pairing a different ring) first waits for a running analysis (`synchronized
-(Analyzer.class)`), except "Delete all local data" in Settings, which runs on the screen thread. Analysis and database reads in the UI run in AsyncTasks.
+"Analysing" (other ring tasks then only write to the log). A sync counts for `busy()` from its start,
+also while it waits for the lock, and Settings "Sync now" refuses while `busy()` like the main screen; when
+two syncs overlap anyway, only the last one to end sets the final line ("Up to date" or its error), so the
+first one's line cannot cover a download still under way (`RingTasks.syncEndStatus`, issue #43).
+
+Stopping a sync reaches only that sync: the background job holds a `SyncTicket`, and `cancelSync` stops it
+only while its download holds the ring (`RingTasks.Owner`, one monitor for the check and the stop). Once
+the download is over, Android stopping the job leaves Live, a game or the person's own sync alone (#43).
+
+Live (issue #153): `liveSession` is the token of the newest live session queued or running. `startLive`
+rejoins only when that session is still the current one (`RingTasks.rejoinLive`); a session that was
+stopped (turned phone, Done and back) and is still cleaning up gets a new session queued behind it on the
+worker, which waits for the lock as usual. Messages of an ended session only go to the log.
+
+Code that replaces or wipes the database first waits for a running analysis (`synchronized
+(Analyzer.class)`): restore, pairing a different ring, and "Delete all local data" (`Analyzer.deleteAll`,
+one transaction). Delete also runs inside `RingManager.whileRingFree`, which holds the ring lock and
+refuses while a sync is under way, so no download or analysis writes nights or events back after it
+(issue #43). Analysis and database reads in the UI run in AsyncTasks.
 A task that must outlive a turned phone (screens are rebuilt, no `configChanges`) holds only the
 application context and reports through a holder to the screen attached now: `DemoRun` in
 `MainActivity` (#29) and the repair in Data check (`LogActivity.REPAIR`, a `core/OneRun`, #130).

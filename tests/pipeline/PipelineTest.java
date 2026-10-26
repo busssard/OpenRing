@@ -634,6 +634,7 @@ public class PipelineTest {
         nightTwice();
         nightAcrossChecks();
         demoTwice();
+        deleteDuringAnalysis();
         oldNights();
         lastWornOldSync();
         lastWornStrayEvents();
@@ -1686,6 +1687,136 @@ public class PipelineTest {
         app.openring.data.Demo.enter(phone, empty, day.plusDays(1), nextNow + 120);
         check("an emptied demo is built again", empty.n.get() == 2 && Db.get(phone).count("SELECT COUNT(*) FROM events") > 0, empty.n.get() + " steps");
         app.openring.data.Demo.leave(phone);
+    }
+
+    /**
+     * Issue #43 B: Delete all local data while an analysis runs. The analysis already holds a week of
+     * nights when Delete starts; Delete must wait for it, so afterwards every table is empty (no ghost
+     * nights, no kv values written back).
+     */
+    static void deleteDuringAnalysis() throws Exception {
+        final Context c = freshDb("openring-delete");
+        final Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2026-03-01").atStartOfDay(z).toEpochSecond();
+        long end = t0 + 21 * 86400L + 12 * 3600;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, 20, end, z, new Random(43));
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, end);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        Analyzer.run(c, null);
+        db.addBattery(end, 80);
+        long nightsBefore = db.count("SELECT COUNT(*) FROM nights");
+        check("delete test: the history has nights before Delete", nightsBefore >= 15, nightsBefore + " nights");
+
+        final java.util.concurrent.CountDownLatch paused = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch deleteStarted = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch deleteDone = new java.util.concurrent.CountDownLatch(1);
+        final boolean[] deletedEarly = {false};
+        final Throwable[] err = new Throwable[2];
+        Thread analysis = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Analyzer.runAll(c, new Analyzer.Log() {
+                        @Override
+                        public void log(String m) {
+                            // the first week's nights are worked out and about to be stored: Delete starts now
+                            if (!m.startsWith("sleep for") || paused.getCount() == 0) return;
+                            paused.countDown();
+                            try {
+                                deleteStarted.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                                Thread.sleep(400); // long enough for a Delete that does not wait to finish
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                            deletedEarly[0] = deleteDone.getCount() == 0;
+                        }
+                    });
+                } catch (Throwable t) {
+                    err[0] = t;
+                }
+            }
+        });
+        analysis.start();
+        check("delete test: the analysis reached its first week", paused.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        Thread delete = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    deleteStarted.countDown();
+                    Analyzer.deleteAll(c);
+                } catch (Throwable t) {
+                    err[1] = t;
+                } finally {
+                    deleteDone.countDown();
+                }
+            }
+        });
+        delete.start();
+        analysis.join(300000);
+        delete.join(300000);
+        check("delete during an analysis: no error", err[0] == null && err[1] == null, err[0] != null ? err[0] : err[1]);
+        check("delete during an analysis waits for it to end", !deletedEarly[0], "");
+        StringBuilder left = new StringBuilder();
+        int tables = 0;
+        android.database.Cursor cur = db.getReadableDatabase().rawQuery(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'android_metadata'", null);
+        List<String> names = new ArrayList<String>();
+        if (cur.moveToFirst()) do names.add(cur.getString(0)); while (cur.moveToNext());
+        cur.close();
+        for (String t : names) {
+            tables++;
+            long n = db.count("SELECT COUNT(*) FROM " + t);
+            if (n > 0) left.append(t).append(' ').append(n).append(", ");
+        }
+        check("delete during an analysis: every table is empty afterwards (no ghost nights)", tables >= 10 && left.length() == 0,
+                tables + " tables, left: " + left);
+        // the next analysis on the empty history finds nothing and stores nothing
+        Analyzer.run(c, null);
+        check("after Delete the next analysis stores no nights", db.count("SELECT COUNT(*) FROM nights") == 0
+                && db.count("SELECT COUNT(*) FROM days") == 0, db.count("SELECT COUNT(*) FROM nights") + " nights");
+        deleteOneTransaction(c);
+    }
+
+    /**
+     * Review of PR #174: Delete all local data is one transaction. A delete that fails part way (here a
+     * trigger stops the last table) leaves every table as it was, and the error reaches the caller,
+     * so Settings can say that nothing was deleted.
+     */
+    static void deleteOneTransaction(Context c) throws Exception {
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2026-04-01").atStartOfDay(z).toEpochSecond();
+        long end = t0 + 8 * 86400L + 12 * 3600;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, 7, end, z, new Random(174));
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, end);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        Analyzer.run(c, null);
+        db.getWritableDatabase().execSQL("INSERT INTO screen_reads(start, stop) VALUES (?, ?)", new Object[] {(double) t0, (double) end});
+        String[] tables = {"events", "nights", "days", "kv", "zones", "screen_reads"};
+        long[] before = new long[tables.length];
+        for (int i = 0; i < tables.length; i++) before[i] = db.count("SELECT COUNT(*) FROM " + tables[i]);
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop_delete BEFORE DELETE ON screen_reads BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        Throwable thrown = null;
+        try {
+            Analyzer.deleteAll(c);
+        } catch (RuntimeException e) {
+            thrown = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER stop_delete");
+        StringBuilder changed = new StringBuilder();
+        for (int i = 0; i < tables.length; i++) {
+            long n = db.count("SELECT COUNT(*) FROM " + tables[i]);
+            if (n != before[i]) changed.append(tables[i]).append(' ').append(before[i]).append(" to ").append(n).append(", ");
+        }
+        check("delete failing part way: the error reaches the caller", thrown != null && String.valueOf(thrown).contains("test stop"), thrown);
+        check("delete failing part way: every table as it was (one transaction)", before[0] > 0 && before[1] > 0 && before[3] > 0
+                && changed.length() == 0, before[0] + " events, " + before[1] + " nights, " + before[3] + " kv; changed: " + changed);
+        Analyzer.deleteAll(c);
+        check("delete after the failure empties everything", db.count("SELECT COUNT(*) FROM events") == 0
+                && db.count("SELECT COUNT(*) FROM nights") == 0 && db.count("SELECT COUNT(*) FROM screen_reads") == 0, "");
     }
 
     // ---------------------------------------------------------------- issue #21, dating
