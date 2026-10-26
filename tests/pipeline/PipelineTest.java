@@ -1108,10 +1108,10 @@ public class PipelineTest {
         // ---- #33: a key file saved with a byte order mark (Windows Notepad) ----
         byte[] key = app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a");
         Context c = freshDb("openring-b33c");
-        app.openring.data.Backup.Result bom = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream("﻿4431967d8bacc2659743142b68391d9a\r\n".getBytes("UTF-8")));
+        app.openring.data.Backup.Result bom = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream("\uFEFF4431967d8bacc2659743142b68391d9a\r\n".getBytes("UTF-8")));
         check("a key file with a byte order mark is accepted (#33)", bom.ok && java.util.Arrays.equals(app.openring.data.Prefs.of(c).loadKey(), key), bom.message);
         app.openring.data.Backup.Result bomJson = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(
-                zipWithJson("﻿{\"key\":\"4431967d8bacc2659743142b68391d9a\",\"screen_goal\":90}")));
+                zipWithJson("\uFEFF{\"key\":\"4431967d8bacc2659743142b68391d9a\",\"screen_goal\":90}")));
         check("a backup JSON with a byte order mark is read as JSON", bomJson.ok && app.openring.data.Prefs.of(c).screenGoalMin() == 90, bomJson.message);
 
         // ---- #33: restored values stay inside what Settings allows ----

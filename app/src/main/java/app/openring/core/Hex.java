@@ -30,7 +30,7 @@ public final class Hex {
         StringBuilder clean = new StringBuilder();
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '﻿' || c == ':') continue;
+            if (Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '\uFEFF' || c == ':') continue;
             clean.append(c);
         }
         String h = clean.toString();

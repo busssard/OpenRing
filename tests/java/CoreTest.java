@@ -649,7 +649,7 @@ public class CoreTest {
         }
         // issue #33: a key saved by Windows Notepad starts with a byte order mark, some editors put in a no break space
         byte[] key = Hex.parseKey("4431967d8bacc2659743142b68391d9a");
-        check("key: a byte order mark is ignored", Arrays.equals(Hex.parseKey("﻿4431967d8bacc2659743142b68391d9a\r\n"), key));
+        check("key: a byte order mark is ignored", Arrays.equals(Hex.parseKey("\uFEFF4431967d8bacc2659743142b68391d9a\r\n"), key));
         check("key: a no break space is ignored", Arrays.equals(Hex.parseKey("4431967d 8bacc265 9743142b 68391d9a"), key));
         check("key: colons and 0x still work", Arrays.equals(Hex.parseKey("0x44:31:96:7d:8b:ac:c2:65:97:43:14:2b:68:39:1d:9a"), key));
         check("key: other characters are still refused", Hex.parseKey("​4431967d8bacc2659743142b68391d9a") == null
