@@ -25,6 +25,8 @@ public final class DayData {
     public app.openring.data.RightNow now;
     /** Main nights from 30 days before the selected date to 30 days after it (at most up to tomorrow), oldest first (issue #98). */
     public final List<JSONObject> recent = new ArrayList<JSONObject>();
+    /** True when any main night is stored, also outside {@link #recent} (Further analysis covers all time). */
+    public boolean anyNight;
     /** Screen time of the selected date and the days before (Screen tab, Today ring); null if it could not be read. */
     public app.openring.data.ScreenDays.Info screen;
     /** The zone this day is shown in: its main night's, else the zone noted then, else the phone's (issue #22). */
@@ -50,6 +52,7 @@ public final class DayData {
             JSONObject o = Json.parse(s);
             if (o != null) d.recent.add(o);
         }
+        d.anyNight = !d.recent.isEmpty() || db.anyMainNight();
         try {
             d.now = app.openring.data.RightNow.load(c);
         } catch (RuntimeException ignored) {

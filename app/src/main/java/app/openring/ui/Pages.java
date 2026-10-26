@@ -310,7 +310,7 @@ public final class Pages {
                     + "through the night, sleep stages, heart rate, HRV, blood oxygen and breathing."));
             root.addView(how);
             addNaps(c, root, d);
-            if (!d.recent.isEmpty()) root.addView(furtherAnalysis(c, d));
+            if (d.anyNight) root.addView(furtherAnalysis(c, d));
             return root;
         }
 

@@ -45,9 +45,9 @@ public final class Analyzer {
     /** Earlier nights and days for the day summaries of one {@link #analyze} call (issue #139); null otherwise. */
     private History history;
     /** Tests only: false reads every day's history straight from the database, as before issue #139. */
-    static boolean cacheHistory = true;
+    static volatile boolean cacheHistory = true;
     /** Tests only: runs after each day summary is written (a test throws from it to stop a run part way). */
-    static Runnable afterDay;
+    static volatile Runnable afterDay;
 
     private Analyzer(Context c, Log log) {
         db = Db.get(c);
@@ -217,6 +217,7 @@ public final class Analyzer {
             int n = 0;
             for (LocalDate d = first; !d.isAfter(d1); d = d.plusDays(1)) {
                 analyzeDay(d, sure);
+                history.forget(d);
                 n++;
             }
             // stored days after the range (its newest event moved earlier, issue #58) are analysed too, so a day
@@ -226,7 +227,9 @@ public final class Analyzer {
                 if (!later.isEmpty()) log.log(later.size() + " stored day" + (later.size() == 1 ? "" : "s") + " after " + d1 + " kept: events after it wait for a time record");
             } else {
                 for (String k : later) {
-                    analyzeDay(LocalDate.parse(k), sure);
+                    LocalDate d = LocalDate.parse(k);
+                    analyzeDay(d, sure);
+                    history.forget(d);
                     n++;
                 }
             }
@@ -794,7 +797,6 @@ public final class Analyzer {
         }
         past.dayWritten(key);
         db.putDay(key, out.toString());
-        past.forget(day);
         if (afterDay != null) afterDay.run();
     }
 

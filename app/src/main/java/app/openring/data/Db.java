@@ -630,6 +630,11 @@ public final class Db extends SQLiteOpenHelper {
         return nightsJson(date.minusDays(RECENT_DAYS).toString(), to.toString(), true);
     }
 
+    /** True when any main night is stored (the Sleep tab offers Further analysis then, issue #98). */
+    public boolean anyMainNight() {
+        return count("SELECT EXISTS (SELECT 1 FROM nights WHERE main = 1)") > 0;
+    }
+
     /** The nights of one day ordered by start, each as {start, main (Boolean), json} (issue #139). */
     public List<Object[]> nightsOfDay(String day) {
         List<Object[]> out = new ArrayList<Object[]>();
