@@ -652,11 +652,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return card;
     }
 
-    /** Opens at a card when started with the extra {@code section} ("stages", "screen" or "games"), used by the screen test. */
+    /**
+     * Opens at a card when started with the extra {@code section} ("stages", "screen" or "games"), used by the screen test.
+     * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
+     */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
         final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard : null;
         if (card == null) return;
+        // the demo page is short: room below the last card, so every card can reach the top (issue #160)
+        root.addView(new View(this), new LinearLayout.LayoutParams(1, getResources().getDisplayMetrics().heightPixels));
         scroll.post(new Runnable() {
             @Override
             public void run() {
