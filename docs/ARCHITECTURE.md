@@ -72,12 +72,20 @@ Nothing leaves the phone: the app has no internet permission.
 Demo mode uses a separate file (`openring-demo.db`), so demo and real data never mix.
 
 Restoring a full backup (`Backup.prepare`, then `finish`) first checks the backup's database on its own
-(`Db.inspect`: `quick_check`, a version this app can open, the Open Ring tables) and refuses it whole if
-it fails. If the phone's history reaches more than an hour later or holds more events, Setup asks
+(`Db.inspect`: `quick_check`, a version this app can open, and every table and column the app has for that
+version, `Db.schemaProblem`, issue #156) and refuses it whole if it fails. If the phone's history reaches more than an hour later or holds more events, Setup asks
 before replacing it (#26). `Db.replaceWith` keeps the old file as `openring.db.old` until the new one
 opens with the event count the check saw, and puts it back if not (#27). A left over `.old` means a
-swap was cut off, so `Db.get` puts it back before opening the real file. Each restore has its own temp
-file in the cache. Histories are never merged.
+swap was cut off, so `Db.get` puts it back before opening the real file; the opened, upgraded file must
+also pass the schema check of the current version. Each restore has its own temp file in the cache.
+Histories are never merged. A backup holds every setting; restored numbers are kept in the ranges Settings
+allows, and the stage detail level comes along only with the history or onto a phone without nights (#33).
+
+Export database and a full backup never copy the live file (issue #115). `Exporter.snapshot` waits for a
+running analysis, then makes a copy in the cache: `VACUUM INTO` on SQLite 3.27 and later (Android 11 and
+newer), otherwise the file and its write ahead log copied while the write lock is held (a sync waits those
+seconds). The copy is made a single file and must pass `Db.inspect` and hold at least the events the
+history had, before anything is written to the file the person picked; otherwise `Exporter.NotSaved`.
 
 ## Analysis
 
@@ -95,6 +103,11 @@ file in the cache. Histories are never merged.
    Every 30 seconds with the phone screen on for at least 15 seconds becomes awake (`ScreenTime.markAwake`).
    A single use of 15 seconds or more that a step border splits so neither part reaches 15 seconds marks
    the step holding most of it (issue #41); `ScreenTime.AWAKE_RULE` (kv `phone_awake`) re analyses nights on a change.
+   The stage detail level (`StageFilter`) then folds short pieces, and phone use and the wake ups the ring
+   reports itself are marked awake again (`NightAnalyzer.detailStages`). The Settings preview runs the same
+   function on the stored `stages_raw` (`Analyzer.preview`, phone use chosen by `ScreenTime.forNight` as in the
+   analysis, the ring's wake ups from the night's `ring_awake`, stored since issue #30), so it shows the night
+   that saving produces.
 3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep

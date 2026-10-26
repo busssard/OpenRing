@@ -1269,13 +1269,12 @@ public final class Pages {
 
         LinearLayout vo = Ui.card(c);
         vo.addView(Ui.caption(c, "Cardio capacity (estimate)"));
-        double v = Json.d(day, "vo2max");
-        if (Double.isNaN(v)) {
-            Prefs p = Prefs.of(c);
-            v = app.openring.core.analysis.Wellness.vo2maxJackson(p.age(), p.sex() == 1, p.weightKg());
-        }
-        vo.addView(Ui.text(c, Ui.fmt(v, 0) + " ml/kg/min", 24, Ui.TEXT, Ui.LIGHT));
-        vo.addView(Ui.body(c, "Estimated VO2 max from your age and lowest night time heart rate (Uth method). A rough guide, not a lab test."));
+        // only the heart rate estimate the text names, and only a value a person can have (issue #116)
+        double v = Json.d(day, "vo2max"), shown = app.openring.core.analysis.Wellness.vo2maxShown(v);
+        if (!Double.isNaN(shown)) vo.addView(Ui.text(c, Ui.fmt(shown, 0) + " ml/kg/min", 24, Ui.TEXT, Ui.LIGHT));
+        vo.addView(Ui.body(c, Explain.vo2max(v, d.night != null)));
+        vo.addView(Ui.gap(c, 4));
+        vo.addView(Ui.text(c, Explain.VO2MAX, 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(vo);
 
         root.addView(infoCard(c, "Night time measurements", Explain.NIGHT_SIGNALS));

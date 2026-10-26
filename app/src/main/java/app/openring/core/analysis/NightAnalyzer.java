@@ -83,10 +83,9 @@ public final class NightAnalyzer {
         // so Settings can preview other levels without re analysing
         n.stagesRaw = stages;
         n.stageDetail = StageFilter.clampLevel(in.stageDetail);
-        stages = StageFilter.filter(stages, n.stageDetail);
-        // the detail filter must not hide phone use again: it was counted as awake, so it stays awake
-        if (!in.screen.isEmpty()) ScreenTime.markAwake(stages, in.start, in.end, in.screen);
-        if (!in.ringAwake.isEmpty()) ScreenTime.markAwake(stages, in.start, in.end, in.ringAwake);
+        for (double[] w : in.ringAwake) if (w[1] > in.start && w[0] < in.end) n.ringAwake.add(new double[] {w[0], w[1]});
+        // the detail filter must not hide phone use or the ring's own wake ups: they stay awake (issue #30)
+        stages = detailStages(stages, n.stageDetail, in.start, in.end, in.screen, n.ringAwake);
         n.stages = stages;
         metrics(n, stages, in);
 
@@ -124,6 +123,20 @@ public final class NightAnalyzer {
         n.hrvDeep = stageMean(hrv, stages, in.start, in.end, Stager.DEEP);
         n.hrvRem = stageMean(hrv, stages, in.start, in.end, Stager.REM);
         return n;
+    }
+
+    /**
+     * The stages a detail level shows (issue #30): {@code raw} through {@link StageFilter}, then phone use
+     * ({@code screen}) and the wake ups the ring reports itself ({@code ringAwake}, issue #42) marked awake
+     * again, because the filter must not hide them. The saved night and the Settings preview both come
+     * from here, so the preview is the night that saving produces. {@code raw} is not changed.
+     */
+    public static int[] detailStages(int[] raw, int level, double start, double end,
+            java.util.List<double[]> screen, java.util.List<double[]> ringAwake) {
+        int[] st = StageFilter.filter(raw, level);
+        if (screen != null && !screen.isEmpty()) ScreenTime.markAwake(st, start, end, screen);
+        if (ringAwake != null && !ringAwake.isEmpty()) ScreenTime.markAwake(st, start, end, ringAwake);
+        return st;
     }
 
     static double covered(int[] s) {
