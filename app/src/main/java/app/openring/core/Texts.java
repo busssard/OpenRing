@@ -42,4 +42,13 @@ public final class Texts {
         return "The " + (backup ? "backup" : "export") + " could not be saved. Pick another place, or free some space, and try again. "
                 + SyncError.DETAILS;
     }
+
+    /**
+     * The sentence when the copy of the history made for an export or full backup did not pass its
+     * check (issue #115): nothing was written, the phone's history was only read.
+     */
+    public static String notChecked(boolean backup) {
+        return backup ? "The backup was not saved, because the copy of your history did not pass its check. Nothing on this phone was changed. Try again in a minute."
+                : "The export was not saved, because the copy of the history did not pass its check. Nothing on this phone was changed. Try again in a minute.";
+    }
 }
