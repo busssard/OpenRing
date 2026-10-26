@@ -212,7 +212,7 @@ public final class RingManager {
     private Session open(boolean anyRing, Set<String> exclude) throws IOException, InterruptedException {
         BluetoothAdapter a = RingScanner.adapter(ctx);
         if (a == null) throw new IOException("This phone has no Bluetooth");
-        if (!a.isEnabled()) throw new IOException("Bluetooth is off");
+        if (!a.isEnabled()) throw new IOException(SyncError.BLUETOOTH_OFF_TEXT);
         Prefs p = Prefs.of(ctx);
         String addr = p.address();
         Session s = new Session();
@@ -437,16 +437,22 @@ public final class RingManager {
                     res.message = SyncError.raw(e);
                     break;
                 } catch (IOException e) {
-                    res.message = SyncError.raw(e);
-                    log("attempt " + attempt + " failed: " + res.message);
-                    // only Bluetooth really off, no ring found or a stop end the sync at once; passing
-                    // Bluetooth errors (a refused write, a failed scan) get the other attempts (issue #157)
-                    if (!SyncError.retryable(res.message, bluetoothOn())) break;
-                    Thread.sleep(2500);
+                    String raw = SyncError.raw(e);
+                    log("attempt " + attempt + " failed: " + raw);
+                    boolean on = bluetoothOn();
+                    // Bluetooth turned off during the sync: say so, not the disconnect it caused
+                    res.message = SyncError.attemptError(raw, on);
+                    // only Bluetooth really off, no ring found, a key problem or a stop end the sync at once;
+                    // passing Bluetooth errors (a refused write, a failed scan) get the other attempts (issue #157)
+                    if (!SyncError.retryable(res.message, on)) break;
+                    if (attempt < 3) Thread.sleep(2500);
                 } catch (HistoryBatch.BatchException e) {
-                    res.message = SyncError.raw(e);
-                    log("attempt " + attempt + " failed: " + res.message);
-                    Thread.sleep(2500);
+                    String raw = SyncError.raw(e);
+                    log("attempt " + attempt + " failed: " + raw);
+                    boolean on = bluetoothOn();
+                    res.message = SyncError.attemptError(raw, on);
+                    if (!on) break;
+                    if (attempt < 3) Thread.sleep(2500);
                 } finally {
                     close(s);
                 }

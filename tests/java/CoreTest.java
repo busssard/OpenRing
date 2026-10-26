@@ -985,6 +985,23 @@ public class CoreTest {
             "No ring found. Put it on its charger next to the phone, and close the Oura app if it is installed."};
         for (String r : stop) check("sync retry: stops after " + r, !SyncError.retryable(r, true));
         for (String r : retry) check("sync retry: stops with Bluetooth off after " + r, !SyncError.retryable(r, false));
+        // a key problem cannot pass on another attempt (independent review of #178)
+        String[] keys = {"authentication failed: " + Auth.describe(Auth.WRONG_KEY), "authentication failed: " + Auth.describe(Auth.IN_FACTORY_RESET),
+            "No ring key saved. Finish setup first."};
+        for (String r : keys) check("sync retry: stops after the key problem " + r, !SyncError.retryable(r, true));
+        check("sync retry: an unknown auth state is retried", SyncError.retryable("authentication failed: unknown auth state 0x7f", true));
+        // Bluetooth turned off in the middle of a sync: the attempt keeps "Bluetooth is off", not the disconnect it caused
+        eq("sync attempt: Bluetooth off replaces the disconnect", SyncError.attemptError("ring disconnected", false), SyncError.BLUETOOTH_OFF_TEXT);
+        eq("sync attempt: Bluetooth on keeps the text", SyncError.attemptError("ring disconnected", true), "ring disconnected");
+        eq("sync attempt: Bluetooth off text reads as Bluetooth off", SyncError.kind(SyncError.BLUETOOTH_OFF_TEXT), SyncError.Kind.BLUETOOTH_OFF);
+        check("sync attempt: Bluetooth off ends the sync", !SyncError.retryable(SyncError.attemptError("write failed (GATT status 133)", false), true));
+        // the notice after a failed sync the person started: the whole plain sentence, none after a stop or success
+        check("sync notice: none after a sync that worked", SyncError.failureNotice(true, "Sync complete") == null);
+        check("sync notice: none after a stop", SyncError.failureNotice(false, "Sync stopped") == null && SyncError.failureNotice(false, "Interrupted") == null);
+        check("sync notice: none in demo mode", SyncError.failureNotice(false, "Demo mode: syncing is off") == null);
+        eq("sync notice: the plain sentence", SyncError.failureNotice(false, "connection failed (GATT status 133)"),
+                SyncError.plain("connection failed (GATT status 133)"));
+        eq("sync notice: also without a reason", SyncError.failureNotice(false, null), unknown);
     }
 
     /** The games draw at most {@link SyncError#GAME_LINES} lines of {@link SyncError#GAME_LINE} characters. */

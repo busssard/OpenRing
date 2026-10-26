@@ -47,9 +47,31 @@ public final class SyncError {
         return raw == null || raw.trim().isEmpty() ? NO_REASON : raw;
     }
 
+    /** The text RingManager and RingScanner give when the phone's Bluetooth is off. */
+    public static final String BLUETOOTH_OFF_TEXT = "Bluetooth is off";
+
+    /**
+     * The error a failed sync attempt keeps: with the phone's Bluetooth off right after it, "Bluetooth is off" (the
+     * attempt's own text, such as "ring disconnected", would send the person to the wrong advice); otherwise its text.
+     */
+    public static String attemptError(String raw, boolean bluetoothOn) {
+        return bluetoothOn ? raw : BLUETOOTH_OFF_TEXT;
+    }
+
+    /**
+     * The sentence of the notification after a sync the person started failed, or null for none: not after one that
+     * worked, was stopped on purpose or is off in demo mode (issue #91).
+     */
+    public static String failureNotice(boolean ok, String raw) {
+        if (ok) return null;
+        Kind k = kind(stored(false, raw));
+        if (k == Kind.STOPPED || k == Kind.DEMO) return null;
+        return plain(stored(false, raw));
+    }
+
     /**
      * Whether another sync attempt can help after the failure {@code raw}: not with Bluetooth off (the adapter, or the
-     * text says so), no Bluetooth, no ring found (a whole scan already ran) or a stop. Passing Bluetooth errors such as
+     * text says so), no Bluetooth, no ring found (a whole scan already ran), a key the ring refuses, no key or a stop. Passing Bluetooth errors such as
      * a refused write, a failed scan or a refused GATT connection are retried (issue #157).
      */
     public static boolean retryable(String raw, boolean bluetoothOn) {
@@ -59,6 +81,9 @@ public final class SyncError {
             case NO_BLUETOOTH:
             case NOT_FOUND:
             case STOPPED:
+            case KEY_REFUSED:
+            case RING_RESET:
+            case NO_KEY:
                 return false;
             default:
                 return true;
