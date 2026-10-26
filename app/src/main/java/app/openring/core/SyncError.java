@@ -28,6 +28,43 @@ public final class SyncError {
     /** The games draw the ring state in at most this many lines of this many characters. */
     public static final int GAME_LINES = 3, GAME_LINE = 44;
 
+    /** The games' ring state when the ring sent no motion in the first seconds; fits the lines above (issue #90). */
+    public static final String GAME_NO_MOTION = "Your ring sent no motion data, so it probably cannot stream motion on this firmware. Touch steering works.";
+
+    /** Stored for a failed sync that gave no reason, so it never reads as no error (issue #91). */
+    public static final String NO_REASON = "Sync failed without a reason";
+
+    /** The raw text of a failure for the log and the stored error: its message, or the exception's name when it has none (issue #91). */
+    public static String raw(Throwable e) {
+        if (e == null) return NO_REASON;
+        String m = e.getMessage();
+        return m == null || m.trim().isEmpty() ? e.getClass().getName() : m;
+    }
+
+    /** The error to store after a sync: none after one that worked, never none after one that failed (issue #91). */
+    public static String stored(boolean ok, String raw) {
+        if (ok) return null;
+        return raw == null || raw.trim().isEmpty() ? NO_REASON : raw;
+    }
+
+    /**
+     * Whether another sync attempt can help after the failure {@code raw}: not with Bluetooth off (the adapter, or the
+     * text says so), no Bluetooth, no ring found (a whole scan already ran) or a stop. Passing Bluetooth errors such as
+     * a refused write, a failed scan or a refused GATT connection are retried (issue #157).
+     */
+    public static boolean retryable(String raw, boolean bluetoothOn) {
+        if (!bluetoothOn) return false;
+        switch (kind(raw)) {
+            case BLUETOOTH_OFF:
+            case NO_BLUETOOTH:
+            case NOT_FOUND:
+            case STOPPED:
+                return false;
+            default:
+                return true;
+        }
+    }
+
     /** Sorts a raw error text (from GattLink, RingScanner, RingManager, RingClient, Auth, HistoryBatch) into a class. */
     public static Kind kind(String raw) {
         if (raw == null) return Kind.UNKNOWN;

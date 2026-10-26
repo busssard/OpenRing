@@ -42,6 +42,8 @@ public final class SyncService extends Service implements RingManager.Listener {
                 .setSmallIcon(R.drawable.ic_stat_ring)
                 .setContentTitle("Syncing your ring")
                 .setContentText(text)
+                // the plain sentences after a failed sync are longer than one line (issue #91)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setContentIntent(pi)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)

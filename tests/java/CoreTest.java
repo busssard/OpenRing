@@ -764,7 +764,7 @@ public class CoreTest {
     }
 
     /** Plain sentences for failed syncs; the raw texts come from the code (issue #47). */
-    static void syncError() {
+    static void syncError() throws java.io.IOException {
         Object[][] cases = {
             {"Bluetooth is off", SyncError.Kind.BLUETOOTH_OFF},
             {"Bluetooth LE scanner unavailable", SyncError.Kind.BLUETOOTH_OFF},
@@ -838,7 +838,7 @@ public class CoreTest {
     }
 
     /** The same raw texts after pairing, a Settings action, live heart rate or game motion failed (issue #60). */
-    static void ringError(Object[][] cases) {
+    static void ringError(Object[][] cases) throws java.io.IOException {
         SyncError.Task P = SyncError.Task.PAIR, A = SyncError.Task.ACTION, L = SyncError.Task.LIVE;
         // every kind and task: plain, no jargon or raw codes, a sync is never mentioned outside a sync
         for (Object[] k : cases) {
@@ -939,6 +939,60 @@ public class CoreTest {
             check("ring error: game text fits for " + k[0] + " (" + g + ")", fits && !g.contains("(") && String.join(" ", lines).equals(g));
         }
         eq("ring error: wrap", SyncError.wrap("aaa bbb  ccc dddddddd", 7), Arrays.asList("aaa bbb", "ccc", "dddddddd"));
+        // the "no motion data" text of the games fits the three drawn lines and still says touch steering works (issue #90)
+        check("game text: no motion fits", gameFits(SyncError.GAME_NO_MOTION));
+        check("game text: no motion names touch steering", SyncError.GAME_NO_MOTION.endsWith("Touch steering works."));
+        check("game text: old no motion text did not fit", !gameFits("Your ring sent no motion data, so it probably cannot stream motion on this firmware. "
+                + "The ring is free again; touch steering works."));
+        // every text the games are given: one literal that fits, a SyncError constant, or SyncError.game (tested above)
+        java.util.regex.Pattern lit = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
+        List<java.io.File> src = new ArrayList<java.io.File>();
+        javaFiles(new java.io.File("app/src/main/java/app/openring"), src);
+        int states = 0;
+        for (java.io.File f : src) {
+            String s = new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8");
+            for (int i = s.indexOf("motionState("); i >= 0; i = s.indexOf("motionState(", i + 1)) {
+                if (s.startsWith("void ", i - 5)) continue; // the method itself
+                String args = callArgs(s, i + "motionState(".length());
+                String text = args.substring(0, Math.max(0, args.lastIndexOf(','))).trim();
+                states++;
+                String where = f.getName() + " motionState(" + args;
+                java.util.regex.Matcher m = lit.matcher(text);
+                if (m.matches()) check("game text fits: " + where, gameFits(m.group(1)));
+                else check("game text is a SyncError text: " + where, text.startsWith("SyncError.game(") || text.matches("SyncError\\.GAME_[A-Z_]+"));
+            }
+        }
+        check("game text scan: motion states found", states >= 5);
+
+        // a failed sync always stores some error text (issue #91)
+        eq("sync error: raw of an exception without message", SyncError.raw(new java.io.IOException()), "java.io.IOException");
+        eq("sync error: raw of a blank message", SyncError.raw(new java.io.IOException(" ")), "java.io.IOException");
+        eq("sync error: raw keeps the message", SyncError.raw(new java.io.IOException("ring disconnected")), "ring disconnected");
+        eq("sync error: raw of no exception", SyncError.raw(null), SyncError.NO_REASON);
+        check("sync error: worked stores nothing", SyncError.stored(true, "Sync complete") == null);
+        eq("sync error: failed without text stores the fallback", SyncError.stored(false, null), SyncError.NO_REASON);
+        eq("sync error: failed with a blank text stores the fallback", SyncError.stored(false, "  "), SyncError.NO_REASON);
+        eq("sync error: failed keeps its text", SyncError.stored(false, "ring disconnected"), "ring disconnected");
+        String unknown = "The sync did not finish because of an unexpected problem. Sync again. " + SyncError.DETAILS;
+        eq("sync error: fallback reads as the unknown sentence", SyncError.plain(SyncError.stored(false, null)), unknown);
+        eq("sync error: exception name reads as the unknown sentence", SyncError.plain(SyncError.raw(new java.io.IOException())), unknown);
+
+        // a sync stops early only when another attempt cannot help (issue #157)
+        String[] retry = {"Bluetooth stack refused the write", "Bluetooth refused to open a GATT connection", "Bluetooth scan failed (error 2)",
+            "connection failed (GATT status 133)", "ring disconnected", "write was never acknowledged", "service discovery failed", null, ""};
+        for (String r : retry) check("sync retry: retried after " + r, SyncError.retryable(r, true));
+        String[] stop = {"Bluetooth is off", "Bluetooth LE scanner unavailable", "This phone has no Bluetooth", "interrupted", "Sync stopped",
+            "No ring found. Put it on its charger next to the phone, and close the Oura app if it is installed."};
+        for (String r : stop) check("sync retry: stops after " + r, !SyncError.retryable(r, true));
+        for (String r : retry) check("sync retry: stops with Bluetooth off after " + r, !SyncError.retryable(r, false));
+    }
+
+    /** The games draw at most {@link SyncError#GAME_LINES} lines of {@link SyncError#GAME_LINE} characters. */
+    static boolean gameFits(String t) {
+        List<String> lines = SyncError.wrap(t, SyncError.GAME_LINE);
+        boolean fits = lines.size() <= SyncError.GAME_LINES;
+        for (String line : lines) fits &= line.length() <= SyncError.GAME_LINE;
+        return fits;
     }
 
     static boolean near(double a, double b) {
