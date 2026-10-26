@@ -114,7 +114,8 @@ history had, before anything is written to the file the person picked; otherwise
    analysis, the ring's wake ups from the night's `ring_awake`, stored since issue #30), so it shows the night
    that saving produces.
 3. `NightAnalyzer` computes durations, efficiency (time asleep over time in bed, as Oura defines it; steps without
-   stage data count as time in bed, neither asleep nor awake, and the Sleep page shows them as "No data", issue #107), latency, wake ups, cycles, lowest heart rate, HRV,
+   stage data count as time in bed, neither asleep nor awake, and the Sleep page shows them as "No data", issue #107; the screens and the averages work efficiency out from the
+   stored minutes, `StageShare.efficiency`, so nights analysed before agree without a re analysis), latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep
    35/15/10/10/10/10/10); a period with no sleep at all has no Restfulness (issue #118), like REM and deep on a

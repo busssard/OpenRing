@@ -2394,7 +2394,7 @@ public class CoreTest {
         check("#107 lead: latency counts the time without data (22 min)", near(lead.latencyMin, 22));
         double[] nd = StageShare.noData(lead.stages, lead.inBedMin);
         check("#107 lead: 20 min without data, all before falling asleep", near(nd[0], 20) && near(nd[1], 20));
-        eq("#107 lead: the note", StageShare.noDataNote(nd[0], nd[1]), "No data: the ring gave no sleep stage for 20 min. It counts as time in bed, "
+        eq("#107 lead: the note", StageShare.noDataNote(nd[0], nd[1], true), "No data: there was no sleep stage for 20 min. It counts as time in bed, "
                 + "not as asleep or awake, so it lowers efficiency. All of it was before you fell asleep, so latency includes it.");
         // #107 tail: 200 min light, then 100 min without data
         Night tail = ringStaged(digits("2", 400, "0", 200));
@@ -2404,23 +2404,35 @@ public class CoreTest {
         check("#107 tail: 100 min without data, none before falling asleep", near(nd[0], 100) && near(nd[1], 0));
         check("#107 tail: stage minutes and no data add up to time in bed",
                 near(tail.deepMin + tail.lightMin + tail.remMin + tail.awakeMin + nd[0], tail.inBedMin));
-        eq("#107 tail: the note", StageShare.noDataNote(nd[0], nd[1]), "No data: the ring gave no sleep stage for 100 min. It counts as time in bed, "
-                + "not as asleep or awake, so it lowers efficiency.");
+        eq("#107 tail: the note writes the time as the row does", StageShare.noDataNote(nd[0], nd[1], true), "No data: there was no sleep stage for 1h 40m. "
+                + "It counts as time in bed, not as asleep or awake, so it lowers efficiency.");
+        // review of #183: nights analysed before stored asleep over the time with data; the screens work it out again
+        check("#107 shown efficiency of a new night is the stored one", Math.abs(StageShare.efficiency(tail.asleepMin, tail.inBedMin, tail.efficiency) - tail.efficiency) < 1e-9
+                && Math.abs(StageShare.efficiency(lead.asleepMin, lead.inBedMin, lead.efficiency) - lead.efficiency) < 1e-9);
+        check("#107 an older night's stored 100% shows as 66.7%", Math.abs(StageShare.efficiency(200, 300, 100) - 100.0 * 200 / 300) < 1e-9);
+        check("#107 shown efficiency unknown without sleep or time in bed", Double.isNaN(StageShare.efficiency(0, 40, Double.NaN))
+                && Double.isNaN(StageShare.efficiency(10, 0.5, 90)) && Double.isNaN(StageShare.efficiency(Double.NaN, 300, 90))
+                && Double.isNaN(StageShare.efficiency(10, Double.NaN, 90)));
+        check("#107 shown efficiency stays within 0 and 100", StageShare.efficiency(310, 300, 100) == 100 && StageShare.efficiency(-5, 300, 0) == 0);
         Night tailScore = tail;
         check("#107 tail: the efficiency contributor reads 67%", "67%".equals(part(Scores.sleep(tailScore, 0, 40), "efficiency").detail));
         // a night with no missing data keeps its efficiency
         Night full = ringStaged(digits("4", 20, "2", 400, "4", 20));
         check("#107 no missing data: efficiency as before", Math.abs(full.efficiency - 100.0 * 400 / 440) < 1e-6);
         check("#107 no missing data: no note", StageShare.noData(full.stages, full.inBedMin)[0] == 0
-                && StageShare.noDataNote(0, 0) == null && StageShare.noDataNote(0.4, 0) == null);
+                && StageShare.noDataNote(0, 0, true) == null && StageShare.noDataNote(0.4, 0, true) == null);
         // part before falling asleep, part later
         nd = StageShare.noData(digits("0", 10, "2", 100, "0", 30, "2", 100), 120);
         check("#107 split: 20 min in all, 5 before falling asleep", near(nd[0], 20) && near(nd[1], 5));
-        check("#107 split: the note names the part before", StageShare.noDataNote(nd[0], nd[1]).endsWith(" 5 min of it was before you fell asleep, so latency includes that part."));
+        check("#107 split: the note names the part before", StageShare.noDataNote(nd[0], nd[1], true).endsWith(" 5 min of it was before you fell asleep, so latency includes that part."));
+        check("#107 split: an hour or more before falling asleep as on the rows",
+                StageShare.noDataNote(100, 70, true).endsWith(" 1h 10m of it was before you fell asleep, so latency includes that part."));
         nd = StageShare.noData(digits("0", 10, "4", 50), 30);
         check("#107 no sleep: no time before falling asleep", near(nd[0], 5) && near(nd[1], 0));
+        eq("#107 no sleep: the note leaves out efficiency and latency (both unknown)", StageShare.noDataNote(nd[0], 5, false),
+                "No data: there was no sleep stage for 5 min. It counts as time in bed, not as asleep or awake.");
         check("#107 no stages: nothing", StageShare.noData(null, 30)[0] == 0 && StageShare.noData(new int[0], 30)[0] == 0
-                && StageShare.noData(new int[] {0}, Double.NaN)[0] == 0 && StageShare.noDataNote(Double.NaN, Double.NaN) == null);
+                && StageShare.noData(new int[] {0}, Double.NaN)[0] == 0 && StageShare.noDataNote(Double.NaN, Double.NaN, true) == null);
 
         // #118: a 40 minute bedtime the ring marks awake all through
         NightAnalyzer.Input in = new NightAnalyzer.Input();

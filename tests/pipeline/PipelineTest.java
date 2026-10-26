@@ -3058,6 +3058,13 @@ public class PipelineTest {
             check(names[k] + ": efficiency is asleep over time in bed", Math.abs(n.optDouble("efficiency") - 100 * asleep / inBed) < 0.01,
                     n.optDouble("efficiency") + " vs " + 100 * asleep / inBed);
             check(names[k] + ": latency counts from the start of the bedtime", Math.abs(n.optDouble("latency_min") - (r0 - w0) / 60) <= 0.5, n.opt("latency_min"));
+            // review of #183: a night stored before, with asleep over the time with data, averages like a new one
+            app.openring.data.SleepHistory now = app.openring.data.SleepHistory.of(java.util.Collections.singletonList(n), ZONE);
+            JSONObject old = Json.parse(n.toString());
+            old.put("efficiency", 100 * asleep / (inBed - none[0]));
+            app.openring.data.SleepHistory before = app.openring.data.SleepHistory.of(java.util.Collections.singletonList(old), ZONE);
+            check(names[k] + ": average efficiency from the stored minutes, older nights the same", Math.abs(now.efficiency - n.optDouble("efficiency")) < 0.01
+                    && Math.abs(before.efficiency - now.efficiency) < 1e-9, before.efficiency + " vs " + now.efficiency);
         }
     }
 

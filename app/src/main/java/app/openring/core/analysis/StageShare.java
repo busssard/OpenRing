@@ -1,5 +1,7 @@
 package app.openring.core.analysis;
 
+import app.openring.core.Texts;
+
 /**
  * Stage percentages for the screens (issue #32). REM, light and deep are shares of the time asleep and are rounded so
  * they always add up to 100; awake is a share of the time in bed. The usual ranges are the ones in {@code ui/Explain}.
@@ -82,18 +84,32 @@ public final class StageShare {
 
     /**
      * The line under the stage rows when part of the night has no stage data, null when under a minute (issue #107):
-     * "No data: the ring gave no sleep stage for 20 min. It counts as time in bed, not as asleep or awake, so it
-     * lowers efficiency. All of it was before you fell asleep, so latency includes it."
+     * "No data: there was no sleep stage for 20 min. It counts as time in bed, not as asleep or awake, so it lowers
+     * efficiency. All of it was before you fell asleep, so latency includes it." Without any sleep ({@code slept}
+     * false) efficiency and latency are unknown, so the line stops after "awake". Durations as on the rows
+     * ({@link Texts#minutes}: "20 min", "1h 40m").
      */
-    public static String noDataNote(double totalMin, double beforeMin) {
+    public static String noDataNote(double totalMin, double beforeMin, boolean slept) {
         long all = Double.isNaN(totalMin) ? 0 : Math.round(totalMin);
         if (all < 1) return null;
-        long before = Double.isNaN(beforeMin) ? 0 : Math.min(all, Math.round(beforeMin));
-        String s = "No data: the ring gave no sleep stage for " + all + " min. It counts as time in bed, not as asleep or awake, "
-                + "so it lowers efficiency.";
+        long before = Double.isNaN(beforeMin) || !slept ? 0 : Math.min(all, Math.round(beforeMin));
+        String s = "No data: there was no sleep stage for " + Texts.minutes(all) + ". It counts as time in bed, not as asleep or awake";
+        if (!slept) return s + ".";
+        s += ", so it lowers efficiency.";
         if (before >= all) return s + " All of it was before you fell asleep, so latency includes it.";
-        if (before >= 1) return s + " " + before + " min of it was before you fell asleep, so latency includes that part.";
+        if (before >= 1) return s + " " + Texts.minutes(before) + " of it was before you fell asleep, so latency includes that part.";
         return s;
+    }
+
+    /**
+     * Efficiency as the screens show it (issue #107): time asleep over time in bed, worked out from the stored
+     * minutes, so nights analysed before (whose stored efficiency left out the time without stage data) agree
+     * without a re analysis. NaN when the stored efficiency is unknown (no sleep at all) or there is under a minute
+     * in bed. For nights analysed now it is the stored value.
+     */
+    public static double efficiency(double asleepMin, double inBedMin, double stored) {
+        if (Double.isNaN(stored) || Double.isNaN(asleepMin) || Double.isNaN(inBedMin) || inBedMin < MIN_BASE) return Double.NaN;
+        return 100 * Math.max(0, Math.min(asleepMin, inBedMin)) / inBedMin;
     }
 
     private static double clean(double v) {
