@@ -58,6 +58,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        DELETE.attach(this);
         getWindow().setStatusBarColor(Ui.BG);
         getWindow().setNavigationBarColor(Ui.BG);
         ScrollView s = new ScrollView(this);
@@ -243,6 +244,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
             public void run() {
                 if (!Permissions.granted(SettingsActivity.this)) {
                     Permissions.request(SettingsActivity.this);
+                    return;
+                }
+                // one sync at a time, as on the main screen: a second one would end under the first one's "Up to date" (issue #43)
+                if (RingManager.get(SettingsActivity.this).busy()) {
+                    problem(Texts.SYNC_BUSY);
                     return;
                 }
                 SyncService.start(SettingsActivity.this);
@@ -469,9 +475,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 confirm("Delete everything?", "All synced events and results on this phone are erased. The ring keeps its key.", new Runnable() {
                     @Override
                     public void run() {
-                        Db.get(SettingsActivity.this).resetAll();
-                        say("Deleted");
-                        build();
+                        deleteAll();
                     }
                 });
             }
@@ -918,6 +922,65 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         yes.run();
                     }
                 }).setNegativeButton("Cancel", null).show();
+    }
+
+    /**
+     * The running Delete all local data (issue #43). Static, so a turned phone (a new Settings screen)
+     * gets the result and is rebuilt, and a second tap cannot start a second delete (pattern of #130).
+     */
+    static final app.openring.core.OneRun<SettingsActivity> DELETE = new app.openring.core.OneRun<SettingsActivity>();
+
+    @Override
+    protected void onDestroy() {
+        DELETE.detach(this);
+        super.onDestroy();
+    }
+
+    /**
+     * Delete all local data, confirmed by the person. Waits for a running analysis and holds the ring
+     * lock, so nothing is written back afterwards; refused while a sync or another ring task runs
+     * (issue #43). Off the screen thread: a Re analyse all can take minutes to finish first.
+     */
+    void deleteAll() {
+        if (!DELETE.start()) {
+            toast("Deleting, please wait");
+            return;
+        }
+        final android.content.Context app = getApplicationContext();
+        toast("Deleting");
+        new AsyncTask<Void, Void, Boolean>() {
+            @Override
+            protected Boolean doInBackground(Void... v) {
+                try {
+                    return RingManager.get(app).whileRingFree(new Runnable() {
+                        @Override
+                        public void run() {
+                            Analyzer.deleteAll(app);
+                        }
+                    });
+                } catch (RuntimeException e) {
+                    // one transaction: nothing was deleted
+                    RingManager.get(app).log("delete failed: " + android.util.Log.getStackTraceString(e));
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Boolean ok) {
+                // the Settings screen shown now, also after the phone was turned meanwhile
+                SettingsActivity s = DELETE.finish();
+                boolean shown = s != null && !s.isFinishing() && !s.isDestroyed();
+                if (ok == null || !ok) {
+                    String m = ok == null ? Texts.DELETE_FAILED : Texts.DELETE_BUSY;
+                    if (shown) s.problem(m);
+                    else Toast.makeText(app, m, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                RingManager.get(app).log("all local data deleted");
+                Toast.makeText(app, "Deleted", Toast.LENGTH_LONG).show();
+                if (shown) s.build();
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     void reanalyse() {

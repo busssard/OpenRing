@@ -1190,10 +1190,16 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
-    /** Wipe everything (keeps nothing). */
+    /** Wipe everything (keeps nothing), in one transaction: a failure part way leaves everything as it was. */
     public void resetAll() {
         SQLiteDatabase db = getWritableDatabase();
-        for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones", "screen_reads"}) db.execSQL("DELETE FROM " + t);
+        db.beginTransaction();
+        try {
+            for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones", "screen_reads"}) db.execSQL("DELETE FROM " + t);
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
     }
 
     /** Forget computed results so the next analysis rebuilds everything from raw events. */
