@@ -607,7 +607,7 @@ public final class Charts {
                 double t = series.t(idx[best]);
                 // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
                 String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t)
-                        : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, t);
+                        : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, nearestMinute ? app.openring.core.analysis.WakeUps.roundMin(t) : t);
                 cv.drawCircle(xs[best], ys[best], Ui.dp(getContext(), 4.5f), dot);
                 drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit);
             }

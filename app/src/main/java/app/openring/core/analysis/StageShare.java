@@ -133,11 +133,18 @@ public final class StageShare {
         }
         long missing = total - given;
         if (missing < -n || missing > n) return null;
+        // a part that is exactly 0 never gets a minute (no "No data 1 min" or "Deep 0h 1m" on a night without it);
+        // the others take it, a second minute only once each has had one
+        int[] got = new int[n];
         for (long k = 0; k < missing; k++) {
-            int best = 0;
-            for (int i = 1; i < n; i++) if (rest[i] > rest[best]) best = i;
+            int best = -1;
+            for (int i = 0; i < n; i++) {
+                if (!(clean(parts[i]) > 0)) continue;
+                if (best < 0 || got[i] < got[best] || (got[i] == got[best] && rest[i] > rest[best])) best = i;
+            }
+            if (best < 0) return null;
             out[best]++;
-            rest[best] = -2;
+            got[best]++;
         }
         // a total below the parts rounded down (the shown time in bed comes from rounded clock times): the minutes
         // come off the smallest remainders, one per part, never below 0
