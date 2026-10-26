@@ -17,6 +17,33 @@ public final class Explain {
             + "reached your daily goal and your training over the last week. Balance matters: both too little and too much lower it. "
             + "Days without the ring are left out of the weekly parts.";
 
+    /**
+     * What each sleep stage detail level does (Settings, issues #9, #28), indexed like {@code StageFilter.NAMES}.
+     * Balanced and Calm name what always stays awake however short (issue #30): phone use and the ring's own
+     * wake ups are marked awake again after the filter, and awake next to missing data is never folded.
+     */
+    public static final String[] STAGE_DETAIL = {
+        "Detailed: every stage change the estimate finds, even short ones. Many thin lines.",
+        "Balanced (recommended): sleep stages shorter than 3 minutes join the sleep stage next to them. "
+            + "Being awake for 30 seconds between sleep joins the sleep around it, 1 minute or more always stays, "
+            + "and short sleep is never turned into awake. Phone use, a wake up your ring reports itself and being awake "
+            + "next to time without ring data always stay awake, even when short.",
+        "Calm: sleep stages shorter than 5 minutes join the sleep stage next to them, being awake needs 2 minutes to stay. "
+            + "Long, calm blocks, similar in style to the official app. Shorter wake ups are no longer shown or counted, "
+            + "except phone use, a wake up your ring reports itself and being awake next to time without ring data: these always stay. "
+            + "Short sleep is never turned into awake."
+    };
+
+    /**
+     * The line under the stage detail preview when the night had phone use counted as awake (issue #30),
+     * or null without any. {@code phoneMin} is the night's stored phone minutes, as on the Sleep page.
+     */
+    public static String previewPhone(double phoneMin) {
+        if (!(phoneMin > 0)) return null;
+        String min = phoneMin < 1 ? "under a minute" : Math.round(phoneMin) + " min";
+        return "Includes " + min + " on the phone, shown as awake at every detail level.";
+    }
+
     /** The note above the activity contributors while fewer than 7 days of the last week were worn (issue #44). */
     public static String activityDays(int n) {
         String days = n == 1 ? "1 day" : n + " days";

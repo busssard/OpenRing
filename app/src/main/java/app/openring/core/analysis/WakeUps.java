@@ -53,33 +53,39 @@ public final class WakeUps {
 
     /**
      * What a stage detail level adds to the wake up rule, or null when it keeps every wake up of a
-     * minute or more (Detailed, Balanced). Calm folds being awake under 2 minutes into sleep.
+     * minute or more (Detailed, Balanced). Calm folds being awake under 2 minutes into sleep, except what
+     * stays on purpose (issue #30): phone use and the ring's own wake ups are marked awake again
+     * ({@link NightAnalyzer#detailStages}), and awake next to missing data stays ({@link StageFilter}).
      */
     public static String levelNote(int level) {
         int lv = StageFilter.clampLevel(level);
         int sec = StageFilter.minWakeEpochs(lv) * 30;
         if (sec <= MIN_S) return null;
-        return StageFilter.NAMES[lv] + " stage detail folds being awake under " + (sec / 60) + " minutes into sleep.";
+        return StageFilter.NAMES[lv] + " stage detail folds being awake under " + (sec / 60) + " minutes into sleep, "
+                + "except phone use, wake ups your ring reports itself and being awake next to time without ring data.";
     }
 
     /**
      * The wake up rule of a level for short lines (issue #128): "a minute or more" (Detailed, Balanced)
-     * or "2 min or more with Calm", so a line under a wake up count says what it counted.
+     * or "2 min or more with Calm (1 min on the phone or next to missing ring data)", so a line under a
+     * wake up count says what it counted, with the wake ups Calm keeps from a minute (issue #30).
      */
     public static String rule(int level) {
         int min = shortestKeptMin(level);
-        return min <= 1 ? "a minute or more" : min + " min or more with " + StageFilter.NAMES[StageFilter.clampLevel(level)];
+        return min <= 1 ? "a minute or more" : min + " min or more with " + StageFilter.NAMES[StageFilter.clampLevel(level)]
+                + " (1 min on the phone or next to missing ring data)";
     }
 
     /**
      * The line under the average wake ups of several nights (issue #128): "Wake ups of " + {@link #rule}
      * when all nights share {@code level}; with -1 (nights at different levels) it still names the rule,
-     * "Wake ups of a minute or more (2 min with Calm), each night at its own detail level".
+     * "Wake ups of a minute or more (2 min with Calm, 1 min on the phone or next to missing ring data), each
+     * night at its own detail level" (the Calm exception as in {@link #rule}, issue #30).
      */
     public static String averageLine(int level) {
         if (level >= 0) return "Wake ups of " + rule(level);
         return "Wake ups of " + rule(StageFilter.DETAILED) + " (" + shortestKeptMin(StageFilter.CALM) + " min with "
-                + StageFilter.NAMES[StageFilter.CALM] + "), each night at its own detail level";
+                + StageFilter.NAMES[StageFilter.CALM] + ", 1 min on the phone or next to missing ring data), each night at its own detail level";
     }
 
     /** Shortest wake up a level keeps, in whole minutes, for short labels. */

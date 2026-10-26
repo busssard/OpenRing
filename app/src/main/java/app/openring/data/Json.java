@@ -132,6 +132,7 @@ public final class Json {
         put(o, "spo2", n.spo2);
         put(o, "spo2_low", n.spo2Low);
         put(o, "phone_min", n.phoneMin);
+        if (!n.ringAwake.isEmpty()) put(o, "ring_awake", spans(n.ringAwake));
         put(o, "hr_series", series(n.hr, 160));
         put(o, "motion_series", series(app.openring.core.analysis.NightAnalyzer.bin(n.motion, n.start, n.end, 300), 200));
         put(o, "hrv_series", series(n.hrv, 160));
@@ -155,6 +156,35 @@ public final class Json {
     public static int[] stagesRaw(JSONObject night) {
         String raw = night.optString("stages_raw", "");
         return raw.isEmpty() ? stages(night) : digits(raw);
+    }
+
+    /**
+     * The wake ups the ring reported itself inside a night {start, end} (issue #30); empty for nights
+     * without any and for nights analysed before they were stored.
+     */
+    public static java.util.List<double[]> ringAwake(JSONObject night) {
+        java.util.List<double[]> out = new java.util.ArrayList<double[]>();
+        JSONArray a = night == null ? null : night.optJSONArray("ring_awake");
+        if (a == null) return out;
+        for (int i = 0; i < a.length(); i++) {
+            JSONArray w = a.optJSONArray(i);
+            if (w == null || w.length() < 2) continue;
+            double s = w.optDouble(0, Double.NaN), e = w.optDouble(1, Double.NaN);
+            if (!Double.isNaN(s) && !Double.isNaN(e) && e > s) out.add(new double[] {s, e});
+        }
+        return out;
+    }
+
+    /** Time spans {start, end} as [[start, end], ...], unrounded so they mark the same steps again. */
+    static JSONArray spans(java.util.List<double[]> spans) {
+        JSONArray a = new JSONArray();
+        for (double[] s : spans) {
+            JSONArray w = new JSONArray();
+            w.put((Object) Double.valueOf(s[0]));
+            w.put((Object) Double.valueOf(s[1]));
+            a.put(w);
+        }
+        return a;
     }
 
     static int[] digits(String s) {

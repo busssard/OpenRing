@@ -95,6 +95,11 @@ file in the cache. Histories are never merged.
    Every 30 seconds with the phone screen on for at least 15 seconds becomes awake (`ScreenTime.markAwake`).
    A single use of 15 seconds or more that a step border splits so neither part reaches 15 seconds marks
    the step holding most of it (issue #41); `ScreenTime.AWAKE_RULE` (kv `phone_awake`) re analyses nights on a change.
+   The stage detail level (`StageFilter`) then folds short pieces, and phone use and the wake ups the ring
+   reports itself are marked awake again (`NightAnalyzer.detailStages`). The Settings preview runs the same
+   function on the stored `stages_raw` (`Analyzer.preview`, phone use chosen by `ScreenTime.forNight` as in the
+   analysis, the ring's wake ups from the night's `ring_awake`, stored since issue #30), so it shows the night
+   that saving produces.
 3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep

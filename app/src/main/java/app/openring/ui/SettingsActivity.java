@@ -698,13 +698,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }
         card.addView(row);
         card.addView(Ui.gap(this, 8));
-        card.addView(Ui.body(this, DETAIL_TEXTS[detailChoice]));
+        card.addView(Ui.body(this, Explain.STAGE_DETAIL[detailChoice]));
         JSONObject night = lastNight();
         card.addView(Ui.gap(this, 12));
         if (night == null) {
             card.addView(Ui.text(this, "A preview of your last night appears here after the first night with the ring.", 12, Ui.TEXT_3, Ui.REGULAR));
         } else {
-            int[] st = StageFilter.filter(Json.stagesRaw(night), detailChoice);
+            // the same stages saving produces: filter, then phone use and the ring's own wake ups marked awake again (issue #30)
+            int[] st = Analyzer.preview(Db.get(this), p.screenAwake(), night, detailChoice);
             card.addView(Ui.text(this, "Your last night with this setting", 11, Ui.TEXT_3, Ui.MEDIUM));
             card.addView(Ui.gap(this, 6));
             card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")).zone(Json.zone(night, java.time.ZoneId.systemDefault())), Ui.sized(this, -1, 150));
@@ -719,6 +720,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     + "Wake ups: awake for a minute or more between falling asleep and waking up, counted as on the Sleep page."
                     + (brief > 0 ? " Awake under a minute (" + Texts.count(brief, "time", "times") + " here) is drawn but not counted." : ""),
                     11, Ui.TEXT_3, Ui.REGULAR));
+            String phone = p.screenAwake() ? Explain.previewPhone(Json.d(night, "phone_min")) : null;
+            if (phone != null) card.addView(Ui.text(this, phone, 11, Ui.TEXT_3, Ui.REGULAR));
         }
         final boolean changed = detailChoice != p.stageDetail();
         action(card, changed ? "Save and update all nights" : "Saved: " + StageFilter.NAMES[p.stageDetail()],
@@ -732,16 +735,6 @@ public final class SettingsActivity extends Activity implements RingManager.List
             }
         });
     }
-
-    static final String[] DETAIL_TEXTS = {
-        "Detailed: every stage change the estimate finds, even short ones. Many thin lines.",
-        "Balanced (recommended): sleep stages shorter than 3 minutes join the sleep stage next to them. "
-            + "Being awake for 30 seconds between sleep joins the sleep around it, 1 minute or more always stays, "
-            + "and short sleep is never turned into awake.",
-        "Calm: sleep stages shorter than 5 minutes join the sleep stage next to them, being awake needs 2 minutes to stay. "
-            + "Long, calm blocks, similar in style to the official app. Wake ups shorter than 2 minutes are no longer shown or counted. "
-            + "Short sleep is never turned into awake."
-    };
 
     void refreshStageDetail(Prefs p) {
         if (stagesCard != null) fillStageDetail(stagesCard, p);
