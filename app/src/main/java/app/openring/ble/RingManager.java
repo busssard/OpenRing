@@ -212,7 +212,7 @@ public final class RingManager {
     private Session open(boolean anyRing, Set<String> exclude) throws IOException, InterruptedException {
         BluetoothAdapter a = RingScanner.adapter(ctx);
         if (a == null) throw new IOException("This phone has no Bluetooth");
-        if (!a.isEnabled()) throw new IOException("Bluetooth is off");
+        if (!a.isEnabled()) throw new IOException(SyncError.BLUETOOTH_OFF_TEXT);
         Prefs p = Prefs.of(ctx);
         String addr = p.address();
         Session s = new Session();
@@ -359,7 +359,7 @@ public final class RingManager {
                 download(res, key, prefs);
             } finally {
                 try {
-                    prefs.setLastSyncError(res.ok ? null : res.message);
+                    prefs.setLastSyncError(SyncError.stored(res.ok, res.message));
                     if (res.ok) prefs.setLastSync(System.currentTimeMillis() / 1000);
                 } finally {
                     // the download is over and the link closed: free the ring for Live, games and
@@ -434,17 +434,25 @@ public final class RingManager {
                         attempt--;
                         continue;
                     }
-                    res.message = e.getMessage();
+                    res.message = SyncError.raw(e);
                     break;
                 } catch (IOException e) {
-                    res.message = e.getMessage();
-                    log("attempt " + attempt + " failed: " + e.getMessage());
-                    if (e.getMessage() != null && (e.getMessage().startsWith("No ring found") || e.getMessage().startsWith("Bluetooth"))) break;
-                    Thread.sleep(2500);
+                    String raw = SyncError.raw(e);
+                    log("attempt " + attempt + " failed: " + raw);
+                    boolean on = bluetoothOn();
+                    // Bluetooth turned off during the sync: say so, not the disconnect it caused
+                    res.message = SyncError.attemptError(raw, on);
+                    // only Bluetooth really off, no ring found, a key problem or a stop end the sync at once;
+                    // passing Bluetooth errors (a refused write, a failed scan) get the other attempts (issue #157)
+                    if (!SyncError.retryable(res.message, on)) break;
+                    if (attempt < 3) Thread.sleep(2500);
                 } catch (HistoryBatch.BatchException e) {
-                    res.message = e.getMessage();
-                    log("attempt " + attempt + " failed: " + e.getMessage());
-                    Thread.sleep(2500);
+                    String raw = SyncError.raw(e);
+                    log("attempt " + attempt + " failed: " + raw);
+                    boolean on = bluetoothOn();
+                    res.message = SyncError.attemptError(raw, on);
+                    if (!on) break;
+                    if (attempt < 3) Thread.sleep(2500);
                 } finally {
                     close(s);
                 }
@@ -454,6 +462,16 @@ public final class RingManager {
         } catch (RuntimeException e) {
             res.message = "Unexpected error: " + e;
             log(android.util.Log.getStackTraceString(e));
+        }
+    }
+
+    /** The phone's Bluetooth is on right now (an unreadable state counts as on, so the sync keeps its attempts). */
+    private boolean bluetoothOn() {
+        try {
+            BluetoothAdapter a = RingScanner.adapter(ctx);
+            return a != null && a.isEnabled();
+        } catch (RuntimeException e) {
+            return true;
         }
     }
 
@@ -1080,8 +1098,7 @@ public final class RingManager {
                         if (f == null) {
                             if (frames == 0 && now - started > MOTION_GIVE_UP_MS) {
                                 log("motion: " + s.link.sideSummary());
-                                motionState("Your ring sent no motion data, so it probably cannot stream motion on this firmware. "
-                                        + "The ring is free again; touch steering works.", false);
+                                motionState(SyncError.GAME_NO_MOTION, false);
                                 break;
                             }
                             if (!s.link.isConnected()) throw new IOException("the ring disconnected");
