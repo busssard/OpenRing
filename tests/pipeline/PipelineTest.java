@@ -1617,6 +1617,73 @@ public class PipelineTest {
      * database under the first. Now a second call waits and finds the demo built; the "built" mark
      * also keeps 00:30 (newest day still yesterday) from rebuilding it.
      */
+    static void demoTwice() throws Exception {
+        ZoneId z = ZoneId.systemDefault();
+        final LocalDate day = LocalDate.parse("2026-02-10");
+        final long now = java.time.LocalDateTime.parse("2026-02-10T00:30:00").atZone(z).toEpochSecond();
+        Context single = freshDb("openring-demo-one");
+        app.openring.data.Demo.enter(single, null, day, now);
+        String want = demoCounts(Db.get(single));
+        app.openring.data.Demo.leave(single);
+
+        final Context phone = freshDb("openring-demo-two");
+        final Steps a = new Steps(), b = new Steps();
+        final java.util.concurrent.CyclicBarrier start = new java.util.concurrent.CyclicBarrier(2);
+        final Throwable[] err = new Throwable[2];
+        Thread[] th = new Thread[2];
+        for (int i = 0; i < 2; i++) {
+            final int k = i;
+            th[i] = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        start.await();
+                        app.openring.data.Demo.enter(phone, k == 0 ? a : b, day, now);
+                    } catch (Throwable t) {
+                        err[k] = t;
+                    }
+                }
+            });
+            th[i].start();
+        }
+        for (Thread t : th) t.join(600000);
+        check("two demo starts at once: no error", err[0] == null && err[1] == null, err[0] != null ? err[0] : err[1]);
+        String got = demoCounts(Db.get(phone));
+        check("two demo starts at once: same demo as one start", got.equals(want), got + " (one start: " + want + ")");
+        check("two demo starts at once: only one builds", a.n.get() + b.n.get() == 2 && (a.n.get() == 0 || b.n.get() == 0),
+                a.n.get() + " and " + b.n.get() + " steps");
+        check("demo marked as built today", day.toString().equals(Db.get(phone).kv("demo_day", null)), Db.get(phone).kv("demo_day", null));
+        check("at 00:30 the newest demo day is still yesterday", day.minusDays(1).toString().equals(Db.get(phone).latestDay()), Db.get(phone).latestDay());
+
+        Steps again = new Steps();
+        boolean rebuilt = app.openring.data.Demo.enter(phone, again, day, now + 600);
+        check("demo started again the same day is not rebuilt", !rebuilt && again.n.get() == 0 && demoCounts(Db.get(phone)).equals(want), again.n.get() + " steps");
+        Steps cut = new Steps();
+        app.openring.data.Demo.complete(phone, cut, day.plusDays(1), now + 86400);
+        check("a complete demo is kept after a restart", cut.n.get() == 0, cut.n.get() + " steps");
+
+        Steps next = new Steps();
+        long nextNow = java.time.LocalDateTime.parse("2026-02-11T12:00:00").atZone(z).toEpochSecond();
+        app.openring.data.Demo.enter(phone, next, day.plusDays(1), nextNow);
+        check("demo started on a later day is built again", next.n.get() == 2 && "2026-02-11".equals(Db.get(phone).latestDay()),
+                next.n.get() + " steps, newest " + Db.get(phone).latestDay());
+
+        // cut off half way: events written, no mark (the app was ended while preparing)
+        Db.get(phone).put("demo_day", null);
+        Steps resume = new Steps();
+        boolean finished = app.openring.data.Demo.complete(phone, resume, day.plusDays(1), nextNow + 60);
+        check("a demo cut off half way is finished", finished && resume.n.get() == 2 && "2026-02-11".equals(Db.get(phone).kv("demo_day", null)),
+                resume.n.get() + " steps");
+        Steps later = new Steps();
+        boolean redone = app.openring.data.Demo.complete(phone, later);
+        check("a complete demo from an earlier day is kept after a restart", !redone && later.n.get() == 0, later.n.get() + " steps");
+        Db.get(phone).resetAll();
+        Steps empty = new Steps();
+        app.openring.data.Demo.enter(phone, empty, day.plusDays(1), nextNow + 120);
+        check("an emptied demo is built again", empty.n.get() == 2 && Db.get(phone).count("SELECT COUNT(*) FROM events") > 0, empty.n.get() + " steps");
+        app.openring.data.Demo.leave(phone);
+    }
+
     /**
      * Issue #43 B: Delete all local data while an analysis runs. The analysis already holds a week of
      * nights when Delete starts; Delete must wait for it, so afterwards every table is empty (no ghost
@@ -1704,73 +1771,47 @@ public class PipelineTest {
         Analyzer.run(c, null);
         check("after Delete the next analysis stores no nights", db.count("SELECT COUNT(*) FROM nights") == 0
                 && db.count("SELECT COUNT(*) FROM days") == 0, db.count("SELECT COUNT(*) FROM nights") + " nights");
+        deleteOneTransaction(c);
     }
 
-    static void demoTwice() throws Exception {
+    /**
+     * Review of PR #174: Delete all local data is one transaction. A delete that fails part way (here a
+     * trigger stops the last table) leaves every table as it was, and the error reaches the caller,
+     * so Settings can say that nothing was deleted.
+     */
+    static void deleteOneTransaction(Context c) throws Exception {
+        Db db = Db.get(c);
         ZoneId z = ZoneId.systemDefault();
-        final LocalDate day = LocalDate.parse("2026-02-10");
-        final long now = java.time.LocalDateTime.parse("2026-02-10T00:30:00").atZone(z).toEpochSecond();
-        Context single = freshDb("openring-demo-one");
-        app.openring.data.Demo.enter(single, null, day, now);
-        String want = demoCounts(Db.get(single));
-        app.openring.data.Demo.leave(single);
-
-        final Context phone = freshDb("openring-demo-two");
-        final Steps a = new Steps(), b = new Steps();
-        final java.util.concurrent.CyclicBarrier start = new java.util.concurrent.CyclicBarrier(2);
-        final Throwable[] err = new Throwable[2];
-        Thread[] th = new Thread[2];
-        for (int i = 0; i < 2; i++) {
-            final int k = i;
-            th[i] = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        start.await();
-                        app.openring.data.Demo.enter(phone, k == 0 ? a : b, day, now);
-                    } catch (Throwable t) {
-                        err[k] = t;
-                    }
-                }
-            });
-            th[i].start();
+        long t0 = LocalDate.parse("2026-04-01").atStartOfDay(z).toEpochSecond();
+        long end = t0 + 8 * 86400L + 12 * 3600;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, 7, end, z, new Random(174));
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, end);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        Analyzer.run(c, null);
+        db.getWritableDatabase().execSQL("INSERT INTO screen_reads(start, stop) VALUES (?, ?)", new Object[] {(double) t0, (double) end});
+        String[] tables = {"events", "nights", "days", "kv", "zones", "screen_reads"};
+        long[] before = new long[tables.length];
+        for (int i = 0; i < tables.length; i++) before[i] = db.count("SELECT COUNT(*) FROM " + tables[i]);
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop_delete BEFORE DELETE ON screen_reads BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        Throwable thrown = null;
+        try {
+            Analyzer.deleteAll(c);
+        } catch (RuntimeException e) {
+            thrown = e;
         }
-        for (Thread t : th) t.join(600000);
-        check("two demo starts at once: no error", err[0] == null && err[1] == null, err[0] != null ? err[0] : err[1]);
-        String got = demoCounts(Db.get(phone));
-        check("two demo starts at once: same demo as one start", got.equals(want), got + " (one start: " + want + ")");
-        check("two demo starts at once: only one builds", a.n.get() + b.n.get() == 2 && (a.n.get() == 0 || b.n.get() == 0),
-                a.n.get() + " and " + b.n.get() + " steps");
-        check("demo marked as built today", day.toString().equals(Db.get(phone).kv("demo_day", null)), Db.get(phone).kv("demo_day", null));
-        check("at 00:30 the newest demo day is still yesterday", day.minusDays(1).toString().equals(Db.get(phone).latestDay()), Db.get(phone).latestDay());
-
-        Steps again = new Steps();
-        boolean rebuilt = app.openring.data.Demo.enter(phone, again, day, now + 600);
-        check("demo started again the same day is not rebuilt", !rebuilt && again.n.get() == 0 && demoCounts(Db.get(phone)).equals(want), again.n.get() + " steps");
-        Steps cut = new Steps();
-        app.openring.data.Demo.complete(phone, cut, day.plusDays(1), now + 86400);
-        check("a complete demo is kept after a restart", cut.n.get() == 0, cut.n.get() + " steps");
-
-        Steps next = new Steps();
-        long nextNow = java.time.LocalDateTime.parse("2026-02-11T12:00:00").atZone(z).toEpochSecond();
-        app.openring.data.Demo.enter(phone, next, day.plusDays(1), nextNow);
-        check("demo started on a later day is built again", next.n.get() == 2 && "2026-02-11".equals(Db.get(phone).latestDay()),
-                next.n.get() + " steps, newest " + Db.get(phone).latestDay());
-
-        // cut off half way: events written, no mark (the app was ended while preparing)
-        Db.get(phone).put("demo_day", null);
-        Steps resume = new Steps();
-        boolean finished = app.openring.data.Demo.complete(phone, resume, day.plusDays(1), nextNow + 60);
-        check("a demo cut off half way is finished", finished && resume.n.get() == 2 && "2026-02-11".equals(Db.get(phone).kv("demo_day", null)),
-                resume.n.get() + " steps");
-        Steps later = new Steps();
-        boolean redone = app.openring.data.Demo.complete(phone, later);
-        check("a complete demo from an earlier day is kept after a restart", !redone && later.n.get() == 0, later.n.get() + " steps");
-        Db.get(phone).resetAll();
-        Steps empty = new Steps();
-        app.openring.data.Demo.enter(phone, empty, day.plusDays(1), nextNow + 120);
-        check("an emptied demo is built again", empty.n.get() == 2 && Db.get(phone).count("SELECT COUNT(*) FROM events") > 0, empty.n.get() + " steps");
-        app.openring.data.Demo.leave(phone);
+        db.getWritableDatabase().execSQL("DROP TRIGGER stop_delete");
+        StringBuilder changed = new StringBuilder();
+        for (int i = 0; i < tables.length; i++) {
+            long n = db.count("SELECT COUNT(*) FROM " + tables[i]);
+            if (n != before[i]) changed.append(tables[i]).append(' ').append(before[i]).append(" to ").append(n).append(", ");
+        }
+        check("delete failing part way: the error reaches the caller", thrown != null && String.valueOf(thrown).contains("test stop"), thrown);
+        check("delete failing part way: every table as it was (one transaction)", before[0] > 0 && before[1] > 0 && before[3] > 0
+                && changed.length() == 0, before[0] + " events, " + before[1] + " nights, " + before[3] + " kv; changed: " + changed);
+        Analyzer.deleteAll(c);
+        check("delete after the failure empties everything", db.count("SELECT COUNT(*) FROM events") == 0
+                && db.count("SELECT COUNT(*) FROM nights") == 0 && db.count("SELECT COUNT(*) FROM screen_reads") == 0, "");
     }
 
     // ---------------------------------------------------------------- issue #21, dating
