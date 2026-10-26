@@ -53,6 +53,28 @@ public final class Explain {
                 + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " of these 7 days.";
     }
 
+    /** What VO2 max and its unit mean, under the Cardio capacity card (issue #116). */
+    public static final String VO2MAX = "VO2 max is the most oxygen your body can use per minute in hard exercise, "
+            + "for each kg of body weight (ml/kg/min). Higher means fitter heart and lungs.";
+
+    /**
+     * The line under the Cardio capacity card for the day's stored VO2 max {@code stored} (issue #116):
+     * where the number comes from, why there is none (no night, or a night without a usable lowest heart
+     * rate), or why an impossible one is not shown. {@code hadNight}: the day has a main night.
+     */
+    public static String vo2max(double stored, boolean hadNight) {
+        if (Double.isNaN(stored)) {
+            if (hadNight) return "No usable heart rate in that night's sleep, so no estimate. It needs the lowest heart rate of the night (Uth method).";
+            return "Needs a night with the ring. It comes from your age and the lowest heart rate in that night's sleep (Uth method).";
+        }
+        if (Double.isNaN(app.openring.core.analysis.Wellness.vo2maxShown(stored))) {
+            return "Not shown for this day: that night's lowest heart rate gave a value outside what a person can have ("
+                    + Math.round(app.openring.core.analysis.Wellness.VO2MAX_LOW) + " to " + Math.round(app.openring.core.analysis.Wellness.VO2MAX_HIGH)
+                    + " ml/kg/min), so that reading was probably off.";
+        }
+        return "From your age and the lowest heart rate in that night's sleep (Uth method). A rough guide, not a lab test.";
+    }
+
     public static final String SCREEN = "The screen score looks at your phone use: how long the screen was on compared with your "
             + "daily goal (half), phone use in the hour before you fell asleep (about a third) and during the night (the rest). "
             + "Days without a known night only count the screen time, so the same screen time scores lower there. It is a simple rule of thumb made for Open Ring, not a medical measure. "

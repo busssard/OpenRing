@@ -174,6 +174,7 @@ public class PipelineTest {
         check("data check: one of one boot segment is singular", r2.steps.get(2).detail.endsWith("1 of 1 boot segment with a time record"), r2.steps.get(2).detail);
         check("data check: events keep their grouping", r2.steps.get(0).detail.equals("5,353 events copied from the ring"), r2.steps.get(0).detail);
         check("data check: plurals for several nights", r2.steps.get(3).detail.startsWith("3 sleep periods (3 main nights), 4 days computed"), r2.steps.get(3).detail);
+        dataCheckPrivate("synthetic history, nights older than 14 days", r2.text, db);
 
         for (int d = 0; d < 3; d++) {
             String key = day0.plusDays(d).toString();
@@ -535,6 +536,7 @@ public class PipelineTest {
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
         dayHeartChecks(demo);
+        dataCheckPrivate("demo", DataCheck.run(phone2).text, demo);
         // issue #44: the first demo days count the worn days so far, later ones a full week as before
         int firstWorn = -1, fullWeek = 0, weekDays = 0;
         boolean weekTexts = true;
@@ -680,11 +682,94 @@ public class PipelineTest {
         screenGaps(full.toByteArray());
         sqlForOldPhones();
         oneEventCheck();
+        nightSummaryCases();
         backupGaps(full.toByteArray());
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
+    /**
+     * Issue #40: the copied data check is meant for public bug reports, so it holds counts and dates
+     * only. No clock times, minutes asleep, scores, stages or battery level of any night, but still the
+     * number of sleep periods per day as the database has them.
+     */
+    static void dataCheckPrivate(String label, String text, Db db) throws Exception {
+        String from = LocalDate.now().minusDays(DataCheck.NIGHT_DAYS - 1).toString();
+        List<String> ns = db.nightsJson(from, "9999-12-31", false);
+        if (ns.isEmpty()) {
+            check("data check (" + label + "): no recent nights, says none", text.contains("\nSleep periods of the last 14 days (counts and dates only)\n  none\n"), text);
+            return;
+        }
+        check("data check (" + label + "): no clock time", !java.util.regex.Pattern.compile("\\d{1,2}:\\d{2}").matcher(text).find(), text);
+        check("data check (" + label + "): no minutes", !java.util.regex.Pattern.compile("\\d+ ?min\\b").matcher(text).find(), text);
+        check("data check (" + label + "): no battery level, no per night list",
+                !text.contains("battery") && !text.contains("from, to, asleep"), text);
+        // a score is a whole number next to the word; the only one left is the count "with a sleep score: n of m"
+        check("data check (" + label + "): no score value", !java.util.regex.Pattern.compile("score\\D{0,3}\\d++(?! of )").matcher(text).find(), text);
+        java.text.SimpleDateFormat hm = new java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US);
+        boolean leak = false;
+        int main = 0, scored = 0;
+        java.util.Map<String, int[]> perDay = new java.util.TreeMap<String, int[]>();
+        for (String js : ns) {
+            JSONObject o = Json.parse(js);
+            String stages = o.optString("stages", "");
+            leak |= text.contains(hm.format(new java.util.Date((long) (o.optDouble("start") * 1000))))
+                    || text.contains(hm.format(new java.util.Date((long) (o.optDouble("end") * 1000))))
+                    || stages.length() >= 10 && text.contains(stages.substring(0, 10));
+            if (o.optBoolean("main")) main++;
+            if (o.optJSONObject("score") != null && o.optJSONObject("score").has("value")) scored++;
+            int[] n = perDay.get(o.optString("day"));
+            if (n == null) perDay.put(o.optString("day"), n = new int[2]);
+            n[o.optBoolean("main") ? 0 : 1]++;
+        }
+        check("data check (" + label + "): no start, end or stages of any night", !leak, text);
+        check("data check (" + label + "): counts the sleep periods", text.contains(app.openring.core.Texts.count(ns.size(), "sleep period", "sleep periods")
+                + " (" + app.openring.core.Texts.count(main, "main night", "main nights") + ", "
+                + app.openring.core.Texts.count(ns.size() - main, "nap", "naps") + "), newest on "), text);
+        check("data check (" + label + "): counts the scored nights", text.contains("with a sleep score: " + scored + " of " + ns.size()), text);
+        boolean days = true;
+        for (java.util.Map.Entry<String, int[]> e : perDay.entrySet()) {
+            String want = e.getValue()[1] == 0 ? app.openring.core.Texts.count(e.getValue()[0], "main night", "main nights")
+                    : e.getValue()[0] == 0 ? app.openring.core.Texts.count(e.getValue()[1], "nap", "naps")
+                    : app.openring.core.Texts.count(e.getValue()[0], "main night", "main nights") + ", " + app.openring.core.Texts.count(e.getValue()[1], "nap", "naps");
+            days &= text.contains("    " + e.getKey() + "  " + want + "\n");
+        }
+        check("data check (" + label + "): each day with its count", days, text);
+        check("data check (" + label + "): names the stage sources", text.contains("  Stages from: "), text);
+        // exactly 14 days listed, today and the 13 before, as the header says
+        int listed = 0;
+        for (String line : text.split("\n")) if (line.matches("    \\d{4}-\\d{2}-\\d{2}  .*")) listed++;
+        check("data check (" + label + "): lists as many days as the header says", listed == DataCheck.NIGHT_DAYS, listed);
+    }
+
+    /** Issue #40, review of PR #173: each branch of the night summary, with made up nights. */
+    static void nightSummaryCases() {
+        LocalDate today = LocalDate.parse("2026-10-26");
+        List<String> ns = new ArrayList<String>();
+        ns.add("{\"day\":\"2026-10-24\",\"main\":true,\"source\":\"ring\",\"phone_min\":0,\"score\":{\"value\":81},\"start\":1,\"end\":2}");
+        ns.add("{\"day\":\"2026-10-24\",\"main\":false,\"source\":\"signals\",\"score\":{}}");
+        ns.add("{\"day\":\"2026-10-25\",\"main\":false,\"source\":\"signals\"}");
+        ns.add("{\"day\":\"2026-10-26\",\"main\":true,\"source\":\"window\",\"phone_min\":12.5,\"score\":{\"value\":64}}");
+        ns.add("{\"day\":\"2026-10-26\",\"main\":true}");
+        ns.add("not json {");
+        String t = DataCheck.nightSummary(ns, today, 3);
+        System.out.println(t);
+        check("night summary: header", t.startsWith("\nSleep periods of the last 3 days (counts and dates only)\n"), t);
+        check("night summary: totals, unparsable line skipped", t.contains("  5 sleep periods (3 main nights, 2 naps), newest on 2026-10-26\n"), t);
+        check("night summary: several sources, missing one counted as unknown", t.contains("  Stages from: ring 1, signals 2, unknown 1, window 1\n"), t);
+        check("night summary: phone data and scores counted", t.contains("  With phone use data: 2 of 5, with a sleep score: 2 of 5\n"), t);
+        check("night summary: main night and nap", t.contains("    2026-10-24  1 main night, 1 nap\n"), t);
+        check("night summary: nap only", t.contains("    2026-10-25  1 nap\n"), t);
+        check("night summary: two main nights", t.contains("    2026-10-26  2 main nights\n"), t);
+        check("night summary: no score values", !t.contains("81") && !t.contains("64") && !t.contains("12.5"), t);
+        String gap = DataCheck.nightSummary(java.util.Collections.singletonList("{\"day\":\"2026-10-26\",\"main\":true,\"source\":\"ring\"}"), today, 3);
+        check("night summary: empty days say none", gap.contains("    2026-10-24  none\n    2026-10-25  none\n    2026-10-26  1 main night\n")
+                && !gap.contains("2026-10-23"), gap);
+        check("night summary: no nights at all", DataCheck.nightSummary(new ArrayList<String>(), today, 3)
+                .equals("\nSleep periods of the last 3 days (counts and dates only)\n  none\n"), "");
+        check("night summary: only unparsable lines", DataCheck.nightSummary(java.util.Collections.singletonList("{"), today, 3).endsWith("  none\n"), "");
+    }
+
     /** Issue #92, code review of PR #100: a history of a single event says "1 event", also in the timing line. */
     static void oneEventCheck() throws Exception {
         long now = T0 + 3600;
