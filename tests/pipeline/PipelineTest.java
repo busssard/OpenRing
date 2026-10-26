@@ -1090,6 +1090,14 @@ public class PipelineTest {
         app.openring.data.Backup.Result kr = app.openring.data.Backup.read(keep, new java.io.ByteArrayInputStream(ka.toByteArray()));
         check("key and settings only over a phone with nights keeps its stage detail", kr.ok && pk.stageDetail() == keptLevel
                 && !pk.finderSound(), pk.stageDetail() + " vs " + keptLevel);
+        // a phone history that cannot be read (here: a file that is not a database) keeps the phone's level too
+        Context unread = freshDb("openring-b33unread");
+        java.nio.file.Files.write(unread.getDatabasePath(Db.REAL).toPath(), "not a database at all, but a file".getBytes("UTF-8"));
+        app.openring.data.Prefs pu = app.openring.data.Prefs.of(unread);
+        pu.setStageDetail(app.openring.core.analysis.StageFilter.DETAILED);
+        app.openring.data.Backup.Result ur = app.openring.data.Backup.read(unread, new java.io.ByteArrayInputStream(ka.toByteArray()));
+        check("key and settings only over a phone history that cannot be read keeps its stage detail", ur.ok
+                && pu.stageDetail() == app.openring.core.analysis.StageFilter.DETAILED, ur.message + ", " + pu.stageDetail());
         java.io.ByteArrayOutputStream fa = new java.io.ByteArrayOutputStream();
         app.openring.data.Backup.write(a, fa, true);
         Context fb = freshDb("openring-b33full");

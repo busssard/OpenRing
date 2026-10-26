@@ -226,7 +226,8 @@ public final class Backup {
         // history, or onto a phone without analysed nights; a phone that keeps its own nights keeps
         // its level, since another one would analyse its whole history again
         Db.Info phone = r.history ? null : Db.inspect(c.getDatabasePath(Db.REAL), false);
-        applySettings(Prefs.of(c), p.key, p.o, phone == null || !phone.exists || phone.nights <= 0);
+        // a phone history that cannot be read counts as one with nights, so its level stays
+        applySettings(Prefs.of(c), p.key, p.o, phone == null || !phone.exists || phone.ok && phone.nights == 0);
         // the key is saved: a Setup screen closed before showing the result must not start over
         Prefs.of(c).setSetupDone(true);
         r.ok = true;
