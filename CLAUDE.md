@@ -82,7 +82,9 @@ Check every plan and PR against these before showing it:
 * Three scheduled Claude runs are configured in the owner's Claude account (not in this repository):
   * **Daily experiments (about 18:00):** designs and runs experiments to find bugs and inconsistencies.
     It never pushes code; it only opens issues titled `[EXP] ...` with the label `experiment`, and only
-    for real findings (a day without issues is fine).
+    for real findings (a day without issues is fine). It tests the real app as people use it with a
+    ring; demo mode itself is out of scope (owner's decision), and a finding that only appears with
+    the demo's made up data is not filed.
   * **Nightly build (about midnight):** works through all open issues (no fixed number) by the process
     above and opens pull requests; it never merges. An issue that needs to be thought over gets a comment
     with options and a recommendation instead of a build, and is built after the owner answers. Problems
