@@ -629,6 +629,7 @@ public class PipelineTest {
         nightTwice();
         nightAcrossChecks();
         demoTwice();
+        deleteDuringAnalysis();
         oldNights();
         lastWornOldSync();
         lastWornStrayEvents();
@@ -1616,6 +1617,95 @@ public class PipelineTest {
      * database under the first. Now a second call waits and finds the demo built; the "built" mark
      * also keeps 00:30 (newest day still yesterday) from rebuilding it.
      */
+    /**
+     * Issue #43 B: Delete all local data while an analysis runs. The analysis already holds a week of
+     * nights when Delete starts; Delete must wait for it, so afterwards every table is empty (no ghost
+     * nights, no kv values written back).
+     */
+    static void deleteDuringAnalysis() throws Exception {
+        final Context c = freshDb("openring-delete");
+        final Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2026-03-01").atStartOfDay(z).toEpochSecond();
+        long end = t0 + 21 * 86400L + 12 * 3600;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, 20, end, z, new Random(43));
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, end);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        Analyzer.run(c, null);
+        db.addBattery(end, 80);
+        long nightsBefore = db.count("SELECT COUNT(*) FROM nights");
+        check("delete test: the history has nights before Delete", nightsBefore >= 15, nightsBefore + " nights");
+
+        final java.util.concurrent.CountDownLatch paused = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch deleteStarted = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch deleteDone = new java.util.concurrent.CountDownLatch(1);
+        final boolean[] deletedEarly = {false};
+        final Throwable[] err = new Throwable[2];
+        Thread analysis = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Analyzer.runAll(c, new Analyzer.Log() {
+                        @Override
+                        public void log(String m) {
+                            // the first week's nights are worked out and about to be stored: Delete starts now
+                            if (!m.startsWith("sleep for") || paused.getCount() == 0) return;
+                            paused.countDown();
+                            try {
+                                deleteStarted.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                                Thread.sleep(400); // long enough for a Delete that does not wait to finish
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                            deletedEarly[0] = deleteDone.getCount() == 0;
+                        }
+                    });
+                } catch (Throwable t) {
+                    err[0] = t;
+                }
+            }
+        });
+        analysis.start();
+        check("delete test: the analysis reached its first week", paused.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        Thread delete = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    deleteStarted.countDown();
+                    Analyzer.deleteAll(c);
+                } catch (Throwable t) {
+                    err[1] = t;
+                } finally {
+                    deleteDone.countDown();
+                }
+            }
+        });
+        delete.start();
+        analysis.join(300000);
+        delete.join(300000);
+        check("delete during an analysis: no error", err[0] == null && err[1] == null, err[0] != null ? err[0] : err[1]);
+        check("delete during an analysis waits for it to end", !deletedEarly[0], "");
+        StringBuilder left = new StringBuilder();
+        int tables = 0;
+        android.database.Cursor cur = db.getReadableDatabase().rawQuery(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'android_metadata'", null);
+        List<String> names = new ArrayList<String>();
+        if (cur.moveToFirst()) do names.add(cur.getString(0)); while (cur.moveToNext());
+        cur.close();
+        for (String t : names) {
+            tables++;
+            long n = db.count("SELECT COUNT(*) FROM " + t);
+            if (n > 0) left.append(t).append(' ').append(n).append(", ");
+        }
+        check("delete during an analysis: every table is empty afterwards (no ghost nights)", tables >= 10 && left.length() == 0,
+                tables + " tables, left: " + left);
+        // the next analysis on the empty history finds nothing and stores nothing
+        Analyzer.run(c, null);
+        check("after Delete the next analysis stores no nights", db.count("SELECT COUNT(*) FROM nights") == 0
+                && db.count("SELECT COUNT(*) FROM days") == 0, db.count("SELECT COUNT(*) FROM nights") + " nights");
+    }
+
     static void demoTwice() throws Exception {
         ZoneId z = ZoneId.systemDefault();
         final LocalDate day = LocalDate.parse("2026-02-10");

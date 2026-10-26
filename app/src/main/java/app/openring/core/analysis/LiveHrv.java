@@ -42,7 +42,35 @@ public final class LiveHrv {
         return n < 8 ? Double.NaN : Math.sqrt(sum / n);
     }
 
+    /** Beat to beat intervals in the window now. */
+    public int size() {
+        return ibis.size();
+    }
+
     public void clear() {
         ibis.clear();
+    }
+
+    /** Fewest clean beats for a value: {@link #rmssd} needs 8 clean successive pairs. */
+    public static final int MIN_BEATS = 9;
+
+    /**
+     * The one line under the live tiles that says what the HRV tile shows (issue #152). HRV comes only
+     * from real beat to beat intervals; always on heart rate values are averages, so they never count.
+     *
+     * @param beats      beat to beat intervals in the window ({@link #size})
+     * @param heartRates always on heart rate values received this session
+     * @param rmssd      {@link #rmssd}, NaN when there is no value yet
+     */
+    public static String note(int beats, int heartRates, double rmssd) {
+        if (!Double.isNaN(rmssd)) {
+            return "HRV: the typical change from one heartbeat to the next, from the last " + beats + " heartbeats.";
+        }
+        if (beats > 0) return "HRV not available yet: it needs at least " + MIN_BEATS + " clean heartbeats, " + beats + " so far.";
+        if (heartRates > 0) {
+            return "HRV not available yet: the ring sent heart rate averages only, and HRV needs single heartbeats. "
+                    + "Your HRV while asleep is on the Sleep tab.";
+        }
+        return "HRV appears once the ring sends single heartbeats.";
     }
 }

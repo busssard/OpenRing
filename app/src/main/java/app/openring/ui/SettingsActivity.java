@@ -245,6 +245,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     Permissions.request(SettingsActivity.this);
                     return;
                 }
+                // one sync at a time, as on the main screen: a second one would end under the first one's "Up to date" (issue #43)
+                if (RingManager.get(SettingsActivity.this).busy()) {
+                    problem(Texts.SYNC_BUSY);
+                    return;
+                }
                 SyncService.start(SettingsActivity.this);
             }
         });
@@ -469,9 +474,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 confirm("Delete everything?", "All synced events and results on this phone are erased. The ring keeps its key.", new Runnable() {
                     @Override
                     public void run() {
-                        Db.get(SettingsActivity.this).resetAll();
-                        say("Deleted");
-                        build();
+                        deleteAll();
                     }
                 });
             }
@@ -925,6 +928,44 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         yes.run();
                     }
                 }).setNegativeButton("Cancel", null).show();
+    }
+
+    /**
+     * Delete all local data, confirmed by the person. Waits for a running analysis and holds the ring
+     * lock, so nothing is written back afterwards; refused while a sync or another ring task runs
+     * (issue #43). Off the screen thread: a Re analyse all can take minutes to finish first.
+     */
+    void deleteAll() {
+        final android.content.Context app = getApplicationContext();
+        toast("Deleting");
+        new AsyncTask<Void, Void, Boolean>() {
+            @Override
+            protected Boolean doInBackground(Void... v) {
+                try {
+                    return RingManager.get(app).whileRingFree(new Runnable() {
+                        @Override
+                        public void run() {
+                            Analyzer.deleteAll(app);
+                        }
+                    });
+                } catch (RuntimeException e) {
+                    // one transaction: nothing was deleted
+                    RingManager.get(app).log("delete failed: " + android.util.Log.getStackTraceString(e));
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Boolean ok) {
+                if (ok == null || !ok) {
+                    problem(ok == null ? Texts.DELETE_FAILED : Texts.DELETE_BUSY);
+                    return;
+                }
+                RingManager.get(app).log("all local data deleted");
+                toast("Deleted");
+                if (!isFinishing() && !isDestroyed()) build();
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     void reanalyse() {
