@@ -208,7 +208,7 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
     void showHrv() {
         double r = hrv.rmssd();
         hrvV.setText(Double.isNaN(r) ? "--" : String.valueOf(Math.round(r)));
-        hrvNote.setText(LiveHrv.note(hrv.size(), heartRates, r));
+        hrvNote.setText(LiveHrv.note(hrv.size(), hrv.cleanPairs(), heartRates, r));
     }
 
     @Override

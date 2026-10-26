@@ -2276,18 +2276,29 @@ public class CoreTest {
         for (int i = 0; i < 30; i++) f.add(new RingEvent(EventCodec.AOHR_EVENT, 20 + i, b(0, 0, 2, 70 + i % 3, 1, 71, 1)));
         for (int x : f.beats) h.add(x);
         check("live HRV: heart rate values alone give no HRV (#152)", f.heartRates.size() == 60 && h.size() == 0 && Double.isNaN(h.rmssd()));
-        String only = LiveHrv.note(h.size(), f.heartRates.size(), h.rmssd());
+        String only = LiveHrv.note(h.size(), h.cleanPairs(), f.heartRates.size(), h.rmssd());
         check("live HRV note: heart rate only says HRV needs single heartbeats", only.startsWith("HRV not available yet") && only.contains("single heartbeats"));
-        check("live HRV note: nothing yet", LiveHrv.note(0, 0, Double.NaN).equals("HRV appears once the ring sends single heartbeats."));
+        check("live HRV note: nothing yet", LiveHrv.note(0, 0, 0, Double.NaN).equals("HRV appears once the ring sends single heartbeats."));
         for (int i = 0; i < 5; i++) h.add(800 + 10 * (i % 2));
-        eq("live HRV note: a few beats", LiveHrv.note(h.size(), 60, h.rmssd()), "HRV not available yet: it needs at least 9 clean heartbeats, 5 so far.");
+        eq("live HRV note: a few beats", LiveHrv.note(h.size(), h.cleanPairs(), 60, h.rmssd()), "HRV not available yet: it needs at least 9 clean heartbeats, 5 so far.");
         for (int i = 0; i < 5; i++) h.add(800 + 10 * (i % 2));
         check("live HRV: 10 clean beats give a value", Math.abs(h.rmssd() - Math.sqrt(800.0 / 9)) < 1e-9); // 8 pairs of 10 ms, one of 0
-        eq("live HRV note: with a value", LiveHrv.note(h.size(), 60, h.rmssd()), "HRV: the typical change from one heartbeat to the next, from the last 10 heartbeats.");
-        for (String t : new String[] {only, LiveHrv.note(0, 0, Double.NaN), LiveHrv.note(3, 0, Double.NaN), LiveHrv.note(40, 0, 20)}) {
+        eq("live HRV note: with a value", LiveHrv.note(h.size(), h.cleanPairs(), 60, h.rmssd()), "HRV: the typical change from one heartbeat to the next, from the last 10 heartbeats.");
+        for (String t : new String[] {only, LiveHrv.note(0, 0, 0, Double.NaN), LiveHrv.note(3, 2, 0, Double.NaN), LiveHrv.note(40, 39, 0, 20), LiveHrv.note(20, 0, 0, Double.NaN)}) {
             check("live HRV note without dashes: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
         }
         check("live HRV: needs 9 beats as the note says", LiveHrv.MIN_BEATS == 9);
+        // review of PR #174: 20 uneven beats (600 and 900 ms alternate, every jump over 20 %) give no value,
+        // and the line says they jump too much instead of "needs 9, 20 so far"
+        LiveHrv uneven = new LiveHrv(40);
+        for (int i = 0; i < 20; i++) uneven.add(i % 2 == 0 ? 600 : 900);
+        String jumpy = LiveHrv.note(uneven.size(), uneven.cleanPairs(), 0, uneven.rmssd());
+        check("live HRV: alternating 600 and 900 ms give no value", Double.isNaN(uneven.rmssd()) && uneven.cleanPairs() == 0 && uneven.size() == 20);
+        eq("live HRV note: enough beats but too uneven", jumpy, "HRV not available yet: the heartbeats so far jump too much to count. Keep your hand still.");
+        LiveHrv few = new LiveHrv(40);
+        for (int x : new int[] {800, 810, 1200, 805}) few.add(x);
+        eq("live HRV note: a few beats count only the clean ones", LiveHrv.note(few.size(), few.cleanPairs(), 0, few.rmssd()),
+                "HRV not available yet: it needs at least 9 clean heartbeats, 2 so far.");
         LiveHrv eight = new LiveHrv(40);
         for (int i = 0; i < LiveHrv.MIN_BEATS - 1; i++) eight.add(800 + 10 * (i % 2));
         check("live HRV: 8 beats are not enough, 9 are", Double.isNaN(eight.rmssd()) && addOne(eight));

@@ -47,6 +47,17 @@ public final class LiveHrv {
         return ibis.size();
     }
 
+    /** Successive pairs in the window that {@link #rmssd} counts (a jump of at most 20 %). */
+    public int cleanPairs() {
+        int n = 0;
+        Integer prev = null;
+        for (Integer cur : ibis) {
+            if (prev != null && Math.abs(cur - prev) <= prev * 0.2) n++;
+            prev = cur;
+        }
+        return n;
+    }
+
     public void clear() {
         ibis.clear();
     }
@@ -59,14 +70,19 @@ public final class LiveHrv {
      * from real beat to beat intervals; always on heart rate values are averages, so they never count.
      *
      * @param beats      beat to beat intervals in the window ({@link #size})
+     * @param cleanPairs pairs of them that count ({@link #cleanPairs}); 8 are needed
      * @param heartRates always on heart rate values received this session
      * @param rmssd      {@link #rmssd}, NaN when there is no value yet
      */
-    public static String note(int beats, int heartRates, double rmssd) {
+    public static String note(int beats, int cleanPairs, int heartRates, double rmssd) {
         if (!Double.isNaN(rmssd)) {
             return "HRV: the typical change from one heartbeat to the next, from the last " + beats + " heartbeats.";
         }
-        if (beats > 0) return "HRV not available yet: it needs at least " + MIN_BEATS + " clean heartbeats, " + beats + " so far.";
+        if (beats >= MIN_BEATS) {
+            // enough beats, but too many big jumps between them (a moving hand, missed beats)
+            return "HRV not available yet: the heartbeats so far jump too much to count. Keep your hand still.";
+        }
+        if (beats > 0) return "HRV not available yet: it needs at least " + MIN_BEATS + " clean heartbeats, " + (cleanPairs > 0 ? cleanPairs + 1 : beats) + " so far.";
         if (heartRates > 0) {
             return "HRV not available yet: the ring sent heart rate averages only, and HRV needs single heartbeats. "
                     + "Your HRV while asleep is on the Sleep tab.";
