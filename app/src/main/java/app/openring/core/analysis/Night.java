@@ -27,6 +27,11 @@ public final class Night {
     public double hrvDeep = Double.NaN, hrvRem = Double.NaN;
     /** Minutes the phone screen was on within the window, counted as awake; NaN without screen data (issue #13). */
     public double phoneMin = Double.NaN;
+    /**
+     * Wake ups the ring reports itself inside the window {start, end} (issue #42), kept with the night so
+     * the Settings preview marks them awake again like the analysis does (issue #30).
+     */
+    public List<double[]> ringAwake = new ArrayList<double[]>();
 
     /** Chart series, unix seconds. */
     public TS hr = new TS(), hrv = new TS(), motion = new TS(), spo2Series = new TS(), tempSeries = new TS();

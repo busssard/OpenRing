@@ -264,17 +264,20 @@ public class CoreTest {
         // the level's rule in the texts: only Calm folds wake ups of a minute or more
         eq("Detailed adds nothing", WakeUps.levelNote(StageFilter.DETAILED), null);
         eq("Balanced adds nothing", WakeUps.levelNote(B), null);
-        eq("Calm names its rule", WakeUps.levelNote(C), "Calm stage detail folds being awake under 2 minutes into sleep.");
+        eq("Calm names its rule and what always stays (#30)", WakeUps.levelNote(C), "Calm stage detail folds being awake under 2 minutes into sleep, "
+                + "except phone use, wake ups your ring reports itself and being awake next to time without ring data.");
         eq("shortest kept: Balanced 1 min, Calm 2 min", WakeUps.shortestKeptMin(B) * 10 + WakeUps.shortestKeptMin(C), 12);
         // issue #128: the line under a wake up count names the level's rule
         eq("rule: Detailed", WakeUps.rule(StageFilter.DETAILED), "a minute or more");
         eq("rule: Balanced", WakeUps.rule(B), "a minute or more");
-        eq("rule: Calm", WakeUps.rule(C), "2 min or more with Calm");
-        eq("average line: Calm", WakeUps.averageLine(C), "Wake ups of 2 min or more with Calm");
+        eq("rule: Calm, with the wake ups it keeps from a minute (#30)", WakeUps.rule(C), "2 min or more with Calm (1 min on the phone or next to missing ring data)");
+        eq("average line: Calm", WakeUps.averageLine(C), "Wake ups of 2 min or more with Calm (1 min on the phone or next to missing ring data)");
         eq("average line: Balanced", WakeUps.averageLine(B), "Wake ups of a minute or more");
         eq("average line: mixed levels still name the rule", WakeUps.averageLine(-1),
-                "Wake ups of a minute or more (2 min with Calm), each night at its own detail level");
-        eq("rule: out of range levels are clamped", WakeUps.rule(-3) + " / " + WakeUps.rule(9), "a minute or more / 2 min or more with Calm");
+                "Wake ups of a minute or more (2 min with Calm, 1 min on the phone or next to missing ring data), each night at its own detail level");
+        check("average line: mixed levels name the Calm exception like the rule (#30)",
+                WakeUps.averageLine(-1).contains("1 min on the phone or next to missing ring data") && WakeUps.rule(C).contains("1 min on the phone or next to missing ring data"));
+        eq("rule: out of range levels are clamped", WakeUps.rule(-3) + " / " + WakeUps.rule(9), "a minute or more / 2 min or more with Calm (1 min on the phone or next to missing ring data)");
 
         // random nights: for every level, preview count = night count = timeline rows, and the old rule agrees
         Random rnd = new Random(70);
@@ -301,6 +304,168 @@ public class CoreTest {
         eq("random nights: timeline lists exactly the counted wake ups", listDiffers, 0);
         eq("random nights: same count as the rule before", oldRuleDiffers, 0);
         eq("random nights: wake ups and short pieces are all awake runs", partsMissing, 0);
+    }
+
+    /** Issue #30: the stage detail preview is the night that saving produces, also with phone use. */
+    static void previewSameAsSaved() {
+        int L = Stager.LIGHT, W = Stager.WAKE;
+        int B = StageFilter.BALANCED, C = StageFilter.CALM;
+        // the issue's case: an hour of light sleep with a 90 second phone check, Calm
+        int[] light = runs(L, 120);
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        in.start = 1_700_000_000;
+        in.end = in.start + 3600;
+        in.ringStages = light;
+        in.stageDetail = C;
+        in.screen.add(new double[] {in.start + 1800, in.start + 1890});
+        Night n = NightAnalyzer.analyze(in);
+        eq("90 s on the phone: raw stages have it awake", WakeUps.count(n.stagesRaw, 30), 1);
+        eq("90 s on the phone: the saved Calm night keeps the wake up", n.awakenings, 1);
+        eq("90 s on the phone: the old preview path (filter only) lost it", WakeUps.count(StageFilter.filter(n.stagesRaw, C), 30), 0);
+        int[] raw = n.stagesRaw.clone();
+        int[] pv = NightAnalyzer.detailStages(n.stagesRaw, C, in.start, in.end, in.screen, n.ringAwake);
+        check("90 s on the phone: the preview equals the saved night", Arrays.equals(pv, n.stages));
+        eq("90 s on the phone: the preview counts the wake up", WakeUps.count(pv, 30), 1);
+        check("the preview does not change the raw stages", Arrays.equals(raw, n.stagesRaw));
+        // Balanced folds 30 s of awake between sleep, but not a 25 s phone check
+        NightAnalyzer.Input inB = new NightAnalyzer.Input();
+        inB.start = in.start;
+        inB.end = in.end;
+        inB.ringStages = light;
+        inB.stageDetail = B;
+        inB.screen.add(new double[] {in.start + 1800, in.start + 1825});
+        Night nb = NightAnalyzer.analyze(inB);
+        int[] pb = NightAnalyzer.detailStages(nb.stagesRaw, B, inB.start, inB.end, inB.screen, nb.ringAwake);
+        check("25 s on the phone, Balanced: the step stays awake", pb[60] == W && nb.stages[60] == W);
+        eq("25 s on the phone, Balanced: a moment under a minute, not a wake up", WakeUps.count(pb, 30) * 10 + WakeUps.shortOnes(pb, 30), 1);
+        check("25 s on the phone, Balanced: the preview equals the saved night", Arrays.equals(pb, nb.stages));
+        check("Balanced without phone use would fold it", StageFilter.filter(nb.stagesRaw, B)[60] == L);
+        // a short wake up the ring reports itself (issue #42) stays too, and is kept with the night
+        NightAnalyzer.Input inR = new NightAnalyzer.Input();
+        inR.start = in.start;
+        inR.end = in.end;
+        inR.ringStages = light;
+        inR.stageDetail = C;
+        inR.ringAwake.add(new double[] {in.start + 1800, in.start + 1860});
+        inR.ringAwake.add(new double[] {in.start - 900, in.start - 600}); // outside the window: not kept
+        Night nr = NightAnalyzer.analyze(inR);
+        eq("ring's own wake up: only the one inside the window is kept", nr.ringAwake.size(), 1);
+        eq("ring's own wake up: the saved Calm night counts it", nr.awakenings, 1);
+        int[] pr = NightAnalyzer.detailStages(nr.stagesRaw, C, inR.start, inR.end, null, nr.ringAwake);
+        check("ring's own wake up: the preview equals the saved night", Arrays.equals(pr, nr.stages));
+        eq("ring's own wake up: a night stored without it (older version) folds it in the preview",
+                WakeUps.count(NightAnalyzer.detailStages(nr.stagesRaw, C, inR.start, inR.end, null, new ArrayList<double[]>()), 30), 0);
+        // awake next to missing data stays at Calm (StageFilter), the texts name it: light 40, awake 3, unknown 4, light 40
+        Night nm = metricsOnly(runs(L, 40, W, 3, 0, 4, L, 40), C);
+        eq("awake next to missing data: Calm counts 1.5 min as a wake up", nm.awakenings, 1);
+
+        // the phone use the analysis takes: overlapping the window, at most 4 hours
+        List<double[]> all = new ArrayList<double[]>();
+        double s0 = 1_700_000_000, e0 = s0 + 8 * 3600;
+        all.add(new double[] {s0 - 600, s0});                                  // ends as the window starts: out
+        all.add(new double[] {s0 - 600, s0 + 60});                             // overlaps the start: in
+        all.add(new double[] {s0 + 3600, s0 + 3600 + ScreenTime.MAX_NIGHT_SESSION_S});      // exactly 4 hours: in
+        all.add(new double[] {s0 + 3600, s0 + 3600 + ScreenTime.MAX_NIGHT_SESSION_S + 1});  // longer: out
+        all.add(new double[] {e0, e0 + 60});                                   // starts as it ends: out
+        List<double[]> fn = ScreenTime.forNight(all, s0, e0);
+        eq("phone use for a night: overlapping, up to 4 hours", fn.size() == 2 && fn.get(0) == all.get(1) && fn.get(1) == all.get(2), true);
+
+        // random nights with phone use and ring wake ups: at every level the preview is the saved night
+        Random rnd = new Random(30);
+        int differs = 0, countDiffers = 0, oldDiffers = 0, nights = 20000;
+        for (int t = 0; t < nights; t++) {
+            int len = 20 + rnd.nextInt(200);
+            int[] s = new int[len];
+            for (int i = 0; i < len; ) {
+                int code = rnd.nextInt(12) == 0 ? 0 : 1 + rnd.nextInt(4);
+                int run = 1 + rnd.nextInt(rnd.nextBoolean() ? 3 : 12);
+                for (int k = 0; k < run && i < len; k++) s[i++] = code;
+            }
+            double start = 1_700_000_000 + rnd.nextInt(1000), end = start + len * 30;
+            List<double[]> sessions = new ArrayList<double[]>();
+            for (int k = rnd.nextInt(5); k > 0; k--) {
+                double a = start - 300 + rnd.nextDouble() * (end - start + 600);
+                sessions.add(new double[] {a, a + 5 + rnd.nextDouble() * 200});
+            }
+            if (rnd.nextInt(20) == 0) sessions.add(new double[] {start, start + ScreenTime.MAX_NIGHT_SESSION_S + 60});
+            List<double[]> ring = new ArrayList<double[]>();
+            for (int k = rnd.nextInt(3); k > 0; k--) {
+                double a = start + rnd.nextDouble() * (end - start);
+                ring.add(new double[] {a, a + 20 + rnd.nextDouble() * 280});
+            }
+            List<double[]> phone = ScreenTime.forNight(sessions, start, end);
+            for (int lv = 0; lv < 3; lv++) {
+                NightAnalyzer.Input r = new NightAnalyzer.Input();
+                r.start = start;
+                r.end = end;
+                r.ringStages = s;
+                r.stageDetail = lv;
+                r.screen.addAll(phone);
+                r.ringAwake.addAll(ring);
+                Night rn = NightAnalyzer.analyze(r);
+                int[] p = NightAnalyzer.detailStages(rn.stagesRaw, lv, start, end, phone, rn.ringAwake);
+                if (!Arrays.equals(p, rn.stages)) differs++;
+                if (WakeUps.count(p, 30) != rn.awakenings) countDiffers++;
+                if (!Arrays.equals(StageFilter.filter(rn.stagesRaw, lv), rn.stages)) oldDiffers++;
+            }
+        }
+        eq("random nights with phone use: the preview is the saved night at every level", differs, 0);
+        eq("random nights with phone use: the preview counts the saved wake ups", countDiffers, 0);
+        check("random nights with phone use: the filter alone would differ in some (" + oldDiffers + ")", oldDiffers > 0);
+
+        // the texts say what always stays awake
+        String[] tx = app.openring.ui.Explain.STAGE_DETAIL;
+        eq("stage detail texts: one per level", tx.length, StageFilter.NAMES.length);
+        for (int lv = 0; lv < tx.length; lv++) {
+            check("stage detail text " + lv + " starts with its name", tx[lv].startsWith(StageFilter.NAMES[lv]));
+            check("stage detail text " + lv + " has no dash as punctuation", !tx[lv].contains(" - ") && !tx[lv].contains("–") && !tx[lv].contains("—"));
+        }
+        for (int lv = B; lv <= C; lv++) {
+            check("stage detail text " + lv + " names phone use, the ring's own wake ups and missing data",
+                    tx[lv].toLowerCase(Locale.ROOT).contains("phone use") && tx[lv].contains("a wake up your ring reports itself")
+                    && tx[lv].contains("next to time without ring data"));
+        }
+        check("Calm text no longer says every shorter wake up goes", !tx[C].contains("Wake ups shorter than 2 minutes are no longer shown or counted."));
+        eq("preview phone line: none without phone data", app.openring.ui.Explain.previewPhone(Double.NaN), null);
+        eq("preview phone line: none at 0", app.openring.ui.Explain.previewPhone(0), null);
+        eq("preview phone line: half a minute", app.openring.ui.Explain.previewPhone(0.5),
+                "Includes under a minute on the phone, shown as awake at every detail level.");
+        eq("preview phone line: minutes", app.openring.ui.Explain.previewPhone(4.2),
+                "Includes 4 min on the phone, shown as awake at every detail level.");
+    }
+
+    /**
+     * Issue #116: the Cardio capacity card shows only the heart rate estimate (Uth) its text names,
+     * only inside 10 to 90 ml/kg/min, and says why when there is no number.
+     */
+    static void vo2max() {
+        double uth = app.openring.core.analysis.Wellness.vo2maxUth(35, 55);
+        check("vo2max: Uth for 35 years and 55 bpm is 51.0", Math.abs(uth - 51.0) < 0.05);
+        check("vo2max: no estimate without a heart rate", Double.isNaN(app.openring.core.analysis.Wellness.vo2maxUth(35, Double.NaN)));
+        double[][] cases = {{9.9, Double.NaN}, {10, 10}, {51, 51}, {90, 90}, {90.1, Double.NaN}, {0, Double.NaN}, {-3, Double.NaN},
+            {Double.NaN, Double.NaN}, {Double.POSITIVE_INFINITY, Double.NaN}};
+        for (double[] cs : cases) {
+            double got = app.openring.core.analysis.Wellness.vo2maxShown(cs[0]);
+            check("vo2max shown for " + cs[0], Double.isNaN(cs[1]) ? Double.isNaN(got) : got == cs[1]);
+        }
+        // the highest Uth can give (lowest heart rate 30 bpm, age 18) is outside the range, so it is not shown
+        check("vo2max: an impossible Uth value is not shown",
+                Double.isNaN(app.openring.core.analysis.Wellness.vo2maxShown(app.openring.core.analysis.Wellness.vo2maxUth(18, 30))));
+        String withNight = "From your age and the lowest heart rate in that night's sleep (Uth method). A rough guide, not a lab test.";
+        eq("vo2max line: a value", app.openring.ui.Explain.vo2max(51, true), withNight);
+        eq("vo2max line: no night", app.openring.ui.Explain.vo2max(Double.NaN, false),
+                "Needs a night with the ring. It comes from your age and the lowest heart rate in that night's sleep (Uth method).");
+        // a night was found, but its lowest heart rate was missing or under 30 bpm, so Analyzer stored no vo2max
+        eq("vo2max line: a night without a usable heart rate", app.openring.ui.Explain.vo2max(Double.NaN, true),
+                "No usable heart rate in that night's sleep, so no estimate. It needs the lowest heart rate of the night (Uth method).");
+        eq("vo2max line: impossible value", app.openring.ui.Explain.vo2max(99.7, true),
+                "Not shown for this day: that night's lowest heart rate gave a value outside what a person can have (10 to 90 ml/kg/min), so that reading was probably off.");
+        eq("vo2max line: zero is impossible too", app.openring.ui.Explain.vo2max(0, true), app.openring.ui.Explain.vo2max(99.7, true));
+        check("vo2max explanation names the unit", app.openring.ui.Explain.VO2MAX.contains("ml/kg/min") && app.openring.ui.Explain.VO2MAX.startsWith("VO2 max is "));
+        for (String tx : new String[] {app.openring.ui.Explain.VO2MAX, app.openring.ui.Explain.vo2max(51, true), app.openring.ui.Explain.vo2max(Double.NaN, false),
+            app.openring.ui.Explain.vo2max(Double.NaN, true), app.openring.ui.Explain.vo2max(0, true)}) {
+            check("vo2max texts use no dash as punctuation: " + tx, !tx.contains(" - ") && !tx.contains("\u2013") && !tx.contains("\u2014"));
+        }
     }
 
     /** The wake up count before issue #70 (NightAnalyzer.countBouts with 2 steps), as the reference. */
@@ -499,6 +664,7 @@ public class CoreTest {
         client();
         analysis();
         dayHeart();
+        vo2max();
         longWake();
         timeline();
         activityWeek();
@@ -509,6 +675,7 @@ public class CoreTest {
         dialMath();
         stageFilter();
         wakeUps();
+        previewSameAsSaved();
         stageShare();
         syncError();
         texts();
@@ -588,6 +755,19 @@ public class CoreTest {
         r.detach("old screen");
         r.attach("new screen");
         eq("one run: the rebuilt screen is told", r.finish(), "new screen");
+        // Settings ring actions (issue #59): only the screen shown now, no running state of their own
+        OneRun<String> shown = new OneRun<String>();
+        check("shown screen: none at first", shown.attached() == null);
+        shown.attach("settings");
+        eq("shown screen: the one resumed", shown.attached(), "settings");
+        shown.attach("turned settings");
+        shown.detach("settings"); // the old screen closing late changes nothing
+        eq("shown screen: the turned one after a turn", shown.attached(), "turned settings");
+        check("shown screen: asking starts nothing", !shown.running() && shown.start());
+        eq("shown screen: asking ends nothing", shown.attached(), "turned settings");
+        check("shown screen: the job still runs", shown.running());
+        shown.detach("turned settings");
+        check("shown screen: none after Back", shown.attached() == null);
     }
 
     /** Issue #127: the space kept for Further analysis belongs to one screen layout. */
@@ -640,6 +820,22 @@ public class CoreTest {
             check("save failed " + backup + ": no raw text", !t.contains("null") && !t.contains("Exception") && !t.contains("failed:"));
             check("save failed " + backup + ": no dash as punctuation", !t.contains(" - ") && !t.contains("–") && !t.contains("—"));
         }
+        // issue #115: a copy of the history that did not pass its check
+        eq("not checked: backup", Texts.notChecked(true),
+                "The backup was not saved, because the copy of your history did not pass its check. Nothing on this phone was changed. Try again in a minute.");
+        eq("not checked: export", Texts.notChecked(false),
+                "The export was not saved, because the copy of the history did not pass its check. Nothing on this phone was changed. Try again in a minute.");
+        for (boolean backup : new boolean[] {false, true}) {
+            String t = Texts.notChecked(backup);
+            check("not checked " + backup + ": goes into the dialog, no dash as punctuation", !Texts.fitsToast(t) && !t.contains(" - ") && !t.contains("–") && !t.contains("—"));
+        }
+        // issue #33: a key saved by Windows Notepad starts with a byte order mark, some editors put in a no break space
+        byte[] key = Hex.parseKey("4431967d8bacc2659743142b68391d9a");
+        check("key: a byte order mark is ignored", Arrays.equals(Hex.parseKey("\uFEFF4431967d8bacc2659743142b68391d9a\r\n"), key));
+        check("key: a no break space is ignored", Arrays.equals(Hex.parseKey("4431967d 8bacc265 9743142b 68391d9a"), key));
+        check("key: colons and 0x still work", Arrays.equals(Hex.parseKey("0x44:31:96:7d:8b:ac:c2:65:97:43:14:2b:68:39:1d:9a"), key));
+        check("key: other characters are still refused", Hex.parseKey("​4431967d8bacc2659743142b68391d9a") == null
+                && Hex.parseKey("4431967d8bacc2659743142b68391d9") == null);
 
         // Restfulness and Move every hour (Scores)
         Night n = new Night();

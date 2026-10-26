@@ -32,6 +32,12 @@ public class SQLiteDatabase {
     static void bind(PreparedStatement p, Object[] args) throws SQLException {
         for (int i = 0; args != null && i < args.length; i++) p.setObject(i + 1, args[i]);
     }
+    public int delete(String table, String where, String[] args) {
+        try (PreparedStatement p = conn.prepareStatement("DELETE FROM " + table + (where == null ? "" : " WHERE " + where))) {
+            for (int i = 0; args != null && i < args.length; i++) p.setString(i + 1, args[i]);
+            return p.executeUpdate();
+        } catch (SQLException e) { throw wrap(e); }
+    }
     public Cursor rawQuery(String sql, String[] args) {
         try { PreparedStatement p = conn.prepareStatement(sql);
             for (int i = 0; args != null && i < args.length; i++) p.setString(i + 1, args[i]);

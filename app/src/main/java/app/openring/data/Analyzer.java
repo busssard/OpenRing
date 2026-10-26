@@ -215,7 +215,18 @@ public final class Analyzer {
             // a sleep across the first midnight is rebuilt as a whole (issue #132), its day too
             if (changed != null && changed.compareTo(first.toString()) < 0) first = LocalDate.parse(changed);
         }
-        for (LocalDate d = first; !d.isAfter(d1); d = d.plusDays(1)) analyzeDay(d);
+        // a day with no data left loses its stored summary (issue #58), but only a day that ends by the newest
+        // dated event while later events still wait for a time record: they may belong to the days after it
+        double sure = db.undatedAfterNewest() ? to : Double.POSITIVE_INFINITY;
+        for (LocalDate d = first; !d.isAfter(d1); d = d.plusDays(1)) analyzeDay(d, sure);
+        // stored days after the range (its newest event moved earlier, issue #58) are analysed too, so a day
+        // that kept a summary without data behind it goes
+        List<String> later = db.daysAfter(d1.toString());
+        if (sure < Double.POSITIVE_INFINITY) {
+            if (!later.isEmpty()) log.log(later.size() + " stored day" + (later.size() == 1 ? "" : "s") + " after " + d1 + " kept: events after it wait for a time record");
+        } else {
+            for (String k : later) analyzeDay(LocalDate.parse(k), sure);
+        }
     }
 
     // ---------------------------------------------------------------------------- nights
@@ -278,7 +289,7 @@ public final class Analyzer {
         List<double[]> screen = new ArrayList<double[]>();
         if (prefs.screenAwake()) {
             // a session of many hours is most likely a lost "off" (or a video left playing): not used for sleep
-            for (double[] s : db.screen(from - 36 * 3600, to + 3600)) if (s[1] - s[0] <= ScreenTime.MAX_NIGHT_SESSION_S) screen.add(s);
+            screen = ScreenTime.forNight(db.screen(from - 36 * 3600, to + 3600), from - 36 * 3600, to + 3600);
         }
 
         // the stored nights from lo on are replaced; lo is moved back so no sleep crosses it (issue #132)
@@ -431,6 +442,19 @@ public final class Analyzer {
         return z == null ? zone : z;
     }
 
+    /**
+     * The stages a stored night gets with detail {@code level} (the Settings preview, issue #30): its raw
+     * stages through the same {@link NightAnalyzer#detailStages} as the analysis, with the phone use the
+     * analysis would take now ({@code phoneAwake}: Count phone use as awake, {@link ScreenTime#forNight})
+     * and the ring's own wake ups stored with the night (none for nights analysed before this was stored).
+     */
+    public static int[] preview(Db db, boolean phoneAwake, JSONObject night, int level) {
+        double start = Json.d(night, "start"), end = Json.d(night, "end");
+        List<double[]> screen = new ArrayList<double[]>();
+        if (phoneAwake && end > start) screen = ScreenTime.forNight(db.screen(start, end), start, end);
+        return NightAnalyzer.detailStages(Json.stagesRaw(night), level, start, end, screen, Json.ringAwake(night));
+    }
+
     /** Analyses the sleep window [start, end) of period {@code p} (its edges may have moved past phone use). */
     Night analyzeNight(NightFinder.Period p, double start, double end, List<double[]> screen) {
         int[] tags = {EventCodec.HRV_EVENT, EventCodec.MOTION_EVENT, EventCodec.SLEEP_PERIOD_INFO_2, EventCodec.GREEN_IBI_QUALITY,
@@ -439,7 +463,7 @@ public final class Analyzer {
         NightAnalyzer.Input in = new NightAnalyzer.Input();
         in.start = start;
         in.end = end;
-        for (double[] s : screen) if (s[1] > start && s[0] < end) in.screen.add(s);
+        in.screen.addAll(ScreenTime.forNight(screen, start, end));
         in.ringAwake.addAll(p.awake);
         TS spHr = new TS();
         TS motionFromSp = new TS();
@@ -520,7 +544,11 @@ public final class Analyzer {
         return l.isEmpty() ? null : Json.parse(l.get(l.size() - 1));
     }
 
-    void analyzeDay(LocalDate day) {
+    /**
+     * Analyses and stores one day. A day with no data behind it (no activity, heart rate or sleep) has its
+     * stored summary removed (issue #58) when it ends at or before {@code sure}; a later one keeps it.
+     */
+    void analyzeDay(LocalDate day, double sure) {
         String key = day.toString();
         // the day's own 24 hours, in the zone of its main night (issue #22)
         ZoneId dz = dayZone(day);
@@ -544,7 +572,17 @@ public final class Analyzer {
 
         JSONObject mainNight = nightJson(db.nightsJson(key, key, true));
         boolean anyHr = db.count("SELECT COUNT(*) FROM events WHERE tag IN (93, 128, 134, 106) AND unix >= " + (long) ds + " AND unix < " + (long) de) > 0;
-        if (d.coveredMin == 0 && mainNight == null && !anyHr) return;
+        if (d.coveredMin == 0 && mainNight == null && !anyHr) {
+            // nothing behind this day any more (its events were dated again, issue #58): the summary goes like
+            // its nights did. A nap still stored for it keeps the summary, as before.
+            if (!db.nightsJson(key, key, false).isEmpty()) return;
+            if (de <= sure) {
+                if (db.deleteDay(key)) log.log("no data left for " + key + ", its summary was removed");
+            } else if (db.dayJson(key) != null) {
+                log.log("no data left for " + key + ", its summary was kept: events after it wait for a time record");
+            }
+            return;
+        }
 
         // history: previous 60 days of day summaries and main nights
         List<JSONObject> prevDays = new ArrayList<JSONObject>();

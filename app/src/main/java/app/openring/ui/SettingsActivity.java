@@ -49,8 +49,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
     private LinearLayout root;
     private TextView status;
     private final int[] featureModes = {-1, -1, -1};
-    /** A measurement switch or read is running; its result reaches only this page (code review of #149). */
+    /** A measurement switch or read started on this page is running (code review of #149). */
     private boolean ringPending;
+    /**
+     * The Settings screen shown now (issue #59): a ring action's result goes there, also when the
+     * phone was turned meanwhile and Android built a new screen. Attached in onResume, detached
+     * only when the screen closes, so a turn hands over directly to the new one.
+     */
+    static final app.openring.core.OneRun<SettingsActivity> SHOWN = new app.openring.core.OneRun<SettingsActivity>();
     /** Detail level picked in the Sleep stage detail card, saved only with its button. */
     private int detailChoice = -1;
     private LinearLayout stagesCard;
@@ -121,9 +127,17 @@ public final class SettingsActivity extends Activity implements RingManager.List
     @Override
     protected void onResume() {
         super.onResume();
+        Prefs p = Prefs.of(this);
+        // the ring was factory reset while the app was in the background, or a turned screen stayed
+        // behind: Settings needs a ring with a key, the main screen opens Setup (issue #59)
+        if (!p.demo() && (!p.setupDone() || !p.hasKey())) {
+            toSetup(getApplicationContext());
+            finish();
+            return;
+        }
+        SHOWN.attach(this);
         RingManager.get(this).addListener(this);
         // back from Android's usage access page: show the new state, and read the screen log the first time
-        Prefs p = Prefs.of(this);
         boolean allowedNow = ScreenUse.allowed(this);
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
@@ -137,6 +151,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     protected void onPause() {
         super.onPause();
         RingManager.get(this).removeListener(this);
+        if (isFinishing()) SHOWN.detach(this); // a turn keeps it until the new screen attaches
     }
 
     @Override
@@ -349,13 +364,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         @Override
                         public void done(boolean ok, String message) {
                             ringPending = false;
-                            if (!ok) {
-                                problem(message);
-                                return;
-                            }
-                            say(message);
-                            featureModes[k] = mode;
-                            build();
+                            int[] modes = featureModes.clone(); // what this page knew, for a page built by a turn
+                            modes[k] = mode;
+                            ringDone(ok, message, ok ? modes : null, true);
                         }
                     });
                 }
@@ -598,15 +609,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
             public void done(boolean ok, String message) {
                 ringPending = false;
                 if (!ok) {
-                    problem(message);
+                    ringDone(false, message, null, false);
                     return;
                 }
+                int[] modes = featureModes.clone();
                 for (String part : message.split(",")) {
                     String[] kv = part.split(":");
                     int f = Integer.parseInt(kv[0]), m = Integer.parseInt(kv[1]);
-                    for (int i = 0; i < 3; i++) if (RingManager.FEATURES[i] == f) featureModes[i] = m;
+                    for (int i = 0; i < 3; i++) if (RingManager.FEATURES[i] == f) modes[i] = m;
                 }
-                build();
+                ringDone(true, null, modes, false);
             }
         });
     }
@@ -652,11 +664,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return card;
     }
 
-    /** Opens at a card when started with the extra {@code section} ("stages", "screen" or "games"), used by the screen test. */
+    /**
+     * Opens at a card when started with the extra {@code section} ("stages", "screen" or "games"), used by the screen test.
+     * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
+     */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
         final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard : null;
         if (card == null) return;
+        // the demo page is short: room below the last card, so every card can reach the top (issue #160)
+        root.addView(new View(this), new LinearLayout.LayoutParams(1, getResources().getDisplayMetrics().heightPixels));
         scroll.post(new Runnable() {
             @Override
             public void run() {
@@ -702,13 +719,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }
         card.addView(row);
         card.addView(Ui.gap(this, 8));
-        card.addView(Ui.body(this, DETAIL_TEXTS[detailChoice]));
+        card.addView(Ui.body(this, Explain.STAGE_DETAIL[detailChoice]));
         JSONObject night = lastNight();
         card.addView(Ui.gap(this, 12));
         if (night == null) {
             card.addView(Ui.text(this, "A preview of your last night appears here after the first night with the ring.", 12, Ui.TEXT_3, Ui.REGULAR));
         } else {
-            int[] st = StageFilter.filter(Json.stagesRaw(night), detailChoice);
+            // the same stages saving produces: filter, then phone use and the ring's own wake ups marked awake again (issue #30)
+            int[] st = Analyzer.preview(Db.get(this), p.screenAwake(), night, detailChoice);
             card.addView(Ui.text(this, "Your last night with this setting", 11, Ui.TEXT_3, Ui.MEDIUM));
             card.addView(Ui.gap(this, 6));
             card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")).zone(Json.zone(night, java.time.ZoneId.systemDefault())), Ui.sized(this, -1, 150));
@@ -723,6 +741,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     + "Wake ups: awake for a minute or more between falling asleep and waking up, counted as on the Sleep page."
                     + (brief > 0 ? " Awake under a minute (" + Texts.count(brief, "time", "times") + " here) is drawn but not counted." : ""),
                     11, Ui.TEXT_3, Ui.REGULAR));
+            String phone = p.screenAwake() ? Explain.previewPhone(Json.d(night, "phone_min")) : null;
+            if (phone != null) card.addView(Ui.text(this, phone, 11, Ui.TEXT_3, Ui.REGULAR));
         }
         final boolean changed = detailChoice != p.stageDetail();
         action(card, changed ? "Save and update all nights" : "Saved: " + StageFilter.NAMES[p.stageDetail()],
@@ -736,16 +756,6 @@ public final class SettingsActivity extends Activity implements RingManager.List
             }
         });
     }
-
-    static final String[] DETAIL_TEXTS = {
-        "Detailed: every stage change the estimate finds, even short ones. Many thin lines.",
-        "Balanced (recommended): sleep stages shorter than 3 minutes join the sleep stage next to them. "
-            + "Being awake for 30 seconds between sleep joins the sleep around it, 1 minute or more always stays, "
-            + "and short sleep is never turned into awake.",
-        "Calm: sleep stages shorter than 5 minutes join the sleep stage next to them, being awake needs 2 minutes to stay. "
-            + "Long, calm blocks, similar in style to the official app. Wake ups shorter than 2 minutes are no longer shown or counted. "
-            + "Short sleep is never turned into awake."
-    };
 
     void refreshStageDetail(Prefs p) {
         if (stagesCard != null) fillStageDetail(stagesCard, p);
@@ -1026,17 +1036,60 @@ public final class SettingsActivity extends Activity implements RingManager.List
                             @Override
                             public void done(boolean ok, String message) {
                                 if (!ok) {
-                                    problem(message);
+                                    ringDone(false, message, null, false);
                                     return;
                                 }
-                                // Settings closes now, so a dialog would vanish: a short toast, Setup is where it is paired again
+                                // Settings closes now, so a dialog would vanish: a short toast, Setup is where it is paired again.
+                                // Not this page's own startActivity and finish: after a turn of the phone it is gone and the
+                                // new Settings screen would stay under Setup (issue #59)
                                 toast(message);
-                                startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
-                                finish();
+                                SettingsActivity s = shownNow();
+                                if (s != null) {
+                                    SHOWN.detach(s); // not kept as a closed screen
+                                    s.finish();
+                                }
+                                toSetup(getApplicationContext());
                             }
                         });
                     }
                 }).setNegativeButton("Cancel", null).show();
+    }
+
+    /** The Settings screen shown now, null when none is (closed, or closing). */
+    static SettingsActivity shownNow() {
+        SettingsActivity s = SHOWN.attached();
+        return s != null && !s.isFinishing() && !s.isDestroyed() ? s : null;
+    }
+
+    /**
+     * A measurement switch or read ended (issue #59): the Settings screen shown now takes the states
+     * ({@code modes}, from the page that started it) and the message, also when the phone was turned
+     * meanwhile. With Settings closed only a toast is left. {@code sayIt}: show a success message too.
+     */
+    void ringDone(boolean ok, String message, int[] modes, boolean sayIt) {
+        SettingsActivity s = shownNow();
+        if (s == null) {
+            if (message != null && (!ok || sayIt)) toast(message);
+            return;
+        }
+        if (!ok) {
+            s.problem(message);
+            return;
+        }
+        if (sayIt) s.say(message);
+        System.arraycopy(modes, 0, s.featureModes, 0, s.featureModes.length);
+        s.build();
+    }
+
+    /**
+     * Back to the main screen with every screen above it closed (Settings, also one built by turning
+     * the phone); without a key its onResume opens Setup. From the application context, so it does
+     * not depend on a screen that may be gone. Android ignores it while the app is in the background;
+     * then onResume here or on the main screen does it on return.
+     */
+    static void toSetup(Context app) {
+        app.startActivity(new Intent(app, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
     }
 
     void create(String name, String mime, int code) {
@@ -1052,12 +1105,31 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         final Uri uri = data.getData();
         final boolean backup = code == BACKUP_KEY || code == BACKUP_FULL;
+        // set when the copy of the history did not pass its check (issue #115): the file got nothing
+        final boolean[] notChecked = {false};
+        // bytes that reached the chosen file; a failure before the first one leaves an empty file
+        final long[] written = {0};
         new AsyncTask<Void, Void, String>() {
             @Override
             protected String doInBackground(Void... v) {
+                boolean opened = false;
                 try {
-                    OutputStream os = getContentResolver().openOutputStream(uri);
-                    if (os == null) throw new java.io.IOException("Android gave no file to write to");
+                    OutputStream raw = getContentResolver().openOutputStream(uri);
+                    if (raw == null) throw new java.io.IOException("Android gave no file to write to");
+                    opened = true;
+                    OutputStream os = new java.io.FilterOutputStream(raw) {
+                        @Override
+                        public void write(int b) throws java.io.IOException {
+                            out.write(b);
+                            written[0]++;
+                        }
+
+                        @Override
+                        public void write(byte[] b, int off, int len) throws java.io.IOException {
+                            out.write(b, off, len);
+                            written[0] += len;
+                        }
+                    };
                     try {
                         if (code == EXPORT_CSV) Exporter.dailyCsv(SettingsActivity.this, os);
                         else if (code == BACKUP_KEY || code == BACKUP_FULL) app.openring.data.Backup.write(SettingsActivity.this, os, code == BACKUP_FULL);
@@ -1066,16 +1138,32 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         os.close();
                     }
                     return backup ? "Backup saved" : "Exported";
+                } catch (Exporter.NotSaved e) {
+                    RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " not saved: " + e.getMessage());
+                    notChecked[0] = true;
+                    removeEmpty(opened);
+                    return null;
                 } catch (Exception e) {
                     // the raw reason goes to the log, the screen gets a sentence that says what to do (issue #89)
                     RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " failed: " + android.util.Log.getStackTraceString(e));
+                    removeEmpty(opened);
                     return null;
+                }
+            }
+
+            /** Nothing reached the file: remove the empty file Android created, so it is not taken for a backup later. */
+            void removeEmpty(boolean opened) {
+                if (!opened || written[0] > 0) return;
+                try {
+                    android.provider.DocumentsContract.deleteDocument(getContentResolver(), uri);
+                } catch (Exception x) {
+                    RingManager.get(SettingsActivity.this).log("the empty file could not be removed: " + x);
                 }
             }
 
             @Override
             protected void onPostExecute(String r) {
-                if (r == null) problem(Texts.saveFailed(backup));
+                if (r == null) problem(notChecked[0] ? Texts.notChecked(backup) : Texts.saveFailed(backup));
                 else say(r);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
