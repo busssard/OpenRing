@@ -43,6 +43,7 @@ import java.util.Random;
 
 import app.openring.ble.RingManager;
 import app.openring.ble.RingScanner;
+import app.openring.core.PermissionAsk;
 import app.openring.core.Texts;
 import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.LastWorn;
@@ -90,6 +91,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private double demoHeading;
     private final Random demoNoise = new Random(74);
     private boolean askedPermission, permissionBlocked;
+    /** The last request on this screen came back refused without Android's explanation (issue #140). */
+    private boolean quietDenial;
     private Charts.LineChart trailChart;
     // the search walk (phase 2): steps from the accelerometer, only while recording
     private Sensor accel;
@@ -337,13 +340,15 @@ public final class FinderActivity extends Activity implements SensorEventListene
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
         if (askedPermission && !Permissions.granted(this)) {
-            // denied and Android will not ask again: only the app's settings can switch it on
-            boolean canAsk = false;
-            for (String p : Permissions.needed()) {
-                if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED && shouldShowRequestPermissionRationale(p)) canAsk = true;
-            }
-            permissionBlocked = !canAsk;
+            // refused again after an explicit refusal, Android no longer asks: only the app's settings can switch it
+            // on. A dialog closed without choosing (or an interrupted request) still asks next time (issue #140).
+            boolean[] rationale = Permissions.rationale(this);
+            String[] needed = Permissions.needed();
+            boolean before = Prefs.of(this).permissionDenied() || quietDenial;
+            permissionBlocked = PermissionAsk.blocked(perms, results, needed, rationale, before);
+            quietDenial = PermissionAsk.quietDenial(perms, results, needed, rationale);
         }
+        Permissions.remember(this);
         if (resumed) startScan();
     }
 

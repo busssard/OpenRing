@@ -208,12 +208,14 @@ public final class LastWorn {
             }
             int e = s;
             while (e + 1 < n && warm[e + 1]) e++;
+            // a heart rate from before the neighbouring cool reading before the stretch is from the time before
+            // the ring came off: it must not vouch for a charger after it (review of afd266a, issue #135)
+            double after = s > 0 ? t[s - 1] : Double.NEGATIVE_INFINITY;
             boolean near = false;
-            for (int i = s; i <= e && !near; i++) near = hasNear(pairedT, t[i], NEAR_S);
+            for (int i = s; i <= e && !near; i++) near = hasNear(pairedT, t[i], NEAR_S, after);
             if (!near) {
-                // only up to the neighbouring cool readings: a value from before the ring went cool must not
-                // vouch for a charger after it (review of afd266a)
-                double from = s > 0 ? Math.max(t[s] - NEAR_S, t[s - 1]) : t[s] - NEAR_S;
+                // lone values only up to the neighbouring cool readings on both sides
+                double from = Math.max(t[s] - NEAR_S, after);
                 double to = e + 1 < n ? Math.min(t[e] + NEAR_S, t[e + 1]) : t[e] + NEAR_S;
                 near = loneEvents(hr, hrId, from, to);
             }
@@ -246,7 +248,8 @@ public final class LastWorn {
             int s = n - 1;
             while (s > 0 && warm[s - 1]) s--;
             double lastHr = r.lastHr;
-            boolean hrNear = stretchHr[n - 1] || (!Double.isNaN(lastHr) && lastHr >= t[s] - NEAR_S);
+            // a heart rate before the stretch counts only when no cool reading lies between them (issue #135)
+            boolean hrNear = stretchHr[n - 1] || (!Double.isNaN(lastHr) && lastHr >= t[s] - NEAR_S && (s == 0 || lastHr >= t[s - 1]));
             if (!r.hrRule || (hrNear && t[n - 1] - lastHr <= NO_HR_S) || (!hrNear && t[n - 1] - t[s] <= NO_HR_S)) {
                 r.state = WORN;
                 r.at = Double.isNaN(lastHr) ? t[n - 1] : Math.max(t[n - 1], lastHr);
@@ -429,6 +432,15 @@ public final class LastWorn {
         if (i >= t.length) return t.length - 1;
         if (i > 0 && x - t[i - 1] < t[i] - x) return i - 1;
         return i;
+    }
+
+    /** Whether a sorted list holds a value within {@code w} of {@code x} that is not before {@code from}. */
+    static boolean hasNear(double[] sorted, double x, double w, double from) {
+        double lo = Math.max(x - w, from);
+        int i = Arrays.binarySearch(sorted, lo);
+        if (i < 0) i = -i - 1;
+        while (i > 0 && sorted[i - 1] >= lo) i--;
+        return i < sorted.length && sorted[i] <= x + w;
     }
 
     /** Whether a sorted list holds a value within {@code w} of {@code x}. */

@@ -29,7 +29,30 @@ public final class Permissions {
         return true;
     }
 
+    /** For each of {@link #needed}, whether Android would explain it now (it was refused once, issue #140). */
+    static boolean[] rationale(Activity a) {
+        String[] n = needed();
+        boolean[] out = new boolean[n.length];
+        for (int i = 0; i < n.length; i++) out[i] = a.checkSelfPermission(n[i]) != PackageManager.PERMISSION_GRANTED && a.shouldShowRequestPermissionRationale(n[i]);
+        return out;
+    }
+
+    /**
+     * Remembers an explicit refusal (Android explains the permission now) and forgets it once granted, so a
+     * later refusal without explanation can be told from a dialog closed without choosing (issue #140).
+     */
+    static void remember(Activity a) {
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(a);
+        if (granted(a)) {
+            if (p.permissionDenied()) p.setPermissionDenied(false);
+        } else if (app.openring.core.PermissionAsk.deniedOnce(rationale(a)) && !p.permissionDenied()) {
+            p.setPermissionDenied(true);
+        }
+    }
+
     public static void request(Activity a) {
+        // a second request only comes after an answer to the first: a refusal then shows here
+        remember(a);
         List<String> l = new ArrayList<String>();
         for (String p : needed()) l.add(p);
         if (Build.VERSION.SDK_INT >= 33) l.add(Manifest.permission.POST_NOTIFICATIONS);
