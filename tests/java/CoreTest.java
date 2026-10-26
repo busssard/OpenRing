@@ -1065,6 +1065,12 @@ public class CoreTest {
         check("NaN part gives null", StageShare.roundTogether(new double[] {Double.NaN, 1}, 1) == null);
         eq("negative part counts as 0", Arrays.toString(StageShare.roundTogether(new double[] {-3, 2.5}, 3)), "[0, 3]");
         eq("exact parts stay", Arrays.toString(StageShare.roundTogether(new double[] {10, 20, 30}, 60)), "[10, 20, 30]");
+        // review of #201: a part that is exactly 0 never gets a minute
+        eq("zero part gets no minute", Arrays.toString(StageShare.roundTogether(new double[] {10.9, 10.9, 0}, 23)), "[12, 11, 0]");
+        eq("zero part: one other part may take two", Arrays.toString(StageShare.roundTogether(new double[] {8.96, 0}, 10)), "[10, 0]");
+        check("only zero parts cannot take a minute", StageShare.roundTogether(new double[] {0, -2}, 1) == null);
+        double[] noMissing = StageShare.shownMinutes(31.6, 236.6, 71.6, 8.96, 0, 339.8, 348.76, 350);
+        eq("no missing data: No data stays 0 when awake takes two", noMissing[4] + "," + (noMissing[3] + noMissing[0] + noMissing[1] + noMissing[2]), "0.0,350.0");
         // many nights: rows always add up and each stays within a minute of its exact value
         Random rnd = new Random(111);
         int bad = 0;
@@ -1084,6 +1090,17 @@ public class CoreTest {
             if (!ok && bad++ < 3) System.out.println("  night " + Arrays.toString(ex) + " in bed " + ib + " shown " + shownIb + " got " + Arrays.toString(r));
         }
         eq("2000 nights: rows add up, sleep stages within a minute, awake and no data within two", bad, 0);
+        // nights without missing data never get a No data minute, nights without deep never a deep minute
+        int ghost = 0;
+        for (int i = 0; i < 200000; i++) {
+            double ep = 0.5 * (1 + rnd.nextDouble() * 1e-4);
+            int dN = rnd.nextInt(4) == 0 ? 0 : rnd.nextInt(200), lN = 1 + rnd.nextInt(600), rN = rnd.nextInt(200), aN = rnd.nextInt(100);
+            double s0 = 1761400000 + rnd.nextInt(60) + rnd.nextDouble(), e0 = s0 + (dN + lN + rN + aN) * ep * 60;
+            double ib = (e0 - s0) / 60, st = ib / (dN + lN + rN + aN);
+            double[] r = StageShare.shownMinutes(dN * st, lN * st, rN * st, aN * st, 0, (dN + lN + rN) * st, ib, WakeUps.shownMinutes(s0, e0));
+            if (r[4] != 0 || (dN == 0 && r[0] != 0)) ghost++;
+        }
+        eq("200000 nights: no No data or deep minute that is not there", ghost, 0);
 
         // #138: one rounding for night times
         java.time.ZoneId utc = java.time.ZoneId.of("UTC");

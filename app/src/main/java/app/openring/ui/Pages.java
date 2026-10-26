@@ -351,7 +351,8 @@ public final class Pages {
         // the minutes shown, rounded together so they add up to Total sleep and Time in bed (issue #111)
         double[] shown = StageShare.shownMinutes(deepMin, lightMin, remMin, awakeMin, none[0], Json.d(n, "asleep_min"), inBedMin,
                 shownInBed(n));
-        String noneNote = StageShare.noDataNote(shown[4], none[1], Json.d(n, "asleep_min") > 0);
+        // the row only when the night really has time without stage data (review of #201)
+        String noneNote = none[0] > 0 ? StageShare.noDataNote(shown[4], none[1], Json.d(n, "asleep_min") > 0) : null;
         hyp.addView(stageRowPct(c, "Awake", shown[3], StageShare.share(awakeMin, inBedMin), Ui.STAGE_AWAKE));
         hyp.addView(stageRowPct(c, "REM", shown[2], share == null ? Double.NaN : share[2], Ui.STAGE_REM));
         hyp.addView(stageRowPct(c, "Light", shown[1], share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
@@ -414,7 +415,7 @@ public final class Pages {
         double s = Json.d(n, "start"), e = Json.d(n, "end");
         root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz).nearestMinute(),
                 "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : minute(Json.d(n, "lowest_hr_time"), nz)
-                        + app.openring.core.analysis.ClockChange.repeatNote(nz, Json.d(n, "lowest_hr_time")))));
+                        + app.openring.core.analysis.ClockChange.repeatNote(nz, WakeUps.roundMin(Json.d(n, "lowest_hr_time"))))));
         root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz).nearestMinute(),
                 "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
         JSONArray sp = n.optJSONArray("spo2_series");
