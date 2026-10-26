@@ -41,8 +41,9 @@ completely, then read the two guides it points to before changing anything:
    When it has passed, open the PNGs in the folder `pr-<number>/` of the branch `screenshots-preview`
    with the Read tool (each pull request has its own folder; the root only holds the latest run of
    any PR). `pr-<number>/HEAD.txt` must name your PR head commit, otherwise wait or rerun by pushing
-   again. A failed preview push only warns, so a missing folder means looking at the run's log. Check the change really looks right and fix it if not. New screens
-   or states: extend `.github/scripts/screens.sh`.
+   again. A failed preview push only warns, so when the folder is missing, read the run's log. Check
+   the change really looks right and fix it if not. New screens or states: extend
+   `.github/scripts/screens.sh`.
 6. Do not send APK files in chat; GitHub builds them.
 
 ## Design instincts (what the owner kept pushing for; do it without being asked)

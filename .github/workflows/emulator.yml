@@ -64,7 +64,7 @@ jobs:
         run: |
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then export BRANCH=screenshots FOLDER=
           elif [ -n "$PR_NUMBER" ]; then export BRANCH=screenshots-preview FOLDER="pr-$PR_NUMBER"
-          else export BRANCH=screenshots-preview FOLDER="branch-${GITHUB_REF_NAME//\//-}"
+          else export BRANCH=screenshots-preview FOLDER="branch-${GITHUB_REF_NAME//\//-}" SOURCE_BRANCH="$GITHUB_REF_NAME"
           fi
           SRC=screenshots REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .github/scripts/publish_screens.sh
       - name: Screenshots badge, result
