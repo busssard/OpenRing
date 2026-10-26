@@ -349,6 +349,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             startActivity(new Intent(this, SetupActivity.class));
             return;
         }
+        // a grant clears a remembered refusal, so a permission Android takes back later asks afresh (issue #140)
+        if (!prefs.demo()) Permissions.remember(this);
         if (!prefs.demo() && !Permissions.granted(this) && !askedPermissions) {
             askedPermissions = true;
             Permissions.request(this);

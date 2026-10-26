@@ -454,6 +454,11 @@ public class PipelineTest {
         fp.setFinderSound(false);
         check("ring finder: clicks on by default, can be switched off", soundDefault && !fp.finderSound(), null);
         fp.setFinderSound(true);
+        boolean deniedDefault = fp.permissionDenied();
+        fp.setPermissionDenied(true);
+        boolean deniedSet = fp.permissionDenied();
+        fp.setPermissionDenied(false);
+        check("ring finder: an explicit permission refusal is remembered, none by default (#140)", !deniedDefault && deniedSet && !fp.permissionDenied(), null);
         boolean heightBefore = fp.hasHeight();
 
         // ---- sleep history: average night over all analysed nights ----
