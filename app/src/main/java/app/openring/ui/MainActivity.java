@@ -52,9 +52,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         Object last = getLastNonConfigurationInstance();
-        // recreated without the state handed over: Android ended the app in the meantime
-        boolean restored = b != null && !(last instanceof DemoRun);
-        if (last instanceof DemoRun) demoRun = (DemoRun) last;
+        // handed over by a turned phone: the same process, which already checked the demo
+        boolean handedOver = last instanceof DemoRun;
+        if (handedOver) demoRun = (DemoRun) last;
         demoRun.owner = this;
         if (b != null) {
             tab = b.getInt("tab", Pages.TODAY);
@@ -142,7 +142,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
             // a preparation started before the phone was turned: show its progress again
             preparingDemo = true;
             showDemoDialog();
-        } else if (restored && Prefs.of(this).demo()) {
+        } else if (app.openring.data.Demo.finishOnStart(Prefs.of(this).demo(), demoRun.running, handedOver)) {
+            // Android may have ended the app while the demo was prepared, also when it is opened again
+            // from the launcher (no saved screen then): finish it, progress shows only if work is left (issue #69)
             startDemo(false);
         }
     }

@@ -64,6 +64,17 @@ public final class Demo {
         return complete(c, p, LocalDate.now(), System.currentTimeMillis() / 1000);
     }
 
+    /**
+     * Whether a new main screen has to call {@link #complete} (issue #69): demo mode is on and no
+     * preparation runs. Android may have ended the app half way, and opening it again from the
+     * launcher brings no saved screen, so this does not depend on one; a finished demo returns at
+     * once. {@code handedOver}: a turned phone handed this screen the preparation state of the same
+     * process, which already checked.
+     */
+    public static boolean finishOnStart(boolean demoOn, boolean preparing, boolean handedOver) {
+        return demoOn && !preparing && !handedOver;
+    }
+
     /** As above with a chosen "today" and "now", for the tests. */
     public static boolean complete(Context c, Progress p, LocalDate today, long now) {
         synchronized (Demo.class) {
