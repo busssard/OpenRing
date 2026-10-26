@@ -451,16 +451,19 @@ public class CoreTest {
         // the highest Uth can give (lowest heart rate 30 bpm, age 18) is outside the range, so it is not shown
         check("vo2max: an impossible Uth value is not shown",
                 Double.isNaN(app.openring.core.analysis.Wellness.vo2maxShown(app.openring.core.analysis.Wellness.vo2maxUth(18, 30))));
-        eq("vo2max line: a value", app.openring.ui.Explain.vo2max(51),
-                "From your age and the lowest heart rate in last night's sleep (Uth method). A rough guide, not a lab test.");
-        eq("vo2max line: no night", app.openring.ui.Explain.vo2max(Double.NaN),
+        String withNight = "From your age and the lowest heart rate in that night's sleep (Uth method). A rough guide, not a lab test.";
+        eq("vo2max line: a value", app.openring.ui.Explain.vo2max(51, true), withNight);
+        eq("vo2max line: no night", app.openring.ui.Explain.vo2max(Double.NaN, false),
                 "Needs a night with the ring. It comes from your age and the lowest heart rate in that night's sleep (Uth method).");
-        eq("vo2max line: impossible value", app.openring.ui.Explain.vo2max(99.7),
-                "Not shown for this day: last night's lowest heart rate gave a value outside what a person can have (10 to 90 ml/kg/min), so that reading was probably off.");
-        eq("vo2max line: zero is impossible too", app.openring.ui.Explain.vo2max(0), app.openring.ui.Explain.vo2max(99.7));
+        // a night was found, but its lowest heart rate was missing or under 30 bpm, so Analyzer stored no vo2max
+        eq("vo2max line: a night without a usable heart rate", app.openring.ui.Explain.vo2max(Double.NaN, true),
+                "No usable heart rate in that night's sleep, so no estimate. It needs the lowest heart rate of the night (Uth method).");
+        eq("vo2max line: impossible value", app.openring.ui.Explain.vo2max(99.7, true),
+                "Not shown for this day: that night's lowest heart rate gave a value outside what a person can have (10 to 90 ml/kg/min), so that reading was probably off.");
+        eq("vo2max line: zero is impossible too", app.openring.ui.Explain.vo2max(0, true), app.openring.ui.Explain.vo2max(99.7, true));
         check("vo2max explanation names the unit", app.openring.ui.Explain.VO2MAX.contains("ml/kg/min") && app.openring.ui.Explain.VO2MAX.startsWith("VO2 max is "));
-        for (String tx : new String[] {app.openring.ui.Explain.VO2MAX, app.openring.ui.Explain.vo2max(51), app.openring.ui.Explain.vo2max(Double.NaN),
-            app.openring.ui.Explain.vo2max(0)}) {
+        for (String tx : new String[] {app.openring.ui.Explain.VO2MAX, app.openring.ui.Explain.vo2max(51, true), app.openring.ui.Explain.vo2max(Double.NaN, false),
+            app.openring.ui.Explain.vo2max(Double.NaN, true), app.openring.ui.Explain.vo2max(0, true)}) {
             check("vo2max texts use no dash as punctuation: " + tx, !tx.contains(" - ") && !tx.contains("\u2013") && !tx.contains("\u2014"));
         }
     }

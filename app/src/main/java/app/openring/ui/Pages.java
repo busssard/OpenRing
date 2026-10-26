@@ -1270,7 +1270,7 @@ public final class Pages {
         // only the heart rate estimate the text names, and only a value a person can have (issue #116)
         double v = Json.d(day, "vo2max"), shown = app.openring.core.analysis.Wellness.vo2maxShown(v);
         if (!Double.isNaN(shown)) vo.addView(Ui.text(c, Ui.fmt(shown, 0) + " ml/kg/min", 24, Ui.TEXT, Ui.LIGHT));
-        vo.addView(Ui.body(c, Explain.vo2max(v)));
+        vo.addView(Ui.body(c, Explain.vo2max(v, d.night != null)));
         vo.addView(Ui.gap(c, 4));
         vo.addView(Ui.text(c, Explain.VO2MAX, 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(vo);

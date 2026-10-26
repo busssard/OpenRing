@@ -139,19 +139,22 @@ public final class DataCheck {
                 .append(db.kvLong("epoch", 1)).append(", cursor ").append(db.kvLong("cursor", 0)).append('\n');
         // the nights themselves, counts and dates only (issue #40): which day each sleep period was given
         // to is what the screens go by; times, minutes and scores are health values and stay out
-        t.append(nightSummary(db.nightsJson(java.time.LocalDate.now().minusDays(14).toString(), "9999-12-31", false),
-                java.time.LocalDate.now(), 14));
+        java.time.LocalDate today = java.time.LocalDate.now();
+        t.append(nightSummary(db.nightsJson(today.minusDays(NIGHT_DAYS - 1).toString(), "9999-12-31", false), today, NIGHT_DAYS));
         r.text = t.toString();
         return r;
     }
 
+    /** The data check counts the sleep periods of this many days, today included. */
+    public static final int NIGHT_DAYS = 14;
+
     /**
-     * The sleep periods of the last {@code days} days up to {@code today} as counts and dates only
+     * The sleep periods of the last {@code days} days up to {@code today} (today and the {@code days - 1} before) as counts and dates only
      * (issue #40): how many, which day each counts for, how their stages were found and whether phone
      * use and a score reached them. No clock times, minutes, scores or stages, so the copy stays safe
      * to post in a public bug report.
      */
-    static String nightSummary(List<String> nights, java.time.LocalDate today, int days) {
+    public static String nightSummary(List<String> nights, java.time.LocalDate today, int days) {
         java.util.TreeMap<String, int[]> perDay = new java.util.TreeMap<String, int[]>(); // main, naps
         java.util.TreeMap<String, Integer> sources = new java.util.TreeMap<String, Integer>();
         int all = 0, main = 0, phone = 0, scored = 0;
@@ -191,7 +194,7 @@ public final class DataCheck {
         t.append("  With phone use data: ").append(phone).append(" of ").append(all)
                 .append(", with a sleep score: ").append(scored).append(" of ").append(all).append('\n');
         t.append("  Per day (the day a sleep period counts for):\n");
-        java.time.LocalDate from = today.minusDays(days);
+        java.time.LocalDate from = today.minusDays(days - 1);
         for (java.time.LocalDate d = from; !d.isAfter(today); d = d.plusDays(1)) {
             if (!perDay.containsKey(d.toString())) perDay.put(d.toString(), new int[2]);
         }

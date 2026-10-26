@@ -59,16 +59,20 @@ public final class Explain {
 
     /**
      * The line under the Cardio capacity card for the day's stored VO2 max {@code stored} (issue #116):
-     * where the number comes from, why there is none without a night, or why an impossible one is not shown.
+     * where the number comes from, why there is none (no night, or a night without a usable lowest heart
+     * rate), or why an impossible one is not shown. {@code hadNight}: the day has a main night.
      */
-    public static String vo2max(double stored) {
-        if (Double.isNaN(stored)) return "Needs a night with the ring. It comes from your age and the lowest heart rate in that night's sleep (Uth method).";
+    public static String vo2max(double stored, boolean hadNight) {
+        if (Double.isNaN(stored)) {
+            if (hadNight) return "No usable heart rate in that night's sleep, so no estimate. It needs the lowest heart rate of the night (Uth method).";
+            return "Needs a night with the ring. It comes from your age and the lowest heart rate in that night's sleep (Uth method).";
+        }
         if (Double.isNaN(app.openring.core.analysis.Wellness.vo2maxShown(stored))) {
-            return "Not shown for this day: last night's lowest heart rate gave a value outside what a person can have ("
+            return "Not shown for this day: that night's lowest heart rate gave a value outside what a person can have ("
                     + Math.round(app.openring.core.analysis.Wellness.VO2MAX_LOW) + " to " + Math.round(app.openring.core.analysis.Wellness.VO2MAX_HIGH)
                     + " ml/kg/min), so that reading was probably off.";
         }
-        return "From your age and the lowest heart rate in last night's sleep (Uth method). A rough guide, not a lab test.";
+        return "From your age and the lowest heart rate in that night's sleep (Uth method). A rough guide, not a lab test.";
     }
 
     public static final String SCREEN = "The screen score looks at your phone use: how long the screen was on compared with your "
