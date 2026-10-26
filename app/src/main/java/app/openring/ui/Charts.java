@@ -1102,7 +1102,7 @@ public final class Charts {
                 String line1 = clock(picked), line2, line3 = null;
                 if (s != null) {
                     double m = (s[1] - s[0]) / 60.0;
-                    line2 = clock(s[0]) + " to " + clock(s[1]) + ", " + (m < 1 ? "under a minute" : Pages.span(m));
+                    line2 = clock(s[0]) + " to " + clock(s[1]) + ", " + (m < 1 ? "less than 1 min" : Pages.span(m));
                     line3 = appAt(Math.min(Math.max(picked, s[0]), s[1] - 1));
                 } else {
                     boolean asleep = false;

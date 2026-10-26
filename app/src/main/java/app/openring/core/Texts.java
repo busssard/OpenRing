@@ -73,6 +73,16 @@ public final class Texts {
      * skin temperature as a change ("-0.2 \u00b0C"), resting heart rate in bpm, HRV in ms, breathing per minute.
      */
     public static String radar(String label, double v, Locale locale) {
+        return radar(label, v, Double.NaN, locale);
+    }
+
+    /**
+     * As {@link #radar(String, double, Locale)}, but skin temperature shows the day's stored change
+     * {@code tempDev} (3 decimals) when known, so it reads as on Today; the radar's own marker is stored at
+     * 2 decimals and could round differently (0.046 is "0.0" on Today, its marker 0.05 would be "+0.1").
+     */
+    public static String radar(String label, double v, double tempDev, Locale locale) {
+        if (label.startsWith("Skin") && !Double.isNaN(tempDev) && !Double.isInfinite(tempDev)) v = tempDev;
         if (Double.isNaN(v) || Double.isInfinite(v)) return "--";
         if (label.startsWith("Skin")) return signed(v, locale) + " \u00b0C";
         if (label.startsWith("Resting")) return String.format(locale, "%.0f bpm", v);

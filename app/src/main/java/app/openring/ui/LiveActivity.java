@@ -68,7 +68,7 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
         // one plain line under each number (issue #165); the line under the first row says what HRV is based on
         hrV = tile(r1, "Heart rate", "bpm", Ui.HEART, "Beats per minute, the newest reading");
         hrvV = tile(r1, "HRV", "ms", Ui.READY, "Change from beat to beat, higher is calmer");
-        spo2V = tile(r2, "Blood oxygen", "%", Ui.OXY, "Oxygen in the blood, only while measuring it below");
+        spo2V = tile(r2, "Blood oxygen", "%", Ui.OXY, "Oxygen in the blood, only with the switch below on");
         tempV = tile(r2, "Sensor temp", "\u00b0C", Ui.TEMP, "The ring's own reading, lower than body temperature");
         tiles.addView(r1);
         hrvNote = Ui.text(this, "", 12, Ui.TEXT_3, Ui.REGULAR);

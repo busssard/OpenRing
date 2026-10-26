@@ -997,11 +997,11 @@ public final class Pages {
         LinearLayout num = Ui.card(c);
         num.addView(Ui.caption(c, "This day"));
         num.addView(Ui.statRow(c, Ui.stat(c, "Uses", String.valueOf(in.day.turnedOn), Texts.word(in.day.turnedOn, "time", "times"), 0),
-                Ui.stat(c, "Longest", Ui.fmt(in.day.longestMin, 0), "min", 0)));
+                Ui.stat(c, "Longest", span(in.day.longestMin), "", 0)));
         num.addView(Ui.statRow(c, Ui.stat(c, "First look", clock(in.firstLook, in.zone), "", 0),
-                Ui.stat(c, "Not counted", Ui.fmt(in.excludedMin, 0), "min", 0)));
-        num.addView(Ui.statRow(c, Ui.stat(c, "Before bed", Ui.fmt(in.bedMin, 0), "min", 0),
-                Ui.stat(c, "In the night", Ui.fmt(in.nightMin, 0), "min", 0)));
+                Ui.stat(c, "Not counted", span(in.excludedMin), "", 0)));
+        num.addView(Ui.statRow(c, Ui.stat(c, "Before bed", span(in.bedMin), "", 0),
+                Ui.stat(c, "In the night", span(in.nightMin), "", 0)));
         num.addView(Ui.text(c, "Uses: how often you started using the phone (unlocked it, or turned the screen on if it has no lock screen). Longest: the longest use in one go. "
                 + "First look: the first time after waking up. Not counted: time in apps you left out (below). "
                 + "Before bed: the hour before you fell asleep last night. In the night: between falling asleep and waking up. "
@@ -1017,9 +1017,9 @@ public final class Pages {
             sc.addView(Ui.contributor(c, "Screen time", span(in.day.totalMin) + " of " + hours(g), in.score.amount, Ui.OXY,
                     "Half your goal or less is best, the goal itself still good, twice the goal or more lowers this to zero."));
             if (!Double.isNaN(in.score.bedtime)) {
-                sc.addView(Ui.contributor(c, "Before bed", Ui.fmt(in.bedMin, 0) + " min", in.score.bedtime, Ui.OXY,
+                sc.addView(Ui.contributor(c, "Before bed", span(in.bedMin), in.score.bedtime, Ui.OXY,
                         "Screen light and content in the last hour keep the brain awake. 5 minutes or less is best, 45 or more lowers this to zero."));
-                sc.addView(Ui.contributor(c, "In the night", Ui.fmt(in.nightMin, 0) + " min", in.score.night, Ui.OXY,
+                sc.addView(Ui.contributor(c, "In the night", span(in.nightMin), in.score.night, Ui.OXY,
                         "Checking the phone after waking up at night makes it harder to fall asleep again. 1 minute or less is best, 20 or more lowers this to zero."));
             } else {
                 // a night is known, but the phone's log was not read for the hour before it or the night itself (issue #131)
@@ -1258,12 +1258,12 @@ public final class Pages {
                 LinearLayout top = Ui.hbox(c);
                 top.addView(Ui.text(c, k, 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
                 boolean flagged = a.optDouble(3) > 0;
-                top.addView(Ui.text(c, Texts.radar(k, a.optDouble(0), Locale.getDefault()) + (flagged ? "  unusual" : ""), 13, flagged ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR));
+                top.addView(Ui.text(c, Texts.radar(k, a.optDouble(0), Json.d(day, "temp_dev"), Locale.getDefault()) + (flagged ? "  unusual" : ""), 13, flagged ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR));
                 rc.addView(top);
                 rc.addView(new Charts.RangeGauge(c, a.optDouble(0), a.optDouble(1), a.optDouble(2), flagged), Ui.sized(c, -1, 18));
             }
             rc.addView(Ui.gap(c, 6));
-            rc.addView(Ui.text(c, "Last night's values; skin temperature is the change from your usual. The bar under each is your normal range from recent nights. "
+            rc.addView(Ui.text(c, "That night's values; skin temperature is the change from your usual. The bar under each is your normal range. "
                     + "A wellness signal compared with your own recent nights, not a diagnosis.", 11, Ui.TEXT_3, Ui.REGULAR));
         }
         root.addView(rc);

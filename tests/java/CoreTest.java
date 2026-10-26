@@ -780,7 +780,6 @@ public class CoreTest {
         eq("kept height: other layout untouched", k.get(landscape), 1100);
     }
 
-    /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
     /** One way to write the same quantity everywhere (issues #99, #163, #165). */
     static void unitTexts() {
         Locale de = Locale.GERMANY;
@@ -822,6 +821,11 @@ public class CoreTest {
         eq("radar: phone's decimal sign", Texts.radar("Respiratory rate", 13.94, de), "13,9 /min");
         eq("radar: unknown marker keeps one decimal", Texts.radar("Other", 1.25, Locale.US), "1.3");
         eq("radar: no value", Texts.radar("HRV", Double.NaN, Locale.US), "--");
+        // the radar stores its markers at 2 decimals, the day's temp_dev at 3: the radar shows temp_dev (review of #181)
+        eq("radar: skin temperature from temp_dev, 0.046 is 0.0 as on Today", Texts.radar("Skin temperature", 0.05, 0.046, Locale.US), "0.0 \u00b0C");
+        eq("radar: skin temperature, 0.046 stored at 2 decimals alone would read +0.1", Texts.radar("Skin temperature", 0.05, Locale.US), "+0.1 \u00b0C");
+        eq("radar: skin temperature falls back to the marker", Texts.radar("Skin temperature", -0.17, Double.NaN, Locale.US), "-0.2 \u00b0C");
+        eq("radar: temp_dev only for skin temperature", Texts.radar("HRV", 59.3, 0.046, Locale.US), "59 ms");
         Wellness.Radar wr = Wellness.radar(new double[] {0.1, 50, 60, 14}, new double[][] {
             {0, 0.1, -0.1, 0.2, -0.2, 0.05, 0}, {49, 50, 51, 52, 48, 50, 50}, {55, 60, 65, 58, 62, 61, 59}, {13, 14, 15, 14, 13.5, 14.5, 14}});
         for (String k : wr.markers.keySet()) check("radar: every marker has a unit: " + k, !Texts.radar(k, 1, Locale.US).equals("1.0"));
@@ -829,6 +833,7 @@ public class CoreTest {
         eq("uses: one", Texts.word(1, "time", "times"), "time");
     }
 
+    /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
     static void texts() throws IOException {
         eq("count: one", Texts.count(1, "wake up", "wake ups"), "1 wake up");
         eq("count: zero is plural", Texts.count(0, "wake up", "wake ups"), "0 wake ups");
