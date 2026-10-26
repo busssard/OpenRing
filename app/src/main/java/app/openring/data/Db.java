@@ -623,6 +623,39 @@ public final class Db extends SQLiteOpenHelper {
         getWritableDatabase().insertWithOnConflict("days", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
+    /** Removes the stored summary of {@code day}; true when there was one (issue #58). */
+    public boolean deleteDay(String day) {
+        return getWritableDatabase().delete("days", "day = ?", new String[] {day}) > 0;
+    }
+
+    /** The stored days after {@code day}, oldest first (issue #58). */
+    public List<String> daysAfter(String day) {
+        List<String> out = new ArrayList<String>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT day FROM days WHERE day > ? ORDER BY day", new String[] {day});
+        try {
+            while (c.moveToNext()) out.add(c.getString(0));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /**
+     * True when an undated event follows the newest dated one in the ring's order (row id): its boot has no
+     * usable time record yet (a sync cut off before its anchor, a phone clock set back), so it may belong
+     * to any time after the newest dated event (issue #58). Older undated boots (ring restarts without a
+     * time record) do not count. Walks back from the newest row only.
+     */
+    public boolean undatedAfterNewest() {
+        Cursor c = getReadableDatabase().rawQuery("SELECT EXISTS (SELECT 1 FROM events WHERE unix IS NULL AND id >"
+                + " (SELECT id FROM events WHERE unix IS NOT NULL ORDER BY id DESC LIMIT 1))", null);
+        try {
+            return c.moveToFirst() && c.getInt(0) == 1;
+        } finally {
+            c.close();
+        }
+    }
+
     public String dayJson(String day) {
         Cursor c = getReadableDatabase().rawQuery("SELECT json FROM days WHERE day=?", new String[] {day});
         try {
