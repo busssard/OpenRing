@@ -75,12 +75,20 @@ Nothing leaves the phone: the app has no internet permission.
 Demo mode uses a separate file (`openring-demo.db`), so demo and real data never mix.
 
 Restoring a full backup (`Backup.prepare`, then `finish`) first checks the backup's database on its own
-(`Db.inspect`: `quick_check`, a version this app can open, the Open Ring tables) and refuses it whole if
-it fails. If the phone's history reaches more than an hour later or holds more events, Setup asks
+(`Db.inspect`: `quick_check`, a version this app can open, and every table and column the app has for that
+version, `Db.schemaProblem`, issue #156) and refuses it whole if it fails. If the phone's history reaches more than an hour later or holds more events, Setup asks
 before replacing it (#26). `Db.replaceWith` keeps the old file as `openring.db.old` until the new one
 opens with the event count the check saw, and puts it back if not (#27). A left over `.old` means a
-swap was cut off, so `Db.get` puts it back before opening the real file. Each restore has its own temp
-file in the cache. Histories are never merged.
+swap was cut off, so `Db.get` puts it back before opening the real file; the opened, upgraded file must
+also pass the schema check of the current version. Each restore has its own temp file in the cache.
+Histories are never merged. A backup holds every setting; restored numbers are kept in the ranges Settings
+allows, and the stage detail level comes along only with the history or onto a phone without nights (#33).
+
+Export database and a full backup never copy the live file (issue #115). `Exporter.snapshot` waits for a
+running analysis, then makes a copy in the cache: `VACUUM INTO` on SQLite 3.27 and later (Android 11 and
+newer), otherwise the file and its write ahead log copied while the write lock is held (a sync waits those
+seconds). The copy is made a single file and must pass `Db.inspect` and hold at least the events the
+history had, before anything is written to the file the person picked; otherwise `Exporter.NotSaved`.
 
 ## Analysis
 
@@ -114,11 +122,16 @@ file in the cache. Histories are never merged.
    not move earlier nights. A new zone row analyses the nights since the row before again.
 6. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
    when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
-   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes.
+   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
    Each week replaces the stored nights from its start, moved back to the start of any sleep (found now or
    stored) that crosses it, so a sleep stored with an end shortened by phone use is replaced, never doubled
    (`Analyzer.boundary`, issue #132); the days of the nights it replaced are analysed again too, and the main
-   sleep of such a day is chosen also against its stored sleeps that stay (their flag is updated).
+   sleep of such a day is chosen also against its stored sleeps that stay (their flag is updated). A day the analysis
+   visits that has no data left (no activity, heart rate or sleep, for example after its events were dated
+   again) loses its stored summary in the same step, and stored days after the newest dated event are visited
+   for that too (issue #58). Not while an undated event (other than a time record) follows the newest dated one in row
+   order (its boot has no usable time record yet): then only days that end by the newest dated event can go, and the log says the others
+   were kept.
 7. The day's heart rate (Body tab, `core/analysis/DayHeart`, issue #72) is one line of quarter hour averages of
    every reading from midnight to midnight in the day's zone (one point per quarter hour, 92 to 100 on a clock
    change day), stored as `hr_day`. Lowest, Average and Highest are that line's lowest point, mean and highest

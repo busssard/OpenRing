@@ -616,11 +616,77 @@ public final class Db extends SQLiteOpenHelper {
         return out;
     }
 
+    /** Days before and after a date that the "Recent nights" strip shows (issue #98). */
+    public static final int RECENT_DAYS = 30;
+
+    /**
+     * Main nights for the "Recent nights" strip of {@code date}, ordered by start: from {@link #RECENT_DAYS}
+     * days before it to as many after it, never past the day after {@code today} (a night in a zone ahead can
+     * end there). An old date loads no more nights than one in the middle of the history (issue #98).
+     */
+    public List<String> recentNights(java.time.LocalDate date, java.time.LocalDate today) {
+        java.time.LocalDate to = date.plusDays(RECENT_DAYS), cap = today.plusDays(1);
+        if (to.isAfter(cap)) to = cap.isBefore(date) ? date : cap;
+        return nightsJson(date.minusDays(RECENT_DAYS).toString(), to.toString(), true);
+    }
+
+    /** True when any main night is stored (the Sleep tab offers Further analysis then, issue #98). */
+    public boolean anyMainNight() {
+        return count("SELECT EXISTS (SELECT 1 FROM nights WHERE main = 1)") > 0;
+    }
+
+    /** The nights of one day ordered by start, each as {start, main (Boolean), json} (issue #139). */
+    public List<Object[]> nightsOfDay(String day) {
+        List<Object[]> out = new ArrayList<Object[]>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT start, main, json FROM nights WHERE day = ? ORDER BY start", new String[] {day});
+        try {
+            while (c.moveToNext()) out.add(new Object[] {c.getDouble(0), c.getInt(1) == 1, c.getString(2)});
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     public void putDay(String day, String json) {
         ContentValues cv = new ContentValues();
         cv.put("day", day);
         cv.put("json", json);
         getWritableDatabase().insertWithOnConflict("days", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    /** Removes the stored summary of {@code day}; true when there was one (issue #58). */
+    public boolean deleteDay(String day) {
+        return getWritableDatabase().delete("days", "day = ?", new String[] {day}) > 0;
+    }
+
+    /** The stored days after {@code day}, oldest first (issue #58). */
+    public List<String> daysAfter(String day) {
+        List<String> out = new ArrayList<String>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT day FROM days WHERE day > ? ORDER BY day", new String[] {day});
+        try {
+            while (c.moveToNext()) out.add(c.getString(0));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /**
+     * True when an undated event follows the newest dated one in the ring's order (row id): its boot has no
+     * usable time record yet (for example a sync cut off before its phone anchor), so it may belong to any
+     * time after the newest dated event (issue #58). Older undated boots (ring restarts without a time
+     * record) do not count, and neither do time records themselves (time_sync 66, rtc_beacon 133): they
+     * hold no data for a day, and a phone anchor that fits no boot stays undated for good. Walks back from
+     * the newest row only.
+     */
+    public boolean undatedAfterNewest() {
+        Cursor c = getReadableDatabase().rawQuery("SELECT EXISTS (SELECT 1 FROM events WHERE unix IS NULL AND tag NOT IN (66, 133) AND id >"
+                + " (SELECT id FROM events WHERE unix IS NOT NULL ORDER BY id DESC LIMIT 1))", null);
+        try {
+            return c.moveToFirst() && c.getInt(0) == 1;
+        } finally {
+            c.close();
+        }
     }
 
     public String dayJson(String day) {
@@ -936,14 +1002,77 @@ public final class Db extends SQLiteOpenHelper {
         public boolean exists, ok;
         /** Why it cannot be restored: {@link #DAMAGED} or {@link #NEWER}, null when fine. */
         public String problem;
+        /** What the schema check found missing (issue #156), for the log; null when the schema is complete. */
+        public String schema;
         public int version;
         public long events;
+        /** Stored nights, -1 when they cannot be read. */
+        public long nights;
         /** Newest dated event (unix seconds), NaN when nothing is dated. */
         public double newest = Double.NaN;
     }
 
     public static final String DAMAGED = "damaged", NEWER = "newer";
-    private static final String[] TABLES = {"events", "nights", "days", "kv"};
+
+    /**
+     * The schema every Open Ring history has (issue #156): each table, the version that added it and
+     * the columns the app reads and writes. {@code events.seg} came with version 2. The first public
+     * release already was version 2 with the six base tables, and no version ever dropped one.
+     */
+    private static final Object[][] SCHEMA = {
+        {"events", 1, new String[] {"id", "epoch", "tag", "ds", "body", "captured", "unix"}},
+        {"anchors", 1, new String[] {"epoch", "ds", "unix", "source"}},
+        {"nights", 1, new String[] {"start", "stop", "day", "main", "score", "json"}},
+        {"days", 1, new String[] {"day", "json"}},
+        {"battery", 1, new String[] {"unix", "pct"}},
+        {"kv", 1, new String[] {"k", "v"}},
+        {"screen", 3, new String[] {"start", "stop"}},
+        {"apps", 4, new String[] {"pkg", "start", "stop"}},
+        {"zones", 5, new String[] {"start", "stop", "id"}},
+        {"screen_reads", 6, new String[] {"start", "stop"}},
+    };
+
+    /**
+     * What is wrong with the schema of {@code d} for a history at {@code version}, or null when it
+     * matches. Every table up to that version must be a table (not a view) with its columns; a table
+     * of a later version that is already there must have them too, since the upgrade's
+     * {@code CREATE TABLE IF NOT EXISTS} keeps it as it is. A column the app does not know that is
+     * NOT NULL without a default would make every insert fail, so it is refused as well.
+     * Uses only {@code sqlite_master} and {@code PRAGMA table_info}, which SQLite 3.18 has.
+     */
+    static String schemaProblem(SQLiteDatabase d, int version) {
+        for (Object[] t : SCHEMA) {
+            String name = (String) t[0];
+            int since = (Integer) t[1];
+            java.util.List<String> need = new java.util.ArrayList<String>(java.util.Arrays.asList((String[]) t[2]));
+            // events.seg: needed from version 2, known (and added by the upgrade) before
+            java.util.List<String> known = new java.util.ArrayList<String>(need);
+            if ("events".equals(name)) {
+                known.add("seg");
+                if (version >= 2) need.add("seg");
+            }
+            String type = first(d, "SELECT type FROM sqlite_master WHERE name = '" + name + "'");
+            if (type == null) {
+                if (version >= since) return "no table " + name;
+                continue;
+            }
+            if (!"table".equals(type)) return name + " is a " + type;
+            java.util.Set<String> have = new java.util.HashSet<String>();
+            Cursor c = d.rawQuery("PRAGMA table_info(" + name + ")", null);
+            try {
+                while (c.moveToNext()) {
+                    String col = c.getString(1);
+                    have.add(col);
+                    // a column the app never fills: NOT NULL (3), no default (4), not part of the key (5)
+                    if (!known.contains(col) && c.getInt(3) != 0 && c.isNull(4) && c.getInt(5) == 0) return name + "." + col + " is NOT NULL without a default";
+                }
+            } finally {
+                c.close();
+            }
+            for (String col : need) if (!have.contains(col)) return "no column " + name + "." + col;
+        }
+        return null;
+    }
 
     /** Does nothing, so Android's default handler cannot delete a file we only look at. */
     private static final android.database.DatabaseErrorHandler KEEP_FILE = new android.database.DatabaseErrorHandler() {
@@ -955,8 +1084,9 @@ public final class Db extends SQLiteOpenHelper {
      * Look at a database file on its own, read only and without localized collators, so the file
      * stays byte for byte as it was (a read write open on Android can switch the journal mode or
      * write android_metadata). With {@code check} (a backup's copy) it must pass
-     * {@code PRAGMA quick_check}, have a version this app can open and hold the Open Ring tables.
-     * Without it (the phone's own history) only the event count and newest date are read.
+     * {@code PRAGMA quick_check}, have a version this app can open and hold every Open Ring table
+     * and column of that version ({@link #schemaProblem}, issue #156). Without it (the phone's own
+     * history) only the event and night counts and the newest date are read.
      */
     static Info inspect(java.io.File f, boolean check) {
         Info i = new Info();
@@ -979,11 +1109,10 @@ public final class Db extends SQLiteOpenHelper {
                     i.problem = DAMAGED;
                     return i;
                 }
-                for (String t : TABLES) {
-                    if (!t.equals(first(d, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '" + t + "'"))) {
-                        i.problem = DAMAGED;
-                        return i;
-                    }
+                i.schema = schemaProblem(d, i.version);
+                if (i.schema != null) {
+                    i.problem = DAMAGED;
+                    return i;
                 }
             }
             Cursor c = d.rawQuery("SELECT COUNT(*), MAX(unix) FROM events", null);
@@ -994,6 +1123,12 @@ public final class Db extends SQLiteOpenHelper {
                 }
             } finally {
                 c.close();
+            }
+            try {
+                String n = first(d, "SELECT COUNT(*) FROM nights");
+                i.nights = n == null ? 0 : Long.parseLong(n);
+            } catch (RuntimeException e) {
+                i.nights = -1; // only the phone's own file can get here without a nights table
             }
             i.ok = true;
         } catch (RuntimeException e) {
@@ -1025,9 +1160,9 @@ public final class Db extends SQLiteOpenHelper {
     /**
      * Swap the real database for a restored copy (a backup) that {@link #inspect} accepted and
      * found {@code expectedEvents} events in. The old file is kept as {@code openring.db.old} until
-     * the new one opens through the helper (which also upgrades an older copy) and holds exactly
+     * the new one opens through the helper (which also upgrades an older copy), holds exactly
      * that many events (Android's default error handler can replace a broken file with an empty
-     * one that "opens"). Otherwise the old file comes back and an IOException tells the caller
+     * one that "opens") and has every table and column of this version. Otherwise the old file comes back and an IOException tells the caller
      * nothing changed. If the app is stopped in the middle, {@link #recoverSwap} puts the old file
      * back before the next open.
      *
@@ -1079,6 +1214,9 @@ public final class Db extends SQLiteOpenHelper {
             instance = new Db(c.getApplicationContext(), REAL);
             long n = instance.eventCount();
             if (n != expectedEvents) throw new java.io.IOException("the restored history holds " + n + " events, expected " + expectedEvents);
+            // opened and upgraded: it must now have every table and column of this version (issue #156)
+            String missing = schemaProblem(instance.getReadableDatabase(), VERSION);
+            if (missing != null) throw new java.io.IOException("the restored history is incomplete: " + missing);
         } catch (java.io.IOException | RuntimeException e) {
             if (instance != null) {
                 try {

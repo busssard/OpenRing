@@ -856,6 +856,22 @@ public class CoreTest {
             check("save failed " + backup + ": no raw text", !t.contains("null") && !t.contains("Exception") && !t.contains("failed:"));
             check("save failed " + backup + ": no dash as punctuation", !t.contains(" - ") && !t.contains("–") && !t.contains("—"));
         }
+        // issue #115: a copy of the history that did not pass its check
+        eq("not checked: backup", Texts.notChecked(true),
+                "The backup was not saved, because the copy of your history did not pass its check. Nothing on this phone was changed. Try again in a minute.");
+        eq("not checked: export", Texts.notChecked(false),
+                "The export was not saved, because the copy of the history did not pass its check. Nothing on this phone was changed. Try again in a minute.");
+        for (boolean backup : new boolean[] {false, true}) {
+            String t = Texts.notChecked(backup);
+            check("not checked " + backup + ": goes into the dialog, no dash as punctuation", !Texts.fitsToast(t) && !t.contains(" - ") && !t.contains("–") && !t.contains("—"));
+        }
+        // issue #33: a key saved by Windows Notepad starts with a byte order mark, some editors put in a no break space
+        byte[] key = Hex.parseKey("4431967d8bacc2659743142b68391d9a");
+        check("key: a byte order mark is ignored", Arrays.equals(Hex.parseKey("\uFEFF4431967d8bacc2659743142b68391d9a\r\n"), key));
+        check("key: a no break space is ignored", Arrays.equals(Hex.parseKey("4431967d 8bacc265 9743142b 68391d9a"), key));
+        check("key: colons and 0x still work", Arrays.equals(Hex.parseKey("0x44:31:96:7d:8b:ac:c2:65:97:43:14:2b:68:39:1d:9a"), key));
+        check("key: other characters are still refused", Hex.parseKey("​4431967d8bacc2659743142b68391d9a") == null
+                && Hex.parseKey("4431967d8bacc2659743142b68391d9") == null);
 
         // Restfulness and Move every hour (Scores)
         Night n = new Night();

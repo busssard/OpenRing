@@ -662,6 +662,7 @@ public class PipelineTest {
         freshDb("openring30-done");
         nightTwice();
         nightAcrossChecks();
+        staleDays();
         demoTwice();
         deleteDuringAnalysis();
         oldNights();
@@ -684,6 +685,9 @@ public class PipelineTest {
         sqlForOldPhones();
         oneEventCheck();
         nightSummaryCases();
+        backupGaps(full.toByteArray());
+        historyCache();
+        recentWindow();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -1033,6 +1037,390 @@ public class PipelineTest {
                 withDb(zipWithJson("{\"key\":\"nope\"}"), dbBytes)));
         check("invalid key refused", !ri.ok, ri.message);
         noTemp(ph, "after an invalid key");
+    }
+
+    /**
+     * Issues #33, #115 and #156: a backup holds every setting and restores only values Settings
+     * allows, a key file may start with a byte order mark, a broken file gets a plain sentence; an
+     * export is a consistent copy of everything committed, checked before it is called saved; a
+     * restore refuses a history whose schema lacks a table or column, and the phone keeps its own.
+     */
+    static void backupGaps(byte[] full) throws Exception {
+        byte[] dbBytes = zipEntry(full, "openring.db");
+        // ---- #115: an export while an old reader blocks the checkpoint holds every committed row ----
+        Context ec = freshDb("openring-b115");
+        app.openring.data.Backup.read(ec, new java.io.ByteArrayInputStream(full));
+        Db edb = Db.get(ec);
+        wal(edb);
+        java.sql.Connection reader = java.sql.DriverManager.getConnection("jdbc:sqlite:" + ec.getDatabasePath(Db.REAL).getPath());
+        java.sql.Statement rs = reader.createStatement();
+        rs.execute("BEGIN");
+        rs.executeQuery("SELECT COUNT(*) FROM kv").close();
+        for (int i = 0; i < 500; i++) edb.put("export_test_" + i, i);
+        long kvRows = edb.count("SELECT COUNT(*) FROM kv"), evRows = edb.eventCount();
+        java.io.ByteArrayOutputStream ex = new java.io.ByteArrayOutputStream();
+        String exErr = null;
+        try {
+            app.openring.data.Exporter.database(ec, ex);
+        } catch (java.io.IOException x) {
+            exErr = x.getMessage();
+        }
+        long[] got = exErr == null ? countsKv(ex.toByteArray()) : new long[] {-1, -1};
+        check("an export while another reader is open holds every committed row (#115)", exErr == null && got[0] == evRows && got[1] == kvRows,
+                exErr != null ? exErr : got[0] + "/" + evRows + " events, " + got[1] + "/" + kvRows + " kv rows");
+        for (boolean vacuum : new boolean[] {true, false}) {
+            String way = vacuum ? "VACUUM INTO" : "copy under the write lock (Android 8 to 10)";
+            java.io.File snap = snapshotWith(ec, vacuum);
+            long[] sg = countsKv(Files.readAllBytes(snap.toPath()));
+            check("snapshot by " + way + " with an old reader open holds every row", sg[0] == evRows && sg[1] == kvRows && quickCheck(snap)
+                    && !new java.io.File(snap.getPath() + "-wal").exists(), sg[0] + " events, " + sg[1] + " kv rows");
+            app.openring.data.Exporter.release(snap);
+        }
+        rs.execute("COMMIT");
+        reader.close();
+        exportLeft(ec, "after exports with an old reader");
+
+        // ---- #115: an export while another connection keeps writing is one consistent moment ----
+        for (boolean vacuum : new boolean[] {true, false}) {
+            String way = vacuum ? "VACUUM INTO" : "copy under the write lock";
+            for (int run = 0; run < 3; run++) {
+                final String path = ec.getDatabasePath(Db.REAL).getPath();
+                final java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+                final java.util.concurrent.atomic.AtomicInteger written = new java.util.concurrent.atomic.AtomicInteger();
+                final java.util.concurrent.atomic.AtomicReference<String> wErr = new java.util.concurrent.atomic.AtomicReference<String>();
+                final int base = 1000000 * (run + 1) + (vacuum ? 0 : 500000);
+                Thread w = new Thread(new Runnable() {
+                    public void run() {
+                        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + path);
+                             java.sql.Statement st = cn.createStatement()) {
+                            st.execute("PRAGMA busy_timeout = 30000");
+                            st.executeQuery("PRAGMA wal_autocheckpoint = 100").close();
+                            for (int k = 0; !stop.get() || k < 200; k++) {
+                                // one event and its marker in one transaction: a torn copy would hold one without the other
+                                st.execute("BEGIN IMMEDIATE");
+                                st.execute("INSERT INTO events(epoch, tag, ds, body, captured) VALUES (77, 70, " + (base + k) + ", x'0102" + String.format("%08x", k) + "', 1)");
+                                st.execute("INSERT INTO kv(k, v) VALUES ('w_" + (base + k) + "', '" + k + "')");
+                                st.execute("COMMIT");
+                                written.incrementAndGet();
+                            }
+                        } catch (Exception x) {
+                            wErr.set(x.toString());
+                        }
+                    }
+                });
+                w.start();
+                while (written.get() < 100 && wErr.get() == null) Thread.sleep(1);
+                long evBefore = Db.get(ec).eventCount();
+                java.io.File snap = snapshotWith(ec, vacuum);
+                stop.set(true);
+                w.join();
+                long writerEv = countIn(snap, "SELECT COUNT(*) FROM events WHERE epoch = 77"), writerKv = countIn(snap, "SELECT COUNT(*) FROM kv WHERE k LIKE 'w_%'");
+                long allEv = countIn(snap, "SELECT COUNT(*) FROM events");
+                check("snapshot by " + way + " while another connection writes (run " + (run + 1) + "): passes quick_check, one consistent moment",
+                        wErr.get() == null && quickCheck(snap) && writerEv == writerKv && allEv >= evBefore && allEv < Db.get(ec).eventCount(),
+                        wErr.get() != null ? wErr.get() : writerEv + " writer events, " + writerKv + " markers, " + allEv + " of " + evBefore + " before");
+                app.openring.data.Exporter.release(snap);
+            }
+        }
+        // a full backup made while another connection writes restores on a new phone
+        final String bpath = ec.getDatabasePath(Db.REAL).getPath();
+        final java.util.concurrent.atomic.AtomicBoolean bstop = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread bw = new Thread(new Runnable() {
+            public void run() {
+                try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + bpath);
+                     java.sql.Statement st = cn.createStatement()) {
+                    st.execute("PRAGMA busy_timeout = 30000");
+                    for (int k = 0; !bstop.get(); k++) st.execute("INSERT INTO kv(k, v) VALUES ('b_" + k + "', 'x')");
+                } catch (Exception x) {
+                    // the check below finds a backup that is not complete
+                }
+            }
+        });
+        bw.start();
+        Thread.sleep(50);
+        long bEvents = Db.get(ec).eventCount();
+        java.io.ByteArrayOutputStream slow = new java.io.ByteArrayOutputStream() {
+            @Override
+            public synchronized void write(byte[] b, int off, int len) {
+                try {
+                    Thread.sleep(2);
+                } catch (InterruptedException x) {
+                    Thread.currentThread().interrupt();
+                }
+                super.write(b, off, len);
+            }
+        };
+        app.openring.data.Prefs.of(ec).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        app.openring.data.Backup.write(ec, slow, true);
+        bstop.set(true);
+        bw.join();
+        exportLeft(ec, "after a backup while another connection writes");
+        Context nb = freshDb("openring-b115-new");
+        app.openring.data.Backup.Result nbr = app.openring.data.Backup.read(nb, new java.io.ByteArrayInputStream(slow.toByteArray()));
+        check("a full backup made while another connection writes restores with every event", nbr.ok && nbr.history && Db.get(nb).eventCount() == bEvents,
+                nbr.message + ", " + Db.get(nb).eventCount() + " of " + bEvents);
+
+        // ---- #115: a copy that fails its check is not saved, and nothing is written ----
+        Context nc = freshDb("openring-b115-bad");
+        app.openring.data.Backup.read(nc, new java.io.ByteArrayInputStream(full));
+        Db.get(nc).getWritableDatabase().execSQL("DROP TABLE zones");
+        for (int k = 0; k < 2; k++) {
+            java.io.ByteArrayOutputStream none = new java.io.ByteArrayOutputStream();
+            String why = null;
+            try {
+                if (k == 0) app.openring.data.Exporter.database(nc, none);
+                else app.openring.data.Backup.write(nc, none, true);
+            } catch (app.openring.data.Exporter.NotSaved x) {
+                why = x.getMessage();
+            }
+            check((k == 0 ? "an export" : "a full backup") + " whose copy fails its check is not saved, nothing written (#115)",
+                    why != null && why.contains("zones") && none.size() == 0, why + ", " + none.size() + " bytes");
+        }
+        exportLeft(nc, "after a copy that failed its check");
+        java.nio.file.Files.write(new java.io.File(nc.getCacheDir(), "export-123.db").toPath(), new byte[] {1});
+        java.nio.file.Files.write(new java.io.File(nc.getCacheDir(), "export-123.db-wal").toPath(), new byte[] {1});
+        Db.get(nc).getWritableDatabase().execSQL("CREATE TABLE zones (start REAL PRIMARY KEY, stop REAL NOT NULL, id TEXT NOT NULL)");
+        java.io.ByteArrayOutputStream fine = new java.io.ByteArrayOutputStream();
+        app.openring.data.Exporter.database(nc, fine);
+        check("an export after the history is whole again is saved", countsKv(fine.toByteArray())[0] == Db.get(nc).eventCount(), fine.size());
+        exportLeft(nc, "after an export, with copies left by a stopped app");
+
+        // ---- #33: stage detail and the finder sound travel with the backup ----
+        Context a = freshDb("openring-b33a");
+        app.openring.data.Backup.Result ra = app.openring.data.Backup.read(a, new java.io.ByteArrayInputStream(full));
+        check("backup gaps: the main backup restores", ra.ok && ra.history, ra.message);
+        app.openring.data.Prefs pa = app.openring.data.Prefs.of(a);
+        pa.setStageDetail(app.openring.core.analysis.StageFilter.CALM);
+        pa.setFinderSound(false);
+        java.io.ByteArrayOutputStream ka = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(a, ka, false);
+        Context b = freshDb("openring-b33b");
+        app.openring.data.Backup.Result rb = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(ka.toByteArray()));
+        app.openring.data.Prefs pb = app.openring.data.Prefs.of(b);
+        check("a backup keeps the stage detail setting (#33)", rb.ok && pb.stageDetail() == app.openring.core.analysis.StageFilter.CALM, pb.stageDetail());
+        check("a backup keeps the ring finder sound switch", !pb.finderSound(), null);
+
+        // a key and settings restore over a phone that keeps its own nights keeps its level (another one
+        // would analyse its whole history again); with the history replaced the level comes along
+        Context keep = freshDb("openring-b33keep");
+        app.openring.data.Backup.read(keep, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Prefs pk = app.openring.data.Prefs.of(keep);
+        int keptLevel = pk.stageDetail();
+        check("a full restore: the stored stage detail matches the setting, so no full re analysis follows",
+                Db.get(keep).kvLong("stage_detail", -1) == keptLevel, Db.get(keep).kvLong("stage_detail", -1) + " vs " + keptLevel);
+        app.openring.data.Backup.Result kr = app.openring.data.Backup.read(keep, new java.io.ByteArrayInputStream(ka.toByteArray()));
+        check("key and settings only over a phone with nights keeps its stage detail", kr.ok && pk.stageDetail() == keptLevel
+                && !pk.finderSound(), pk.stageDetail() + " vs " + keptLevel);
+        // a phone history that cannot be read (here: a file that is not a database) keeps the phone's level too
+        Context unread = freshDb("openring-b33unread");
+        java.nio.file.Files.write(unread.getDatabasePath(Db.REAL).toPath(), "not a database at all, but a file".getBytes("UTF-8"));
+        app.openring.data.Prefs pu = app.openring.data.Prefs.of(unread);
+        pu.setStageDetail(app.openring.core.analysis.StageFilter.DETAILED);
+        app.openring.data.Backup.Result ur = app.openring.data.Backup.read(unread, new java.io.ByteArrayInputStream(ka.toByteArray()));
+        check("key and settings only over a phone history that cannot be read keeps its stage detail", ur.ok
+                && pu.stageDetail() == app.openring.core.analysis.StageFilter.DETAILED, ur.message + ", " + pu.stageDetail());
+        java.io.ByteArrayOutputStream fa = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(a, fa, true);
+        Context fb = freshDb("openring-b33full");
+        app.openring.data.Backup.read(fb, new java.io.ByteArrayInputStream(fa.toByteArray()));
+        check("a full restore takes the backup's stage detail", app.openring.data.Prefs.of(fb).stageDetail() == app.openring.core.analysis.StageFilter.CALM,
+                app.openring.data.Prefs.of(fb).stageDetail());
+
+        // ---- #33: a key file saved with a byte order mark (Windows Notepad) ----
+        byte[] key = app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a");
+        Context c = freshDb("openring-b33c");
+        app.openring.data.Backup.Result bom = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream("\uFEFF4431967d8bacc2659743142b68391d9a\r\n".getBytes("UTF-8")));
+        check("a key file with a byte order mark is accepted (#33)", bom.ok && java.util.Arrays.equals(app.openring.data.Prefs.of(c).loadKey(), key), bom.message);
+        app.openring.data.Backup.Result bomJson = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(
+                zipWithJson("\uFEFF{\"key\":\"4431967d8bacc2659743142b68391d9a\",\"screen_goal\":90}")));
+        check("a backup JSON with a byte order mark is read as JSON", bomJson.ok && app.openring.data.Prefs.of(c).screenGoalMin() == 90, bomJson.message);
+
+        // ---- #33: restored values stay inside what Settings allows ----
+        Context d = freshDb("openring-b33d");
+        app.openring.data.Backup.Result rr = app.openring.data.Backup.read(d, new java.io.ByteArrayInputStream(zipWithJson(
+                "{\"key\":\"4431967d8bacc2659743142b68391d9a\",\"profile\":{\"age\":500,\"sex\":7,\"weight\":0,\"height\":1000,\"target_kcal\":99999},"
+                + "\"screen_goal\":-5,\"stage_detail\":9,\"screen_min_show\":7}")));
+        app.openring.data.Prefs pd = app.openring.data.Prefs.of(d);
+        check("restored values are kept in range (#33)", rr.ok && pd.age() == 100 && pd.weightKg() == 30 && pd.heightCm() == 230 && pd.targetKcal() == 3000
+                && pd.sex() == 2 && pd.screenGoalMin() == 0 && pd.screenMinShowMin() == 5
+                && pd.stageDetail() == app.openring.core.analysis.StageFilter.BALANCED,
+                pd.age() + " " + pd.sex() + " " + pd.weightKg() + " " + pd.heightCm() + " " + pd.targetKcal() + " " + pd.screenGoalMin() + " " + pd.stageDetail());
+
+        // ---- #33: broken files get a plain sentence, not Java's text ----
+        String cut = null, big = null;
+        try {
+            cut = app.openring.data.Backup.read(d, new java.io.ByteArrayInputStream(java.util.Arrays.copyOf(full, full.length / 2))).message;
+        } catch (java.io.IOException e) {
+            cut = "thrown: " + e.getMessage();
+        }
+        try {
+            byte[] huge = new byte[(1 << 20) + 10];
+            java.util.Arrays.fill(huge, (byte) 'a');
+            big = app.openring.data.Backup.read(d, new java.io.ByteArrayInputStream(huge)).message;
+        } catch (java.io.IOException e) {
+            big = "thrown: " + e.getMessage();
+        }
+        check("a cut off backup file gets a plain sentence (#33)", PLAIN_BROKEN.equals(cut), cut);
+        check("a file over 1 MB gets a plain sentence (#33)", PLAIN_BROKEN.equals(big), big);
+        noTemp(d, "after broken files");
+
+        // ---- #156: backups whose schema lacks a table or column are refused whole ----
+        Context ph = freshDb("openring-b156");
+        app.openring.data.Backup.Result r0 = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(full));
+        Db pdb = Db.get(ph);
+        long events = pdb.eventCount(), nights = pdb.count("SELECT COUNT(*) FROM nights");
+        check("schema check: the phone has a history", r0.ok && events > 1000 && nights > 0, events + " events, " + nights + " nights");
+        String evNoSeg = "CREATE TABLE ev2 (id INTEGER PRIMARY KEY, epoch INTEGER NOT NULL, tag INTEGER NOT NULL, ds INTEGER NOT NULL, body BLOB NOT NULL,"
+                + " captured INTEGER NOT NULL, unix REAL, UNIQUE(tag, ds, body) ON CONFLICT IGNORE)";
+        String evExtra = "CREATE TABLE ev2 (id INTEGER PRIMARY KEY, epoch INTEGER NOT NULL, tag INTEGER NOT NULL, ds INTEGER NOT NULL, body BLOB NOT NULL,"
+                + " captured INTEGER NOT NULL, unix REAL, seg INTEGER, extra INTEGER NOT NULL, UNIQUE(tag, ds, body) ON CONFLICT IGNORE)";
+        Object[][] broken = {
+            {"zones dropped (v6)", alter(dbBytes, 6, "DROP TABLE zones")},
+            {"screen_reads dropped (v6)", alter(dbBytes, 6, "DROP TABLE screen_reads")},
+            {"zones dropped (v5)", alter(dbBytes, 5, "DROP TABLE screen_reads", "DROP TABLE zones")},
+            {"screen and apps dropped (v5)", alter(dbBytes, 5, "DROP TABLE screen_reads", "DROP TABLE screen", "DROP TABLE apps")},
+            {"only events, nights, days and kv (v5)", alter(dbBytes, 5, "DROP TABLE screen_reads", "DROP TABLE screen", "DROP TABLE apps",
+                    "DROP TABLE zones", "DROP TABLE anchors", "DROP TABLE battery")},
+            {"events without seg (v5)", alter(dbBytes, 5, "DROP TABLE screen_reads", evNoSeg,
+                    "INSERT INTO ev2 SELECT id, epoch, tag, ds, body, captured, unix FROM events", "DROP TABLE events", "ALTER TABLE ev2 RENAME TO events")},
+            {"events with an extra NOT NULL column (v6)", alter(dbBytes, 6, evExtra,
+                    "INSERT INTO ev2 SELECT id, epoch, tag, ds, body, captured, unix, seg, 0 FROM events", "DROP TABLE events", "ALTER TABLE ev2 RENAME TO events")},
+            {"v3 without anchors and battery", alter(dbBytes, 3, "DROP TABLE screen_reads", "DROP TABLE zones", "DROP TABLE apps",
+                    "DROP TABLE anchors", "DROP TABLE battery")},
+            {"kv without its value column (v6)", alter(dbBytes, 6, "DROP TABLE kv", "CREATE TABLE kv (k TEXT PRIMARY KEY)")},
+            {"zones as a view (v6)", alter(dbBytes, 6, "DROP TABLE zones", "CREATE VIEW zones AS SELECT start, stop, '' AS id FROM screen")},
+        };
+        for (Object[] x : broken) {
+            app.openring.data.Backup.Plan p = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(withDb(full, (byte[]) x[1])));
+            app.openring.data.Backup.Result r = app.openring.data.Backup.finish(ph, p, true);
+            check("schema check: " + x[0] + " is refused as damaged (#156)", !r.ok && r.message.contains("damaged, nothing was changed"), r.message);
+            Db now = Db.get(ph);
+            check("schema check: the phone keeps its events and nights after " + x[0], now.eventCount() == events
+                    && now.count("SELECT COUNT(*) FROM nights") == nights, now.eventCount() + " events, " + now.count("SELECT COUNT(*) FROM nights") + " nights");
+            noTemp(ph, "after " + x[0]);
+        }
+        // a swap that bypasses the check: the opened file lacks a table, so the old history comes back
+        java.io.File noZones = fileOf(alter(dbBytes, 6, "DROP TABLE zones"));
+        String swapErr = null;
+        try {
+            Db.replaceWith(ph, noZones, events);
+        } catch (java.io.IOException x) {
+            swapErr = x.getMessage();
+        }
+        check("a swap whose opened history lacks a table is rolled back with every event and night (#156)", swapErr != null
+                && Db.get(ph).eventCount() == events && Db.get(ph).count("SELECT COUNT(*) FROM nights") == nights
+                && !new java.io.File(ph.getDatabasePath(Db.REAL).getPath() + ".old").exists(), swapErr);
+        // analysis, the data check and Delete all still work on the kept history
+        Analyzer.run(ph, null);
+        DataCheck.run(ph);
+        check("schema check: the kept history still analyses", Db.get(ph).kv("analysis_error", null) == null, Db.get(ph).kv("analysis_error", null));
+
+        // ---- restores of a backup made by this version and by older schema versions ----
+        Object[][] good = {
+            {"this version (v6)", dbBytes},
+            {"v5", alter(dbBytes, 5, "DROP TABLE screen_reads")},
+            {"v4", alter(dbBytes, 4, "DROP TABLE screen_reads", "DROP TABLE zones")},
+            {"v3", alter(dbBytes, 3, "DROP TABLE screen_reads", "DROP TABLE zones", "DROP TABLE apps")},
+            {"v2", alter(dbBytes, 2, "DROP TABLE screen_reads", "DROP TABLE zones", "DROP TABLE apps", "DROP TABLE screen")},
+        };
+        long[] want = counts(fileOf(dbBytes));
+        for (Object[] x : good) {
+            Context g = freshDb("openring-good");
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(g, new java.io.ByteArrayInputStream(withDb(full, (byte[]) x[1])));
+            Db gd = Db.get(g);
+            boolean same = gd.eventCount() == want[0] && gd.count("SELECT COUNT(*) FROM nights") == want[1] && gd.count("SELECT COUNT(*) FROM days") == want[2]
+                    && gd.count(EVENTS_SUM) == countIn(fileOf(dbBytes), EVENTS_SUM) && gd.count(NIGHTS_SUM) == countIn(fileOf(dbBytes), NIGHTS_SUM);
+            check("a backup of " + x[0] + " restores with every event, night and day", r.ok && r.history && same && gd.getReadableDatabase().getVersion() == 6,
+                    r.message + ", " + gd.eventCount() + " events");
+            Analyzer.run(g, null);
+            check("a restored backup of " + x[0] + " analyses and keeps its events", gd.kv("analysis_error", null) == null && gd.eventCount() == want[0],
+                    gd.kv("analysis_error", null));
+            gd.resetAll();
+        }
+
+    }
+
+    /** {@code Exporter.snapshot} with the way forced (package private in the app). */
+    static java.io.File snapshotWith(Context c, boolean vacuum) throws Exception {
+        java.lang.reflect.Method m = app.openring.data.Exporter.class.getDeclaredMethod("snapshot", Context.class, Boolean.class);
+        m.setAccessible(true);
+        try {
+            return (java.io.File) m.invoke(null, c, vacuum);
+        } catch (java.lang.reflect.InvocationTargetException x) {
+            throw (Exception) x.getCause();
+        }
+    }
+
+    static boolean quickCheck(java.io.File f) throws Exception {
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement(); java.sql.ResultSet r = st.executeQuery("PRAGMA quick_check")) {
+            return r.next() && "ok".equals(r.getString(1));
+        }
+    }
+
+    static long countIn(java.io.File f, String sql) throws Exception {
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement(); java.sql.ResultSet r = st.executeQuery(sql)) {
+            r.next();
+            return r.getLong(1);
+        }
+    }
+
+    static void exportLeft(Context c, String when) {
+        String[] left = c.getCacheDir().list(new java.io.FilenameFilter() {
+            public boolean accept(java.io.File d, String n) {
+                return n.startsWith("export-");
+            }
+        });
+        check("no export copy left " + when, left != null && left.length == 0, left == null ? null : java.util.Arrays.toString(left));
+    }
+
+    /** Fingerprints of every event's counter and body and of every stored night. */
+    static final String EVENTS_SUM = "SELECT SUM(ds) + SUM(LENGTH(body)) + SUM(tag) FROM events",
+            NIGHTS_SUM = "SELECT SUM(LENGTH(json)) + SUM(CAST(start AS INTEGER)) FROM nights";
+
+    static final String PLAIN_BROKEN = "This file is damaged or is not an Open Ring backup, nothing was changed.";
+
+    /** A copy of a history file changed by {@code sql}, at schema {@code version}. */
+    static byte[] alter(byte[] db, int version, String... sql) throws Exception {
+        java.io.File f = fileOf(db);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            for (String s : sql) st.execute(s);
+            st.execute("PRAGMA user_version = " + version);
+        }
+        return Files.readAllBytes(f.toPath());
+    }
+
+    static java.io.File fileOf(byte[] db) throws Exception {
+        java.io.File f = Files.createTempFile("alter", ".db").toFile();
+        Files.write(f.toPath(), db);
+        return f;
+    }
+
+    /** Events and kv rows in a database file given as bytes. */
+    static long[] countsKv(byte[] db) throws Exception {
+        java.io.File f = fileOf(db);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            long[] out = new long[2];
+            try (java.sql.ResultSet r = st.executeQuery("SELECT COUNT(*) FROM events")) {
+                r.next();
+                out[0] = r.getLong(1);
+            }
+            try (java.sql.ResultSet r = st.executeQuery("SELECT COUNT(*) FROM kv")) {
+                r.next();
+                out[1] = r.getLong(1);
+            }
+            return out;
+        }
+    }
+
+    /** Write ahead logging on, as on the phone (the stand in helper leaves it off). */
+    static void wal(Db db) {
+        android.database.Cursor cur = db.getWritableDatabase().rawQuery("PRAGMA journal_mode=WAL", null);
+        cur.moveToFirst();
+        cur.close();
     }
 
     static Context freshPhone() throws java.io.IOException {
@@ -1460,6 +1848,8 @@ public class PipelineTest {
         List<String> bad = oldSqlProblems("x", "db.execSQL(\"INSERT OR REPLACE INTO screen_reads(start, stop) SELECT MIN(start), MAX(stop)\"\n"
                 + "    + \" FROM screen HAVING COUNT(*) > 0\");\nc = db.rawQuery(\"INSERT INTO t(a) VALUES (1) ON CONFLICT(a) DO NOTHING\", null);");
         check("the check finds HAVING without GROUP BY and an UPSERT", bad.size() == 2, bad);
+        check("the check finds VACUUM INTO without the version check (#115)", oldSqlProblems("x", "d.execSQL(\"VACUUM INTO ?\", a);").size() == 1
+                && oldSqlProblems("x", "// only from SQLite 3.27\nd.execSQL(\"VACUUM INTO ?\", a);").isEmpty(), null);
         check("HAVING with GROUP BY is fine", oldSqlProblems("x", "db.rawQuery(\"SELECT a FROM t GROUP BY a HAVING COUNT(*) > 1\", null);").isEmpty(), null);
     }
 
@@ -1474,6 +1864,8 @@ public class PipelineTest {
             if (!u.contains("EXECSQL") && !u.contains("RAWQUERY") && !u.contains("SELECT ") && !u.contains("INSERT ")) continue;
             if (u.contains("HAVING ") && !u.contains("GROUP BY")) found.add(name + ": HAVING without GROUP BY");
             for (String n : newer) if (u.contains(n)) found.add(name + ": " + n.trim());
+            // VACUUM INTO came with SQLite 3.27 (Android 11): only behind the version check, which the statement names
+            if (u.contains("VACUUM INTO") && !st.contains("3.27")) found.add(name + ": VACUUM INTO without the 3.27 check");
         }
         return found;
     }
@@ -2461,6 +2853,20 @@ public class PipelineTest {
         System.out.println("  " + days + " days: incremental analysis " + incMs + " ms (about " + (incMs - newMs + oldMs) + " ms with the old rewrite)");
         check("long history: incremental analysis stays incremental", db.kvLong("analyzed_until", 0) >= (long) range[1] && db.count("SELECT COUNT(*) FROM nights") < 10,
                 db.count("SELECT COUNT(*) FROM nights") + " nights");
+        // issue #115: the checked copy of a long history, both ways, holds every event and night
+        wal(db);
+        long allEvents = db.eventCount(), allNights = db.count("SELECT COUNT(*) FROM nights");
+        for (boolean vacuum : new boolean[] {true, false}) {
+            t = System.nanoTime();
+            java.io.File snap = snapshotWith(c, vacuum);
+            long ms = (System.nanoTime() - t) / 1000000;
+            System.out.println("  " + days + " days: checked copy by " + (vacuum ? "VACUUM INTO" : "copy under the write lock") + " " + ms + " ms, "
+                    + snap.length() / 1024 + " KB");
+            check("long history: the checked copy " + (vacuum ? "(VACUUM INTO)" : "(copy under the write lock)") + " holds every event and night",
+                    countIn(snap, "SELECT COUNT(*) FROM events") == allEvents && countIn(snap, "SELECT COUNT(*) FROM nights") == allNights
+                    && countIn(snap, EVENTS_SUM) == db.count(EVENTS_SUM), allEvents + " events, " + allNights + " nights");
+            app.openring.data.Exporter.release(snap);
+        }
         db.close();
     }
 
@@ -2950,5 +3356,674 @@ public class PipelineTest {
         check("#132 the day keeps a sleep total from the nap", dayJ != null && dayJ.optDouble("asleep_min", 0) > 0, dayJ == null ? null : dayJ.opt("asleep_min"));
         check("#132 the log says the stored sleep was removed", log.contains("removed 1 stored sleep that ended just before 00:00"), log);
         freshDb("openring132-review-done");
+    }
+
+    // ------------------------------------------------------------------ issue #58, stale day rows
+
+    static final ZoneId Z58 = ZoneId.systemDefault();
+    static final long T58 = LocalDate.parse("2026-10-01").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+
+    /** A fresh phone with {@code days} of demo history from {@code t0} in boot 1. */
+    static Context history58(String name, long t0, int days) throws Exception {
+        Context c = freshDb(name);
+        add58(Db.get(c), 1, t0, days, 0);
+        return c;
+    }
+
+    /** Three days in boot 1 and, after a ring restart, one more day in boot 2 whose phone anchor is {@code shift} seconds off. */
+    static Context twoBoots58(String name, long shift) throws Exception {
+        Context c = history58(name, T58, 3);
+        add58(Db.get(c), 2, T2_58, 1, shift);
+        return c;
+    }
+
+    static final long T2_58 = T58 + 4 * 86400L, T3_58 = T58 + 6 * 86400L;
+
+    static String date58(double unix) {
+        return java.time.Instant.ofEpochSecond((long) unix).atZone(Z58).toLocalDate().toString();
+    }
+
+    /** Zone history: the phone's zone, then Tokyo from 12 hours before boot 2. */
+    static void tokyo58(Db db) {
+        db.noteZone(T58 - 86400, Z58.getId());
+        db.noteZone(T2_58 - 12 * 3600, "Asia/Tokyo");
+    }
+
+    static void add58(Db db, int epoch, long t0, int days, long shift) {
+        long end = t0 + days * 86400L + 12 * 3600;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, days, end, Z58, new Random(58 + epoch));
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), epoch, end);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(epoch, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10 + shift);
+    }
+
+    /** Sets the time of the phone anchor of boot {@code epoch} (a stand in for time records that date the events again). */
+    static void moveAnchor(Db db, int epoch, long t0, long shift) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT id, ds FROM events WHERE tag = 66 AND epoch = ?", new String[] {String.valueOf(epoch)});
+        try {
+            while (c.moveToNext()) {
+                long ds = c.getLong(1);
+                db.getWritableDatabase().execSQL("UPDATE events SET body = ? WHERE id = ?",
+                        new Object[] {app.openring.core.TimeLine.phoneAnchorBody(t0 + (ds - app.openring.data.Demo.DS0) / 10 + shift), c.getLong(0)});
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    /** day to JSON of every stored day. */
+    static java.util.TreeMap<String, String> days58(Db db) {
+        java.util.TreeMap<String, String> out = new java.util.TreeMap<String, String>();
+        for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) out.put(r[0], r[1]);
+        return out;
+    }
+
+    /** Every stored night: start, stop, day, main and its JSON. */
+    static List<String> nights58(Db db) {
+        List<String> out = new ArrayList<String>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start, stop, day, main, json FROM nights ORDER BY start", null);
+        try {
+            while (c.moveToNext()) out.add(c.getDouble(0) + " " + c.getDouble(1) + " " + c.getString(2) + " " + c.getInt(3) + " " + c.getString(4));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** id, tag, ds, body and the exact date of every raw event. */
+    static List<String> events58(Db db) {
+        List<String> out = new ArrayList<String>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT id, tag, ds, body, unix FROM events ORDER BY id", null);
+        try {
+            while (c.moveToNext()) {
+                out.add(c.getLong(0) + " " + c.getInt(1) + " " + c.getLong(2) + " " + java.util.Arrays.hashCode(c.getBlob(3))
+                        + " " + (c.isNull(4) ? "-" : Long.toString(Double.doubleToLongBits(c.getDouble(4)))));
+            }
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** A copy of the stored day {@code from} under the date {@code to}, as an older version could leave it. */
+    static void staleCopy(Db db, String from, String to) {
+        JSONObject o = Json.parse(db.dayJson(from));
+        Json.put(o, "date", to);
+        db.putDay(to, o.toString());
+    }
+
+    static String keys(java.util.Map<String, String> m) {
+        return m.keySet().toString();
+    }
+
+    /** The days that differ between {@code a} and {@code b} (missing on one side or with another JSON). */
+    static String diff(java.util.Map<String, String> a, java.util.Map<String, String> b) {
+        java.util.TreeSet<String> all = new java.util.TreeSet<String>(a.keySet());
+        all.addAll(b.keySet());
+        StringBuilder sb = new StringBuilder();
+        for (String k : all) if (a.get(k) == null || !a.get(k).equals(b.get(k))) sb.append(sb.length() == 0 ? "" : ", ").append(k);
+        return sb.length() == 0 ? "none" : sb.toString();
+    }
+
+    static Analyzer.Log collect(final StringBuilder sb) {
+        return new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                sb.append(m).append('\n');
+            }
+        };
+    }
+
+    /** Thrown by a log that stops the analysis part way (a phone that kills the app). */
+    static final class Stop extends RuntimeException {
+        Stop() {
+            super("stopped for the test");
+        }
+    }
+
+    static Analyzer.Log stopAt(final String text) {
+        return new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                if (m.contains(text)) throw new Stop();
+            }
+        };
+    }
+
+    /**
+     * Issue #58: a day that has no data left after the events were dated again loses its stored row,
+     * also after the newest dated event; a day whose events only wait for a time record keeps it.
+     */
+    static void staleDays() throws Exception {
+        // the reference: the same history dated right from the start
+        Context c = twoBoots58("openring58-ref", 0);
+        Analyzer.run(c, null);
+        Db db = Db.get(c);
+        java.util.TreeMap<String, String> refDays = days58(db);
+        List<String> refNights = nights58(db);
+        String refLatest = db.latestDay();
+        check("#58 set up: reference history analysed", refDays.size() >= 5 && refNights.size() >= 4, keys(refDays));
+
+        // 1. the newest boot dated one or two days too late (its phone anchor was off), then dated right by
+        // its time record: the old newest day lies inside the analysed range, or after the newest dated event
+        for (int shift = 1; shift <= 2; shift++) {
+            c = twoBoots58("openring58-shift" + shift, shift * 86400L);
+            Analyzer.run(c, null);
+            db = Db.get(c);
+            String wrong = db.latestDay();
+            check("#58 set up: dated " + shift + " day(s) too late, newest day " + wrong,
+                    LocalDate.parse(refLatest).plusDays(shift).toString().equals(wrong), keys(days58(db)));
+            moveAnchor(db, 2, T2_58, 0);
+            StringBuilder log = new StringBuilder();
+            Analyzer.run(c, collect(log));
+            String where = shift == 1 ? "inside the analysed range" : "after the newest dated event";
+            check("#58 dated again (" + where + "): the stale days are removed, the others as dated right at once", days58(db).equals(refDays),
+                    keys(days58(db)) + ", differ: " + diff(days58(db), refDays));
+            check("#58 dated again (" + where + "): the main screen opens on the real newest day", refLatest.equals(db.latestDay()), db.latestDay());
+            check("#58 dated again (" + where + "): the nights are the same as dated right at once", nights58(db).equals(refNights), nights58(db).size() + " nights");
+            check("#58 dated again (" + where + "): the log names the removed day", log.indexOf("no data left for " + wrong + ", its summary was removed") >= 0, log);
+        }
+
+        // 1b. a sleep still stored for that day (written after the sleeps were found) keeps its summary, as before
+        c = twoBoots58("openring58-nap", 2 * 86400L);
+        Analyzer.run(c, null);
+        final Db napDb = Db.get(c);
+        final String napDay = napDb.latestDay();
+        final double napAt = LocalDate.parse(napDay).atTime(14, 0).atZone(Z58).toEpochSecond();
+        moveAnchor(napDb, 2, T2_58, 0);
+        Analyzer.run(c, new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                if (!m.endsWith(" sleep periods")) return;
+                List<Object[]> nap = new ArrayList<Object[]>();
+                nap.add(new Object[] {napAt, napAt + 1800, napDay, 0, 50, "{\"start\":" + napAt + ",\"end\":" + (napAt + 1800) + ",\"day\":\"" + napDay + "\"}"});
+                napDb.replaceNights(napAt, napAt + 1, nap);
+            }
+        });
+        check("#58 a day with a sleep still stored keeps its summary", napDb.dayJson(napDay) != null, napDay);
+
+        // 2. stopped part way, then run again: no day with data is lost, and the second run finishes the job
+        c = twoBoots58("openring58-stop", 2 * 86400L);
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        java.util.TreeMap<String, String> before = days58(db);
+        moveAnchor(db, 2, T2_58, 0);
+        boolean stopped = false;
+        try {
+            Analyzer.run(c, stopAt("sleep periods"));
+        } catch (Stop e) {
+            stopped = true;
+        }
+        check("#58 stopped while finding sleeps: every stored day is still there", stopped && days58(db).equals(before), diff(days58(db), before));
+        stopped = false;
+        try {
+            Analyzer.run(c, stopAt("its summary was removed"));
+        } catch (Stop e) {
+            stopped = true;
+        }
+        java.util.TreeMap<String, String> mid = days58(db);
+        boolean kept = true;
+        for (String k : refDays.keySet()) kept &= mid.containsKey(k);
+        check("#58 stopped after removing the first stale day: every day with data is still there", stopped && kept && mid.size() > refDays.size(), keys(mid));
+        check("#58 the stop is recorded as an analysis error", db.kv("analysis_error", null) != null, db.kv("analysis_error", null));
+        Analyzer.run(c, null);
+        check("#58 run again after the stop: the same days and nights as dated right at once",
+                days58(db).equals(refDays) && nights58(db).equals(refNights), diff(days58(db), refDays));
+        Analyzer.run(c, null);
+        check("#58 a second run changes nothing", days58(db).equals(refDays) && nights58(db).equals(refNights), diff(days58(db), refDays));
+
+        // 3. dating not complete yet: the newest boot's time record cannot be used for now (a sync cut
+        // off before its phone anchor), so its events wait undated. Their days are not removed.
+        c = twoBoots58("openring58-wait", 0);
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        // review of #176: an empty day before the newest dated event still goes while boot 2 waits
+        String early = LocalDate.parse(refDays.firstKey()).minusDays(1).toString(); // the first day the analysis visits
+        staleCopy(db, refDays.firstKey(), early);
+        moveAnchor(db, 2, T2_58, 1300000000L - T2_58); // dated in 2011: not usable, so boot 2 is undated
+        StringBuilder log = new StringBuilder();
+        Analyzer.run(c, collect(log));
+        java.util.TreeMap<String, String> waiting = days58(db);
+        boolean all = true;
+        for (String k : refDays.keySet()) all &= waiting.containsKey(k) && waiting.get(k).equals(refDays.get(k));
+        check("#58 events waiting for a time record: no stored day is removed or changed", all && db.undatedCount() > 0,
+                keys(waiting) + ", " + db.undatedCount() + " undated");
+        check("#58 the log says why they are kept", log.indexOf("kept: events after it wait for a time record") >= 0, log);
+        check("#58 while boot 2 waits, an empty day before the newest dated event is still removed", !waiting.containsKey(early),
+                early + " in " + keys(waiting));
+        moveAnchor(db, 2, T2_58, 0);
+        Analyzer.run(c, null);
+        check("#58 once dated again: the same days and nights as dated right at once", days58(db).equals(refDays) && nights58(db).equals(refNights),
+                diff(days58(db), refDays));
+        // a phone anchor that fits no boot stays undated for good; it must not keep stale days forever
+        db.insertPhoneAnchor(99, 5, T2_58 + 86400);
+        String after = LocalDate.parse(refLatest).plusDays(3).toString();
+        staleCopy(db, refLatest, after);
+        db.put("analyzed_until", 0);
+        Analyzer.run(c, null);
+        check("#58 an undated phone anchor that fits no boot does not keep a stale day", db.undatedCount() == 1 && days58(db).equals(refDays),
+                db.undatedCount() + " undated, differ: " + diff(days58(db), refDays));
+
+        // review of #176: an undated boot between two dated ones does not hold the fix back; its days have no
+        // data now and go, and come back once it is dated again
+        c = twoBoots58("openring58-three-ref", 0);
+        add58(Db.get(c), 3, T3_58, 1, 0);
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        java.util.TreeMap<String, String> ref3 = days58(db);
+        List<String> ref3Nights = nights58(db);
+        c = twoBoots58("openring58-three", 0);
+        add58(Db.get(c), 3, T3_58, 1, 0);
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        String newest3 = db.latestDay(), after3 = LocalDate.parse(newest3).plusDays(3).toString();
+        staleCopy(db, newest3, after3);
+        moveAnchor(db, 2, T2_58, 1300000000L - T2_58);
+        Analyzer.run(c, null);
+        java.util.TreeMap<String, String> mid3 = days58(db);
+        boolean outer = !mid3.containsKey(after3) && newest3.equals(db.latestDay());
+        for (String k : refDays.keySet()) if (k.compareTo(date58(T2_58)) < 0) outer &= ref3.get(k).equals(mid3.get(k));
+        check("#58 undated boot between two dated ones: the stale later day goes, the dated boots' days stay", outer, keys(mid3));
+        moveAnchor(db, 2, T2_58, 0);
+        Analyzer.run(c, null);
+        check("#58 the middle boot dated again: the same days and nights as dated right at once", days58(db).equals(ref3) && nights58(db).equals(ref3Nights),
+                diff(days58(db), ref3));
+
+        // review of #176: the newest boot in another zone than the phone's (Tokyo, 7 or 8 hours ahead)
+        c = twoBoots58("openring58-zone-ref", 0);
+        tokyo58(Db.get(c));
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        java.util.TreeMap<String, String> refZ = days58(db);
+        List<String> refZNights = nights58(db);
+        String refZLatest = db.latestDay();
+        c = twoBoots58("openring58-zone", 86400L);
+        tokyo58(Db.get(c));
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        String wrongZ = db.latestDay();
+        moveAnchor(db, 2, T2_58, 0);
+        Analyzer.run(c, null);
+        check("#58 in another zone: dated again, the same days and nights as dated right at once", !wrongZ.equals(refZLatest)
+                && days58(db).equals(refZ) && nights58(db).equals(refZNights) && refZLatest.equals(db.latestDay()),
+                wrongZ + " to " + db.latestDay() + ", differ: " + diff(days58(db), refZ));
+
+        // 4. an older database with history and stale days left by an older version: same events,
+        // nights and days after the update, except the stale ones
+        c = history58("openring58-old", T58, 3);
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        refDays = days58(db);
+        refNights = nights58(db);
+        refLatest = db.latestDay();
+        String gapDay = LocalDate.parse(refLatest).plusDays(1).toString(), farDay = LocalDate.parse(refLatest).plusDays(4).toString();
+        staleCopy(db, refLatest, gapDay);
+        staleCopy(db, refLatest, farDay);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        java.io.ByteArrayOutputStream backupNow = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, backupNow, true);
+        List<String> oldEvents = events58(db);
+        db.close();
+        java.io.File f = c.getDatabasePath(Db.REAL);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+            st.execute("DROP TABLE zones");
+            st.execute("DROP TABLE IF EXISTS screen_reads");
+            st.execute("PRAGMA user_version = 4");
+        }
+        byte[] v4 = Files.readAllBytes(f.toPath());
+        Context up = freshDb("openring58-up");
+        Files.write(up.getDatabasePath(Db.REAL).toPath(), v4);
+        db = Db.get(up);
+        check("#58 an older database opens with its stale days", days58(db).containsKey(farDay) && days58(db).containsKey(gapDay), keys(days58(db)));
+        Analyzer.run(up, null);
+        check("#58 after the update: every raw event the same, row by row", events58(db).equals(oldEvents), events58(db).size() + " events");
+        check("#58 after the update: the nights unchanged", nights58(db).equals(refNights), nights58(db).size() + " nights");
+        check("#58 after the update: the days unchanged, only the stale ones removed", days58(db).equals(refDays), diff(days58(db), refDays));
+
+        // 5. restoring a backup with stale days, made by this version and by an older one
+        byte[] zip = backupNow.toByteArray();
+        for (int k = 0; k < 2; k++) {
+            Context ph = freshDb("openring58-restore" + k);
+            byte[] in = k == 0 ? zip : withDb(zip, v4);
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(in));
+            Db rdb = Db.get(ph);
+            String which = k == 0 ? "this version" : "an older version";
+            check("#58 restore of a backup from " + which + " with stale days", r.ok && days58(rdb).containsKey(farDay), r.message);
+            Analyzer.run(ph, null);
+            check("#58 restored from " + which + ": events, nights and days kept, only the stale days removed",
+                    events58(rdb).equals(oldEvents) && nights58(rdb).equals(refNights) && days58(rdb).equals(refDays), diff(days58(rdb), refDays));
+        }
+        staleLong();
+        freshDb("openring58-done");
+    }
+
+    /** Issue #58 with a long history: a whole history analysed again removes only the stale days, and fast enough. */
+    static void staleLong() throws Exception {
+        int n = 60;
+        Context c = history58("openring58-long", LocalDate.parse("2026-07-01").atStartOfDay(Z58).toEpochSecond(), n);
+        Analyzer.run(c, null);
+        Db db = Db.get(c);
+        java.util.TreeMap<String, String> ref = days58(db);
+        List<String> refN = nights58(db);
+        String newest = db.latestDay();
+        // stale rows after the newest day, as a phone clock once set ahead could leave them
+        for (int k = 2; k <= 11; k++) staleCopy(db, newest, LocalDate.parse(newest).plusDays(k).toString());
+        db.put("analyzed_until", 0); // the whole history, as after the dating changed
+        long t = System.nanoTime();
+        Analyzer.run(c, null);
+        long ms = (System.nanoTime() - t) / 1000000;
+        System.out.println("  #58: " + n + " days analysed again with 10 stale days in " + ms + " ms");
+        check("#58 long history: only the 10 stale days removed, every other day and night the same",
+                days58(db).equals(ref) && nights58(db).equals(refN), diff(days58(db), ref));
+    }
+    // ------------------------------------------------------- issue #139, earlier nights read once per run
+
+    interface Phone139 {
+        Context make(String name) throws Exception;
+    }
+
+    interface Runs139 {
+        void run(Context c) throws Exception;
+    }
+
+    static void setStatic(String field, Object v) throws Exception {
+        java.lang.reflect.Field f = Analyzer.class.getDeclaredField(field);
+        f.setAccessible(true);
+        f.set(null, v);
+    }
+
+    /** Every column of every stored night and day, start and stop by their exact bits (issue #139). */
+    static List<String> results139(Db db) {
+        List<String> out = new ArrayList<String>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start, stop, day, main, score, json FROM nights ORDER BY start", null);
+        try {
+            while (c.moveToNext()) out.add("night " + Double.doubleToLongBits(c.getDouble(0)) + " " + Double.doubleToLongBits(c.getDouble(1)) + " "
+                    + c.getString(2) + " " + c.getInt(3) + " " + (c.isNull(4) ? "null" : String.valueOf(c.getLong(4))) + " " + c.getString(5));
+        } finally {
+            c.close();
+        }
+        for (String[] r : db.daysJson("0000-01-01", "9999-12-31")) out.add("day " + r[0] + " " + r[1]);
+        return out;
+    }
+
+    static long nightRows(List<String> rows) {
+        long n = 0;
+        for (String r : rows) if (r.startsWith("night ")) n++;
+        return n;
+    }
+
+    static String firstDiff(List<String> a, List<String> b) {
+        for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
+            if (!a.get(i).equals(b.get(i))) return "row " + i + ": " + a.get(i).substring(0, Math.min(120, a.get(i).length()))
+                    + " | " + b.get(i).substring(0, Math.min(120, b.get(i).length()));
+        }
+        return a.size() + " and " + b.size() + " rows";
+    }
+
+    /** Set up the phone, run the steps with the history store on or off, return its rows; the store is on again after. */
+    static List<String> analysed139(String name, Phone139 p, Runs139 s, boolean cache) throws Exception {
+        setStatic("cacheHistory", cache);
+        try {
+            Context c = p.make(name);
+            s.run(c);
+            return results139(Db.get(c));
+        } finally {
+            setStatic("cacheHistory", true);
+        }
+    }
+
+    static long ms139;
+
+    /** A full re analysis, timed into {@link #ms139}. */
+    static void timedRunAll(Context c, Analyzer.Log log) {
+        long t = System.nanoTime();
+        Analyzer.runAll(c, log);
+        ms139 = (System.nanoTime() - t) / 1000000;
+    }
+
+    static final int DAYS139 = 130;
+    static final long T139 = LocalDate.parse("2025-02-03").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+
+    /** 130 days of demo history across the spring clock change, the last 12 days with the phone in Tokyo. */
+    static Context demo139(String name) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long end = T139 + (DAYS139 + 1) * 86400L + 12 * 3600;
+        db.noteZone(T139 - 86400, z.getId());
+        db.noteZone(T139 + (DAYS139 - 12) * 86400L, "Asia/Tokyo");
+        putBoot(db, app.openring.data.Demo.history(T139, DAYS139, end, z, new Random(139)), 1, T139, end);
+        return c;
+    }
+
+    /**
+     * Issue #139: the history store gives byte identical nights and days (Re analyse all, a sync after, other
+     * histories), an older database analysed without it stays the same, a stopped run leaves nothing behind,
+     * and a full re analysis is at least twice as fast.
+     */
+    static void historyCache() throws Exception {
+        final StringBuilder log = new StringBuilder();
+        final long[] ms = new long[2];
+        Phone139 demo = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                return demo139(name);
+            }
+        };
+        List<String> off = analysed139("openring139-off", demo, new Runs139() {
+            @Override
+            public void run(Context c) {
+                timedRunAll(c, null);
+                ms[0] = ms139;
+                Analyzer.run(c, null);
+            }
+        }, false);
+        List<String> on = analysed139("openring139-on", demo, new Runs139() {
+            @Override
+            public void run(Context c) {
+                timedRunAll(c, collect(log));
+                ms[1] = ms139;
+                Analyzer.run(c, null);
+            }
+        }, true);
+        check("#139 set up: " + DAYS139 + " days of demo history analysed", nightRows(off) >= DAYS139 - 5 && off.size() - nightRows(off) >= DAYS139 - 5,
+                nightRows(off) + " nights, " + (off.size() - nightRows(off)) + " days");
+        check("#139 Re analyse all and a sync: every night and day the same with the store, byte for byte", on.equals(off), firstDiff(on, off));
+        System.out.println("  #139: Re analyse all of " + DAYS139 + " days: " + ms[0] + " ms reading every day's history from the database, "
+                + ms[1] + " ms with the store");
+        // the timing is logged above; the check is lenient (a busy test machine), the read counts below are exact
+        check("#139 Re analyse all faster with the store", ms[1] < ms[0], ms[1] + " ms, before " + ms[0] + " ms");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+) days summarised, (\\d+) stored nights and (\\d+) stored days read for them, at most (\\d+) kept").matcher(log);
+        boolean found = m.find();
+        int maxKept = found ? Integer.parseInt(m.group(4)) : -1, nightsRead = found ? Integer.parseInt(m.group(2)) : -1;
+        // a day looks back 104 days for nights and 60 for summaries: the store stays below that whatever the history length
+        // every night once; a day summary once when a later day reads it (the newest is read by none)
+        check("#139 each stored night and day read once", found && nightsRead == nightRows(on)
+                && Integer.parseInt(m.group(3)) <= on.size() - nightRows(on) && Integer.parseInt(m.group(3)) >= on.size() - nightRows(on) - 2,
+                found ? m.group() : log);
+        historyBound();
+
+        // an older database: analysed without the store (as by the version before), then the sync analysis with it
+        setStatic("cacheHistory", false);
+        Context old = demo139("openring139-old");
+        Analyzer.run(old, null);
+        Db odb = Db.get(old);
+        List<String> before = results139(odb), events = events58(odb);
+        setStatic("cacheHistory", true);
+        Analyzer.run(old, null);
+        check("#139 older database: after the analysis with the store every event, night and day is the same",
+                results139(odb).equals(before) && events58(odb).equals(events) && before.equals(off), firstDiff(results139(odb), before));
+        odb.put("analyzed_until", 0); // dating changed: everything again, incremental path
+        Analyzer.run(old, null);
+        check("#139 older database analysed again as a whole: the same", results139(odb).equals(before), firstDiff(results139(odb), before));
+
+        // a run stopped part way (the app killed): nothing of the store survives, the next run gives the same rows
+        final int[] count = {0};
+        List<String> stopped = analysed139("openring139-stop", demo, new Runs139() {
+            @Override
+            public void run(Context c) throws Exception {
+                Analyzer.run(c, null);
+                setStatic("afterDay", new Runnable() {
+                    @Override
+                    public void run() {
+                        if (++count[0] == 40) throw new Stop();
+                    }
+                });
+                try {
+                    Analyzer.runAll(c, null);
+                } catch (Stop expected) {
+                } finally {
+                    setStatic("afterDay", null);
+                }
+                Db db = Db.get(c);
+                check("#139 set up: the run stopped after 40 days", count[0] == 40 && db.count("SELECT COUNT(*) FROM days") < DAYS139 - 40
+                        && db.kvLong("analyzed_until", -1) == 0, count[0] + " days, " + db.count("SELECT COUNT(*) FROM days") + " stored");
+                Analyzer.run(c, null);
+            }
+        }, true);
+        check("#139 stopped run, then the next analysis: the same rows as a run never stopped", stopped.equals(off), firstDiff(stopped, off));
+
+        // other histories: the synthetic one of this test with days off and rest days, the trip of #22, #58 dated again
+        final List<RingEvent> gap = history(14, new java.util.HashSet<Integer>(Arrays.asList(4, 5, 6, 10)), new java.util.HashSet<Integer>(Arrays.asList(2, 3, 11)));
+        Phone139 synth = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                Context c = freshDb(name);
+                Db db = Db.get(c);
+                long now = T0 + 14 * 86400 + 7 * 3600 + 1800; // T0 is shared with main; the history must end before the real now
+                for (int i = 0; i < gap.size(); i += 4096) db.insertBatch(gap.subList(i, Math.min(gap.size(), i + 4096)), 1, now);
+                long lastDs = gap.get(gap.size() - 1).ds;
+                db.insertPhoneAnchor(1, lastDs, T0 + (lastDs - DS0) / 10);
+                return c;
+            }
+        };
+        Runs139 runs = new Runs139() {
+            @Override
+            public void run(Context c) {
+                Analyzer.run(c, null);
+                Analyzer.runAll(c, null);
+            }
+        };
+        off = analysed139("openring139-synth-off", synth, runs, false);
+        on = analysed139("openring139-synth-on", synth, runs, true);
+        check("#139 synthetic history with days off: the same with the store", on.equals(off) && nightRows(off) >= 9, nightRows(off) + " nights, " + firstDiff(on, off));
+
+        Phone139 trip = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                ZoneId zh = ZoneId.of("Europe/Zurich"), ny = ZoneId.of("America/New_York");
+                long t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond(), end0 = t0 + 11 * 86400L + 12 * 3600;
+                long t1 = LocalDate.parse("2026-09-13").atStartOfDay(ny).toEpochSecond(), end1 = t1 + 6 * 86400L + 12 * 3600;
+                Context c = freshDb(name);
+                Db db = Db.get(c);
+                for (int d = 2; d <= 12; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(zh).toEpochSecond(), "Europe/Zurich");
+                for (int d = 14; d <= 19; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(ny).toEpochSecond(), "America/New_York");
+                putBoot(db, app.openring.data.Demo.history(t0, 10, end0, zh, new Random(21)), 1, t0, end0);
+                putBoot(db, app.openring.data.Demo.history(t1, 5, end1, ny, new Random(22)), 2, t1, end1);
+                return c;
+            }
+        };
+        off = analysed139("openring139-trip-off", trip, runs, false);
+        on = analysed139("openring139-trip-on", trip, runs, true);
+        check("#139 trip in two zones: the same with the store", on.equals(off) && nightRows(off) >= 14, firstDiff(on, off));
+
+        Phone139 shifted = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                return twoBoots58(name, 86400L);
+            }
+        };
+        Runs139 again = new Runs139() {
+            @Override
+            public void run(Context c) {
+                Analyzer.run(c, null);
+                moveAnchor(Db.get(c), 2, T2_58, 0);
+                Analyzer.run(c, null);
+            }
+        };
+        off = analysed139("openring139-58-off", shifted, again, false);
+        on = analysed139("openring139-58-on", shifted, again, true);
+        check("#139 history dated again, a stale day removed (#58): the same with the store", on.equals(off) && nightRows(off) >= 4, firstDiff(on, off));
+        freshDb("openring139-done");
+    }
+
+    /**
+     * Issue #139, review of #180: over a history longer than the 104 days a day looks back, the store keeps at most
+     * the nights of 107 days (104 back, the day itself and the two around it) and the summaries of 61 (what is older
+     * is dropped as the days move on).
+     */
+    static void historyBound() throws Exception {
+        Context c = freshDb("openring139-long");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        int days = 250;
+        long t0 = LocalDate.parse("2025-01-06").atStartOfDay(z).toEpochSecond(), end = t0 + (days + 1) * 86400L + 12 * 3600;
+        putBoot(db, app.openring.data.Demo.history(t0, days, end, z, new Random(250)), 1, t0, end);
+        StringBuilder log = new StringBuilder();
+        long t = System.nanoTime();
+        Analyzer.run(c, collect(log));
+        long ms = (System.nanoTime() - t) / 1000000;
+        // the most nights of any 107 days in a row, plus 61 day summaries: the bound the window allows
+        List<String> starts = new ArrayList<String>();
+        android.database.Cursor cur = db.getReadableDatabase().rawQuery("SELECT day FROM nights ORDER BY day", null);
+        try {
+            while (cur.moveToNext()) starts.add(cur.getString(0));
+        } finally {
+            cur.close();
+        }
+        int most = 0;
+        for (int i = 0; i < starts.size(); i++) {
+            String last = LocalDate.parse(starts.get(i)).plusDays(106).toString();
+            int k = i;
+            while (k < starts.size() && starts.get(k).compareTo(last) <= 0) k++;
+            most = Math.max(most, k - i);
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("at most (\\d+) kept").matcher(log);
+        int kept = m.find() ? Integer.parseInt(m.group(1)) : -1;
+        long total = db.count("SELECT COUNT(*) FROM nights") + db.count("SELECT COUNT(*) FROM days");
+        System.out.println("  #139: " + days + " days analysed in " + ms + " ms, at most " + kept + " of " + total + " nights and days kept");
+        check("#139 a history longer than the window: the store stays within 107 days of nights and 61 of summaries", kept > 0
+                && kept <= most + 61 && kept < total / 2, kept + " kept, bound " + (most + 61) + ", " + total + " stored");
+    }
+
+    // ------------------------------------------------------------ issue #98, the recent nights strip
+
+    /** Issue #98: the strip of an old date loads a window of nights, not every night up to today. */
+    static void recentWindow() throws Exception {
+        Context c = freshDb("openring98");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate today = LocalDate.parse("2026-10-26"), first = today.minusDays(399);
+        List<Object[]> rows = new ArrayList<Object[]>();
+        for (int k = 0; k < 400; k++) {
+            LocalDate d = first.plusDays(k);
+            double end = d.atTime(6, 45).atZone(z).toEpochSecond(), start = end - 8 * 3600;
+            JSONObject js = new JSONObject();
+            Json.put(js, "day", d.toString());
+            Json.put(js, "start", start);
+            Json.put(js, "end", end);
+            Json.put(js, "main", true);
+            rows.add(new Object[] {start, end, d.toString(), 1, 80, js.toString()});
+            // a nap on every fifth day: not in the strip
+            if (k % 5 == 0) rows.add(new Object[] {end + 6 * 3600, end + 7 * 3600, d.toString(), 0, 50, js.toString()});
+        }
+        db.replaceNights(0, Double.MAX_VALUE, rows);
+        int yearBack = db.recentNights(today.minusDays(365), today).size(), mid = db.recentNights(today.minusDays(200), today).size();
+        int old = db.nightsJson(today.minusDays(365 + 30).toString(), today.plusDays(1).toString(), true).size();
+        check("#98 a date a year back loads as many nights as one 200 days back", yearBack == mid && yearBack == 2 * Db.RECENT_DAYS + 1,
+                yearBack + " and " + mid + " nights, " + old + " before");
+        check("#98 today loads the same nights as before", db.recentNights(today, today).equals(
+                db.nightsJson(today.minusDays(30).toString(), today.plusDays(1).toString(), true)), db.recentNights(today, today).size());
+        check("#98 ten days back: the 30 days before it up to today", db.recentNights(today.minusDays(10), today).size() == 41,
+                db.recentNights(today.minusDays(10), today).size());
+        List<String> first98 = db.recentNights(first, today);
+        check("#98 the oldest date: its night and the 30 after it", first98.size() == 31
+                && first.toString().equals(Json.parse(first98.get(0)).optString("day")), first98.size());
+        check("#98 a date in a long gap: no nights in the strip, Further analysis still offered",
+                db.recentNights(first.minusDays(100), today).isEmpty() && db.anyMainNight(), db.recentNights(first.minusDays(100), today).size());
+        check("#98 no main night stored: no Further analysis", !Db.get(freshDb("openring98-empty")).anyMainNight(), "");
+        freshDb("openring98-done");
     }
 }

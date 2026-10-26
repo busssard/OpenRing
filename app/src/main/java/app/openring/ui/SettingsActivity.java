@@ -1045,12 +1045,31 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         final Uri uri = data.getData();
         final boolean backup = code == BACKUP_KEY || code == BACKUP_FULL;
+        // set when the copy of the history did not pass its check (issue #115): the file got nothing
+        final boolean[] notChecked = {false};
+        // bytes that reached the chosen file; a failure before the first one leaves an empty file
+        final long[] written = {0};
         new AsyncTask<Void, Void, String>() {
             @Override
             protected String doInBackground(Void... v) {
+                boolean opened = false;
                 try {
-                    OutputStream os = getContentResolver().openOutputStream(uri);
-                    if (os == null) throw new java.io.IOException("Android gave no file to write to");
+                    OutputStream raw = getContentResolver().openOutputStream(uri);
+                    if (raw == null) throw new java.io.IOException("Android gave no file to write to");
+                    opened = true;
+                    OutputStream os = new java.io.FilterOutputStream(raw) {
+                        @Override
+                        public void write(int b) throws java.io.IOException {
+                            out.write(b);
+                            written[0]++;
+                        }
+
+                        @Override
+                        public void write(byte[] b, int off, int len) throws java.io.IOException {
+                            out.write(b, off, len);
+                            written[0] += len;
+                        }
+                    };
                     try {
                         if (code == EXPORT_CSV) Exporter.dailyCsv(SettingsActivity.this, os);
                         else if (code == BACKUP_KEY || code == BACKUP_FULL) app.openring.data.Backup.write(SettingsActivity.this, os, code == BACKUP_FULL);
@@ -1059,16 +1078,32 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         os.close();
                     }
                     return backup ? "Backup saved" : "Exported";
+                } catch (Exporter.NotSaved e) {
+                    RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " not saved: " + e.getMessage());
+                    notChecked[0] = true;
+                    removeEmpty(opened);
+                    return null;
                 } catch (Exception e) {
                     // the raw reason goes to the log, the screen gets a sentence that says what to do (issue #89)
                     RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " failed: " + android.util.Log.getStackTraceString(e));
+                    removeEmpty(opened);
                     return null;
+                }
+            }
+
+            /** Nothing reached the file: remove the empty file Android created, so it is not taken for a backup later. */
+            void removeEmpty(boolean opened) {
+                if (!opened || written[0] > 0) return;
+                try {
+                    android.provider.DocumentsContract.deleteDocument(getContentResolver(), uri);
+                } catch (Exception x) {
+                    RingManager.get(SettingsActivity.this).log("the empty file could not be removed: " + x);
                 }
             }
 
             @Override
             protected void onPostExecute(String r) {
-                if (r == null) problem(Texts.saveFailed(backup));
+                if (r == null) problem(notChecked[0] ? Texts.notChecked(backup) : Texts.saveFailed(backup));
                 else say(r);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
