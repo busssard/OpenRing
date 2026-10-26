@@ -42,7 +42,15 @@ public final class SyncJob extends JobService {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                RingManager.get(SyncJob.this).syncBlocking(t);
+                RingManager.SyncResult res = RingManager.get(SyncJob.this).syncBlocking(t);
+                // a background sync that worked removes the notice of an earlier failed one (issue #91)
+                if (res.ok) {
+                    try {
+                        ((android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(SyncService.FAILED_ID);
+                    } catch (RuntimeException e) {
+                        RingManager.get(SyncJob.this).log("old sync notice not removed: " + e);
+                    }
+                }
                 jobFinished(params, false);
             }
         }, "ring-job").start();

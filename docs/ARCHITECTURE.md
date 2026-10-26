@@ -18,7 +18,7 @@ Nothing leaves the phone: the app has no internet permission.
 
 | Package | Responsibility |
 | --- | --- |
-| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line; issues #43 and #153), `Hex` |
+| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line; issues #43 and #153), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
 | `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
@@ -182,6 +182,12 @@ refuses while a sync is under way, so no download or analysis writes nights or e
 A task that must outlive a turned phone (screens are rebuilt, no `configChanges`) holds only the
 application context and reports through a holder to the screen attached now: `DemoRun` in
 `MainActivity` (#29) and the repair in Data check (`LogActivity.REPAIR`, a `core/OneRun`, #130).
+Settings ring actions (read or switch measurements, factory reset) report to `SettingsActivity.SHOWN`, the
+screen resumed now, with the states the starting screen knew; a reset closes every Settings screen by
+opening the main screen with `CLEAR_TOP` from the application context, and Settings without a key sends
+the person there on resume, where Setup opens (#59). The main screen finishes a cut off demo whenever demo
+mode is on and no preparation runs (`Demo.finishOnStart`), also when the app is opened from the launcher
+after Android ended it (#69).
 
 ## Ring finder (issue #74)
 
@@ -200,14 +206,20 @@ can run meanwhile. Everything below stops in `onPause`.
   every warm stretch fail); otherwise temperature decides, as before. A warm stretch with a paired heart rate
   within 30 minutes of any of its readings, or with lone heart rates of two different events at most an hour
   apart within 30 minutes of it and not past its neighbouring cool readings (`loneEvents`, sparse daytime heart rate after a dense day), is a finger as a
-  whole (heart rate may stop while the hand moves); one without counts only when `hrRule` is off. A heart rate needs one from another stored event within 30 minutes
+  whole (heart rate may stop while the hand moves); one without counts only when `hrRule` is off. A heart rate older
+  than a stretch's first warm reading counts for it (in this step and at the end) only when it is not older than the
+  cool readings before the stretch (issue #135): taken off, a few minutes on the table, then the charger is no longer
+  confirmed by the heart rate from before, while one measured during the cool readings (cold fingers) still counts. Lone
+  values stay bounded by the neighbouring cool readings. After a single cool reading (5 minutes on a table cannot be told
+  from a cold hand), over an hour warm without heart rate stays `UNSURE` since the heart rate before it. A heart rate needs one from another stored event within 30 minutes
   (the values of one HRV event or AOHR burst never vouch for each other, so `lastWorn` passes an event
   number per heart rate, and pairing is worked out first because the rule uses it); a lone one counts only next to a finger reading or after a warm newest reading (else it is a stray).
   Uncounted warm readings neither end nor start a cool stretch. At the end: warm with heart rate in the
   last hour (only such a heart rate confirms it on the card), or warm for under an hour with no heart rate yet (just put on), is worn; warm with heart rate
   at first but none for over an hour is `UNSURE` (charger, duvet) at the last heart rate; warm for over an
   hour without any heart rate near is ignored and the cool readings before decide. A charger right after
-  taking it off (no cool reading between) reads as worn until it leaves the charger. The card text (`LastWorn.text`, the app passes its time format) lists what
+  taking it off (no cool reading between) reads as worn until it leaves the charger; with two or more cool readings between,
+  it reads "probably just put on" for its first hour, then taken off. The card text (`LastWorn.text`, the app passes its time format) lists what
   was left out (warm readings, a stray heart rate, named once per event: `strayInWarm`) and how old the newest reading is. `Prefs.lastHeard` is saved when a connection opens or closes
   and when any scan hears the saved address; `Prefs` keeps the battery read before the newest one.
 * Hot and cold: `RingScanner.watch` runs one `SCAN_MODE_LOW_LATENCY` scan (Android blocks the sixth
@@ -218,6 +230,16 @@ can run meanwhile. Everything below stops in `onPause`.
   `FinderActivity.heard` and again in `Proximity.add` and `SearchWalk.rssi`, and do not count as heard
   (issue #95); while only such values arrive the label reads "No usable signal" (`Proximity.label(band, unusable)`, issue #125). After a scan failure `core/analysis/ScanRetry` holds the 30 s wait; Bluetooth off or a
   missing permission ends it, so the screen shows the real reason and starts again (issue #96).
+  Setup without a saved ring takes the ring with the strongest plausible signal (`Proximity.strongest`; a ring
+  keeps its last plausible reading of the scan, `Proximity.replaces`), so a 127 never wins (issue #105).
+* Permission: after a request comes back without it, the screen says "Android no longer asks" and offers the app's
+  settings only after a refusal without Android's explanation that follows an explicit one (`core/PermissionAsk`;
+  `Prefs.permissionDenied` remembers that Android explained it once, set by `Permissions.request` and cleared once
+  granted, also when Main or Find my ring resumes with it granted, since Android may take an unused app's permission
+  back and then asks afresh), or after two such answers in a row on the screen (a refusal from before the app
+  remembered it: the first Allow shows no dialog, the second leads to the app's settings). `PermissionAsk.answer`
+  holds the whole decision the screen takes.
+  A dialog closed without choosing or an interrupted request keeps "Allow" (issue #140).
 * The screen is locked to portrait (the walk assumes an upright phone, and turning on the spot would
   otherwise rotate the screen and lose the walk) and handles size changes itself (issue #96).
 * Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from

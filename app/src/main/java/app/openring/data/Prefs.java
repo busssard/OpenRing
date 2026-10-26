@@ -110,6 +110,12 @@ public final class Prefs {
     /** The ring finder clicks and vibrates faster when closer; this switches both (issue #74). */
     public boolean finderSound() { return sp.getBoolean("finder_sound", true); }
     public void setFinderSound(boolean b) { sp.edit().putBoolean("finder_sound", b).apply(); }
+    /**
+     * Whether the person explicitly refused the Bluetooth permission at least once (Android offered its
+     * explanation): only then does a later refusal without one mean Android no longer asks (issue #140).
+     */
+    public boolean permissionDenied() { return sp.getBoolean("perm_denied", false); }
+    public void setPermissionDenied(boolean b) { sp.edit().putBoolean("perm_denied", b).apply(); }
     /** When this phone last heard the ring (a scan saw it or a connection opened), unix seconds, 0 never. */
     public long lastHeard() { return sp.getLong("last_heard", 0); }
     public void setLastHeard(long t) { sp.edit().putLong("last_heard", t).apply(); }
