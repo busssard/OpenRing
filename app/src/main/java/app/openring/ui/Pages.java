@@ -438,13 +438,14 @@ public final class Pages {
         final android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(c);
         hs.setHorizontalScrollBarEnabled(false);
         LinearLayout row = Ui.hbox(c);
-        int selIndex = -1;
+        int selIndex = -1, upTo = 0;
         String sel = d.date.toString();
         for (int i = 0; i < d.recent.size(); i++) {
             JSONObject o = d.recent.get(i);
             final String day = o.optString("day");
             boolean selected = day.equals(sel);
             if (selected) selIndex = i;
+            if (day.compareTo(sel) <= 0) upTo = i;
             LinearLayout col = Ui.vbox(c);
             col.setGravity(Gravity.CENTER_HORIZONTAL);
             JSONObject sc = o.optJSONObject("score");
@@ -467,8 +468,9 @@ public final class Pages {
         }
         hs.addView(row);
         card.addView(hs);
-        // keep the selected night in view (newest at the right)
-        final int target = selIndex < 0 ? d.recent.size() - 1 : selIndex;
+        // keep the selected night in view (newest at the right); a day without one shows the newest night up to
+        // it, as the strip also holds the nights after an older date (issue #98)
+        final int target = selIndex < 0 ? upTo : selIndex;
         hs.post(new Runnable() {
             @Override
             public void run() {

@@ -649,6 +649,8 @@ public class PipelineTest {
         screenGaps(full.toByteArray());
         sqlForOldPhones();
         oneEventCheck();
+        historyCache();
+        recentWindow();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -2983,5 +2985,267 @@ public class PipelineTest {
         System.out.println("  #58: " + n + " days analysed again with 10 stale days in " + ms + " ms");
         check("#58 long history: only the 10 stale days removed, every other day and night the same",
                 days58(db).equals(ref) && nights58(db).equals(refN), diff(days58(db), ref));
+    }
+    // ------------------------------------------------------- issue #139, earlier nights read once per run
+
+    interface Phone139 {
+        Context make(String name) throws Exception;
+    }
+
+    interface Runs139 {
+        void run(Context c) throws Exception;
+    }
+
+    static void setStatic(String field, Object v) throws Exception {
+        java.lang.reflect.Field f = Analyzer.class.getDeclaredField(field);
+        f.setAccessible(true);
+        f.set(null, v);
+    }
+
+    /** Every column of every stored night and day, start and stop by their exact bits (issue #139). */
+    static List<String> results139(Db db) {
+        List<String> out = new ArrayList<String>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start, stop, day, main, score, json FROM nights ORDER BY start", null);
+        try {
+            while (c.moveToNext()) out.add("night " + Double.doubleToLongBits(c.getDouble(0)) + " " + Double.doubleToLongBits(c.getDouble(1)) + " "
+                    + c.getString(2) + " " + c.getInt(3) + " " + (c.isNull(4) ? "null" : String.valueOf(c.getLong(4))) + " " + c.getString(5));
+        } finally {
+            c.close();
+        }
+        for (String[] r : db.daysJson("0000-01-01", "9999-12-31")) out.add("day " + r[0] + " " + r[1]);
+        return out;
+    }
+
+    static long nightRows(List<String> rows) {
+        long n = 0;
+        for (String r : rows) if (r.startsWith("night ")) n++;
+        return n;
+    }
+
+    static String firstDiff(List<String> a, List<String> b) {
+        for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
+            if (!a.get(i).equals(b.get(i))) return "row " + i + ": " + a.get(i).substring(0, Math.min(120, a.get(i).length()))
+                    + " | " + b.get(i).substring(0, Math.min(120, b.get(i).length()));
+        }
+        return a.size() + " and " + b.size() + " rows";
+    }
+
+    /** Set up the phone, run the steps with the history store on or off, return its rows; the store is on again after. */
+    static List<String> analysed139(String name, Phone139 p, Runs139 s, boolean cache) throws Exception {
+        setStatic("cacheHistory", cache);
+        try {
+            Context c = p.make(name);
+            s.run(c);
+            return results139(Db.get(c));
+        } finally {
+            setStatic("cacheHistory", true);
+        }
+    }
+
+    static long ms139;
+
+    /** A full re analysis, timed into {@link #ms139}. */
+    static void timedRunAll(Context c, Analyzer.Log log) {
+        long t = System.nanoTime();
+        Analyzer.runAll(c, log);
+        ms139 = (System.nanoTime() - t) / 1000000;
+    }
+
+    static final int DAYS139 = 130;
+    static final long T139 = LocalDate.parse("2025-02-03").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+
+    /** 130 days of demo history across the spring clock change, the last 12 days with the phone in Tokyo. */
+    static Context demo139(String name) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long end = T139 + (DAYS139 + 1) * 86400L + 12 * 3600;
+        db.noteZone(T139 - 86400, z.getId());
+        db.noteZone(T139 + (DAYS139 - 12) * 86400L, "Asia/Tokyo");
+        putBoot(db, app.openring.data.Demo.history(T139, DAYS139, end, z, new Random(139)), 1, T139, end);
+        return c;
+    }
+
+    /**
+     * Issue #139: the history store gives byte identical nights and days (Re analyse all, a sync after, other
+     * histories), an older database analysed without it stays the same, a stopped run leaves nothing behind,
+     * and a full re analysis is at least twice as fast.
+     */
+    static void historyCache() throws Exception {
+        final StringBuilder log = new StringBuilder();
+        final long[] ms = new long[2];
+        Phone139 demo = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                return demo139(name);
+            }
+        };
+        List<String> off = analysed139("openring139-off", demo, new Runs139() {
+            @Override
+            public void run(Context c) {
+                timedRunAll(c, null);
+                ms[0] = ms139;
+                Analyzer.run(c, null);
+            }
+        }, false);
+        List<String> on = analysed139("openring139-on", demo, new Runs139() {
+            @Override
+            public void run(Context c) {
+                timedRunAll(c, collect(log));
+                ms[1] = ms139;
+                Analyzer.run(c, null);
+            }
+        }, true);
+        check("#139 set up: " + DAYS139 + " days of demo history analysed", nightRows(off) >= DAYS139 - 5 && off.size() - nightRows(off) >= DAYS139 - 5,
+                nightRows(off) + " nights, " + (off.size() - nightRows(off)) + " days");
+        check("#139 Re analyse all and a sync: every night and day the same with the store, byte for byte", on.equals(off), firstDiff(on, off));
+        System.out.println("  #139: Re analyse all of " + DAYS139 + " days: " + ms[0] + " ms reading every day's history from the database, "
+                + ms[1] + " ms with the store");
+        check("#139 Re analyse all at least twice as fast with the store", ms[1] * 2 < ms[0], ms[1] + " ms, before " + ms[0] + " ms");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+) days summarised, (\\d+) stored nights and (\\d+) stored days read for them, at most (\\d+) kept").matcher(log);
+        boolean found = m.find();
+        int maxKept = found ? Integer.parseInt(m.group(4)) : -1, nightsRead = found ? Integer.parseInt(m.group(2)) : -1;
+        // a day looks back 104 days for nights and 60 for summaries: the store stays below that whatever the history length
+        check("#139 each stored night read once, memory bounded by the 104 day window", found && nightsRead == nightRows(on)
+                && maxKept > 0 && maxKept <= 3 * 106 + 61 && maxKept < nightRows(on) + (on.size() - nightRows(on)), found ? m.group() : log);
+
+        // an older database: analysed without the store (as by the version before), then the sync analysis with it
+        setStatic("cacheHistory", false);
+        Context old = demo139("openring139-old");
+        Analyzer.run(old, null);
+        Db odb = Db.get(old);
+        List<String> before = results139(odb), events = events58(odb);
+        setStatic("cacheHistory", true);
+        Analyzer.run(old, null);
+        check("#139 older database: after the analysis with the store every event, night and day is the same",
+                results139(odb).equals(before) && events58(odb).equals(events) && before.equals(off), firstDiff(results139(odb), before));
+        odb.put("analyzed_until", 0); // dating changed: everything again, incremental path
+        Analyzer.run(old, null);
+        check("#139 older database analysed again as a whole: the same", results139(odb).equals(before), firstDiff(results139(odb), before));
+
+        // a run stopped part way (the app killed): nothing of the store survives, the next run gives the same rows
+        final int[] count = {0};
+        List<String> stopped = analysed139("openring139-stop", demo, new Runs139() {
+            @Override
+            public void run(Context c) throws Exception {
+                Analyzer.run(c, null);
+                setStatic("afterDay", new Runnable() {
+                    @Override
+                    public void run() {
+                        if (++count[0] == 40) throw new Stop();
+                    }
+                });
+                try {
+                    Analyzer.runAll(c, null);
+                } catch (Stop expected) {
+                } finally {
+                    setStatic("afterDay", null);
+                }
+                Db db = Db.get(c);
+                check("#139 set up: the run stopped after 40 days", count[0] == 40 && db.count("SELECT COUNT(*) FROM days") < DAYS139 - 40
+                        && db.kvLong("analyzed_until", -1) == 0, count[0] + " days, " + db.count("SELECT COUNT(*) FROM days") + " stored");
+                Analyzer.run(c, null);
+            }
+        }, true);
+        check("#139 stopped run, then the next analysis: the same rows as a run never stopped", stopped.equals(off), firstDiff(stopped, off));
+
+        // other histories: the synthetic one of this test with days off and rest days, the trip of #22, #58 dated again
+        final List<RingEvent> gap = history(14, new java.util.HashSet<Integer>(Arrays.asList(4, 5, 6, 10)), new java.util.HashSet<Integer>(Arrays.asList(2, 3, 11)));
+        Phone139 synth = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                Context c = freshDb(name);
+                Db db = Db.get(c);
+                long now = T0 + 14 * 86400 + 7 * 3600 + 1800; // T0 is shared with main; the history must end before the real now
+                for (int i = 0; i < gap.size(); i += 4096) db.insertBatch(gap.subList(i, Math.min(gap.size(), i + 4096)), 1, now);
+                long lastDs = gap.get(gap.size() - 1).ds;
+                db.insertPhoneAnchor(1, lastDs, T0 + (lastDs - DS0) / 10);
+                return c;
+            }
+        };
+        Runs139 runs = new Runs139() {
+            @Override
+            public void run(Context c) {
+                Analyzer.run(c, null);
+                Analyzer.runAll(c, null);
+            }
+        };
+        off = analysed139("openring139-synth-off", synth, runs, false);
+        on = analysed139("openring139-synth-on", synth, runs, true);
+        check("#139 synthetic history with days off: the same with the store", on.equals(off) && nightRows(off) >= 9, nightRows(off) + " nights, " + firstDiff(on, off));
+
+        Phone139 trip = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                ZoneId zh = ZoneId.of("Europe/Zurich"), ny = ZoneId.of("America/New_York");
+                long t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond(), end0 = t0 + 11 * 86400L + 12 * 3600;
+                long t1 = LocalDate.parse("2026-09-13").atStartOfDay(ny).toEpochSecond(), end1 = t1 + 6 * 86400L + 12 * 3600;
+                Context c = freshDb(name);
+                Db db = Db.get(c);
+                for (int d = 2; d <= 12; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(zh).toEpochSecond(), "Europe/Zurich");
+                for (int d = 14; d <= 19; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(ny).toEpochSecond(), "America/New_York");
+                putBoot(db, app.openring.data.Demo.history(t0, 10, end0, zh, new Random(21)), 1, t0, end0);
+                putBoot(db, app.openring.data.Demo.history(t1, 5, end1, ny, new Random(22)), 2, t1, end1);
+                return c;
+            }
+        };
+        off = analysed139("openring139-trip-off", trip, runs, false);
+        on = analysed139("openring139-trip-on", trip, runs, true);
+        check("#139 trip in two zones: the same with the store", on.equals(off) && nightRows(off) >= 14, firstDiff(on, off));
+
+        Phone139 shifted = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                return twoBoots58(name, 86400L);
+            }
+        };
+        Runs139 again = new Runs139() {
+            @Override
+            public void run(Context c) {
+                Analyzer.run(c, null);
+                moveAnchor(Db.get(c), 2, T2_58, 0);
+                Analyzer.run(c, null);
+            }
+        };
+        off = analysed139("openring139-58-off", shifted, again, false);
+        on = analysed139("openring139-58-on", shifted, again, true);
+        check("#139 history dated again, a stale day removed (#58): the same with the store", on.equals(off) && nightRows(off) >= 4, firstDiff(on, off));
+        freshDb("openring139-done");
+    }
+
+    // ------------------------------------------------------------ issue #98, the recent nights strip
+
+    /** Issue #98: the strip of an old date loads a window of nights, not every night up to today. */
+    static void recentWindow() throws Exception {
+        Context c = freshDb("openring98");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate today = LocalDate.parse("2026-10-26"), first = today.minusDays(399);
+        List<Object[]> rows = new ArrayList<Object[]>();
+        for (int k = 0; k < 400; k++) {
+            LocalDate d = first.plusDays(k);
+            double end = d.atTime(6, 45).atZone(z).toEpochSecond(), start = end - 8 * 3600;
+            JSONObject js = new JSONObject();
+            Json.put(js, "day", d.toString());
+            Json.put(js, "start", start);
+            Json.put(js, "end", end);
+            Json.put(js, "main", true);
+            rows.add(new Object[] {start, end, d.toString(), 1, 80, js.toString()});
+            // a nap on every fifth day: not in the strip
+            if (k % 5 == 0) rows.add(new Object[] {end + 6 * 3600, end + 7 * 3600, d.toString(), 0, 50, js.toString()});
+        }
+        db.replaceNights(0, Double.MAX_VALUE, rows);
+        int yearBack = db.recentNights(today.minusDays(365), today).size(), mid = db.recentNights(today.minusDays(200), today).size();
+        int old = db.nightsJson(today.minusDays(365 + 30).toString(), today.plusDays(1).toString(), true).size();
+        check("#98 a date a year back loads as many nights as one 200 days back", yearBack == mid && yearBack == 2 * Db.RECENT_DAYS + 1,
+                yearBack + " and " + mid + " nights, " + old + " before");
+        check("#98 today loads the same nights as before", db.recentNights(today, today).equals(
+                db.nightsJson(today.minusDays(30).toString(), today.plusDays(1).toString(), true)), db.recentNights(today, today).size());
+        check("#98 ten days back: the 30 days before it up to today", db.recentNights(today.minusDays(10), today).size() == 41,
+                db.recentNights(today.minusDays(10), today).size());
+        List<String> first98 = db.recentNights(first, today);
+        check("#98 the oldest date: its night and the 30 after it", first98.size() == 31
+                && first.toString().equals(Json.parse(first98.get(0)).optString("day")), first98.size());
+        freshDb("openring98-done");
     }
 }

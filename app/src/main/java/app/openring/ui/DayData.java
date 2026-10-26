@@ -23,7 +23,7 @@ public final class DayData {
     public final Map<String, JSONObject> history = new HashMap<String, JSONObject>();
     /** Newest readings from the last sync (for the Body page). */
     public app.openring.data.RightNow now;
-    /** Main nights from 30 days before the selected date up to today, oldest first. */
+    /** Main nights from 30 days before the selected date to 30 days after it (at most up to tomorrow), oldest first (issue #98). */
     public final List<JSONObject> recent = new ArrayList<JSONObject>();
     /** Screen time of the selected date and the days before (Screen tab, Today ring); null if it could not be read. */
     public app.openring.data.ScreenDays.Info screen;
@@ -45,7 +45,8 @@ public final class DayData {
         java.time.ZoneId phone = java.time.ZoneId.systemDefault();
         java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(date.atTime(12, 0).atZone(phone).toEpochSecond()));
         d.zone = Json.zone(d.night, noted == null ? phone : noted);
-        for (String s : db.nightsJson(date.minusDays(30).toString(), LocalDate.now().plusDays(1).toString(), true)) {
+        // a window around the date, so an old date loads as fast as a recent one (issue #98)
+        for (String s : db.recentNights(date, LocalDate.now())) {
             JSONObject o = Json.parse(s);
             if (o != null) d.recent.add(o);
         }

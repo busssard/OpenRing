@@ -616,6 +616,32 @@ public final class Db extends SQLiteOpenHelper {
         return out;
     }
 
+    /** Days before and after a date that the "Recent nights" strip shows (issue #98). */
+    public static final int RECENT_DAYS = 30;
+
+    /**
+     * Main nights for the "Recent nights" strip of {@code date}, ordered by start: from {@link #RECENT_DAYS}
+     * days before it to as many after it, never past the day after {@code today} (a night in a zone ahead can
+     * end there). An old date loads no more nights than one in the middle of the history (issue #98).
+     */
+    public List<String> recentNights(java.time.LocalDate date, java.time.LocalDate today) {
+        java.time.LocalDate to = date.plusDays(RECENT_DAYS), cap = today.plusDays(1);
+        if (to.isAfter(cap)) to = cap.isBefore(date) ? date : cap;
+        return nightsJson(date.minusDays(RECENT_DAYS).toString(), to.toString(), true);
+    }
+
+    /** The nights of one day ordered by start, each as {start, main (Boolean), json} (issue #139). */
+    public List<Object[]> nightsOfDay(String day) {
+        List<Object[]> out = new ArrayList<Object[]>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT start, main, json FROM nights WHERE day = ? ORDER BY start", new String[] {day});
+        try {
+            while (c.moveToNext()) out.add(new Object[] {c.getDouble(0), c.getInt(1) == 1, c.getString(2)});
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     public void putDay(String day, String json) {
         ContentValues cv = new ContentValues();
         cv.put("day", day);
