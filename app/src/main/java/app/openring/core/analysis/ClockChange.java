@@ -36,12 +36,36 @@ public final class ClockChange {
         // today) would be passed over
         ZoneOffsetTransition t = zone.getRules().nextTransition(Instant.ofEpochSecond((long) Math.ceil(start) - 1));
         while (t != null && t.getInstant().getEpochSecond() < end) {
-            long at = t.getInstant().getEpochSecond();
             int min = (t.getOffsetAfter().getTotalSeconds() - t.getOffsetBefore().getTotalSeconds()) / 60;
-            if (min != 0) return new Change(at, min, hm(t.getDateTimeBefore().toLocalTime()), hm(t.getDateTimeAfter().toLocalTime()));
+            if (min != 0) return change(t, min);
             t = zone.getRules().nextTransition(t.getInstant());
         }
         return null;
+    }
+
+    /**
+     * The change of the calendar day [start, end) (its midnights), for the screens that show one day
+     * (issue #158), or null. A change belongs to the date of the clock time it skips (forward) or repeats
+     * (back), also when its moment is a midnight: in Greenland 23:00 becomes 00:00, so the Saturday is the
+     * 23 hour day although the moment is Sunday's midnight; in Cairo 00:00 becomes 01:00, so the Friday is.
+     * Away from midnight this is the same as {@link #find}, which nights keep using (a night is real time).
+     */
+    public static Change onDay(ZoneId zone, double start, double end) {
+        if (zone == null || Double.isNaN(start) || Double.isNaN(end) || end <= start) return null;
+        java.time.LocalDate day = Instant.ofEpochSecond((long) Math.floor(start)).atZone(zone).toLocalDate();
+        ZoneOffsetTransition t = zone.getRules().nextTransition(Instant.ofEpochSecond((long) Math.ceil(start) - 1));
+        while (t != null && t.getInstant().getEpochSecond() <= end) {
+            int min = (t.getOffsetAfter().getTotalSeconds() - t.getOffsetBefore().getTotalSeconds()) / 60;
+            // forward the skipped time starts at the clock before the change, back the repeated one at the clock after it
+            java.time.LocalDate of = (min > 0 ? t.getDateTimeBefore() : t.getDateTimeAfter()).toLocalDate();
+            if (min != 0 && of.equals(day)) return change(t, min);
+            t = zone.getRules().nextTransition(t.getInstant());
+        }
+        return null;
+    }
+
+    private static Change change(ZoneOffsetTransition t, int min) {
+        return new Change(t.getInstant().getEpochSecond(), min, hm(t.getDateTimeBefore().toLocalTime()), hm(t.getDateTimeAfter().toLocalTime()));
     }
 
     /**

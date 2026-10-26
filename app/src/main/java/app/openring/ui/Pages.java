@@ -980,13 +980,13 @@ public final class Pages {
                 return n;
             }
         }, in.from, in.to, System.currentTimeMillis() / 1000.0, span(in.day.totalMin), today ? "today" : "on this day")
-                .shownAs(ScreenTime.widen(in.sessions, Prefs.of(c).screenMinShowMin() * 60.0)).zone(in.zone), Ui.sized(c, -1, 300));
+                .shownAs(in.shown).zone(in.zone), Ui.sized(c, -1, 300));
         dial.addView(Ui.gap(c, 8));
         int minShow = Prefs.of(c).screenMinShowMin();
         dial.addView(Ui.text(c, "The day as a clock, midnight at the top. Each blue line is 5 minutes of the day with phone use, "
                 + "brighter the more of them was used. Purple: your sleep. Touch the clock and slide around it to see the times; "
                 + "tap the middle for the total again.", 12, Ui.TEXT_2, Ui.REGULAR));
-        String change = app.openring.core.analysis.ClockChange.dialText(app.openring.core.analysis.ClockChange.find(in.zone, in.from, in.to));
+        String change = app.openring.core.analysis.ClockChange.dialText(app.openring.core.analysis.ClockChange.onDay(in.zone, in.from, in.to));
         if (change != null) {
             // a day the clocks changed (issue #46): the orange arc on the clock is explained here
             dial.addView(Ui.gap(c, 4));
@@ -1217,7 +1217,7 @@ public final class Pages {
         if (has) {
             hr.addView(Ui.text(c, "Each point of the line is a quarter hour average, midnight to midnight. Lowest and highest are its lowest and highest points. Touch the line to read any time.",
                     12, Ui.TEXT_3, Ui.REGULAR));
-            String twice = app.openring.core.analysis.ClockChange.repeatText(app.openring.core.analysis.ClockChange.find(d.zone, ds, de));
+            String twice = app.openring.core.analysis.ClockChange.repeatText(app.openring.core.analysis.ClockChange.onDay(d.zone, ds, de));
             if (twice != null) hr.addView(Ui.text(c, twice, 12, Ui.TEXT_3, Ui.REGULAR));
             double night = Json.d(day, "rhr");
             if (!Double.isNaN(night)) hr.addView(Ui.text(c, "Lowest in last night's sleep: " + Ui.fmt(night, 0) + " bpm (Resting HR on Today, from the ring's own 5 minute night readings, so it can differ by a beat or two from the line).",

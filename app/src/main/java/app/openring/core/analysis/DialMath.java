@@ -59,6 +59,89 @@ public final class DialMath {
         return out;
     }
 
+    /** What a touch on the face reads (issue #109): the moment, the use there (its index, -1 for none) and whether it was asleep. */
+    public static final class Touch {
+        public final double at;
+        public final int session;
+        public final boolean asleep;
+
+        Touch(double at, int session, boolean asleep) {
+            this.at = at;
+            this.session = session;
+            this.asleep = asleep;
+        }
+    }
+
+    /**
+     * A touch at the clock time {@code fraction} on the face of {@code day} [from, to) with {@code steps}
+     * lines (issue #109). {@code sessions} are the real uses, {@code shown} the same uses as drawn (each at
+     * least as long as the chip says, same order and size). A touched moment inside a use picks it (a real
+     * use before one only drawn over it; in the hour that repeats, the pass with use). Otherwise, when the touched line is lit, the shown use
+     * nearest to the touched moment among those {@link #fill} put on that line, so every lit line finds its
+     * use. The moment is then moved into the real use, so the hand and the times agree. Without a use,
+     * {@code asleep} says whether a touched moment (either pass of the repeated hour) lies in {@code nights}.
+     */
+    public static Touch touch(double fraction, LocalDate day, double from, double to, ZoneId zone, int steps,
+            List<double[]> sessions, List<double[]> shown, List<double[]> nights) {
+        if (shown == null || shown.size() != sessions.size()) shown = sessions;
+        double f = Math.max(0, Math.min(fraction, 1));
+        double[] at = instants(f, day, zone);
+        int best = -1;
+        double bestAt = at[0];
+        // inside a real use first (widened uses can cover the next one), then inside a use as drawn
+        for (List<double[]> list : java.util.Arrays.asList(sessions, shown)) {
+            for (int j = 0; j < at.length && best < 0; j++) {
+                for (int i = 0; i < list.size(); i++) {
+                    double[] s = list.get(i);
+                    if (at[j] >= s[0] && at[j] < s[1]) {
+                        best = i;
+                        bestAt = at[j];
+                        break;
+                    }
+                }
+            }
+        }
+        if (best < 0 && to > from) {
+            // the real pieces that land on the touched line, with the maths of fill
+            int k = Math.min(steps - 1, (int) Math.floor(f * steps));
+            double len = 86400.0 / steps, bestD = Double.POSITIVE_INFINITY;
+            int pieces = (int) Math.ceil((to - from) / len - 1e-9);
+            for (int p = 0; p < pieces; p++) {
+                double ps = from + p * len, pe = Math.min(to, ps + len);
+                if (Math.min(steps - 1, (int) Math.floor(fraction(ps + 1e-3, from, to, zone) * steps + 1e-6)) != k) continue;
+                for (int i = 0; i < shown.size(); i++) {
+                    double[] s = shown.get(i);
+                    double a = Math.max(Math.max(s[0], from), ps), b = Math.min(Math.min(s[1], to), pe);
+                    if (b <= a) continue;
+                    for (double x : at) {
+                        double d = x < a ? a - x : x >= b ? x - b : 0;
+                        // ties go to the first found: the earlier piece, then the earlier use
+                        if (d < bestD) {
+                            bestD = d;
+                            best = i;
+                            bestAt = x;
+                        }
+                    }
+                }
+            }
+        }
+        if (best >= 0) {
+            double[] r = sessions.get(best);
+            double x = Math.max(r[0], Math.min(bestAt, Math.max(r[0], r[1] - 1)));
+            return new Touch(Math.max(from, Math.min(to - 1, x)), best, false);
+        }
+        double pick = at[0];
+        boolean asleep = false;
+        for (double x : at) {
+            if (asleep) break;
+            if (nights != null) for (double[] n : nights) if (x >= n[0] && x < n[1]) {
+                asleep = true;
+                pick = x;
+            }
+        }
+        return new Touch(Math.max(from, Math.min(to - 1, pick)), -1, asleep);
+    }
+
     /**
      * The moments of {@code day} at the clock time {@code fraction} (a touch on the face): one, two in
      * the hour that repeats when the clocks go back (earlier first), or the moment of the switch when

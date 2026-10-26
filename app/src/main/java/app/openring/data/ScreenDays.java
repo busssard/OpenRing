@@ -144,6 +144,8 @@ public final class ScreenDays {
         public Row[] rows = new Row[0];
         /** Counted sessions and apps in front touching this day, for reading the clock by touch. */
         public List<double[]> sessions = Collections.emptyList();
+        /** The same sessions as the clock draws them, each at least as long as the chosen minimum (same order). */
+        public List<double[]> shown = Collections.emptyList();
         public Map<String, List<double[]>> dayApps = Collections.emptyMap();
     }
 
@@ -211,8 +213,16 @@ public final class ScreenDays {
             List<double[]> shown = ScreenTime.widen(counted, minShowS);
             // 5 minutes of clock time per line, so 03:00 is at its tick also when the clocks change (issue #46)
             in.dial = app.openring.core.analysis.DialMath.fill(shown, in.from, in.to, zone, DIAL_STEPS);
+            // every use drawn on this day, also one before midnight that its minimum length carries over it (issue #109)
             in.sessions = new ArrayList<double[]>();
-            for (double[] x : counted) if (x[1] > in.from && x[0] < in.to) in.sessions.add(x);
+            in.shown = new ArrayList<double[]>();
+            for (int i = 0; i < counted.size(); i++) {
+                double[] x = counted.get(i), w = shown.get(i);
+                if (w[1] > in.from && x[0] < in.to) {
+                    in.sessions.add(x);
+                    in.shown.add(w);
+                }
+            }
             // one app in front at a time for the list and the readout (old stored rows could overlap, issue #71)
             Map<String, List<double[]>> front = ScreenTime.oneAtATime(apps);
             in.dayApps = front;
