@@ -16,6 +16,18 @@ public final class Texts {
     /** The toast after a factory reset (RingManager); Settings closes right after, so it must fit a toast. */
     public static final String RING_RESET_DONE = "The ring was reset, its old key no longer works.";
 
+    /** Settings, Sync now while a sync or another ring task runs (issue #43). */
+    public static final String SYNC_BUSY = "A sync, Live or a game is using the ring. Try again when it is done.";
+
+    /** Settings, Delete all local data refused while a sync or another ring task runs (issue #43). */
+    public static final String DELETE_BUSY = "Nothing was deleted, a sync, Live or a game is using the ring. Try again when it is done.";
+
+    /** Settings, Delete all local data failed part way; it is one transaction, so nothing was deleted. */
+    public static final String DELETE_FAILED = "Nothing was deleted, something went wrong. Diagnostics, Log tab, shows why.";
+
+    /** Live could not get the ring within 10 seconds: a sync, a game or Delete all local data holds it (issue #43). */
+    public static final String LIVE_BUSY = "The ring is busy right now (a sync or another task). Try again in a moment.";
+
     /**
      * The toast when a repair in Data check fails; it can show on any screen of the app (issue #130),
      * so it names where to look instead of "above".

@@ -28,10 +28,13 @@ import app.openring.core.analysis.TS;
  * the ring's sensor temperature, and a breath hold timer for dry apnea training.
  */
 public final class LiveActivity extends Activity implements RingManager.LiveListener {
-    private TextView state, source, hrV, hrvV, spo2V, tempV, holdBtn, holdTime, summary;
+    private TextView state, source, hrV, hrvV, hrvNote, spo2V, tempV, holdBtn, holdTime, summary;
     private LinearLayout hrBox, spo2Box;
     private final TS hrSeries = new TS(), spo2Series = new TS();
+    /** Only real beat to beat intervals (green IBI, live indications); never always on heart rate (issue #152). */
     private final LiveHrv hrv = new LiveHrv(40);
+    /** Always on heart rate values this screen received: they give the heart rate only. */
+    private int heartRates;
     private final List<double[]> holds = new ArrayList<double[]>(); // {start, end} unix
     private double holdStart = Double.NaN;
     private double started;
@@ -67,6 +70,9 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
         spo2V = tile(r2, "Blood oxygen", "%", Ui.OXY);
         tempV = tile(r2, "Sensor temp", "°C", Ui.TEMP);
         tiles.addView(r1);
+        hrvNote = Ui.text(this, "", 12, Ui.TEXT_3, Ui.REGULAR);
+        tiles.addView(hrvNote);
+        showHrv();
         tiles.addView(Ui.gap(this, 10));
         tiles.addView(r2);
         root.addView(tiles);
@@ -194,9 +200,15 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
         source.setText("Live from the ring");
         hrSeries.add(now(), b);
         hrv.add(ibi);
-        double r = hrv.rmssd();
-        if (!Double.isNaN(r)) hrvV.setText(String.valueOf(Math.round(r)));
+        showHrv();
         redraw();
+    }
+
+    /** The HRV tile and its line: a value only from real beat to beat intervals (issue #152). */
+    void showHrv() {
+        double r = hrv.rmssd();
+        hrvV.setText(Double.isNaN(r) ? "--" : String.valueOf(Math.round(r)));
+        hrvNote.setText(LiveHrv.note(hrv.size(), hrv.cleanPairs(), heartRates, r));
     }
 
     @Override
@@ -232,9 +244,18 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
             int[] last = java.util.Arrays.copyOfRange(v, v.length - n, v.length);
             java.util.Arrays.sort(last);
             hrV.setText(String.valueOf(Math.round(60000.0 / last[n / 2])));
-            double r = hrv.rmssd();
-            if (!Double.isNaN(r)) hrvV.setText(String.valueOf(Math.round(r)));
+            showHrv();
             source.setText("From the ring's measurements, updated every few seconds");
+        } else if ("hr".equals(kind)) {
+            // always on heart rate: averages about 1.92 s apart, for the number and the chart only
+            for (int i = 0; i < v.length; i++) hrSeries.add(t - (v.length - 1 - i) * app.openring.core.analysis.LiveFeed.HR_STEP_S, v[i]);
+            heartRates += v.length;
+            int n = Math.min(5, v.length);
+            int[] last = java.util.Arrays.copyOfRange(v, v.length - n, v.length);
+            java.util.Arrays.sort(last);
+            hrV.setText(String.valueOf(last[n / 2]));
+            showHrv();
+            source.setText("From the ring's heart rate readings, updated every few seconds");
         } else if ("spo2".equals(kind)) {
             for (int i = 0; i < v.length; i++) {
                 double x = v[i];
