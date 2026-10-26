@@ -79,12 +79,13 @@ public final class WakeUps {
     /**
      * The line under the average wake ups of several nights (issue #128): "Wake ups of " + {@link #rule}
      * when all nights share {@code level}; with -1 (nights at different levels) it still names the rule,
-     * "Wake ups of a minute or more (2 min with Calm), each night at its own detail level".
+     * "Wake ups of a minute or more (2 min with Calm, 1 min on the phone or next to missing ring data), each
+     * night at its own detail level" (the Calm exception as in {@link #rule}, issue #30).
      */
     public static String averageLine(int level) {
         if (level >= 0) return "Wake ups of " + rule(level);
         return "Wake ups of " + rule(StageFilter.DETAILED) + " (" + shortestKeptMin(StageFilter.CALM) + " min with "
-                + StageFilter.NAMES[StageFilter.CALM] + "), each night at its own detail level";
+                + StageFilter.NAMES[StageFilter.CALM] + ", 1 min on the phone or next to missing ring data), each night at its own detail level";
     }
 
     /** Shortest wake up a level keeps, in whole minutes, for short labels. */

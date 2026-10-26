@@ -274,7 +274,9 @@ public class CoreTest {
         eq("average line: Calm", WakeUps.averageLine(C), "Wake ups of 2 min or more with Calm (1 min on the phone or next to missing ring data)");
         eq("average line: Balanced", WakeUps.averageLine(B), "Wake ups of a minute or more");
         eq("average line: mixed levels still name the rule", WakeUps.averageLine(-1),
-                "Wake ups of a minute or more (2 min with Calm), each night at its own detail level");
+                "Wake ups of a minute or more (2 min with Calm, 1 min on the phone or next to missing ring data), each night at its own detail level");
+        check("average line: mixed levels name the Calm exception like the rule (#30)",
+                WakeUps.averageLine(-1).contains("1 min on the phone or next to missing ring data") && WakeUps.rule(C).contains("1 min on the phone or next to missing ring data"));
         eq("rule: out of range levels are clamped", WakeUps.rule(-3) + " / " + WakeUps.rule(9), "a minute or more / 2 min or more with Calm (1 min on the phone or next to missing ring data)");
 
         // random nights: for every level, preview count = night count = timeline rows, and the old rule agrees
