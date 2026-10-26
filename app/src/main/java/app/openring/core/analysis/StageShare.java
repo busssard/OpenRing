@@ -112,6 +112,85 @@ public final class StageShare {
         return 100 * Math.max(0, Math.min(asleepMin, inBedMin)) / inBedMin;
     }
 
+    /**
+     * Whole minutes for parts that belong to one shown total (issue #111): each part rounded down, the minutes still
+     * missing to {@code total} go to the largest remainders (ties to the earlier part), so the parts add up to the
+     * total and each one is within a minute of its exact value. Negative parts count as 0. Null when a part is NaN or
+     * the total cannot be reached that way (it is below the parts rounded down, or more than one minute per part
+     * above them).
+     */
+    public static long[] roundTogether(double[] parts, long total) {
+        int n = parts.length;
+        long[] out = new long[n];
+        double[] rest = new double[n];
+        long given = 0;
+        for (int i = 0; i < n; i++) {
+            if (Double.isNaN(parts[i]) || Double.isInfinite(parts[i])) return null;
+            double v = clean(parts[i]);
+            out[i] = (long) Math.floor(v);
+            rest[i] = v - out[i];
+            given += out[i];
+        }
+        long missing = total - given;
+        if (missing < -n || missing > n) return null;
+        for (long k = 0; k < missing; k++) {
+            int best = 0;
+            for (int i = 1; i < n; i++) if (rest[i] > rest[best]) best = i;
+            out[best]++;
+            rest[best] = -2;
+        }
+        // a total below the parts rounded down (the shown time in bed comes from rounded clock times): the minutes
+        // come off the smallest remainders, one per part, never below 0
+        for (long k = 0; k > missing; k--) {
+            int best = -1;
+            for (int i = 0; i < n; i++) if (out[i] > 0 && rest[i] < 2 && (best < 0 || rest[i] < rest[best])) best = i;
+            if (best < 0) return null;
+            out[best]--;
+            rest[best] = 2;
+        }
+        return out;
+    }
+
+    /**
+     * The minutes the stage rows show, {deep, light, rem, awake, no data}, rounded so they add up to the totals shown
+     * next to them (issue #111); display only, the stored minutes stay exact. Deep, light and REM add up to the shown
+     * time asleep ({@code round(asleepMin)}); awake and no data add up to {@code inBedShown} minus that. A group whose
+     * exact minutes do not add up to its total within a minute (a mixed or older night) is rounded to its own sum
+     * instead, so it never pretends to add up. {@code inBedShown} below 0 means no time in bed is shown (Further
+     * analysis): awake and no data are then rounded each on its own. NaN (a missing stage) stays NaN and rounds the
+     * rest of its group on its own.
+     */
+    public static double[] shownMinutes(double deep, double light, double rem, double awake, double noData,
+                                        double asleepMin, double inBedMin, long inBedShown) {
+        double[] sleep = {deep, light, rem};
+        double sleepSum = deep + light + rem;
+        long sleepTotal = !Double.isNaN(asleepMin) && Math.abs(sleepSum - asleepMin) < 1 ? Math.round(asleepMin) : -1;
+        double[] s = group(sleep, sleepTotal);
+        double[] rest = {awake, noData};
+        long restTotal = -1;
+        if (inBedShown >= 0 && !Double.isNaN(sleepSum) && !Double.isNaN(inBedMin)
+                && Math.abs(sleepSum + awake + noData - inBedMin) < 1 && sleepTotal >= 0) {
+            restTotal = inBedShown - (long) (s[0] + s[1] + s[2]);
+        }
+        double[] r = inBedShown < 0 ? new double[] {round(awake), round(noData)} : group(rest, restTotal);
+        return new double[] {s[0], s[1], s[2], r[0], r[1]};
+    }
+
+    /** Rounded together to {@code total} when it can be reached, else to the parts' own rounded sum; NaN rounds alone. */
+    private static double[] group(double[] parts, long total) {
+        double sum = 0;
+        for (double v : parts) sum += Double.isNaN(v) ? Double.NaN : clean(v);
+        long[] t = total >= 0 ? roundTogether(parts, total) : null;
+        if (t == null && !Double.isNaN(sum)) t = roundTogether(parts, Math.round(sum));
+        double[] out = new double[parts.length];
+        for (int i = 0; i < parts.length; i++) out[i] = t != null ? t[i] : round(parts[i]);
+        return out;
+    }
+
+    private static double round(double v) {
+        return Double.isNaN(v) ? Double.NaN : Math.round(clean(v));
+    }
+
     private static double clean(double v) {
         return v < 0 ? 0 : v;
     }

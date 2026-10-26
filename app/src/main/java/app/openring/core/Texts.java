@@ -110,4 +110,14 @@ public final class Texts {
         return backup ? "The backup was not saved, because the copy of your history did not pass its check. Nothing on this phone was changed. Try again in a minute."
                 : "The export was not saved, because the copy of the history did not pass its check. Nothing on this phone was changed. Try again in a minute.";
     }
+
+    /**
+     * The text size that lets the widest of several labels fit its room (the tab bar, issue #119): {@code wanted}
+     * when the widest label, measured at that size, fits; else smaller by the same factor, but not below
+     * {@code min}. Widths and room in the same unit (pixels).
+     */
+    public static float fitSize(float wanted, float widest, float room, float min) {
+        if (!(widest > 0) || !(room > 0) || widest <= room) return wanted;
+        return Math.max(min, wanted * room / widest);
+    }
 }

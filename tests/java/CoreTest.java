@@ -678,6 +678,7 @@ public class CoreTest {
         wakeUps();
         previewSameAsSaved();
         stageShare();
+        sleepMinutes();
         syncError();
         texts();
         unitTexts();
@@ -1012,6 +1013,99 @@ public class CoreTest {
         eq("note: awake", StageShare.note(9, "time in bed", null), "9% of time in bed");
         eq("note: unknown with range", StageShare.note(Double.NaN, "sleep", StageShare.USUAL_DEEP), "Usual 13 to 23% of sleep");
         eq("note: unknown without range", StageShare.note(Double.NaN, "sleep", null), "No data yet");
+    }
+
+    /** Issues #111, #138, #119: stage minutes that add up to the totals shown, one rounding for night times, tab label size. */
+    static void sleepMinutes() {
+        // #111, the issue's demo night: rounded alone 0h 48m + 4h 20m + 2h 23m = 7h 31m next to Total sleep 7h 30m
+        double deep = 47.6, light = 259.6, rem = 142.6, asleep = deep + light + rem;
+        eq("alone the rows add up to one more", Math.round(deep) + Math.round(light) + Math.round(rem), 451L);
+        eq("total sleep shows 7h 30m", Math.round(asleep), 450L);
+        long[] t = StageShare.roundTogether(new double[] {deep, light, rem}, 450);
+        eq("together they add up to 450, ties to the earlier stage", Arrays.toString(t), "[48, 260, 142]");
+        // with awake and the shown window 22:25 to 06:47
+        double start = 1761431120, end = start + 501.8333 * 60; // 22:25:20 to 06:47:10 UTC
+        long inBedShown = WakeUps.shownMinutes(start, end);
+        eq("shown time in bed is the minutes between the shown clocks", inBedShown, 502L);
+        double inBed = (end - start) / 60, awake = inBed - asleep;
+        eq("alone the rows with awake add up to 503", Math.round(deep) + Math.round(light) + Math.round(rem) + Math.round(awake), 503L);
+        double[] m = StageShare.shownMinutes(deep, light, rem, awake, 0, asleep, inBed, inBedShown);
+        eq("sleep page rows", Arrays.toString(m), "[48.0, 260.0, 142.0, 52.0, 0.0]");
+        eq("sleep rows add up to total sleep", m[0] + m[1] + m[2], 450.0);
+        eq("all rows add up to the shown time in bed", m[0] + m[1] + m[2] + m[3] + m[4], 502.0);
+        // No data (issue #107) joins awake in the time in bed group
+        double[] nd = StageShare.shownMinutes(40.4, 250.4, 120.4, 30.4, 19.6, 411.2, 461.2, 461);
+        eq("no data row: rows add up to time in bed", nd[0] + nd[1] + nd[2] + nd[3] + nd[4], 461.0);
+        eq("no data row: sleep adds up to total sleep", nd[0] + nd[1] + nd[2], 411.0);
+        eq("no data row: no data keeps its 20 min", nd[4], 20.0);
+        // the shown time in bed may be one minute off the exact one (rounded clocks): awake takes it
+        double[] off = StageShare.shownMinutes(60, 300, 100, 40.2, 0, 460, 500.2, 501);
+        eq("one minute more from the rounded clocks goes to awake", off[3], 41.0);
+        // parts that do not add up to their total are rounded to their own sum, never stretched
+        double[] mix = StageShare.shownMinutes(40.6, 250.6, 120.6, 30, 0, 420, 450, 450);
+        eq("mixed night: sleep rows to their own sum", Arrays.toString(mix), "[41.0, 251.0, 120.0, 30.0, 0.0]");
+        // Further analysis: no time in bed shown, awake alone
+        double[] fa = StageShare.shownMinutes(43.4, 281.4, 124.4, 51.6, 0, 449.2, 500.8, -1);
+        eq("further analysis: sleep rows add up to asleep", fa[0] + fa[1] + fa[2], 449.0);
+        eq("further analysis: awake rounded alone", fa[3], 52.0);
+        // a missing stage stays unknown, the others round alone
+        double[] miss = StageShare.shownMinutes(Double.NaN, 250.6, 120.6, 30.4, 0, 371.2, 401.6, 402);
+        check("missing stage stays NaN", Double.isNaN(miss[0]));
+        eq("missing stage: others round alone", miss[1] + "," + miss[2], "251.0,121.0");
+        eq("missing stage: awake rounded alone", miss[3], 30.0);
+        check("missing awake stays NaN", Double.isNaN(StageShare.shownMinutes(40, 250, 120, Double.NaN, 0, 410, 450, 450)[3]));
+        // roundTogether edge cases
+        check("total out of reach gives null", StageShare.roundTogether(new double[] {1.2, 1.2}, 5) == null
+                && StageShare.roundTogether(new double[] {1.2, 1.2}, -1) == null && StageShare.roundTogether(new double[] {0.2, 5.2}, 3) == null);
+        eq("total below the floors: smallest remainder gives a minute", Arrays.toString(StageShare.roundTogether(new double[] {28.002, 10.0009}, 37)), "[28, 9]");
+        eq("total below the floors: never below 0", Arrays.toString(StageShare.roundTogether(new double[] {0.1, 10.5}, 9)), "[0, 9]");
+        // the rounded clocks can make the shown time in bed a minute short of the exact rows: the smallest remainder gives it
+        double[] shortBed = StageShare.shownMinutes(73.506, 66.506, 30.503, 28.0024, 10.0009, 170.515, 208.518, 208);
+        eq("shown time in bed a minute short: rows still add up", Arrays.toString(shortBed), "[74.0, 67.0, 30.0, 28.0, 9.0]");
+        check("NaN part gives null", StageShare.roundTogether(new double[] {Double.NaN, 1}, 1) == null);
+        eq("negative part counts as 0", Arrays.toString(StageShare.roundTogether(new double[] {-3, 2.5}, 3)), "[0, 3]");
+        eq("exact parts stay", Arrays.toString(StageShare.roundTogether(new double[] {10, 20, 30}, 60)), "[10, 20, 30]");
+        // many nights: rows always add up and each stays within a minute of its exact value
+        Random rnd = new Random(111);
+        int bad = 0;
+        for (int i = 0; i < 2000; i++) {
+            double step = 0.5, len = 400 + rnd.nextInt(800);
+            int dN = rnd.nextInt((int) len / 4), lN = rnd.nextInt((int) len / 2), rN = rnd.nextInt((int) len / 4);
+            int aN = rnd.nextInt((int) len / 8), nN = rnd.nextInt(30);
+            double s0 = 1761400000 + rnd.nextInt(60) + rnd.nextDouble(), e0 = s0 + (dN + lN + rN + aN + nN) * step * 60 * (1 + rnd.nextDouble() * 1e-4);
+            double ib = (e0 - s0) / 60, ep = ib / (dN + lN + rN + aN + nN);
+            double dd = dN * ep, ll = lN * ep, rr = rN * ep, aa = aN * ep, nn = nN * ep;
+            long shownIb = WakeUps.shownMinutes(s0, e0);
+            double[] r = StageShare.shownMinutes(dd, ll, rr, aa, nn, dd + ll + rr, ib, shownIb);
+            boolean ok = r[0] + r[1] + r[2] == Math.round(dd + ll + rr) && r[0] + r[1] + r[2] + r[3] + r[4] == shownIb;
+            double[] ex = {dd, ll, rr, aa, nn};
+            for (int k = 0; k < 5; k++) if (Math.abs(r[k] - ex[k]) >= 2) ok = false;
+            for (int k = 0; k < 3; k++) if (Math.abs(r[k] - ex[k]) >= 1) ok = false;
+            if (!ok && bad++ < 3) System.out.println("  night " + Arrays.toString(ex) + " in bed " + ib + " shown " + shownIb + " got " + Arrays.toString(r));
+        }
+        eq("2000 nights: rows add up, sleep stages within a minute, awake and no data within two", bad, 0);
+
+        // #138: one rounding for night times
+        java.time.ZoneId utc = java.time.ZoneId.of("UTC");
+        double t0 = java.time.Instant.parse("2026-10-20T22:42:00Z").getEpochSecond();
+        eq("clock: 29 s rounds down", WakeUps.clock(t0 + 29, utc), "22:42");
+        eq("clock: 30 s rounds up like the timeline", WakeUps.clock(t0 + 30, utc), "22:43");
+        eq("clock: 22:42:40 is 22:43 on the score card too", WakeUps.clock(t0 + 40, utc), "22:43");
+        eq("clock: unknown", WakeUps.clock(Double.NaN, utc), "--");
+        eq("clock: next day", WakeUps.clock(java.time.Instant.parse("2026-10-20T23:59:45Z").getEpochSecond(), utc), "00:00");
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        double n0 = java.time.Instant.parse("2026-10-14T00:15:40Z").getEpochSecond(); // 02:15:40 summer time
+        eq("rounded stage tip: times and length as shown", ClockChange.roundedStageTip(z, n0 + 400, "Deep", n0, n0 + 1500 - 50),
+                "02:22  Deep, 02:16 to 02:40 (24 min)");
+        double s1 = java.time.Instant.parse("2026-10-25T00:00:00Z").getEpochSecond();
+        eq("rounded stage tip: repeated hour keeps its note", ClockChange.roundedStageTip(z, s1 + 3600 + 22 * 60 + 10, "Deep", s1 + 3600 + 15 * 60 - 20,
+                s1 + 3600 + 40 * 60 + 25), "02:22 (second time)  Deep, 02:15 to 02:40 (25 min)");
+
+        // #119: tab label size
+        eq("fit: fits, size kept", Texts.fitSize(11, 45, 56, 8), 11f);
+        eq("fit: too wide, shrinks by the same factor", Texts.fitSize(11, 70, 56, 8), 8.8f);
+        eq("fit: never below the minimum", Texts.fitSize(11, 140, 56, 8), 8f);
+        eq("fit: nothing measured, size kept", Texts.fitSize(11, 0, 56, 8), 11f);
     }
 
     /** Plain sentences for failed syncs; the raw texts come from the code (issue #47). */

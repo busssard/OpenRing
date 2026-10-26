@@ -280,9 +280,21 @@ public final class Pages {
         return "Awake " + WakeUps.rule(n.optInt("stage_detail", 0)) + ", each one is in the timeline";
     }
 
-    /** Clock time rounded to the nearest minute, as every row of the timeline shows it. */
+    /**
+     * Clock time rounded to the nearest minute, as every row of the timeline shows it; every night time on the
+     * Sleep page uses it, so the same moment shows the same minute everywhere (issue #138).
+     */
     static String minute(double unix, java.time.ZoneId z) {
-        return Charts.clock(WakeUps.roundMin(unix), z);
+        return WakeUps.clock(unix, z);
+    }
+
+    /**
+     * Time in bed as the Sleep page shows it: the minutes between the shown start and end times, so the window, Time in
+     * bed and the stage rows agree (issues #111, #138). -1 when unknown.
+     */
+    static long shownInBed(JSONObject n) {
+        double s = Json.d(n, "start"), e = Json.d(n, "end");
+        return Double.isNaN(s) || Double.isNaN(e) ? -1 : WakeUps.shownMinutes(s, e);
     }
 
     /** "+0.3", "-0.2", "0.0" near zero (not "-0.0"), with the phone's decimal sign (issues #32, #163). */
@@ -299,7 +311,7 @@ public final class Pages {
         java.time.ZoneId nz = d.zoneOf(n);
         root.addView(hero(c, d.score("sleep"), "Sleep", Ui.SLEEP,
                 n == null ? "No main sleep recorded for this day" : "Total sleep " + Ui.hm(Json.d(n, "asleep_min"))
-                        + "  ·  " + Charts.clock(Json.d(n, "start"), nz) + " to " + Charts.clock(Json.d(n, "end"), nz)));
+                        + "  ·  " + minute(Json.d(n, "start"), nz) + " to " + minute(Json.d(n, "end"), nz)));
         if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         if (n == null) {
             root.addView(infoCard(c, "About sleep", Explain.SLEEP));
@@ -332,15 +344,19 @@ public final class Pages {
         hyp.addView(Ui.gap(c, 10));
         // REM, light and deep as shares of time asleep (adding up to 100), awake of time in bed (issue #32)
         double deepMin = Json.d(n, "deep_min"), lightMin = Json.d(n, "light_min"), remMin = Json.d(n, "rem_min"), awakeMin = Json.d(n, "awake_min");
+        double inBedMin = Json.d(n, "in_bed_min");
         int[] share = StageShare.sleepShares(deepMin, lightMin, remMin);
-        hyp.addView(stageRowPct(c, "Awake", awakeMin, StageShare.share(awakeMin, Json.d(n, "in_bed_min")), Ui.STAGE_AWAKE));
-        hyp.addView(stageRowPct(c, "REM", remMin, share == null ? Double.NaN : share[2], Ui.STAGE_REM));
-        hyp.addView(stageRowPct(c, "Light", lightMin, share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
-        hyp.addView(stageRowPct(c, "Deep", deepMin, share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
         // time in bed without stage data, so the rows add up to time in bed and a low efficiency is explained (issue #107)
-        double[] none = StageShare.noData(Json.stages(n), Json.d(n, "in_bed_min"));
-        String noneNote = StageShare.noDataNote(none[0], none[1], Json.d(n, "asleep_min") > 0);
-        if (noneNote != null) hyp.addView(stageRowPct(c, "No data", none[0], StageShare.share(none[0], Json.d(n, "in_bed_min")), Ui.TEXT_3));
+        double[] none = StageShare.noData(Json.stages(n), inBedMin);
+        // the minutes shown, rounded together so they add up to Total sleep and Time in bed (issue #111)
+        double[] shown = StageShare.shownMinutes(deepMin, lightMin, remMin, awakeMin, none[0], Json.d(n, "asleep_min"), inBedMin,
+                shownInBed(n));
+        String noneNote = StageShare.noDataNote(shown[4], none[1], Json.d(n, "asleep_min") > 0);
+        hyp.addView(stageRowPct(c, "Awake", shown[3], StageShare.share(awakeMin, inBedMin), Ui.STAGE_AWAKE));
+        hyp.addView(stageRowPct(c, "REM", shown[2], share == null ? Double.NaN : share[2], Ui.STAGE_REM));
+        hyp.addView(stageRowPct(c, "Light", shown[1], share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
+        hyp.addView(stageRowPct(c, "Deep", shown[0], share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
+        if (noneNote != null) hyp.addView(stageRowPct(c, "No data", shown[4], StageShare.share(none[0], inBedMin), Ui.TEXT_3));
         hyp.addView(Ui.gap(c, 2));
         hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. "
                 + (noneNote == null ? "Awake is a share of your time in bed." : "Awake and No data are shares of your time in bed."),
@@ -383,7 +399,7 @@ public final class Pages {
         LinearLayout stats = Ui.card(c);
         stats.addView(Ui.caption(c, "Details"));
         // a short line under every number (issue #47); ranges as in Explain
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(Json.d(n, "in_bed_min")), "", 0, "From start to end of the sleep window"),
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(shownInBed(n) < 0 ? Double.NaN : shownInBed(n)), "", 0, "From start to end of the sleep window"),
                 Ui.stat(c, "Efficiency", Ui.fmt(nightEfficiency(n), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal"),
                 Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, wakeUpsLine(n))));
@@ -396,14 +412,14 @@ public final class Pages {
         root.addView(stats);
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
-        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz),
-                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : Charts.clock(Json.d(n, "lowest_hr_time"), nz)
+        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz).nearestMinute(),
+                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : minute(Json.d(n, "lowest_hr_time"), nz)
                         + app.openring.core.analysis.ClockChange.repeatNote(nz, Json.d(n, "lowest_hr_time")))));
-        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz),
+        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz).nearestMinute(),
                 "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
         JSONArray sp = n.optJSONArray("spo2_series");
         if (sp != null && sp.length() > 0) {
-            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz),
+            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz).nearestMinute(),
                     "Average " + Ui.fmt(Json.d(n, "spo2"), 1) + "%"));
         }
 
@@ -657,13 +673,15 @@ public final class Pages {
         int[] share = StageShare.sleepShares(h.deepMin, h.lightMin, h.remMin);
         double deepPct = share == null ? Double.NaN : share[0], lightPct = share == null ? Double.NaN : share[1],
                 remPct = share == null ? Double.NaN : share[2];
+        // Deep, REM and Light rounded together so they add up to Asleep (issue #111); no time in bed is shown here
+        double[] shown = StageShare.shownMinutes(h.deepMin, h.lightMin, h.remMin, h.awakeMin, 0, h.asleepMin, h.inBedMin, -1);
         out.addView(Ui.statRow(c, Ui.stat(c, "Asleep", Ui.hm(h.asleepMin), "", Ui.SLEEP, "Average per night"),
                 Ui.stat(c, "Sleep score", Ui.fmt(h.score, 0), "", Ui.SLEEP, "Average per night")));
         out.addView(Ui.statRow(c, Ui.stat(c, "Falls asleep", clockOf(h.bedtimeMin), "", 0, "Usual time you fall asleep"),
                 Ui.stat(c, "Wakes up", clockOf(h.wakeMin), "", 0, "Usual time you wake up")));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(h.deepMin), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
-                Ui.stat(c, "REM", Ui.hm(h.remMin), "", Ui.STAGE_REM, StageShare.note(remPct, "sleep", StageShare.USUAL_REM))));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(h.lightMin), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
+        out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(shown[0]), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
+                Ui.stat(c, "REM", Ui.hm(shown[2]), "", Ui.STAGE_REM, StageShare.note(remPct, "sleep", StageShare.USUAL_REM))));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(shown[1]), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
                 Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", Ui.STAGE_AWAKE, StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
         out.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(h.efficiency, 0), "%", 0, "Share of time in bed asleep"),
                 Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0,
@@ -689,7 +707,7 @@ public final class Pages {
         for (JSONObject o : d.naps) {
             nc.addView(Ui.gap(c, 6));
             java.time.ZoneId oz = d.zoneOf(o);
-            nc.addView(Ui.text(c, Charts.clock(Json.d(o, "start"), oz) + " to " + Charts.clock(Json.d(o, "end"), oz) + "   " + Ui.hm(Json.d(o, "asleep_min")) + " asleep", 15, Ui.TEXT, Ui.REGULAR));
+            nc.addView(Ui.text(c, minute(Json.d(o, "start"), oz) + " to " + minute(Json.d(o, "end"), oz) + "   " + Ui.hm(Json.d(o, "asleep_min")) + " asleep", 15, Ui.TEXT, Ui.REGULAR));
         }
         root.addView(nc);
     }
@@ -770,7 +788,7 @@ public final class Pages {
         card.addView(signalRow(c, "Blood oxygen", Json.d(d.day, "spo2"), usual(d, "spo2"), "%", 0, false));
         double low = Json.d(d.night, "lowest_hr_time"), s0 = Json.d(d.night, "sleep_start"), s1 = Json.d(d.night, "sleep_end");
         if (!Double.isNaN(low)) {
-            String when = Charts.clock(low, d.zoneOf(d.night));
+            String when = minute(low, d.zoneOf(d.night));
             String rel = (s1 > s0) ? ((low - s0) / (s1 - s0) <= 0.5 ? ", in the first half of the night (good)" : ", late in the night") : "";
             card.addView(Ui.gap(c, 6));
             card.addView(Ui.body(c, "Lowest heart rate reached at " + when + rel + "."));
