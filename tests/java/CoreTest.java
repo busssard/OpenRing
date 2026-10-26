@@ -679,6 +679,7 @@ public class CoreTest {
         stageShare();
         syncError();
         texts();
+        unitTexts();
         drafts();
         oneRun();
         keptHeight();
@@ -780,6 +781,54 @@ public class CoreTest {
     }
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
+    /** One way to write the same quantity everywhere (issues #99, #163, #165). */
+    static void unitTexts() {
+        Locale de = Locale.GERMANY;
+        // temperature change: near zero is "0.0", never "-0.0" or "+0.0"; the stored value rounded first (issue #163)
+        eq("signed: -0.04 is 0.0", Texts.signed(-0.04, Locale.US), "0.0");
+        eq("signed: +0.04 is 0.0", Texts.signed(0.04, Locale.US), "0.0");
+        eq("signed: -0.03 is 0.0", Texts.signed(-0.03, Locale.US), "0.0");
+        eq("signed: 0.05 is +0.1", Texts.signed(0.05, Locale.US), "+0.1");
+        eq("signed: -0.05 is -0.1", Texts.signed(-0.05, Locale.US), "-0.1");
+        eq("signed: 0.0496 is stored as 0.05, so +0.1 as the card shows", Texts.signed(0.0496, Locale.US), "+0.1");
+        eq("signed: 0.0494 is 0.0", Texts.signed(0.0494, Locale.US), "0.0");
+        eq("signed: -0.31", Texts.signed(-0.31, Locale.US), "-0.3");
+        eq("signed: phone's decimal sign", Texts.signed(0.26, de), "+0,3");
+        eq("signed: near zero with the phone's decimal sign", Texts.signed(-0.04, de), "0,0");
+        eq("signed: unknown", Texts.signed(Double.NaN, Locale.US), "--");
+        Scores.ReadinessInput ri = new Scores.ReadinessInput();
+        for (double v : new double[] {-0.04, 0.04, 0.05, -0.03, 0.0496, 0.6}) {
+            ri.tempDev = v;
+            eq("readiness: temperature detail " + v + " as the card", part(Scores.readiness(ri), "temperature").detail, Texts.signed(v, Locale.US) + " \u00b0C");
+        }
+        ri.tempDev = -0.04;
+        eq("readiness: -0.04 is 0.0 \u00b0C", part(Scores.readiness(ri), "temperature").detail, "0.0 \u00b0C");
+
+        // minutes on the Screen tab: one way under an hour (issue #99)
+        eq("minutes: 30", Texts.minutes(30), "30 min");
+        eq("minutes: rounded", Texts.minutes(14.6), "15 min");
+        eq("minutes: zero", Texts.minutes(0), "0 min");
+        eq("minutes: just under an hour", Texts.minutes(59.4), "59 min");
+        eq("minutes: rounds up to an hour", Texts.minutes(59.5), "1h 0m");
+        eq("minutes: above an hour", Texts.minutes(65), "1h 5m");
+        eq("minutes: unknown", Texts.minutes(Double.NaN), "--");
+
+        // symptom radar values with a unit and the precision of Today (issue #99)
+        eq("radar: HRV", Texts.radar("HRV", 59.3, Locale.US), "59 ms");
+        eq("radar: resting heart rate", Texts.radar("Resting heart rate", 52.6, Locale.US), "53 bpm");
+        eq("radar: breathing", Texts.radar("Respiratory rate", 13.94, Locale.US), "13.9 /min");
+        eq("radar: skin temperature as on Today", Texts.radar("Skin temperature", -0.17, Locale.US), "-0.2 \u00b0C");
+        eq("radar: skin temperature near zero", Texts.radar("Skin temperature", -0.04, Locale.US), "0.0 \u00b0C");
+        eq("radar: phone's decimal sign", Texts.radar("Respiratory rate", 13.94, de), "13,9 /min");
+        eq("radar: unknown marker keeps one decimal", Texts.radar("Other", 1.25, Locale.US), "1.3");
+        eq("radar: no value", Texts.radar("HRV", Double.NaN, Locale.US), "--");
+        Wellness.Radar wr = Wellness.radar(new double[] {0.1, 50, 60, 14}, new double[][] {
+            {0, 0.1, -0.1, 0.2, -0.2, 0.05, 0}, {49, 50, 51, 52, 48, 50, 50}, {55, 60, 65, 58, 62, 61, 59}, {13, 14, 15, 14, 13.5, 14.5, 14}});
+        for (String k : wr.markers.keySet()) check("radar: every marker has a unit: " + k, !Texts.radar(k, 1, Locale.US).equals("1.0"));
+        // "1 time" on the Screen tab (issue #165)
+        eq("uses: one", Texts.word(1, "time", "times"), "time");
+    }
+
     static void texts() throws IOException {
         eq("count: one", Texts.count(1, "wake up", "wake ups"), "1 wake up");
         eq("count: zero is plural", Texts.count(0, "wake up", "wake ups"), "0 wake ups");

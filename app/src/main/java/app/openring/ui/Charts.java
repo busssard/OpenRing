@@ -1226,7 +1226,7 @@ public final class Charts {
                 }
                 t.setTextAlign(Paint.Align.RIGHT);
                 t.setColor(known ? (sel ? Ui.TEXT : Ui.TEXT_2) : Ui.TEXT_3);
-                cv.drawText(known ? Ui.hm(row.totalMin) : "--", w - Ui.dp(getContext(), 4), cy + t.getTextSize() * 0.35f, t);
+                cv.drawText(known ? Pages.span(row.totalMin) : "--", w - Ui.dp(getContext(), 4), cy + t.getTextSize() * 0.35f, t);
             }
         }
 

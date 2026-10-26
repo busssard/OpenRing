@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import app.openring.core.Texts;
 import app.openring.core.analysis.Scores;
 import app.openring.core.analysis.ScreenTime;
 import app.openring.core.analysis.StageShare;
@@ -284,10 +285,9 @@ public final class Pages {
         return Charts.clock(WakeUps.roundMin(unix), z);
     }
 
+    /** "+0.3", "-0.2", "0.0" near zero (not "-0.0"), with the phone's decimal sign (issues #32, #163). */
     static String signed(double v) {
-        if (Double.isNaN(v)) return "--";
-        if (Math.abs(v) < 0.05) return String.format(Locale.getDefault(), "%.1f", 0.0); // not "-0.0"
-        return String.format(Locale.getDefault(), "%+.1f", v);
+        return Texts.signed(v, Locale.getDefault());
     }
 
     // ======================================================================== SLEEP
@@ -729,7 +729,7 @@ public final class Pages {
             root.addView(note);
         }
         root.addView(signals(c, d));
-        root.addView(contributors(c, sc, Ui.READY, "Contributors"));
+        root.addView(contributors(c, sc, Ui.READY, "Contributors", d.day));
 
         LinearLayout t = Ui.card(c);
         t.addView(Ui.caption(c, "Temperature vs usual"));
@@ -956,7 +956,7 @@ public final class Pages {
             return root;
         }
         int goal = in.goalMin;
-        String sub = Ui.hm(in.day.totalMin) + (goal > 0 ? " of " + hours(goal) + " goal" : "") + (today ? ", so far today" : "");
+        String sub = span(in.day.totalMin) + (goal > 0 ? " of " + hours(goal) + " goal" : "") + (today ? ", so far today" : "");
         root.addView(hero(c, in.score == null ? Double.NaN : in.score.value, "Screen", Ui.OXY, sub));
 
         // the day as a clock
@@ -971,7 +971,7 @@ public final class Pages {
                 if (n == null) names.put(pkg, n = app.openring.data.ScreenUse.label(c, pkg));
                 return n;
             }
-        }, in.from, in.to, System.currentTimeMillis() / 1000.0, Ui.hm(in.day.totalMin), today ? "today" : "on this day")
+        }, in.from, in.to, System.currentTimeMillis() / 1000.0, span(in.day.totalMin), today ? "today" : "on this day")
                 .shownAs(ScreenTime.widen(in.sessions, Prefs.of(c).screenMinShowMin() * 60.0)).zone(in.zone), Ui.sized(c, -1, 300));
         dial.addView(Ui.gap(c, 8));
         int minShow = Prefs.of(c).screenMinShowMin();
@@ -994,7 +994,7 @@ public final class Pages {
         // the numbers
         LinearLayout num = Ui.card(c);
         num.addView(Ui.caption(c, "This day"));
-        num.addView(Ui.statRow(c, Ui.stat(c, "Uses", String.valueOf(in.day.turnedOn), "times", 0),
+        num.addView(Ui.statRow(c, Ui.stat(c, "Uses", String.valueOf(in.day.turnedOn), Texts.word(in.day.turnedOn, "time", "times"), 0),
                 Ui.stat(c, "Longest", Ui.fmt(in.day.longestMin, 0), "min", 0)));
         num.addView(Ui.statRow(c, Ui.stat(c, "First look", clock(in.firstLook, in.zone), "", 0),
                 Ui.stat(c, "Not counted", Ui.fmt(in.excludedMin, 0), "min", 0)));
@@ -1012,7 +1012,7 @@ public final class Pages {
             LinearLayout sc = Ui.card(c);
             sc.addView(Ui.caption(c, "Contributors"));
             int g = goal > 0 ? goal : app.openring.core.analysis.ScreenScore.DEFAULT_GOAL_MIN;
-            sc.addView(Ui.contributor(c, "Screen time", Ui.hm(in.day.totalMin) + " of " + hours(g), in.score.amount, Ui.OXY,
+            sc.addView(Ui.contributor(c, "Screen time", span(in.day.totalMin) + " of " + hours(g), in.score.amount, Ui.OXY,
                     "Half your goal or less is best, the goal itself still good, twice the goal or more lowers this to zero."));
             if (!Double.isNaN(in.score.bedtime)) {
                 sc.addView(Ui.contributor(c, "Before bed", Ui.fmt(in.bedMin, 0) + " min", in.score.bedtime, Ui.OXY,
@@ -1062,9 +1062,9 @@ public final class Pages {
         return row;
     }
 
-    /** "37m" under an hour, "1h 5m" above. */
+    /** "37 min" under an hour, "1h 5m" above: one way on the whole Screen tab (issue #99). */
     static String span(double min) {
-        return Double.isNaN(min) || min >= 59.5 ? Ui.hm(min) : Math.round(min) + "m";
+        return Texts.minutes(min);
     }
 
     /** "07:42" for a moment, "--" when unknown. */
@@ -1110,7 +1110,7 @@ public final class Pages {
                 LinearLayout row = Ui.hbox(c);
                 row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
                 row.addView(Ui.text(c, name, 14, out ? Ui.TEXT_3 : plain ? Ui.TEXT : Ui.TEXT_2, Ui.REGULAR), Ui.weight(1));
-                row.addView(Ui.text(c, (out ? "not counted, " : "") + (r.shownMin == 0 ? "less than 1m" : span(r.shownMin)), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
+                row.addView(Ui.text(c, (out ? "not counted, " : "") + (r.shownMin == 0 ? "less than 1 min" : span(r.shownMin)), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
                 card.addView(row);
             }
         }
@@ -1180,9 +1180,9 @@ public final class Pages {
                 .show();
     }
 
-    /** "3h", "2h 30m" or "45m" for a goal in minutes. */
+    /** "3h", "2h 30m" or "45 min" for a goal in minutes. */
     static String hours(int min) {
-        if (min < 60) return min + "m";
+        if (min < 60) return span(min);
         return min % 60 == 0 ? (min / 60) + "h" : (min / 60) + "h " + (min % 60) + "m";
     }
 
@@ -1256,12 +1256,13 @@ public final class Pages {
                 LinearLayout top = Ui.hbox(c);
                 top.addView(Ui.text(c, k, 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
                 boolean flagged = a.optDouble(3) > 0;
-                top.addView(Ui.text(c, Ui.fmt(a.optDouble(0), k.startsWith("Skin") ? 2 : 1) + (flagged ? "  unusual" : ""), 13, flagged ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR));
+                top.addView(Ui.text(c, Texts.radar(k, a.optDouble(0), Locale.getDefault()) + (flagged ? "  unusual" : ""), 13, flagged ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR));
                 rc.addView(top);
                 rc.addView(new Charts.RangeGauge(c, a.optDouble(0), a.optDouble(1), a.optDouble(2), flagged), Ui.sized(c, -1, 18));
             }
             rc.addView(Ui.gap(c, 6));
-            rc.addView(Ui.text(c, "A wellness signal compared with your own recent nights, not a diagnosis.", 11, Ui.TEXT_3, Ui.REGULAR));
+            rc.addView(Ui.text(c, "Last night's values; skin temperature is the change from your usual. The bar under each is your normal range from recent nights. "
+                    + "A wellness signal compared with your own recent nights, not a diagnosis.", 11, Ui.TEXT_3, Ui.REGULAR));
         }
         root.addView(rc);
 
@@ -1343,6 +1344,15 @@ public final class Pages {
     }
 
     static View contributors(Context c, JSONObject score, int color, String title) {
+        return contributors(c, score, color, title, null);
+    }
+
+    /**
+     * The contributor rows. With the day, the temperature row shows the day's stored change exactly as the
+     * "Temperature vs usual" card does, with the phone's decimal sign, also for days analysed before the
+     * stored detail was built that way (issue #163).
+     */
+    static View contributors(Context c, JSONObject score, int color, String title, JSONObject day) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, title));
         JSONArray cs = score == null ? null : score.optJSONArray("contributors");
@@ -1352,7 +1362,10 @@ public final class Pages {
         }
         for (int i = 0; i < cs.length(); i++) {
             JSONObject o = cs.optJSONObject(i);
-            card.addView(Ui.contributor(c, o.optString("label"), o.optString("detail"), o.optDouble("score"), color, Explain.of(o.optString("key"))));
+            String detail = o.optString("detail");
+            double dev = Json.d(day, "temp_dev");
+            if ("temperature".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(dev)) detail = signed(dev) + " \u00b0C";
+            card.addView(Ui.contributor(c, o.optString("label"), detail, o.optDouble("score"), color, Explain.of(o.optString("key"))));
         }
         return card;
     }

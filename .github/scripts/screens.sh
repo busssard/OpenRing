@@ -83,6 +83,7 @@ swipe_up; swipe_up;                       shot sleep-details 1
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
+swipe_up; swipe_up;                       shot readiness-contributors 1   # temperature line as the card below (issue #163)
 launch --ei tab 3;                          shot activity
 # third demo day: the note that the weekly parts are based on 3 days so far (issue #44)
 launch --ei tab 3 --es day "$(date -d '32 days ago' +%F)"
