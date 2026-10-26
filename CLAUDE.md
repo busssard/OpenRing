@@ -85,6 +85,9 @@ Check every plan and PR against these before showing it:
     for real findings (a day without issues is fine). It tests the real app as people use it with a
     ring; demo mode itself is out of scope (owner's decision), and a finding that only appears with
     the demo's made up data is not filed.
+    Current focus (owner's decision, until he changes it): code review of `main` (code smells and bad
+    practices, each with file:line and a concrete cost) and performance stoppers with one to three
+    years of history (slow loads, main thread work, memory, battery).
   * **Nightly build (about midnight):** works through all open issues (no fixed number) by the process
     above and opens pull requests; it never merges. An issue that needs to be thought over gets a comment
     with options and a recommendation instead of a build, and is built after the owner answers. Problems
