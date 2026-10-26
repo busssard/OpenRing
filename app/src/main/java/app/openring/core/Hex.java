@@ -20,13 +20,17 @@ public final class Hex {
         return sb.toString();
     }
 
-    /** Decode a hex string (whitespace, colons and spaces are ignored). Returns null when invalid. */
+    /**
+     * Decode a hex string (whitespace, colons and spaces are ignored, also a byte order mark and a no
+     * break space, which editors like Windows Notepad write into a saved key, issue #33). Returns null
+     * when invalid.
+     */
     public static byte[] decode(String s) {
         if (s == null) return null;
         StringBuilder clean = new StringBuilder();
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (Character.isWhitespace(c) || c == ':') continue;
+            if (Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '﻿' || c == ':') continue;
             clean.append(c);
         }
         String h = clean.toString();

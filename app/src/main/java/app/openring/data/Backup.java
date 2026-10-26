@@ -17,6 +17,7 @@ import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 import app.openring.core.Hex;
+import app.openring.core.analysis.StageFilter;
 
 /**
  * Open Ring backup file: a zip holding {@code openring-backup.json} (ring key, ring identity,
@@ -35,10 +36,24 @@ public final class Backup {
         public String message;
     }
 
+    /**
+     * Write a backup. With {@code withHistory} the checked copy of the history is made first
+     * ({@link Exporter#snapshot}, issue #115), so a copy that fails its check leaves the file empty
+     * ({@link Exporter.NotSaved}) instead of half a backup.
+     */
     public static void write(Context c, OutputStream os, boolean withHistory) throws IOException {
         Prefs p = Prefs.of(c);
         byte[] key = p.loadKey();
         if (key == null) throw new IOException("no ring key saved on this phone");
+        File snap = withHistory ? Exporter.snapshot(c) : null;
+        try {
+            write(p, key, os, snap);
+        } finally {
+            Exporter.release(snap);
+        }
+    }
+
+    private static void write(Prefs p, byte[] key, OutputStream os, File snap) throws IOException {
         JSONObject o = new JSONObject();
         Json.put(o, "format", "openring-backup");
         Json.put(o, "version", 1);
@@ -61,13 +76,15 @@ public final class Backup {
         Json.put(o, "screen_exclude", new org.json.JSONArray(p.screenExcluded()));
         Json.put(o, "games_on", p.gamesOn());
         Json.put(o, "screen_min_show", p.screenMinShowMin());
+        Json.put(o, "stage_detail", p.stageDetail());
+        Json.put(o, "finder_sound", p.finderSound());
         ZipOutputStream z = new ZipOutputStream(os);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
         z.closeEntry();
-        if (withHistory) {
+        if (snap != null) {
             z.putNextEntry(new ZipEntry(DB));
-            Exporter.database(c, z);
+            Exporter.stream(snap, z);
             z.closeEntry();
         }
         z.finish();
@@ -98,6 +115,7 @@ public final class Backup {
 
     static final String DAMAGED = "The history in this backup is damaged, nothing was changed.";
     static final String NEWER = "This backup comes from a newer Open Ring. Update the app first, nothing was changed.";
+    static final String BROKEN = "This file is damaged or is not an Open Ring backup, nothing was changed.";
     static final String NOT_OPENED = "The history in this backup could not be opened. Your history on this phone was kept, nothing was changed.";
     /** Re dating after a sync moves times by minutes, a sync adds hours. */
     static final double SLACK_S = 3600;
@@ -146,9 +164,10 @@ public final class Backup {
                     }
                 }
             } else {
-                json = new String(readAll(in, 1 << 20), StandardCharsets.UTF_8).trim();
+                json = new String(readAll(in, 1 << 20), StandardCharsets.UTF_8);
             }
             if (json == null) return fail(p, "This file is not an Open Ring backup.");
+            json = withoutBom(json).trim();
             p.o = json.startsWith("{") ? Json.parse(json) : null;
             p.key = Hex.parseKey(p.o != null ? p.o.optString("key", "") : json);
             if (p.key == null) return fail(p, p.o == null ? "No 32 character key found in this file." : "The backup holds no valid ring key.");
@@ -166,6 +185,10 @@ public final class Backup {
             }
             keep = true;
             return p;
+        } catch (java.util.zip.ZipException | java.io.EOFException | TooLarge e) {
+            // a cut off or damaged zip, or far too big for a backup: a plain sentence (issue #33);
+            // a failure writing the temp copy (no space left) still reaches the caller
+            return fail(p, BROKEN);
         } finally {
             if (!keep) {
                 p.db = null;
@@ -199,7 +222,11 @@ public final class Backup {
         } finally {
             cancel(c, p);
         }
-        applySettings(Prefs.of(c), p.key, p.o);
+        // the stage detail level belongs to how the history was analysed: it comes along with the
+        // history, or onto a phone without analysed nights; a phone that keeps its own nights keeps
+        // its level, since another one would analyse its whole history again
+        Db.Info phone = r.history ? null : Db.inspect(c.getDatabasePath(Db.REAL), false);
+        applySettings(Prefs.of(c), p.key, p.o, phone == null || !phone.exists || phone.nights <= 0);
         // the key is saved: a Setup screen closed before showing the result must not start over
         Prefs.of(c).setSetupDone(true);
         r.ok = true;
@@ -276,7 +303,12 @@ public final class Backup {
         }
     }
 
-    private static void applySettings(Prefs p, byte[] key, JSONObject o) {
+    /**
+     * Key and settings from a backup. Numbers are kept inside what Settings and Setup allow (issue
+     * #33): a value out of range is set to the nearest limit, as typing it in Settings does; a choice
+     * that does not exist keeps the current one.
+     */
+    private static void applySettings(Prefs p, byte[] key, JSONObject o, boolean stageDetail) {
         p.setDemo(false);
         p.saveKey(key);
         if (o == null) return;
@@ -286,12 +318,14 @@ public final class Backup {
         if (!o.isNull("firmware")) p.setFirmware(o.optString("firmware", null));
         JSONObject prof = o.optJSONObject("profile");
         if (prof != null) {
-            p.setProfile(prof.optInt("age", p.age()), prof.optInt("sex", p.sex()), prof.optInt("weight", p.weightKg()),
-                    prof.optInt("height", p.heightCm()), prof.optInt("target_kcal", p.targetKcal()));
+            int sex = prof.optInt("sex", p.sex());
+            p.setProfile(clamp(prof.optInt("age", p.age()), 10, 100), sex >= 0 && sex <= 2 ? sex : p.sex(),
+                    clamp(prof.optInt("weight", p.weightKg()), 30, 250), clamp(prof.optInt("height", p.heightCm()), 100, 230),
+                    clamp(prof.optInt("target_kcal", p.targetKcal()), 0, 3000));
             p.setProfileSet();
         }
         if (o.has("background_sync")) p.setBackgroundSync(o.optBoolean("background_sync", true));
-        if (o.has("screen_goal")) p.setScreenGoalMin(o.optInt("screen_goal", p.screenGoalMin()));
+        if (o.has("screen_goal")) p.setScreenGoalMin(clamp(o.optInt("screen_goal", p.screenGoalMin()), 0, 1440));
         if (o.has("screen_awake")) p.setScreenAwake(o.optBoolean("screen_awake", true));
         org.json.JSONArray ex = o.optJSONArray("screen_exclude");
         if (ex != null) {
@@ -304,6 +338,15 @@ public final class Backup {
             int m = o.optInt("screen_min_show", 5);
             p.setScreenMinShowMin(m == 0 || m == 5 || m == 10 || m == 15 ? m : 5);
         }
+        if (stageDetail && o.has("stage_detail")) {
+            int d = o.optInt("stage_detail", -1);
+            if (d >= StageFilter.DETAILED && d <= StageFilter.CALM) p.setStageDetail(d);
+        }
+        if (o.has("finder_sound")) p.setFinderSound(o.optBoolean("finder_sound", true));
+    }
+
+    static int clamp(int v, int lo, int hi) {
+        return Math.max(lo, Math.min(hi, v));
     }
 
     static boolean looksLikeSqlite(File f) throws IOException {
@@ -316,14 +359,26 @@ public final class Backup {
         }
     }
 
+    /** More than a backup's JSON or a key file can hold. */
+    static final class TooLarge extends IOException {
+        TooLarge() {
+            super("file too large");
+        }
+    }
+
     static byte[] readAll(InputStream in, int max) throws IOException {
         ByteArrayOutputStream bo = new ByteArrayOutputStream();
         byte[] buf = new byte[8192];
         int n;
         while ((n = in.read(buf)) > 0) {
             bo.write(buf, 0, n);
-            if (bo.size() > max) throw new IOException("file too large");
+            if (bo.size() > max) throw new TooLarge();
         }
         return bo.toByteArray();
+    }
+
+    /** Editors like Windows Notepad start a saved text with a byte order mark (issue #33). */
+    static String withoutBom(String s) {
+        return s.startsWith("\uFEFF") ? s.substring(1) : s;
     }
 }

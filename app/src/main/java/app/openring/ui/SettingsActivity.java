@@ -989,6 +989,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         final Uri uri = data.getData();
         final boolean backup = code == BACKUP_KEY || code == BACKUP_FULL;
+        // set when the copy of the history did not pass its check (issue #115): the file got nothing
+        final boolean[] notChecked = {false};
         new AsyncTask<Void, Void, String>() {
             @Override
             protected String doInBackground(Void... v) {
@@ -1003,6 +1005,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         os.close();
                     }
                     return backup ? "Backup saved" : "Exported";
+                } catch (Exporter.NotSaved e) {
+                    RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " not saved: " + e.getMessage());
+                    notChecked[0] = true;
+                    // nothing was written: remove the empty file Android created, so it is not taken for a backup later
+                    try {
+                        android.provider.DocumentsContract.deleteDocument(getContentResolver(), uri);
+                    } catch (Exception x) {
+                        RingManager.get(SettingsActivity.this).log("the empty file could not be removed: " + x);
+                    }
+                    return null;
                 } catch (Exception e) {
                     // the raw reason goes to the log, the screen gets a sentence that says what to do (issue #89)
                     RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " failed: " + android.util.Log.getStackTraceString(e));
@@ -1012,7 +1024,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
             @Override
             protected void onPostExecute(String r) {
-                if (r == null) problem(Texts.saveFailed(backup));
+                if (r == null) problem(notChecked[0] ? Texts.notChecked(backup) : Texts.saveFailed(backup));
                 else say(r);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
