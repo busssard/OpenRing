@@ -68,12 +68,36 @@ adb shell settings put system user_rotation 0   # back to portrait for every scr
 sleep 2
 # keep any leaked window line now, before later screens can push it out of the log buffer
 adb logcat -d 2>/dev/null | grep -E "has leaked window" > "$OUT/leaked.txt"
-# wait for the demo to be generated and analysed (up to 3 minutes)
-for i in $(seq 1 90); do
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-  if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "made up person"; then break; fi
-  sleep 2
-done
+wait_demo() {  # until the demo is generated and analysed (up to 3 minutes)
+  for i in $(seq 1 90); do
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+    if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "made up person"; then return 0; fi
+    sleep 2
+  done
+}
+wait_demo
+
+# The app ended while the demo is prepared, then opened from the launcher (issue #69): it must finish
+# the demo, not show it half built. The demo above is built for today, so start from a cleared app:
+# the preparation takes several seconds, ending it one second after the screen shows cuts it off.
+log "ending the app while the demo is prepared, opening it again from the launcher (issue #69)"
+adb shell pm clear $PKG >/dev/null
+for perm in BLUETOOTH_SCAN BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant $PKG android.permission.$perm 2>/dev/null; done
+launch --ez demo true
+sleep 1
+adb shell am force-stop $PKG
+sleep 1
+adb shell am start -W -n $MAIN -a android.intent.action.MAIN -c android.intent.category.LAUNCHER >/dev/null
+wait_demo
+if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "No data for this day yet"; then
+  echo "::error::the demo stayed half built after the app was ended while preparing it (issue #69)"
+  exit 1
+fi
+if adb logcat -d 2>/dev/null | grep -q "demo: finish check, built now"; then
+  log "the demo cut off by ending the app was finished after opening it again"
+else
+  echo "::warning::issue #69 step: no cut off demo was finished after opening again (the preparation may have ended before the app was)"
+fi
 shot today 2
 
 launch --ei tab 1;                          shot sleep
@@ -123,6 +147,8 @@ if grep -q "app\.openring\." "$OUT/leaked.txt"; then
   exit 1
 fi
 log "no leaked dialogs"
+# two named shots that are the same picture: one of them did not get to its card or state (issue #160)
+./.github/scripts/same_shots.sh "$OUT" || exit 1
 if [ "$DIRTY" = 1 ]; then
   echo "::error::some screenshots show a system dialog; not publishing them as README pictures"
   exit 1

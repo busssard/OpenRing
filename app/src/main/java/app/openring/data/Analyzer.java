@@ -123,6 +123,19 @@ public final class Analyzer {
         db.put("last_analysis", now);
     }
 
+    /**
+     * Delete all local data (Settings). Holds the analysis lock like {@link #run}, restore and pairing,
+     * so an analysis that already read a week of nights finishes first and cannot write them back
+     * into the emptied database afterwards (issue #43).
+     */
+    public static void deleteAll(Context c) {
+        deleteAll(Db.get(c));
+    }
+
+    public static synchronized void deleteAll(Db db) {
+        db.resetAll();
+    }
+
     /** Rebuild everything from the raw events. */
     public static synchronized void runAll(Context c, Log log) {
         Analyzer a = new Analyzer(c, log);

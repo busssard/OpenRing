@@ -31,13 +31,26 @@ public final class SyncJob extends JobService {
         js.schedule(info);
     }
 
+    /** This job's sync, so a stop by Android ends only it (issue #43). */
+    private volatile RingManager.SyncTicket ticket;
+
     @Override
     public boolean onStartJob(final JobParameters params) {
         if (RingManager.get(this).busy()) return false;
+        final RingManager.SyncTicket t = new RingManager.SyncTicket();
+        ticket = t;
         new Thread(new Runnable() {
             @Override
             public void run() {
-                RingManager.SyncResult r = RingManager.get(SyncJob.this).syncBlocking();
+                RingManager.SyncResult res = RingManager.get(SyncJob.this).syncBlocking(t);
+                // a background sync that worked removes the notice of an earlier failed one (issue #91)
+                if (res.ok) {
+                    try {
+                        ((android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(SyncService.FAILED_ID);
+                    } catch (RuntimeException e) {
+                        RingManager.get(SyncJob.this).log("old sync notice not removed: " + e);
+                    }
+                }
                 jobFinished(params, false);
             }
         }, "ring-job").start();
@@ -46,7 +59,9 @@ public final class SyncJob extends JobService {
 
     @Override
     public boolean onStopJob(JobParameters params) {
-        RingManager.get(this).cancel();
+        // stops this job's download only; once it has given the ring back (it then analyses), Live, a
+        // game or a sync the person started keep running (issue #43)
+        RingManager.get(this).cancelSync(ticket);
         return false;
     }
 }

@@ -689,6 +689,8 @@ public class CoreTest {
         screenAppReads();
         screenScore();
         decoders();
+        ringTasks();
+        liveFeed();
         requests();
         auth();
         System.out.println(passed + " passed, " + failed + " failed");
@@ -753,6 +755,19 @@ public class CoreTest {
         r.detach("old screen");
         r.attach("new screen");
         eq("one run: the rebuilt screen is told", r.finish(), "new screen");
+        // Settings ring actions (issue #59): only the screen shown now, no running state of their own
+        OneRun<String> shown = new OneRun<String>();
+        check("shown screen: none at first", shown.attached() == null);
+        shown.attach("settings");
+        eq("shown screen: the one resumed", shown.attached(), "settings");
+        shown.attach("turned settings");
+        shown.detach("settings"); // the old screen closing late changes nothing
+        eq("shown screen: the turned one after a turn", shown.attached(), "turned settings");
+        check("shown screen: asking starts nothing", !shown.running() && shown.start());
+        eq("shown screen: asking ends nothing", shown.attached(), "turned settings");
+        check("shown screen: the job still runs", shown.running());
+        shown.detach("turned settings");
+        check("shown screen: none after Back", shown.attached() == null);
     }
 
     /** Issue #127: the space kept for Further analysis belongs to one screen layout. */
@@ -945,7 +960,7 @@ public class CoreTest {
     }
 
     /** Plain sentences for failed syncs; the raw texts come from the code (issue #47). */
-    static void syncError() {
+    static void syncError() throws java.io.IOException {
         Object[][] cases = {
             {"Bluetooth is off", SyncError.Kind.BLUETOOTH_OFF},
             {"Bluetooth LE scanner unavailable", SyncError.Kind.BLUETOOTH_OFF},
@@ -1019,7 +1034,7 @@ public class CoreTest {
     }
 
     /** The same raw texts after pairing, a Settings action, live heart rate or game motion failed (issue #60). */
-    static void ringError(Object[][] cases) {
+    static void ringError(Object[][] cases) throws java.io.IOException {
         SyncError.Task P = SyncError.Task.PAIR, A = SyncError.Task.ACTION, L = SyncError.Task.LIVE;
         // every kind and task: plain, no jargon or raw codes, a sync is never mentioned outside a sync
         for (Object[] k : cases) {
@@ -1120,6 +1135,77 @@ public class CoreTest {
             check("ring error: game text fits for " + k[0] + " (" + g + ")", fits && !g.contains("(") && String.join(" ", lines).equals(g));
         }
         eq("ring error: wrap", SyncError.wrap("aaa bbb  ccc dddddddd", 7), Arrays.asList("aaa bbb", "ccc", "dddddddd"));
+        // the "no motion data" text of the games fits the three drawn lines and still says touch steering works (issue #90)
+        check("game text: no motion fits", gameFits(SyncError.GAME_NO_MOTION));
+        check("game text: no motion names touch steering", SyncError.GAME_NO_MOTION.endsWith("Touch steering works."));
+        check("game text: old no motion text did not fit", !gameFits("Your ring sent no motion data, so it probably cannot stream motion on this firmware. "
+                + "The ring is free again; touch steering works."));
+        // every text the games are given: one literal that fits, a SyncError constant, or SyncError.game (tested above)
+        java.util.regex.Pattern lit = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
+        List<java.io.File> src = new ArrayList<java.io.File>();
+        javaFiles(new java.io.File("app/src/main/java/app/openring"), src);
+        int states = 0;
+        for (java.io.File f : src) {
+            String s = new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8");
+            for (int i = s.indexOf("motionState("); i >= 0; i = s.indexOf("motionState(", i + 1)) {
+                if (s.startsWith("void ", i - 5)) continue; // the method itself
+                String args = callArgs(s, i + "motionState(".length());
+                String text = args.substring(0, Math.max(0, args.lastIndexOf(','))).trim();
+                states++;
+                String where = f.getName() + " motionState(" + args;
+                java.util.regex.Matcher m = lit.matcher(text);
+                if (m.matches()) check("game text fits: " + where, gameFits(m.group(1)));
+                else check("game text is a SyncError text: " + where, text.startsWith("SyncError.game(") || text.matches("SyncError\\.GAME_[A-Z_]+"));
+            }
+        }
+        check("game text scan: motion states found", states >= 5);
+
+        // a failed sync always stores some error text (issue #91)
+        eq("sync error: raw of an exception without message", SyncError.raw(new java.io.IOException()), "java.io.IOException");
+        eq("sync error: raw of a blank message", SyncError.raw(new java.io.IOException(" ")), "java.io.IOException");
+        eq("sync error: raw keeps the message", SyncError.raw(new java.io.IOException("ring disconnected")), "ring disconnected");
+        eq("sync error: raw of no exception", SyncError.raw(null), SyncError.NO_REASON);
+        check("sync error: worked stores nothing", SyncError.stored(true, "Sync complete") == null);
+        eq("sync error: failed without text stores the fallback", SyncError.stored(false, null), SyncError.NO_REASON);
+        eq("sync error: failed with a blank text stores the fallback", SyncError.stored(false, "  "), SyncError.NO_REASON);
+        eq("sync error: failed keeps its text", SyncError.stored(false, "ring disconnected"), "ring disconnected");
+        String unknown = "The sync did not finish because of an unexpected problem. Sync again. " + SyncError.DETAILS;
+        eq("sync error: fallback reads as the unknown sentence", SyncError.plain(SyncError.stored(false, null)), unknown);
+        eq("sync error: exception name reads as the unknown sentence", SyncError.plain(SyncError.raw(new java.io.IOException())), unknown);
+
+        // a sync stops early only when another attempt cannot help (issue #157)
+        String[] retry = {"Bluetooth stack refused the write", "Bluetooth refused to open a GATT connection", "Bluetooth scan failed (error 2)",
+            "connection failed (GATT status 133)", "ring disconnected", "write was never acknowledged", "service discovery failed", null, ""};
+        for (String r : retry) check("sync retry: retried after " + r, SyncError.retryable(r, true));
+        String[] stop = {"Bluetooth is off", "Bluetooth LE scanner unavailable", "This phone has no Bluetooth", "interrupted", "Sync stopped",
+            "No ring found. Put it on its charger next to the phone, and close the Oura app if it is installed."};
+        for (String r : stop) check("sync retry: stops after " + r, !SyncError.retryable(r, true));
+        for (String r : retry) check("sync retry: stops with Bluetooth off after " + r, !SyncError.retryable(r, false));
+        // a key problem cannot pass on another attempt (independent review of #178)
+        String[] keys = {"authentication failed: " + Auth.describe(Auth.WRONG_KEY), "authentication failed: " + Auth.describe(Auth.IN_FACTORY_RESET),
+            "No ring key saved. Finish setup first."};
+        for (String r : keys) check("sync retry: stops after the key problem " + r, !SyncError.retryable(r, true));
+        check("sync retry: an unknown auth state is retried", SyncError.retryable("authentication failed: unknown auth state 0x7f", true));
+        // Bluetooth turned off in the middle of a sync: the attempt keeps "Bluetooth is off", not the disconnect it caused
+        eq("sync attempt: Bluetooth off replaces the disconnect", SyncError.attemptError("ring disconnected", false), SyncError.BLUETOOTH_OFF_TEXT);
+        eq("sync attempt: Bluetooth on keeps the text", SyncError.attemptError("ring disconnected", true), "ring disconnected");
+        eq("sync attempt: Bluetooth off text reads as Bluetooth off", SyncError.kind(SyncError.BLUETOOTH_OFF_TEXT), SyncError.Kind.BLUETOOTH_OFF);
+        check("sync attempt: Bluetooth off ends the sync", !SyncError.retryable(SyncError.attemptError("write failed (GATT status 133)", false), true));
+        // the notice after a failed sync the person started: the whole plain sentence, none after a stop or success
+        check("sync notice: none after a sync that worked", SyncError.failureNotice(true, "Sync complete") == null);
+        check("sync notice: none after a stop", SyncError.failureNotice(false, "Sync stopped") == null && SyncError.failureNotice(false, "Interrupted") == null);
+        check("sync notice: none in demo mode", SyncError.failureNotice(false, "Demo mode: syncing is off") == null);
+        eq("sync notice: the plain sentence", SyncError.failureNotice(false, "connection failed (GATT status 133)"),
+                SyncError.plain("connection failed (GATT status 133)"));
+        eq("sync notice: also without a reason", SyncError.failureNotice(false, null), unknown);
+    }
+
+    /** The games draw at most {@link SyncError#GAME_LINES} lines of {@link SyncError#GAME_LINE} characters. */
+    static boolean gameFits(String t) {
+        List<String> lines = SyncError.wrap(t, SyncError.GAME_LINE);
+        boolean fits = lines.size() <= SyncError.GAME_LINES;
+        for (String line : lines) fits &= line.length() <= SyncError.GAME_LINE;
+        return fits;
     }
 
     static boolean near(double a, double b) {
@@ -2385,6 +2471,112 @@ public class CoreTest {
         double r = h.rmssd();
         check("live rmssd ignores the doubled beat", r > 10 && r < 30);
     }
+    /** Issues #43 and #153: which task a stop reaches, when Live rejoins, which sync shows the final line. */
+    static void ringTasks() {
+        RingTasks.Owner o = new RingTasks.Owner();
+        final int[] stops = {0};
+        Runnable stop = new Runnable() {
+            public void run() {
+                stops[0]++;
+            }
+        };
+        Object job = new Object(), mine = new Object();
+        check("owner: a stop before the job holds the ring reaches nothing", !o.stopIf(job, stop) && stops[0] == 0);
+        o.take(job);
+        check("owner: the job holds the ring during its download", o.holds(job) && !o.holds(mine) && !o.holds(null));
+        check("owner: a stop for the downloading job runs once", o.stopIf(job, stop) && stops[0] == 1);
+        o.release(mine);
+        check("owner: release by another task changes nothing", o.holds(job));
+        o.release(job);
+        check("owner: after its download the job holds nothing", !o.holds(job));
+        // the job analyses, the person's sync (or Live, which never takes the owner) gets the ring
+        o.take(mine);
+        check("owner: a stop for the analysing job does not reach the person's sync (#43)", !o.stopIf(job, stop) && stops[0] == 1 && o.holds(mine));
+        check("owner: a stop without a ticket reaches nothing", !o.stopIf(null, stop) && stops[0] == 1);
+        o.release(mine);
+
+        // #153: a stopped session still cleaning up (older token) is never rejoined
+        int running = 1, token = 1;
+        check("live: same session, same choice is rejoined", RingTasks.rejoinLive(running, token, false, false));
+        token = 2; // stopLive of the old screen (a turned phone, or Done)
+        check("live: a stopped session that is still cleaning up is not rejoined (#153)", !RingTasks.rejoinLive(running, token, false, false));
+        check("live: no session running starts one", !RingTasks.rejoinLive(0, token, false, false) && !RingTasks.rejoinLive(0, 0, false, false));
+        check("live: a blood oxygen switch starts a new session", !RingTasks.rejoinLive(1, 1, false, true) && !RingTasks.rejoinLive(1, 1, true, false));
+        // the sequence of RingManager.startLive: the new screen takes token 3, the old task ends and
+        // clears only its own mark, so a third screen rejoins the new session
+        java.util.concurrent.atomic.AtomicInteger session = new java.util.concurrent.atomic.AtomicInteger(1), current = new java.util.concurrent.atomic.AtomicInteger(1);
+        current.incrementAndGet(); // stopLive
+        boolean rejoined = RingTasks.rejoinLive(session.get(), current.get(), false, false);
+        if (!rejoined) session.set(current.incrementAndGet());
+        session.compareAndSet(1, 0); // the old session's cleanup ends
+        check("live: after a turn the new screen has its own session", !rejoined && session.get() == 3);
+        check("live: a screen opened next rejoins the new session", RingTasks.rejoinLive(session.get(), current.get(), false, false));
+
+        // #43 C: only the last sync shows its line
+        eq("sync end: another sync runs, nothing shown", RingTasks.syncEndStatus(1, "Up to date", null), null);
+        eq("sync end: the last sync shows its own line", RingTasks.syncEndStatus(0, "Sync stopped", "Up to date"), "Sync stopped");
+        eq("sync end: a sync that never got the ring shows the line left behind", RingTasks.syncEndStatus(0, null, "Up to date"), "Up to date");
+        eq("sync end: nothing to show", RingTasks.syncEndStatus(0, null, null), null);
+        check("texts: busy and delete messages fit the rules", !Texts.SYNC_BUSY.contains(" - ") && !Texts.DELETE_BUSY.contains(" - ")
+                && Texts.DELETE_BUSY.startsWith("Nothing was deleted") && Texts.DELETE_FAILED.startsWith("Nothing was deleted")
+                && !Texts.LIVE_BUSY.contains(" - ") && !Texts.LIVE_BUSY.contains("syncing") && !Texts.SYNC_BUSY.contains("ring task"));
+    }
+
+    /** Issue #152: always on heart rate never becomes a beat interval, so it never feeds live HRV. */
+    static void liveFeed() {
+        LiveFeed f = new LiveFeed();
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        // green IBI: 800 ms clean, 812 ms clean, 800 ms quality 2, 200 ms clean (too fast to be a beat)
+        ev.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, 10, b(100, 8, 101, 12, 100, 2 << 3, 25, 8)));
+        // always on heart rate: 70, 72 bpm and an impossible 250
+        ev.add(new RingEvent(EventCodec.AOHR_EVENT, 11, b(0, 0, 3, 70, 1, 72, 1, 250, 1)));
+        ev.add(new RingEvent(EventCodec.TEMP_EVENT, 12, b(0x2c, 0x0d)));
+        ev.add(new RingEvent(EventCodec.SPO2_EVENT, 13, b(0, 97, 60, 98, 0xff)));
+        f.addAll(ev);
+        eq("live feed: only clean green IBI beats are beats", f.beats, Arrays.asList(800, 812));
+        eq("live feed: always on heart rate stays heart rate", f.heartRates, Arrays.asList(70, 72));
+        check("live feed: temperature and blood oxygen", Math.abs(f.temp - 33.72) < 1e-9 && f.spo2.equals(Arrays.asList(97, 98)) && f.lastSpo2 == 98);
+        f.clear();
+        check("live feed: a new refresh starts empty, the newest temperature stays", f.beats.isEmpty() && f.heartRates.isEmpty()
+                && f.spo2.isEmpty() && Math.abs(f.temp - 33.72) < 1e-9);
+        // heart rate only: HRV gets nothing, the screen says why
+        LiveHrv h = new LiveHrv(40);
+        for (int i = 0; i < 30; i++) f.add(new RingEvent(EventCodec.AOHR_EVENT, 20 + i, b(0, 0, 2, 70 + i % 3, 1, 71, 1)));
+        for (int x : f.beats) h.add(x);
+        check("live HRV: heart rate values alone give no HRV (#152)", f.heartRates.size() == 60 && h.size() == 0 && Double.isNaN(h.rmssd()));
+        String only = LiveHrv.note(h.size(), h.cleanPairs(), f.heartRates.size(), h.rmssd());
+        check("live HRV note: heart rate only says HRV needs single heartbeats", only.startsWith("HRV not available yet") && only.contains("single heartbeats"));
+        check("live HRV note: nothing yet", LiveHrv.note(0, 0, 0, Double.NaN).equals("HRV appears once the ring sends single heartbeats."));
+        for (int i = 0; i < 5; i++) h.add(800 + 10 * (i % 2));
+        eq("live HRV note: a few beats", LiveHrv.note(h.size(), h.cleanPairs(), 60, h.rmssd()), "HRV not available yet: it needs at least 9 clean heartbeats, 5 so far.");
+        for (int i = 0; i < 5; i++) h.add(800 + 10 * (i % 2));
+        check("live HRV: 10 clean beats give a value", Math.abs(h.rmssd() - Math.sqrt(800.0 / 9)) < 1e-9); // 8 pairs of 10 ms, one of 0
+        eq("live HRV note: with a value", LiveHrv.note(h.size(), h.cleanPairs(), 60, h.rmssd()), "HRV: the typical change from one heartbeat to the next, from the last 10 heartbeats.");
+        for (String t : new String[] {only, LiveHrv.note(0, 0, 0, Double.NaN), LiveHrv.note(3, 2, 0, Double.NaN), LiveHrv.note(40, 39, 0, 20), LiveHrv.note(20, 0, 0, Double.NaN)}) {
+            check("live HRV note without dashes: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
+        check("live HRV: needs 9 beats as the note says", LiveHrv.MIN_BEATS == 9);
+        // review of PR #174: 20 uneven beats (600 and 900 ms alternate, every jump over 20 %) give no value,
+        // and the line says they jump too much instead of "needs 9, 20 so far"
+        LiveHrv uneven = new LiveHrv(40);
+        for (int i = 0; i < 20; i++) uneven.add(i % 2 == 0 ? 600 : 900);
+        String jumpy = LiveHrv.note(uneven.size(), uneven.cleanPairs(), 0, uneven.rmssd());
+        check("live HRV: alternating 600 and 900 ms give no value", Double.isNaN(uneven.rmssd()) && uneven.cleanPairs() == 0 && uneven.size() == 20);
+        eq("live HRV note: enough beats but too uneven", jumpy, "HRV not available yet: the heartbeats so far jump too much to count. Keep your hand still.");
+        LiveHrv few = new LiveHrv(40);
+        for (int x : new int[] {800, 810, 1200, 805}) few.add(x);
+        eq("live HRV note: a few beats count only the clean ones", LiveHrv.note(few.size(), few.cleanPairs(), 0, few.rmssd()),
+                "HRV not available yet: it needs at least 9 clean heartbeats, 2 so far.");
+        LiveHrv eight = new LiveHrv(40);
+        for (int i = 0; i < LiveHrv.MIN_BEATS - 1; i++) eight.add(800 + 10 * (i % 2));
+        check("live HRV: 8 beats are not enough, 9 are", Double.isNaN(eight.rmssd()) && addOne(eight));
+    }
+
+    static boolean addOne(LiveHrv h) {
+        h.add(800);
+        return !Double.isNaN(h.rmssd());
+    }
+
     static void dialMath() {
         // issue #46: the screen time clock places moments by their clock time
         java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");

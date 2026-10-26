@@ -30,6 +30,14 @@ public final class OneRun<T> {
         if (owner == o) owner = null;
     }
 
+    /**
+     * The screen attached now, without ending anything: for results that need no "running" state
+     * of their own, like Settings ring actions, which the ring lock already keeps to one (issue #59).
+     */
+    public synchronized T attached() {
+        return owner;
+    }
+
     /** The job ended: returns the screen to tell (null when none is attached), a new start is allowed. */
     public synchronized T finish() {
         running = false;

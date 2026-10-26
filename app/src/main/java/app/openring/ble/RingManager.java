@@ -58,8 +58,9 @@ public final class RingManager {
         void onValue(String kind, double value);
 
         /**
-         * Measurements the ring stored in the last seconds, oldest first: "ibi" (clean beat
-         * intervals in ms) or "spo2" (one percent per second).
+         * Measurements the ring stored in the last seconds, oldest first: "ibi" (clean beat to beat
+         * intervals in ms, the only source of live HRV), "hr" (always on heart rate in bpm, about
+         * 1.92 s apart; an average, so heart rate only, issue #152) or "spo2" (one percent per second).
          */
         void onSeries(String kind, int[] values);
     }
@@ -96,8 +97,15 @@ public final class RingManager {
     /** Syncs past their download, analysing; they no longer hold the ring (issue #21). */
     private final java.util.concurrent.atomic.AtomicInteger analysing = new java.util.concurrent.atomic.AtomicInteger();
     private volatile double progress = -1;
-    private volatile boolean liveRunning;
+    /** Token of the newest live session queued or running, 0 when none (issue #153). */
+    private final java.util.concurrent.atomic.AtomicInteger liveSession = new java.util.concurrent.atomic.AtomicInteger();
     private volatile RingClient current;
+    /** The sync whose download holds the ring now; a stop for a sync reaches only that one (issue #43). */
+    private final app.openring.core.RingTasks.Owner downloader = new app.openring.core.RingTasks.Owner();
+    /** Guards {@link #syncs} when a sync ends and {@link #endLeft}, so the last sync shows the final line (issue #43). */
+    private final Object syncEnd = new Object();
+    /** The final line of a sync that ended while another one still ran; the last one shows it if it has none. */
+    private String endLeft;
     private volatile boolean cancelRequested;
     private final java.util.concurrent.atomic.AtomicInteger liveToken = new java.util.concurrent.atomic.AtomicInteger();
 
@@ -204,7 +212,7 @@ public final class RingManager {
     private Session open(boolean anyRing, Set<String> exclude) throws IOException, InterruptedException {
         BluetoothAdapter a = RingScanner.adapter(ctx);
         if (a == null) throw new IOException("This phone has no Bluetooth");
-        if (!a.isEnabled()) throw new IOException("Bluetooth is off");
+        if (!a.isEnabled()) throw new IOException(SyncError.BLUETOOTH_OFF_TEXT);
         Prefs p = Prefs.of(ctx);
         String addr = p.address();
         Session s = new Session();
@@ -251,13 +259,48 @@ public final class RingManager {
         }
     }
 
-    /** Stop whatever is running (sync, live HR). */
-    public void cancel() {
-        cancelRequested = true;
-        liveToken.incrementAndGet();
-        motionToken.incrementAndGet();
-        RingClient c = current;
-        if (c != null) c.cancel();
+    /** One sync, so a stop can name it (issue #43). */
+    public static final class SyncTicket {
+        volatile boolean stop;
+    }
+
+    /**
+     * Stop the sync of {@code t} (the background job when Android ends it). It reaches the ring only
+     * while that sync's download holds it; once the download is over (the ring is then free for Live,
+     * games and other syncs, issue #21) nothing else is touched (issue #43).
+     */
+    public void cancelSync(SyncTicket t) {
+        if (t == null) return;
+        t.stop = true;
+        if (downloader.stopIf(t, new Runnable() {
+            @Override
+            public void run() {
+                cancelRequested = true;
+                RingClient c = current;
+                if (c != null) c.cancel();
+            }
+        })) log("sync stopped by the system");
+    }
+
+    /**
+     * Runs {@code r} with the ring lock held, so no sync or ring task can start meanwhile, and only when
+     * no sync is under way (download, screen log or analysis). False, and {@code r} does not run, when
+     * the ring is busy. Used by Delete all local data (issue #43).
+     */
+    public boolean whileRingFree(Runnable r) {
+        if (syncs.get() > 0 || !op.tryLock()) return false;
+        try {
+            // a sync counted while the lock was taken still waits for it; leave the ring to it
+            if (syncs.get() > 0) return false;
+            busy = true;
+            notifyListeners();
+            r.run();
+            return true;
+        } finally {
+            busy = false;
+            op.unlock();
+            notifyListeners();
+        }
     }
 
     // ------------------------------------------------------------------------- sync
@@ -270,6 +313,11 @@ public final class RingManager {
 
     /** Full sync plus analysis. Blocks; call from a background thread. */
     public SyncResult syncBlocking() {
+        return syncBlocking(new SyncTicket());
+    }
+
+    /** As {@link #syncBlocking()}; {@link #cancelSync} with the same ticket stops this sync only. */
+    public SyncResult syncBlocking(SyncTicket ticket) {
         SyncResult res = new SyncResult();
         Prefs prefs = Prefs.of(ctx);
         if (prefs.demo()) {
@@ -281,26 +329,29 @@ public final class RingManager {
             res.message = "No ring key saved. Finish setup first.";
             return res;
         }
-        // a game or live session that just ended may still be closing its link
-        boolean locked;
-        try {
-            locked = op.tryLock(15, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            locked = false;
-        }
-        if (!locked) {
-            res.message = "The ring is busy with another task";
-            log("sync skipped: the ring is busy with another task");
-            return res;
-        }
-        // busy() stays true from here until the analysis has ended, also when the download
-        // fails with an Error, so screens reload only once the new nights are there (issue #21)
+        // counted from here, also while it waits for the ring, so busy() sees it (issue #43). busy()
+        // stays true until the analysis has ended, also when the download fails with an Error, so
+        // screens reload only once the new nights are there (issue #21)
         syncs.incrementAndGet();
         boolean analysingRaised = false;
+        String own = null;
         try {
+            // a game or live session that just ended may still be closing its link
+            boolean locked;
+            try {
+                locked = op.tryLock(15, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                locked = false;
+            }
+            if (!locked) {
+                res.message = "The ring is busy with another task";
+                log("sync skipped: the ring is busy with another task");
+                return res;
+            }
             boolean stopped = false;
             try {
-                cancelRequested = false;
+                downloader.take(ticket);
+                cancelRequested = ticket.stop;
                 busy = true;
                 progress = -1;
                 prefs.setLastAttempt(System.currentTimeMillis() / 1000);
@@ -308,12 +359,16 @@ public final class RingManager {
                 download(res, key, prefs);
             } finally {
                 try {
-                    prefs.setLastSyncError(res.ok ? null : res.message);
+                    prefs.setLastSyncError(SyncError.stored(res.ok, res.message));
                     if (res.ok) prefs.setLastSync(System.currentTimeMillis() / 1000);
                 } finally {
                     // the download is over and the link closed: free the ring for Live, games and
-                    // Settings while the screen log is read and the nights are analysed (issue #21)
-                    stopped = cancelRequested;
+                    // Settings while the screen log is read and the nights are analysed (issue #21).
+                    // From now on a stop for this sync reaches nothing (issue #43)
+                    downloader.release(ticket);
+                    stopped = cancelRequested || ticket.stop;
+                    // the screens get a plain sentence, the raw text stays in the log and the data check (issue #47)
+                    own = res.ok ? "Up to date" : app.openring.core.SyncError.plain(res.message);
                     analysing.incrementAndGet();
                     analysingRaised = true;
                     progress = -1;
@@ -342,10 +397,16 @@ public final class RingManager {
             }
         } finally {
             if (analysingRaised) analysing.decrementAndGet();
-            syncs.decrementAndGet();
-            // the screens get a plain sentence, the raw text stays in the log and the data check (issue #47)
-            if (!res.ok) log("sync failed: " + res.message);
-            forceStatus(res.ok ? "Up to date" : app.openring.core.SyncError.plain(res.message));
+            if (own != null && !res.ok) log("sync failed: " + res.message);
+            String show;
+            synchronized (syncEnd) {
+                int left = syncs.decrementAndGet();
+                // a second sync still under way shows its own line when it ends, not this one's "Up to date" (issue #43)
+                show = app.openring.core.RingTasks.syncEndStatus(left, own, endLeft);
+                endLeft = left > 0 ? (own != null ? own : endLeft) : null;
+            }
+            if (show != null) forceStatus(show);
+            else if (own != null) log("sync ended (" + own + "), another sync is still under way");
         }
         return res;
     }
@@ -373,17 +434,25 @@ public final class RingManager {
                         attempt--;
                         continue;
                     }
-                    res.message = e.getMessage();
+                    res.message = SyncError.raw(e);
                     break;
                 } catch (IOException e) {
-                    res.message = e.getMessage();
-                    log("attempt " + attempt + " failed: " + e.getMessage());
-                    if (e.getMessage() != null && (e.getMessage().startsWith("No ring found") || e.getMessage().startsWith("Bluetooth"))) break;
-                    Thread.sleep(2500);
+                    String raw = SyncError.raw(e);
+                    log("attempt " + attempt + " failed: " + raw);
+                    boolean on = bluetoothOn();
+                    // Bluetooth turned off during the sync: say so, not the disconnect it caused
+                    res.message = SyncError.attemptError(raw, on);
+                    // only Bluetooth really off, no ring found, a key problem or a stop end the sync at once;
+                    // passing Bluetooth errors (a refused write, a failed scan) get the other attempts (issue #157)
+                    if (!SyncError.retryable(res.message, on)) break;
+                    if (attempt < 3) Thread.sleep(2500);
                 } catch (HistoryBatch.BatchException e) {
-                    res.message = e.getMessage();
-                    log("attempt " + attempt + " failed: " + e.getMessage());
-                    Thread.sleep(2500);
+                    String raw = SyncError.raw(e);
+                    log("attempt " + attempt + " failed: " + raw);
+                    boolean on = bluetoothOn();
+                    res.message = SyncError.attemptError(raw, on);
+                    if (!on) break;
+                    if (attempt < 3) Thread.sleep(2500);
                 } finally {
                     close(s);
                 }
@@ -393,6 +462,16 @@ public final class RingManager {
         } catch (RuntimeException e) {
             res.message = "Unexpected error: " + e;
             log(android.util.Log.getStackTraceString(e));
+        }
+    }
+
+    /** The phone's Bluetooth is on right now (an unreadable state counts as on, so the sync keeps its attempts). */
+    private boolean bluetoothOn() {
+        try {
+            BluetoothAdapter a = RingScanner.adapter(ctx);
+            return a != null && a.isEnabled();
+        } catch (RuntimeException e) {
+            return true;
         }
     }
 
@@ -659,10 +738,6 @@ public final class RingManager {
 
     // ---------------------------------------------------------------------- live HR
 
-    public boolean liveRunning() {
-        return liveRunning;
-    }
-
     private volatile LiveListener liveListener;
 
     /**
@@ -683,30 +758,24 @@ public final class RingManager {
      * @param spo2 also run the ring's blood oxygen measurement (experimental, uses more battery).
      *             Changing it while a session runs restarts the session.
      */
-    public void startLive(final LiveListener l, final boolean spo2) {
+    public synchronized void startLive(final LiveListener l, final boolean spo2) {
         liveListener = l;
-        if (liveRunning && liveSpo2 != spo2) {
-            liveToken.incrementAndGet();
-            main.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    if (liveListener == l) startLive(l, spo2);
-                }
-            }, 700);
-            return;
-        }
-        if (liveRunning) {
+        // rejoin only a session that is still the current one: a stopped one may still be cleaning up
+        // (a turned phone, Done and back within seconds), and would end without values (issue #153)
+        if (app.openring.core.RingTasks.rejoinLive(liveSession.get(), liveToken.get(), liveSpo2, spo2)) {
             post("Measuring, keep your hand still");
             return;
         }
+        // a new session: the new token ends an older one at its next check; this task runs on the same
+        // worker after it, once it has cleaned up and given the ring back. A blood oxygen switch too.
         liveSpo2 = spo2;
         final int token = liveToken.incrementAndGet();
-        liveRunning = true;
+        liveSession.set(token);
         worker.execute(new Runnable() {
             @Override
             public void run() {
                 if (token != liveToken.get()) {
-                    liveRunning = false;
+                    liveSession.compareAndSet(token, 0);
                     return;
                 }
                 boolean locked;
@@ -716,8 +785,8 @@ public final class RingManager {
                     locked = false;
                 }
                 if (!locked) {
-                    post("The ring is busy syncing, try again in a moment");
-                    liveRunning = false;
+                    post(token, Texts.LIVE_BUSY);
+                    liveSession.compareAndSet(token, 0);
                     return;
                 }
                 busy = true;
@@ -726,11 +795,11 @@ public final class RingManager {
                 boolean realtimeOn = false;
                 int spo2PrevMode = -1;
                 try {
-                    post("Connecting to your ring");
+                    post(token, "Connecting to your ring");
                     s = open(false, null);
                     s.client.authenticate(Prefs.of(ctx).loadKey());
                     // fresh data first: it tells whether the ring is on a finger right now
-                    post("Checking the ring");
+                    post(token, "Checking the ring");
                     try {
                         drainNew(s.client, true, null);
                     } catch (Exception e) {
@@ -744,7 +813,7 @@ public final class RingManager {
                     app.openring.data.RightNow now = app.openring.data.RightNow.load(ctx);
                     log("live: ring sensor " + now.skinTemp + " C, worn " + now.worn);
                     if (now.worn == 0) {
-                        post(String.format(Locale.US, "The ring reads %.0f \u00b0C, room temperature, so it is probably not on a finger. "
+                        post(token, String.format(Locale.US, "The ring reads %.0f \u00b0C, room temperature, so it is probably not on a finger. "
                                 + "Put it on (not on the charger) and keep your hand still.", now.skinTemp));
                     }
                     int[] fs = s.client.featureStatus(Protocol.FEATURE_DAYTIME_HR);
@@ -765,31 +834,17 @@ public final class RingManager {
                             log("live: SpO2 requested mode " + (ok ? "accepted" : "NOT accepted"));
                         }
                     }
-                    if (now.worn != 0) post(spo2 ? "Measuring, keep your hand completely still. Blood oxygen needs 30 to 60 seconds of calm."
+                    if (now.worn != 0) post(token, spo2 ? "Measuring, keep your hand completely still. Blood oxygen needs 30 to 60 seconds of calm."
                             : "Measuring, keep your hand still. The first beats take 10 to 30 seconds.");
                     long started = System.currentTimeMillis(), lastBeat = 0, lastLatest = started;
                     long lastSpo2Poll = started, lastRefresh = started;
                     int spo2Counter = -1;
-                    final double[] fresh = {Double.NaN, Double.NaN}; // newest sensor temp, newest stored SpO2
-                    final List<Integer> newIbis = new ArrayList<Integer>(), newSpo2 = new ArrayList<Integer>();
+                    // real beats and always on heart rate stay apart: only real beats give HRV (issue #152)
+                    final app.openring.core.analysis.LiveFeed feed = new app.openring.core.analysis.LiveFeed();
                     EventObserver watch = new EventObserver() {
                         @Override
                         public void onEvents(List<RingEvent> events) {
-                            for (RingEvent e : events) {
-                                if (e.tag == app.openring.core.EventCodec.TEMP_EVENT || e.tag == app.openring.core.EventCodec.SLEEP_TEMP_EVENT) {
-                                    double[] t = app.openring.core.EventCodec.temps(e.body);
-                                    if (t != null && t.length > 0) fresh[0] = t[0];
-                                } else if (e.tag == app.openring.core.EventCodec.SPO2_EVENT) {
-                                    int[] v = app.openring.core.EventCodec.spo2(e.body);
-                                    if (v != null) for (int x : v) if (x >= 70 && x <= 100) { fresh[1] = x; newSpo2.add(x); }
-                                } else if (e.tag == app.openring.core.EventCodec.GREEN_IBI_QUALITY) {
-                                    int[][] g = app.openring.core.EventCodec.greenIbi(e.body);
-                                    if (g != null) for (int i = 0; i < g[0].length; i++) if (g[1][i] == 1 && app.openring.core.EventCodec.plausibleIbi(g[0][i])) newIbis.add(g[0][i]);
-                                } else if (e.tag == app.openring.core.EventCodec.AOHR_EVENT) {
-                                    int[][] a = app.openring.core.EventCodec.aohr(e.body);
-                                    if (a != null) for (int i = 0; i < a[0].length; i++) if (app.openring.core.EventCodec.plausibleHr(a[0][i])) newIbis.add((int) Math.round(60000.0 / a[0][i]));
-                                }
-                            }
+                            feed.addAll(events);
                         }
                     };
                     long lastArm = started;
@@ -872,17 +927,18 @@ public final class RingManager {
                         if (nowMs - lastRefresh > 4000) {
                             lastRefresh = nowMs;
                             try {
-                                newIbis.clear();
-                                newSpo2.clear();
+                                feed.clear();
                                 drainNew(s.client, true, watch);
-                                if (!Double.isNaN(fresh[0])) value("temp", fresh[0]);
-                                if (!newIbis.isEmpty()) {
-                                    beats += newIbis.size();
+                                if (!Double.isNaN(feed.temp)) value("temp", feed.temp);
+                                if (!feed.beats.isEmpty()) series("ibi", feed.beats);
+                                if (!feed.heartRates.isEmpty()) series("hr", feed.heartRates);
+                                int got = feed.beats.size() + feed.heartRates.size();
+                                if (got > 0) {
+                                    beats += got;
                                     lastBeat = nowMs;
-                                    series("ibi", newIbis);
-                                    if (stored++ == 0) post("Measuring. Readings arrive in small batches every few seconds.");
+                                    if (stored++ == 0) post(token, "Measuring. Readings arrive in small batches every few seconds.");
                                 }
-                                if (!newSpo2.isEmpty()) series("spo2", newSpo2);
+                                if (!feed.spo2.isEmpty()) series("spo2", feed.spo2);
                             } catch (Exception e) {
                                 log("live: refresh failed: " + e.getMessage());
                             }
@@ -918,7 +974,7 @@ public final class RingManager {
                             }
                             if (li.status != lastStatus) {
                                 lastStatus = li.status;
-                                post("Ring: " + RingClient.statusText(li.status));
+                                post(token, "Ring: " + RingClient.statusText(li.status));
                             }
                             if (li.bpm > 0 && token == liveToken.get()) {
                                 beats++;
@@ -927,16 +983,16 @@ public final class RingManager {
                             }
                         }
                         if (beats == 0 && frames == 0 && nowMs - started > 45000 && nowMs - started < 46100) {
-                            post(now.worn == 0 ? "No pulse: the ring does not seem to be on a finger."
+                            post(token, now.worn == 0 ? "No pulse: the ring does not seem to be on a finger."
                                     : "The ring has not sent a pulse yet. Wear it snugly on a warm finger, rest your hand on a table and wait.");
                         }
                     }
                     log("live: " + beats + " beats, " + frames + " live frames, " + s.link.sideSummary());
-                    post(beats > 0 ? "Stopped" : "Stopped without a pulse. Diagnostics, Log tab, shows what the ring sent.");
+                    post(token, beats > 0 ? "Stopped" : "Stopped without a pulse. Diagnostics, Log tab, shows what the ring sent.");
                 } catch (Exception e) {
                     String raw = e.getMessage() == null ? e.toString() : e.getMessage();
                     log("live: stopped by " + raw);
-                    post("Live heart rate stopped. " + SyncError.plain(raw, SyncError.Task.LIVE));
+                    post(token, "Live heart rate stopped. " + SyncError.plain(raw, SyncError.Task.LIVE));
                 } finally {
                     try {
                         if (s != null && s.link.isConnected()) {
@@ -948,7 +1004,8 @@ public final class RingManager {
                     } catch (Exception ignored) {
                     }
                     close(s);
-                    liveRunning = false;
+                    // only this session's own mark: a newer one may be queued already (issue #153)
+                    liveSession.compareAndSet(token, 0);
                     busy = false;
                     op.unlock();
                     notifyListeners();
@@ -958,7 +1015,7 @@ public final class RingManager {
     }
 
     /** Stop the live session, but only if {@code l} is the screen that owns it. */
-    public void stopLive(LiveListener l) {
+    public synchronized void stopLive(LiveListener l) {
         if (l != null && l != liveListener) return;
         liveListener = null;
         liveToken.incrementAndGet();
@@ -1041,8 +1098,7 @@ public final class RingManager {
                         if (f == null) {
                             if (frames == 0 && now - started > MOTION_GIVE_UP_MS) {
                                 log("motion: " + s.link.sideSummary());
-                                motionState("Your ring sent no motion data, so it probably cannot stream motion on this firmware. "
-                                        + "The ring is free again; touch steering works.", false);
+                                motionState(SyncError.GAME_NO_MOTION, false);
                                 break;
                             }
                             if (!s.link.isConnected()) throw new IOException("the ring disconnected");
@@ -1121,6 +1177,19 @@ public final class RingManager {
                 if (l != null) l.onValue(kind, v);
             }
         });
+    }
+
+    /**
+     * A message of the live session {@code token}. One that is no longer current (stopped, and a newer
+     * one may be starting for the same screen) only writes to the log, so its "Stopped" cannot cover
+     * the new session (issue #153).
+     */
+    private void post(int token, String state) {
+        if (token != liveToken.get()) {
+            log("live (ended session): " + state);
+            return;
+        }
+        post(state);
     }
 
     private void post(final String state) {

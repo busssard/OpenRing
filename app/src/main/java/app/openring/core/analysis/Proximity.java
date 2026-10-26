@@ -47,6 +47,28 @@ public final class Proximity {
     }
 
     /**
+     * Which of several rings heard in one scan is the closest (setup without a saved ring, issue #105): the
+     * index of the strongest {@link #plausible} signal, so a 127 ("not available") never beats a real reading.
+     * When none is plausible, the highest raw value as before; -1 for an empty list.
+     */
+    public static int strongest(int[] rssi) {
+        int best = -1, raw = -1;
+        for (int i = 0; i < rssi.length; i++) {
+            if (raw < 0 || rssi[i] > rssi[raw]) raw = i;
+            if (plausible(rssi[i]) && (best < 0 || rssi[i] > rssi[best])) best = i;
+        }
+        return best >= 0 ? best : raw;
+    }
+
+    /**
+     * Whether a new advertisement of a ring replaces the one kept for it in a scan: always, unless the new
+     * signal is not {@link #plausible} and the kept one is (the kept reading stays comparable, issue #105).
+     */
+    public static boolean replaces(int keptRssi, int newRssi) {
+        return plausible(newRssi) || !plausible(keptRssi);
+    }
+
+    /**
      * Adds one reading at {@code atMs} (any monotonic clock) and returns the smoothed value. A reading
      * that is not {@link #plausible} is ignored: it changes nothing and does not count as heard.
      */
