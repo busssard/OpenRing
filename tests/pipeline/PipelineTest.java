@@ -659,6 +659,7 @@ public class PipelineTest {
 
         longWakeChecks();
         previewRingWake();
+        ringStagesInLongerPeriod();
         freshDb("openring30-done");
         nightTwice();
         nightAcrossChecks();
@@ -2989,6 +2990,74 @@ public class PipelineTest {
             check("#30 older nights, analysis " + run + ": every event kept", db.count("SELECT COUNT(*) FROM events") == events, events);
             check("#30 older nights, analysis " + run + ": the same nights and stages", nightRows(db).equals(before), nightRows(db).size() + " vs " + before.size());
             check("#30 older nights, analysis " + run + ": ring_awake stored again", !Json.ringAwake(mainNight(db, d)).isEmpty(), null);
+        }
+    }
+
+    /**
+     * Issue #110: a ring that stages sleep itself (0x5a pages) for 23:00 to 07:00, deep for its first 5 minutes and REM
+     * 03:00 to 03:30, in a night a bedtime period makes longer: A from 22:50 to 07:30, C a bedtime of 40 minutes from
+     * 07:20. The stored stages keep the ring's clock times; the extra time has no data and lowers efficiency (#107).
+     */
+    static void ringStagesInLongerPeriod() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        String[] names = {"#110 A", "#110 C"};
+        double[][] beds = {{at(d, -1 - 10 / 60.0), at(d, 7.5)}, {at(d, 7 + 20 / 60.0), at(d, 8)}};
+        for (int k = 0; k < 2; k++) {
+            long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+            long ds0 = 9L * 86400 * 10;
+            List<RingEvent> ev = new ArrayList<RingEvent>();
+            double r0 = at(d, -1), r1 = at(d, 7), w0 = Math.min(r0, beds[k][0]), w1 = Math.max(r1, beds[k][1]);
+            // worn the whole time: heart rate, HRV, motion and temperature, no sleep state (the ring's stages decide)
+            for (double t = w0; t < w1; t += 60) {
+                long dd = ds0 + Math.round((t - t0) * 10);
+                if (((long) (t - w0)) % 300 == 0) ev.add(new RingEvent(EventCodec.HRV_EVENT, dd, new byte[] {(byte) (54 + rnd.nextInt(4)), (byte) (55 + rnd.nextInt(10))}));
+                ev.add(new RingEvent(EventCodec.MOTION_EVENT, dd, new byte[] {0, 1, 2, 3}));
+                ev.add(new RingEvent(EventCodec.SLEEP_TEMP_EVENT, dd, le16((int) Math.round((35.3 + rnd.nextGaussian() * 0.04) * 100))));
+            }
+            // the ring's hypnogram, 960 steps of 30 s in 4 pages sent at the run's end
+            int[] codes = new int[960];
+            for (int i = 0; i < codes.length; i++) {
+                double t = r0 + i * 30.0;
+                codes[i] = i < 10 ? 1 : (t >= at(d, 3) && t < at(d, 3.5) ? 3 : 2);
+            }
+            for (int pg = 0; pg < 4; pg++) {
+                byte[] b = new byte[61];
+                b[0] = (byte) pg;
+                for (int j = 0; j < 60; j++) {
+                    int v = 0;
+                    for (int q = 0; q < 4; q++) v = (v << 2) | (codes[pg * 240 + j * 4 + q] - 1);
+                    b[1 + j] = (byte) v;
+                }
+                ev.add(new RingEvent(EventCodec.SLEEP_PHASE_DATA, ds0 + Math.round((r1 - t0) * 10) + pg, b));
+            }
+            byte[] bt = new byte[8];
+            Protocol.Le.putU32(bt, 0, ds0 + Math.round((beds[k][0] - t0) * 10));
+            Protocol.Le.putU32(bt, 4, ds0 + Math.round((beds[k][1] - t0) * 10));
+            ev.add(new RingEvent(EventCodec.BEDTIME_PERIOD, ds0 + Math.round((w1 + 600 - t0) * 10), bt));
+            Db db = runSynthetic(ev, t0, ds0, w1 + 1800);
+            JSONObject n = mainNight(db, d);
+            check(names[k] + ": one main night from the ring's stages", n != null && "ring".equals(n.optString("source")), n == null ? null : n.optString("source"));
+            if (n == null) continue;
+            double s = n.optDouble("start"), e = n.optDouble("end");
+            int[] raw = Json.stagesRaw(n);
+            double step = (e - s) / raw.length;
+            check(names[k] + ": the night covers the bedtime period", Math.abs(s - w0) < 60 && Math.abs(e - w1) < 60, when(s) + " to " + when(e));
+            int deepAt = -1, lastCode = -1;
+            for (int i = 0; i < raw.length; i++) {
+                if (raw[i] == 1 && deepAt < 0) deepAt = i;
+                if (raw[i] != 0) lastCode = i;
+            }
+            check(names[k] + ": deep at 23:00 as the ring says", deepAt >= 0 && Math.abs(s + deepAt * step - r0) <= 30, deepAt < 0 ? "none" : when(s + deepAt * step));
+            check(names[k] + ": the ring's stages end at 07:00", Math.abs(s + (lastCode + 1) * step - r1) <= 30, when(s + (lastCode + 1) * step));
+            int rem0305 = raw[(int) ((at(d, 3 + 5 / 60.0) - s) / step)], rem0335 = raw[(int) ((at(d, 3 + 35 / 60.0) - s) / step)];
+            check(names[k] + ": REM from 03:00, light again at 03:35", rem0305 == 3 && rem0335 == 2, rem0305 + " " + rem0335);
+            double inBed = n.optDouble("in_bed_min"), asleep = n.optDouble("asleep_min");
+            double[] none = app.openring.core.analysis.StageShare.noData(Json.stages(n), inBed);
+            double extra = (w1 - w0 - (r1 - r0)) / 60;
+            check(names[k] + ": the extra time has no stage data", Math.abs(none[0] - extra) <= 1, none[0] + " min, expected " + extra);
+            check(names[k] + ": efficiency is asleep over time in bed", Math.abs(n.optDouble("efficiency") - 100 * asleep / inBed) < 0.01,
+                    n.optDouble("efficiency") + " vs " + 100 * asleep / inBed);
+            check(names[k] + ": latency counts from the start of the bedtime", Math.abs(n.optDouble("latency_min") - (r0 - w0) / 60) <= 0.5, n.opt("latency_min"));
         }
     }
 

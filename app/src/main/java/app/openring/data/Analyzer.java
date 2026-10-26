@@ -555,8 +555,9 @@ public final class Analyzer {
         if (in.hr5.isEmpty() && !spHr.isEmpty()) in.hr5 = NightAnalyzer.bin(spHr, start, end, 300);
         if (in.motion.isEmpty()) in.motion = motionFromSp;
         if (p.staged && p.codes != null) {
-            // the ring's hypnogram ends at the period's own end, even when the window was shortened
-            in.ringStages = NightFinder.align(new NightFinder.RingRun(p.end - p.codes.length * 30.0, p.end, p.codes), start, end);
+            // the ring's hypnogram at its own times: it ends where the ring's run ended, also when a bedtime
+            // period made the period longer (issue #110) or phone use shortened the window
+            in.ringStages = NightFinder.align(p.ringRun(), start, end);
         }
         in.stageDetail = prefs.stageDetail();
         return NightAnalyzer.analyze(in);

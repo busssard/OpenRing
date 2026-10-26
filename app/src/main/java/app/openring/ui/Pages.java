@@ -337,9 +337,15 @@ public final class Pages {
         hyp.addView(stageRowPct(c, "REM", remMin, share == null ? Double.NaN : share[2], Ui.STAGE_REM));
         hyp.addView(stageRowPct(c, "Light", lightMin, share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
         hyp.addView(stageRowPct(c, "Deep", deepMin, share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
+        // time in bed without stage data, so the rows add up to time in bed and a low efficiency is explained (issue #107)
+        double[] none = StageShare.noData(Json.stages(n), Json.d(n, "in_bed_min"));
+        String noneNote = StageShare.noDataNote(none[0], none[1]);
+        if (noneNote != null) hyp.addView(stageRowPct(c, "No data", none[0], StageShare.share(none[0], Json.d(n, "in_bed_min")), Ui.TEXT_3));
         hyp.addView(Ui.gap(c, 2));
-        hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. Awake is a share of your time in bed.",
+        hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. "
+                + (noneNote == null ? "Awake is a share of your time in bed." : "Awake and No data are shares of your time in bed."),
                 11, Ui.TEXT_3, Ui.REGULAR));
+        if (noneNote != null) hyp.addView(Ui.text(c, noneNote, 11, Ui.TEXT_3, Ui.REGULAR));
         String src = n.optString("source");
         hyp.addView(Ui.gap(c, 6));
         hyp.addView(Ui.text(c, "ring".equals(src) ? "Stages from your ring's own analysis"

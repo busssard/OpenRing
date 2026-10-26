@@ -97,7 +97,9 @@ history had, before anything is written to the file the person picked; otherwise
    up in the middle of the night (up to 3 hours, the gap from 22:00 at the earliest to before 06:30, the
    sleep before it begun at 21:00 or later, the ring worn through it) joins the pieces before and after
    into one night; the time the ring calls awake in the gap counts as awake, and ring stages of both
-   pieces keep their own times (issue #42). kv `night_finder` holds the rules version. `Analyzer` then
+   pieces keep their own times (issue #42). A period keeps where the ring's own hypnogram ends (`Period.codesEnd`), so
+   a bedtime period that makes a ring staged run longer leaves the stages at their clock times and the extra time
+   without stage data (issue #110). kv `night_finder` holds the rules version. `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
    When "Count phone use as awake" is on (default), phone use of a minute or more that overlaps the first or
    last 10 minutes of a period moves its edge past it, and a period of under 15 minutes left is dropped.
@@ -111,10 +113,12 @@ history had, before anything is written to the file the person picked; otherwise
    function on the stored `stages_raw` (`Analyzer.preview`, phone use chosen by `ScreenTime.forNight` as in the
    analysis, the ring's wake ups from the night's `ring_awake`, stored since issue #30), so it shows the night
    that saving produces.
-3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
+3. `NightAnalyzer` computes durations, efficiency (time asleep over time in bed, as Oura defines it; steps without
+   stage data count as time in bed, neither asleep nor awake, and the Sleep page shows them as "No data", issue #107), latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep
-   35/15/10/10/10/10/10); contributor curves are transparent and based on sleep research. Baselines become
+   35/15/10/10/10/10/10); a period with no sleep at all has no Restfulness (issue #118), like REM and deep on a
+   night without stages; contributor curves are transparent and based on sleep research. Baselines become
    personal after about 14 nights.
 5. Time zones (issue #22): each night takes its zone from `zones` and stores it as `zone`; its day, sleep timing
    and clock change marker use it, and a day uses its main night's zone. Screens format each night's times
