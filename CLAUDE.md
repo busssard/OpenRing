@@ -38,9 +38,10 @@ completely, then read the two guides it points to before changing anything:
    conflicts yourself. A PR that needs another open PR's code is built on that branch ("Stacked on
    #x"). Never merge yourself, never push to `main`.
 5. **Look at the result.** The emulator test runs for pull requests (not for plain branch pushes).
-   When it has passed, open the PNGs on the branch `screenshots-preview` with the Read tool. That
-   branch is shared by all pull requests: its commit message must name your PR head commit, otherwise
-   wait or rerun by pushing again. Check the change really looks right and fix it if not. New screens
+   When it has passed, open the PNGs in the folder `pr-<number>/` of the branch `screenshots-preview`
+   with the Read tool (each pull request has its own folder; the root only holds the latest run of
+   any PR). `pr-<number>/HEAD.txt` must name your PR head commit, otherwise wait or rerun by pushing
+   again. A failed preview push only warns, so a missing folder means looking at the run's log. Check the change really looks right and fix it if not. New screens
    or states: extend `.github/scripts/screens.sh`.
 6. Do not send APK files in chat; GitHub builds them.
 

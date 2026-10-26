@@ -123,6 +123,8 @@ if grep -q "app\.openring\." "$OUT/leaked.txt"; then
   exit 1
 fi
 log "no leaked dialogs"
+# two named shots that are the same picture: one of them did not get to its card or state (issue #160)
+./.github/scripts/same_shots.sh "$OUT" || exit 1
 if [ "$DIRTY" = 1 ]; then
   echo "::error::some screenshots show a system dialog; not publishing them as README pictures"
   exit 1

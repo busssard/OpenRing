@@ -72,8 +72,15 @@ fixed list of `data/` files; when you add a file there that the pipeline needs, 
 **On Android:** `emulator.yml` runs for pull requests and pushes to `main`. It installs the APK on an
 Android 14 emulator, opens every screen with demo data and fails on any crash. Its screenshots are pushed
 to the branch `screenshots` (from `main`, used by the README) or `screenshots-preview` (from pull
-requests in this repository; shared by all of them, the commit message names the PR head commit). Pull
-requests from forks get them as the `screenshots` artifact of the run. The emulator uses the plain
+requests in this repository). On `screenshots-preview` each pull request has its own folder `pr-<number>/`
+with `HEAD.txt` naming the commit it shows; the root holds the latest run of any pull request and
+`LATEST.txt` says which. `.github/scripts/publish_screens.sh` pushes them: it replaces only that
+folder, retries when another pull request pushed at the same moment, drops the folders of closed pull
+requests, and only warns if the preview cannot be pushed (a preview never turns the check red; the
+README pictures on `main` still fail loudly). Without screenshots (the emulator failed before the
+screen test) it does nothing. `screens.sh` fails when two shots are the same picture
+(`.github/scripts/same_shots.sh`), and `tests/test_ci_scripts.sh` (run by `run_tests.sh`) tests both
+scripts against a local repository. Pull requests from forks get them as the `screenshots` artifact of the run. The emulator uses the plain
 Android image (no Google apps) with 4 GB of memory; if a system "isn't responding" dialog appears,
 the script taps *Wait*, and it fails if the dialog stays, so the README pictures are never replaced
 by spoiled ones. Look at them before asking for a
@@ -81,7 +88,7 @@ review. When you add a screen or a state worth seeing, add it to
 `.github/scripts/screens.sh`. The main screen accepts these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
 (boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd),
-`settings` (opens Settings at a card: `top`, `stages`, `screen` or `games`), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead).
+`settings` (opens Settings at a card: `top`, `stages`, `screen` or `games`; with a card, the page gets an empty space at its end so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.

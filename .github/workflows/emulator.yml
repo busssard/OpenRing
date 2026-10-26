@@ -1,7 +1,7 @@
 name: Android emulator test
 # Installs the app on a real Android 14 emulator, opens every screen with demo data, fails on any
 # crash, and keeps the screenshots: on main they become the README pictures (branch "screenshots"),
-# for pull requests they go to "screenshots-preview" so changes can be looked at before merging.
+# for pull requests they go to "screenshots-preview" (folder pr-<number>) so changes can be looked at before merging.
 on:
   push:
     branches: [main]
@@ -51,20 +51,22 @@ jobs:
         with:
           name: screenshots
           path: screenshots
-      # README pictures (main) only from a clean run; previews for pull requests also when it failed
+      # README pictures (main) only from a clean run; previews for pull requests also when it failed.
+      # Each pull request gets its own folder pr-<number> on screenshots-preview (the root holds the
+      # latest run); a lost race with another pull request is retried, a preview never turns the check
+      # red, and without screenshots (the emulator failed first) the step does nothing (issue #57).
       - name: Publish the screenshots
         if: (success() || (failure() && github.event_name == 'pull_request')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          branch=screenshots-preview
-          [ "$GITHUB_REF" = "refs/heads/main" ] && branch=screenshots
-          cd screenshots
-          git init -q -b "$branch"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          src="${{ github.event.pull_request.head.sha || github.sha }}"
-          git commit -q -m "Screenshots from ${src::7} (demo data)"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then export BRANCH=screenshots FOLDER=
+          elif [ -n "$PR_NUMBER" ]; then export BRANCH=screenshots-preview FOLDER="pr-$PR_NUMBER"
+          else export BRANCH=screenshots-preview FOLDER="branch-${GITHUB_REF_NAME//\//-}"
+          fi
+          SRC=screenshots REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .github/scripts/publish_screens.sh
       - name: Screenshots badge, result
         if: always() && github.ref == 'refs/heads/main'
         env:

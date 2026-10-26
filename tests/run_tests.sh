@@ -12,3 +12,5 @@ fi
 javac -source 8 -target 8 -Xlint:-options -d "$OUT" $(find app/src/main/java/app/openring/core -name '*.java') app/src/main/java/app/openring/ui/Explain.java tests/java/CoreTest.java tests/java/FinderTest.java
 java $JAVA_OPTS -cp "$OUT" CoreTest
 java $JAVA_OPTS -cp "$OUT" FinderTest
+# the emulator CI scripts: publishing the screenshots, the identical shot check (issues #57, #160)
+bash tests/test_ci_scripts.sh
