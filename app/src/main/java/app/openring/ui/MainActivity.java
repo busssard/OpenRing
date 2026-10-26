@@ -268,6 +268,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             };
             try {
                 boolean built = fresh ? app.openring.data.Demo.enter(ctx, p) : app.openring.data.Demo.complete(ctx, p);
+                // the emulator test looks for "demo: finish check, built now" after ending the app (issue #69)
+                android.util.Log.i("OpenRing", "demo: " + (fresh ? "start" : "finish check") + (built ? ", built now" : ", nothing to do"));
                 return built ? BUILT : KEPT;
             } catch (RuntimeException e) {
                 android.util.Log.w("OpenRing", "demo: preparing the demo data failed", e);

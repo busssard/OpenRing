@@ -1546,9 +1546,8 @@ public class PipelineTest {
         check("only that demo night is marked", marked == 1, marked);
     }
 
-    // ------------------------------------------------- issue #29, demo started twice at once
+    // ------------------------------------------------- issue #69, demo cut off by an ended app
 
-    /** Events, main nights, days, screen sessions and app rows of a demo database. */
     /** Stops a demo build at its analysis step, the way Android ending the app would (issue #69). */
     static final class EndApp implements app.openring.data.Demo.Progress {
         @Override
@@ -1600,6 +1599,9 @@ public class PipelineTest {
         check("demo left: a new screen has nothing to finish", !app.openring.data.Demo.finishOnStart(app.openring.data.Prefs.of(phone).demo(), false, false), "");
     }
 
+    // ------------------------------------------------- issue #29, demo started twice at once
+
+    /** Events, main nights, days, screen sessions and app rows of a demo database. */
     static String demoCounts(Db db) {
         return db.count("SELECT COUNT(*) FROM events") + " events, " + db.count("SELECT COUNT(*) FROM nights WHERE main = 1") + " nights, "
                 + db.count("SELECT COUNT(*) FROM days") + " days, " + db.count("SELECT COUNT(*) FROM screen") + " screen, "

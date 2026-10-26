@@ -983,7 +983,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
                                 // new Settings screen would stay under Setup (issue #59)
                                 toast(message);
                                 SettingsActivity s = shownNow();
-                                if (s != null) s.finish();
+                                if (s != null) {
+                                    SHOWN.detach(s); // not kept as a closed screen
+                                    s.finish();
+                                }
                                 toSetup(getApplicationContext());
                             }
                         });

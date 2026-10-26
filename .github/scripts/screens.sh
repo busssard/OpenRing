@@ -68,35 +68,35 @@ adb shell settings put system user_rotation 0   # back to portrait for every scr
 sleep 2
 # keep any leaked window line now, before later screens can push it out of the log buffer
 adb logcat -d 2>/dev/null | grep -E "has leaked window" > "$OUT/leaked.txt"
-# the app ended while the demo is prepared, then opened from the launcher (issue #69): it must finish
-# the demo, not show it half built. Only when the preparation still runs here; a fast runner skips it.
-ENDED=0
-adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q -e "demo data" -e "5 weeks" -e "demo nights"; then
-  log "ending the app while the demo is prepared, opening it again from the launcher (issue #69)"
-  adb shell am force-stop $PKG
-  sleep 1
-  adb shell am start -W -n $MAIN -a android.intent.action.MAIN -c android.intent.category.LAUNCHER >/dev/null
-  ENDED=1
-  sleep 3
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-  if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q -e "demo data" -e "5 weeks" -e "demo nights"; then
-    log "demo progress shown again after opening the app again"
-  else
-    log "no demo progress on screen after opening again (it may already be done)"
-  fi
-else
-  log "demo already prepared, not ending the app during preparation (issue #69 step skipped)"
-fi
-# wait for the demo to be generated and analysed (up to 3 minutes)
-for i in $(seq 1 90); do
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-  if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "made up person"; then break; fi
-  sleep 2
-done
-if [ "$ENDED" = 1 ] && adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "No data for this day yet"; then
+wait_demo() {  # until the demo is generated and analysed (up to 3 minutes)
+  for i in $(seq 1 90); do
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+    if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "made up person"; then return 0; fi
+    sleep 2
+  done
+}
+wait_demo
+
+# The app ended while the demo is prepared, then opened from the launcher (issue #69): it must finish
+# the demo, not show it half built. The demo above is built for today, so start from a cleared app:
+# the preparation takes several seconds, ending it one second after the screen shows cuts it off.
+log "ending the app while the demo is prepared, opening it again from the launcher (issue #69)"
+adb shell pm clear $PKG >/dev/null
+for perm in BLUETOOTH_SCAN BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant $PKG android.permission.$perm 2>/dev/null; done
+launch --ez demo true
+sleep 1
+adb shell am force-stop $PKG
+sleep 1
+adb shell am start -W -n $MAIN -a android.intent.action.MAIN -c android.intent.category.LAUNCHER >/dev/null
+wait_demo
+if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "No data for this day yet"; then
   echo "::error::the demo stayed half built after the app was ended while preparing it (issue #69)"
   exit 1
+fi
+if adb logcat -d 2>/dev/null | grep -q "demo: finish check, built now"; then
+  log "the demo cut off by ending the app was finished after opening it again"
+else
+  echo "::warning::issue #69 step: no cut off demo was finished after opening again (the preparation may have ended before the app was)"
 fi
 shot today 2
 
