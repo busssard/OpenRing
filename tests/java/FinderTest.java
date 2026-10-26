@@ -981,6 +981,22 @@ public class FinderTest {
         LastWorn.Result rn = offThenCharger(60, 0, 25);
         check("#135: the charger right after taking off (no cool reading): still reads worn and confirmed (the limit)",
                 rn.state == LastWorn.WORN && rn.confirmed, rn.state);
+        // review of PR #179: heart rate while the skin read cool (cold fingers), then warm again: the heart rate
+        // measured during the cool readings still counts. 33 C with a value every 10 min until 09:41, 25 C from
+        // 09:00 to 09:50, warm from 09:55 to 10:40
+        double[][] cf = tempsC(10 + 45 / 60.0, new double[] {0, 9, 33}, new double[] {9, 9 + 55 / 60.0, 25}, new double[] {9 + 55 / 60.0, 11, 33});
+        double[] cfHr = every(0, 9 + 42 / 60.0, 10); // the last at 09:41
+        LastWorn.Result rcf = LastWorn.find(cf[0], cf[1], cfHr);
+        check("#179 review: heart rate while cool, then warm: worn and confirmed", rcf.state == LastWorn.WORN && rcf.hrRule && rcf.confirmed
+                && !rcf.justOn && rcf.lastHr == cfHr[cfHr.length - 1], rcf.state + " confirmed " + rcf.confirmed + " justOn " + rcf.justOn);
+        // review of PR #179: a single cool reading in the middle of wearing, then over an hour warm without heart
+        // rate: as before #135, not sure since the last heart rate (one reading cannot be told from 5 minutes on a table)
+        LastWorn.Result r1 = offThenCharger(60, 5, 90);
+        check("#179 review: one cool reading, then 90 min warm without heart rate: not sure since the last heart rate",
+                r1.state == LastWorn.UNSURE && Math.abs(r1.at - (BASE + 60 * 60)) <= 10, r1.state + " " + (r1.at - BASE) / 60);
+        // two cool readings are a real stay on the table: taken off (the 90 min case above)
+        LastWorn.Result r2 = offThenCharger(60, 10, 90);
+        check("#179 review: two cool readings, then 90 min warm: taken off", r2.state == LastWorn.OFF, r2.state);
         // the same with only night heart rate (an HRV event until 07:55, 15 min cool, then the charger): the rule
         // is off, so it reads worn, but the night heart rate before the cool readings confirms nothing
         double[][] nt = tempsC(9, new double[] {0, 8, 33}, new double[] {8, 8.25, 22}, new double[] {8.25, 9, 31});
@@ -1070,11 +1086,9 @@ public class FinderTest {
         LastWorn.Result r65 = LastWorn.find(w65[0], w65[1], day);
         check("warm for 3900 s without heart rate: off at 10 h", r65.state == LastWorn.OFF && r65.warmNoHrNow
                 && Math.abs(r65.at - (BASE + 10 * H)) <= 300, r65.state);
-        // two heart rates (separate events) ending exactly 1800 s before a warm stretch of two hours: near it.
-        // Since issue #135 only when no cool reading lies between, so the readings from 19:30 to 19:55 are left
-        // out (a gap in the temperature data); the last cool reading is at 19:25
-        double[][] w2full = tempsC(22, new double[] {0, 10, 34}, new double[] {20, 22, 30});
-        double[][] w2 = withoutTimes(w2full, BASE + 19.5 * H, BASE + 20 * H);
+        // two heart rates (separate events) ending exactly 1800 s before a warm stretch of two hours: near it
+        // (they lie in the cool readings before it, cold fingers, so issue #135 keeps them)
+        double[][] w2 = tempsC(22, new double[] {0, 10, 34}, new double[] {20, 22, 30});
         double edge = BASE + 20 * H - 1800;
         double[] at = Arrays.copyOf(day, day.length + 2);
         at[day.length] = edge - 60;
@@ -1085,31 +1099,12 @@ public class FinderTest {
         at[day.length + 1] = edge - 1;
         LastWorn.Result rf = LastWorn.find(w2[0], w2[1], at);
         check("1801 s away it is not: the warm stretch does not count", rf.state == LastWorn.OFF && rf.warmNoHrNow, rf.state);
-        // issue #135: the same heart rates with the cool readings from 19:30 to 19:55 between them and the warm
-        // stretch: two heart rates while cool (cold fingers), then taken off at 19:30; the warm stretch does not count
-        at[day.length] = edge - 60;
-        at[day.length + 1] = edge;
-        LastWorn.Result rcg = LastWorn.find(w2full[0], w2full[1], at);
-        check("#135: the same heart rates with cool readings between: off at 19:30, the warm stretch named", rcg.state == LastWorn.OFF
-                && rcg.at == edge && rcg.warmNoHrNow && rcg.warmNoHrAt == BASE + 20 * H, rcg.state + " " + (rcg.at - BASE) / H);
         // the heart rate rule looks at the last 48 hours only: daytime heart rate that stopped 3 days ago does not switch it on
         double[][] longer = tempsC(4 * 24, new double[] {0, 96, 33});
         LastWorn.Result rl = LastWorn.find(longer[0], longer[1], new double[0], beats(new double[] {0, 20}));
         check("daytime heart rate that stopped 3 days ago: temperature decides", rl.state == LastWorn.WORN && !rl.hrRule, rl.state);
         LastWorn.Result rl2 = LastWorn.find(longer[0], longer[1], new double[0], beats(new double[] {0, 60}));
         check("daytime heart rate within the last 48 hours: the rule applies", rl2.hrRule && rl2.state == LastWorn.UNSURE, rl2.state);
-    }
-
-    /** The readings without those from {@code from} up to (not including) {@code to}. */
-    static double[][] withoutTimes(double[][] tc, double from, double to) {
-        List<Integer> keep = new ArrayList<Integer>();
-        for (int i = 0; i < tc[0].length; i++) if (tc[0][i] < from || tc[0][i] >= to) keep.add(i);
-        double[] t = new double[keep.size()], c = new double[keep.size()];
-        for (int i = 0; i < t.length; i++) {
-            t[i] = tc[0][keep.get(i)];
-            c[i] = tc[1][keep.get(i)];
-        }
-        return new double[][] {t, c};
     }
 
     /** Single value daytime heart rates every {@code minutes} from {@code fromH} to {@code toH}, each its own event. */
@@ -1519,19 +1514,34 @@ public class FinderTest {
         check("#140: a quiet refusal is denied without explanation, Back or interrupted is not",
                 PermissionAsk.quietDenial(asked, new int[] {D, D, D}, need, none) && !PermissionAsk.quietDenial(asked, new int[] {D, D, D}, need, both)
                         && !PermissionAsk.quietDenial(new String[0], new int[0], need, none));
-        // the screen's sequence (FinderActivity): Back once still asks, the remembered refusal blocks only after a real no
-        boolean denied = false, quiet = false;
-        boolean blocked = PermissionAsk.blocked(asked, new int[] {D, D, D}, need, none, denied || quiet);
-        quiet = PermissionAsk.quietDenial(asked, new int[] {D, D, D}, need, none);
-        check("#140 sequence: Back once, Allow stays", !blocked && quiet);
+        // the screen's sequence, through answer() as FinderActivity calls it: Back once still asks
+        int[] dd = {D, D, D};
+        PermissionAsk.Answer a = PermissionAsk.answer(false, asked, dd, need, none, false, false);
+        check("#140 sequence: Back once, Allow stays", !a.blocked && a.quiet && !a.denied);
         // refused explicitly: Android explains it now, the app remembers that
-        blocked = PermissionAsk.blocked(asked, new int[] {D, D, D}, need, both, denied || quiet);
-        quiet = PermissionAsk.quietDenial(asked, new int[] {D, D, D}, need, both);
-        denied |= PermissionAsk.deniedOnce(both);
-        check("#140 sequence: a first real no, Allow stays", !blocked && !quiet && denied);
+        a = PermissionAsk.answer(false, asked, dd, need, both, a.denied, a.quiet);
+        check("#140 sequence: a first real no, Allow stays, the refusal is remembered", !a.blocked && !a.quiet && a.denied);
+        // Back on the second dialog: Android still explains it, still asks
+        a = PermissionAsk.answer(false, asked, dd, need, both, a.denied, a.quiet);
+        check("#140 sequence: Back after a real no, Allow stays", !a.blocked && a.denied);
         // refused again: no explanation any more, Android no longer asks
-        blocked = PermissionAsk.blocked(asked, new int[] {D, D, D}, need, none, denied || quiet);
-        check("#140 sequence: a second real no, open the app's settings", blocked);
+        PermissionAsk.Answer no2 = PermissionAsk.answer(false, asked, dd, need, none, a.denied, a.quiet);
+        check("#140 sequence: a second real no, open the app's settings", no2.blocked && no2.denied);
+        // granted in the app's settings: the refusal is forgotten (onResume calls remember)
+        boolean stored = PermissionAsk.remember(true, none, no2.denied);
+        check("#140 sequence: granted later, the refusal is forgotten", !stored);
+        // Android resets the unused app's permission; the dialog is closed with Back: Allow stays (the bug would return otherwise)
+        a = PermissionAsk.answer(false, asked, dd, need, none, PermissionAsk.remember(false, none, stored), false);
+        check("#140 sequence: granted, then reset by Android, then Back: Allow stays", !a.blocked && a.quiet && !a.denied);
+        // a grant in the answer itself clears everything
+        a = PermissionAsk.answer(true, asked, new int[] {G, G, G}, need, none, true, true);
+        check("#140: granted: not blocked, nothing remembered", !a.blocked && !a.quiet && !a.denied);
+        // a phone refused twice before this version (nothing remembered): the first Allow shows no dialog and keeps
+        // Allow, the second leads to the app's settings
+        a = PermissionAsk.answer(false, asked, dd, need, none, false, false);
+        PermissionAsk.Answer a2 = PermissionAsk.answer(false, asked, dd, need, none, a.denied, a.quiet);
+        check("#140: blocked before this version: first tap Allow stays, second tap open the app's settings", !a.blocked && a2.blocked);
+        check("#140: an interrupted request in between does not count as quiet", !PermissionAsk.answer(false, new String[0], new int[0], need, none, false, false).quiet);
     }
 
     // ------------------------------------------------------------------ scan retry (issue #96)

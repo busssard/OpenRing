@@ -42,12 +42,13 @@ public final class Permissions {
      * later refusal without explanation can be told from a dialog closed without choosing (issue #140).
      */
     static void remember(Activity a) {
+        store(a, app.openring.core.PermissionAsk.remember(granted(a), rationale(a), app.openring.data.Prefs.of(a).permissionDenied()));
+    }
+
+    /** Saves the remembered explicit refusal when it changed. */
+    static void store(Activity a, boolean denied) {
         app.openring.data.Prefs p = app.openring.data.Prefs.of(a);
-        if (granted(a)) {
-            if (p.permissionDenied()) p.setPermissionDenied(false);
-        } else if (app.openring.core.PermissionAsk.deniedOnce(rationale(a)) && !p.permissionDenied()) {
-            p.setPermissionDenied(true);
-        }
+        if (p.permissionDenied() != denied) p.setPermissionDenied(denied);
     }
 
     public static void request(Activity a) {

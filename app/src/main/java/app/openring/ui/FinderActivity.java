@@ -301,6 +301,11 @@ public final class FinderActivity extends Activity implements SensorEventListene
         super.onResume();
         resumed = true;
         listenSince = SystemClock.elapsedRealtime();
+        if (!demo) {
+            // granted in the app's settings meanwhile: forget the refusal, Android asks afresh if it takes it back (#140)
+            if (Permissions.granted(this)) permissionBlocked = quietDenial = false;
+            Permissions.remember(this);
+        }
         if (rotation != null && !demo) sm.registerListener(this, rotation, SensorManager.SENSOR_DELAY_GAME);
         try {
             tone = new ToneGenerator(AudioManager.STREAM_MUSIC, 70);
@@ -339,16 +344,15 @@ public final class FinderActivity extends Activity implements SensorEventListene
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
-        if (askedPermission && !Permissions.granted(this)) {
-            // refused again after an explicit refusal, Android no longer asks: only the app's settings can switch it
-            // on. A dialog closed without choosing (or an interrupted request) still asks next time (issue #140).
-            boolean[] rationale = Permissions.rationale(this);
-            String[] needed = Permissions.needed();
-            boolean before = Prefs.of(this).permissionDenied() || quietDenial;
-            permissionBlocked = PermissionAsk.blocked(perms, results, needed, rationale, before);
-            quietDenial = PermissionAsk.quietDenial(perms, results, needed, rationale);
+        // refused again after an explicit refusal, Android no longer asks: only the app's settings can switch it
+        // on. A dialog closed without choosing (or an interrupted request) still asks next time (issue #140).
+        PermissionAsk.Answer a = PermissionAsk.answer(Permissions.granted(this), perms, results, Permissions.needed(),
+                Permissions.rationale(this), Prefs.of(this).permissionDenied(), quietDenial);
+        if (askedPermission) {
+            permissionBlocked = a.blocked;
+            quietDenial = a.quiet;
         }
-        Permissions.remember(this);
+        Permissions.store(this, a.denied);
         if (resumed) startScan();
     }
 

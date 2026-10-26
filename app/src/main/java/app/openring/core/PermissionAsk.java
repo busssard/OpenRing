@@ -40,6 +40,43 @@ public final class PermissionAsk {
         return false;
     }
 
+    /** What the screen does after a permission request came back (see {@link #answer}). */
+    public static final class Answer {
+        /** Only the app's settings can switch it on: show "Open app settings" instead of "Allow". */
+        public boolean blocked;
+        /** This answer was a refusal without explanation; the next one like it blocks (see {@link #quietDenial}). */
+        public boolean quiet;
+        /** The new value of the remembered explicit refusal ({@link #remember}). */
+        public boolean denied;
+    }
+
+    /**
+     * The screen's whole decision after a request (issue #140), so the test drives the code the app runs.
+     *
+     * @param granted      whether all needed permissions are granted now
+     * @param deniedBefore the remembered explicit refusal from before this request
+     * @param quietBefore  the last answer on this screen was a refusal without explanation
+     */
+    public static Answer answer(boolean granted, String[] perms, int[] results, String[] needed, boolean[] rationale,
+                                boolean deniedBefore, boolean quietBefore) {
+        Answer a = new Answer();
+        a.denied = remember(granted, rationale, deniedBefore);
+        if (granted) return a;
+        a.blocked = blocked(perms, results, needed, rationale, deniedBefore || quietBefore);
+        a.quiet = quietDenial(perms, results, needed, rationale);
+        return a;
+    }
+
+    /**
+     * The remembered explicit refusal, updated: set once Android explains a needed permission, cleared once
+     * they are all granted (Android may take an unused app's permissions back later and then asks afresh,
+     * so a refusal from before the grant must not count).
+     */
+    public static boolean remember(boolean granted, boolean[] rationale, boolean stored) {
+        if (granted) return false;
+        return stored || deniedOnce(rationale);
+    }
+
     /**
      * Whether Android answered a needed permission with DENIED without explaining it: a dialog closed without
      * choosing, or a refusal Android no longer asks about. Two of these in a row on one screen mean Android
