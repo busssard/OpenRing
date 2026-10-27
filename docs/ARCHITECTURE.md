@@ -18,7 +18,7 @@ Nothing leaves the phone: the app has no internet permission.
 
 | Package | Responsibility |
 | --- | --- |
-| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line; issues #43 and #153), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
+| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line; issues #43 and #153), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
 | `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
@@ -196,10 +196,13 @@ Stopping a sync reaches only that sync: the background job holds a `SyncTicket`,
 only while its download holds the ring (`RingTasks.Owner`, one monitor for the check and the stop). Once
 the download is over, Android stopping the job leaves Live, a game or the person's own sync alone (#43).
 
-Live (issue #153): `liveSession` is the token of the newest live session queued or running. `startLive`
-rejoins only when that session is still the current one (`RingTasks.rejoinLive`); a session that was
-stopped (turned phone, Done and back) and is still cleaning up gets a new session queued behind it on the
-worker, which waits for the lock as usual. Messages of an ended session only go to the log.
+Live (issue #153): `core/LiveSessions` keeps the session tokens. Each start gets a new token, a stop moves
+the current token on, and the running mark holds the token of the newest session queued or running.
+`startLive` rejoins only when that session is still the current one (`RingTasks.rejoinLive`, applied by
+`LiveSessions.start`); a session that was stopped (turned phone, Done and back) and is still cleaning up
+gets a new session queued behind it on the worker, which waits for the lock as usual. A queued session
+that became stale, or one that ends, clears only its own mark (`stale`, `ended`), so an older session
+never clears a newer one. Messages of an ended session only go to the log.
 
 Code that replaces or wipes the database first waits for a running analysis (`synchronized
 (Analyzer.class)`): restore, pairing a different ring, and "Delete all local data" (`Analyzer.deleteAll`,

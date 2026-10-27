@@ -899,6 +899,7 @@ public class CoreTest {
         screenScore();
         decoders();
         ringTasks();
+        liveSessions();
         liveFeed();
         requests();
         auth();
@@ -3488,6 +3489,68 @@ public class CoreTest {
         check("texts: busy and delete messages fit the rules", !Texts.SYNC_BUSY.contains(" - ") && !Texts.DELETE_BUSY.contains(" - ")
                 && Texts.DELETE_BUSY.startsWith("Nothing was deleted") && Texts.DELETE_FAILED.startsWith("Nothing was deleted")
                 && !Texts.LIVE_BUSY.contains(" - ") && !Texts.LIVE_BUSY.contains("syncing") && !Texts.SYNC_BUSY.contains("ring task"));
+    }
+
+    /**
+     * Issue #153 (left open by #217): the live session bookkeeping of RingManager. A stopped session that
+     * is still cleaning up is never rejoined, and an older session ending never clears a newer one.
+     */
+    static void liveSessions() throws InterruptedException {
+        LiveSessions s = new LiveSessions();
+        eq("live sessions: nothing runs at first", s.running(), 0);
+        int first = s.start(false);
+        eq("live sessions: the first start gets token 1", first, 1);
+        eq("live sessions: it is marked running", s.running(), 1);
+        check("live sessions: a queued current session is not stale", !s.stale(first) && s.running() == 1);
+        eq("live sessions: a second screen with the same choice joins (0)", s.start(false), 0);
+        check("live sessions: joining keeps the session current", s.isCurrent(first) && s.running() == 1 && !s.spo2());
+
+        // a turned phone or Done and back: the old screen stops, the new one starts while the old session cleans up
+        s.stop();
+        check("live sessions: a stopped session is no longer current", !s.isCurrent(first));
+        eq("live sessions: a start after a stop gets a new session, not the cleaning up one", s.start(false), 3);
+        eq("live sessions: the new session is marked running", s.running(), 3);
+        s.ended(first);
+        eq("live sessions: the old session ending does not clear the newer one", s.running(), 3);
+        eq("live sessions: the newer session can be joined after the old one ended", s.start(false), 0);
+
+        // a blood oxygen switch replaces the running session
+        eq("live sessions: a blood oxygen switch starts a new session", s.start(true), 4);
+        check("live sessions: the switch is remembered", s.spo2() && s.isCurrent(4) && !s.isCurrent(3));
+        check("live sessions: the replaced session, queued, finds itself stale", s.stale(3));
+        eq("live sessions: a stale session clears only itself", s.running(), 4);
+        eq("live sessions: switching back starts again", s.start(false), 5);
+        check("live sessions: switching back is remembered", !s.spo2());
+
+        // stopped while queued: it clears its own mark, so the next screen starts a fresh session
+        s.stop();
+        check("live sessions: a session stopped while queued is stale", s.stale(5));
+        eq("live sessions: and leaves nothing running", s.running(), 0);
+        eq("live sessions: nothing running, a start gets a new session", s.start(false), 7);
+        s.ended(7); // could not get the ring, or done
+        eq("live sessions: a session that ends clears its mark", s.running(), 0);
+        eq("live sessions: after it ended a start does not join it", s.start(false), 8);
+
+        // two screens start at the same moment many times: tokens are distinct and the mark is the newest one
+        final LiveSessions c = new LiveSessions();
+        final List<Integer> tokens = Collections.synchronizedList(new ArrayList<Integer>());
+        Thread[] ts = new Thread[4];
+        for (int i = 0; i < ts.length; i++) {
+            final boolean spo2 = i % 2 == 0;
+            ts[i] = new Thread(new Runnable() {
+                public void run() {
+                    for (int k = 0; k < 20000; k++) {
+                        int t = c.start(spo2);
+                        if (t != 0) tokens.add(t);
+                    }
+                }
+            });
+        }
+        for (Thread t : ts) t.start();
+        for (Thread t : ts) t.join();
+        check("live sessions: concurrent starts never share a token", new HashSet<Integer>(tokens).size() == tokens.size() && !tokens.isEmpty());
+        eq("live sessions: after concurrent starts the newest token is the one marked running", c.running(), Collections.max(tokens));
+        check("live sessions: and it is the current one", c.isCurrent(c.running()));
     }
 
     /** Issue #152: always on heart rate never becomes a beat interval, so it never feeds live HRV. */
