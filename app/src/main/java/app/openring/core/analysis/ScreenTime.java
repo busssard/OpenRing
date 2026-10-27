@@ -48,6 +48,103 @@ public final class ScreenTime {
     /** A session that the lock screen ends within this time of its start was only a glance at the lock screen. */
     public static final double GLANCE_S = 5;
 
+    /**
+     * Android usage event types for the screen: 15 screen interactive, 16 screen non interactive, 26
+     * device shutdown, 27 device startup, 17 keyguard shown, 18 keyguard hidden; 1 (an app came to the
+     * front) and 7 (user interaction) show the phone was in use. 0 for every other type.
+     */
+    public static int screenKind(int androidType) {
+        switch (androidType) {
+            case 15: return ON;
+            case 16: return OFF;
+            case 26: return SHUTDOWN;
+            case 27: return STARTUP;
+            case 17: return LOCKED;
+            case 18: return UNLOCKED;
+            case 1: case 7: return ALIVE;
+            default: return 0;
+        }
+    }
+
+    /**
+     * Android usage event types for the apps in front: 1 an app came to the front, 2 it went to the
+     * back; the screen turning off, a shutdown or a start closes every app. 0 for every other type.
+     */
+    public static int appKind(int androidType) {
+        switch (androidType) {
+            case 1: return APP_ON;
+            case 2: return APP_OFF;
+            case 16: return OFF;
+            case 26: return SHUTDOWN;
+            case 27: return STARTUP;
+            default: return 0;
+        }
+    }
+
+    /**
+     * One read of Android's usage log, split into the screen list (events from {@code screenFrom}) and
+     * the app list (events from {@code appFrom}, with the package of each app event). The reader feeds
+     * every event in log order; data/ScreenUse and the tests share this, so the tests read the log the
+     * way the app does.
+     */
+    public static final class LogSplit {
+        private final double screenFrom, appFrom;
+        private final List<Double> times = new ArrayList<Double>(), aTimes = new ArrayList<Double>();
+        private final List<Integer> kinds = new ArrayList<Integer>(), aKinds = new ArrayList<Integer>();
+        private final List<String> aPkgs = new ArrayList<String>();
+
+        public LogSplit(double screenFrom, double appFrom) {
+            this.screenFrom = screenFrom;
+            this.appFrom = appFrom;
+        }
+
+        /** One log event at {@code t} (seconds) of Android type {@code type}, from the app {@code pkg}. */
+        public void add(double t, int type, String pkg) {
+            int app = t < appFrom ? 0 : appKind(type);
+            if (app != 0) {
+                aTimes.add(t);
+                aKinds.add(app);
+                aPkgs.add(app == APP_ON || app == APP_OFF ? pkg : null);
+            }
+            int kind = screenKind(type);
+            if (kind == 0 || t < screenFrom) return;
+            times.add(t);
+            kinds.add(kind);
+        }
+
+        public double[] screenTimes() {
+            return doubles(times);
+        }
+
+        public int[] screenKinds() {
+            return ints(kinds);
+        }
+
+        public double[] appTimes() {
+            return doubles(aTimes);
+        }
+
+        public int[] appKinds() {
+            return ints(aKinds);
+        }
+
+        public String[] appPackages() {
+            return aPkgs.toArray(new String[0]);
+        }
+
+        private static double[] doubles(List<Double> l) {
+            double[] a = new double[l.size()];
+            for (int i = 0; i < a.length; i++) a[i] = l.get(i);
+            return a;
+        }
+
+        private static int[] ints(List<Integer> l) {
+            int[] a = new int[l.size()];
+            for (int i = 0; i < a.length; i++) a[i] = l.get(i);
+            return a;
+        }
+    }
+
     /** As below; the old overload with a lock screen flag gives the same result (the log itself tells). */
     public static List<double[]> sessions(double[] times, int[] kinds, double from, double now, boolean ignored) {
         return sessions(times, kinds, from, now);

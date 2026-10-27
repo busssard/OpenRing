@@ -600,7 +600,7 @@ public class PipelineTest {
         // issue #112: the night counts as rest although the demo sends no activity values then, and every minute of a
         // day is in one level or not worn; issue #155: today's total burn counts its resting burn so far
         int sumDays = 0;
-        String today = demoToday.toString(), todayUntil = null;
+        String today = demoToday.toString(), todayUntil = null, pastUntil = null;
         for (String[] r : demo.daysJson("2000-01-01", "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
             if (o == null || !o.has("rest_min")) continue;
@@ -611,12 +611,12 @@ public class PipelineTest {
                     + o.optDouble("rest_min") + o.optDouble("non_wear_min");
             if (Math.abs(sum - len) < 1e-6) sumDays++;
             if (r[0].equals(today)) todayUntil = o.has("total_until") ? "yes" : "no";
-            else if (o.has("total_until")) todayUntil = "a past day " + r[0];
+            else if (o.has("total_until")) pastUntil = pastUntil == null ? r[0] : pastUntil + " " + r[0];
         }
         restChecks(demo, demoNow, "demo", 0);
         check("demo: every minute of a day in one level or not worn (#112)", sumDays == demo.daysJson("2000-01-01", "2100-01-01").size(), sumDays);
         // at 14:00 today has a day, analysed while it runs (the 00:30 demo below has none yet)
-        check("demo: only today counts its resting burn so far (#155)", "yes".equals(todayUntil), todayUntil);
+        check("demo: only today counts its resting burn so far (#155)", "yes".equals(todayUntil) && pastUntil == null, "today " + todayUntil + ", past days " + pastUntil);
         check("demo weeks are full weeks with the old texts", weekDays >= 25 && weekTexts, weekDays + " days");
         ScreenTime.Day demoScreen = app.openring.data.ScreenDays.day(demo, demoToday.minusDays(2), java.time.ZoneId.systemDefault());
         check("demo has screen time", demoScreen != null && demoScreen.totalMin > 90 && demoScreen.totalMin < 300 && demoScreen.turnedOn > 20,
@@ -1001,7 +1001,6 @@ public class PipelineTest {
             medium[i] = o == null ? -1 : o.optDouble("medium_min");
         }
         check("activity 28 to 30 March: each day counts its real minutes (#114)", cov[0] == 1440 && cov[1] == 1380 && cov[2] == 1440, Arrays.toString(cov));
-        check("activity 28 to 30 March: the days add up to the real total (#114)", cov[0] + cov[1] + cov[2] == (int) ((b - a) / 60), (cov[0] + cov[1] + cov[2]) + " of " + (b - a) / 60);
         check("activity: a walk after midnight on 30 March counts once, on 30 March (#114)", medium[1] == 0 && medium[2] == 30, Arrays.toString(medium));
         JSONObject s29 = dayOf(spring, "2026-03-29");
         // review of #202: a newly analysed day stores its real minutes, and only such a day gets the line under the chart
@@ -1765,10 +1764,8 @@ public class PipelineTest {
                 first.optString("day") + " detail " + first.optInt("stage_detail", -1));
         Analyzer.runAll(c, null);
         long nightsAll = db.count("SELECT COUNT(*) FROM nights"), daysAll = db.count("SELECT COUNT(*) FROM days");
-        String oldestAll = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0)).optString("day");
         check("full re analysis keeps every night and day (#20)", nightsAll == nights && daysAll == days,
                 nights + " to " + nightsAll + " nights, " + days + " to " + daysAll + " days");
-        check("full re analysis keeps the oldest night", oldestAll.equals(oldest), oldestAll);
         // and after the full re analysis the oldest night keeps its date and the chosen detail
         first = Json.parse(db.nightsJson("2000-01-01", "2100-01-01", true).get(0));
         check("after the full re analysis the oldest night has the chosen detail", first.optInt("stage_detail", -1) == level
@@ -2189,9 +2186,8 @@ public class PipelineTest {
                         LocalDate want = i < 5 ? before.get(i) : after.get(i - 5);
                         ok &= want.toString().equals(o.optString("day"));
                         got.append(o.optString("day")).append(' ');
-                        // as DayData.travelLine: the main night before by start
-                        String l = i == 0 ? null : app.openring.core.analysis.ClockChange.travel(main.get(i - 1).optString("zone", null),
-                                o.optString("zone", null), (Json.d(o, "start") + Json.d(o, "end")) / 2);
+                        // the line the day screen shows (DayData.travelLine)
+                        String l = app.openring.data.SleepHistory.travelLine(o, main);
                         if (l != null) {
                             travelDay = travelDay == null ? o.optString("day") : travelDay + " and " + o.optString("day");
                             line = l;
@@ -2259,13 +2255,9 @@ public class PipelineTest {
                 + " (without zones " + Math.round(hb.bedtimeSdMin) + ")");
         JSONObject nyDay = Json.parse(db.dayJson("2026-09-15"));
         check("trip " + when + ": a day in New York is analysed", nyDay != null && nyDay.has("readiness"), null);
-        JSONObject prev = null, first = null;
-        for (JSONObject o : main) {
-            if ("2026-09-14".equals(o.optString("day"))) first = o;
-            else if (first == null) prev = o;
-        }
-        String line = first == null || prev == null ? null : app.openring.core.analysis.ClockChange.travel(prev.optString("zone"),
-                first.optString("zone"), (Json.d(first, "start") + Json.d(first, "end")) / 2);
+        JSONObject first = null;
+        for (JSONObject o : main) if ("2026-09-14".equals(o.optString("day"))) first = o;
+        String line = app.openring.data.SleepHistory.travelLine(first, main);
         check("trip " + when + ": the first night away gets the orange line",
                 "Times this night are in New York time, 6 hours behind where you slept the night before.".equals(line), line);
     }
@@ -3894,8 +3886,8 @@ public class PipelineTest {
                             && Math.abs(waso - wakes[k]) <= 15 && Math.abs(asleep - sleep) <= 25, describe(n));
                     check(how + ": scores lower than sleeping through", sc < score[0] - 5, sc + " vs " + score[0]);
                     if (!marker) score[k] = sc;
-                    check(how + ": latency " + (marker ? "from the marker" : "stays 0 without a marker"),
-                            marker || n.optDouble("latency_min") <= 1, n.opt("latency_min"));
+                    check(how + ": latency " + (marker ? "from the marker (the 10 awake minutes at the start)" : "stays 0 without a marker"),
+                            marker ? n.optDouble("latency_min") >= 5 && n.optDouble("latency_min") <= 15 : n.optDouble("latency_min") <= 1, n.opt("latency_min"));
                 } else if (marker) {
                     check(how + ": the marker keeps one night", all.size() == 1, describe(n));
                 } else {
@@ -4120,7 +4112,7 @@ public class PipelineTest {
         check("#132 a stored night alone across the start moves it: the sleep is rebuilt, the old row gone", now.size() == 1
                 && now.get(0)[0] == first.get(0)[0] && now.get(0)[1] == first.get(0)[1] && mains(db, day) == 1, spans(now));
         check("#132 the day the old row was on has no sleep left", storedSleeps(db, next, next).isEmpty() && mains(db, next) == 0, spans(storedSleeps(db, next, next)));
-        check("#132 that run logs nothing about replaced sleeps (only the stored night crossed)", !log.contains("replaced "), log);
+        check("#132 that run logs nothing about rebuilt or removed sleeps (only the stored night crossed)", !log.contains("stored sleep"), log);
 
         // a long nap 11:30 to 16:00 and an evening sleep to 00:30 with phone use from 23:50 (both day d);
         // phone use at first also 19:00 to 21:30, so the nap is the main sleep

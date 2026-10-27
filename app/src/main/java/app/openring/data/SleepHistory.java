@@ -33,6 +33,20 @@ public final class SleepHistory {
      */
     public int stageDetail = StageFilter.DETAILED;
 
+    /**
+     * The orange line after a trip (issue #22): {@code night}'s zone differs from the zone of the night
+     * in {@code nights} that started last before it. Null without a night before or without a change.
+     */
+    public static String travelLine(JSONObject night, List<JSONObject> nights) {
+        if (night == null) return null;
+        double start = Json.d(night, "start");
+        JSONObject prev = null;
+        for (JSONObject o : nights) if (Json.d(o, "start") < start && (prev == null || Json.d(o, "start") > Json.d(prev, "start"))) prev = o;
+        if (prev == null) return null;
+        double mid = (start + Json.d(night, "end")) / 2;
+        return app.openring.core.analysis.ClockChange.travel(prev.optString("zone", null), night.optString("zone", null), mid);
+    }
+
     /** Main nights whose day lies in [fromDay, toDay] (ISO dates; "0000-01-01" for all time). */
     public static SleepHistory load(Db db, String fromDay, String toDay, ZoneId zone) {
         List<JSONObject> list = new ArrayList<JSONObject>();

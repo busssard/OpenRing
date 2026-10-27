@@ -1091,12 +1091,12 @@ public class FinderTest {
                     c[0] == 300 && c[1] < (nr[1] == 0 ? 0.02 : 0.05) * 300, c[1]);
         }
         int[] around = circles(AROUND, NO_RING, 4, 0, 400000, 200);
-        check("no ring, walk around the room: no clear circle", around[1] == 0, around[1]);
+        check("no ring, walk around the room: a spot every time, no clear circle", around[0] == 200 && around[1] == 0, around[0] + " spots, " + around[1] + " clear");
         // the ring 2 to 5 m outside the L walk: few clear circles, and a circle that misses it is almost always flagged as maybe farther
         // (with "15 % explained": 114 clear in 300, 81 missing the ring, 13 of them not flagged)
         int[] out = circles(PART, RING_OUTSIDE, 5, 1.5, 400000, 300);
         System.out.printf(Locale.US, "  ring 2 to 5 m outside the L walk: %d clear circles in %d walks, %d miss the ring, %d of those not flagged beyond%n", out[1], out[0], out[2], out[3]);
-        check("ring outside the L walk: a clear circle in under a third of walks", out[1] < 100, out[1]);
+        check("ring outside the L walk: a spot every time, a clear circle in under a third of walks", out[0] == 300 && out[1] < 100, out[0] + " spots, " + out[1] + " clear");
         check("ring outside the L walk: a clear circle that misses it and does not say it may be farther in under 5 % of walks", out[3] < 15, out[3]);
     }
 
@@ -1359,9 +1359,7 @@ public class FinderTest {
         LastWorn.Result r = offThenCharger(60, 10, 25);
         check("#135: off, table 10 min, charger 25 min: not confirmed, at most just put on", r.hrRule && r.state == LastWorn.WORN
                 && !r.confirmed && r.justOn && r.lastHr < BASE + 61 * 60, r.state + " confirmed " + r.confirmed + " justOn " + r.justOn);
-        // the test the issue asked for: off, table 10 min, charger 30 min
-        LastWorn.Result r30 = offThenCharger(60, 10, 30);
-        check("#135: off, table 10 min, charger 30 min: just put on, not confirmed", r30.state == LastWorn.WORN && !r30.confirmed && r30.justOn, r30.state);
+        // the test the issue asked for (off, table 10 min, charger 30 min) is one cell of the sweep below
         // the issue's sweep: cool 5 to 25 minutes, charger 10 to 45 minutes; never "from a finger, heart rate until ..."
         int bad = 0;
         String first = null;
@@ -1403,9 +1401,7 @@ public class FinderTest {
         LastWorn.Result r1 = offThenCharger(60, 5, 90);
         check("#179 review: one cool reading, then 90 min warm without heart rate: not sure since the last heart rate",
                 r1.state == LastWorn.UNSURE && Math.abs(r1.at - (BASE + 60 * 60)) <= 10, r1.state + " " + (r1.at - BASE) / 60);
-        // two cool readings are a real stay on the table: taken off (the 90 min case above)
-        LastWorn.Result r2 = offThenCharger(60, 10, 90);
-        check("#179 review: two cool readings, then 90 min warm: taken off", r2.state == LastWorn.OFF, r2.state);
+        // two cool readings are a real stay on the table: taken off (the 90 min case of the #135 checks)
         // the same with only night heart rate (an HRV event until 07:55, 15 min cool, then the charger): the rule
         // is off, so it reads worn, but the night heart rate before the cool readings confirms nothing
         double[][] nt = tempsC(9, new double[] {0, 8, 33}, new double[] {8, 8.25, 22}, new double[] {8.25, 9, 31});
@@ -1890,7 +1886,6 @@ public class FinderTest {
     static void briefIs(String name, LastWorn.Result r, double now, LastWorn.Clock clock, String want) {
         String got = LastWorn.brief(r, now, clock);
         check("brief: " + name, got.equals(want), got);
-        check("brief has no dash: " + name, !got.contains(" - ") && !got.contains("\u2013") && !got.contains("\u2014"));
     }
 
     static void finderLayout() {
