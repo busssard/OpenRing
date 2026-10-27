@@ -204,8 +204,9 @@ public final class Charts {
             return this;
         }
 
+        /** Night times rounded to the nearest minute, as the timeline shows them (issue #138). */
         private String clock(double t) {
-            return Charts.clock(t, zone);
+            return app.openring.core.analysis.WakeUps.clock(t, zone);
         }
 
         public Hypnogram(Context c, int[] stages, double start, double end) {
@@ -305,7 +306,7 @@ public final class Charts {
                 double ep = (end - start) / n;
                 double ta = start + a * ep, tb = start + b * ep;
                 // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
-                String label = app.openring.core.analysis.ClockChange.stageTip(zone, start + (k + 0.5) * ep, name(stages[k]), ta, tb);
+                String label = app.openring.core.analysis.ClockChange.roundedStageTip(zone, start + (k + 0.5) * ep, name(stages[k]), ta, tb);
                 drawTip(cv, labelW + (k + 0.5f) * cw, Ui.dp(getContext(), 20), bottom, label);
             }
             // time axis
@@ -382,8 +383,16 @@ public final class Charts {
             return this;
         }
 
+        private boolean nearestMinute;
+
+        /** Times rounded to the nearest minute, for the night charts on the Sleep page (issue #138). */
+        public LineChart nearestMinute() {
+            nearestMinute = true;
+            return this;
+        }
+
         private String clock(double t) {
-            return Charts.clock(t, zone);
+            return nearestMinute ? app.openring.core.analysis.WakeUps.clock(t, zone) : Charts.clock(t, zone);
         }
         private int maxDays;
         private double midAt = Double.NaN;
@@ -598,7 +607,7 @@ public final class Charts {
                 double t = series.t(idx[best]);
                 // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
                 String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t)
-                        : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, t);
+                        : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, nearestMinute ? app.openring.core.analysis.WakeUps.roundMin(t) : t);
                 cv.drawCircle(xs[best], ys[best], Ui.dp(getContext(), 4.5f), dot);
                 drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit);
             }

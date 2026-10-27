@@ -43,6 +43,16 @@ public final class WakeUps {
     }
 
     /**
+     * "22:43": a night's moment as the Sleep page shows it, rounded to the nearest minute like the
+     * timeline, so the score card, the charts and the timeline show the same minute (issue #138); "--"
+     * when unknown. {@code zone} null is the phone's zone.
+     */
+    public static String clock(double unix, java.time.ZoneId zone) {
+        if (Double.isNaN(unix) || Double.isInfinite(unix)) return "--";
+        return ClockChange.hm(zone, roundMin(unix));
+    }
+
+    /**
      * Minutes shown for a span from {@code a} to {@code b}: the difference of the two rounded clock
      * times, so "Awake for 3 min, back asleep 02:17" after "02:14" adds up. A span of a minute or
      * more always rounds to at least 1 min, so a wake up never shows as 0 min.

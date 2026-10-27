@@ -154,6 +154,14 @@ public final class ClockChange {
                 + (b.equals(note) ? "" : b) + " (" + Math.round((to - from) / 60) + " min)";
     }
 
+    /**
+     * {@link #stageTip} with every time rounded to the nearest minute (issue #138), so the readout shows the same
+     * minutes as the night timeline and its length is the difference of the two times shown.
+     */
+    public static String roundedStageTip(ZoneId zone, double at, String stage, double from, double to) {
+        return stageTip(zone, WakeUps.roundMin(at), stage, WakeUps.roundMin(from), WakeUps.roundMin(to));
+    }
+
     /** "07:42" in {@code zone} (the system zone without one), as the charts write it. */
     static String hm(ZoneId zone, double unix) {
         java.time.ZonedDateTime z = Instant.ofEpochSecond((long) unix).atZone(zone == null ? ZoneId.systemDefault() : zone);

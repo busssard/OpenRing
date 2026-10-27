@@ -135,6 +135,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         nav = Ui.hbox(this);
         nav.setBackgroundColor(Ui.CARD);
         nav.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 6));
+        navPx = -1;
         for (int i = 0; i < ICONS.length; i++) nav.addView(navItem(i), Ui.weight(1));
         root.addView(nav);
         setContentView(root);
@@ -496,14 +497,23 @@ public final class MainActivity extends Activity implements RingManager.Listener
         return sb.toString();
     }
 
+    /** The tab label size worked out by {@link #navTextPx} for the first tab, -1 before. */
+    float navPx = -1;
+
     View navItem(final int i) {
         LinearLayout item = Ui.vbox(this);
         item.setGravity(Gravity.CENTER);
         ImageView icon = new ImageView(this);
         icon.setImageResource(ICONS[i]);
         item.addView(icon, new LinearLayout.LayoutParams(Ui.dp(this, 24), Ui.dp(this, 24)));
+        // centred under its icon in the full cell, one line, one size that lets the longest label fit (issue #119)
         TextView t = Ui.text(this, LABELS[i], 11, Ui.TEXT_3, Ui.MEDIUM);
-        item.addView(t);
+        t.setGravity(Gravity.CENTER);
+        t.setSingleLine(true);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        if (navPx < 0) navPx = navTextPx(t.getPaint()); // measured once for all six tabs
+        t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, navPx);
+        item.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         item.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -511,6 +521,22 @@ public final class MainActivity extends Activity implements RingManager.Listener
             }
         });
         return item;
+    }
+
+    /**
+     * The tab label size in pixels: 11 sp, or smaller (not below 8 sp) when the widest label would not fit a sixth of the
+     * screen with 2 dp on each side (large font settings on a narrow phone; "Activity" needs about 45 of 60 dp at 11 sp).
+     */
+    float navTextPx(android.graphics.Paint paint) {
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        float wanted = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 11, dm);
+        float min = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 8, dm);
+        android.graphics.Paint p = new android.graphics.Paint(paint);
+        p.setTextSize(wanted);
+        float widest = 0;
+        for (String l : LABELS) widest = Math.max(widest, p.measureText(l));
+        float room = dm.widthPixels / (float) LABELS.length - Ui.dp(this, 4);
+        return app.openring.core.Texts.fitSize(wanted, widest, room, min);
     }
 
     View iconButton(int res, View.OnClickListener l) {
