@@ -13,7 +13,7 @@ labels: bug
 **Ring and phone**
 Ring model and firmware (Settings, Ring):
 Android version:
-Open Ring version (Settings, About and updates):
+Open Ring version (Settings, About):
 
 **Data check** (Settings, Help, Data check and log, copy and paste here; it contains no health values)
 

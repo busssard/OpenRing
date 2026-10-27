@@ -126,7 +126,8 @@ public final class Scores {
         double tempScore = Double.isNaN(in.tempDev) ? Double.NaN
             : Stats.curve(Math.abs(in.tempDev) * (in.tempDev < 0 ? 0.7 : 1.0), new double[][] {{0.1, 100}, {0.3, 90}, {0.5, 72}, {1.0, 40}, {1.5, 12}});
         add(sc, "temperature", "Body temperature", tempScore, 13,
-            Double.isNaN(in.tempDev) ? "" : String.format(Locale.US, "%+.1f °C", in.tempDev));
+            // the same rule and rounding as the card (issue #163); the screen formats it again with the phone's locale
+            Double.isNaN(in.tempDev) ? "" : Texts.signed(in.tempDev, Locale.US) + " °C");
         add(sc, "recovery", "Recovery index",
             Stats.curve(in.recoveryFraction, new double[][] {{0.5, 100}, {0.6, 88}, {0.75, 62}, {0.9, 38}, {1.0, 22}}), 10,
             Double.isNaN(in.recoveryFraction) ? "" : (in.recoveryFraction <= 0.5 ? "lowest HR in first half" : "lowest HR late in the night"));
