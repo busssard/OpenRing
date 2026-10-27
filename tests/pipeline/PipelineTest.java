@@ -599,7 +599,7 @@ public class PipelineTest {
         check("first demo day counts 1 worn day", firstWorn == 1, firstWorn);
         // issue #112: the night counts as rest although the demo sends no activity values then, and every minute of a
         // day is in one level or not worn; issue #155: today's total burn counts its resting burn so far
-        int restDays = 0, sumDays = 0, nights112 = 0;
+        int sumDays = 0;
         String today = demoToday.toString(), todayUntil = null;
         for (String[] r : demo.daysJson("2000-01-01", "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
@@ -610,15 +610,10 @@ public class PipelineTest {
             double sum = o.optDouble("high_min") + o.optDouble("medium_min") + o.optDouble("low_min") + o.optDouble("inactive_min")
                     + o.optDouble("rest_min") + o.optDouble("non_wear_min");
             if (Math.abs(sum - len) < 1e-6) sumDays++;
-            // a night the demo cut short at its "now" is not a whole night (issue #123)
-            if (!demo.nightsJson(r[0], r[0], true).isEmpty() && !cutShort(demo, r[0], demoNow)) {
-                nights112++;
-                if (o.optDouble("rest_min") >= 300) restDays++;
-            }
             if (r[0].equals(today)) todayUntil = o.has("total_until") ? "yes" : "no";
             else if (o.has("total_until")) todayUntil = "a past day " + r[0];
         }
-        check("demo: days with a night show the night as rest (#112)", nights112 >= 28 && restDays == nights112, restDays + " of " + nights112);
+        restChecks(demo, demoNow, "demo", 0);
         check("demo: every minute of a day in one level or not worn (#112)", sumDays == demo.daysJson("2000-01-01", "2100-01-01").size(), sumDays);
         // at 14:00 today has a day, analysed while it runs (the 00:30 demo below has none yet)
         check("demo: only today counts its resting burn so far (#155)", "yes".equals(todayUntil), todayUntil);
@@ -733,6 +728,7 @@ public class PipelineTest {
         long cutNow = java.time.LocalDateTime.parse("2026-10-22T01:19:00").atZone(zz).toEpochSecond();
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2026-10-22"), cutNow);
         dayHeartChecks(Db.get(phone3), cutNow, "demo at 01:19", 1);
+        restChecks(Db.get(phone3), cutNow, "demo at 01:19", 1);
         // clocks forward on 29 March 2026, at noon
         long springNow = java.time.LocalDateTime.parse("2026-04-12T12:00:00").atZone(zz).toEpochSecond();
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2026-04-12"), springNow);
@@ -2669,6 +2665,27 @@ public class PipelineTest {
                 nearNight + " of " + withNight + ", " + cut + " night cut short left out");
     }
 
+    /**
+     * Issue #112: every demo day with a whole night has at least 5 hours of Rest, although the demo sends no activity
+     * values at night. A night the demo cut short at its {@code now} is left out (issue #123); {@code wantCut} is how
+     * many there must be.
+     */
+    static void restChecks(Db db, long now, String label, int wantCut) {
+        int restDays = 0, nights = 0, cut = 0;
+        for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o == null || !o.has("rest_min") || db.nightsJson(r[0], r[0], true).isEmpty()) continue;
+            if (cutShort(db, r[0], now)) {
+                cut++;
+                continue;
+            }
+            nights++;
+            if (o.optDouble("rest_min") >= 300) restDays++;
+        }
+        check(label + ": days with a night show the night as rest (#112)", nights >= 28 && restDays == nights && cut == wantCut,
+                restDays + " of " + nights + ", " + cut + " night cut short left out");
+    }
+
     /** Whether the main night of {@code day} ended less than 2 hours before the demo's {@code now}: cut short by it (issue #123). */
     static boolean cutShort(Db db, String day, long now) {
         List<String> ns = db.nightsJson(day, day, true);
@@ -3161,10 +3178,13 @@ public class PipelineTest {
         check("always on heart rate: the night without HRV events is found (#166)", n0 != null && n1 != null && n2 != null,
                 describe(n0) + " / " + describe(n1) + " / " + describe(n2));
         if (n0 == null || n1 == null || n2 == null) return;
-        double hrvAvg = (n0.optDouble("avg_hr") + n2.optDouble("avg_hr")) / 2;
-        check("always on heart rate: the night's lowest heart rate comes from the bursts (#166)", Math.abs(n1.optDouble("lowest_hr") - 51) < 4
-                && n1.optJSONArray("hr_series") != null && n1.optJSONArray("hr_series").length() > 50, n1.opt("lowest_hr"));
-        check("always on heart rate: 0 and 250 left out of the night, average like the HRV nights (#166)", Math.abs(n1.optDouble("avg_hr") - hrvAvg) <= 3,
+        // the bursts carry the HRV nights' curve, so the night reads like them; one 0 kept per burst lowers each 5 minute
+        // value by about 5 % (lowest about 48, average 3 below), one 250 kept raises it by about 10 bpm
+        double hrvAvg = (n0.optDouble("avg_hr") + n2.optDouble("avg_hr")) / 2, hrvLow = (n0.optDouble("lowest_hr") + n2.optDouble("lowest_hr")) / 2;
+        check("always on heart rate: the night's lowest heart rate comes from the bursts, like the HRV nights (#166)",
+                Math.abs(n1.optDouble("lowest_hr") - hrvLow) <= 1.5 && n1.optJSONArray("hr_series") != null && n1.optJSONArray("hr_series").length() > 50,
+                n1.opt("lowest_hr") + " vs " + hrvLow);
+        check("always on heart rate: 0 and 250 left out of the night, average like the HRV nights (#166)", Math.abs(n1.optDouble("avg_hr") - hrvAvg) <= 1.5,
                 n1.opt("avg_hr") + " vs " + hrvAvg);
         app.openring.core.analysis.TS line = dayLine(db, day0.plusDays(2).toString());
         double q1 = pointAt(line, day2 + 23 * 3600 + 450), q2 = pointAt(line, day2 + 23 * 3600 + 1350);
