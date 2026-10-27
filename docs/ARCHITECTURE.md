@@ -97,7 +97,12 @@ history had, before anything is written to the file the person picked; otherwise
    up in the middle of the night (up to 3 hours, the gap from 22:00 at the earliest to before 06:30, the
    sleep before it begun at 21:00 or later, the ring worn through it) joins the pieces before and after
    into one night; the time the ring calls awake in the gap counts as awake, and ring stages of both
-   pieces keep their own times (issue #42). kv `night_finder` holds the rules version. `Analyzer` then
+   pieces keep their own times (issue #42). These clock times are read in the zone the sleep was slept in
+   (`Analyzer.sleptIn`, see Time zones below), decided once per night from the end of the last piece reached
+   through gaps of up to 3 hours (`NightFinder.nightEnds`), never in the phone's zone now, so a trip does not split nights
+   analysed again later (issue #161). A period keeps where the ring's own hypnogram ends (`Period.codesEnd`), so
+   a bedtime period that makes a ring staged run longer leaves the stages at their clock times and the extra time
+   without stage data (issue #110). kv `night_finder` holds the rules version. `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
    When "Count phone use as awake" is on (default), phone use of a minute or more that overlaps the first or
    last 10 minutes of a period moves its edge past it, and a period of under 15 minutes left is dropped.
@@ -111,18 +116,28 @@ history had, before anything is written to the file the person picked; otherwise
    function on the stored `stages_raw` (`Analyzer.preview`, phone use chosen by `ScreenTime.forNight` as in the
    analysis, the ring's wake ups from the night's `ring_awake`, stored since issue #30), so it shows the night
    that saving produces.
-3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
+3. `NightAnalyzer` computes durations, efficiency (time asleep over time in bed, as Oura defines it; steps without
+   stage data count as time in bed, neither asleep nor awake, and the Sleep page shows them as "No data", issue #107; the screens and the averages work efficiency out from the
+   stored minutes, `StageShare.efficiency`, so nights analysed before agree without a re analysis), latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep
-   35/15/10/10/10/10/10); contributor curves are transparent and based on sleep research. Baselines become
+   35/15/10/10/10/10/10); a period with no sleep at all has no Restfulness (issue #118), like REM and deep on a
+   night without stages; contributor curves are transparent and based on sleep research. Baselines become
    personal after about 14 nights.
 5. Time zones (issue #22): each night takes its zone from `zones` and stores it as `zone`; its day, sleep timing
    and clock change marker use it, and a day uses its main night's zone. Screens format each night's times
    with its own zone (`Json.zone`, falling back to the phone's zone for nights without one), so a trip does
-   not move earlier nights. A new zone row analyses the nights since the row before again.
+   not move earlier nights. A new zone row analyses the nights since the row before again. A night whose end
+   falls between two rows takes the later zone; it keeps the date it has in the zone before only when it was
+   most likely slept there, its end nearer to 07:00 on that clock (`ClockChange.sleptBefore`: a night before a
+   flight west), so a first night after crossing the date line stays on its own day (issue #162). Screens that show
+   one calendar day (Screen clock, the Body tab's day) take its clock change from `ClockChange.onDay`: a change
+   belongs to the date of the clock time it skips or repeats, also at midnight (Greenland, Cairo; issue #158),
+   while nights keep `ClockChange.find`. A touch on a lit 5 minute line of the Screen clock finds the use drawn
+   there with the step maths of `DialMath.fill` (`DialMath.touch`, issue #109).
 6. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
    when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
-   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes.
+   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
    Each week replaces the stored nights from its start, moved back to the start of any sleep (found now or
    stored) that crosses it, so a sleep stored with an end shortened by phone use is replaced, never doubled
    (`Analyzer.boundary`, issue #132); the days of the nights it replaced are analysed again too, and the main
@@ -146,6 +161,23 @@ history had, before anything is written to the file the person picked; otherwise
    The day reads events from 30 minutes before midnight, so the values after midnight of an HRV event begun before it
    (six values, start + 0 to 25 minutes) count for the new day. kv `day_heart` holds the rules version
    (`DayHeart.VERSION`); a change analyses everything again once.
+8. The day's activity (`Wellness.day`, Activity tab) counts every real minute from midnight to midnight in the day's
+   zone once: 1440 minutes, 1380 or 1500 when the clocks change by an hour (1410 or 1470 for Lord Howe's half hour),
+   so neighbouring days never share or lose a minute (issue #114). The 96 quarter hours of "Intensity through the
+   day" and the 08:00 to 22:00 window go by each minute's clock time, like `DialMath.fill`: the repeated hour lands
+   twice on the same quarter hours (their average), the skipped one stays empty, and a line under the chart says so
+   (`ClockChange.activityText`) on days analysed this way: the day JSON stores the real minutes as `day_min`, and a
+   day stored before has no `day_min` (its numbers still count 1440 minutes), so it gets no line. A sitting stretch (awake, under 1.5 MET, ended by sleep, a missing minute or more
+   movement) is a long sitting period when 60 or more of its own minutes lie between 08:00 and 22:00, also at the end
+   of the day (issue #154). Activity values count only from 0 to 25 MET (`EventCodec.plausibleMet`, issue #120);
+   higher ones are damaged bytes and count as missing minutes. A minute inside one of the day's sleeps is Rest also
+   without an activity value (issue #112; whether a Ring 4 sends values at night is not known), so every minute is in
+   exactly one of High, Medium, Low, Inactive, Rest or Not worn (`non_wear_min`); `covered_min` stays the minutes with a
+   value. Total burn (`total_kcal`) is active burn plus the resting burn (`Wellness.bmr`); a day still running when it
+   is analysed counts the resting burn only for the share of its real seconds that has passed (`Wellness.restingKcal`,
+   issue #155, as Oura's total burn grows through the day) and stores `total_until`, which the screen shows as "So far
+   (up to 08:07)"; the next analysis after the day ended stores the whole day. These rules have no version of their own: stored days
+   keep their numbers until they are analysed again (the last two days after each sync, or Re analyse all).
 
 ## Threading
 
@@ -178,7 +210,8 @@ A task that must outlive a turned phone (screens are rebuilt, no `configChanges`
 application context and reports through a holder to the screen attached now: `DemoRun` in
 `MainActivity` (#29) and the repair in Data check (`LogActivity.REPAIR`, a `core/OneRun`, #130).
 Settings ring actions (read or switch measurements, factory reset) report to `SettingsActivity.SHOWN`, the
-screen resumed now, with the states the starting screen knew; a reset closes every Settings screen by
+screen resumed now, with the states the starting screen knew (the analysis after "Count phone use as awake"
+redraws the stage detail preview there, only that card, #204); a reset closes every Settings screen by
 opening the main screen with `CLEAR_TOP` from the application context, and Settings without a key sends
 the person there on resume, where Setup opens (#59). The main screen finishes a cut off demo whenever demo
 mode is on and no preparation runs (`Demo.finishOnStart`), also when the app is opened from the launcher

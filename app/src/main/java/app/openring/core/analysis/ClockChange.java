@@ -36,12 +36,57 @@ public final class ClockChange {
         // today) would be passed over
         ZoneOffsetTransition t = zone.getRules().nextTransition(Instant.ofEpochSecond((long) Math.ceil(start) - 1));
         while (t != null && t.getInstant().getEpochSecond() < end) {
-            long at = t.getInstant().getEpochSecond();
             int min = (t.getOffsetAfter().getTotalSeconds() - t.getOffsetBefore().getTotalSeconds()) / 60;
-            if (min != 0) return new Change(at, min, hm(t.getDateTimeBefore().toLocalTime()), hm(t.getDateTimeAfter().toLocalTime()));
+            if (min != 0) return change(t, min);
             t = zone.getRules().nextTransition(t.getInstant());
         }
         return null;
+    }
+
+    /**
+     * The change of the calendar day [start, end) (its midnights), for the screens that show one day
+     * (issue #158), or null. A change belongs to the date of the clock time it skips (forward) or repeats
+     * (back), also when its moment is a midnight: in Greenland 23:00 becomes 00:00, so the Saturday is the
+     * 23 hour day although the moment is Sunday's midnight; in Cairo 00:00 becomes 01:00, so the Friday is.
+     * Away from midnight this is the same as {@link #find}, which nights keep using (a night is real time).
+     */
+    public static Change onDay(ZoneId zone, double start, double end) {
+        if (zone == null || Double.isNaN(start) || Double.isNaN(end) || end <= start) return null;
+        java.time.LocalDate day = Instant.ofEpochSecond((long) Math.floor(start)).atZone(zone).toLocalDate();
+        ZoneOffsetTransition t = zone.getRules().nextTransition(Instant.ofEpochSecond((long) Math.ceil(start) - 1));
+        while (t != null && t.getInstant().getEpochSecond() <= end) {
+            int min = (t.getOffsetAfter().getTotalSeconds() - t.getOffsetBefore().getTotalSeconds()) / 60;
+            // forward the skipped time starts at the clock before the change, back the repeated one at the clock after it
+            java.time.LocalDate of = (min > 0 ? t.getDateTimeBefore() : t.getDateTimeAfter()).toLocalDate();
+            if (min != 0 && of.equals(day)) return change(t, min);
+            t = zone.getRules().nextTransition(t.getInstant());
+        }
+        return null;
+    }
+
+    /** A usual wake up time on the clock (minutes), to tell where a sleep between two zone notes was slept. */
+    static final int MORNING_MIN = 7 * 60;
+
+    /**
+     * A sleep ending at {@code end} between two zone notes (issues #161, #162): true when it was most likely
+     * slept in {@code before} (the zone noted last before the gap, a night before the flight), so its end is
+     * nearer to 07:00 on that clock than on the clock of {@code later} (the first zone noted after it). A tie,
+     * the same clock or a missing zone gives false: the later zone counts, as the owner decided on #22.
+     */
+    public static boolean sleptBefore(double end, ZoneId before, ZoneId later) {
+        if (before == null || later == null || Double.isNaN(end)) return false;
+        Instant t = Instant.ofEpochSecond((long) end);
+        return fromMorning(t.atZone(before).toLocalTime()) < fromMorning(t.atZone(later).toLocalTime());
+    }
+
+    /** Minutes between {@code t} and 07:00 on the clock face (0 to 720). */
+    public static int fromMorning(LocalTime t) {
+        int d = Math.abs(t.getHour() * 60 + t.getMinute() - MORNING_MIN);
+        return Math.min(d, 24 * 60 - d);
+    }
+
+    private static Change change(ZoneOffsetTransition t, int min) {
+        return new Change(t.getInstant().getEpochSecond(), min, hm(t.getDateTimeBefore().toLocalTime()), hm(t.getDateTimeAfter().toLocalTime()));
     }
 
     /**
@@ -103,6 +148,30 @@ public final class ClockChange {
     }
 
     /**
+     * The line under the day's activity chart on a day the clocks changed (issue #114), for example "The clocks went
+     * back one hour on this day (03:00 became 02:00), so 02:00 to 03:00 happened twice. ...", or null without a change.
+     */
+    public static String activityText(Change c) {
+        if (c == null || c.minutes == 0) return null;
+        String amount = amount(Math.abs(c.minutes));
+        if (c.minutes < 0) {
+            return "The clocks went back " + amount + " on this day (" + c.from + " became " + c.to + "), so " + c.to + " to " + c.from
+                    + " happened twice. The chart shows both at the same place, the numbers above count every real minute once.";
+        }
+        return "The clocks went forward " + amount + " on this day (" + c.from + " became " + c.to + "), so " + c.from + " to " + c.to
+                + " did not happen and the chart has nothing there.";
+    }
+
+    /**
+     * The line under a stored day's activity chart (review of #202): {@link #activityText} only when the day was
+     * analysed with real minutes, which its day JSON marks with {@code day_min} ({@code storedDayMin} above 0). A day
+     * stored before still holds numbers for 1440 minutes, so it gets no line until it is analysed again.
+     */
+    public static String activityText(Change c, int storedDayMin) {
+        return storedDayMin > 0 ? activityText(c) : null;
+    }
+
+    /**
      * " (first time)" or " (second time)" after a clock time in the hour that happens twice when the clocks go
      * back (issue #97), so two moments that read "02:22" can be told apart; "" at every other moment.
      */
@@ -128,6 +197,14 @@ public final class ClockChange {
         String note = repeatNote(zone, at), a = repeatNote(zone, from), b = repeatNote(zone, to);
         return hm(zone, at) + note + "  " + stage + ", " + hm(zone, from) + (a.equals(note) ? "" : a) + " to " + hm(zone, to)
                 + (b.equals(note) ? "" : b) + " (" + Math.round((to - from) / 60) + " min)";
+    }
+
+    /**
+     * {@link #stageTip} with every time rounded to the nearest minute (issue #138), so the readout shows the same
+     * minutes as the night timeline and its length is the difference of the two times shown.
+     */
+    public static String roundedStageTip(ZoneId zone, double at, String stage, double from, double to) {
+        return stageTip(zone, WakeUps.roundMin(at), stage, WakeUps.roundMin(from), WakeUps.roundMin(to));
     }
 
     /** "07:42" in {@code zone} (the system zone without one), as the charts write it. */

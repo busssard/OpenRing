@@ -107,6 +107,7 @@ swipe_up; swipe_up;                       shot sleep-details 1
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
+swipe_up; swipe_up;                       shot readiness-contributors 1   # temperature line as the card below (issue #163)
 launch --ei tab 3;                          shot activity
 # third demo day: the note that the weekly parts are based on 3 days so far (issue #44)
 launch --ei tab 3 --es day "$(date -d '32 days ago' +%F)"
@@ -117,11 +118,69 @@ launch --ei tab 4;                          shot body
 swipe_up; swipe_up;                       shot body-trends 1
 launch --ei tab 5;                          shot screen
 adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fling
-adb shell input tap 462 1282;              shot screen-touch 1     # read the clock by touch (about 13:00)
+# read the clock by touch (issue #109): at the trailing edge of the first blue line, so the picture shows a
+# use read from a line. The demo's uses follow the time of the run, so the line is found on the screen:
+# blue pixels on a circle of 300 px around the clock's middle (540, 950 after the swipe above), else 13:00.
+adb exec-out screencap > "$OUT/.dial.raw"
+xy=$(python3 - "$OUT/.dial.raw" <<'PY' 2>/dev/null
+import math, struct, sys
+d = open(sys.argv[1], "rb").read()
+w, h = struct.unpack("<II", d[:8])
+head = len(d) - w * h * 4
+lit = []
+for i in range(3600):
+    a = math.radians(i / 10.0)
+    x, y = int(540 + 300 * math.sin(a)), int(950 - 300 * math.cos(a))
+    o = head + (y * w + x) * 4
+    r, g, b = d[o], d[o + 1], d[o + 2]
+    lit.append(b > 150 and b > r + 40 and g > 100)
+for i in range(3600):
+    if lit[i] and not lit[(i + 1) % 3600]:
+        a = math.radians((i - 2) / 10.0)
+        print(int(540 + 300 * math.sin(a)), int(950 - 300 * math.cos(a)))
+        break
+PY
+)
+rm -f "$OUT/.dial.raw"
+log "clock touch at ${xy:-462 1282}"
+adb shell input tap ${xy:-462 1282};       shot screen-touch 1
 swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 launch --es settings top;                   shot settings
 launch --es settings stages;                shot settings-stage-detail
+# Count phone use as awake switched off and on (issue #204): when the nights are analysed again the
+# preview above redraws, its phone line goes away and comes back without leaving the page. The card
+# opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view.
+adb shell input swipe 30 1700 30 900 1500; sleep 1
+ui_dump() { adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1; adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml 2>/dev/null; }
+phone_line() { ui_dump | grep -q "on the phone, shown as awake"; }
+SCREEN_H=$(adb shell wm size 2>/dev/null | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f2 | tr -d '\r')
+tap_phone_switch() {  # fails when the switch is not listed or its middle is off the screen
+  b=$(ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  local x=$(( ($1 + $3) / 2 )) y=$(( ($2 + $4) / 2 ))
+  [ "$y" -gt 0 ] && [ "$y" -lt "${SCREEN_H:-2400}" ] || return 1
+  adb shell input tap $x $y
+}
+wait_phone_line() {  # $1: 0 gone, 1 shown; up to 60 seconds for the analysis
+  for i in $(seq 1 30); do
+    if phone_line; then [ "$1" = 1 ] && return 0; else [ "$1" = 0 ] && return 0; fi
+    sleep 2
+  done
+  return 1
+}
+if ! phone_line; then
+  echo "::warning::issue #204 step skipped: no phone line in the stage detail preview on screen"
+elif ! tap_phone_switch; then
+  echo "::warning::issue #204 step skipped: the switch Count phone use as awake is not on screen"
+else
+  wait_phone_line 0 || { echo "::error::the stage detail preview kept its phone line after switching phone use off (issue #204)"; exit 1; }
+  shot settings-phone-off 4   # the "Updating the nights" toast (about 3.5 s) is gone by then
+  tap_phone_switch || { echo "::error::the switch Count phone use as awake was not on screen to switch it on again (issue #204)"; exit 1; }
+  wait_phone_line 1 || { echo "::error::the stage detail preview did not show its phone line again after switching phone use on (issue #204)"; exit 1; }
+  log "the stage detail preview followed the phone use switch both ways"
+fi
 launch --es settings screen;                shot settings-screen-time
 launch --es settings games;                 shot settings-games
 # Find my ring (issues #74, #191), all on one screen without swiping: in demo a made up signal fills

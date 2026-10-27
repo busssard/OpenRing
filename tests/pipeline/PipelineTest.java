@@ -61,6 +61,16 @@ public class PipelineTest {
 
     /** As above, without any event on the days in {@code off} (the ring stayed in a drawer). */
     static List<RingEvent> history(int days, java.util.Set<Integer> off, java.util.Set<Integer> rest) {
+        return history(days, off, rest, java.util.Collections.<Integer>emptySet());
+    }
+
+    /**
+     * As above; on the nights of the days in {@code aohr} always on heart rate bursts (tag 0x86) take the place of the
+     * HRV events and of the sleep periods' average heart rate, which the night would use first (issue #166): every 5
+     * minutes 20 values 1.92 s apart on the same heart rate curve, with one 0 and one 250 that must be left out. They
+     * draw no random numbers, so the other nights stay as they were.
+     */
+    static List<RingEvent> history(int days, java.util.Set<Integer> off, java.util.Set<Integer> rest, java.util.Set<Integer> aohr) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         for (int d = 0; d < days; d++) {
             if (off.contains(d)) continue;
@@ -74,7 +84,7 @@ public class PipelineTest {
                 int state = (f < 0.04 || f > 0.98) ? 0 : 1;
                 int motion = state == 0 ? 20 : (rnd.nextDouble() < 0.05 ? 6 : 0);
                 byte[] spi = new byte[10];
-                spi[0] = (byte) (hr * 2);
+                spi[0] = (byte) (aohr.contains(d) ? 0 : hr * 2); // no average either, so only the bursts give the heart rate
                 spi[4] = (byte) Math.round((14 + rnd.nextGaussian() * 0.5) * 8);
                 spi[6] = (byte) motion;
                 spi[7] = (byte) state;
@@ -82,7 +92,17 @@ public class PipelineTest {
                 spi[9] = 0x10;
                 ev.add(new RingEvent(EventCodec.SLEEP_PERIOD_INFO_2, ds(t), spi));
             }
-            for (double t = bed; t < wake; t += 1800) {
+            if (aohr.contains(d)) {
+                for (double t = bed; t < wake; t += 300) {
+                    double f = (t - bed) / (wake - bed);
+                    int[] v = new int[20];
+                    Arrays.fill(v, (int) Math.round(60 - 9 * Math.sin(Math.PI * Math.min(1, f * 1.6))));
+                    v[4] = 0;
+                    v[9] = 250;
+                    ev.add(new RingEvent(EventCodec.AOHR_EVENT, ds(t), aohrBody(v)));
+                }
+            }
+            for (double t = bed; t < wake && !aohr.contains(d); t += 1800) {
                 byte[] hrv = new byte[12];
                 for (int k = 0; k < 6; k++) {
                     double tt = t + k * 300, f = (tt - bed) / (wake - bed);
@@ -132,6 +152,17 @@ public class PipelineTest {
         return ev;
     }
 
+    /** An always on heart rate event: two header bytes, the count, then heart rate and quality per value. */
+    static byte[] aohrBody(int... bpm) {
+        byte[] b = new byte[3 + 2 * bpm.length];
+        b[2] = (byte) bpm.length;
+        for (int i = 0; i < bpm.length; i++) {
+            b[3 + 2 * i] = (byte) bpm[i];
+            b[4 + 2 * i] = 1;
+        }
+        return b;
+    }
+
     public static void main(String[] args) throws Exception {
         LocalDate day0 = LocalDate.of(2026, 10, 7);
         T0 = day0.atStartOfDay(ZONE).toEpochSecond();
@@ -141,8 +172,7 @@ public class PipelineTest {
         long lastDs = all.get(all.size() - 1).ds;
         System.out.println("synthetic history: " + all.size() + " events");
 
-        File dir = Files.createTempDirectory("openring").toFile();
-        Context ctx = new Context(dir);
+        Context ctx = freshDb("openring");
         Db db = Db.get(ctx);
 
         // ---- sync 1: interrupted at 60 % (link lost, never reaches the present) ----
@@ -496,12 +526,13 @@ public class PipelineTest {
         pr.setScreenExcluded(java.util.Arrays.asList("com.google.android.apps.maps", " ", "org.osmand"));
         pr.setGamesOn(true);
         long eventsBefore = Db.get(ctx).count("SELECT COUNT(*) FROM events");
+        // read before the restore: afterwards Db.get(ctx) returns the restored phone's database too (issue #113)
+        List<Object[]> zonesBefore = Db.get(ctx).zones();
         java.io.ByteArrayOutputStream full = new java.io.ByteArrayOutputStream();
         app.openring.data.Backup.write(ctx, full, true);
         java.io.ByteArrayOutputStream small = new java.io.ByteArrayOutputStream();
         app.openring.data.Backup.write(ctx, small, false);
-        java.io.File dir2 = java.nio.file.Files.createTempDirectory("openring2").toFile();
-        Context phone2 = new Context(dir2);
+        Context phone2 = freshDb("openring2");
         app.openring.data.Backup.Result br = app.openring.data.Backup.read(phone2, new java.io.ByteArrayInputStream(full.toByteArray()));
         check("full backup restores", br.ok && br.history, br.message);
         check("restored key matches", java.util.Arrays.equals(app.openring.data.Prefs.of(phone2).loadKey(), keyBytes), "");
@@ -511,8 +542,8 @@ public class PipelineTest {
                 new java.util.TreeSet<String>(java.util.Arrays.asList("com.google.android.apps.maps", "org.osmand"))), app.openring.data.Prefs.of(phone2).screenExcluded());
         check("restored games switch", app.openring.data.Prefs.of(phone2).gamesOn(), null);
         check("restored history keeps screen time", Db.get(phone2).count("SELECT COUNT(*) FROM screen") == 3, Db.get(phone2).count("SELECT COUNT(*) FROM screen"));
-        check("restored history keeps the zone history (#22)", Db.get(phone2).zones().size() == Db.get(ctx).zones().size()
-                && !Db.get(phone2).zones().isEmpty() && Db.get(phone2).zones().get(0)[2].equals(Db.get(ctx).zones().get(0)[2]), Db.get(phone2).zones().size());
+        check("restored history keeps the zone history (#22)", Db.get(phone2).zones().size() == zonesBefore.size()
+                && !zonesBefore.isEmpty() && Db.get(phone2).zones().get(0)[2].equals(zonesBefore.get(0)[2]), Db.get(phone2).zones().size() + " of " + zonesBefore.size());
         long eventsAfter = Db.get(phone2).count("SELECT COUNT(*) FROM events");
         check("restored history", eventsAfter == eventsBefore, eventsBefore + " -> " + eventsAfter);
         app.openring.data.Backup.Result bs = app.openring.data.Backup.read(phone2, new java.io.ByteArrayInputStream(small.toByteArray()));
@@ -526,10 +557,20 @@ public class PipelineTest {
         // ---- demo mode: made up history in its own file, real data untouched ----
         long realEvents = Db.get(phone2).count("SELECT COUNT(*) FROM events");
         long t = System.currentTimeMillis();
-        app.openring.data.Demo.enter(phone2, null);
+        // a fixed hour (issue #123): "today" is yesterday and "now" 14:00 on it, so no check depends on when the
+        // tests run (the newest night is never cut short, today's Total burn is always "so far"). The date still
+        // follows the calendar, so the Data check (last 14 days from the real today) sees the demo's nights.
+        final LocalDate demoToday = LocalDate.now().minusDays(1);
+        final long demoNow = demoToday.atTime(14, 0).atZone(ZoneId.systemDefault()).toEpochSecond();
+        try {
+            setStatic("testNow", demoNow);
+            app.openring.data.Demo.enter(phone2, null, demoToday, demoNow);
+        } finally {
+            setStatic("testNow", 0L);
+        }
         Db demo = Db.get(phone2);
         check("demo uses its own database", demo.fileName.equals(Db.DEMO), demo.fileName);
-        app.openring.core.analysis.LastWorn.Result demoLast = app.openring.data.RightNow.lastWorn(demo, System.currentTimeMillis() / 1000.0);
+        app.openring.core.analysis.LastWorn.Result demoLast = app.openring.data.RightNow.lastWorn(demo, demoNow);
         check("ring finder: the demo ring reads as worn, confirmed by heart rate (#94)", demoLast.state == app.openring.core.analysis.LastWorn.WORN
                 && !Double.isNaN(demoLast.skinC) && !demoLast.justOn && !Double.isNaN(demoLast.lastHr), demoLast.state + " " + demoLast.skinC + " " + demoLast.lastHr);
         long demoNights = demo.count("SELECT COUNT(*) FROM nights WHERE main = 1");
@@ -540,8 +581,9 @@ public class PipelineTest {
         check("demo notes no time zones, so its nights look as before (#22)", demo.zones().isEmpty()
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
-        dayHeartChecks(demo);
+        dayHeartChecks(demo, demoNow, "demo days", 0);
         dataCheckPrivate("demo", DataCheck.run(phone2).text, demo);
+        exportChecks(phone2, demo, demoToday);
         // issue #44: the first demo days count the worn days so far, later ones a full week as before
         int firstWorn = -1, fullWeek = 0, weekDays = 0;
         boolean weekTexts = true;
@@ -555,8 +597,28 @@ public class PipelineTest {
             weekTexts &= tp != null && tp.optString("detail").endsWith(" of 7 days") && vp != null && vp.optString("detail").endsWith(" kcal this week");
         }
         check("first demo day counts 1 worn day", firstWorn == 1, firstWorn);
+        // issue #112: the night counts as rest although the demo sends no activity values then, and every minute of a
+        // day is in one level or not worn; issue #155: today's total burn counts its resting burn so far
+        int sumDays = 0;
+        String today = demoToday.toString(), todayUntil = null;
+        for (String[] r : demo.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o == null || !o.has("rest_min")) continue;
+            LocalDate dd = LocalDate.parse(r[0]);
+            java.time.ZoneId sz = java.time.ZoneId.systemDefault();
+            double len = (dd.plusDays(1).atStartOfDay(sz).toEpochSecond() - dd.atStartOfDay(sz).toEpochSecond()) / 60.0;
+            double sum = o.optDouble("high_min") + o.optDouble("medium_min") + o.optDouble("low_min") + o.optDouble("inactive_min")
+                    + o.optDouble("rest_min") + o.optDouble("non_wear_min");
+            if (Math.abs(sum - len) < 1e-6) sumDays++;
+            if (r[0].equals(today)) todayUntil = o.has("total_until") ? "yes" : "no";
+            else if (o.has("total_until")) todayUntil = "a past day " + r[0];
+        }
+        restChecks(demo, demoNow, "demo", 0);
+        check("demo: every minute of a day in one level or not worn (#112)", sumDays == demo.daysJson("2000-01-01", "2100-01-01").size(), sumDays);
+        // at 14:00 today has a day, analysed while it runs (the 00:30 demo below has none yet)
+        check("demo: only today counts its resting burn so far (#155)", "yes".equals(todayUntil), todayUntil);
         check("demo weeks are full weeks with the old texts", weekDays >= 25 && weekTexts, weekDays + " days");
-        ScreenTime.Day demoScreen = app.openring.data.ScreenDays.day(demo, LocalDate.now().minusDays(2), java.time.ZoneId.systemDefault());
+        ScreenTime.Day demoScreen = app.openring.data.ScreenDays.day(demo, demoToday.minusDays(2), java.time.ZoneId.systemDefault());
         check("demo has screen time", demoScreen != null && demoScreen.totalMin > 90 && demoScreen.totalMin < 300 && demoScreen.turnedOn > 20,
                 demoScreen == null ? null : Math.round(demoScreen.totalMin) + " min, turned on " + demoScreen.turnedOn);
         // apps in front (1.15): the demo leaves its maps app out, so counted time is below the raw time
@@ -567,7 +629,7 @@ public class PipelineTest {
         int mapsDays = 0;
         app.openring.data.ScreenDays.Info di = null;
         for (int back = 1; back < 20; back++) {
-            app.openring.data.ScreenDays.Info x = app.openring.data.ScreenDays.info(demo, LocalDate.now().minusDays(back), z, 180, dp.screenExcluded());
+            app.openring.data.ScreenDays.Info x = app.openring.data.ScreenDays.info(demo, demoToday.minusDays(back), z, 180, dp.screenExcluded());
             if (x.excludedMin > 1) {
                 mapsDays++;
                 if (di == null) di = x;
@@ -600,6 +662,18 @@ public class PipelineTest {
                     && wide.score.value == di.score.value, Math.round(exactMin) + " -> " + Math.round(wideMin) + " min shown");
             check("touch readout data: sessions and apps of the day", !wide.sessions.isEmpty() && !wide.dayApps.isEmpty()
                     && app.openring.core.analysis.ScreenTime.at(wide.sessions, wide.sessions.get(0)[0] + 1) != null, null);
+            // issue #109: touching any lit line of the clock finds a use, a dark line none, also with uses drawn longer
+            for (app.openring.data.ScreenDays.Info x : new app.openring.data.ScreenDays.Info[] {di, wide}) {
+                int miss = 0, found = 0;
+                for (int k = 0; k < x.dial.length; k++) {
+                    app.openring.core.analysis.DialMath.Touch tc = app.openring.core.analysis.DialMath.touch((k + 0.5) / x.dial.length, x.date,
+                            x.from, x.to, z, x.dial.length, x.sessions, x.shown, x.nights);
+                    if ((x.dial[k] > 0) != (tc.session >= 0)) miss++;
+                    if (tc.session >= 0) found++;
+                }
+                check("touching a lit line of the clock finds its use" + (x == wide ? ", uses drawn 15 min" : ""),
+                        miss == 0 && found > 10 && x.shown.size() == x.sessions.size(), miss + " wrong, " + found + " found");
+            }
             long noApp = 0;
             for (ScreenTime.AppRow r : wide.appRows) if (r.kind == ScreenTime.AppRow.NO_APP) noApp += r.shownMin;
             check("no app in front is small in the demo", noApp < 5, noApp);
@@ -612,15 +686,15 @@ public class PipelineTest {
                     && rowsLeft == Math.round(di.excludedMin), rowsCounted + " / " + rowsLeft);
             check("with every app counted nothing is left out", everyApp.excludedMin < 0.01 && Math.abs(everyApp.day.totalMin - di.rawMin) < 0.01, everyApp.excludedMin);
         }
-        app.openring.data.ScreenDays.Info old = app.openring.data.ScreenDays.info(demo, LocalDate.now().minusDays(60), z, 180, dp.screenExcluded());
+        app.openring.data.ScreenDays.Info old = app.openring.data.ScreenDays.info(demo, demoToday.minusDays(60), z, 180, dp.screenExcluded());
         check("days before the screen data are unknown", old.day == null && old.score == null && Double.isNaN(old.rows[13].totalMin), null);
         check("the demo's usage log counts as read from its first day, so no day is a gap (#131)", demo.screenReads().size() == 1
-                && ScreenTime.coverage(demo.screenReads(), LocalDate.now().minusDays(30).atStartOfDay(z).toEpochSecond(),
-                LocalDate.now().atStartOfDay(z).toEpochSecond(), System.currentTimeMillis() / 1000.0) == ScreenTime.COVERED, demo.screenReads().size());
+                && ScreenTime.coverage(demo.screenReads(), demoToday.minusDays(30).atStartOfDay(z).toEpochSecond(),
+                demoToday.atStartOfDay(z).toEpochSecond(), demoNow) == ScreenTime.COVERED, demo.screenReads().size());
         long before = demo.count("SELECT COUNT(*) FROM screen");
-        demo.deleteScreenSince(System.currentTimeMillis() / 1000.0 - 3 * 86400);
+        demo.deleteScreenSince(demoNow - 3 * 86400.0);
         long after = demo.count("SELECT COUNT(*) FROM screen");
-        check("new counting rules read the last days again", after < before && after > 0 && demo.count("SELECT COUNT(*) FROM apps WHERE stop > " + (System.currentTimeMillis() / 1000 - 3 * 86400)) == 0,
+        check("new counting rules read the last days again", after < before && after > 0 && demo.count("SELECT COUNT(*) FROM apps WHERE stop > " + (demoNow - 3 * 86400)) == 0,
                 before + " -> " + after);
         check("recent apps list", app.openring.data.ScreenDays.recentApps(demo, 10).size() >= 5, null);
         int phoneNights = 0;
@@ -628,20 +702,15 @@ public class PipelineTest {
         check("demo nights show phone checks", phoneNights >= 3, phoneNights + " nights");
         List<String> demoMain = demo.nightsJson("2000-01-01", "2100-01-01", true);
         check("newest demo night has a phone check (for the screenshots)", Json.d(Json.parse(demoMain.get(demoMain.size() - 1)), "phone_min") >= 1, null);
-        // right after midnight the made up person has not slept long enough yet for today to have a night,
-        // so until 04:00 the newest demo day may still be yesterday
-        java.time.LocalDateTime clock = java.time.LocalDateTime.now();
-        boolean demoCurrent = clock.toLocalDate().toString().equals(demo.latestDay())
-                || clock.getHour() < 4 && clock.toLocalDate().minusDays(1).toString().equals(demo.latestDay());
-        check("demo today exists", demoCurrent, demo.latestDay());
+        // at 14:00 the newest demo day is today (the 00:30 demo below checks that it is yesterday right after midnight)
+        check("demo today exists", demoToday.toString().equals(demo.latestDay()), demo.latestDay());
         app.openring.data.Demo.leave(phone2);
         check("leaving the demo restores the real data", Db.get(phone2).fileName.equals(Db.REAL)
                 && Db.get(phone2).count("SELECT COUNT(*) FROM events") == realEvents, "");
         check("real list of apps not counted is back", app.openring.data.Prefs.of(phone2).screenExcluded().size() == 2, app.openring.data.Prefs.of(phone2).screenExcluded());
 
         // ---- demo across daylight saving switches (issue #22), on fixed past dates and hours ----
-        java.io.File dir3 = java.nio.file.Files.createTempDirectory("openring3").toFile();
-        Context phone3 = new Context(dir3);
+        Context phone3 = freshDb("openring3");
         ZoneId zz = ZoneId.systemDefault();
         // clocks back on 26 October 2025; "now" is 00:30, when tonight's night is still too short
         long fallNow = java.time.LocalDateTime.parse("2025-11-09T00:30:00").atZone(zz).toEpochSecond();
@@ -652,6 +721,14 @@ public class PipelineTest {
         JSONObject fallNewest = Json.parse(fallMain.get(fallMain.size() - 1));
         check("newest demo night has a phone check at 00:30", Json.d(fallNewest, "phone_min") >= 1, fallNewest.optString("day"));
         check("at 00:30 the newest demo night is last night", "2025-11-08".equals(fallNewest.optString("day")), fallNewest.optString("day"));
+        check("at 00:30 the demo has no day for today yet, so nothing counts a resting burn so far (#155)", Db.get(phone3).dayJson("2025-11-09") == null
+                && "2025-11-08".equals(Db.get(phone3).latestDay()), Db.get(phone3).latestDay());
+        // issue #123: at 01:19 on 22 October 2026 the newest demo night is cut short (about 3 hours, ending 00:59); the
+        // checks of whole nights skip exactly that day, all others still count
+        long cutNow = java.time.LocalDateTime.parse("2026-10-22T01:19:00").atZone(zz).toEpochSecond();
+        app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2026-10-22"), cutNow);
+        dayHeartChecks(Db.get(phone3), cutNow, "demo at 01:19", 1);
+        restChecks(Db.get(phone3), cutNow, "demo at 01:19", 1);
         // clocks forward on 29 March 2026, at noon
         long springNow = java.time.LocalDateTime.parse("2026-04-12T12:00:00").atZone(zz).toEpochSecond();
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2026-04-12"), springNow);
@@ -661,9 +738,11 @@ public class PipelineTest {
         check("newest demo night has a phone check at noon", Json.d(springNewest, "phone_min") >= 1
                 && "2026-04-12".equals(springNewest.optString("day")), springNewest.optString("day"));
         app.openring.data.Demo.leave(phone3);
+        demoSwitchPattern();
 
         longWakeChecks();
         previewRingWake();
+        ringStagesInLongerPeriod();
         freshDb("openring30-done");
         nightTwice();
         nightAcrossChecks();
@@ -684,14 +763,22 @@ public class PipelineTest {
         dialClockChange();
         appRowsStored();
         activityGap();
+        activityClockChange();
+        totalBurnSoFar();
         zoneTable();
         travelZones();
+        travelLongWake();
+        dateLineNights();
         zoneStorage(full.toByteArray());
         screenGaps(full.toByteArray());
         sqlForOldPhones();
         oneEventCheck();
         nightSummaryCases();
         backupGaps(full.toByteArray());
+        historyCache();
+        recentWindow();
+        aohrHistory(); // last: it draws from the shared random numbers, so it changes no history before it
+        rightNowAohr();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -820,7 +907,7 @@ public class PipelineTest {
         java.util.Set<Integer> off = new java.util.HashSet<Integer>(Arrays.asList(3, 4, 5, 6));
         List<RingEvent> ev = history(10, off, new java.util.HashSet<Integer>(Arrays.asList(1, 2, 8, 9)));
         long now = T0 + 10 * 86400 + 7 * 3600 + 1800;
-        Context c = new Context(Files.createTempDirectory("openring-gap").toFile());
+        Context c = freshDb("openring-gap"); // its own empty database, not the one the test before left open (issue #113)
         Db db = Db.get(c);
         for (int i = 0; i < ev.size(); i += 4096) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4096)), 1, now);
         long lastDs = ev.get(ev.size() - 1).ds;
@@ -856,6 +943,154 @@ public class PipelineTest {
         check("gap: training volume below 100 and about the same before and after", vol[2] != null && vol[9] != null
                 && vol[9].optLong("score") < 100 && Math.abs(vol[2].optLong("score") - vol[9].optLong("score")) <= 3, vol[2] + " / " + vol[9]);
         check("gap: the day right after the gap is not pulled down", score[7] > 0 && Math.abs(score[7] - score[2]) <= 3, score[2] + " / " + score[7]);
+        db.close();
+    }
+
+    // ------------------------------------------- issues #114 and #120, a day of activity through the stack
+
+    /**
+     * Activity events of one hour each (MET per minute) from {@code from} to {@code to}, on a boot counted from
+     * {@code base}: 1.6 MET, 4.0 inside [walk0, walk1), and the hour starting at {@code badHour} either all 0xff
+     * ({@code bad}) or left out.
+     */
+    static List<RingEvent> metHours(double base, double from, double to, double walk0, double walk1, double badHour, boolean bad) {
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        for (double t = from; t < to; t += 3600) {
+            if (t == badHour && !bad) continue;
+            byte[] met = new byte[61];
+            met[0] = 1;
+            for (int k = 1; k <= 60; k++) {
+                double m = t + (k - 1) * 60;
+                met[k] = t == badHour ? (byte) 0xff : (byte) (m >= walk0 && m < walk1 ? 40 : 16);
+            }
+            ev.add(new RingEvent(EventCodec.ACTIVITY_INFO, DS0 + Math.round((t - base) * 10), met));
+        }
+        return ev;
+    }
+
+    static Db metDb(String name, double base, List<RingEvent> ev) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        long lastDs = ev.get(ev.size() - 1).ds, lastUnix = (long) base + (lastDs - DS0) / 10;
+        db.insertBatch(ev, 1, lastUnix + 3600);
+        db.insertPhoneAnchor(1, lastDs, lastUnix);
+        Analyzer.run(c, null);
+        return db;
+    }
+
+    static JSONObject dayOf(Db db, String day) {
+        return Json.parse(db.dayJson(day));
+    }
+
+    /**
+     * Issue #114: on the days the clocks change in Zurich every real minute belongs to exactly one day, so the
+     * minutes of neighbouring days add up to the real total and a walk after midnight counts once. Issue #120: an
+     * hour of 0xff activity bytes changes nothing against the same history without that hour.
+     */
+    static void activityClockChange() throws Exception {
+        ZoneId z = ZoneId.of("Europe/Zurich");
+        // spring: 28 to 30 March 2026, a walk 00:15 to 00:45 on 30 March
+        double a = LocalDate.parse("2026-03-28").atStartOfDay(z).toEpochSecond(), b = LocalDate.parse("2026-03-31").atStartOfDay(z).toEpochSecond();
+        double w0 = java.time.LocalDateTime.parse("2026-03-30T00:15:00").atZone(z).toEpochSecond();
+        Db spring = metDb("openring-act-spring", a, metHours(a, a, b, w0, w0 + 1800, -1, false));
+        int[] cov = new int[3];
+        double[] medium = new double[3];
+        for (int i = 0; i < 3; i++) {
+            JSONObject o = dayOf(spring, LocalDate.parse("2026-03-28").plusDays(i).toString());
+            cov[i] = o == null ? -1 : o.optInt("covered_min");
+            medium[i] = o == null ? -1 : o.optDouble("medium_min");
+        }
+        check("activity 28 to 30 March: each day counts its real minutes (#114)", cov[0] == 1440 && cov[1] == 1380 && cov[2] == 1440, Arrays.toString(cov));
+        check("activity 28 to 30 March: the days add up to the real total (#114)", cov[0] + cov[1] + cov[2] == (int) ((b - a) / 60), (cov[0] + cov[1] + cov[2]) + " of " + (b - a) / 60);
+        check("activity: a walk after midnight on 30 March counts once, on 30 March (#114)", medium[1] == 0 && medium[2] == 30, Arrays.toString(medium));
+        JSONObject s29 = dayOf(spring, "2026-03-29");
+        // review of #202: a newly analysed day stores its real minutes, and only such a day gets the line under the chart
+        JSONObject sp29 = dayOf(spring, "2026-03-29");
+        check("activity 29 March: stores day_min 1380 (review of #202)", sp29 != null && sp29.optInt("day_min", -1) == 1380
+                && dayOf(spring, "2026-03-28").optInt("day_min", -1) == 1440, sp29 == null ? null : sp29.opt("day_min"));
+        String springLine = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(z,
+                LocalDate.parse("2026-03-29").atStartOfDay(z).toEpochSecond(), LocalDate.parse("2026-03-30").atStartOfDay(z).toEpochSecond()),
+                sp29 == null ? 0 : sp29.optInt("day_min", 0));
+        check("activity 29 March: the newly analysed day shows the line (review of #202)", springLine != null && springLine.startsWith("The clocks went forward"), springLine);
+        check("activity 29 March: the chart has nothing from 02:00 to 03:00 (#114)", s29 != null && s29.optJSONArray("met_profile").isNull(8)
+                && s29.optJSONArray("met_profile").isNull(11) && !s29.optJSONArray("met_profile").isNull(12), null);
+        spring.close();
+
+        // autumn: 24 to 26 October 2026, a walk 23:15 to 23:45 on 25 October, and an hour of 0xff on 24 October
+        a = LocalDate.parse("2026-10-24").atStartOfDay(z).toEpochSecond();
+        b = LocalDate.parse("2026-10-27").atStartOfDay(z).toEpochSecond();
+        w0 = java.time.LocalDateTime.parse("2026-10-25T23:15:00").atZone(z).toEpochSecond();
+        double bad = java.time.LocalDateTime.parse("2026-10-24T14:00:00").atZone(z).toEpochSecond();
+        Db fall = metDb("openring-act-fall", a, metHours(a, a, b, w0, w0 + 1800, bad, true));
+        JSONObject[] f = {dayOf(fall, "2026-10-24"), dayOf(fall, "2026-10-25"), dayOf(fall, "2026-10-26")};
+        Db without = metDb("openring-act-fall-control", a, metHours(a, a, b, w0, w0 + 1800, bad, false));
+        JSONObject[] c = {dayOf(without, "2026-10-24"), dayOf(without, "2026-10-25"), dayOf(without, "2026-10-26")};
+        boolean all = f[0] != null && f[1] != null && f[2] != null;
+        int sum = all ? f[0].optInt("covered_min") + f[1].optInt("covered_min") + f[2].optInt("covered_min") : -1;
+        check("activity 25 October: the day counts 1500 minutes (#114)", all && f[1].optInt("covered_min") == 1500 && f[2].optInt("covered_min") == 1440,
+                all ? f[1].opt("covered_min") + ", " + f[2].opt("covered_min") : null);
+        check("activity 24 to 26 October: the days add up to the real total less the bad hour (#114, #120)", sum == (int) ((b - a) / 60) - 60, sum);
+        check("activity: a walk at 23:15 on 25 October counts on 25 October (#114)", all && f[1].optDouble("medium_min") == 30 && f[2].optDouble("medium_min") == 0
+                && f[1].optDouble("steps") > 3000, all ? f[1].opt("medium_min") + " / " + f[2].opt("medium_min") : null);
+        // review of #202: 25 October stores day_min 1500; the same day stored before this change (no day_min, still
+        // 1440 minute numbers) gets no line, and day_min is the only added field
+        double f25 = LocalDate.parse("2026-10-25").atStartOfDay(z).toEpochSecond(), f26 = LocalDate.parse("2026-10-26").atStartOfDay(z).toEpochSecond();
+        check("activity 25 October: stores day_min 1500 (review of #202)", all && f[1].optInt("day_min", -1) == 1500 && f[2].optInt("day_min", -1) == 1440,
+                all ? f[1].opt("day_min") : null);
+        JSONObject older = all ? new JSONObject(f[1].toString()) : new JSONObject();
+        older.remove("day_min");
+        String newLine = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(z, f25, f26),
+                all ? f[1].optInt("day_min", 0) : 0);
+        String oldLine = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(z, f25, f26),
+                older.optInt("day_min", 0));
+        check("activity 25 October: newly analysed shows the line, stored before shows none (review of #202)",
+                newLine != null && newLine.startsWith("The clocks went back") && oldLine == null, newLine + " / " + oldLine);
+        String same = "";
+        String[] keys = {"steps", "active_kcal", "training_kcal", "high_min", "medium_min", "low_min", "inactive_min", "non_wear_min", "covered_min", "avg_met", "long_inactive"};
+        for (String k : keys) if (c[0] == null || f[0] == null || Math.abs(f[0].optDouble(k, -1) - c[0].optDouble(k, -1)) > 1e-9) same += k + " ";
+        check("activity: an hour of 0xff on 24 October counts like the same hour missing (#120)", same.isEmpty() && f[0].optDouble("high_min") == 0
+                && f[0].optInt("non_wear_min") == 60, same + (f[0] == null ? "" : f[0].opt("active_kcal") + " kcal"));
+        check("activity: the raw 0xff event is kept (#120)", fall.count("SELECT COUNT(*) FROM events WHERE tag = " + EventCodec.ACTIVITY_INFO)
+                == without.count("SELECT COUNT(*) FROM events WHERE tag = " + EventCodec.ACTIVITY_INFO) + 1, null);
+        fall.close();
+        without.close();
+    }
+
+    /**
+     * Issue #155: a day still running when analysed counts its resting burn up to then and says so (total_until);
+     * analysed again once it has ended, it has the whole resting burn and no total_until, like a day before.
+     */
+    static void totalBurnSoFar() throws Exception {
+        ZoneId z = ZoneId.of("Europe/Zurich");
+        double a = LocalDate.parse("2026-06-09").atStartOfDay(z).toEpochSecond(), b = LocalDate.parse("2026-06-11").atStartOfDay(z).toEpochSecond();
+        double noon = java.time.LocalDateTime.parse("2026-06-10T12:00:00").atZone(z).toEpochSecond();
+        List<RingEvent> ev = metHours(a, a, noon, -1, -1, -1, false);
+        Context c = freshDb("openring-burn");
+        Db db = Db.get(c);
+        long lastDs = ev.get(ev.size() - 1).ds, lastUnix = (long) a + (lastDs - DS0) / 10;
+        db.insertBatch(ev, 1, lastUnix + 3600);
+        db.insertPhoneAnchor(1, lastDs, lastUnix);
+        try {
+            setStatic("testNow", (long) noon);
+            Analyzer.run(c, null);
+        } finally {
+            setStatic("testNow", 0L);
+        }
+        JSONObject d9 = dayOf(db, "2026-06-09"), d10 = dayOf(db, "2026-06-10");
+        double bmr = d9 == null ? -1 : d9.optDouble("total_kcal") - d9.optDouble("active_kcal");
+        double rest10 = d10 == null ? -1 : d10.optDouble("total_kcal") - d10.optDouble("active_kcal");
+        check("total burn: a day that has ended has the whole resting burn and no total_until (#155)", d9 != null && bmr > 1000 && !d9.has("total_until"),
+                d9 == null ? null : d9.opt("total_kcal") + " " + d9.opt("total_until"));
+        check("total burn: at noon the day counts half its resting burn, up to noon (#155)", d10 != null && Math.abs(rest10 - bmr / 2) < 0.01
+                && d10.optLong("total_until") == (long) noon, rest10 + " of " + bmr + ", until " + (d10 == null ? null : d10.opt("total_until")));
+        // the next sync, after the day ended: the whole day again (the last two days are analysed again)
+        db.insertBatch(metHours(a, noon, b, -1, -1, -1, false), 1, (long) b + 3600);
+        db.insertPhoneAnchor(1, DS0 + Math.round((b - 60 - a) * 10), (long) b - 60);
+        Analyzer.run(c, null);
+        JSONObject e10 = dayOf(db, "2026-06-10");
+        check("total burn: analysed after the day ended, the whole resting burn, no total_until (#155)", e10 != null && !e10.has("total_until")
+                && Math.abs(e10.optDouble("total_kcal") - e10.optDouble("active_kcal") - bmr) < 0.01 && e10.optInt("covered_min") == 1440,
+                e10 == null ? null : e10.opt("total_kcal") + " " + e10.opt("covered_min"));
         db.close();
     }
 
@@ -1427,8 +1662,8 @@ public class PipelineTest {
         cur.close();
     }
 
-    static Context freshPhone() throws java.io.IOException {
-        return new Context(java.nio.file.Files.createTempDirectory("openring-restore").toFile());
+    static Context freshPhone() throws Exception {
+        return freshDb("openring-restore");
     }
 
     static void unchanged(Context c, long events, byte[] key, String when) {
@@ -1502,7 +1737,7 @@ public class PipelineTest {
      */
     static void oldNights() throws Exception {
         long t = System.currentTimeMillis();
-        Context c = new Context(Files.createTempDirectory("openring4").toFile());
+        Context c = freshDb("openring4");
         Db db = Db.get(c);
         ZoneId z = ZoneId.systemDefault();
         String[] starts = {"2024-05-01", "2025-09-10"};
@@ -1771,6 +2006,210 @@ public class PipelineTest {
         }
     }
 
+    /** Hours after midnight starting {@code d} in zone {@code z} (negative: the evening before). */
+    static double atIn(LocalDate d, double hour, ZoneId z) {
+        return d.atStartOfDay(z).toEpochSecond() + hour * 3600;
+    }
+
+    /** One night per date in {@code days}, 23:00 to 07:00 in {@code z}, a 75 minute wake up from 02:30 when {@code wake}. */
+    static void zoneNights(List<RingEvent> ev, List<LocalDate> days, ZoneId z, boolean wake, long t0, long ds0) {
+        for (LocalDate d : days) {
+            List<double[]> awake = new ArrayList<double[]>();
+            if (wake) awake.add(new double[] {atIn(d, 2.5, z), atIn(d, 2.5, z) + 75 * 60});
+            wornSleep(ev, atIn(d, -1, z), atIn(d, 7, z), awake, t0, ds0);
+        }
+    }
+
+    static List<LocalDate> dates(String first, int n) {
+        List<LocalDate> out = new ArrayList<LocalDate>();
+        for (int i = 0; i < n; i++) out.add(LocalDate.parse(first).plusDays(i));
+        return out;
+    }
+
+    /** A phone with these events, nothing analysed yet (zones are noted by the caller). */
+    static Context travelPhone(String name, List<RingEvent> ev, long t0, long ds0) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        java.util.Collections.sort(ev, new java.util.Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        long lastDs = ev.get(ev.size() - 1).ds;
+        long last = t0 + (lastDs - ds0) / 10;
+        db.insertBatch(ev, 1, last);
+        db.insertPhoneAnchor(1, lastDs, last);
+        return c;
+    }
+
+    /** Every stored sleep as "day main start to end, asleep, wake ups, zone", in order. */
+    static List<String> nightLines(Db db) {
+        List<String> out = new ArrayList<String>();
+        for (String js : db.nightsJson("2000-01-01", "2100-01-01", false)) {
+            JSONObject o = Json.parse(js);
+            ZoneId z = Json.zone(o, ZoneId.systemDefault());
+            out.add(String.format(java.util.Locale.US, "%s %s %s to %s, %.0f min, %d wake ups, %s", o.optString("day"),
+                    o.optBoolean("main") ? "main" : "nap", hm(Json.d(o, "start"), z), hm(Json.d(o, "end"), z),
+                    o.optDouble("asleep_min"), o.optInt("awakenings"), o.optString("zone")));
+        }
+        return out;
+    }
+
+    /**
+     * Issue #161: nights with a long wake up (no bedtime marker, the #42 rule joins them) are analysed
+     * again while the phone is in another zone, both ways. Each stays one night with its wake up, read
+     * on the clock of the zone it was slept in; running again or Re analyse all gives the same nights.
+     */
+    static void travelLongWake() throws Exception {
+        java.util.TimeZone keep = java.util.TimeZone.getDefault();
+        String[][] ways = {{"America/New_York", "Europe/Zurich"}, {"Europe/Zurich", "America/New_York"}};
+        try {
+            for (String[] w : ways) {
+                ZoneId slept = ZoneId.of(w[0]), now = ZoneId.of(w[1]);
+                String how = "#161 " + slept.getId().replaceAll(".*/", "") + " nights, phone then in " + now.getId().replaceAll(".*/", "");
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(slept));
+                long t0 = LocalDate.parse("2026-09-13").atStartOfDay(slept).toEpochSecond(), ds0 = 9L * 86400 * 10;
+                List<RingEvent> ev = new ArrayList<RingEvent>();
+                List<LocalDate> days = dates("2026-09-15", 4);
+                zoneNights(ev, days, slept, true, t0, ds0);
+                Context c = travelPhone("openring161", ev, t0, ds0);
+                Db db = Db.get(c);
+                for (LocalDate d : days) db.noteZone(atIn(d, 8, slept), slept.getId());
+                Analyzer.run(c, null);
+                List<String> home = nightLines(db);
+                long events = db.count("SELECT COUNT(*) FROM events");
+                int whole = 0;
+                for (String l : home) if (l.contains(" main ") && !l.contains(" 0 wake ups")) whole++;
+                check(how + ": first analysed where slept, one night each with its wake up", home.size() == 4 && whole == 4, home);
+                // arriving: the app start notes the new zone, the nights since the row before are analysed again
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(now));
+                boolean again = Analyzer.noteZone(db, atIn(LocalDate.parse("2026-09-19"), 9, now), now, Double.NaN);
+                Analyzer.run(c, null);
+                List<String> away = nightLines(db);
+                check(how + ": analysed again in the new zone, the nights stay as they were", again && away.equals(home), away);
+                Analyzer.run(c, null);
+                check(how + ": a second run gives the same nights", nightLines(db).equals(home), nightLines(db));
+                Analyzer.runAll(c, null);
+                check(how + ": Re analyse all in the new zone gives the same nights", nightLines(db).equals(home), nightLines(db));
+                check(how + ": every event kept, no rules version change", db.count("SELECT COUNT(*) FROM events") == events
+                        && db.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION, events);
+            }
+            // flying west after a few days without opening the app: the Zurich nights between the last Zurich note
+            // and the first one in Los Angeles were slept in Zurich, so their wake ups are read on Zurich's clock too
+            ZoneId zh = ZoneId.of("Europe/Zurich"), la = ZoneId.of("America/Los_Angeles");
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(la));
+            long t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond(), ds0 = 9L * 86400 * 10;
+            List<RingEvent> ev = new ArrayList<RingEvent>();
+            List<LocalDate> days = dates("2026-09-02", 10);
+            zoneNights(ev, days, zh, true, t0, ds0);
+            Context c = travelPhone("openring161w", ev, t0, ds0);
+            Db db = Db.get(c);
+            for (int i = 0; i < 7; i++) db.noteZone(atIn(days.get(i), 8, zh), zh.getId());
+            db.noteZone(atIn(LocalDate.parse("2026-09-13"), 8, la), la.getId());
+            Analyzer.run(c, null);
+            List<String> lines = nightLines(db);
+            int whole = 0, onDay = 0;
+            for (String l : lines) {
+                if (l.contains(" main ") && !l.contains(" 0 wake ups")) whole++;
+                for (LocalDate d : days) if (l.startsWith(d + " main")) onDay++;
+            }
+            check("#161 Zurich nights before a flight west, analysed in Los Angeles: one night each with its wake up, on its own day",
+                    lines.size() == 10 && whole == 10 && onDay == 10, lines);
+
+            // review of PR #206: the zone is decided once per night, not per piece. New York nights with three
+            // 62 minute wake ups (00:00, 01:52, 03:44); the first one lies between the last Zurich note and the
+            // first New York note. Read per piece, its later pieces end in the Zurich morning and the first
+            // piece became a nap
+            ZoneId ny = ZoneId.of("America/New_York");
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(ny));
+            t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond();
+            ev = new ArrayList<RingEvent>();
+            List<LocalDate> home = dates("2026-09-02", 5), away = dates("2026-09-08", 4);
+            zoneNights(ev, home, zh, false, t0, ds0);
+            for (LocalDate d : away) {
+                List<double[]> awake = new ArrayList<double[]>();
+                for (double h : new double[] {0, 112 / 60.0, 224 / 60.0}) awake.add(new double[] {atIn(d, h, ny), atIn(d, h, ny) + 62 * 60});
+                wornSleep(ev, atIn(d, -1, ny), atIn(d, 7, ny), awake, t0, ds0);
+            }
+            c = travelPhone("openring161m", ev, t0, ds0);
+            db = Db.get(c);
+            for (LocalDate d : home) db.noteZone(atIn(d, 8, zh), zh.getId());
+            for (LocalDate d : away) db.noteZone(atIn(d, 8, ny), ny.getId());
+            Analyzer.run(c, null);
+            lines = nightLines(db);
+            int nights = 0, naps = 0;
+            for (String l : lines) {
+                if (l.contains(" nap ")) naps++;
+                for (LocalDate d : away) if (l.startsWith(d + " main") && !l.contains(" 0 wake ups") && !l.contains(" 1 wake ups")
+                        && !l.contains(" 2 wake ups")) nights++;
+            }
+            check("#161 New York nights with three long wake ups, the first between the notes: one night each, no nap",
+                    nights == 4 && naps == 0 && lines.size() == 9, lines);
+        } finally {
+            java.util.TimeZone.setDefault(keep);
+        }
+    }
+
+    /**
+     * Issue #162: flying east across the date line into a zone far behind (Auckland to Los Angeles, Tokyo
+     * to Honolulu), the first night in the new zone stays on its own day when no zone was noted between
+     * landing and that morning, and the orange trip line shows on that day. Nights slept before the flight
+     * in a gap between notes keep their date of the zone before (the case the rule was made for).
+     */
+    static void dateLineNights() throws Exception {
+        java.util.TimeZone keep = java.util.TimeZone.getDefault();
+        String[][] trips = {{"Pacific/Auckland", "America/Los_Angeles"}, {"Asia/Tokyo", "Pacific/Honolulu"}};
+        try {
+            for (String[] t : trips) {
+                ZoneId from = ZoneId.of(t[0]), to = ZoneId.of(t[1]);
+                String how = "#162 " + from.getId().replaceAll(".*/", "") + " to " + to.getId().replaceAll(".*/", "");
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(to));
+                long t0 = LocalDate.parse("2026-10-04").atStartOfDay(from).toEpochSecond(), ds0 = 9L * 86400 * 10;
+                List<LocalDate> before = dates("2026-10-06", 5), after = dates("2026-10-11", 4);
+                for (int gap = 0; gap < 2; gap++) {
+                    List<RingEvent> ev = new ArrayList<RingEvent>();
+                    zoneNights(ev, before, from, false, t0, ds0);
+                    zoneNights(ev, after, to, false, t0, ds0);
+                    Context c = travelPhone("openring162", ev, t0, ds0);
+                    Db db = Db.get(c);
+                    // gap 0: a note every morning, the first one there after the first night (the issue's case);
+                    // gap 1: notes stop two days before the flight and start again two days after it
+                    for (int i = 0; i < (gap == 0 ? 5 : 3); i++) db.noteZone(atIn(before.get(i), 8, from), from.getId());
+                    for (int i = gap == 0 ? 0 : 2; i < 4; i++) db.noteZone(atIn(after.get(i), 8, to), to.getId());
+                    Analyzer.run(c, null);
+                    List<String> lines = nightLines(db);
+                    List<JSONObject> main = new ArrayList<JSONObject>();
+                    for (String js : db.nightsJson("2000-01-01", "2100-01-01", true)) main.add(Json.parse(js));
+                    StringBuilder got = new StringBuilder();
+                    boolean ok = lines.size() == 9 && main.size() == 9;
+                    String travelDay = null, line = null;
+                    for (int i = 0; i < main.size(); i++) {
+                        JSONObject o = main.get(i);
+                        LocalDate want = i < 5 ? before.get(i) : after.get(i - 5);
+                        ok &= want.toString().equals(o.optString("day"));
+                        got.append(o.optString("day")).append(' ');
+                        // as DayData.travelLine: the main night before by start
+                        String l = i == 0 ? null : app.openring.core.analysis.ClockChange.travel(main.get(i - 1).optString("zone", null),
+                                o.optString("zone", null), (Json.d(o, "start") + Json.d(o, "end")) / 2);
+                        if (l != null) {
+                            travelDay = travelDay == null ? o.optString("day") : travelDay + " and " + o.optString("day");
+                            line = l;
+                        }
+                    }
+                    String what = how + (gap == 0 ? ", first note after the first night there" : ", no notes for two days on each side");
+                    check(what + ": one main night on each day", ok, got + " / " + lines);
+                    if (gap == 0) {
+                        check(what + ": the trip line shows on the first night there", "2026-10-11".equals(travelDay)
+                                && line.contains("hours behind where you slept the night before"), travelDay + ": " + line);
+                    }
+                }
+            }
+        } finally {
+            java.util.TimeZone.setDefault(keep);
+        }
+    }
+
     static void putBoot(Db db, List<RingEvent> ev, int epoch, long t0, long end) {
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), epoch, end);
         long lastDs = ev.get(ev.size() - 1).ds;
@@ -2024,6 +2463,91 @@ public class PipelineTest {
      * Issue #22: demo bed and wake times keep their clock time across a switch (median of up to 14 nights on each side
      * moves by under 30 minutes, the old bug moved it by 60), and the switch night carries the marker.
      */
+    /** Issue #137: the average night of the demo's clock change nights 2026-10-25 and 2027-03-28 keeps their clock times. */
+    static void demoSwitchPattern() throws Exception {
+        Context phone = freshDb("openring137");
+        ZoneId z = ZoneId.systemDefault();
+        // "now" must lie in the past (the analysis refuses times more than a day ahead), so the spring night
+        // 2027-03-28 is checked in CoreTest with the zone rules; dstChecks checks 2025-10-26 and 2026-03-29 here
+        String[][] cases = {{"2026-10-25", "2026-10-26", "back"}};
+        for (String[] k : cases) {
+            long now = java.time.LocalDateTime.parse(k[1] + "T12:00:00").atZone(z).toEpochSecond();
+            app.openring.data.Demo.enter(phone, null, LocalDate.parse(k[1]), now);
+            Db db = Db.get(phone);
+            patternMatchesNight(db, k[0], "demo, clocks " + k[2] + " " + k[0]);
+            app.openring.data.Demo.leave(phone);
+        }
+        // issue #164: main nights ending at 15:50 and 16:10 wake at 16:00, not 04:00
+        List<JSONObject> day = new ArrayList<JSONObject>();
+        day.add(Json.parse(dayNight(java.time.LocalDateTime.parse("2026-10-10T08:00:00"), java.time.LocalDateTime.parse("2026-10-10T15:50:00"), z)));
+        day.add(Json.parse(dayNight(java.time.LocalDateTime.parse("2026-10-11T08:20:00"), java.time.LocalDateTime.parse("2026-10-11T16:10:00"), z)));
+        app.openring.data.SleepHistory dh = app.openring.data.SleepHistory.of(day, z);
+        check("history: day sleeper wakes at 16:00", Math.abs(dh.wakeMin - 16 * 60) < 0.01, dh.wakeMin);
+        check("history: day sleeper falls asleep at 08:10, varies by 10 min", Math.abs(dh.bedtimeMin - (8 * 60 + 10)) < 0.01
+                && Math.abs(dh.bedtimeSdMin - 10) < 0.01, dh.bedtimeMin + ", " + dh.bedtimeSdMin);
+        int lastBin = -1;
+        int[] r = dh.pattern.range(0.05);
+        for (int i = r[0]; i < r[1]; i++) if (dh.pattern.inBed(i) > 0) lastBin = i;
+        check("history: day sleep drawn to 16:10", app.openring.core.analysis.SleepPattern.clockMin(lastBin + 1) == 16 * 60 + 10
+                && app.openring.core.analysis.SleepPattern.clockMin(r[0]) == 7 * 60, app.openring.core.analysis.SleepPattern.clockMin(lastBin + 1));
+        // normal nights 23:00 to 07:00 and 23:30 to 07:20 keep today's numbers
+        List<JSONObject> normal = new ArrayList<JSONObject>();
+        normal.add(Json.parse(dayNight(java.time.LocalDateTime.parse("2026-10-10T23:00:00"), java.time.LocalDateTime.parse("2026-10-11T07:00:00"), z)));
+        normal.add(Json.parse(dayNight(java.time.LocalDateTime.parse("2026-10-11T23:30:00"), java.time.LocalDateTime.parse("2026-10-12T07:20:00"), z)));
+        app.openring.data.SleepHistory nh = app.openring.data.SleepHistory.of(normal, z);
+        check("history: normal nights fall asleep 23:15, wake 07:10, vary by 15 min", Math.abs(nh.bedtimeMin - (23 * 60 + 15)) < 1e-6
+                && Math.abs(nh.wakeMin - (7 * 60 + 10)) < 1e-6 && Math.abs(nh.bedtimeSdMin - 15) < 1e-6, nh.bedtimeMin + ", " + nh.wakeMin + ", " + nh.bedtimeSdMin);
+    }
+
+    /** A main night JSON from {@code a} to {@code b} (local times in {@code z}), all light sleep. */
+    static String dayNight(java.time.LocalDateTime a, java.time.LocalDateTime b, ZoneId z) {
+        long s = a.atZone(z).toEpochSecond(), e = b.atZone(z).toEpochSecond();
+        StringBuilder st = new StringBuilder();
+        for (long t = s; t < e; t += 30) st.append('2');
+        return "{\"day\":\"" + b.toLocalDate() + "\",\"main\":true,\"start\":" + s + ",\"end\":" + e + ",\"sleep_start\":" + s
+                + ",\"sleep_end\":" + e + ",\"stages\":\"" + st + "\"}";
+    }
+
+    /** The average night of {@code day} alone is in bed from the night's start to its end, on the night's own clock (issue #137). */
+    static void patternMatchesNight(Db db, String day, String what) {
+        ZoneId z = ZoneId.systemDefault();
+        List<String> main = db.nightsJson(day, day, true);
+        JSONObject n = main.isEmpty() ? null : Json.parse(main.get(0));
+        if (n == null) {
+            check(what + ": main night found", false, day);
+            return;
+        }
+        app.openring.data.SleepHistory h = app.openring.data.SleepHistory.load(db, day, day, z);
+        int first = -1, last = -1;
+        for (int i = 0; i < app.openring.core.analysis.SleepPattern.BINS; i++) {
+            if (h.pattern.inBed(i) <= 0) continue;
+            if (first < 0) first = i;
+            last = i;
+        }
+        double start = Json.d(n, "start"), end = Json.d(n, "end"), sleepEnd = Json.d(n, "sleep_end");
+        int wantFirst = binOf(start + 15, z), wantLast = binOf(end - 15, z), sleepEndBin = binOf(sleepEnd - 1, z);
+        String got = clock(first) + " to " + clock(last + 1) + ", night " + hm(start, z) + " to " + hm(end, z) + " (asleep until " + hm(sleepEnd, z) + ")";
+        check(what + ": average night starts and ends at the night's clock times", first == wantFirst && last == wantLast, got);
+        check(what + ": in bed until the bin of the wake time", last >= sleepEndBin, got);
+        check(what + ": the night crosses the change", n.has("clock_change_at"), n.optString("clock_change_min"));
+    }
+
+    static int binOf(double unix, ZoneId z) {
+        java.time.ZonedDateTime t = java.time.Instant.ofEpochSecond((long) unix).atZone(z);
+        int m = t.getHour() * 60 + t.getMinute();
+        return Math.floorMod(m - app.openring.core.analysis.SleepPattern.ANCHOR_MIN, 1440) / app.openring.core.analysis.SleepPattern.BIN_MIN;
+    }
+
+    static String clock(int bin) {
+        int m = app.openring.core.analysis.SleepPattern.clockMin(bin);
+        return String.format("%02d:%02d", m / 60, m % 60);
+    }
+
+    static String hm(double unix, ZoneId z) {
+        java.time.ZonedDateTime t = java.time.Instant.ofEpochSecond((long) unix).atZone(z);
+        return String.format("%02d:%02d", t.getHour(), t.getMinute());
+    }
+
     static void dstChecks(Db db, String way, String switchDay, String switchUtc, int minutes, String from, String to) {
         ZoneId z = ZoneId.systemDefault();
         LocalDate sw = LocalDate.parse(switchDay);
@@ -2057,6 +2581,7 @@ public class PipelineTest {
                 && from.equals(switchNight.optString("clock_change_from")) && to.equals(switchNight.optString("clock_change_to")),
                 switchNight == null ? null : switchNight.optString("clock_change_from") + " to " + switchNight.optString("clock_change_to"));
         check("only that demo night is marked", marked == 1, marked);
+        patternMatchesNight(db, switchDay, "demo, clocks " + way + " " + switchDay);
     }
 
     // ------------------------------------------------- issue #69, demo cut off by an ended app
@@ -2124,10 +2649,12 @@ public class PipelineTest {
     /**
      * Issue #72: on every demo day the Body tab's Lowest, Average and Highest are the stored line's own lowest point,
      * mean and highest point, with every stored point inside the day the chart draws, and the day's lowest stays near
-     * the night's lowest (5 minute averages).
+     * the night's lowest (5 minute averages). That holds for whole nights only: a night the demo cut short at its
+     * {@code now} falls and rises within minutes, so a quarter hour sits above its 5 minute low (issue #123). Such days
+     * are left out of the second check; {@code wantCut} is how many there must be.
      */
-    static void dayHeartChecks(Db db) {
-        int days = 0, matched = 0, nearNight = 0, withNight = 0;
+    static void dayHeartChecks(Db db, long now, String label, int wantCut) {
+        int days = 0, matched = 0, nearNight = 0, withNight = 0, cut = 0;
         String bad = "";
         for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
@@ -2145,15 +2672,45 @@ public class PipelineTest {
             if (ok) matched++;
             else bad += r[0] + " ";
             double night = Json.d(o, "rhr");
-            if (!Double.isNaN(night)) {
-                withNight++;
-                if (Math.abs(low - night) <= 3) nearNight++;
+            if (Double.isNaN(night)) continue;
+            if (cutShort(db, r[0], now)) {
+                cut++;
+                continue;
             }
+            withNight++;
+            if (Math.abs(low - night) <= 3) nearNight++;
         }
-        check("demo days: Highest and Lowest are the drawn line's highest and lowest point, Average its mean (#72)",
+        check(label + ": Highest and Lowest are the drawn line's highest and lowest point, Average its mean (#72)",
                 days >= 28 && matched == days, matched + " of " + days + " " + bad);
-        check("demo days: the day's lowest within 3 bpm of the night's lowest (#72)", withNight >= 28 && nearNight == withNight,
-                nearNight + " of " + withNight);
+        check(label + ": the day's lowest within 3 bpm of the night's lowest (#72)", withNight >= 28 && nearNight == withNight && cut == wantCut,
+                nearNight + " of " + withNight + ", " + cut + " night cut short left out");
+    }
+
+    /**
+     * Issue #112: every demo day with a whole night has at least 5 hours of Rest, although the demo sends no activity
+     * values at night. A night the demo cut short at its {@code now} is left out (issue #123); {@code wantCut} is how
+     * many there must be.
+     */
+    static void restChecks(Db db, long now, String label, int wantCut) {
+        int restDays = 0, nights = 0, cut = 0;
+        for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o == null || !o.has("rest_min") || db.nightsJson(r[0], r[0], true).isEmpty()) continue;
+            if (cutShort(db, r[0], now)) {
+                cut++;
+                continue;
+            }
+            nights++;
+            if (o.optDouble("rest_min") >= 300) restDays++;
+        }
+        check(label + ": days with a night show the night as rest (#112)", nights >= 28 && restDays == nights && cut == wantCut,
+                restDays + " of " + nights + ", " + cut + " night cut short left out");
+    }
+
+    /** Whether the main night of {@code day} ended less than 2 hours before the demo's {@code now}: cut short by it (issue #123). */
+    static boolean cutShort(Db db, String day, long now) {
+        List<String> ns = db.nightsJson(day, day, true);
+        return !ns.isEmpty() && Json.d(Json.parse(ns.get(0)), "end") > now - 2 * 3600;
     }
 
     /** Issue #72: a day of {@code hours} keeps one point per quarter hour (none merged), so nothing is cut off. */
@@ -2578,6 +3135,140 @@ public class PipelineTest {
         app.openring.data.RightNow r = app.openring.data.RightNow.load(ctx);
         check("Today's heart rate: the newest plausible value (#97)", r.hr == 64, r.hr);
         check("Today's heart rate: at its own time, not the event start (#97)", Math.abs(r.hrAt - (start + 1800)) <= 1, (r.hrAt - start) / 60 + " min after start");
+    }
+
+    /**
+     * Issue #166: Today's heart rate from an always on heart rate burst is its newest plausible value at its own time
+     * ({70, 0, 72, 250, 0}: 72 at the start + 2 x 1.92 s, the position in the burst, not the count of plausible values),
+     * and blood oxygen falls back past a newest reading that is all zero to the one before.
+     */
+    static void rightNowAohr() throws Exception {
+        Context ctx = freshDb("openring-now-aohr");
+        Db db = Db.get(ctx);
+        long now = System.currentTimeMillis() / 1000, start = now - 3600, base = 1000;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        byte[] ts = new byte[4];
+        Protocol.Le.putU32(ts, 0, start);
+        ev.add(new RingEvent(EventCodec.TIME_SYNC, base, ts));
+        // an HRV event at start + 10 minutes (last value at + 35 minutes), older than the burst
+        ev.add(new RingEvent(EventCodec.HRV_EVENT, base + 6000, new byte[] {60, 40, 61, 40, 62, 40, 63, 40, 64, 40, 65, 40}));
+        ev.add(new RingEvent(EventCodec.AOHR_EVENT, base + 30000, aohrBody(70, 0, 72, 250, 0))); // start + 50 minutes
+        ev.add(new RingEvent(EventCodec.SPO2_EVENT, base + 20000, new byte[] {0, 96, 97, 95, 96, 98})); // start + 33:20
+        ev.add(new RingEvent(EventCodec.SPO2_EVENT, base + 32000, new byte[] {0, 0, 0, 0, 0, 0}));      // start + 53:20, no value
+        db.insertBatch(ev, 1, now);
+        db.rebuildTime(now);
+        app.openring.data.RightNow r = app.openring.data.RightNow.load(ctx);
+        check("Today's heart rate: an always on burst gives its newest plausible value (#166)", r.hr == 72, r.hr);
+        check("Today's heart rate: at its place in the burst, start + 3.84 s (#166)", Math.abs(r.hrAt - (start + 3000 + 3.84)) < 0.05,
+                (r.hrAt - start - 3000) + " s after the burst start");
+        check("Today's blood oxygen: an all zero reading is passed over for the one before (#166)", r.spo2 == 96 && Math.abs(r.spo2At - (start + 2000)) < 0.05,
+                r.spo2 + " at " + (r.spo2At - start) + " s");
+    }
+
+    /**
+     * Issue #166: always on heart rate in the night and in the day's heart rate line. The three day synthetic history
+     * with the HRV events of the night of day 1 replaced by bursts (see {@link #history}), and one burst of 40 values
+     * on day 2 from 23:14:30: values 0 to 15 read 90 (two of them 0 and 250), 16 to 39 read 60. Value 15 lies at
+     * 23:14:58.8 and value 16 at 23:15:00.7, so the quarter hours either side read exactly 90 and 60; a wrong spacing,
+     * a time from the count of plausible values instead of the position, or a 250 kept moves a value across.
+     */
+    static void aohrHistory() throws Exception {
+        LocalDate day0 = java.time.Instant.ofEpochSecond(T0).atZone(ZONE).toLocalDate();
+        java.util.Set<Integer> none = java.util.Collections.<Integer>emptySet();
+        List<RingEvent> ev = history(3, none, none, java.util.Collections.singleton(1));
+        double day2 = T0 + 2 * 86400.0, burst = day2 + 23 * 3600 + 14 * 60 + 30;
+        int[] v = new int[40];
+        for (int i = 0; i < v.length; i++) v[i] = i < 16 ? 90 : 60;
+        v[3] = 0;
+        v[5] = 250;
+        ev.add(new RingEvent(EventCodec.AOHR_EVENT, ds(burst), aohrBody(v)));
+        java.util.Collections.sort(ev, new java.util.Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        long now = T0 + 3 * 86400 + 7 * 3600 + 1800;
+        Context c = freshDb("openring-aohr");
+        Db db = Db.get(c);
+        for (int i = 0; i < ev.size(); i += 4096) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4096)), 1, now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, T0 + (lastDs - DS0) / 10);
+        Analyzer.run(c, null);
+        JSONObject n0 = mainNight(db, day0), n1 = mainNight(db, day0.plusDays(1)), n2 = mainNight(db, day0.plusDays(2));
+        check("always on heart rate: the night without HRV events is found (#166)", n0 != null && n1 != null && n2 != null,
+                describe(n0) + " / " + describe(n1) + " / " + describe(n2));
+        if (n0 == null || n1 == null || n2 == null) return;
+        // the bursts carry the HRV nights' curve, so the night reads like them; one 0 kept per burst lowers each 5 minute
+        // value by about 5 % (lowest about 48, average 3 below), one 250 kept raises it by about 10 bpm
+        double hrvAvg = (n0.optDouble("avg_hr") + n2.optDouble("avg_hr")) / 2, hrvLow = (n0.optDouble("lowest_hr") + n2.optDouble("lowest_hr")) / 2;
+        check("always on heart rate: the night's lowest heart rate comes from the bursts, like the HRV nights (#166)",
+                Math.abs(n1.optDouble("lowest_hr") - hrvLow) <= 1.5 && n1.optJSONArray("hr_series") != null && n1.optJSONArray("hr_series").length() > 50,
+                n1.opt("lowest_hr") + " vs " + hrvLow);
+        check("always on heart rate: 0 and 250 left out of the night, average like the HRV nights (#166)", Math.abs(n1.optDouble("avg_hr") - hrvAvg) <= 1.5,
+                n1.opt("avg_hr") + " vs " + hrvAvg);
+        app.openring.core.analysis.TS line = dayLine(db, day0.plusDays(2).toString());
+        double q1 = pointAt(line, day2 + 23 * 3600 + 450), q2 = pointAt(line, day2 + 23 * 3600 + 1350);
+        check("always on heart rate in the day's line: the burst splits at 23:15 as its 1.92 s spacing says (#166)",
+                Math.abs(q1 - 90) < 1e-9 && Math.abs(q2 - 60) < 1e-9, q1 + " / " + q2);
+        JSONObject d1 = dayOf(db, day0.plusDays(1).toString());
+        check("always on heart rate: the night without HRV events gives the day its resting heart rate (#166)", d1 != null
+                && Math.abs(d1.optDouble("rhr") - n1.optDouble("lowest_hr")) < 1e-9, d1 == null ? null : d1.opt("rhr"));
+    }
+
+    /**
+     * Issue #166: the CSV export. The header names the 21 columns, every row has as many cells, there is one row per
+     * stored day, each cell is its day's field of the same name (readiness and activity from their scores), and every
+     * column has a value on some demo day, so a renamed field that would empty a column fails here. Today's Total burn
+     * is the "so far" value stored with total_until (#155).
+     */
+    static void exportChecks(Context c, Db db, LocalDate today) throws Exception {
+        String[] want = {"date", "sleep_score", "asleep_min", "rhr", "hrv", "temp", "temp_dev", "breath", "spo2", "steps", "active_kcal",
+            "total_kcal", "distance_m", "low_min", "medium_min", "high_min", "inactive_min", "target_kcal", "vo2max", "readiness_score", "activity_score"};
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        app.openring.data.Exporter.dailyCsv(c, out);
+        String[] lines = new String(out.toByteArray(), "UTF-8").split("\n", -1);
+        String[] head = lines[0].split(",", -1);
+        check("export: the header names the 21 columns (#166)", Arrays.equals(head, want), lines[0]);
+        List<String[]> days = db.daysJson("0000-00-00", "9999-99-99");
+        check("export: one row per stored day, then a line break (#166)", lines.length == days.size() + 2 && lines[lines.length - 1].isEmpty(),
+                (lines.length - 2) + " rows, " + days.size() + " days");
+        int cellCount = 0, wrongCells = 0;
+        int[] filled = new int[want.length];
+        String first = null, todayTotal = null;
+        for (int i = 0; i < days.size() && i + 1 < lines.length; i++) {
+            String[] cells = lines[i + 1].split(",", -1);
+            if (cells.length == head.length) cellCount++;
+            JSONObject o = Json.parse(days.get(i)[1]);
+            for (int k = 0; k < Math.min(cells.length, want.length); k++) {
+                if (!cells[k].isEmpty()) filled[k]++;
+                boolean same;
+                if (k == 0) {
+                    same = cells[k].equals(days.get(i)[0]);
+                } else if (k >= want.length - 2) {
+                    JSONObject sc = o.optJSONObject(k == want.length - 2 ? "readiness" : "activity_score");
+                    same = sc == null ? cells[k].isEmpty() : cells[k].equals(Integer.toString(sc.optInt("value")));
+                } else {
+                    double jv = o.optDouble(want[k]);
+                    same = !o.has(want[k]) ? cells[k].isEmpty() : !cells[k].isEmpty() && (Double.parseDouble(cells[k]) == jv
+                            || Double.isNaN(jv) && cells[k].equals(String.valueOf(o.opt(want[k]))));
+                }
+                if (!same) {
+                    wrongCells++;
+                    if (first == null) first = days.get(i)[0] + " " + want[k] + ": " + cells[k] + " vs " + o.opt(want[k]);
+                }
+            }
+            if (days.get(i)[0].equals(today.toString()) && cells.length > 11) todayTotal = cells[11];
+        }
+        check("export: the header and every row have 21 cells (#166)", head.length == want.length && cellCount == days.size(), cellCount + " of " + days.size());
+        check("export: every cell is its day's field of the same name (#166)", wrongCells == 0 && !days.isEmpty(), first);
+        String empty = "";
+        for (int k = 0; k < want.length; k++) if (filled[k] == 0) empty += want[k] + " ";
+        check("export: every column has a value on some demo day (#166)", empty.isEmpty(), empty);
+        JSONObject td = Json.parse(db.dayJson(today.toString()));
+        check("export: today's Total burn is the value so far (#155, #166)", td != null && todayTotal != null && !todayTotal.isEmpty()
+                && Double.parseDouble(todayTotal) == td.optDouble("total_kcal") && td.optLong("total_until") > 0,
+                todayTotal + (td == null ? "" : ", until " + td.opt("total_until")));
     }
 
     /**
@@ -3046,6 +3737,81 @@ public class PipelineTest {
             check("#30 older nights, analysis " + run + ": every event kept", db.count("SELECT COUNT(*) FROM events") == events, events);
             check("#30 older nights, analysis " + run + ": the same nights and stages", nightRows(db).equals(before), nightRows(db).size() + " vs " + before.size());
             check("#30 older nights, analysis " + run + ": ring_awake stored again", !Json.ringAwake(mainNight(db, d)).isEmpty(), null);
+        }
+    }
+
+    /**
+     * Issue #110: a ring that stages sleep itself (0x5a pages) for 23:00 to 07:00, deep for its first 5 minutes and REM
+     * 03:00 to 03:30, in a night a bedtime period makes longer: A from 22:50 to 07:30, C a bedtime of 40 minutes from
+     * 07:20. The stored stages keep the ring's clock times; the extra time has no data and lowers efficiency (#107).
+     */
+    static void ringStagesInLongerPeriod() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        String[] names = {"#110 A", "#110 C"};
+        double[][] beds = {{at(d, -1 - 10 / 60.0), at(d, 7.5)}, {at(d, 7 + 20 / 60.0), at(d, 8)}};
+        for (int k = 0; k < 2; k++) {
+            long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+            long ds0 = 9L * 86400 * 10;
+            List<RingEvent> ev = new ArrayList<RingEvent>();
+            double r0 = at(d, -1), r1 = at(d, 7), w0 = Math.min(r0, beds[k][0]), w1 = Math.max(r1, beds[k][1]);
+            // worn the whole time: heart rate, HRV, motion and temperature, no sleep state (the ring's stages decide)
+            for (double t = w0; t < w1; t += 60) {
+                long dd = ds0 + Math.round((t - t0) * 10);
+                if (((long) (t - w0)) % 300 == 0) ev.add(new RingEvent(EventCodec.HRV_EVENT, dd, new byte[] {(byte) (54 + rnd.nextInt(4)), (byte) (55 + rnd.nextInt(10))}));
+                ev.add(new RingEvent(EventCodec.MOTION_EVENT, dd, new byte[] {0, 1, 2, 3}));
+                ev.add(new RingEvent(EventCodec.SLEEP_TEMP_EVENT, dd, le16((int) Math.round((35.3 + rnd.nextGaussian() * 0.04) * 100))));
+            }
+            // the ring's hypnogram, 960 steps of 30 s in 4 pages sent at the run's end
+            int[] codes = new int[960];
+            for (int i = 0; i < codes.length; i++) {
+                double t = r0 + i * 30.0;
+                codes[i] = i < 10 ? 1 : (t >= at(d, 3) && t < at(d, 3.5) ? 3 : 2);
+            }
+            for (int pg = 0; pg < 4; pg++) {
+                byte[] b = new byte[61];
+                b[0] = (byte) pg;
+                for (int j = 0; j < 60; j++) {
+                    int v = 0;
+                    for (int q = 0; q < 4; q++) v = (v << 2) | (codes[pg * 240 + j * 4 + q] - 1);
+                    b[1 + j] = (byte) v;
+                }
+                ev.add(new RingEvent(EventCodec.SLEEP_PHASE_DATA, ds0 + Math.round((r1 - t0) * 10) + pg, b));
+            }
+            byte[] bt = new byte[8];
+            Protocol.Le.putU32(bt, 0, ds0 + Math.round((beds[k][0] - t0) * 10));
+            Protocol.Le.putU32(bt, 4, ds0 + Math.round((beds[k][1] - t0) * 10));
+            ev.add(new RingEvent(EventCodec.BEDTIME_PERIOD, ds0 + Math.round((w1 + 600 - t0) * 10), bt));
+            Db db = runSynthetic(ev, t0, ds0, w1 + 1800);
+            JSONObject n = mainNight(db, d);
+            check(names[k] + ": one main night from the ring's stages", n != null && "ring".equals(n.optString("source")), n == null ? null : n.optString("source"));
+            if (n == null) continue;
+            double s = n.optDouble("start"), e = n.optDouble("end");
+            int[] raw = Json.stagesRaw(n);
+            double step = (e - s) / raw.length;
+            check(names[k] + ": the night covers the bedtime period", Math.abs(s - w0) < 60 && Math.abs(e - w1) < 60, when(s) + " to " + when(e));
+            int deepAt = -1, lastCode = -1;
+            for (int i = 0; i < raw.length; i++) {
+                if (raw[i] == 1 && deepAt < 0) deepAt = i;
+                if (raw[i] != 0) lastCode = i;
+            }
+            check(names[k] + ": deep at 23:00 as the ring says", deepAt >= 0 && Math.abs(s + deepAt * step - r0) <= 30, deepAt < 0 ? "none" : when(s + deepAt * step));
+            check(names[k] + ": the ring's stages end at 07:00", Math.abs(s + (lastCode + 1) * step - r1) <= 30, when(s + (lastCode + 1) * step));
+            int rem0305 = raw[(int) ((at(d, 3 + 5 / 60.0) - s) / step)], rem0335 = raw[(int) ((at(d, 3 + 35 / 60.0) - s) / step)];
+            check(names[k] + ": REM from 03:00, light again at 03:35", rem0305 == 3 && rem0335 == 2, rem0305 + " " + rem0335);
+            double inBed = n.optDouble("in_bed_min"), asleep = n.optDouble("asleep_min");
+            double[] none = app.openring.core.analysis.StageShare.noData(Json.stages(n), inBed);
+            double extra = (w1 - w0 - (r1 - r0)) / 60;
+            check(names[k] + ": the extra time has no stage data", Math.abs(none[0] - extra) <= 1, none[0] + " min, expected " + extra);
+            check(names[k] + ": efficiency is asleep over time in bed", Math.abs(n.optDouble("efficiency") - 100 * asleep / inBed) < 0.01,
+                    n.optDouble("efficiency") + " vs " + 100 * asleep / inBed);
+            check(names[k] + ": latency counts from the start of the bedtime", Math.abs(n.optDouble("latency_min") - (r0 - w0) / 60) <= 0.5, n.opt("latency_min"));
+            // review of #183: a night stored before, with asleep over the time with data, averages like a new one
+            app.openring.data.SleepHistory now = app.openring.data.SleepHistory.of(java.util.Collections.singletonList(n), ZONE);
+            JSONObject old = Json.parse(n.toString());
+            old.put("efficiency", 100 * asleep / (inBed - none[0]));
+            app.openring.data.SleepHistory before = app.openring.data.SleepHistory.of(java.util.Collections.singletonList(old), ZONE);
+            check(names[k] + ": average efficiency from the stored minutes, older nights the same", Math.abs(now.efficiency - n.optDouble("efficiency")) < 0.01
+                    && Math.abs(before.efficiency - now.efficiency) < 1e-9, before.efficiency + " vs " + now.efficiency);
         }
     }
 
@@ -3774,5 +4540,313 @@ public class PipelineTest {
         System.out.println("  #58: " + n + " days analysed again with 10 stale days in " + ms + " ms");
         check("#58 long history: only the 10 stale days removed, every other day and night the same",
                 days58(db).equals(ref) && nights58(db).equals(refN), diff(days58(db), ref));
+    }
+    // ------------------------------------------------------- issue #139, earlier nights read once per run
+
+    interface Phone139 {
+        Context make(String name) throws Exception;
+    }
+
+    interface Runs139 {
+        void run(Context c) throws Exception;
+    }
+
+    static void setStatic(String field, Object v) throws Exception {
+        java.lang.reflect.Field f = Analyzer.class.getDeclaredField(field);
+        f.setAccessible(true);
+        f.set(null, v);
+    }
+
+    /** Every column of every stored night and day, start and stop by their exact bits (issue #139). */
+    static List<String> results139(Db db) {
+        List<String> out = new ArrayList<String>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start, stop, day, main, score, json FROM nights ORDER BY start", null);
+        try {
+            while (c.moveToNext()) out.add("night " + Double.doubleToLongBits(c.getDouble(0)) + " " + Double.doubleToLongBits(c.getDouble(1)) + " "
+                    + c.getString(2) + " " + c.getInt(3) + " " + (c.isNull(4) ? "null" : String.valueOf(c.getLong(4))) + " " + c.getString(5));
+        } finally {
+            c.close();
+        }
+        for (String[] r : db.daysJson("0000-01-01", "9999-12-31")) out.add("day " + r[0] + " " + r[1]);
+        return out;
+    }
+
+    static long nightRows(List<String> rows) {
+        long n = 0;
+        for (String r : rows) if (r.startsWith("night ")) n++;
+        return n;
+    }
+
+    static String firstDiff(List<String> a, List<String> b) {
+        for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
+            if (!a.get(i).equals(b.get(i))) return "row " + i + ": " + a.get(i).substring(0, Math.min(120, a.get(i).length()))
+                    + " | " + b.get(i).substring(0, Math.min(120, b.get(i).length()));
+        }
+        return a.size() + " and " + b.size() + " rows";
+    }
+
+    /** Set up the phone, run the steps with the history store on or off, return its rows; the store is on again after. */
+    static List<String> analysed139(String name, Phone139 p, Runs139 s, boolean cache) throws Exception {
+        setStatic("cacheHistory", cache);
+        try {
+            Context c = p.make(name);
+            s.run(c);
+            return results139(Db.get(c));
+        } finally {
+            setStatic("cacheHistory", true);
+        }
+    }
+
+    static long ms139;
+
+    /** A full re analysis, timed into {@link #ms139}. */
+    static void timedRunAll(Context c, Analyzer.Log log) {
+        long t = System.nanoTime();
+        Analyzer.runAll(c, log);
+        ms139 = (System.nanoTime() - t) / 1000000;
+    }
+
+    static final int DAYS139 = 130;
+    static final long T139 = LocalDate.parse("2025-02-03").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+
+    /** 130 days of demo history across the spring clock change, the last 12 days with the phone in Tokyo. */
+    static Context demo139(String name) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long end = T139 + (DAYS139 + 1) * 86400L + 12 * 3600;
+        db.noteZone(T139 - 86400, z.getId());
+        db.noteZone(T139 + (DAYS139 - 12) * 86400L, "Asia/Tokyo");
+        putBoot(db, app.openring.data.Demo.history(T139, DAYS139, end, z, new Random(139)), 1, T139, end);
+        return c;
+    }
+
+    /**
+     * Issue #139: the history store gives byte identical nights and days (Re analyse all, a sync after, other
+     * histories), an older database analysed without it stays the same, a stopped run leaves nothing behind,
+     * and a full re analysis is at least twice as fast.
+     */
+    static void historyCache() throws Exception {
+        final StringBuilder log = new StringBuilder();
+        final long[] ms = new long[2];
+        Phone139 demo = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                return demo139(name);
+            }
+        };
+        List<String> off = analysed139("openring139-off", demo, new Runs139() {
+            @Override
+            public void run(Context c) {
+                timedRunAll(c, null);
+                ms[0] = ms139;
+                Analyzer.run(c, null);
+            }
+        }, false);
+        List<String> on = analysed139("openring139-on", demo, new Runs139() {
+            @Override
+            public void run(Context c) {
+                timedRunAll(c, collect(log));
+                ms[1] = ms139;
+                Analyzer.run(c, null);
+            }
+        }, true);
+        check("#139 set up: " + DAYS139 + " days of demo history analysed", nightRows(off) >= DAYS139 - 5 && off.size() - nightRows(off) >= DAYS139 - 5,
+                nightRows(off) + " nights, " + (off.size() - nightRows(off)) + " days");
+        check("#139 Re analyse all and a sync: every night and day the same with the store, byte for byte", on.equals(off), firstDiff(on, off));
+        System.out.println("  #139: Re analyse all of " + DAYS139 + " days: " + ms[0] + " ms reading every day's history from the database, "
+                + ms[1] + " ms with the store");
+        // the timing is logged above; the check is lenient (a busy test machine), the read counts below are exact
+        check("#139 Re analyse all faster with the store", ms[1] < ms[0], ms[1] + " ms, before " + ms[0] + " ms");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+) days summarised, (\\d+) stored nights and (\\d+) stored days read for them, at most (\\d+) kept").matcher(log);
+        boolean found = m.find();
+        int maxKept = found ? Integer.parseInt(m.group(4)) : -1, nightsRead = found ? Integer.parseInt(m.group(2)) : -1;
+        // a day looks back 104 days for nights and 60 for summaries: the store stays below that whatever the history length
+        // every night once; a day summary once when a later day reads it (the newest is read by none)
+        check("#139 each stored night and day read once", found && nightsRead == nightRows(on)
+                && Integer.parseInt(m.group(3)) <= on.size() - nightRows(on) && Integer.parseInt(m.group(3)) >= on.size() - nightRows(on) - 2,
+                found ? m.group() : log);
+        historyBound();
+
+        // an older database: analysed without the store (as by the version before), then the sync analysis with it
+        setStatic("cacheHistory", false);
+        Context old = demo139("openring139-old");
+        Analyzer.run(old, null);
+        Db odb = Db.get(old);
+        List<String> before = results139(odb), events = events58(odb);
+        setStatic("cacheHistory", true);
+        Analyzer.run(old, null);
+        check("#139 older database: after the analysis with the store every event, night and day is the same",
+                results139(odb).equals(before) && events58(odb).equals(events) && before.equals(off), firstDiff(results139(odb), before));
+        odb.put("analyzed_until", 0); // dating changed: everything again, incremental path
+        Analyzer.run(old, null);
+        check("#139 older database analysed again as a whole: the same", results139(odb).equals(before), firstDiff(results139(odb), before));
+
+        // a run stopped part way (the app killed): nothing of the store survives, the next run gives the same rows
+        final int[] count = {0};
+        List<String> stopped = analysed139("openring139-stop", demo, new Runs139() {
+            @Override
+            public void run(Context c) throws Exception {
+                Analyzer.run(c, null);
+                setStatic("afterDay", new Runnable() {
+                    @Override
+                    public void run() {
+                        if (++count[0] == 40) throw new Stop();
+                    }
+                });
+                try {
+                    Analyzer.runAll(c, null);
+                } catch (Stop expected) {
+                } finally {
+                    setStatic("afterDay", null);
+                }
+                Db db = Db.get(c);
+                check("#139 set up: the run stopped after 40 days", count[0] == 40 && db.count("SELECT COUNT(*) FROM days") < DAYS139 - 40
+                        && db.kvLong("analyzed_until", -1) == 0, count[0] + " days, " + db.count("SELECT COUNT(*) FROM days") + " stored");
+                Analyzer.run(c, null);
+            }
+        }, true);
+        check("#139 stopped run, then the next analysis: the same rows as a run never stopped", stopped.equals(off), firstDiff(stopped, off));
+
+        // other histories: the synthetic one of this test with days off and rest days, the trip of #22, #58 dated again
+        final List<RingEvent> gap = history(14, new java.util.HashSet<Integer>(Arrays.asList(4, 5, 6, 10)), new java.util.HashSet<Integer>(Arrays.asList(2, 3, 11)));
+        Phone139 synth = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                Context c = freshDb(name);
+                Db db = Db.get(c);
+                long now = T0 + 14 * 86400 + 7 * 3600 + 1800; // T0 is shared with main; the history must end before the real now
+                for (int i = 0; i < gap.size(); i += 4096) db.insertBatch(gap.subList(i, Math.min(gap.size(), i + 4096)), 1, now);
+                long lastDs = gap.get(gap.size() - 1).ds;
+                db.insertPhoneAnchor(1, lastDs, T0 + (lastDs - DS0) / 10);
+                return c;
+            }
+        };
+        Runs139 runs = new Runs139() {
+            @Override
+            public void run(Context c) {
+                Analyzer.run(c, null);
+                Analyzer.runAll(c, null);
+            }
+        };
+        off = analysed139("openring139-synth-off", synth, runs, false);
+        on = analysed139("openring139-synth-on", synth, runs, true);
+        check("#139 synthetic history with days off: the same with the store", on.equals(off) && nightRows(off) >= 9, nightRows(off) + " nights, " + firstDiff(on, off));
+
+        Phone139 trip = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                ZoneId zh = ZoneId.of("Europe/Zurich"), ny = ZoneId.of("America/New_York");
+                long t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond(), end0 = t0 + 11 * 86400L + 12 * 3600;
+                long t1 = LocalDate.parse("2026-09-13").atStartOfDay(ny).toEpochSecond(), end1 = t1 + 6 * 86400L + 12 * 3600;
+                Context c = freshDb(name);
+                Db db = Db.get(c);
+                for (int d = 2; d <= 12; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(zh).toEpochSecond(), "Europe/Zurich");
+                for (int d = 14; d <= 19; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(ny).toEpochSecond(), "America/New_York");
+                putBoot(db, app.openring.data.Demo.history(t0, 10, end0, zh, new Random(21)), 1, t0, end0);
+                putBoot(db, app.openring.data.Demo.history(t1, 5, end1, ny, new Random(22)), 2, t1, end1);
+                return c;
+            }
+        };
+        off = analysed139("openring139-trip-off", trip, runs, false);
+        on = analysed139("openring139-trip-on", trip, runs, true);
+        check("#139 trip in two zones: the same with the store", on.equals(off) && nightRows(off) >= 14, firstDiff(on, off));
+
+        Phone139 shifted = new Phone139() {
+            @Override
+            public Context make(String name) throws Exception {
+                return twoBoots58(name, 86400L);
+            }
+        };
+        Runs139 again = new Runs139() {
+            @Override
+            public void run(Context c) {
+                Analyzer.run(c, null);
+                moveAnchor(Db.get(c), 2, T2_58, 0);
+                Analyzer.run(c, null);
+            }
+        };
+        off = analysed139("openring139-58-off", shifted, again, false);
+        on = analysed139("openring139-58-on", shifted, again, true);
+        check("#139 history dated again, a stale day removed (#58): the same with the store", on.equals(off) && nightRows(off) >= 4, firstDiff(on, off));
+        freshDb("openring139-done");
+    }
+
+    /**
+     * Issue #139, review of #180: over a history longer than the 104 days a day looks back, the store keeps at most
+     * the nights of 107 days (104 back, the day itself and the two around it) and the summaries of 61 (what is older
+     * is dropped as the days move on).
+     */
+    static void historyBound() throws Exception {
+        Context c = freshDb("openring139-long");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        int days = 250;
+        long t0 = LocalDate.parse("2025-01-06").atStartOfDay(z).toEpochSecond(), end = t0 + (days + 1) * 86400L + 12 * 3600;
+        putBoot(db, app.openring.data.Demo.history(t0, days, end, z, new Random(250)), 1, t0, end);
+        StringBuilder log = new StringBuilder();
+        long t = System.nanoTime();
+        Analyzer.run(c, collect(log));
+        long ms = (System.nanoTime() - t) / 1000000;
+        // the most nights of any 107 days in a row, plus 61 day summaries: the bound the window allows
+        List<String> starts = new ArrayList<String>();
+        android.database.Cursor cur = db.getReadableDatabase().rawQuery("SELECT day FROM nights ORDER BY day", null);
+        try {
+            while (cur.moveToNext()) starts.add(cur.getString(0));
+        } finally {
+            cur.close();
+        }
+        int most = 0;
+        for (int i = 0; i < starts.size(); i++) {
+            String last = LocalDate.parse(starts.get(i)).plusDays(106).toString();
+            int k = i;
+            while (k < starts.size() && starts.get(k).compareTo(last) <= 0) k++;
+            most = Math.max(most, k - i);
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("at most (\\d+) kept").matcher(log);
+        int kept = m.find() ? Integer.parseInt(m.group(1)) : -1;
+        long total = db.count("SELECT COUNT(*) FROM nights") + db.count("SELECT COUNT(*) FROM days");
+        System.out.println("  #139: " + days + " days analysed in " + ms + " ms, at most " + kept + " of " + total + " nights and days kept");
+        check("#139 a history longer than the window: the store stays within 107 days of nights and 61 of summaries", kept > 0
+                && kept <= most + 61 && kept < total / 2, kept + " kept, bound " + (most + 61) + ", " + total + " stored");
+    }
+
+    // ------------------------------------------------------------ issue #98, the recent nights strip
+
+    /** Issue #98: the strip of an old date loads a window of nights, not every night up to today. */
+    static void recentWindow() throws Exception {
+        Context c = freshDb("openring98");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate today = LocalDate.parse("2026-10-26"), first = today.minusDays(399);
+        List<Object[]> rows = new ArrayList<Object[]>();
+        for (int k = 0; k < 400; k++) {
+            LocalDate d = first.plusDays(k);
+            double end = d.atTime(6, 45).atZone(z).toEpochSecond(), start = end - 8 * 3600;
+            JSONObject js = new JSONObject();
+            Json.put(js, "day", d.toString());
+            Json.put(js, "start", start);
+            Json.put(js, "end", end);
+            Json.put(js, "main", true);
+            rows.add(new Object[] {start, end, d.toString(), 1, 80, js.toString()});
+            // a nap on every fifth day: not in the strip
+            if (k % 5 == 0) rows.add(new Object[] {end + 6 * 3600, end + 7 * 3600, d.toString(), 0, 50, js.toString()});
+        }
+        db.replaceNights(0, Double.MAX_VALUE, rows);
+        int yearBack = db.recentNights(today.minusDays(365), today).size(), mid = db.recentNights(today.minusDays(200), today).size();
+        int old = db.nightsJson(today.minusDays(365 + 30).toString(), today.plusDays(1).toString(), true).size();
+        check("#98 a date a year back loads as many nights as one 200 days back", yearBack == mid && yearBack == 2 * Db.RECENT_DAYS + 1,
+                yearBack + " and " + mid + " nights, " + old + " before");
+        check("#98 today loads the same nights as before", db.recentNights(today, today).equals(
+                db.nightsJson(today.minusDays(30).toString(), today.plusDays(1).toString(), true)), db.recentNights(today, today).size());
+        check("#98 ten days back: the 30 days before it up to today", db.recentNights(today.minusDays(10), today).size() == 41,
+                db.recentNights(today.minusDays(10), today).size());
+        List<String> first98 = db.recentNights(first, today);
+        check("#98 the oldest date: its night and the 30 after it", first98.size() == 31
+                && first.toString().equals(Json.parse(first98.get(0)).optString("day")), first98.size());
+        check("#98 a date in a long gap: no nights in the strip, Further analysis still offered",
+                db.recentNights(first.minusDays(100), today).isEmpty() && db.anyMainNight(), db.recentNights(first.minusDays(100), today).size());
+        check("#98 no main night stored: no Further analysis", !Db.get(freshDb("openring98-empty")).anyMainNight(), "");
+        freshDb("openring98-done");
     }
 }

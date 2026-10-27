@@ -508,8 +508,212 @@ public class CoreTest {
         int[] r = p.range(0.05);
         check("pattern: range from 22:00 to 08:00", app.openring.core.analysis.SleepPattern.clockMin(r[0]) == 22 * 60
                 && app.openring.core.analysis.SleepPattern.clockMin(r[1]) == 8 * 60);
-        p.add(13 * 60, a, 30); // an afternoon start lands after 12:00 and is ignored by the bins, but counts as a night
+        p.add(13 * 60, a, 30); // an afternoon start is kept too now, the whole clock has bins (issue #164)
         check("pattern: counts nights", p.nights() == 3);
+        check("pattern: an afternoon night is in bed at 15:00", p.inBed(binAt(15 * 60)) > 0.3);
+        patternClock();
+        clockAverage();
+    }
+
+    static int binAt(int clockMin) {
+        return Math.floorMod(clockMin - SleepPattern.ANCHOR_MIN, 1440) / SleepPattern.BIN_MIN;
+    }
+
+    /** First and last bin with someone in bed, as clock minutes {start of first, end of last}. */
+    static int[] inBedSpan(SleepPattern p) {
+        int[] r = p.range(0.05);
+        int first = -1, last = -1;
+        for (int i = r[0]; i < r[1]; i++) {
+            if (p.inBed(i) <= 0) continue;
+            if (first < 0) first = i;
+            last = i;
+        }
+        return first < 0 ? new int[] {-1, -1} : new int[] {SleepPattern.clockMin(first), SleepPattern.clockMin(last + 1)};
+    }
+
+    static long local(String t, java.time.ZoneId z) {
+        return java.time.LocalDateTime.parse(t).atZone(z).toEpochSecond();
+    }
+
+    /** Issue #137: each stage cell at its own clock time; the window round the whole clock (issue #164). */
+    static void patternClock() {
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        // a normal night through the zone gives the same bins as by its start's clock minute
+        SleepPattern byStart = new SleepPattern(), byZone = new SleepPattern();
+        int[] st = new int[8 * 120];
+        for (int i = 0; i < st.length; i++) st[i] = 1 + (i / 37) % 4;
+        byStart.add(23 * 60, st, 30);
+        byZone.add(local("2026-10-10T23:00:00", z), st, 30, z);
+        boolean same = true;
+        for (int b = 0; b < SleepPattern.BINS; b++)
+            for (int k = 1; k <= 4; k++) same &= Math.abs(byStart.share(b, k) - byZone.share(b, k)) < 1e-9;
+        check("pattern clock: a normal night gives the same bins as before", same);
+        int[] r = byZone.range(0.05);
+        check("pattern clock: normal night window 22:00 to 08:00", SleepPattern.clockMin(r[0]) == 22 * 60 && SleepPattern.clockMin(r[1]) == 8 * 60);
+
+        // autumn 2026-10-25: 23:48 to 08:03 is 9h15m of real time
+        SleepPattern fall = new SleepPattern();
+        double fs = local("2026-10-24T23:48:00", z), fe = local("2026-10-25T08:03:00", z);
+        int[] lightF = new int[(int) ((fe - fs) / 30)];
+        Arrays.fill(lightF, 2);
+        fall.add(fs, lightF, 30, z);
+        int[] fspan = inBedSpan(fall);
+        check("pattern clock: autumn night ends at 08:10 bin (08:03), not 09:00", fspan[1] == 8 * 60 + 10 && fspan[0] == 23 * 60 + 40);
+        check("pattern clock: the repeated hour never reads more than 100%", fall.inBed(binAt(2 * 60 + 30)) <= 1 + 1e-9
+                && Math.abs(fall.share(binAt(2 * 60 + 30), 2) - 1) < 1e-9);
+        // a mixed repeated hour: first pass deep, second pass REM, so the bin shows half of each
+        SleepPattern mix = new SleepPattern();
+        double ms = local("2026-10-25T02:00:00", z); // the first pass of 02:00 (java.time takes the earlier offset)
+        int[] two = new int[240];
+        for (int i = 0; i < 240; i++) two[i] = i < 120 ? 1 : 3;
+        mix.add(ms, two, 30, z);
+        int b0230 = binAt(2 * 60 + 30);
+        check("pattern clock: both passes of the repeated hour share its bins", Math.abs(mix.share(b0230, 1) - 0.5) < 1e-9
+                && Math.abs(mix.share(b0230, 3) - 0.5) < 1e-9 && Math.abs(mix.inBed(b0230) - 1) < 1e-9 && mix.inBed(binAt(3 * 60)) == 0);
+
+        // review of #205: the switch night in bed 01:30 to 08:00, six other nights 04:00 to 08:00;
+        // at 02:30 only 1 of 7 nights is in bed, even though that night has 20 minutes in the bin
+        SleepPattern week = new SleepPattern();
+        double ws = local("2026-10-25T01:30:00", z), we = local("2026-10-25T08:00:00", z);
+        int[] sw = new int[(int) ((we - ws) / 30)];
+        for (int i = 0; i < sw.length; i++) sw[i] = i % 2 == 0 ? 1 : 2;
+        week.add(ws, sw, 30, z);
+        int[] four = new int[4 * 120];
+        Arrays.fill(four, 2);
+        for (int d = 0; d < 6; d++) week.add(local("2026-10-1" + d + "T04:00:00", z), four, 30, z);
+        int w0230 = binAt(2 * 60 + 30);
+        check("pattern clock: repeated hour counts one night once (1 of 7 in bed at 02:30)", Math.abs(week.inBed(w0230) - 1 / 7.0) < 1e-9
+                && Math.abs(week.share(w0230, 1) - 0.5 / 7) < 1e-9 && Math.abs(week.inBed(binAt(5 * 60)) - 1) < 1e-9);
+
+        // spring 2027-03-28: 22:03 to 07:54 is 8h51m of real time; 02:00 to 03:00 never shows on the clock
+        SleepPattern spring = new SleepPattern();
+        double ss = local("2027-03-27T22:03:00", z), se = local("2027-03-28T07:54:00", z);
+        int[] lightS = new int[(int) ((se - ss) / 30)];
+        Arrays.fill(lightS, 2);
+        spring.add(ss, lightS, 30, z);
+        int[] sspan = inBedSpan(spring);
+        check("pattern clock: spring night ends at the 07:50 bin (07:54), not 06:50", sspan[1] == 8 * 60 && sspan[0] == 22 * 60);
+        check("pattern clock: the skipped spring hour stays empty", spring.inBed(binAt(2 * 60 + 30)) == 0
+                && spring.inBed(binAt(1 * 60 + 50)) == 1 && spring.inBed(binAt(3 * 60)) == 1);
+        // the same night by the start's clock minute (the old way) ends an hour early
+        SleepPattern oldWay = new SleepPattern();
+        oldWay.add(22 * 60 + 3, lightS, 30);
+        check("pattern clock: counted on from the start it would end at 06:50", inBedSpan(oldWay)[1] == 7 * 60);
+        // Santiago, clocks forward at midnight 2026-09-06
+        java.time.ZoneId sz = java.time.ZoneId.of("America/Santiago");
+        SleepPattern sant = new SleepPattern();
+        double as = local("2026-09-05T23:48:00", sz), ae = local("2026-09-06T08:03:00", sz);
+        int[] lightA = new int[(int) ((ae - as) / 30)];
+        Arrays.fill(lightA, 2);
+        sant.add(as, lightA, 30, sz);
+        check("pattern clock: Santiago night ends at 08:03 too", inBedSpan(sant)[1] == 8 * 60 + 10);
+
+        // a day sleeper 08:00 to 16:00 is kept whole, the window follows it
+        SleepPattern day = new SleepPattern();
+        int[] eight = new int[8 * 120];
+        Arrays.fill(eight, 2);
+        day.add(local("2026-10-10T08:00:00", z), eight, 30, z);
+        int[] dr = day.range(0.05);
+        check("pattern clock: day sleep window 07:00 to 17:00", SleepPattern.clockMin(dr[0]) == 7 * 60 && SleepPattern.clockMin(dr[1]) == 17 * 60
+                && dr[1] - dr[0] == 10 * 6);
+        check("pattern clock: day sleep kept to 16:00", day.inBed(binAt(15 * 60 + 50)) == 1 && day.inBed(binAt(16 * 60)) == 0);
+        // a start before 16:00 was dropped whole before
+        SleepPattern early = new SleepPattern();
+        early.add(15 * 60, eight, 30);
+        check("pattern clock: a 15:00 start is kept", early.inBed(binAt(15 * 60)) == 1 && early.inBed(binAt(22 * 60 + 50)) == 1);
+        // an evening night 18:00 to 02:00: the window passes 20:00 and goes on
+        SleepPattern eve = new SleepPattern();
+        eve.add(18 * 60, eight, 30);
+        int[] er = eve.range(0.05);
+        check("pattern clock: evening window 17:00 to 03:00", SleepPattern.clockMin(er[0]) == 17 * 60 && SleepPattern.clockMin(er[1]) == 3 * 60
+                && er[0] >= 0 && er[1] - er[0] == 10 * 6 && eve.inBed(er[0] + 6) == 1);
+        // a day sleeper plus one normal night: the window starts after the longest empty stretch
+        SleepPattern both = new SleepPattern();
+        both.add(8 * 60, eight, 30);
+        both.add(23 * 60, eight, 30);
+        int[] br = both.range(0.05);
+        check("pattern clock: two sleeps, one window 22:00 to 17:00", SleepPattern.clockMin(br[0]) == 22 * 60 && SleepPattern.clockMin(br[1]) == 17 * 60
+                && br[1] - br[0] == 19 * 6);
+        // in bed round the clock: the whole clock from 20:00; nobody in bed: the same
+        SleepPattern all = new SleepPattern();
+        int[] full = new int[24 * 120];
+        Arrays.fill(full, 2);
+        all.add(0, full, 30);
+        int[] ar = all.range(0.05);
+        check("pattern clock: round the clock draws 24 hours", ar[0] == 0 && ar[1] == SleepPattern.BINS);
+        SleepPattern awakeOnly = new SleepPattern();
+        awakeOnly.add(0, new int[] {0, 0, 0}, 30);
+        int[] nr = awakeOnly.range(0.05);
+        check("pattern clock: no stage data draws the whole clock", nr[0] == 0 && nr[1] == SleepPattern.BINS && awakeOnly.nights() == 1);
+        // a long stretch with a short gap: never more than 24 hours drawn
+        SleepPattern longOne = new SleepPattern();
+        int[] twentyTwo = new int[22 * 120 + 60];
+        Arrays.fill(twentyTwo, 2);
+        longOne.add(20 * 60, twentyTwo, 30);
+        int[] lr = longOne.range(0.05);
+        check("pattern clock: at most 24 hours drawn", lr[1] - lr[0] == SleepPattern.BINS && lr[0] >= 0);
+        check("pattern clock: bins past the clock wrap", SleepPattern.clockMin(SleepPattern.BINS + 6) == 21 * 60
+                && Math.abs(longOne.share(SleepPattern.BINS + 6, 2) - longOne.share(6, 2)) < 1e-12);
+        SleepPattern none = new SleepPattern();
+        none.add(0, new int[0], 30);
+        none.add(0, (int[]) null, 30);
+        none.add(0.0, new int[0], 30, z);
+        none.add(0.0, st, 0, z);
+        check("pattern clock: empty input adds no night", none.nights() == 0 && none.share(0, 1) == 0);
+    }
+
+    /** The old bedtime maths: minutes after 20:00 wrapped at 16:00, plain mean and spread. */
+    static double[] oldClockMean(double[] clock) {
+        double[] r = new double[clock.length];
+        for (int i = 0; i < clock.length; i++) {
+            double x = clock[i] - 20 * 60;
+            if (x < -4 * 60) x += 1440;
+            r[i] = Double.isNaN(clock[i]) ? Double.NaN : x;
+        }
+        double m = Stats.mean(r);
+        return new double[] {((m + 20 * 60) % 1440 + 1440) % 1440, Stats.countFinite(r) >= 2 ? Stats.sd(r) : Double.NaN};
+    }
+
+    /** Issue #164: clock times averaged on the clock face. */
+    static void clockAverage() {
+        double[] w = ClockAverage.of(new double[] {15 * 60 + 50, 16 * 60 + 10});
+        check("clock average: 15:50 and 16:10 give 16:00", Math.abs(w[0] - 16 * 60) < 1e-6 && Math.abs(w[1] - 10) < 1e-6);
+        double[] w3 = ClockAverage.of(new double[] {15 * 60 + 30, 16 * 60, 16 * 60 + 30});
+        check("clock average: 15:30, 16:00 and 16:30 give 16:00, spread 24 min", Math.abs(w3[0] - 16 * 60) < 1e-6 && Math.round(w3[1]) == 24);
+        check("clock average: the old maths gave 04:00 there", Math.abs(oldClockMean(new double[] {15 * 60 + 50, 16 * 60 + 10})[0] - 4 * 60) < 1e-6);
+        double[] mid = ClockAverage.of(new double[] {23 * 60 + 50, 10});
+        check("clock average: 23:50 and 00:10 give 00:00", Math.abs(mid[0]) < 1e-6 || Math.abs(mid[0] - 1440) < 1e-6);
+        // normal nights: exactly the old numbers
+        Random rnd = new Random(5);
+        boolean same = true;
+        for (int k = 0; k < 200; k++) {
+            int n = 1 + rnd.nextInt(30);
+            double[] bed = new double[n], wake = new double[n];
+            for (int i = 0; i < n; i++) {
+                bed[i] = Math.floorMod(21 * 60 + rnd.nextInt(5 * 60), 1440) + rnd.nextDouble(); // 21:00 to 02:00
+                wake[i] = 5 * 60 + rnd.nextInt(5 * 60) + rnd.nextDouble(); // 05:00 to 10:00
+                if (rnd.nextInt(10) == 0) bed[i] = Double.NaN;
+            }
+            double[] nb = ClockAverage.of(bed), ob = oldClockMean(bed), nw = ClockAverage.of(wake), ow = oldClockMean(wake);
+            same &= close(nb[0], ob[0]) && close(nb[1], ob[1]) && close(nw[0], ow[0]) && close(nw[1], ow[1]);
+        }
+        check("clock average: normal nights give exactly the old numbers", same);
+        double[] fixed = ClockAverage.of(new double[] {23 * 60, 23 * 60 + 30});
+        check("clock average: 23:00 and 23:30 give 23:15, spread 15", close(fixed[0], 23 * 60 + 15) && close(fixed[1], 15));
+        double[] one = ClockAverage.of(new double[] {Double.NaN, 7 * 60 + 10});
+        check("clock average: one time has no spread", close(one[0], 7 * 60 + 10) && Double.isNaN(one[1]));
+        double[] empty = ClockAverage.of(new double[] {Double.NaN});
+        check("clock average: no times give no value", Double.isNaN(empty[0]) && Double.isNaN(empty[1]));
+        double[] opposite = ClockAverage.of(new double[] {4 * 60, 16 * 60});
+        // no centre: counted from 04:00 like the old window, so 22:00 as before, and the spread says irregular
+        check("clock average: opposite times count from 04:00, large spread", close(opposite[0], 22 * 60) && close(opposite[1], 360)
+                && close(opposite[0], oldClockMean(new double[] {4 * 60, 16 * 60})[0]));
+    }
+
+    static boolean close(double a, double b) {
+        if (Double.isNaN(a) || Double.isNaN(b)) return Double.isNaN(a) && Double.isNaN(b);
+        double d = Math.abs(a - b);
+        return Math.min(d, 1440 - d) < 1e-6;
     }
 
     static byte[] b(int... v) {
@@ -662,12 +866,16 @@ public class CoreTest {
         history();
         bundles();
         client();
+        drainGuards();
         analysis();
         dayHeart();
         vo2max();
         longWake();
+        nightNumbers();
         timeline();
         activityWeek();
+        activityDay();
+        activityRestAndBurn();
         live();
         motion();
         pattern();
@@ -677,11 +885,14 @@ public class CoreTest {
         wakeUps();
         previewSameAsSaved();
         stageShare();
+        sleepMinutes();
         syncError();
         texts();
+        unitTexts();
         drafts();
         oneRun();
         keptHeight();
+        scrollKeep();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -790,6 +1001,73 @@ public class CoreTest {
         k.remember(portrait, 1500);
         eq("kept height: newer result replaces older", k.get(portrait), 1500);
         eq("kept height: other layout untouched", k.get(landscape), 1100);
+    }
+
+    /** Issue #204: the page stays still when the stage detail card above the switch is redrawn. */
+    static void scrollKeep() {
+        // card from 100 to 600 (500 px), the phone line adds 40 px
+        eq("scroll keep: card fully above, it grows, the page moves with it", ScrollKeep.after(900, 100, 500, 540), 940);
+        eq("scroll keep: card fully above, it shrinks, the page moves with it", ScrollKeep.after(900, 100, 540, 500), 860);
+        eq("scroll keep: card ends exactly at the top edge counts as above", ScrollKeep.after(600, 100, 500, 540), 640);
+        eq("scroll keep: card partly on screen stays", ScrollKeep.after(599, 100, 500, 540), 599);
+        eq("scroll keep: card top on screen stays", ScrollKeep.after(50, 100, 500, 540), 50);
+        eq("scroll keep: top of the page stays", ScrollKeep.after(0, 100, 500, 460), 0);
+        eq("scroll keep: same height stays", ScrollKeep.after(900, 100, 500, 500), 900);
+        eq("scroll keep: card above shrinks to nothing", ScrollKeep.after(20, 0, 20, 0), 0);
+        eq("scroll keep: a negative start is not kept", ScrollKeep.after(-5, 100, 500, 540), 0);
+    }
+
+    /** One way to write the same quantity everywhere (issues #99, #163, #165). */
+    static void unitTexts() {
+        Locale de = Locale.GERMANY;
+        // temperature change: near zero is "0.0", never "-0.0" or "+0.0"; the stored value rounded first (issue #163)
+        eq("signed: -0.04 is 0.0", Texts.signed(-0.04, Locale.US), "0.0");
+        eq("signed: +0.04 is 0.0", Texts.signed(0.04, Locale.US), "0.0");
+        eq("signed: -0.03 is 0.0", Texts.signed(-0.03, Locale.US), "0.0");
+        eq("signed: 0.05 is +0.1", Texts.signed(0.05, Locale.US), "+0.1");
+        eq("signed: -0.05 is -0.1", Texts.signed(-0.05, Locale.US), "-0.1");
+        eq("signed: 0.0496 is stored as 0.05, so +0.1 as the card shows", Texts.signed(0.0496, Locale.US), "+0.1");
+        eq("signed: 0.0494 is 0.0", Texts.signed(0.0494, Locale.US), "0.0");
+        eq("signed: -0.31", Texts.signed(-0.31, Locale.US), "-0.3");
+        eq("signed: phone's decimal sign", Texts.signed(0.26, de), "+0,3");
+        eq("signed: near zero with the phone's decimal sign", Texts.signed(-0.04, de), "0,0");
+        eq("signed: unknown", Texts.signed(Double.NaN, Locale.US), "--");
+        Scores.ReadinessInput ri = new Scores.ReadinessInput();
+        for (double v : new double[] {-0.04, 0.04, 0.05, -0.03, 0.0496, 0.6}) {
+            ri.tempDev = v;
+            eq("readiness: temperature detail " + v + " as the card", part(Scores.readiness(ri), "temperature").detail, Texts.signed(v, Locale.US) + " \u00b0C");
+        }
+        ri.tempDev = -0.04;
+        eq("readiness: -0.04 is 0.0 \u00b0C", part(Scores.readiness(ri), "temperature").detail, "0.0 \u00b0C");
+
+        // minutes on the Screen tab: one way under an hour (issue #99)
+        eq("minutes: 30", Texts.minutes(30), "30 min");
+        eq("minutes: rounded", Texts.minutes(14.6), "15 min");
+        eq("minutes: zero", Texts.minutes(0), "0 min");
+        eq("minutes: just under an hour", Texts.minutes(59.4), "59 min");
+        eq("minutes: rounds up to an hour", Texts.minutes(59.5), "1h 0m");
+        eq("minutes: above an hour", Texts.minutes(65), "1h 5m");
+        eq("minutes: unknown", Texts.minutes(Double.NaN), "--");
+
+        // symptom radar values with a unit and the precision of Today (issue #99)
+        eq("radar: HRV", Texts.radar("HRV", 59.3, Locale.US), "59 ms");
+        eq("radar: resting heart rate", Texts.radar("Resting heart rate", 52.6, Locale.US), "53 bpm");
+        eq("radar: breathing", Texts.radar("Respiratory rate", 13.94, Locale.US), "13.9 /min");
+        eq("radar: skin temperature as on Today", Texts.radar("Skin temperature", -0.17, Locale.US), "-0.2 \u00b0C");
+        eq("radar: skin temperature near zero", Texts.radar("Skin temperature", -0.04, Locale.US), "0.0 \u00b0C");
+        eq("radar: phone's decimal sign", Texts.radar("Respiratory rate", 13.94, de), "13,9 /min");
+        eq("radar: unknown marker keeps one decimal", Texts.radar("Other", 1.25, Locale.US), "1.3");
+        eq("radar: no value", Texts.radar("HRV", Double.NaN, Locale.US), "--");
+        // the radar stores its markers at 2 decimals, the day's temp_dev at 3: the radar shows temp_dev (review of #181)
+        eq("radar: skin temperature from temp_dev, 0.046 is 0.0 as on Today", Texts.radar("Skin temperature", 0.05, 0.046, Locale.US), "0.0 \u00b0C");
+        eq("radar: skin temperature, 0.046 stored at 2 decimals alone would read +0.1", Texts.radar("Skin temperature", 0.05, Locale.US), "+0.1 \u00b0C");
+        eq("radar: skin temperature falls back to the marker", Texts.radar("Skin temperature", -0.17, Double.NaN, Locale.US), "-0.2 \u00b0C");
+        eq("radar: temp_dev only for skin temperature", Texts.radar("HRV", 59.3, 0.046, Locale.US), "59 ms");
+        Wellness.Radar wr = Wellness.radar(new double[] {0.1, 50, 60, 14}, new double[][] {
+            {0, 0.1, -0.1, 0.2, -0.2, 0.05, 0}, {49, 50, 51, 52, 48, 50, 50}, {55, 60, 65, 58, 62, 61, 59}, {13, 14, 15, 14, 13.5, 14.5, 14}});
+        for (String k : wr.markers.keySet()) check("radar: every marker has a unit: " + k, !Texts.radar(k, 1, Locale.US).equals("1.0"));
+        // "1 time" on the Screen tab (issue #165)
+        eq("uses: one", Texts.word(1, "time", "times"), "time");
     }
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
@@ -957,6 +1235,158 @@ public class CoreTest {
         eq("note: awake", StageShare.note(9, "time in bed", null), "9% of time in bed");
         eq("note: unknown with range", StageShare.note(Double.NaN, "sleep", StageShare.USUAL_DEEP), "Usual 13 to 23% of sleep");
         eq("note: unknown without range", StageShare.note(Double.NaN, "sleep", null), "No data yet");
+    }
+
+    /** Issues #111, #138, #119: stage minutes that add up to the totals shown, one rounding for night times, tab label size. */
+    static void sleepMinutes() {
+        // #111, the issue's demo night: rounded alone 0h 48m + 4h 20m + 2h 23m = 7h 31m next to Total sleep 7h 30m
+        double deep = 47.6, light = 259.6, rem = 142.6, asleep = deep + light + rem;
+        eq("alone the rows add up to one more", Math.round(deep) + Math.round(light) + Math.round(rem), 451L);
+        eq("total sleep shows 7h 30m", Math.round(asleep), 450L);
+        long[] t = StageShare.roundTogether(new double[] {deep, light, rem}, 450);
+        eq("together they add up to 450, ties to the earlier stage", Arrays.toString(t), "[48, 260, 142]");
+        // with awake and the shown window 22:25 to 06:47
+        double start = 1761431120, end = start + 501.8333 * 60; // 22:25:20 to 06:47:10 UTC
+        long inBedShown = WakeUps.shownMinutes(start, end);
+        eq("shown time in bed is the minutes between the shown clocks", inBedShown, 502L);
+        double inBed = (end - start) / 60, awake = inBed - asleep;
+        eq("alone the rows with awake add up to 503", Math.round(deep) + Math.round(light) + Math.round(rem) + Math.round(awake), 503L);
+        double[] m = StageShare.shownMinutes(deep, light, rem, awake, 0, asleep, inBed, inBedShown);
+        eq("sleep page rows", Arrays.toString(m), "[48.0, 260.0, 142.0, 52.0, 0.0]");
+        eq("sleep rows add up to total sleep", m[0] + m[1] + m[2], 450.0);
+        eq("all rows add up to the shown time in bed", m[0] + m[1] + m[2] + m[3] + m[4], 502.0);
+        // No data (issue #107) joins awake in the time in bed group
+        double[] nd = StageShare.shownMinutes(40.4, 250.4, 120.4, 30.4, 19.6, 411.2, 461.2, 461);
+        eq("no data row: rows add up to time in bed", nd[0] + nd[1] + nd[2] + nd[3] + nd[4], 461.0);
+        eq("no data row: sleep adds up to total sleep", nd[0] + nd[1] + nd[2], 411.0);
+        eq("no data row: no data keeps its 20 min", nd[4], 20.0);
+        // the shown time in bed may be one minute off the exact one (rounded clocks): awake takes it
+        double[] off = StageShare.shownMinutes(60, 300, 100, 40.2, 0, 460, 500.2, 501);
+        eq("one minute more from the rounded clocks goes to awake", off[3], 41.0);
+        // parts that do not add up to their total are rounded to their own sum, never stretched
+        double[] mix = StageShare.shownMinutes(40.6, 250.6, 120.6, 30, 0, 420, 450, 450);
+        eq("mixed night: sleep rows to their own sum", Arrays.toString(mix), "[41.0, 251.0, 120.0, 30.0, 0.0]");
+        // Further analysis: no time in bed shown, awake alone
+        double[] fa = StageShare.shownMinutes(43.4, 281.4, 124.4, 51.6, 0, 449.2, 500.8, -1);
+        eq("further analysis: sleep rows add up to asleep", fa[0] + fa[1] + fa[2], 449.0);
+        eq("further analysis: awake rounded alone", fa[3], 52.0);
+        // a missing stage stays unknown, the others round alone
+        double[] miss = StageShare.shownMinutes(Double.NaN, 250.6, 120.6, 30.4, 0, 371.2, 401.6, 402);
+        check("missing stage stays NaN", Double.isNaN(miss[0]));
+        eq("missing stage: others round alone", miss[1] + "," + miss[2], "251.0,121.0");
+        eq("missing stage: awake rounded alone", miss[3], 30.0);
+        check("missing awake stays NaN", Double.isNaN(StageShare.shownMinutes(40, 250, 120, Double.NaN, 0, 410, 450, 450)[3]));
+        // roundTogether edge cases
+        check("total out of reach gives null", StageShare.roundTogether(new double[] {1.2, 1.2}, 5) == null
+                && StageShare.roundTogether(new double[] {1.2, 1.2}, -1) == null && StageShare.roundTogether(new double[] {0.2, 5.2}, 3) == null);
+        eq("total below the floors: smallest remainder gives a minute", Arrays.toString(StageShare.roundTogether(new double[] {28.002, 10.0009}, 37)), "[28, 9]");
+        eq("total below the floors: never below 0", Arrays.toString(StageShare.roundTogether(new double[] {0.1, 10.5}, 9)), "[0, 9]");
+        // the rounded clocks can make the shown time in bed a minute short of the exact rows: the smallest remainder gives it
+        double[] shortBed = StageShare.shownMinutes(73.506, 66.506, 30.503, 28.0024, 10.0009, 170.515, 208.518, 208);
+        eq("shown time in bed a minute short: rows still add up", Arrays.toString(shortBed), "[74.0, 67.0, 30.0, 28.0, 9.0]");
+        check("NaN part gives null", StageShare.roundTogether(new double[] {Double.NaN, 1}, 1) == null);
+        eq("negative part counts as 0", Arrays.toString(StageShare.roundTogether(new double[] {-3, 2.5}, 3)), "[0, 3]");
+        eq("exact parts stay", Arrays.toString(StageShare.roundTogether(new double[] {10, 20, 30}, 60)), "[10, 20, 30]");
+        // review of #201: a part that is exactly 0 never gets a minute
+        eq("zero part gets no minute", Arrays.toString(StageShare.roundTogether(new double[] {10.9, 10.9, 0}, 23)), "[12, 11, 0]");
+        eq("zero part: one other part may take two", Arrays.toString(StageShare.roundTogether(new double[] {8.96, 0}, 10)), "[10, 0]");
+        check("only zero parts cannot take a minute", StageShare.roundTogether(new double[] {0, -2}, 1) == null);
+        double[] noMissing = StageShare.shownMinutes(31.6, 236.6, 71.6, 8.96, 0, 339.8, 348.76, 350);
+        eq("no missing data: No data stays 0 when awake takes two", noMissing[4] + "," + (noMissing[3] + noMissing[0] + noMissing[1] + noMissing[2]), "0.0,350.0");
+        // review of #201 (Must fix): a one minute awakening never shows 0 next to its wake up. Here the rounded clocks
+        // make the shown time in bed (154) a minute short and awake (1.0012) had the smallest remainder
+        double ws = 1761400001.82, we = 1761409283.35, wIb = (we - ws) / 60, wAwake = 1.0012, wAsleep = wIb - wAwake;
+        double wDeep = 55.2, wLight = 72.9, wRem = wAsleep - wDeep - wLight;
+        eq("short awakening: shown time in bed is a minute short", WakeUps.shownMinutes(ws, we), 154L);
+        double[] wake = StageShare.shownMinutes(wDeep, wLight, wRem, wAwake, 0, wAsleep, wIb, WakeUps.shownMinutes(ws, we));
+        eq("short awakening: awake keeps its minute", wake[3], 1.0);
+        eq("short awakening: sleep rows still add up to total sleep", wake[0] + wake[1] + wake[2], (double) Math.round(wAsleep));
+        check("roundTogether: a part shown as 1 from 0.5 or more does not give its minute",
+                StageShare.roundTogether(new double[] {1.0012, 0}, 0) == null);
+        eq("roundTogether: another part gives the minute instead", Arrays.toString(StageShare.roundTogether(new double[] {1.0012, 5.4}, 5)), "[1, 4]");
+        eq("roundTogether: a part of half a minute or more gets a minute first", Arrays.toString(StageShare.roundTogether(new double[] {0.6, 50.9}, 51)), "[1, 50]");
+        check("roundTogether: not enough minutes for every part of half a minute gives null",
+                StageShare.roundTogether(new double[] {0.6, 0.6, 0.6}, 1) == null);
+        // review of #201 (Should fix): the note says All of it when all the time without stage data was before sleep,
+        // also when the row was rounded up to a minute more than the exact before minutes
+        eq("note before: all of it follows the shown row", StageShare.shownBefore(20.4, 20.4, 21), 21.0);
+        eq("note before: a part stays exact", StageShare.shownBefore(20.4, 5.2, 21), 5.2);
+        eq("note before: never more than the row", StageShare.shownBefore(20.6, 20.55, 20), 20.0);
+        check("note before: all of it reads All of it", StageShare.noDataNote(21, StageShare.shownBefore(20.4, 20.4, 21), true)
+                .endsWith(" All of it was before you fell asleep, so latency includes it."));
+        check("note before: unknown stays unknown", Double.isNaN(StageShare.shownBefore(20, Double.NaN, 20)));
+        // many nights: rows always add up and each stays within a minute of its exact value
+        Random rnd = new Random(111);
+        int bad = 0;
+        for (int i = 0; i < 2000; i++) {
+            double step = 0.5, len = 400 + rnd.nextInt(800);
+            int dN = rnd.nextInt((int) len / 4), lN = rnd.nextInt((int) len / 2), rN = rnd.nextInt((int) len / 4);
+            int aN = rnd.nextInt((int) len / 8), nN = rnd.nextInt(30);
+            double s0 = 1761400000 + rnd.nextInt(60) + rnd.nextDouble(), e0 = s0 + (dN + lN + rN + aN + nN) * step * 60 * (1 + rnd.nextDouble() * 1e-4);
+            double ib = (e0 - s0) / 60, ep = ib / (dN + lN + rN + aN + nN);
+            double dd = dN * ep, ll = lN * ep, rr = rN * ep, aa = aN * ep, nn = nN * ep;
+            long shownIb = WakeUps.shownMinutes(s0, e0);
+            double[] r = StageShare.shownMinutes(dd, ll, rr, aa, nn, dd + ll + rr, ib, shownIb);
+            double[] ex = {dd, ll, rr, aa, nn};
+            // a part of half a minute to under two minutes keeps its one minute even when its group then cannot add
+            // up (it would otherwise show 0): only then may the rows be a minute off their totals
+            boolean tiny = false;
+            for (double v : ex) if (v >= 0.5 && v < 2) tiny = true;
+            boolean ok = tiny || (r[0] + r[1] + r[2] == Math.round(dd + ll + rr) && r[0] + r[1] + r[2] + r[3] + r[4] == shownIb);
+            for (int k = 0; k < 5; k++) if (Math.abs(r[k] - ex[k]) >= 2) ok = false;
+            for (int k = 0; k < 3; k++) if (Math.abs(r[k] - ex[k]) >= 1) ok = false;
+            // a part of half a minute or more never shows 0, a part that is 0 never shows a minute (review of #201)
+            for (int k = 0; k < 5; k++) if ((ex[k] >= 0.5 && r[k] < 1) || (ex[k] == 0 && r[k] != 0)) ok = false;
+            if (!ok && bad++ < 3) System.out.println("  night " + Arrays.toString(ex) + " in bed " + ib + " shown " + shownIb + " got " + Arrays.toString(r));
+        }
+        eq("2000 nights: rows add up (unless a part of under two minutes keeps its minute), sleep stages within a minute, awake and no data within two, nothing hidden", bad, 0);
+        // nights without missing data never get a No data minute, nights without deep never a deep minute
+        int ghost = 0;
+        for (int i = 0; i < 200000; i++) {
+            double ep = 0.5 * (1 + rnd.nextDouble() * 1e-4);
+            int dN = rnd.nextInt(4) == 0 ? 0 : rnd.nextInt(200), lN = 1 + rnd.nextInt(600), rN = rnd.nextInt(200), aN = rnd.nextInt(100);
+            double s0 = 1761400000 + rnd.nextInt(60) + rnd.nextDouble(), e0 = s0 + (dN + lN + rN + aN) * ep * 60;
+            double ib = (e0 - s0) / 60, st = ib / (dN + lN + rN + aN);
+            double[] r = StageShare.shownMinutes(dN * st, lN * st, rN * st, aN * st, 0, (dN + lN + rN) * st, ib, WakeUps.shownMinutes(s0, e0));
+            if (r[4] != 0 || (dN == 0 && r[0] != 0)) ghost++;
+        }
+        eq("200000 nights: no No data or deep minute that is not there", ghost, 0);
+        // short awakenings (1 to 2.5 min) with clock times anywhere in the second: awake never shows 0 (review of #201)
+        int hidden = 0, notSum = 0;
+        for (int i = 0; i < 200000; i++) {
+            double aw = 0.5 + rnd.nextDouble() * 2, dd = rnd.nextDouble() * 100, ll = 10 + rnd.nextDouble() * 300, rr = rnd.nextDouble() * 100;
+            double nn = rnd.nextInt(3) == 0 ? rnd.nextDouble() * 3 : 0, ib = dd + ll + rr + aw + nn;
+            double s0 = 1761400000 + rnd.nextInt(60) + rnd.nextDouble(), e0 = s0 + ib * 60;
+            double[] r = StageShare.shownMinutes(dd, ll, rr, aw, nn, dd + ll + rr, ib, WakeUps.shownMinutes(s0, e0));
+            double[] ex = {dd, ll, rr, aw, nn};
+            for (int k = 0; k < 5; k++) if ((ex[k] >= 0.5 && r[k] < 1) || (ex[k] == 0 && r[k] != 0)) { hidden++; break; }
+            boolean tiny = (dd >= 0.5 && dd < 2) || (rr >= 0.5 && rr < 2);
+            if (!tiny && r[0] + r[1] + r[2] != Math.round(dd + ll + rr)) notSum++;
+        }
+        eq("200000 nights with a short awakening: no part of half a minute or more shows 0", hidden, 0);
+        eq("200000 nights with a short awakening: sleep rows add up to total sleep (unless a stage of under two minutes keeps its minute)", notSum, 0);
+
+        // #138: one rounding for night times
+        java.time.ZoneId utc = java.time.ZoneId.of("UTC");
+        double t0 = java.time.Instant.parse("2026-10-20T22:42:00Z").getEpochSecond();
+        eq("clock: 29 s rounds down", WakeUps.clock(t0 + 29, utc), "22:42");
+        eq("clock: 30 s rounds up like the timeline", WakeUps.clock(t0 + 30, utc), "22:43");
+        eq("clock: 22:42:40 is 22:43 on the score card too", WakeUps.clock(t0 + 40, utc), "22:43");
+        eq("clock: unknown", WakeUps.clock(Double.NaN, utc), "--");
+        eq("clock: next day", WakeUps.clock(java.time.Instant.parse("2026-10-20T23:59:45Z").getEpochSecond(), utc), "00:00");
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        double n0 = java.time.Instant.parse("2026-10-14T00:15:40Z").getEpochSecond(); // 02:15:40 summer time
+        eq("rounded stage tip: times and length as shown", ClockChange.roundedStageTip(z, n0 + 400, "Deep", n0, n0 + 1500 - 50),
+                "02:22  Deep, 02:16 to 02:40 (24 min)");
+        double s1 = java.time.Instant.parse("2026-10-25T00:00:00Z").getEpochSecond();
+        eq("rounded stage tip: repeated hour keeps its note", ClockChange.roundedStageTip(z, s1 + 3600 + 22 * 60 + 10, "Deep", s1 + 3600 + 15 * 60 - 20,
+                s1 + 3600 + 40 * 60 + 25), "02:22 (second time)  Deep, 02:15 to 02:40 (25 min)");
+
+        // #119: tab label size
+        eq("fit: fits, size kept", Texts.fitSize(11, 45, 56, 8), 11f);
+        eq("fit: too wide, shrinks by the same factor", Texts.fitSize(11, 70, 56, 8), 8.8f);
+        eq("fit: never below the minimum", Texts.fitSize(11, 140, 56, 8), 8f);
+        eq("fit: nothing measured, size kept", Texts.fitSize(11, 0, 56, 8), 11f);
     }
 
     /** Plain sentences for failed syncs; the raw texts come from the code (issue #47). */
@@ -2178,6 +2608,218 @@ public class CoreTest {
         eq("legacy cursor", r.nextCursor, 2L);
     }
 
+    /** Extended GetEvent request from ring counter {@code ds} (the request takes ms). */
+    static String ext(long ds) {
+        return Hex.encode(Protocol.extGetEvent(ds * 100, 4096, 0));
+    }
+
+    /** Extended batch summary: {@code bytesLeft} still on the ring, result code {@code rc}. */
+    static String summary(long bytesLeft, int rc) {
+        byte[] p = {0x2f, 0x0a, 0x42, 0x01, 0, 0, 0, 0, 0, 0, 0, (byte) rc};
+        Protocol.Le.putU32(p, 6, bytesLeft);
+        return Hex.encode(p);
+    }
+
+    /** Sink that keeps what it stored and the cursor it acknowledged; refuses from batch {@code failAt} on. */
+    static final class Store implements RingClient.BatchSink {
+        final int failAt;
+        final List<Long> stored = new ArrayList<Long>();
+        final List<String> seen = new ArrayList<String>();
+        long saved;
+        int calls;
+
+        Store(long cursor, int failAt) {
+            this.saved = cursor;
+            this.failAt = failAt;
+        }
+
+        public boolean onBatch(List<RingEvent> events, long next, long left, int total) {
+            calls++;
+            seen.add(events.size() + " events, next " + next + ", left " + left);
+            if (calls >= failAt) return false;
+            for (RingEvent e : events) stored.add(e.ds);
+            saved = next;
+            return true;
+        }
+    }
+
+    /** Runs a drain and returns the exception it threw, or null when it ended normally. */
+    static Exception drainError(RingClient c, long cursor, RingClient.BatchSink sink) {
+        try {
+            c.drain(cursor, sink);
+            return null;
+        } catch (Exception e) {
+            return e;
+        }
+    }
+
+    /** What {@code cursorMarkerPresent} answers: "true", "false", or the exception class and message. */
+    static String probe(RingClient c, long cursor) {
+        try {
+            return String.valueOf(c.cursorMarkerPresent(cursor));
+        } catch (Exception e) {
+            return e.getClass().getSimpleName() + ": " + e.getMessage();
+        }
+    }
+
+    /** The exception {@code cursorMarkerPresent} threw, or null when it answered true or false. */
+    static Exception probeError(RingClient c, long cursor) {
+        try {
+            c.cursorMarkerPresent(cursor);
+            return null;
+        } catch (Exception e) {
+            return e;
+        }
+    }
+
+    /** Issue #159: the drain paths that decide whether ring history is kept or lost. */
+    static void drainGuards() throws Exception {
+        // a) the sink fails to store the second batch: the drain stops, that batch is not acknowledged
+        Mock m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(0), Hex.encode(bundle(100).encode()), summary(16, 0));
+        m.on(ext(2), Hex.encode(bundle(500).encode()), summary(0, 0));
+        m.on(ext(6), summary(0, 0));
+        RingClient c = new RingClient(m).quiet(5);
+        Store st = new Store(0, 2);
+        Exception e = drainError(c, 0, st);
+        check("drain a: failed store throws", e instanceof RingClient.RingException);
+        eq("drain a: failed store message", e == null ? null : e.getMessage(), "storage failed; batch not acknowledged");
+        eq("drain a: sink was offered the second batch", st.seen.toString(), "[1 events, next 2, left 16, 1 events, next 6, left 0]");
+        eq("drain a: only the first batch is stored", st.stored.toString(), "[1]");
+        eq("drain a: cursor stays after the stored batch", st.saved, 2L);
+        check("drain a: no request past the batch that was not stored", !m.writes.contains(ext(6)));
+        // the next sync starts from the acknowledged cursor and asks for the same position again
+        m.writes.clear();
+        Store retry = new Store(st.saved, Integer.MAX_VALUE);
+        RingClient.DrainResult r = new RingClient(m).quiet(5).drain(retry.saved, retry);
+        eq("drain a: retry asks for the same position", m.writes.indexOf(ext(2)), 1);
+        eq("drain a: retry stores the batch that failed", retry.stored.toString(), "[5]");
+        eq("drain a: retry cursor", r.nextCursor, 6L);
+        // a failure on the very first batch acknowledges nothing
+        m.writes.clear();
+        Store first = new Store(0, 1);
+        e = drainError(new RingClient(m).quiet(5), 0, first);
+        check("drain a: first batch failed throws", e instanceof RingClient.RingException);
+        eq("drain a: first batch failed keeps the cursor", first.saved, 0L);
+        eq("drain a: first batch failed stops at once", m.writes.toString(), "[280100, " + ext(0) + "]");
+        m.writes.clear();
+        new RingClient(m).quiet(5).drain(first.saved, new Store(first.saved, Integer.MAX_VALUE));
+        eq("drain a: after a failed first batch the next drain asks for 0 again", m.writes.indexOf(ext(0)), 1);
+
+        // b) the ring reports bytes left but the batch is empty: an error, never "done"
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(0), summary(16, 0));
+        e = drainError(new RingClient(m).quiet(5), 0, new Store(0, Integer.MAX_VALUE));
+        check("drain b: empty batch with bytes left throws", e instanceof RingClient.RingException);
+        check("drain b: names the bytes left", e != null && e.getMessage().contains("16 bytes"));
+        // the same on legacy GetEvent, the path Ring 4 fw 2.6.7 uses
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(0), "2f020041");
+        m.on(Hex.encode(Protocol.getEvent(0, 255, -1)), "1106000010000000");
+        e = drainError(new RingClient(m).quiet(5), 0, new Store(0, Integer.MAX_VALUE));
+        check("drain b: legacy empty batch with bytes left throws", e instanceof RingClient.RingException);
+        check("drain b: legacy names the bytes left", e != null && e.getMessage().contains("16 bytes"));
+        // an empty batch with nothing left is the normal end
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(0), summary(0, 0));
+        r = new RingClient(m).quiet(5).drain(0, new Store(0, Integer.MAX_VALUE));
+        eq("drain b: empty batch with nothing left ends", r.eventsSynced + " " + r.nextCursor, "0 0");
+
+        // c) marker present: the event right before the cursor is still on the ring
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), Hex.encode(bundle(100).encode()), summary(0, 0));
+        m.on(ext(2), summary(0, 0));
+        eq("probe c: marker present", probe(new RingClient(m).quiet(5), 2), "true");
+        check("probe c: asks for the event before the cursor", m.writes.contains(ext(1)));
+        // the same on legacy GetEvent (Ring 4 fw 2.6.7 refuses the extended request)
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), "2f020041");
+        m.on(Hex.encode(Protocol.getEvent(1, 255, -1)), "43080100000074657374", "1106000000000000");
+        m.on(Hex.encode(Protocol.getEvent(2, 255, -1)), "1106000000000000");
+        eq("probe c: legacy marker present", probe(new RingClient(m).quiet(5), 2), "true");
+
+        // d) marker gone: an empty answer, or only events older than the marker (a replay)
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), summary(0, 0));
+        eq("probe d: marker gone", probe(new RingClient(m).quiet(5), 2), "false");
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), Hex.encode(bundle(0).encode()), summary(0, 0));
+        eq("probe d: only an older event is not the marker", probe(new RingClient(m).quiet(5), 2), "false");
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), "2f020041");
+        m.on(Hex.encode(Protocol.getEvent(1, 255, -1)), "1106000000000000");
+        eq("probe d: legacy marker gone", probe(new RingClient(m).quiet(5), 2), "false");
+
+        // e) the ring rejects the cursor itself (result code 0xff)
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), summary(0, 0xff));
+        eq("probe e: rejected cursor means gone", probe(new RingClient(m).quiet(5), 2), "false");
+
+        // f) any other result code is an error, not an answer
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), summary(0, 0x05));
+        e = probeError(new RingClient(m).quiet(5), 2);
+        check("probe f: result code 0x05 throws", e instanceof RingClient.RingException);
+        check("probe f: names the result code", e != null && e.getMessage().contains("0x05"));
+        e = drainError(new RingClient(m).quiet(5), 1, new Store(1, Integer.MAX_VALUE));
+        check("drain f: result code 0x05 throws", e instanceof HistoryBatch.BatchException);
+        eq("drain f: result code kept", e instanceof HistoryBatch.BatchException ? ((HistoryBatch.BatchException) e).resultCode : null, 5);
+
+        // g) the link is lost in the middle of the probe: an error, neither present nor gone
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), Hex.encode(bundle(100).encode()));
+        check("probe g: batch without summary throws", probeError(new RingClient(m).quiet(5), 2) instanceof RingClient.RingException);
+        Mock dropping = new Mock();
+        dropping.on("280100", "290100");
+        dropping.on(ext(1), Hex.encode(bundle(100).encode()));
+        // passed on as it is or wrapped, as long as it is an error and not an answer
+        check("probe g: lost link throws", probeError(new RingClient(new LosingLink(dropping, ext(1))).quiet(5), 2) instanceof IOException);
+
+        // cursor 0 has nothing before it: present, without asking the ring
+        m = new Mock();
+        eq("probe: cursor 0 is present", probe(new RingClient(m).quiet(5), 0), "true");
+        eq("probe: cursor 0 sends nothing", m.writes.size(), 0);
+    }
+
+    /** A link that is lost after {@code req}: once its frames are read, poll fails as {@code GattLink.poll} does. */
+    static final class LosingLink implements RingClient.Link {
+        final Mock m;
+        final String req;
+        boolean dead;
+
+        LosingLink(Mock m, String req) {
+            this.m = m;
+            this.req = req;
+        }
+
+        public void write(byte[] data) {
+            m.write(data);
+            if (Hex.encode(data).equals(req)) dead = true;
+        }
+
+        public byte[] poll(long timeoutMs) throws IOException {
+            byte[] f = m.poll(timeoutMs);
+            if (f == null && dead) throw new IOException("ring disconnected");
+            return f;
+        }
+
+        public void clearInbox() {
+            m.clearInbox();
+        }
+    }
+
     static void analysis() {
         // A synthetic 8 hour night: HR dips early, HRV rises late, little motion.
         double start = 1_760_000_000;
@@ -2231,6 +2873,224 @@ public class CoreTest {
         double[] debt = Wellness.sleepDebt(new int[] {6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600, 6 * 3600}, new int[] {8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600, 8 * 3600});
         check("sleep debt", debt[0] > 0 && debt[1] == 1);
         eq("nightly temp short", Double.isNaN(NightAnalyzer.nightlyTemperature(new double[] {35, 35})), true);
+    }
+
+    // ------------------------------------------------- issues #114, #154, #120: one day of activity
+
+    static final java.time.ZoneId ZURICH = java.time.ZoneId.of("Europe/Zurich"), LORD_HOWE = java.time.ZoneId.of("Australia/Lord_Howe");
+
+    static double at(String local, java.time.ZoneId z) {
+        return java.time.LocalDateTime.parse(local).atZone(z).toEpochSecond();
+    }
+
+    /** Wellness.day the way Analyzer.analyzeDay calls it: the real day of {@code date} in {@code z}. */
+    static Wellness.Day actDay(String date, java.time.ZoneId z, TS met, List<double[]> sleeps) {
+        java.time.LocalDate d = java.time.LocalDate.parse(date);
+        return Wellness.day(date, d.atStartOfDay(z).toEpochSecond(), d.plusDays(1).atStartOfDay(z).toEpochSecond(), z, met, sleeps, 70, 1600);
+    }
+
+    /** MET per minute from {@code from} to {@code to}: {@code base}, and {@code v} inside each [a, b) of {@code spans}. */
+    static TS metRun(double from, double to, double base, double v, double... spans) {
+        TS t = new TS();
+        for (double m = from; m < to; m += 60) {
+            double x = base;
+            for (int k = 0; k + 1 < spans.length; k += 2) if (m >= spans[k] && m < spans[k + 1]) x = v;
+            t.add(m, x);
+        }
+        return t;
+    }
+
+    /** The sum of every level and Not worn: each real minute in exactly one (issue #112). */
+    static double levels(Wellness.Day w) {
+        return w.highMin + w.mediumMin + w.lowMin + w.inactiveMin + w.restMin + w.nonWearMin;
+    }
+
+    /** Issue #112: the sleep counts as rest without activity values. Issue #155: Total burn of a day still running. */
+    static void activityRestAndBurn() {
+        String day = "2026-06-10";
+        double ds = at(day + "T00:00:00", ZURICH), de = at("2026-06-11T00:00:00", ZURICH), wake = at(day + "T07:00:00", ZURICH);
+        List<double[]> night = new ArrayList<double[]>();
+        night.add(new double[] {ds - 2 * 3600, wake});
+        // values from 07:00 to 23:00 only, as the demo sends: 07:00 to 08:00 a walk, the rest sitting
+        TS awake = metRun(wake, at(day + "T23:00:00", ZURICH), 1.2, 4.0, wake, wake + 3600);
+        Wellness.Day w = actDay(day, ZURICH, awake, night);
+        eq("rest: a night without activity values counts as rest (#112)", w.restMin, 420.0);
+        eq("rest: only 23:00 to midnight is not worn (#112)", w.nonWearMin, 60.0);
+        eq("rest: every minute in one level or not worn (#112)", levels(w), 1440.0);
+        eq("rest: minutes with a value stay 16 hours (#112, #44)", w.coveredMin, 960);
+        // the same day with the rule before: nothing else changes
+        Wellness.Day noSleep = actDay(day, ZURICH, awake, new ArrayList<double[]>());
+        check("rest: active burn, steps, levels and the chart unchanged by the night (#112)", Math.abs(w.activeKcal - noSleep.activeKcal) < 1e-9
+                && w.steps == noSleep.steps && w.mediumMin == noSleep.mediumMin && w.inactiveMin == noSleep.inactiveMin
+                && w.longInactiveStreaks == noSleep.longInactiveStreaks && Double.isNaN(w.metProfile[0]) && Double.isNaN(w.metProfile[27])
+                && Math.abs(w.avgMet - noSleep.avgMet) < 1e-9);
+        eq("rest: without the night those minutes are not worn (#112)", noSleep.nonWearMin, 480.0);
+        // a night with values (0.95 MET) gives the same rest and no active burn from it
+        TS withNight = metRun(ds, at(day + "T23:00:00", ZURICH), 1.2, 4.0, wake, wake + 3600);
+        TS nightVals = new TS();
+        for (int i = 0; i < withNight.size(); i++) nightVals.add(withNight.t(i), withNight.t(i) < wake ? 0.95 : withNight.v(i));
+        Wellness.Day wv = actDay(day, ZURICH, nightVals, night);
+        check("rest: a night with values gives the same rest and active burn (#112)", wv.restMin == 420 && wv.nonWearMin == 60
+                && Math.abs(wv.activeKcal - w.activeKcal) < 1e-9 && wv.coveredMin == 1380 && levels(wv) == 1440);
+        // a nap without values in the afternoon is rest too, and the 25 hour day adds up to 1500
+        List<double[]> naps = new ArrayList<double[]>(night);
+        naps.add(new double[] {at(day + "T14:00:00", ZURICH), at(day + "T14:30:00", ZURICH)});
+        TS holed = new TS();
+        for (int i = 0; i < awake.size(); i++) if (awake.t(i) < at(day + "T14:00:00", ZURICH) || awake.t(i) >= at(day + "T14:30:00", ZURICH)) holed.add(awake.t(i), awake.v(i));
+        Wellness.Day wn = actDay(day, ZURICH, holed, naps);
+        check("rest: a nap without values counts as rest (#112)", wn.restMin == 450 && wn.nonWearMin == 60 && levels(wn) == 1440);
+        double o25 = at("2026-10-25T00:00:00", ZURICH);
+        List<double[]> n25 = new ArrayList<double[]>();
+        n25.add(new double[] {o25 - 3600, at("2026-10-25T07:00:00", ZURICH)});
+        Wellness.Day w25 = actDay("2026-10-25", ZURICH, metRun(at("2026-10-25T07:00:00", ZURICH), at("2026-10-26T00:00:00", ZURICH), 1.2, 1.2), n25);
+        check("rest: 25 October, 8 real hours asleep, the day adds up to 1500 (#112, #114)", w25.restMin == 480 && w25.nonWearMin == 0 && levels(w25) == 1500);
+
+        // #155: the resting part grows with the share of the day that has passed
+        eq("resting burn: at midnight nothing yet (#155)", Wellness.restingKcal(1600, ds, de, ds), 0.0);
+        eq("resting burn: at 06:00 a quarter (#155)", Wellness.restingKcal(1600, ds, de, ds + 6 * 3600), 400.0);
+        eq("resting burn: at noon half (#155)", Wellness.restingKcal(1600, ds, de, ds + 12 * 3600), 800.0);
+        eq("resting burn: after the day the whole day (#155)", Wellness.restingKcal(1600, ds, de, de), 1600.0);
+        eq("resting burn: before the day 0 (#155)", Wellness.restingKcal(1600, ds, de, ds - 60), 0.0);
+        eq("resting burn: without a time the whole day (#155)", Wellness.restingKcal(1600, ds, de, Double.NaN), 1600.0);
+        eq("resting burn: 25 October at 12:00 by the clock, 13 of 25 real hours (#155, #114)",
+                Wellness.restingKcal(1500, o25, at("2026-10-26T00:00:00", ZURICH), at("2026-10-25T12:00:00", ZURICH)), 780.0);
+        double eight = at(day + "T08:00:00", ZURICH);
+        Wellness.Day part = Wellness.day(day, ds, de, ZURICH, metRun(ds, eight, 1.2, 4.0, wake, eight), night, 70, 1560, eight);
+        check("total burn at 08:00: active plus a third of the resting burn (#155)", Math.abs(part.restingKcal - 520) < 1e-9
+                && Math.abs(part.totalKcal - (part.activeKcal + 520)) < 1e-9 && part.activeKcal > 100 && part.totalUntil == eight);
+        Wellness.Day full = Wellness.day(day, ds, de, ZURICH, metRun(ds, eight, 1.2, 4.0, wake, eight), night, 70, 1560, de + 3600);
+        check("total burn of a day that has ended: the whole resting burn, no 'so far' (#155)", full.restingKcal == 1560
+                && Math.abs(full.totalKcal - (full.activeKcal + 1560)) < 1e-9 && Double.isNaN(full.totalUntil) && full.activeKcal == part.activeKcal);
+        Wellness.Day old = actDay(day, ZURICH, awake, night);
+        check("total burn: the call without a time counts the whole day, as before (#155)", old.restingKcal == 1600 && Double.isNaN(old.totalUntil));
+        eq("total burn line, a day that has ended (#155)", app.openring.ui.Explain.totalBurn(Double.NaN, ZURICH), "Active burn plus what your body uses at rest");
+        eq("total burn line, so far (#155)", app.openring.ui.Explain.totalBurn(at(day + "T08:07:20", ZURICH), ZURICH),
+                "So far, up to 08:07 (active plus resting burn)");
+    }
+
+    static void activityDay() {
+        List<double[]> none = new ArrayList<double[]>();
+        // #114: every real minute counts once, 23, 23.5, 24, 24.5 and 25 hour days
+        String[][] days = {{"2026-03-29", "Europe/Zurich", "1380"}, {"2026-10-04", "Australia/Lord_Howe", "1410"}, {"2026-06-10", "Europe/Zurich", "1440"},
+            {"2026-04-05", "Australia/Lord_Howe", "1470"}, {"2026-10-25", "Europe/Zurich", "1500"}};
+        for (String[] c : days) {
+            java.time.ZoneId z = java.time.ZoneId.of(c[1]);
+            java.time.LocalDate d = java.time.LocalDate.parse(c[0]);
+            double a = d.minusDays(1).atStartOfDay(z).toEpochSecond(), b = d.plusDays(2).atStartOfDay(z).toEpochSecond();
+            Wellness.Day w = actDay(c[0], z, metRun(a, b, 1.6, 1.6), none);
+            eq("activity day: " + c[0] + " " + c[1] + " counts its real minutes (#114)", w.coveredMin, Integer.parseInt(c[2]));
+            eq("activity day: " + c[0] + " real day length (#114)", w.dayMin, Integer.parseInt(c[2]));
+        }
+        // a walk late on the day the clocks go back belongs to that day
+        double a = at("2026-10-24T00:00:00", ZURICH), b = at("2026-10-27T00:00:00", ZURICH);
+        TS late = metRun(a, b, 1.6, 4.0, at("2026-10-25T23:15:00", ZURICH), at("2026-10-25T23:45:00", ZURICH));
+        Wellness.Day o25 = actDay("2026-10-25", ZURICH, late, none), o26 = actDay("2026-10-26", ZURICH, late, none);
+        check("activity day: a walk 23:15 to 23:45 on 25 October counts on 25 October (#114)", o25.mediumMin == 30 && o25.steps == 3150 && o26.mediumMin == 0);
+        // a walk after midnight on 30 March counts once, on 30 March
+        a = at("2026-03-28T00:00:00", ZURICH);
+        b = at("2026-03-31T00:00:00", ZURICH);
+        TS early = metRun(a, b, 1.6, 4.0, at("2026-03-30T00:15:00", ZURICH), at("2026-03-30T00:45:00", ZURICH));
+        Wellness.Day s29 = actDay("2026-03-29", ZURICH, early, none), s30 = actDay("2026-03-30", ZURICH, early, none);
+        check("activity day: a walk 00:15 to 00:45 on 30 March counts only on 30 March (#114)", s29.mediumMin == 0 && s30.mediumMin == 30 && s30.steps == 3150);
+        check("activity day: the two days add up to the real minutes (#114)", s29.coveredMin + s30.coveredMin == 1380 + 1440);
+        // the chart by clock time: a walk at 08:00 is in the 08:00 quarter hours on every day
+        String[] dates = {"2026-03-29", "2026-06-10", "2026-10-25"};
+        for (String date : dates) {
+            java.time.LocalDate d = java.time.LocalDate.parse(date);
+            double from = d.atStartOfDay(ZURICH).toEpochSecond(), to = d.plusDays(1).atStartOfDay(ZURICH).toEpochSecond();
+            Wellness.Day w = actDay(date, ZURICH, metRun(from, to, 1.2, 4.0, at(date + "T08:00:00", ZURICH), at(date + "T08:30:00", ZURICH)), none);
+            check("activity day: " + date + " walk at 08:00 drawn at 08:00 (#114)", Math.abs(w.metProfile[32] - 4) < 1e-9 && Math.abs(w.metProfile[33] - 4) < 1e-9
+                    && Math.abs(w.metProfile[31] - 1.2) < 1e-9 && Math.abs(w.metProfile[34] - 1.2) < 1e-9);
+        }
+        // clocks forward: 02:00 to 03:00 has no quarter hour; back: both passes on the same ones
+        Wellness.Day fw = actDay("2026-03-29", ZURICH, metRun(at("2026-03-29T00:00:00", ZURICH), at("2026-03-30T00:00:00", ZURICH), 1.2, 1.2), none);
+        check("activity day: 29 March, 02:00 to 03:00 empty, 01:45 and 03:00 filled (#114)", Double.isNaN(fw.metProfile[8]) && Double.isNaN(fw.metProfile[11])
+                && !Double.isNaN(fw.metProfile[7]) && !Double.isNaN(fw.metProfile[12]));
+        double first = java.time.Instant.parse("2026-10-25T00:00:00Z").getEpochSecond(), second = java.time.Instant.parse("2026-10-25T01:00:00Z").getEpochSecond();
+        Wellness.Day bk = actDay("2026-10-25", ZURICH, metRun(at("2026-10-25T00:00:00", ZURICH), at("2026-10-26T00:00:00", ZURICH), 1.2, 3.2, first, first + 3600), none);
+        check("activity day: 25 October, 02:00 to 03:00 holds both passes, their average (#114)", Math.abs(bk.metProfile[8] - 2.2) < 1e-9
+                && Math.abs(bk.metProfile[11] - 2.2) < 1e-9 && Math.abs(bk.metProfile[12] - 1.2) < 1e-9 && bk.mediumMin == 60);
+        check("activity day: the second pass starts at 02:00 by the clock (#114)", Wellness.clockMin(second, 0, ZURICH) == 120 && Wellness.clockMin(first, 0, ZURICH) == 120);
+        check("activity day: without a zone the clock counts from the start", Wellness.clockMin(1000 + 125 * 60, 1000, null) == 125 && Wellness.clockMin(1000 + 1500 * 60, 1000, null) == 1439);
+
+        // #154: a stretch counts when 60 minutes or more of its sitting lie between 08:00 and 22:00
+        String day = "2026-06-10";
+        double ds = at(day + "T00:00:00", ZURICH), de = at("2026-06-11T00:00:00", ZURICH);
+        String[][] sits = {
+            {"A sit 22:30 to 24:00, day ends sitting", "22:30", "24:00", "0"},
+            {"B sit 22:30 to 23:58", "22:30", "23:58", "0"},
+            {"C sit 14:00 to 15:30", "14:00", "15:30", "1"},
+            {"D sit 20:30 to 22:30, 90 min in the window", "20:30", "22:30", "1"},
+            {"E sit 06:30 to 08:05, 5 min in the window", "06:30", "08:05", "0"},
+            {"F sit 21:00 to 24:00, day ends sitting, 60 min in the window", "21:00", "24:00", "1"},
+            {"G sit 21:01 to 24:00, 59 min in the window", "21:01", "24:00", "0"},
+            {"H sit 07:00 to 09:00, 60 min in the window", "07:00", "09:00", "1"}};
+        for (String[] c : sits) {
+            double s0 = c[1].equals("24:00") ? de : at(day + "T" + c[1] + ":00", ZURICH), s1 = c[2].equals("24:00") ? de : at(day + "T" + c[2] + ":00", ZURICH);
+            Wellness.Day w = actDay(day, ZURICH, metRun(ds, de, 1.6, 1.2, s0, s1), none);
+            eq("long sitting " + c[0] + " (#154)", w.longInactiveStreaks, Integer.parseInt(c[3]));
+        }
+        // a stretch is ended by sleep and by a minute without data, like before
+        TS gap = metRun(ds, de, 1.6, 1.2, at(day + "T14:00:00", ZURICH), at(day + "T16:00:00", ZURICH));
+        TS cut = new TS();
+        for (int i = 0; i < gap.size(); i++) if (Math.abs(gap.t(i) - at(day + "T15:00:00", ZURICH)) > 1) cut.add(gap.t(i), gap.v(i));
+        eq("long sitting: a minute without data splits 14:00 to 16:00 into 60 and 59 minutes (#154)", actDay(day, ZURICH, cut, none).longInactiveStreaks, 1);
+        List<double[]> nap = new ArrayList<double[]>();
+        nap.add(new double[] {at(day + "T14:50:00", ZURICH), at(day + "T15:10:00", ZURICH)});
+        eq("long sitting: a nap splits it into 50 and 50 minutes (#154)", actDay(day, ZURICH, gap, nap).longInactiveStreaks, 0);
+        eq("long sitting: the same day without either has one (#154)", actDay(day, ZURICH, gap, none).longInactiveStreaks, 1);
+        // the window by the clock on 25 October: sitting 07:00 to 09:00 local still has 60 minutes from 08:00
+        eq("long sitting: 25 October 07:00 to 09:00 by the clock (#154, #114)", actDay("2026-10-25", ZURICH, metRun(at("2026-10-25T00:00:00", ZURICH),
+                at("2026-10-26T00:00:00", ZURICH), 1.6, 1.2, at("2026-10-25T07:00:00", ZURICH), at("2026-10-25T09:00:00", ZURICH)), none).longInactiveStreaks, 1);
+        eq("long sitting: 25 October 07:00 to 08:59, 59 minutes from 08:00 by the clock (#154, #114)", actDay("2026-10-25", ZURICH, metRun(at("2026-10-25T00:00:00", ZURICH),
+                at("2026-10-26T00:00:00", ZURICH), 1.6, 1.2, at("2026-10-25T07:00:00", ZURICH), at("2026-10-25T08:59:00", ZURICH)), none).longInactiveStreaks, 0);
+
+        // #120: a range for activity values
+        check("MET range: 0, 1.2 and 25 count", EventCodec.plausibleMet(0) && EventCodec.plausibleMet(1.2) && EventCodec.plausibleMet(25));
+        check("MET range: 25.2, 38.2, -0.1 and NaN do not", !EventCodec.plausibleMet(25.2) && !EventCodec.plausibleMet(38.2)
+                && !EventCodec.plausibleMet(-0.1) && !EventCodec.plausibleMet(Double.NaN));
+        check("MET range: the highest byte that counts is 0xbd (25.0)", EventCodec.plausibleMet(EventCodec.activityMet(b(0, 0xbd))[0])
+                && !EventCodec.plausibleMet(EventCodec.activityMet(b(0, 0xbe))[0]));
+        byte[] bad = new byte[61];
+        for (int i = 1; i < bad.length; i++) bad[i] = (byte) 0xff;
+        double[] raw = EventCodec.activityMet(bad);
+        int kept = 0;
+        for (double v : raw) if (EventCodec.plausibleMet(v)) kept++;
+        check("MET range: an hour of 0xff decodes to 38.2 and none of it counts (#120)", raw.length == 60 && Math.abs(raw[0] - 38.2) < 1e-9 && kept == 0);
+        // the day the way Analyzer builds it: the bad hour is left out, so it is missing, not 2604 kcal
+        double h14 = at(day + "T14:00:00", ZURICH);
+        TS kept14 = new TS(), control = new TS();
+        for (double t = ds; t < de; t += 60) {
+            if (t >= h14 && t < h14 + 3600) {
+                double v = raw[(int) ((t - h14) / 60)];
+                if (EventCodec.plausibleMet(v)) kept14.add(t, v);
+                continue;
+            }
+            kept14.add(t, 1.6);
+            control.add(t, 1.6);
+        }
+        Wellness.Day wb = actDay(day, ZURICH, kept14, none), wc = actDay(day, ZURICH, control, none);
+        check("MET range: the day with the bad hour equals the day without that hour (#120)", wb.highMin == 0 && wb.coveredMin == 1380
+                && wb.nonWearMin == 60 && Math.abs(wb.activeKcal - wc.activeKcal) < 1e-9 && wb.steps == wc.steps && Math.abs(wb.avgMet - 1.6) < 1e-9);
+
+        // the explanation states the rule, and the line under the chart on clock change days
+        eq("move every hour text (#154)", app.openring.ui.Explain.of("move_hourly"),
+                "Times you sat still for an hour or more between 08:00 and 22:00. Only the minutes in that window count, sleep never does.");
+        double z25 = at("2026-10-25T00:00:00", ZURICH), z26 = at("2026-10-26T00:00:00", ZURICH);
+        eq("activity chart line, clocks back (#114)", ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26)),
+                "The clocks went back one hour on this day (03:00 became 02:00), so 02:00 to 03:00 happened twice. The chart shows both at the same place, "
+                        + "the numbers above count every real minute once.");
+        eq("activity chart line, clocks forward (#114)", ClockChange.activityText(ClockChange.onDay(ZURICH, at("2026-03-29T00:00:00", ZURICH), at("2026-03-30T00:00:00", ZURICH))),
+                "The clocks went forward one hour on this day (02:00 became 03:00), so 02:00 to 03:00 did not happen and the chart has nothing there.");
+        check("activity chart line: none on other days", ClockChange.activityText(ClockChange.onDay(ZURICH, at("2026-06-10T00:00:00", ZURICH), at("2026-06-11T00:00:00", ZURICH))) == null
+                && ClockChange.activityText(null) == null);
+        check("activity chart line: Lord Howe's half hour", ClockChange.activityText(ClockChange.onDay(LORD_HOWE, at("2026-04-05T00:00:00", LORD_HOWE),
+                at("2026-04-06T00:00:00", LORD_HOWE))).startsWith("The clocks went back 30 minutes on this day (02:00 became 01:30), so 01:30 to 02:00 happened twice."));
+        // review of #202: only a day analysed with real minutes (stored day_min) gets the line
+        check("activity chart line: a day stored before (no day_min) has none", ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26), 0) == null);
+        eq("activity chart line: a day analysed now has it", ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26), 1500),
+                ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26)));
+        check("activity chart line: day_min alone gives no line on other days", ClockChange.activityText(null, 1440) == null);
     }
 
     /** Issue #44: the weekly parts of the activity score look at the worn days only. */
@@ -2324,7 +3184,7 @@ public class CoreTest {
     static void longWake() {
         NightFinder.LocalClock utc = new NightFinder.LocalClock() {
             @Override
-            public int minuteOfDay(double unix) {
+            public int minuteOfDay(double unix, double end) {
                 return (int) (((long) unix % 86400) / 60);
             }
         };
@@ -2395,6 +3255,169 @@ public class CoreTest {
         Night woke = NightAnalyzer.analyze(in);
         check("ring awake gap counts as awake", woke.awakeMin - calm.awakeMin >= 70 && woke.awakenings >= 1);
         check("ring awake gap lowers the score", Scores.sleep(woke, 0, 40).value < Scores.sleep(calm, 0, 40).value);
+    }
+
+    /** Ring stages from a digit string per 30 s step ("0" no data, 1 deep, 2 light, 3 REM, 4 awake), repeated. */
+    static int[] digits(Object... parts) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i += 2) for (int k = 0; k < (Integer) parts[i + 1]; k++) sb.append(parts[i]);
+        int[] out = new int[sb.length()];
+        for (int i = 0; i < out.length; i++) out[i] = sb.charAt(i) - '0';
+        return out;
+    }
+
+    static Night ringStaged(int[] stages) {
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        in.start = 1_760_000_000;
+        in.end = in.start + stages.length * 30.0;
+        in.ringStages = stages;
+        return NightAnalyzer.analyze(in);
+    }
+
+    /** Issues #107, #118 and #110: efficiency with steps without stage data, no sleep, ring stages in a longer period. */
+    static void nightNumbers() {
+        // #107 lead: 20 min without data, 2 min awake, 200 min light
+        Night lead = ringStaged(digits("0", 40, "4", 4, "2", 400));
+        check("#107 lead: ring stages used", "ring".equals(lead.stageSource));
+        check("#107 lead: efficiency is asleep over time in bed (90.1%)", Math.abs(lead.efficiency - 100.0 * 200 / 222) < 1e-6);
+        check("#107 lead: latency counts the time without data (22 min)", near(lead.latencyMin, 22));
+        double[] nd = StageShare.noData(lead.stages, lead.inBedMin);
+        check("#107 lead: 20 min without data, all before falling asleep", near(nd[0], 20) && near(nd[1], 20));
+        eq("#107 lead: the note", StageShare.noDataNote(nd[0], nd[1], true), "No data: there was no sleep stage for 20 min. It counts as time in bed, "
+                + "not as asleep or awake, so it lowers efficiency. All of it was before you fell asleep, so latency includes it.");
+        // #107 tail: 200 min light, then 100 min without data
+        Night tail = ringStaged(digits("2", 400, "0", 200));
+        check("#107 tail: efficiency 66.7%, not 100%", Math.abs(tail.efficiency - 100.0 * 200 / 300) < 1e-6);
+        check("#107 tail: awake stays 0, the missing time is not made awake", near(tail.awakeMin, 0) && tail.awakenings == 0);
+        nd = StageShare.noData(tail.stages, tail.inBedMin);
+        check("#107 tail: 100 min without data, none before falling asleep", near(nd[0], 100) && near(nd[1], 0));
+        check("#107 tail: stage minutes and no data add up to time in bed",
+                near(tail.deepMin + tail.lightMin + tail.remMin + tail.awakeMin + nd[0], tail.inBedMin));
+        eq("#107 tail: the note writes the time as the row does", StageShare.noDataNote(nd[0], nd[1], true), "No data: there was no sleep stage for 1h 40m. "
+                + "It counts as time in bed, not as asleep or awake, so it lowers efficiency.");
+        // review of #183: nights analysed before stored asleep over the time with data; the screens work it out again
+        check("#107 shown efficiency of a new night is the stored one", Math.abs(StageShare.efficiency(tail.asleepMin, tail.inBedMin, tail.efficiency) - tail.efficiency) < 1e-9
+                && Math.abs(StageShare.efficiency(lead.asleepMin, lead.inBedMin, lead.efficiency) - lead.efficiency) < 1e-9);
+        check("#107 an older night's stored 100% shows as 66.7%", Math.abs(StageShare.efficiency(200, 300, 100) - 100.0 * 200 / 300) < 1e-9);
+        check("#107 shown efficiency unknown without sleep or time in bed", Double.isNaN(StageShare.efficiency(0, 40, Double.NaN))
+                && Double.isNaN(StageShare.efficiency(10, 0.5, 90)) && Double.isNaN(StageShare.efficiency(Double.NaN, 300, 90))
+                && Double.isNaN(StageShare.efficiency(10, Double.NaN, 90)));
+        check("#107 shown efficiency stays within 0 and 100", StageShare.efficiency(310, 300, 100) == 100 && StageShare.efficiency(-5, 300, 0) == 0);
+        Night tailScore = tail;
+        check("#107 tail: the efficiency contributor reads 67%", "67%".equals(part(Scores.sleep(tailScore, 0, 40), "efficiency").detail));
+        // a night with no missing data keeps its efficiency
+        Night full = ringStaged(digits("4", 20, "2", 400, "4", 20));
+        check("#107 no missing data: efficiency as before", Math.abs(full.efficiency - 100.0 * 400 / 440) < 1e-6);
+        check("#107 no missing data: no note", StageShare.noData(full.stages, full.inBedMin)[0] == 0
+                && StageShare.noDataNote(0, 0, true) == null && StageShare.noDataNote(0.4, 0, true) == null);
+        // part before falling asleep, part later
+        nd = StageShare.noData(digits("0", 10, "2", 100, "0", 30, "2", 100), 120);
+        check("#107 split: 20 min in all, 5 before falling asleep", near(nd[0], 20) && near(nd[1], 5));
+        check("#107 split: the note names the part before", StageShare.noDataNote(nd[0], nd[1], true).endsWith(" 5 min of it was before you fell asleep, so latency includes that part."));
+        check("#107 split: an hour or more before falling asleep as on the rows",
+                StageShare.noDataNote(100, 70, true).endsWith(" 1h 10m of it was before you fell asleep, so latency includes that part."));
+        nd = StageShare.noData(digits("0", 10, "4", 50), 30);
+        check("#107 no sleep: no time before falling asleep", near(nd[0], 5) && near(nd[1], 0));
+        eq("#107 no sleep: the note leaves out efficiency and latency (both unknown)", StageShare.noDataNote(nd[0], 5, false),
+                "No data: there was no sleep stage for 5 min. It counts as time in bed, not as asleep or awake.");
+        check("#107 no stages: nothing", StageShare.noData(null, 30)[0] == 0 && StageShare.noData(new int[0], 30)[0] == 0
+                && StageShare.noData(new int[] {0}, Double.NaN)[0] == 0 && StageShare.noDataNote(Double.NaN, Double.NaN, true) == null);
+
+        // #118: a 40 minute bedtime the ring marks awake all through
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        in.start = 1_760_000_000;
+        in.end = in.start + 40 * 60;
+        for (double t = in.start; t < in.end; t += 300) in.hr5.add(t, 68);
+        for (double t = in.start; t < in.end; t += 60) {
+            in.motion.add(t, 3);
+            in.sleepState.add(t, 0);
+        }
+        Night sofa = NightAnalyzer.analyze(in);
+        Night.Score ss = Scores.sleep(sofa, 3600, 35);
+        check("#118 awake bedtime: nobody slept", sofa.asleepMin == 0 && Double.isNaN(sofa.wasoMin));
+        check("#118 awake bedtime: no Restfulness", part(ss, "restfulness") == null);
+        check("#118 awake bedtime: Total sleep still scored", part(ss, "total") != null && "0h 0m".equals(part(ss, "total").detail));
+        Night allAwake = ringStaged(digits("4", 960));
+        Night.Score sa = Scores.sleep(allAwake, 0, 35);
+        check("#118 ring stages all awake: no Restfulness", allAwake.asleepMin == 0 && part(sa, "restfulness") == null);
+        check("#118 ring stages all awake: score from the rest", sa.value >= 0 && sa.value < 40);
+        // a real night with many wake ups keeps it, wake ups counted (CLAUDE.md: never hide real awakenings)
+        Night waker = ringStaged(digits("2", 100, "4", 10, "2", 100, "4", 10, "2", 100, "4", 10, "2", 100));
+        Night.Contributor wr = part(Scores.sleep(waker, 0, 35), "restfulness");
+        check("#118 night with wake ups keeps Restfulness", wr != null && wr.detail.startsWith("3 wake ups") && wr.score < 100);
+
+        // #110: a ring run of 8 h, deep for its first 5 minutes, then light, made longer by a bedtime period
+        double r0 = 1_760_000_000L - 1_760_000_000L % 86400 - 3600, r1 = r0 + 8 * 3600;
+        int[] codes = new int[960];
+        for (int i = 0; i < codes.length; i++) codes[i] = i < 10 ? 1 : 2;
+        String[] names = {"A (bedtime 10 min before to 30 min after)", "C (bedtime of 40 min, 20 min after the run)"};
+        double[][] beds = {{r0 - 600, r1 + 1800}, {r1 + 1200, r1 + 3600}};
+        for (int k = 0; k < 2; k++) {
+            List<double[]> bedtimes = new ArrayList<double[]>();
+            bedtimes.add(beds[k]);
+            List<NightFinder.RingRun> runs = new ArrayList<NightFinder.RingRun>();
+            runs.add(new NightFinder.RingRun(r0, r1, codes));
+            List<NightFinder.Period> ps = NightFinder.find(bedtimes, runs, new TS(), new TS());
+            eq("#110 " + names[k] + ": one period", ps.size(), 1);
+            if (ps.size() != 1) continue;
+            NightFinder.Period q = ps.get(0);
+            check("#110 " + names[k] + ": period grew, staged, the run keeps its end", q.staged && q.end > r1 && near(q.codesEnd, r1));
+            int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+            int first = -1, lastCode = -1;
+            for (int i = 0; i < al.length; i++) {
+                if (al[i] == 1 && first < 0) first = i;
+                if (al[i] != 0) lastCode = i;
+            }
+            check("#110 " + names[k] + ": deep at the run's minute 0", near(q.start + first * 30.0, r0));
+            check("#110 " + names[k] + ": stages end with the run, the extra time has no data", near(q.start + (lastCode + 1) * 30.0, r1));
+            Night n = NightAnalyzer.analyze(nightInput(q, al));
+            check("#110 " + names[k] + ": ring stages used", "ring".equals(n.stageSource));
+            check("#110 " + names[k] + ": 5 min deep, sleep starts at the run", near(n.deepMin, 5) && near(n.sleepStart, r0) && near(n.sleepEnd, r1));
+        }
+        // a staged run inside a bedtime period that then joins a second piece across a night wake (issue #42):
+        // the stitched codes keep the run's own times
+        {
+            NightFinder.LocalClock utc = new NightFinder.LocalClock() {
+                @Override
+                public int minuteOfDay(double unix, double end) {
+                    return (int) (((long) unix % 86400) / 60);
+                }
+            };
+            double day = 1_760_000_000L - 1_760_000_000L % 86400;
+            double rs = day - 3600, re = day + 2 * 3600; // ring run 23:00 to 02:00, bedtime to 02:30
+            int[] c2 = new int[(int) ((re - rs) / 30)];
+            for (int i = 0; i < c2.length; i++) c2[i] = rs + i * 30 < day ? 1 : 3;
+            List<NightFinder.RingRun> runs = new ArrayList<NightFinder.RingRun>();
+            runs.add(new NightFinder.RingRun(rs, re, c2));
+            List<double[]> bedtimes = new ArrayList<double[]>();
+            bedtimes.add(new double[] {rs, day + 2.5 * 3600});
+            TS st = ringState(-1, 7, new double[] {2.5, 3.75}, null);
+            TS support = new TS();
+            for (int i = 0; i < st.size(); i++) support.add(st.t(i), 1);
+            List<NightFinder.Period> sp = NightFinder.find(bedtimes, runs, st, support, utc);
+            eq("#110 bedtime, run and night wake: one night", sp.size(), 1);
+            if (sp.size() == 1) {
+                NightFinder.Period q = sp.get(0);
+                int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+                check("#110 stitched: deep before midnight, REM after, at their real times",
+                        al[(int) ((day - 1500 - q.start) / 30)] == 1 && al[(int) ((day + 900 - q.start) / 30)] == 3);
+                check("#110 stitched: nothing from the ring after its run ended", al[(int) ((day + 2.25 * 3600 - q.start) / 30)] == 0);
+                check("#110 stitched: the night wake is awake", al[(int) ((day + 3 * 3600 - q.start) / 30)] == 4);
+            }
+        }
+        // a period made by hand without codesEnd keeps the old meaning (codes end at its end)
+        NightFinder.Period plain = new NightFinder.Period(0, 600);
+        check("#110 period without codes: no ring run", plain.ringRun() == null);
+        plain.codes = new int[] {1, 2};
+        check("#110 period without codesEnd: codes end at its end", plain.ringRun().end == 600 && plain.ringRun().start == 540);
+    }
+
+    static NightAnalyzer.Input nightInput(NightFinder.Period q, int[] stages) {
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        in.start = q.start;
+        in.end = q.end;
+        in.ringStages = stages;
+        return in;
     }
 
     static void timeline() {
@@ -2687,6 +3710,193 @@ public class CoreTest {
         for (double v : fi) if (v > 0) on++;
         check("a night inside the repeated hour keeps its width", on == 8 && fi[24] == 1 && fi[27] == 1 && fi[32] == 1 && fi[35] == 1 && fi[28] == 0);
         check("empty day fills nothing", DialMath.fill(twice, bFrom, bFrom, z, 288)[0] == 0);
+        dialTouch();
+        clockChangeOnDay();
+    }
+
+    /** Issue #109: touching a lit line of the screen clock finds the use drawn there. */
+    static void dialTouch() {
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        java.time.LocalDate d = java.time.LocalDate.parse("2026-10-14");
+        double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double t1255 = zurich("2026-10-14T12:55:00"), f1257 = (12 * 60 + 57) / 1440.0;
+        List<double[]> uses = new ArrayList<double[]>();
+        uses.add(new double[] {t1255 + 10, t1255 + 40});
+        List<double[]> none = new ArrayList<double[]>();
+        double[] lit = DialMath.fill(uses, from, to, z, 288);
+        check("touch: the 12:55 line is lit by a 30 s use", lit[155] > 0 && lit[156] == 0);
+        DialMath.Touch tc = DialMath.touch(f1257, d, from, to, z, 288, uses, uses, none);
+        check("touch: 12:57 on the lit line finds the use and moves into it", tc.session == 0 && tc.at == t1255 + 39 && !tc.asleep);
+        check("touch: 12:54 on the dark line before reads no use", DialMath.touch((12 * 60 + 54) / 1440.0, d, from, to, z, 288, uses, uses, none).session == -1);
+        check("touch: 13:00 on the dark line after reads no use", DialMath.touch(13 / 24.0, d, from, to, z, 288, uses, uses, none).session == -1);
+        check("touch: inside the use stays at the touched second", DialMath.touch((t1255 + 20 - from) / 86400.0, d, from, to, z, 288, uses, uses, none).at == t1255 + 20);
+        // two uses on one line: the nearer one
+        List<double[]> two = new ArrayList<double[]>();
+        two.add(new double[] {t1255 + 10, t1255 + 40});
+        two.add(new double[] {t1255 + 250, t1255 + 280});
+        DialMath.Touch near = DialMath.touch(f1257 + 60 / 86400.0, d, from, to, z, 288, two, two, none);
+        check("touch: 12:58 takes the nearer use of the line (12:59:10)", near.session == 1 && near.at == t1255 + 250);
+        DialMath.Touch before = DialMath.touch((t1255 + 5 - from) / 86400.0, d, from, to, z, 288, uses, null, null);
+        check("touch: 12:55:05 just before the use moves forward into it (no drawn list, no nights)", before.session == 0 && before.at == t1255 + 10);
+        check("touch: a dark line without nights is not asleep", !DialMath.touch(0.25, d, from, to, z, 288, uses, null, null).asleep);
+        check("touch: 12:56 takes the earlier one", DialMath.touch(f1257 - 60 / 86400.0, d, from, to, z, 288, two, two, none).session == 0);
+        // drawn at least 5 minutes: a 10 s use at 12:58:50 lights 12:55 and 13:00, both find it
+        List<double[]> real = new ArrayList<double[]>();
+        real.add(new double[] {t1255 + 230, t1255 + 240});
+        List<double[]> wide = ScreenTime.widen(real, 300);
+        double[] wl = DialMath.fill(wide, from, to, z, 288);
+        check("touch: a widened use lights two lines", wl[155] > 0 && wl[156] > 0 && wl[157] == 0);
+        DialMath.Touch w1 = DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, wide, none);
+        check("touch: 13:02 on the widened line finds the use, the hand at its real time", w1.session == 0 && w1.at == t1255 + 239);
+        DialMath.Touch w2 = DialMath.touch((13 * 60 + 4.9) / 1440.0, d, from, to, z, 288, real, wide, none);
+        check("touch: 13:04 at the end of the widened line too", w2.session == 0 && w2.at == t1255 + 239);
+        check("touch: without the widening 13:02 reads no use", DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, real, none).session == -1);
+        check("touch: a shown list of another size counts as the real one",
+                DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, new ArrayList<double[]>(), none).session == -1);
+        // a use at 23:58 drawn 5 minutes long lights 00:00 of the next day
+        List<double[]> late = new ArrayList<double[]>();
+        late.add(new double[] {from - 120, from - 100});
+        List<double[]> lateW = ScreenTime.widen(late, 300);
+        check("touch: a use before midnight drawn over it lights 00:00", DialMath.fill(lateW, from, to, z, 288)[0] > 0);
+        DialMath.Touch lt = DialMath.touch(2 / 1440.0, d, from, to, z, 288, late, lateW, none);
+        check("touch: 00:02 finds it, the hand stays on this day", lt.session == 0 && lt.at == from);
+        // asleep and the repeated hour (clocks back, 2026-10-25)
+        java.time.LocalDate back = java.time.LocalDate.parse("2026-10-25");
+        double bFrom = back.atStartOfDay(z).toEpochSecond(), bTo = back.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double second0215 = java.time.Instant.parse("2026-10-25T01:15:00Z").getEpochSecond();
+        List<double[]> second = new ArrayList<double[]>();
+        second.add(new double[] {second0215 + 10, second0215 + 40});
+        DialMath.Touch rp = DialMath.touch((2 * 60 + 17) / 1440.0, back, bFrom, bTo, z, 288, second, second, none);
+        check("touch: 02:17 on the long day finds the use of the second pass", rp.session == 0 && rp.at == second0215 + 39);
+        List<double[]> night2 = new ArrayList<double[]>();
+        night2.add(new double[] {second0215 - 600, second0215 + 3600});
+        DialMath.Touch sl = DialMath.touch((2 * 60 + 40) / 1440.0, back, bFrom, bTo, z, 288, none, none, night2);
+        check("touch: asleep only in the second pass of 02:40 still reads asleep", sl.session == -1 && sl.asleep && sl.at == second0215 + 25 * 60);
+        DialMath.Touch aw = DialMath.touch(14 / 24.0, back, bFrom, bTo, z, 288, none, none, night2);
+        check("touch: 14:00 is not asleep", !aw.asleep && aw.at == zurich("2026-10-25T14:00:00"));
+        // the hour the clocks skip (2026-03-29): the switch moment, inside a use across it, else no use
+        java.time.LocalDate fwd = java.time.LocalDate.parse("2026-03-29");
+        double fFrom = fwd.atStartOfDay(z).toEpochSecond(), fTo = fwd.plusDays(1).atStartOfDay(z).toEpochSecond();
+        List<double[]> around = new ArrayList<double[]>();
+        around.add(new double[] {zurich("2026-03-29T01:59:00"), zurich("2026-03-29T03:00:30")});
+        check("touch: the skipped hour is dark and reads no use, also with a use across the switch", DialMath.fill(around, fFrom, fTo, z, 288)[30] == 0
+                && DialMath.touch(2.5 / 24, fwd, fFrom, fTo, z, 288, around, around, none).session == -1
+                && DialMath.touch(2.5 / 24, fwd, fFrom, fTo, z, 288, none, none, none).session == -1);
+        check("touch: the lines next to the skipped hour find that use", DialMath.touch(1.99 / 24, fwd, fFrom, fTo, z, 288, around, around, none).session == 0
+                && DialMath.touch(3.01 / 24, fwd, fFrom, fTo, z, 288, around, around, none).session == 0);
+        // a widened use from before does not hide a real one on the touched line
+        List<double[]> pair = new ArrayList<double[]>();
+        pair.add(new double[] {t1255 - 200, t1255 - 190});
+        pair.add(new double[] {t1255 + 240, t1255 + 250});
+        List<double[]> pairW = ScreenTime.widen(pair, 900);
+        DialMath.Touch pr = DialMath.touch((12 * 60 + 56) / 1440.0, d, from, to, z, 288, pair, pairW, none);
+        check("touch: 12:56 inside a widened earlier use takes the real use on its line", pr.session == 1 && pr.at == t1255 + 240);
+        // a day that starts at 01:00 (Cairo, the clocks skip midnight): the hand at midnight shows 01:00
+        java.time.ZoneId cairo = java.time.ZoneId.of("Africa/Cairo");
+        java.time.LocalDate cd = java.time.LocalDate.parse("2024-04-26");
+        double cFrom = cd.atStartOfDay(cairo).toEpochSecond(), cTo = cd.plusDays(1).atStartOfDay(cairo).toEpochSecond();
+        check("dial: a day starting at 01:00 has its start at the 01:00 tick", cTo - cFrom == 23 * 3600 && DialMath.fraction(cFrom, cFrom, cTo, cairo) == 1 / 24.0
+                && DialMath.fraction(cFrom - 50, cFrom, cTo, cairo) == 1 / 24.0 && DialMath.fraction(cFrom + 1800, cFrom, cTo, cairo) == 1.5 / 24);
+        check("touch: end of the day and empty day", DialMath.touch(1, d, from, to, z, 288, uses, uses, none).at == to - 1
+                && DialMath.touch(0.5, d, from, from, z, 288, uses, uses, none).session == -1);
+        // every lit line of a busy day finds a use, every dark line none: a normal day, both clock change days,
+        // the half hour changes of Lord Howe and the days of Cairo that start at 01:00 or repeat 23:00
+        touchSweep(z, "2026-10-14", 109);
+        touchSweep(z, "2026-10-25", 110);
+        touchSweep(z, "2026-03-29", 111);
+        touchSweep(java.time.ZoneId.of("Australia/Lord_Howe"), "2026-04-05", 112);
+        touchSweep(java.time.ZoneId.of("Australia/Lord_Howe"), "2026-10-04", 113);
+        touchSweep(java.time.ZoneId.of("Africa/Cairo"), "2024-04-26", 114);
+        touchSweep(java.time.ZoneId.of("Africa/Cairo"), "2024-10-31", 115);
+    }
+
+    static void touchSweep(java.time.ZoneId z, String date, long seed) {
+        java.time.LocalDate d = java.time.LocalDate.parse(date);
+        double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        List<double[]> none = new ArrayList<double[]>();
+        java.util.Random rnd = new java.util.Random(seed);
+        List<double[]> many = new ArrayList<double[]>();
+        for (double t = from - 200; t < to; t += 60 + rnd.nextInt(2400)) many.add(new double[] {t, t + 1 + rnd.nextInt(200)});
+        for (double minS : new double[] {0, 120, 900}) {
+            List<double[]> sh = ScreenTime.widen(many, minS);
+            double[] fl = DialMath.fill(sh, from, to, z, 288);
+            int bad = 0, lit = 0;
+            for (int k = 0; k < 288; k++) {
+                if (fl[k] > 0) lit++;
+                for (double part : new double[] {0.05, 0.5, 0.95}) {
+                    DialMath.Touch x = DialMath.touch((k + part) / 288, d, from, to, z, 288, many, sh, none);
+                    if ((fl[k] > 0) != (x.session >= 0)) bad++;
+                    double[] r = x.session >= 0 ? many.get(x.session) : null;
+                    // the hand on the use, or at midnight for a use of the evening before drawn over it
+                    if (r != null && !(x.at >= r[0] && x.at < Math.max(r[1], r[0] + 1) || r[1] <= from && x.at == from)) bad++;
+                }
+            }
+            check("touch " + z + " " + date + ": lit lines find a use, dark ones none, at least " + (int) minS + " s"
+                    + (bad == 0 ? "" : " (" + bad + " wrong)"), bad == 0 && lit > 50);
+        }
+    }
+
+    /** Issue #158: a change forward at midnight belongs to the day whose clock time it skips. */
+    static void clockChangeOnDay() {
+        for (String id : new String[] {"America/Nuuk", "America/Scoresbysund"}) {
+            java.time.ZoneId z = java.time.ZoneId.of(id);
+            java.time.LocalDate sat = java.time.LocalDate.parse("2027-03-27"), sun = sat.plusDays(1);
+            double s0 = sat.atStartOfDay(z).toEpochSecond(), s1 = sun.atStartOfDay(z).toEpochSecond(), s2 = sun.plusDays(1).atStartOfDay(z).toEpochSecond();
+            check(id + ": 2027-03-27 is the 23 hour day", s1 - s0 == 23 * 3600 && s2 - s1 == 24 * 3600);
+            ClockChange.Change c = ClockChange.onDay(z, s0, s1);
+            check(id + ": the change is on 2027-03-27, 23:00 became 00:00", c != null && c.minutes == 60 && c.from.equals("23:00") && c.to.equals("00:00"));
+            double[] arc = DialMath.changeArc(c);
+            check(id + ": orange arc from 23:00 for an hour", arc != null && arc[0] == 23 / 24.0 && arc[1] == 1 / 24.0);
+            check(id + ": 2027-03-28 has none", ClockChange.onDay(z, s1, s2) == null && ClockChange.dialText(ClockChange.onDay(z, s1, s2)) == null);
+            eq(id + ": dial text on 2027-03-27", ClockChange.dialText(c), "The clocks went forward one hour on this day (23:00 became 00:00), "
+                    + "so the part of the clock from 23:00 to 00:00, marked in orange, stays empty.");
+            // nights keep find: a change inside the night, wherever its days are
+            check(id + ": a night over Saturday's midnight still has it", ClockChange.find(z, s1 - 3 * 3600, s1 + 5 * 3600) != null);
+            java.time.LocalDate oct = java.time.LocalDate.parse("2027-10-30");
+            double o0 = oct.atStartOfDay(z).toEpochSecond(), o1 = oct.plusDays(1).atStartOfDay(z).toEpochSecond(), o2 = oct.plusDays(2).atStartOfDay(z).toEpochSecond();
+            ClockChange.Change b = ClockChange.onDay(z, o0, o1);
+            check(id + ": autumn stays on the 25 hour day 2027-10-30", o1 - o0 == 25 * 3600 && b != null && b.minutes == -60 && ClockChange.onDay(z, o1, o2) == null);
+        }
+        java.time.ZoneId zh = java.time.ZoneId.of("Europe/Zurich");
+        check("Zurich 2026: onDay and find agree", ClockChange.onDay(zh, zurich("2026-03-29T00:00:00"), zurich("2026-03-30T00:00:00")).at
+                == ClockChange.find(zh, zurich("2026-03-29T00:00:00"), zurich("2026-03-30T00:00:00")).at
+                && ClockChange.onDay(zh, zurich("2026-10-25T00:00:00"), zurich("2026-10-26T00:00:00")).minutes == -60
+                && ClockChange.onDay(zh, zurich("2026-10-14T00:00:00"), zurich("2026-10-15T00:00:00")) == null);
+        check("onDay without a zone or with an empty range", ClockChange.onDay(null, 0, 1) == null && ClockChange.onDay(zh, 5, 5) == null
+                && ClockChange.onDay(zh, Double.NaN, 5) == null);
+        // every zone, 2024 to 2036: each change lands on one day, the one whose length differs from 24 h by it
+        int changes = 0, wrong = 0;
+        String firstWrong = null;
+        java.time.Instant end = java.time.LocalDate.parse("2037-01-01").atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        for (String id : java.time.ZoneId.getAvailableZoneIds()) {
+            java.time.ZoneId z = java.time.ZoneId.of(id);
+            java.time.zone.ZoneOffsetTransition t = z.getRules().nextTransition(java.time.LocalDate.parse("2024-01-03").atStartOfDay(java.time.ZoneOffset.UTC).toInstant());
+            for (; t != null && t.getInstant().isBefore(end); t = z.getRules().nextTransition(t.getInstant())) {
+                int min = (t.getOffsetAfter().getTotalSeconds() - t.getOffsetBefore().getTotalSeconds()) / 60;
+                if (min == 0) continue;
+                changes++;
+                java.time.LocalDate mid = t.getInstant().atZone(z).toLocalDate();
+                int hits = 0;
+                for (java.time.LocalDate day = mid.minusDays(2); !day.isAfter(mid.plusDays(2)); day = day.plusDays(1)) {
+                    double a = day.atStartOfDay(z).toEpochSecond(), b = day.plusDays(1).atStartOfDay(z).toEpochSecond();
+                    ClockChange.Change c = ClockChange.onDay(z, a, b);
+                    boolean mine = c != null && c.at == t.getInstant().getEpochSecond();
+                    if (mine) hits++;
+                    String bad = mine && b - a != 86400 - min * 60 ? day + " is " + (b - a) / 3600.0 + " h"
+                            : b - a != 86400 && c == null ? day + " (" + (b - a) / 3600.0 + " h) has no change" : null;
+                    if (bad != null) {
+                        wrong++;
+                        if (firstWrong == null) firstWrong = id + " " + bad;
+                    }
+                }
+                if (hits != 1) {
+                    wrong++;
+                    if (firstWrong == null) firstWrong = id + " " + t + " on " + hits + " days";
+                }
+            }
+        }
+        check("every zone 2024 to 2036: each change on the day whose length differs by it (" + changes + " changes"
+                + (wrong == 0 ? "" : ", " + wrong + " wrong, first " + firstWrong) + ")", changes > 1000 && wrong == 0);
     }
 
     static double zurich(String local) {
@@ -2725,6 +3935,36 @@ public class CoreTest {
         check("text two hours", ClockChange.text(120, "02:00", "04:00").contains("forward 2 hours"));
         check("text without stored times", ClockChange.text(-60, "", null).startsWith("The clocks went back one hour that night. Sleep"));
         travel();
+        sleptBefore();
+    }
+
+    /** Issues #161 and #162: where a sleep between two zone notes was slept, from the clock its end reads on. */
+    static void sleptBefore() {
+        java.time.ZoneId zh = java.time.ZoneId.of("Europe/Zurich"), ny = java.time.ZoneId.of("America/New_York"),
+                la = java.time.ZoneId.of("America/Los_Angeles"), ak = java.time.ZoneId.of("Pacific/Auckland"),
+                tk = java.time.ZoneId.of("Asia/Tokyo"), hn = java.time.ZoneId.of("Pacific/Honolulu");
+        java.time.LocalDate d = java.time.LocalDate.of(2026, 10, 11);
+        check("Zurich night before flying to Los Angeles (06:45 there, 21:45 here)",
+                ClockChange.sleptBefore(d.atTime(6, 45).atZone(zh).toEpochSecond(), zh, la));
+        check("Zurich night before flying to New York (05:30 there, 23:30 here)",
+                ClockChange.sleptBefore(d.atTime(5, 30).atZone(zh).toEpochSecond(), zh, ny));
+        check("first night in New York after Zurich (06:45 here, 12:45 there)",
+                !ClockChange.sleptBefore(d.atTime(6, 45).atZone(ny).toEpochSecond(), zh, ny));
+        check("first night in Los Angeles after Auckland (06:45 here, 02:45 there)",
+                !ClockChange.sleptBefore(d.atTime(6, 45).atZone(la).toEpochSecond(), ak, la));
+        check("Auckland night before flying to Los Angeles (06:45 there, 10:45 here)",
+                ClockChange.sleptBefore(d.atTime(6, 45).atZone(ak).toEpochSecond(), ak, la));
+        check("Tokyo night before flying to Honolulu (06:45 there, 11:45 here)",
+                ClockChange.sleptBefore(d.atTime(6, 45).atZone(tk).toEpochSecond(), tk, hn));
+        check("first night in Honolulu after Tokyo (06:45 here, 01:45 there)",
+                !ClockChange.sleptBefore(d.atTime(6, 45).atZone(hn).toEpochSecond(), tk, hn));
+        // Zurich and Paris share the clock: a tie goes to the later zone
+        check("same clock: the later zone", !ClockChange.sleptBefore(d.atTime(7, 0).atZone(zh).toEpochSecond(), zh, java.time.ZoneId.of("Europe/Paris")));
+        check("no zone before: the later zone", !ClockChange.sleptBefore(d.atTime(7, 0).atZone(zh).toEpochSecond(), null, la)
+                && !ClockChange.sleptBefore(Double.NaN, zh, la) && !ClockChange.sleptBefore(0, zh, null));
+        eq("07:00 is the morning", ClockChange.fromMorning(java.time.LocalTime.of(7, 0)), 0);
+        eq("19:00 is the farthest from it", ClockChange.fromMorning(java.time.LocalTime.of(19, 0)), 720);
+        eq("distance across midnight", ClockChange.fromMorning(java.time.LocalTime.of(23, 30)), 450);
     }
 
     static void travel() {

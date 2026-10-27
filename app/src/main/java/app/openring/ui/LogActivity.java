@@ -171,7 +171,7 @@ public final class LogActivity extends Activity {
         repairNote = Ui.text(this, REPAIRING, 14, Ui.TEMP, Ui.MEDIUM);
         repairNote.setPadding(0, 0, 0, Ui.dp(this, 6));
         content.addView(repairNote);
-        repairButton = Ui.button(this, "Repair: re-date and re-analyse everything", Ui.READY, true);
+        repairButton = Ui.button(this, "Repair: date and analyse everything again", Ui.READY, true);
         repairButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {

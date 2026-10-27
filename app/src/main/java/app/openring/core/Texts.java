@@ -1,8 +1,11 @@
 package app.openring.core;
 
+import java.util.Locale;
+
 /**
  * Small helpers for screen texts: a number with its word in singular or plural (issue #92), the
- * length a toast can show in full, and the sentence for a file that could not be saved (issue #89).
+ * length a toast can show in full, the sentence for a file that could not be saved (issue #89), and
+ * one way to write the same quantity everywhere (issues #99, #163).
  */
 public final class Texts {
     private Texts() {}
@@ -44,6 +47,50 @@ public final class Texts {
         return n == 1 ? one : many;
     }
 
+    /**
+     * A change such as the temperature against your usual, with its sign and one decimal: "+0.3", "-0.2",
+     * and "0.0" near zero, never "-0.0" or "+0.0" (issues #32, #163). The value is first rounded to the
+     * three decimals a day stores, so a score detail built from the unrounded value reads the same as the
+     * card that shows the stored one.
+     */
+    public static String signed(double v, Locale locale) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) return "--";
+        double r = Math.round(v * 1000) / 1000.0;
+        if (Math.abs(r) < 0.05) return String.format(locale, "%.1f", 0.0);
+        return String.format(locale, "%+.1f", r);
+    }
+
+    /** A duration: "30 min" under an hour, "1h 5m" from an hour on, "--" when unknown (issue #99). */
+    public static String minutes(double min) {
+        if (Double.isNaN(min) || Double.isInfinite(min)) return "--";
+        long m = Math.round(min);
+        if (m < 60) return m + " min";
+        return (m / 60) + "h " + (m % 60) + "m";
+    }
+
+    /**
+     * A symptom radar value with its unit and the precision the Today and Sleep cards use (issue #99):
+     * skin temperature as a change ("-0.2 \u00b0C"), resting heart rate in bpm, HRV in ms, breathing per minute.
+     */
+    public static String radar(String label, double v, Locale locale) {
+        return radar(label, v, Double.NaN, locale);
+    }
+
+    /**
+     * As {@link #radar(String, double, Locale)}, but skin temperature shows the day's stored change
+     * {@code tempDev} (3 decimals) when known, so it reads as on Today; the radar's own marker is stored at
+     * 2 decimals and could round differently (0.046 is "0.0" on Today, its marker 0.05 would be "+0.1").
+     */
+    public static String radar(String label, double v, double tempDev, Locale locale) {
+        if (label.startsWith("Skin") && !Double.isNaN(tempDev) && !Double.isInfinite(tempDev)) v = tempDev;
+        if (Double.isNaN(v) || Double.isInfinite(v)) return "--";
+        if (label.startsWith("Skin")) return signed(v, locale) + " \u00b0C";
+        if (label.startsWith("Resting")) return String.format(locale, "%.0f bpm", v);
+        if (label.startsWith("HRV")) return String.format(locale, "%.0f ms", v);
+        if (label.startsWith("Respiratory")) return String.format(locale, "%.1f /min", v);
+        return String.format(locale, "%.1f", v);
+    }
+
     /** True when a toast shows {@code text} in full. */
     public static boolean fitsToast(String text) {
         return text != null && text.length() <= TOAST_MAX;
@@ -62,5 +109,15 @@ public final class Texts {
     public static String notChecked(boolean backup) {
         return backup ? "The backup was not saved, because the copy of your history did not pass its check. Nothing on this phone was changed. Try again in a minute."
                 : "The export was not saved, because the copy of the history did not pass its check. Nothing on this phone was changed. Try again in a minute.";
+    }
+
+    /**
+     * The text size that lets the widest of several labels fit its room (the tab bar, issue #119): {@code wanted}
+     * when the widest label, measured at that size, fits; else smaller by the same factor, but not below
+     * {@code min}. Widths and room in the same unit (pixels).
+     */
+    public static float fitSize(float wanted, float widest, float room, float min) {
+        if (!(widest > 0) || !(room > 0) || widest <= room) return wanted;
+        return Math.max(min, wanted * room / widest);
     }
 }

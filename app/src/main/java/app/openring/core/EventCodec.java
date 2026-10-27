@@ -198,7 +198,21 @@ public final class EventCodec {
         return out;
     }
 
-    /** activity_information: state byte then one MET level per minute. */
+    /**
+     * The plausibility range for an activity value from the ring (issue #120): 0 to 25 MET. The most demanding
+     * activity in the Compendium of Physical Activities (Ainsworth and others, 2011) is running at 14 mph
+     * (22.5 km/h), 23 MET; 25 MET is a VO2 max of about 88 ml/kg/min (1 MET is 3.5 ml/kg/min), near the most a person
+     * can have ({@code Wellness.VO2MAX_HIGH}), and a ring value is the average of a whole minute. A byte decodes to
+     * up to 38.2; values above the range are bytes the ring got wrong and count as missing minutes, never clamped.
+     */
+    public static final double MET_MIN = 0, MET_MAX = 25;
+
+    /** True for an activity value inside {@link #MET_MIN} to {@link #MET_MAX}. */
+    public static boolean plausibleMet(double met) {
+        return met >= MET_MIN && met <= MET_MAX;
+    }
+
+    /** activity_information: state byte then one MET level per minute (raw; {@link #plausibleMet} decides what counts). */
     public static double[] activityMet(byte[] b) {
         if (b.length < 2) return null;
         double[] met = new double[b.length - 1];
