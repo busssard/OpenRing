@@ -122,13 +122,7 @@ public final class DayData {
 
     /** The orange line after a trip: the main night's zone differs from the main night before it (issue #22). */
     public String travelLine() {
-        if (night == null) return null;
-        double start = Json.d(night, "start");
-        JSONObject prev = null;
-        for (JSONObject o : recent) if (Json.d(o, "start") < start && (prev == null || Json.d(o, "start") > Json.d(prev, "start"))) prev = o;
-        if (prev == null) return null;
-        double mid = (start + Json.d(night, "end")) / 2;
-        return app.openring.core.analysis.ClockChange.travel(prev.optString("zone", null), night.optString("zone", null), mid);
+        return app.openring.data.SleepHistory.travelLine(night, recent);
     }
 
     public boolean empty() {

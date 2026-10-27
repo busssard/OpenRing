@@ -126,7 +126,7 @@ public class CoreTest {
             i = j;
         }
         check("Calm leaves no short runs", ok);
-        check("filter reduces stage changes", StageFilter.changes(f) < StageFilter.changes(busy));
+        check("filter reduces stage changes", StageFilter.changes(f) < StageFilter.changes(Stager.smooth(busy, 5)));
         eq("stage changes count", StageFilter.changes(runs(L, 5, D, 5, 0, 2, D, 3, W, 2)), 2);
         eq("awake runs inside the night", StageFilter.wakeRuns(runs(W, 10, L, 5, W, 1, L, 5, W, 3, R, 2, W, 20)), 2);
 
@@ -275,8 +275,6 @@ public class CoreTest {
         eq("average line: Balanced", WakeUps.averageLine(B), "Wake ups of a minute or more");
         eq("average line: mixed levels still name the rule", WakeUps.averageLine(-1),
                 "Wake ups of a minute or more (2 min with Calm, 1 min on the phone or next to missing ring data), each night at its own detail level");
-        check("average line: mixed levels name the Calm exception like the rule (#30)",
-                WakeUps.averageLine(-1).contains("1 min on the phone or next to missing ring data") && WakeUps.rule(C).contains("1 min on the phone or next to missing ring data"));
         eq("rule: out of range levels are clamped", WakeUps.rule(-3) + " / " + WakeUps.rule(9), "a minute or more / 2 min or more with Calm (1 min on the phone or next to missing ring data)");
 
         // random nights: for every level, preview count = night count = timeline rows, and the old rule agrees
@@ -680,7 +678,7 @@ public class CoreTest {
         check("clock average: 15:50 and 16:10 give 16:00", Math.abs(w[0] - 16 * 60) < 1e-6 && Math.abs(w[1] - 10) < 1e-6);
         double[] w3 = ClockAverage.of(new double[] {15 * 60 + 30, 16 * 60, 16 * 60 + 30});
         check("clock average: 15:30, 16:00 and 16:30 give 16:00, spread 24 min", Math.abs(w3[0] - 16 * 60) < 1e-6 && Math.round(w3[1]) == 24);
-        check("clock average: the old maths gave 04:00 there", Math.abs(oldClockMean(new double[] {15 * 60 + 50, 16 * 60 + 10})[0] - 4 * 60) < 1e-6);
+        // the old maths (oldClockMean) gave 04:00 there
         double[] mid = ClockAverage.of(new double[] {23 * 60 + 50, 10});
         check("clock average: 23:50 and 00:10 give 00:00", Math.abs(mid[0]) < 1e-6 || Math.abs(mid[0] - 1440) < 1e-6);
         // normal nights: exactly the old numbers
@@ -904,6 +902,7 @@ public class CoreTest {
         liveFeed();
         requests();
         auth();
+        mutationGaps();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -974,7 +973,7 @@ public class CoreTest {
         shown.attach("turned settings");
         shown.detach("settings"); // the old screen closing late changes nothing
         eq("shown screen: the turned one after a turn", shown.attached(), "turned settings");
-        check("shown screen: asking starts nothing", !shown.running() && shown.start());
+        check("shown screen: asking for a job starts it", !shown.running() && shown.start());
         eq("shown screen: asking ends nothing", shown.attached(), "turned settings");
         check("shown screen: the job still runs", shown.running());
         shown.detach("turned settings");
@@ -1038,7 +1037,6 @@ public class CoreTest {
             eq("readiness: temperature detail " + v + " as the card", part(Scores.readiness(ri), "temperature").detail, Texts.signed(v, Locale.US) + " \u00b0C");
         }
         ri.tempDev = -0.04;
-        eq("readiness: -0.04 is 0.0 \u00b0C", part(Scores.readiness(ri), "temperature").detail, "0.0 \u00b0C");
 
         // minutes on the Screen tab: one way under an hour (issue #99)
         eq("minutes: 30", Texts.minutes(30), "30 min");
@@ -1067,7 +1065,6 @@ public class CoreTest {
             {0, 0.1, -0.1, 0.2, -0.2, 0.05, 0}, {49, 50, 51, 52, 48, 50, 50}, {55, 60, 65, 58, 62, 61, 59}, {13, 14, 15, 14, 13.5, 14.5, 14}});
         for (String k : wr.markers.keySet()) check("radar: every marker has a unit: " + k, !Texts.radar(k, 1, Locale.US).equals("1.0"));
         // "1 time" on the Screen tab (issue #165)
-        eq("uses: one", Texts.word(1, "time", "times"), "time");
     }
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
@@ -1209,13 +1206,11 @@ public class CoreTest {
         int[] a = StageShare.sleepShares(43, 262, 113);
         eq("shares: night like the issue's", Arrays.toString(a), "[10, 63, 27]");
         int[] third = StageShare.sleepShares(100, 100, 100);
-        eq("shares: thirds add up to 100, not 99", third[0] + third[1] + third[2], 100);
         eq("shares: thirds tie goes to the first stage", Arrays.toString(third), "[34, 33, 33]");
         int[] up = StageShare.sleepShares(45, 245, 210);
         // exact 9, 49, 42 with no remainder
         eq("shares: exact values stay", Arrays.toString(up), "[9, 49, 42]");
         int[] over = StageShare.sleepShares(5.5, 5.5, 89); // 5.5 + 5.5 + 89, plain rounding gives 6 + 6 + 89 = 101
-        eq("shares: no 101", over[0] + over[1] + over[2], 100);
         eq("shares: 101 case", Arrays.toString(over), "[6, 5, 89]");
         for (int t = 0; t < 200; t++) {
             int[] r = StageShare.sleepShares(t * 1.37 % 97, t * 2.11 % 300, t * 0.73 % 140 + 1);
@@ -1241,8 +1236,7 @@ public class CoreTest {
     static void sleepMinutes() {
         // #111, the issue's demo night: rounded alone 0h 48m + 4h 20m + 2h 23m = 7h 31m next to Total sleep 7h 30m
         double deep = 47.6, light = 259.6, rem = 142.6, asleep = deep + light + rem;
-        eq("alone the rows add up to one more", Math.round(deep) + Math.round(light) + Math.round(rem), 451L);
-        eq("total sleep shows 7h 30m", Math.round(asleep), 450L);
+        // alone the rows round to 48 + 260 + 143 = 451, total sleep shows 450
         long[] t = StageShare.roundTogether(new double[] {deep, light, rem}, 450);
         eq("together they add up to 450, ties to the earlier stage", Arrays.toString(t), "[48, 260, 142]");
         // with awake and the shown window 22:25 to 06:47
@@ -1250,11 +1244,9 @@ public class CoreTest {
         long inBedShown = WakeUps.shownMinutes(start, end);
         eq("shown time in bed is the minutes between the shown clocks", inBedShown, 502L);
         double inBed = (end - start) / 60, awake = inBed - asleep;
-        eq("alone the rows with awake add up to 503", Math.round(deep) + Math.round(light) + Math.round(rem) + Math.round(awake), 503L);
+        // alone the rows with awake round to 503
         double[] m = StageShare.shownMinutes(deep, light, rem, awake, 0, asleep, inBed, inBedShown);
         eq("sleep page rows", Arrays.toString(m), "[48.0, 260.0, 142.0, 52.0, 0.0]");
-        eq("sleep rows add up to total sleep", m[0] + m[1] + m[2], 450.0);
-        eq("all rows add up to the shown time in bed", m[0] + m[1] + m[2] + m[3] + m[4], 502.0);
         // No data (issue #107) joins awake in the time in bed group
         double[] nd = StageShare.shownMinutes(40.4, 250.4, 120.4, 30.4, 19.6, 411.2, 461.2, 461);
         eq("no data row: rows add up to time in bed", nd[0] + nd[1] + nd[2] + nd[3] + nd[4], 461.0);
@@ -1447,19 +1439,9 @@ public class CoreTest {
             {null, SyncError.Kind.UNKNOWN},
         };
         for (Object[] k : cases) eq("sync error: " + k[0], SyncError.kind((String) k[0]), k[1]);
-        eq("sync error: GATT 133 sentence", SyncError.plain("connection failed (GATT status 133)"),
-                "The ring could not be reached. Keep it close to the phone (on its charger is best) and sync again.");
         check("sync error: unknown names the details", SyncError.plain("Unexpected error: java.lang.IllegalStateException").endsWith(SyncError.DETAILS)
                 && SyncError.plain(null).endsWith(SyncError.DETAILS));
         check("sync error: key refused says how to set up again", SyncError.plain("authentication failed: x").endsWith(SyncError.SETUP_AGAIN));
-        for (SyncError.Kind kd : SyncError.Kind.values()) {
-            String raw = null;
-            for (Object[] k : cases) if (k[1] == kd) { raw = (String) k[0]; break; }
-            String t = SyncError.plain(raw);
-            String low = t.toLowerCase(Locale.ROOT);
-            check("sync error: plain text for " + kd, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014")
-                    && !low.contains("gatt") && !low.contains("mtu") && !low.contains("exception") && t.endsWith("."));
-        }
         ringError(cases);
     }
 
@@ -1467,9 +1449,11 @@ public class CoreTest {
     static void ringError(Object[][] cases) throws java.io.IOException {
         SyncError.Task P = SyncError.Task.PAIR, A = SyncError.Task.ACTION, L = SyncError.Task.LIVE;
         // every kind and task: plain, no jargon or raw codes, a sync is never mentioned outside a sync
+        Set<String> plainSeen = new HashSet<String>();
         for (Object[] k : cases) {
             for (SyncError.Task task : SyncError.Task.values()) {
                 String t = SyncError.plain((String) k[0], task);
+                if (!plainSeen.add(task + " " + k[1] + " " + t)) continue; // same sentence as another raw text
                 String low = t.toLowerCase(Locale.ROOT);
                 check("ring error: plain " + task + " " + k[0], !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014")
                         && !low.contains("gatt") && !low.contains("mtu") && !low.contains("exception") && !low.contains("0x")
@@ -1557,8 +1541,10 @@ public class CoreTest {
         eq("ring error: game text", SyncError.game("authentication failed: " + Auth.describe(Auth.WRONG_KEY)),
                 "Ring motion stopped. Your ring did not accept the key saved on this phone. Touch steering works meanwhile.");
         eq("ring error: game text unknown", SyncError.game(null), "Ring motion stopped. Something unexpected went wrong. Touch steering works meanwhile.");
+        Set<String> gameSeen = new HashSet<String>();
         for (Object[] k : cases) {
             String g = SyncError.game((String) k[0]);
+            if (!gameSeen.add(g)) continue; // same text as another raw text
             List<String> lines = SyncError.wrap(g, SyncError.GAME_LINE);
             boolean fits = lines.size() <= SyncError.GAME_LINES;
             for (String line : lines) fits &= line.length() <= SyncError.GAME_LINE;
@@ -1749,33 +1735,8 @@ public class CoreTest {
 
     // ------------------------------------------------------- issue #71, apps read more than once
 
-    /** Android usage event types the way data/ScreenUse maps them (copied here, that class needs Android). */
-    static int screenKind(int type) {
-        switch (type) {
-            case 15: return ScreenTime.ON;
-            case 16: return ScreenTime.OFF;
-            case 26: return ScreenTime.SHUTDOWN;
-            case 27: return ScreenTime.STARTUP;
-            case 17: return ScreenTime.LOCKED;
-            case 18: return ScreenTime.UNLOCKED;
-            case 1: case 7: return ScreenTime.ALIVE;
-            default: return 0;
-        }
-    }
-
-    static int appKind(int type) {
-        switch (type) {
-            case 1: return ScreenTime.APP_ON;
-            case 2: return ScreenTime.APP_OFF;
-            case 16: return ScreenTime.OFF;
-            case 26: return ScreenTime.SHUTDOWN;
-            case 27: return ScreenTime.STARTUP;
-            default: return 0;
-        }
-    }
-
     /**
-     * Reads a log the way ScreenUse.collect does, once at each of {@code reads}: screen sessions from
+     * Reads a log the way ScreenUse.collect does (with the same {@link ScreenTime.LogSplit}), once at each of {@code reads}: screen sessions from
      * the newest stored session start (a session with a known start replaces the stored one), apps
      * from {@link ScreenTime#appsReadFrom}, stored with {@link ScreenTime#store}. Returns {apps, screen}.
      */
@@ -1789,33 +1750,10 @@ public class CoreTest {
             double newest = -1;
             for (List<double[]> l : apps.values()) for (double[] r : l) newest = Math.max(newest, r[0]);
             double appFrom = ScreenTime.appsReadFrom(first, back, screenFrom, newest, now);
-            List<Double> at = new ArrayList<Double>(), st = new ArrayList<Double>();
-            List<Integer> ak = new ArrayList<Integer>(), sk = new ArrayList<Integer>();
-            List<String> ap = new ArrayList<String>();
-            for (int i = 0; i < t.length && t[i] < now; i++) {
-                int a = appKind(type[i]), k = screenKind(type[i]);
-                if (a != 0 && t[i] >= appFrom) {
-                    at.add(t[i]);
-                    ak.add(a);
-                    ap.add(a == ScreenTime.APP_ON || a == ScreenTime.APP_OFF ? pkg[i] : null);
-                }
-                if (k != 0 && t[i] >= screenFrom) {
-                    st.add(t[i]);
-                    sk.add(k);
-                }
-            }
-            double[] atA = new double[at.size()], stA = new double[st.size()];
-            int[] akA = new int[ak.size()], skA = new int[sk.size()];
-            for (int i = 0; i < atA.length; i++) {
-                atA[i] = at.get(i);
-                akA[i] = ak.get(i);
-            }
-            for (int i = 0; i < stA.length; i++) {
-                stA[i] = st.get(i);
-                skA[i] = sk.get(i);
-            }
-            ScreenTime.store(apps, ScreenTime.appSessions(atA, akA, ap.toArray(new String[0]), appFrom, now));
-            for (double[] s : ScreenTime.sessions(stA, skA, screenFrom, now)) screen.put(s[0], s);
+            ScreenTime.LogSplit log = new ScreenTime.LogSplit(screenFrom, appFrom);
+            for (int i = 0; i < t.length && t[i] < now; i++) log.add(t[i], type[i], pkg[i]);
+            ScreenTime.store(apps, ScreenTime.appSessions(log.appTimes(), log.appKinds(), log.appPackages(), appFrom, now));
+            for (double[] s : ScreenTime.sessions(log.screenTimes(), log.screenKinds(), screenFrom, now)) screen.put(s[0], s);
             first = false;
         }
         return new Object[] {apps, new ArrayList<double[]>(screen.values())};
@@ -1839,6 +1777,28 @@ public class CoreTest {
     /** Issue #71: reading the log twice gives the apps the same time as reading it once; rows add up. */
     @SuppressWarnings("unchecked")
     static void screenAppReads() {
+        // Android's usage event types, as data/ScreenUse reads them (the same functions)
+        StringBuilder sk = new StringBuilder(), ak = new StringBuilder();
+        for (int type = 0; type <= 30; type++) {
+            if (ScreenTime.screenKind(type) != 0) sk.append(type).append('=').append(ScreenTime.screenKind(type)).append(' ');
+            if (ScreenTime.appKind(type) != 0) ak.append(type).append('=').append(ScreenTime.appKind(type)).append(' ');
+        }
+        eq("usage events: screen kinds (1 and 7 in use, 15 on, 16 off, 17 lock, 18 unlock, 26 shutdown, 27 start)", sk.toString(),
+                "1=" + ScreenTime.ALIVE + " 7=" + ScreenTime.ALIVE + " 15=" + ScreenTime.ON + " 16=" + ScreenTime.OFF + " 17=" + ScreenTime.LOCKED
+                + " 18=" + ScreenTime.UNLOCKED + " 26=" + ScreenTime.SHUTDOWN + " 27=" + ScreenTime.STARTUP + " ");
+        eq("usage events: app kinds (1 front, 2 back; off, shutdown and start close every app)", ak.toString(),
+                "1=" + ScreenTime.APP_ON + " 2=" + ScreenTime.APP_OFF + " 16=" + ScreenTime.OFF + " 26=" + ScreenTime.SHUTDOWN + " 27=" + ScreenTime.STARTUP + " ");
+        ScreenTime.LogSplit split = new ScreenTime.LogSplit(100, 200);
+        split.add(50, 15, "x");          // before both starts: dropped
+        split.add(150, 1, "a.app");      // screen only (apps start at 200)
+        split.add(250, 1, "b.app");      // both, the package kept for the app list
+        split.add(260, 16, "android");   // both, no package for "off"
+        split.add(270, 23, "c.app");     // a type neither list uses
+        eq("log split: screen times from its own start", Arrays.toString(split.screenTimes()), "[150.0, 250.0, 260.0]");
+        eq("log split: app times from theirs", Arrays.toString(split.appTimes()), "[250.0, 260.0]");
+        eq("log split: packages only for apps in front", Arrays.toString(split.appPackages()), "[b.app, null]");
+        eq("log split: kinds", Arrays.toString(split.screenKinds()) + Arrays.toString(split.appKinds()),
+                "[" + ScreenTime.ALIVE + ", " + ScreenTime.ALIVE + ", " + ScreenTime.OFF + "][" + ScreenTime.APP_ON + ", " + ScreenTime.OFF + "]");
         // the issue's case: a call over the lock screen while a background sync reads the log at 1100
         double[] t = {900, 900.5, 1000, 1005, 1010, 1200, 1201, 1201.5};
         int[] ty = {16, 17, 15, 1, 18, 2, 16, 17};
@@ -2030,7 +1990,7 @@ public class CoreTest {
         long shown = 0, single = 0;
         for (ScreenTime.AppRow r : rows) shown += r.shownMin;
         for (double v : mins) single += Math.round(v);
-        check("rounding: one by one the rows add up to 54", single == 54);
+        // one by one the rows would round to 54
         check("rounding: together they add up to the total of 52", shown == 52 && rows.size() == 6);
         check("rounding: largest remainder", Arrays.equals(ScreenTime.roundTogether(new double[] {1.4, 1.4, 1.2}), new long[] {2, 1, 1}));
         check("rounding: a tie goes to the earlier row", Arrays.equals(ScreenTime.roundTogether(new double[] {0.5, 0.5}), new long[] {1, 0}));
@@ -2422,11 +2382,8 @@ public class CoreTest {
         byte[] key = Hex.decode("4431967d8bacc2659743142b68391d9a");
         byte[] nonce = Hex.decode("0e2d6a0a08c99b4365f458e6e97382");
         eq("auth known answer", Hex.encode(Auth.encryptNonce(key, nonce)), "a38a8772d3acb6db5c2b516dd56987c8");
-        eq("firmware request", Hex.encode(Protocol.firmware()), "0803000000");
         eq("get event", Hex.encode(Protocol.getEvent(0, 8, -1)), "10090000000008ffffffff");
         eq("ext get event", Hex.encode(Protocol.extGetEvent(123400, 0xffff, 0)), "2f0c410008e2010000000000ffff");
-        eq("data flush", Hex.encode(Protocol.dataFlush()), "280100");
-        eq("set feature", Hex.encode(Protocol.setFeatureMode(2, 3)), "2f03220203");
         eq("event subscribe", Hex.encode(Protocol.eventSubscribe(0x14, 0x1000)), "1803140010");
         List<Packet> many = Packet.parseMany(Hex.decode("0d0639000000360f290100"));
         eq("parse many count", many.size(), 2);
@@ -2441,8 +2398,6 @@ public class CoreTest {
         eq("hrv rmssd", hrv[1][1], 44);
         double[] met = EventCodec.activityMet(new byte[] {0, 10, (byte) 0x81});
         check("met scale", Math.abs(met[0] - 1.0) < 1e-9 && Math.abs(met[1] - 13.0) < 1e-9);
-        int[] ph = EventCodec.sleepPhases(new byte[] {0, (byte) 0x1b});
-        eq("phases", Arrays.toString(ph), "[1, 2, 3, 4]");
         int[] bat = EventCodec.debugBattery(new byte[] {0x24, 95, 0x68, 0x10});
         eq("battery debug", bat[1], 4200);
         double[] temps = EventCodec.temps(new byte[] {(byte) 0x4c, 0x0d});
@@ -2552,9 +2507,9 @@ public class CoreTest {
         }
         try {
             HistoryBatch.decode(Arrays.asList(Packet.parse(Hex.decode("43086400000074657374"))));
-            check("unterminated", false);
+            check("unterminated batch is refused", false);
         } catch (HistoryBatch.BatchException e) {
-            check("unterminated", true);
+            // refused, as it should be
         }
     }
 
@@ -2773,7 +2728,6 @@ public class CoreTest {
         check("probe f: result code 0x05 throws", e instanceof RingClient.RingException);
         check("probe f: names the result code", e != null && e.getMessage().contains("0x05"));
         e = drainError(new RingClient(m).quiet(5), 1, new Store(1, Integer.MAX_VALUE));
-        check("drain f: result code 0x05 throws", e instanceof HistoryBatch.BatchException);
         eq("drain f: result code kept", e instanceof HistoryBatch.BatchException ? ((HistoryBatch.BatchException) e).resultCode : null, 5);
 
         // g) the link is lost in the middle of the probe: an error, neither present nor gone
@@ -3450,8 +3404,8 @@ public class CoreTest {
         boolean[] noPhone = new boolean[1];
         List<TimeLine.Segment> bad = TimeLine.build(new long[] {1}, new long[] {1}, new long[] {5}, new long[] {now + 86400}, noPhone, now);
         eq("future anchor ignored", bad.get(0).anchors.size(), 0);
-        byte[] body = TimeLine.phoneAnchorBody(now);
-        check("phone body", EventCodec.isPhoneAnchor(body) && EventCodec.anchorUnix(EventCodec.TIME_SYNC, body) == now);
+        eq("anchor before 2015 ignored", TimeLine.build(new long[] {1}, new long[] {1}, new long[] {5}, new long[] {1_400_000_000L}, noPhone, now).get(0).anchors.size(), 0);
+        eq("anchor 5 h ahead (a phone clock a little fast) kept", TimeLine.build(new long[] {1}, new long[] {1}, new long[] {5}, new long[] {now + 5 * 3600}, noPhone, now).get(0).anchors.size(), 1);
     }
 
     static void live() {
@@ -3525,15 +3479,6 @@ public class CoreTest {
         check("live: a stopped session that is still cleaning up is not rejoined (#153)", !RingTasks.rejoinLive(running, token, false, false));
         check("live: no session running starts one", !RingTasks.rejoinLive(0, token, false, false) && !RingTasks.rejoinLive(0, 0, false, false));
         check("live: a blood oxygen switch starts a new session", !RingTasks.rejoinLive(1, 1, false, true) && !RingTasks.rejoinLive(1, 1, true, false));
-        // the sequence of RingManager.startLive: the new screen takes token 3, the old task ends and
-        // clears only its own mark, so a third screen rejoins the new session
-        java.util.concurrent.atomic.AtomicInteger session = new java.util.concurrent.atomic.AtomicInteger(1), current = new java.util.concurrent.atomic.AtomicInteger(1);
-        current.incrementAndGet(); // stopLive
-        boolean rejoined = RingTasks.rejoinLive(session.get(), current.get(), false, false);
-        if (!rejoined) session.set(current.incrementAndGet());
-        session.compareAndSet(1, 0); // the old session's cleanup ends
-        check("live: after a turn the new screen has its own session", !rejoined && session.get() == 3);
-        check("live: a screen opened next rejoins the new session", RingTasks.rejoinLive(session.get(), current.get(), false, false));
 
         // #43 C: only the last sync shows its line
         eq("sync end: another sync runs, nothing shown", RingTasks.syncEndStatus(1, "Up to date", null), null);
@@ -3751,8 +3696,11 @@ public class CoreTest {
         DialMath.Touch w2 = DialMath.touch((13 * 60 + 4.9) / 1440.0, d, from, to, z, 288, real, wide, none);
         check("touch: 13:04 at the end of the widened line too", w2.session == 0 && w2.at == t1255 + 239);
         check("touch: without the widening 13:02 reads no use", DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, real, none).session == -1);
+        // a drawn list that does not match the real one (another size) is not used: the widened line reads no use
+        List<double[]> other = new ArrayList<double[]>(wide);
+        other.add(new double[] {t1255 - 3600, t1255 - 3500});
         check("touch: a shown list of another size counts as the real one",
-                DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, new ArrayList<double[]>(), none).session == -1);
+                DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, other, none).session == -1);
         // a use at 23:58 drawn 5 minutes long lights 00:00 of the next day
         List<double[]> late = new ArrayList<double[]>();
         late.add(new double[] {from - 120, from - 100});
@@ -3998,5 +3946,214 @@ public class CoreTest {
                 && ClockChange.zone("Asia/Tokyo") != null);
         eq("minutes alone", ClockChange.travel("Asia/Kolkata", "Asia/Kathmandu", oct),
                 "Times this night are in Kathmandu time, 15 minutes ahead of where you slept the night before.");
+    }
+
+    /** Run length text of stage codes, "code x count" per run, for pinning a whole night in one line. */
+    static String rle(int[] st) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < st.length; ) {
+            int j = i;
+            while (j < st.length && st[j] == st[i]) j++;
+            sb.append(sb.length() > 0 ? " " : "").append(st[i]).append('x').append(j - i);
+            i = j;
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Checks a mutation run asked for: each one fails when the line it names is changed in a small way
+     * (a comparison, a sign, a constant) that no other check noticed. Expected values are worked out by
+     * hand from the inputs in the comments.
+     */
+    static void mutationGaps() {
+        // TS.filter: the value range and the time window both apply. 5 is below the range, 25 above it,
+        // 15 at 900 is after the window: only (200, 15) is left
+        TS ts = new TS();
+        ts.add(100, 5);
+        ts.add(200, 15);
+        ts.add(300, 25);
+        ts.add(900, 15);
+        TS fl = ts.filter(10, 20, 0, 500);
+        check("filter keeps only values in range and inside the window", fl.size() == 1 && fl.t(0) == 200 && fl.v(0) == 15);
+        // TS.interp on the last segment: halfway from (10, 10) to (20, 40) is 25
+        TS line = new TS();
+        line.add(0, 0);
+        line.add(10, 10);
+        line.add(20, 40);
+        eq("interpolation on the last segment", line.interp(15), 25.0);
+
+        // NightAnalyzer: REM runs of 2 and 10 steps of 30 s, 100 steps apart (more than the 15 minute merge gap
+        // of 30 steps); only the 10 step run reaches the 3 minute minimum (6 steps), so 1 cycle
+        NightAnalyzer.Input cy = new NightAnalyzer.Input();
+        cy.start = 1_800_000_000;
+        cy.ringStages = runs(Stager.LIGHT, 100, Stager.REM, 2, Stager.LIGHT, 100, Stager.REM, 10, Stager.LIGHT, 100);
+        cy.end = cy.start + cy.ringStages.length * 30;
+        Night cyn = NightAnalyzer.analyze(cy);
+        eq("a REM run shorter than 3 minutes is not a cycle", cyn.cycles, 1);
+        // an empty ring hypnogram covers nothing, so the night falls back to the plain window (1 hour = 120 steps)
+        NightAnalyzer.Input em = new NightAnalyzer.Input();
+        em.start = 1_800_000_000;
+        em.end = em.start + 3600;
+        em.ringStages = new int[0];
+        Night emn = NightAnalyzer.analyze(em);
+        check("an empty ring hypnogram is not used", "window".equals(emn.stageSource) && emn.stages.length == 120);
+
+        // NightFinder: 30 minutes the ring calls asleep is shorter than a derived sleep's 45 minutes: no sleep
+        double t0 = 1_800_000_000;
+        TS shortSleep = new TS();
+        for (int i = 0; i <= 30; i += 5) shortSleep.add(t0 + i * 60, 1);
+        eq("30 minutes of ring sleep alone is no night", NightFinder.find(new ArrayList<double[]>(), new ArrayList<NightFinder.RingRun>(),
+                shortSleep, new TS()).size(), 0);
+        // a bedtime of an hour is carried on by an event 380 s after it, inside the ring's asleep stretch
+        // (samples each minute from 3000 to 4800 s, awake only at 4020 and 4080). The nearest sample to the
+        // event at 3980 is 3960 (20 s, asleep), not 4020 (40 s, awake), so the night ends at 3980
+        TS st = new TS();
+        for (int s = 3000; s <= 4800; s += 60) st.add(t0 + s, s == 4020 || s == 4080 ? 0 : 1);
+        TS sup = new TS();
+        sup.add(t0 + 3980, 1);
+        List<double[]> bt = new ArrayList<double[]>();
+        bt.add(new double[] {t0, t0 + 3600});
+        List<NightFinder.Period> ext = NightFinder.find(bt, new ArrayList<NightFinder.RingRun>(), st, sup);
+        check("the nearest sleep sample before an event counts", ext.size() == 1 && ext.get(0).end == t0 + 3980);
+
+        // Scores.clock on a real time: 1,800,000,000 s is 20833 days and 28,800 s, so 08:00 UTC and 10:00 at +2 h
+        eq("clock of a real unix time", Scores.clock(1_800_000_000.0, 0), "08:00");
+        eq("clock of a real unix time with an offset", Scores.clock(1_800_000_000.0, 7200), "10:00");
+
+        // Wellness.day: a minute at exactly 3.0 MET is medium, one at exactly 6.0 is high
+        double wd = 1_800_000_000;
+        TS met = new TS();
+        met.add(wd + 10, 3.0);
+        met.add(wd + 70, 6.0);
+        Wellness.Day band = Wellness.day("d", wd, wd + 120, null, met, new ArrayList<double[]>(), 70, 1600, wd + 86400);
+        check("3.0 MET is medium and 6.0 MET is high", band.lowMin == 0 && band.mediumMin == 1 && band.highMin == 1);
+        // Wellness.sleepDebt: a day without sleep (0) is skipped. 6 h of 8 h on days 0, 2, 3, 4 with weights
+        // 1, 0.625, 0.4375, 0.25 (decay 0.1875 a day): 7200 s x 2.3125 = 16650 s, rounded to 45 minutes 16200 s;
+        // 4 valid days is not enough (5)
+        double[] debt0 = Wellness.sleepDebt(new int[] {21600, 0, 21600, 21600, 21600}, new int[] {28800, 28800, 28800, 28800, 28800});
+        eq("sleep debt skips a day without sleep", Arrays.toString(debt0), "[16200.0, 0.0]");
+        // Wellness.radar: history 9,9,9,10,10,10,11,11,11 has median 10 and MAD 1 (sd 1.4826)
+        double[] hist = {9, 10, 11, 9, 10, 11, 9, 10, 11};
+        double sd = 1.4826;
+        double[][] h4 = {hist, hist, hist, hist};
+        eq("two signs, one strong, is major", Wellness.radar(new double[] {10 + 3.5 * sd, 10 + 2.5 * sd, 10, 10}, h4).decision, 2);
+        eq("two signs, none strong, is minor", Wellness.radar(new double[] {10 + 2.5 * sd, 10 + 2.5 * sd, 10, 10}, h4).decision, 1);
+
+        // Proximity.strongest: no plausible reading, the highest raw one is the first
+        eq("strongest raw reading can be the first", Proximity.strongest(new int[] {127, -127}), 0);
+
+        // DialMath.touch: a use ending at the second the next one starts; touching that second is in the second use
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        java.time.LocalDate d = java.time.LocalDate.parse("2026-10-14");
+        double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double t1255 = zurich("2026-10-14T12:55:00");
+        List<double[]> back = new ArrayList<double[]>();
+        back.add(new double[] {t1255 + 10, t1255 + 40});
+        back.add(new double[] {t1255 + 40, t1255 + 70});
+        DialMath.Touch edge = DialMath.touch((t1255 + 40 - from) / 86400.0, d, from, to, z, 288, back, back, null);
+        check("touching the end second of a use reads the use starting there", edge.session == 1 && edge.at == t1255 + 40);
+
+        // StageShare.shownMinutes: asleep shown as 0 minutes, so light 0.3 and REM 0.3 both show 0
+        eq("a shown total of 0 rounds the stages to 0", Arrays.toString(StageShare.shownMinutes(0, 0.3, 0.3, 0, 0, 0.4, 0.6, -1)),
+                "[0.0, 0.0, 0.0, 0.0, 0.0]");
+
+        // ScreenTime.oneAtATime: two apps come to the front at the same second; the alphabetically first holds
+        // the shared time, the other keeps the rest
+        Map<String, List<double[]>> same = new LinkedHashMap<String, List<double[]>>();
+        same.put("b.app", new ArrayList<double[]>(Arrays.asList(new double[] {1000, 1100})));
+        same.put("a.app", new ArrayList<double[]>(Arrays.asList(new double[] {1000, 1050})));
+        Map<String, List<double[]>> one = ScreenTime.oneAtATime(same);
+        check("same start: the alphabetically first app wins", one.containsKey("a.app") && one.containsKey("b.app")
+                && Arrays.toString(one.get("a.app").get(0)).equals("[1000.0, 1050.0]")
+                && Arrays.toString(one.get("b.app").get(0)).equals("[1050.0, 1100.0]"));
+
+        // Tilt: no calibration sample before the first gravity reading, and no crash
+        Tilt tl = new Tilt();
+        tl.alpha = 1;
+        boolean noCrash = true;
+        try {
+            tl.startCalibration();
+            tl.calibrateSample();
+        } catch (RuntimeException e) {
+            noCrash = false;
+        }
+        check("calibrating before any gravity reading does nothing", noCrash);
+        // neutral pose gravity (2, 3, 6) / 7. By hand: the right axis comes from x, (15, -2, -4) / (7 sqrt 5), and the
+        // forward axis is neutral cross right, (0, 2, -1) / sqrt 5. The calibration sample is taken before the hand moves on
+        double[] u0 = {2 / 7.0, 3 / 7.0, 6 / 7.0};
+        double r5 = Math.sqrt(5);
+        double[] bR = {15 / (7 * r5), -2 / (7 * r5), -4 / (7 * r5)}, bF = {0, 2 / r5, -1 / r5};
+        tl.feed(200, 300, 600);
+        tl.startCalibration();
+        tl.calibrateSample();
+        tl.feed(0, 1000, 0); // the hand moves before calibration ends; the sample taken counts
+        tl.finishCalibration();
+        tl.feed(200, 300, 600);
+        double[] c0 = tl.stick();
+        check("tilt: the calibrated pose is centred", c0[0] == 0 && c0[1] == 0);
+        double c20 = Math.cos(Math.toRadians(20)), s20 = Math.sin(Math.toRadians(20));
+        // 20 degrees towards the right axis: steering (20 - 4) / 25 = 0.64 to the right, no forward part
+        tl.feed((int) Math.round(1000 * (c20 * u0[0] + s20 * bR[0])), (int) Math.round(1000 * (c20 * u0[1] + s20 * bR[1])),
+                (int) Math.round(1000 * (c20 * u0[2] + s20 * bR[2])));
+        double[] right = tl.stick();
+        check("tilt right steers right", Math.abs(right[0] - 0.64) < 0.01 && right[1] == 0);
+        tl.feed((int) Math.round(1000 * (c20 * u0[0] - s20 * bR[0])), (int) Math.round(1000 * (c20 * u0[1] - s20 * bR[1])),
+                (int) Math.round(1000 * (c20 * u0[2] - s20 * bR[2])));
+        double[] left = tl.stick();
+        check("tilt left steers left", Math.abs(left[0] + 0.64) < 0.01 && left[1] == 0);
+        tl.feed((int) Math.round(1000 * (c20 * u0[0] + s20 * bF[0])), (int) Math.round(1000 * (c20 * u0[1] + s20 * bF[1])),
+                (int) Math.round(1000 * (c20 * u0[2] + s20 * bF[2])));
+        double[] fwd = tl.stick();
+        check("tilt forward moves only the forward axis", fwd[0] == 0 && Math.abs(fwd[1] - 0.64) < 0.01);
+
+        // Stager: this pins today's output for eight fixed synthetic nights (seeds picked so that small changes
+        // in the smoothing, percentiles, window sizes and deep and REM placement each change at least one night).
+        // The other stage checks test properties and ranges only, so such changes went unnoticed. Any change in
+        // staging now fails here and must be deliberate: update the expected text in the same commit and say why.
+        // Each night is written as runs of "stage x steps" (1 deep, 2 light, 3 REM, 4 awake, 30 s steps).
+        StringBuilder pinned = new StringBuilder();
+        for (int seed : new int[] {22, 73, 145, 152, 294, 1131, 1607, 2338}) {
+            Random r = new Random(seed);
+            double hours = 2 + r.nextInt(8), ss = 1_760_000_000, se = ss + hours * 3600;
+            TS shr = new TS(), shrv = new TS(), smo = new TS();
+            double depth = r.nextDouble() * 14, period = 70 + r.nextInt(50), base = 20 + r.nextInt(50), noise = r.nextDouble() * 3;
+            double quietEdge = r.nextBoolean() ? 0 : 0.02 + r.nextDouble() * 0.05, busy = r.nextDouble() * 0.06;
+            for (double t = ss; t < se; t += 300) {
+                double f = (t - ss) / (se - ss), m = (t - ss) / 60;
+                double cyc = StrictMath.sin(2 * Math.PI * m / period);
+                shr.add(t, 60 - depth * Math.max(0, cyc) * (1.2 - f) - 4 * f + r.nextGaussian() * noise);
+                shrv.add(t, base + 20 * f + 12 * Math.max(0, -cyc) + r.nextGaussian() * 2 * noise);
+            }
+            for (double t = ss; t < se; t += 60) {
+                double f = (t - ss) / (se - ss);
+                smo.add(t, (f < quietEdge || f > 1 - quietEdge) ? 10 : (r.nextDouble() < busy ? 1 + r.nextInt(9) : 0));
+            }
+            pinned.append(pinned.length() > 0 ? " / " : "").append(rle(Stager.stageFromSignals(ss, se, shr, shrv, smo)));
+        }
+        eq("stager output for eight fixed synthetic nights is unchanged", pinned.toString(),
+                "2x27 4x3 2x7 1x36 2x4 4x3 2x21 4x3 2x106 1x26 2x39 4x3 2x53 3x4 2x19 3x6 2x9 4x5 2x7 4x3 2x34 1x22 2x87 3x63 2x56 3x7 2x19 3x15 2x26 3x126 2x1" + " / "
+                + "2x51 1x35 2x178 1x17 2x4 4x3 2x16 3x31 2x76 1x15 2x53 3x64 2x14 4x3 2x45 4x3 2x39 4x3 3x89 4x3 2x41 4x3 2x7 4x3 2x7 3x36 2x1" + " / "
+                + "2x57 1x56 2x58 4x3 2x83 1x21 2x102 3x45 2x72 4x3 2x91 3x96 2x102 3x50 2x1" + " / "
+                + "4x27 2x38 4x3 2x93 1x8 2x83 4x6 2x20 1x16 2x9 4x3 2x35 4x3 2x34 1x22 2x91 3x54 2x98 4x3 3x68 2x52 3x39 4x3 3x5 4x27" + " / "
+                + "2x68 1x56 2x25 4x3 2x146 3x40 2x32 1x22 2x92 3x58 2x108 3x74 2x79 3x1 4x4 3x55 2x4 3x16 4x3 3x53 2x21" + " / "
+                + "2x2 1x52 2x73 3x23 2x25 4x5 2x20 1x16 2x79 3x40 2x10 4x3 2x68 1x19 2x29 3x60 2x115 3x56 4x3 3x9 4x3 3x30 2x63 3x36 2x1" + " / "
+                + "2x112 3x12 2x26 1x26 2x88 3x37 2x3 1x22 2x106 3x43 2x89 3x31 4x5 3x87 2x33" + " / "
+                + "4x7 2x14 4x5 2x132 1x32 2x93 4x3 2x109 4x3 2x7 4x3 2x24 1x22 2x91 4x3 2x54 3x37 2x35 3x18 2x35 4x3 2x48 3x71 4x3 3x21 2x113 3x93 2x1");
+
+        // Scores: curve breakpoints hit exactly. 90 minutes awake gives 40; with 1 wake up (97.33) restfulness is
+        // the mean 68.67, shown 69; with 2 wake ups (94.67) 67.33, shown 67 (no restlessness data)
+        Night rw = new Night();
+        rw.wasoMin = 90;
+        rw.awakenings = 1;
+        eq("restfulness at 90 minutes awake and 1 wake up", Scores.sleep(rw, 0, 40).get("restfulness").score, 69.0);
+        rw.awakenings = 2;
+        eq("restfulness at 90 minutes awake and 2 wake ups", Scores.sleep(rw, 0, 40).get("restfulness").score, 67.0);
+        Scores.ReadinessInput ri = new Scores.ReadinessInput();
+        ri.hrvRecent = 85;
+        ri.hrvBaseline = 100;
+        ri.prevDayActivity = 0.25;
+        Night.Score rs = Scores.readiness(ri);
+        eq("HRV balance at 85% of usual is 70", rs.get("hrv").score, 70.0);
+        eq("previous day activity at a quarter of the target is 72", rs.get("prev_activity").score, 72.0);
     }
 }

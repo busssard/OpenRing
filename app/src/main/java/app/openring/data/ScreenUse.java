@@ -10,7 +10,6 @@ import android.os.Build;
 import android.os.Process;
 import android.provider.Settings;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import app.openring.core.analysis.ScreenTime;
@@ -97,12 +96,8 @@ public final class ScreenUse {
         // seen coming to the front again and its time is neither counted twice nor lost (issue #71)
         long appFrom = (long) Math.floor(ScreenTime.appsReadFrom(firstApps, back / 1000.0, screenFrom / 1000.0, db.appsNewest(), now / 1000.0) * 1000);
         long from = Math.min(screenFrom, appFrom);
-        List<Double> times = new ArrayList<Double>();
-        List<Integer> kinds = new ArrayList<Integer>();
-        // apps in front (their own list: an app's "in front" also counts as a sign of use above)
-        List<Double> aTimes = new ArrayList<Double>();
-        List<Integer> aKinds = new ArrayList<Integer>();
-        List<String> aPkgs = new ArrayList<String>();
+        // the screen list and the apps in front (their own list: an app's "in front" also counts as a sign of use)
+        ScreenTime.LogSplit read = new ScreenTime.LogSplit(screenFrom / 1000.0, appFrom / 1000.0);
         // the oldest event Android still returned: where its log really begins (issue #131)
         long oldest = Long.MAX_VALUE;
         try {
@@ -112,38 +107,15 @@ public final class ScreenUse {
             while (ev != null && ev.hasNextEvent()) {
                 ev.getNextEvent(e);
                 oldest = Math.min(oldest, e.getTimeStamp());
-                double at = e.getTimeStamp() / 1000.0;
-                int type = e.getEventType();
-                int app = e.getTimeStamp() < appFrom ? 0 : appKind(type);
-                if (app != 0) {
-                    aTimes.add(at);
-                    aKinds.add(app);
-                    aPkgs.add(app == ScreenTime.APP_ON || app == ScreenTime.APP_OFF ? e.getPackageName() : null);
-                }
-                int kind = kind(type);
-                if (kind == 0 || e.getTimeStamp() < screenFrom) continue;
-                times.add(at);
-                kinds.add(kind);
+                read.add(e.getTimeStamp() / 1000.0, e.getEventType(), e.getPackageName());
             }
         } catch (RuntimeException e) {
             return 0; // access withdrawn meanwhile, or the phone's log is not readable
         }
-        double[] at = new double[aTimes.size()];
-        int[] ak = new int[at.length];
-        for (int i = 0; i < at.length; i++) {
-            at[i] = aTimes.get(i);
-            ak[i] = aKinds.get(i);
-        }
-        db.putApps(ScreenTime.appSessions(at, ak, aPkgs.toArray(new String[0]), appFrom / 1000.0, now / 1000.0));
+        db.putApps(ScreenTime.appSessions(read.appTimes(), read.appKinds(), read.appPackages(), appFrom / 1000.0, now / 1000.0));
         if (firstApps) db.put("apps_read", 1);
         if (appsRule) db.put("apps_rule", APPS_RULE);
-        double[] t = new double[times.size()];
-        int[] k = new int[kinds.size()];
-        for (int i = 0; i < t.length; i++) {
-            t[i] = times.get(i);
-            k[i] = kinds.get(i);
-        }
-        List<double[]> sessions = ScreenTime.sessions(t, k, screenFrom / 1000.0, now / 1000.0);
+        List<double[]> sessions = ScreenTime.sessions(read.screenTimes(), read.screenKinds(), screenFrom / 1000.0, now / 1000.0);
         if (db.kvLong("screen_rule", 1) < RULE) {
             db.put("screen_rule", RULE);
             if (p.screenAwake()) db.reanalyseFrom(back / 1000.0);
@@ -162,21 +134,6 @@ public final class ScreenUse {
         return sessions.size();
     }
 
-    /**
-     * Android usage event types for the apps in front: 1 an app came to the front, 2 it went to the
-     * back; the screen turning off, a shutdown or a start closes every app.
-     */
-    static int appKind(int type) {
-        switch (type) {
-            case 1: return ScreenTime.APP_ON;
-            case 2: return ScreenTime.APP_OFF;
-            case 16: return ScreenTime.OFF;
-            case 26: return ScreenTime.SHUTDOWN;
-            case 27: return ScreenTime.STARTUP;
-            default: return 0;
-        }
-    }
-
     /** The name Android shows for an app, or a readable guess from the package name. */
     public static String label(Context c, String pkg) {
         try {
@@ -189,21 +146,4 @@ public final class ScreenUse {
         return ScreenTime.shortName(pkg);
     }
 
-    /**
-     * Android usage event types: 15 screen interactive, 16 screen non interactive, 26 device shutdown,
-     * 27 device startup; 1 (an app came to the front), 7 (user interaction) and 18 (unlocked) show the
-     * phone was in use.
-     */
-    static int kind(int type) {
-        switch (type) {
-            case 15: return ScreenTime.ON;
-            case 16: return ScreenTime.OFF;
-            case 26: return ScreenTime.SHUTDOWN;
-            case 27: return ScreenTime.STARTUP;
-            case 17: return ScreenTime.LOCKED;
-            case 18: return ScreenTime.UNLOCKED;
-            case 1: case 7: return ScreenTime.ALIVE;
-            default: return 0;
-        }
-    }
 }
