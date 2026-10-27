@@ -571,6 +571,20 @@ public class CoreTest {
         check("pattern clock: both passes of the repeated hour share its bins", Math.abs(mix.share(b0230, 1) - 0.5) < 1e-9
                 && Math.abs(mix.share(b0230, 3) - 0.5) < 1e-9 && Math.abs(mix.inBed(b0230) - 1) < 1e-9 && mix.inBed(binAt(3 * 60)) == 0);
 
+        // review of #205: the switch night in bed 01:30 to 08:00, six other nights 04:00 to 08:00;
+        // at 02:30 only 1 of 7 nights is in bed, even though that night has 20 minutes in the bin
+        SleepPattern week = new SleepPattern();
+        double ws = local("2026-10-25T01:30:00", z), we = local("2026-10-25T08:00:00", z);
+        int[] sw = new int[(int) ((we - ws) / 30)];
+        for (int i = 0; i < sw.length; i++) sw[i] = i % 2 == 0 ? 1 : 2;
+        week.add(ws, sw, 30, z);
+        int[] four = new int[4 * 120];
+        Arrays.fill(four, 2);
+        for (int d = 0; d < 6; d++) week.add(local("2026-10-1" + d + "T04:00:00", z), four, 30, z);
+        int w0230 = binAt(2 * 60 + 30);
+        check("pattern clock: repeated hour counts one night once (1 of 7 in bed at 02:30)", Math.abs(week.inBed(w0230) - 1 / 7.0) < 1e-9
+                && Math.abs(week.share(w0230, 1) - 0.5 / 7) < 1e-9 && Math.abs(week.inBed(binAt(5 * 60)) - 1) < 1e-9);
+
         // spring 2027-03-28: 22:03 to 07:54 is 8h51m of real time; 02:00 to 03:00 never shows on the clock
         SleepPattern spring = new SleepPattern();
         double ss = local("2027-03-27T22:03:00", z), se = local("2027-03-28T07:54:00", z);
