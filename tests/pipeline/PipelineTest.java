@@ -933,6 +933,14 @@ public class PipelineTest {
         check("activity 28 to 30 March: the days add up to the real total (#114)", cov[0] + cov[1] + cov[2] == (int) ((b - a) / 60), (cov[0] + cov[1] + cov[2]) + " of " + (b - a) / 60);
         check("activity: a walk after midnight on 30 March counts once, on 30 March (#114)", medium[1] == 0 && medium[2] == 30, Arrays.toString(medium));
         JSONObject s29 = dayOf(spring, "2026-03-29");
+        // review of #202: a newly analysed day stores its real minutes, and only such a day gets the line under the chart
+        JSONObject sp29 = dayOf(spring, "2026-03-29");
+        check("activity 29 March: stores day_min 1380 (review of #202)", sp29 != null && sp29.optInt("day_min", -1) == 1380
+                && dayOf(spring, "2026-03-28").optInt("day_min", -1) == 1440, sp29 == null ? null : sp29.opt("day_min"));
+        String springLine = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(z,
+                LocalDate.parse("2026-03-29").atStartOfDay(z).toEpochSecond(), LocalDate.parse("2026-03-30").atStartOfDay(z).toEpochSecond()),
+                sp29 == null ? 0 : sp29.optInt("day_min", 0));
+        check("activity 29 March: the newly analysed day shows the line (review of #202)", springLine != null && springLine.startsWith("The clocks went forward"), springLine);
         check("activity 29 March: the chart has nothing from 02:00 to 03:00 (#114)", s29 != null && s29.optJSONArray("met_profile").isNull(8)
                 && s29.optJSONArray("met_profile").isNull(11) && !s29.optJSONArray("met_profile").isNull(12), null);
         spring.close();
@@ -953,6 +961,19 @@ public class PipelineTest {
         check("activity 24 to 26 October: the days add up to the real total less the bad hour (#114, #120)", sum == (int) ((b - a) / 60) - 60, sum);
         check("activity: a walk at 23:15 on 25 October counts on 25 October (#114)", all && f[1].optDouble("medium_min") == 30 && f[2].optDouble("medium_min") == 0
                 && f[1].optDouble("steps") > 3000, all ? f[1].opt("medium_min") + " / " + f[2].opt("medium_min") : null);
+        // review of #202: 25 October stores day_min 1500; the same day stored before this change (no day_min, still
+        // 1440 minute numbers) gets no line, and day_min is the only added field
+        double f25 = LocalDate.parse("2026-10-25").atStartOfDay(z).toEpochSecond(), f26 = LocalDate.parse("2026-10-26").atStartOfDay(z).toEpochSecond();
+        check("activity 25 October: stores day_min 1500 (review of #202)", all && f[1].optInt("day_min", -1) == 1500 && f[2].optInt("day_min", -1) == 1440,
+                all ? f[1].opt("day_min") : null);
+        JSONObject older = all ? new JSONObject(f[1].toString()) : new JSONObject();
+        older.remove("day_min");
+        String newLine = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(z, f25, f26),
+                all ? f[1].optInt("day_min", 0) : 0);
+        String oldLine = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(z, f25, f26),
+                older.optInt("day_min", 0));
+        check("activity 25 October: newly analysed shows the line, stored before shows none (review of #202)",
+                newLine != null && newLine.startsWith("The clocks went back") && oldLine == null, newLine + " / " + oldLine);
         String same = "";
         String[] keys = {"steps", "active_kcal", "training_kcal", "high_min", "medium_min", "low_min", "inactive_min", "non_wear_min", "covered_min", "avg_met", "long_inactive"};
         for (String k : keys) if (c[0] == null || f[0] == null || Math.abs(f[0].optDouble(k, -1) - c[0].optDouble(k, -1)) > 1e-9) same += k + " ";

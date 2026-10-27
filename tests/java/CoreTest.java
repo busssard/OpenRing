@@ -2585,6 +2585,11 @@ public class CoreTest {
                 && ClockChange.activityText(null) == null);
         check("activity chart line: Lord Howe's half hour", ClockChange.activityText(ClockChange.onDay(LORD_HOWE, at("2026-04-05T00:00:00", LORD_HOWE),
                 at("2026-04-06T00:00:00", LORD_HOWE))).startsWith("The clocks went back 30 minutes on this day (02:00 became 01:30), so 01:30 to 02:00 happened twice."));
+        // review of #202: only a day analysed with real minutes (stored day_min) gets the line
+        check("activity chart line: a day stored before (no day_min) has none", ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26), 0) == null);
+        eq("activity chart line: a day analysed now has it", ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26), 1500),
+                ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26)));
+        check("activity chart line: day_min alone gives no line on other days", ClockChange.activityText(null, 1440) == null);
     }
 
     /** Issue #44: the weekly parts of the activity score look at the worn days only. */
