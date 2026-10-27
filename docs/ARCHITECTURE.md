@@ -122,7 +122,7 @@ history had, before anything is written to the file the person picked; otherwise
    not move earlier nights. A new zone row analyses the nights since the row before again.
 6. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
    when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
-   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes.
+   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
    Each week replaces the stored nights from its start, moved back to the start of any sleep (found now or
    stored) that crosses it, so a sleep stored with an end shortened by phone use is replaced, never doubled
    (`Analyzer.boundary`, issue #132); the days of the nights it replaced are analysed again too, and the main
