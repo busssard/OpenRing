@@ -808,6 +808,25 @@ public class FinderTest {
         return new double[] {w.steps(), w.path().size() - 1, waiting, Math.hypot(w.x() - tx, w.y() - ty)};
     }
 
+    /** A straight walk swaying {@code deg} each way with every step; how often the card would mention waiting steps. */
+    static int swayShown(double deg, long gap, int n, long seed) {
+        SearchWalk w = new SearchWalk().stepLength(0.72);
+        Random r = new Random(seed);
+        w.heading(-100, 0, true);
+        int shown = 0;
+        long t = 0;
+        for (int i = 0; i < n; i++) {
+            for (long u = t; u < t + gap; u += 20) {
+                w.heading(u, (i % 2 == 0 ? deg : -deg) + r.nextGaussian() * 0.5, true);
+                if (u % 120 == 0) w.rssi(u, -70);
+            }
+            t += gap;
+            w.step(t - 10);
+            if (w.waitingToShow() > 0) shown++;
+        }
+        return shown;
+    }
+
     static long[][] every(long first, long gap, int calls, int n) {
         long[][] out = new long[calls][];
         for (int i = 0; i < calls; i++) out[i] = new long[] {first + i * gap, n};
@@ -905,6 +924,40 @@ public class FinderTest {
         SearchWalk.Sample lastRead = sway.samples().get(sway.samples().size() - 1);
         check("swaying while walking: all 12 steps move ahead, the readings move with them", sway.path().size() == 13 && Math.abs(sway.y() - 12 * 0.72 * Math.cos(Math.toRadians(8))) < 1e-6
                 && Math.abs(sway.x()) < 0.2 && lastRead.y > 10 * 0.72, sway.x() + "," + sway.y() + " last reading at " + lastRead.y);
+        check("swaying while walking (8 degrees each way): the card never mentions a waiting step", swayShown(8, 1000, 40, 41) == 0, swayShown(8, 1000, 40, 41));
+        // review of #182: the usual sway is about 3 degrees each way, 6 degrees between steps, over ROTATE_DEG
+        int shown = 0;
+        for (int seed = 0; seed < 20; seed++) shown += swayShown(3, 700, 40, 100 + seed);
+        check("swaying straight walk (3 degrees each way, 20 walks of 40 steps): the card never mentions a waiting step", shown == 0, shown);
+        SearchWalk spun = new SearchWalk().stepLength(0.72);
+        spun.heading(-100, 0, true);
+        int seenSpin = 0;
+        for (int i = 1; i <= 6; i++) {
+            spun.heading(i * 1000L - 500, 18 * i, true);
+            spun.step(i * 1000L);
+            if (i == 1) check("a turn on the spot: its first step is not mentioned yet", spun.waiting() == 1 && spun.waitingToShow() == 0, spun.waitingToShow());
+            seenSpin = spun.waitingToShow();
+        }
+        check("a turn on the spot: from 2 waiting steps on the card says how many", seenSpin == 6, seenSpin);
+        SearchWalk sharp = new SearchWalk().stepLength(0.72);
+        sharp.heading(-100, 0, true);
+        sharp.step(500);
+        sharp.heading(900, 90, true);
+        sharp.step(1500);
+        check("a corner of 90 degrees in one step: the card mentions the 1 waiting step", sharp.waiting() == 1 && sharp.waitingToShow() == 1, sharp.waitingToShow());
+        check("shares: explained rounded down, needed up, never equal while the circle fails", Arrays.equals(SearchWalk.percents(0.6449, 0.6351), new long[] {64, 64})
+                && Arrays.equals(SearchWalk.percents(0.6351, 0.6449), new long[] {63, 65}) && Arrays.equals(SearchWalk.percents(0.07, 0.07), new long[] {7, 7})
+                && Arrays.equals(SearchWalk.percents(0.29, 0.57), new long[] {29, 57}) && Arrays.equals(SearchWalk.percents(0.64, 0.640001), new long[] {64, 65})
+                && Arrays.equals(SearchWalk.percents(0, 0.3), new long[] {0, 30}), Arrays.toString(SearchWalk.percents(0.64, 0.640001)));
+        boolean apart = true;
+        for (int e = 0; e <= 1000; e++) {
+            for (int d = 1; d <= 7; d++) {
+                double ex = e / 1000.0, nd = ex + d / 100000.0;
+                long[] pc = SearchWalk.percents(ex, nd);
+                apart &= pc[0] < pc[1];
+            }
+        }
+        check("shares: a failing circle always shows less explained than needed", apart);
         // a gentle curve (90 degrees over 6 steps) moves along it; a turn on the spot then walking away keeps only the walk
         SearchWalk curve = new SearchWalk().stepLength(0.72);
         long t = 0;
@@ -926,6 +979,16 @@ public class FinderTest {
         for (int i = 0; i < 17; i++) wide[i] = i < 2 ? 0 : i < 14 ? 15 * (i - 1) : 180;
         double[] curve180 = shape(32, wide);
         check("a wide half circle (15 degrees a step over 12 steps) is walked, not a turn on the spot", curve180[1] == 17 && curve180[3] < 0.3, Arrays.toString(curve180));
+        // limit, pinned (review of #182): a tight half circle (round a table, about 2 m across) at 20 degrees a step
+        // or more reads as a turn on the spot, so its turning steps stay
+        for (int per : new int[] {20, 30, 36, 45}) {
+            int k = (int) Math.round(180.0 / per);
+            double[] hs = new double[k + 6];
+            for (int i = 0; i < hs.length; i++) hs[i] = i < 3 ? 0 : Math.min(180, per * (i - 2));
+            double[] tight = shape(40 + per, hs);
+            check("limit: a tight half circle at " + per + " degrees a step counts as a turn on the spot, its " + k + " turning steps stay",
+                    tight[0] == hs.length && tight[1] == hs.length - k, Arrays.toString(tight));
+        }
         double[] u4 = shape(33, new double[] {0, 0, 0, 45, 90, 135, 180, 180, 180, 180});
         double[] u2 = shape(34, new double[] {0, 0, 0, 90, 180, 180, 180, 180});
         // decided: a U turn in 2 to 4 steps is a pivot, close to a turn on the spot; its steps stay (an error under a metre)

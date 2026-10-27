@@ -268,8 +268,11 @@ can run meanwhile. Everything below stops in `onPause`.
   app stamps headings and steps from the sensors' own time, on one clock. Limits: from the heading alone a curve and
   a turn on the spot look the same. A U turn in 2 to 4 steps counts as a pivot and its steps stay (under a metre
   off); a full loop around a table at 10° a step or more, or a slow turn on the spot at under 10° a step, is
-  judged wrongly. While steps wait the card says how many. Readings taken while steps waited move to those steps' places. Every
-  reading keeps its place. Once the walk spans 2 m in two
+  judged wrongly, and so is a half circle walked tightly (round a table, about 2 m across, at 20° a step or more): it
+  counts as a turn on the spot and its steps stay (at 20° a step its 9 turning steps, at 30 to 45° a step 6 to 4).
+  While 2 or more steps wait, or the waiting steps turned 60° or more, the card says how many (`waitingToShow`; the
+  sway of walking keeps one step waiting most of the time, which is not worth a line). Readings taken while steps
+  waited move to those steps' places; otherwise every reading keeps its place. Once the walk spans 2 m in two
   directions (at least 1 m wide, 6 s of readings), `SearchWalk.locate` fits signal = level −
   10 n log10(distance) − body shadow over a 0.2 m grid (walk plus 2 m), n 2 to 3.5, and gives a
   likelihood weighted centre and radius (1.8 × spread, at least 1 m; none above 3 m or at the grid's edge).
