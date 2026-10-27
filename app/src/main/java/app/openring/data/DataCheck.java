@@ -48,6 +48,11 @@ public final class DataCheck {
     }
 
     public static Report run(Context c) {
+        return run(c, java.time.LocalDate.now());
+    }
+
+    /** As {@link #run(Context)}, with the sleep periods counted up to {@code today} (the tests pass a day of their history). */
+    public static Report run(Context c, java.time.LocalDate today) {
         Db db = Db.get(c);
         Prefs p = Prefs.of(c);
         Report r = new Report();
@@ -139,7 +144,6 @@ public final class DataCheck {
                 .append(db.kvLong("epoch", 1)).append(", cursor ").append(db.kvLong("cursor", 0)).append('\n');
         // the nights themselves, counts and dates only (issue #40): which day each sleep period was given
         // to is what the screens go by; times, minutes and scores are health values and stay out
-        java.time.LocalDate today = java.time.LocalDate.now();
         t.append(nightSummary(db.nightsJson(today.minusDays(NIGHT_DAYS - 1).toString(), "9999-12-31", false), today, NIGHT_DAYS));
         r.text = t.toString();
         return r;

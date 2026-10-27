@@ -212,7 +212,14 @@ public class PipelineTest {
         check("data check: events keep their grouping", r2.steps.get(0).detail.equals(copied / 1000 + "," + String.format("%03d", copied % 1000)
                 + " events copied from the ring"), r2.steps.get(0).detail);
         check("data check: plurals for several nights", r2.steps.get(3).detail.startsWith("3 sleep periods (3 main nights), 4 days computed"), r2.steps.get(3).detail);
-        dataCheckPrivate("synthetic history, nights older than 14 days", r2.text, db);
+        dataCheckPrivate("synthetic history, nights older than 14 days", r2.text, db, LocalDate.now());
+        // the same history as on the morning of day 3 (issue #216): the full privacy check runs on ring like nights on any
+        // day of the year, not only while the made up history is less than 14 days old
+        LocalDate onDay3 = day0.plusDays(3);
+        String r3 = DataCheck.run(ctx, onDay3).text;
+        check("data check as on day 3: the history's 3 nights are listed", r3.contains("  3 sleep periods (3 main nights, 0 naps), newest on "
+                + day0.plusDays(2) + "\n"), r3);
+        dataCheckPrivate("synthetic history, as on day 3", r3, db, onDay3);
 
         for (int d = 0; d < 3; d++) {
             String key = day0.plusDays(d).toString();
@@ -590,7 +597,7 @@ public class PipelineTest {
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
         dayHeartChecks(demo, demoNow, "demo days", 0);
-        dataCheckPrivate("demo", DataCheck.run(phone2).text, demo);
+        dataCheckPrivate("demo", DataCheck.run(phone2).text, demo, LocalDate.now());
         exportChecks(phone2, demo, demoToday);
         // issue #44: the first demo days count the worn days so far, later ones a full week as before
         int firstWorn = -1, fullWeek = 0, weekDays = 0;
@@ -800,8 +807,8 @@ public class PipelineTest {
      * only. No clock times, minutes asleep, scores, stages or battery level of any night, but still the
      * number of sleep periods per day as the database has them.
      */
-    static void dataCheckPrivate(String label, String text, Db db) throws Exception {
-        String from = LocalDate.now().minusDays(DataCheck.NIGHT_DAYS - 1).toString();
+    static void dataCheckPrivate(String label, String text, Db db, LocalDate today) throws Exception {
+        String from = today.minusDays(DataCheck.NIGHT_DAYS - 1).toString();
         List<String> ns = db.nightsJson(from, "9999-12-31", false);
         if (ns.isEmpty()) {
             check("data check (" + label + "): no recent nights, says none", text.contains("\nSleep periods of the last 14 days (counts and dates only)\n  none\n"), text);
