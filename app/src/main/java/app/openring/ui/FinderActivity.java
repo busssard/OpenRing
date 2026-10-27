@@ -899,8 +899,9 @@ public final class FinderActivity extends Activity implements SensorEventListene
             b.append("\nThe signal gave no clear spot yet (");
             if (spot.explained < spot.needed) {
                 // issue #136: on a short walk plain noise fits some spot, so more is needed there
-                b.append("its ups and downs could be plain noise: the model explains ").append(Math.round(spot.explained * 100))
-                        .append(" % of them, a walk this short needs ").append(Math.round(spot.needed * 100)).append(" %");
+                long[] pc = SearchWalk.percents(spot.explained, spot.needed);
+                b.append("its ups and downs could be plain noise: the model explains ").append(pc[0])
+                        .append(" % of them, a walk this short needs ").append(pc[1]).append(" %");
             } else {
                 b.append("the circle would be wider than ").append(Math.round(SearchWalk.CLEAR_RADIUS_M)).append(" m");
             }
@@ -913,9 +914,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
         turnText.setText(b.toString());
     }
 
-    /** Steps counted while turning wait until the turn ends; say so, so the step count and the map agree (issue #108). */
+    /**
+     * Steps counted while turning wait until the turn ends; say so, so the step count and the map agree (issue #108).
+     * Not for the one step that waits while the body sways on a straight walk ({@link SearchWalk#waitingToShow}).
+     */
     void appendWaiting(StringBuilder b) {
-        int n = walk.waiting();
+        int n = walk.waitingToShow();
         if (n == 0) return;
         b.append("\n").append(Texts.count(n, "step", "steps")).append(" counted while you turned ").append(n == 1 ? "waits" : "wait")
                 .append(": they move once you walk on, or stay if it was a turn on the spot.");

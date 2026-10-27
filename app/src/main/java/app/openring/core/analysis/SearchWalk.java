@@ -303,6 +303,34 @@ public final class SearchWalk {
         return k;
     }
 
+    /**
+     * The card mentions waiting steps only from this many on: the body sways about 3 degrees each way
+     * with every step, so the heading turns about 6 degrees between steps (over {@link #ROTATE_DEG})
+     * and on a straight walk one step waits almost all the time. Saying so would make the line come
+     * and go with every step (review of #182).
+     */
+    public static final int SHOW_WAITING_STEPS = 2;
+    /** ... or once the waiting steps turned this much (degrees), a corner taken in one step. */
+    public static final double SHOW_WAITING_DEG = 60;
+
+    /** The waiting steps worth mentioning on the card: {@link #waiting()}, or 0 while it is only the sway of walking. */
+    public int waitingToShow() {
+        int n = waiting();
+        return n >= SHOW_WAITING_STEPS || (n > 0 && heldMost >= SHOW_WAITING_DEG) ? n : 0;
+    }
+
+    /**
+     * The shares of {@link Spot#explained} and {@link Spot#needed} as whole percent for the card:
+     * the explained one rounded down, the needed one up, so a circle that fails never reads as
+     * "explains 64 %, needs 64 %" (review of #182). {explained, needed}.
+     */
+    public static long[] percents(double explained, double needed) {
+        long e = (long) Math.floor(explained * 100 + 1e-9);
+        long n = (long) Math.ceil(needed * 100 - 1e-9);
+        if (explained < needed && e >= n) e = n - 1;
+        return new long[] {Math.max(0, e), n};
+    }
+
     private void move(long atMs, double h, int n) {
         double a = Math.toRadians(h);
         for (int i = 0; i < n; i++) {
