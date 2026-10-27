@@ -82,9 +82,11 @@ Check every plan and PR against these before showing it:
 * Three scheduled Claude runs are configured in the owner's Claude account (not in this repository):
   * **Daily experiments (about 18:00):** designs and runs experiments to find bugs and inconsistencies.
     It never pushes code; it only opens issues titled `[EXP] ...` with the label `experiment`, and only
-    for real findings (a day without issues is fine). It tests the real app as people use it with a
-    ring; demo mode itself is out of scope (owner's decision), and a finding that only appears with
-    the demo's made up data is not filed.
+    for real findings (a day without issues is fine). It checks the code paths a person with a ring
+    uses, with tests and made up events, never real health data; demo mode stays the only source of
+    screenshots. Demo mode itself is out of scope (owner's decision), and a finding that only appears
+    with the demo's made up data is not filed. Still in scope: anything where demo mode reaches the
+    real ring or real data (CLAUDE.md: never mix demo and real data).
     Current focus (owner's decision, until he changes it): code review of `main` (code smells and bad
     practices, each with file:line and a concrete cost) and performance stoppers with one to three
     years of history (slow loads, main thread work, memory, battery).
