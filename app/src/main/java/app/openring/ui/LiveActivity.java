@@ -65,10 +65,11 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
 
         LinearLayout tiles = Ui.card(this);
         LinearLayout r1 = Ui.hbox(this), r2 = Ui.hbox(this);
-        hrV = tile(r1, "Heart rate", "bpm", Ui.HEART);
-        hrvV = tile(r1, "HRV (RMSSD)", "ms", Ui.READY);
-        spo2V = tile(r2, "Blood oxygen", "%", Ui.OXY);
-        tempV = tile(r2, "Sensor temp", "°C", Ui.TEMP);
+        // one plain line under each number (issue #165); the line under the first row says what HRV is based on
+        hrV = tile(r1, "Heart rate", "bpm", Ui.HEART, "Beats per minute, the newest reading");
+        hrvV = tile(r1, "HRV", "ms", Ui.READY, "Change from beat to beat, higher is calmer");
+        spo2V = tile(r2, "Blood oxygen", "%", Ui.OXY, "Oxygen in the blood, only with the switch below on");
+        tempV = tile(r2, "Sensor temp", "\u00b0C", Ui.TEMP, "The ring's own reading, lower than body temperature");
         tiles.addView(r1);
         hrvNote = Ui.text(this, "", 12, Ui.TEXT_3, Ui.REGULAR);
         tiles.addView(hrvNote);
@@ -132,7 +133,8 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
         h.post(tick);
     }
 
-    TextView tile(LinearLayout row, String label, String unit, int color) {
+    /** A big live number with its label, unit and one line saying what it is. */
+    TextView tile(LinearLayout row, String label, String unit, int color, String note) {
         LinearLayout t = Ui.vbox(this);
         t.addView(Ui.caption(this, label));
         LinearLayout v = Ui.hbox(this);
@@ -143,6 +145,9 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
         u.setPadding(0, 0, 0, Ui.dp(this, 6));
         v.addView(u);
         t.addView(v);
+        TextView n = Ui.text(this, note, 11, Ui.TEXT_3, Ui.REGULAR);
+        n.setPadding(0, 0, Ui.dp(this, 6), Ui.dp(this, 4));
+        t.addView(n);
         row.addView(t, Ui.weight(1));
         return val;
     }

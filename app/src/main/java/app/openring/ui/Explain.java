@@ -53,6 +53,15 @@ public final class Explain {
                 + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " of these 7 days.";
     }
 
+    /**
+     * The line under Total burn (issue #155): a day still running when it was analysed counts its resting burn only up
+     * to {@code until} (unix seconds, NaN for a day that has ended), shown as a clock time in {@code zone}.
+     */
+    public static String totalBurn(double until, java.time.ZoneId zone) {
+        if (Double.isNaN(until)) return "Active burn plus what your body uses at rest";
+        return "So far, up to " + app.openring.core.analysis.WakeUps.clock(until, zone) + " (active plus resting burn)";
+    }
+
     /** What VO2 max and its unit mean, under the Cardio capacity card (issue #116). */
     public static final String VO2MAX = "VO2 max is the most oxygen your body can use per minute in hard exercise, "
             + "for each kg of body weight (ml/kg/min). Higher means fitter heart and lungs.";
@@ -100,7 +109,7 @@ public final class Explain {
             case "activity_balance": return "Your last week of activity compared with your usual month, so sudden jumps in training load show up.";
             // sleep
             case "total": return "Time actually asleep. Most adults need 7 to 9 hours.";
-            case "efficiency": return "Share of your time in bed spent asleep. 85% or more is good.";
+            case "efficiency": return "Share of your time in bed spent asleep. 85% or more is good. Time the ring gave no sleep stage for counts as time in bed, not as sleep.";
             case "restfulness": return "Wake ups, time awake and restless movement during the night.";
             case "rem": return "Dreaming sleep, important for memory, learning and mood. Usually about a fifth of sleep.";
             case "deep": return "The most restorative stage, mostly in the first half of the night. Usually 13 to 23% of sleep.";
@@ -108,7 +117,7 @@ public final class Explain {
             case "timing": return "Whether the middle of your sleep falls around 2 to 4 a.m., in step with your body clock.";
             // activity
             case "stay_active": return "Hours spent sitting or inactive while awake.";
-            case "move_hourly": return "Long sitting periods of an hour or more during the day.";
+            case "move_hourly": return "Times you sat still for an hour or more between 08:00 and 22:00. Only the minutes in that window count, sleep never does.";
             case "targets": return "How often you reached your daily activity goal in the last 7 days. Days without the ring are left out.";
             case "frequency": return "Days in the last 7 with at least 30 minutes of medium or high activity. With fewer than 7 days of wear, it is scaled up to a week.";
             case "volume": return "Energy burned in medium and high activity in the last 7 days. With fewer than 7 days of wear, it is scaled up to a week.";

@@ -42,6 +42,14 @@ public final class Analyzer {
     /** The phone's zone now; each night and day uses the zone it was in (issue #22), this only when none was noted. */
     private final ZoneId zone = ZoneId.systemDefault();
     private final Log log;
+    /** Earlier nights and days for the day summaries of one {@link #analyze} call (issue #139); null otherwise. */
+    private History history;
+    /** Tests only: false reads every day's history straight from the database, as before issue #139. */
+    static volatile boolean cacheHistory = true;
+    /** Tests only: runs after each day summary is written (a test throws from it to stop a run part way). */
+    static volatile Runnable afterDay;
+    /** Tests only: when above 0, the time (unix seconds) a day still running is analysed at (issue #155). */
+    static volatile long testNow;
 
     private Analyzer(Context c, Log log) {
         db = Db.get(c);
@@ -190,9 +198,8 @@ public final class Analyzer {
         return d.atStartOfDay(zoneAt(d.atTime(12, 0).atZone(zone).toEpochSecond())).toEpochSecond();
     }
 
-    /** A day's zone: its main night's, else the zone history's, else the phone's. */
-    ZoneId dayZone(LocalDate d) {
-        JSONObject main = nightJson(db.nightsJson(d.toString(), d.toString(), true));
+    /** A day's zone: its main night's ({@code main}, null when none), else the zone history's, else the phone's. */
+    ZoneId dayZone(LocalDate d, JSONObject main) {
         ZoneId z = main == null ? null : ClockChange.zone(main.optString("zone", null));
         return z != null ? z : zoneAt(d.atTime(12, 0).atZone(zone).toEpochSecond());
     }
@@ -218,14 +225,33 @@ public final class Analyzer {
         // a day with no data left loses its stored summary (issue #58), but only a day that ends by the newest
         // dated event while later events still wait for a time record: they may belong to the days after it
         double sure = db.undatedAfterNewest() ? to : Double.POSITIVE_INFINITY;
-        for (LocalDate d = first; !d.isAfter(d1); d = d.plusDays(1)) analyzeDay(d, sure);
-        // stored days after the range (its newest event moved earlier, issue #58) are analysed too, so a day
-        // that kept a summary without data behind it goes
-        List<String> later = db.daysAfter(d1.toString());
-        if (sure < Double.POSITIVE_INFINITY) {
-            if (!later.isEmpty()) log.log(later.size() + " stored day" + (later.size() == 1 ? "" : "s") + " after " + d1 + " kept: events after it wait for a time record");
-        } else {
-            for (String k : later) analyzeDay(LocalDate.parse(k), sure);
+        // the nights are all written now: each earlier night and day is read once for every day's baselines
+        // (issue #139); the store lives only for these days, also when one of them fails
+        history = new History(db, cacheHistory);
+        try {
+            int n = 0;
+            for (LocalDate d = first; !d.isAfter(d1); d = d.plusDays(1)) {
+                analyzeDay(d, sure);
+                history.forget(d);
+                n++;
+            }
+            // stored days after the range (its newest event moved earlier, issue #58) are analysed too, so a day
+            // that kept a summary without data behind it goes
+            List<String> later = db.daysAfter(d1.toString());
+            if (sure < Double.POSITIVE_INFINITY) {
+                if (!later.isEmpty()) log.log(later.size() + " stored day" + (later.size() == 1 ? "" : "s") + " after " + d1 + " kept: events after it wait for a time record");
+            } else {
+                for (String k : later) {
+                    LocalDate d = LocalDate.parse(k);
+                    analyzeDay(d, sure);
+                    history.forget(d);
+                    n++;
+                }
+            }
+            if (history.cached) log.log(n + " day" + (n == 1 ? "" : "s") + " summarised, " + history.nightsRead + " stored nights and "
+                    + history.daysRead + " stored days read for them, at most " + history.maxKept + " kept at once");
+        } finally {
+            history = null;
         }
     }
 
@@ -276,11 +302,19 @@ public final class Analyzer {
             }
         }
         List<NightFinder.RingRun> runs = NightFinder.ringRuns(pageTimes, pages);
-        // the phone's clock tells a wake up in the middle of the night from a nap (issue #42)
+        // the clock tells a wake up in the middle of the night from a nap (issue #42), the clock of the zone
+        // the sleep was slept in, not the phone's zone now (issue #161)
         NightFinder.LocalClock clock = new NightFinder.LocalClock() {
+            double lastEnd = Double.NaN;
+            ZoneId lastZone;
+
             @Override
-            public int minuteOfDay(double unix) {
-                java.time.LocalTime lt = Instant.ofEpochSecond((long) unix).atZone(zone).toLocalTime();
+            public int minuteOfDay(double unix, double end) {
+                if (lastZone == null || end != lastEnd) {
+                    lastZone = sleptIn(end);
+                    lastEnd = end;
+                }
+                java.time.LocalTime lt = Instant.ofEpochSecond((long) unix).atZone(lastZone).toLocalTime();
                 return lt.getHour() * 60 + lt.getMinute();
             }
         };
@@ -328,13 +362,16 @@ public final class Analyzer {
         for (Night n : nights) {
             String zid = db.zoneAt(n.end);
             zoneIds.put(n, zid);
-            String d = date(n.end, zoneOf(zid));
-            // a night between two notes counts in the later zone, but never on an earlier date than in the
-            // zone before (flying west, waking at 05:30 in Zurich is 23:30 in New York the day before,
-            // which would make the night before a nap)
-            ZoneId before = ClockChange.zone(db.zoneBeforeGap(n.end));
-            if (before != null) {
-                String earlier = date(n.end, before);
+            ZoneId nz = zoneOf(zid);
+            String d = date(n.end, nz);
+            // a night between two notes counts in the later zone, but a night slept before the flight is never
+            // on an earlier date than in the zone before (flying west, waking at 05:30 in Zurich is 23:30 in New
+            // York the day before, which would make the night before a nap). A night slept after landing keeps
+            // its own date (issue #162: across the date line 06:45 in Los Angeles is already the next day in Auckland)
+            // the same rule as the night wake clock above (sleptIn), so the two cannot drift apart
+            ZoneId slept = sleptIn(n.end);
+            if (!slept.equals(nz)) {
+                String earlier = date(n.end, slept);
                 if (earlier.compareTo(d) > 0) d = earlier;
             }
             days.put(n, d);
@@ -436,6 +473,17 @@ public final class Analyzer {
         return lo;
     }
 
+    /**
+     * The zone a sleep ending at {@code end} was slept in (issues #161, #162): the zone history's at its end
+     * (between two notes the later one, "the last zone counts", #22), or the zone noted before the gap when
+     * the sleep ends in its morning ({@link ClockChange#sleptBefore}); the phone's zone without any history.
+     */
+    ZoneId sleptIn(double end) {
+        ZoneId later = zoneOf(db.zoneAt(end));
+        ZoneId before = ClockChange.zone(db.zoneBeforeGap(end));
+        return ClockChange.sleptBefore(end, before, later) ? before : later;
+    }
+
     /** The zone of a noted id, the phone's zone when there is none (or the phone does not know it). */
     ZoneId zoneOf(String id) {
         ZoneId z = ClockChange.zone(id);
@@ -531,8 +579,9 @@ public final class Analyzer {
         if (in.hr5.isEmpty() && !spHr.isEmpty()) in.hr5 = NightAnalyzer.bin(spHr, start, end, 300);
         if (in.motion.isEmpty()) in.motion = motionFromSp;
         if (p.staged && p.codes != null) {
-            // the ring's hypnogram ends at the period's own end, even when the window was shortened
-            in.ringStages = NightFinder.align(new NightFinder.RingRun(p.end - p.codes.length * 30.0, p.end, p.codes), start, end);
+            // the ring's hypnogram at its own times: it ends where the ring's run ended, also when a bedtime
+            // period made the period longer (issue #110) or phone use shortened the window
+            in.ringStages = NightFinder.align(p.ringRun(), start, end);
         }
         in.stageDetail = prefs.stageDetail();
         return NightAnalyzer.analyze(in);
@@ -550,8 +599,10 @@ public final class Analyzer {
      */
     void analyzeDay(LocalDate day, double sure) {
         String key = day.toString();
+        History past = history != null ? history : new History(db, false);
         // the day's own 24 hours, in the zone of its main night (issue #22)
-        ZoneId dz = dayZone(day);
+        JSONObject mainNight = nightJson(db.nightsJson(key, key, true));
+        ZoneId dz = dayZone(day, mainNight);
         double ds = day.atStartOfDay(dz).toEpochSecond(), de = day.plusDays(1).atStartOfDay(dz).toEpochSecond();
         int weight = prefs.weightKg();
         double bmr = Wellness.bmr(prefs.age(), prefs.sex(), weight);
@@ -561,22 +612,23 @@ public final class Analyzer {
         for (Db.Row r : db.events(new int[] {EventCodec.ACTIVITY_INFO}, ds - 3 * 3600, de)) {
             double[] m = EventCodec.activityMet(r.body);
             if (m == null) continue;
-            for (int i = 0; i < m.length; i++) met.add(r.unix + i * 60, m[i]);
+            // impossible values (a damaged byte) count as missing minutes (issue #120)
+            for (int i = 0; i < m.length; i++) if (EventCodec.plausibleMet(m[i])) met.add(r.unix + i * 60, m[i]);
         }
         List<double[]> sleeps = new ArrayList<double[]>();
-        for (String s : db.nightsJson(day.minusDays(1).toString(), day.plusDays(1).toString(), false)) {
-            JSONObject o = Json.parse(s);
-            if (o != null) sleeps.add(new double[] {o.optDouble("start"), o.optDouble("end")});
-        }
-        Wellness.Day d = Wellness.day(key, ds, met, sleeps, weight, bmr);
+        for (JSONObject o : past.nights(day.minusDays(1), day.plusDays(1), false)) sleeps.add(new double[] {o.optDouble("start"), o.optDouble("end")});
+        // every real minute of the day once, by its clock time in the day's zone (issue #114)
+        // a day still running counts its resting burn only up to now (issue #155)
+        long now = testNow > 0 ? testNow : System.currentTimeMillis() / 1000;
+        Wellness.Day d = Wellness.day(key, ds, de, dz, met, sleeps, weight, bmr, now);
 
-        JSONObject mainNight = nightJson(db.nightsJson(key, key, true));
         boolean anyHr = db.count("SELECT COUNT(*) FROM events WHERE tag IN (93, 128, 134, 106) AND unix >= " + (long) ds + " AND unix < " + (long) de) > 0;
         if (d.coveredMin == 0 && mainNight == null && !anyHr) {
             // nothing behind this day any more (its events were dated again, issue #58): the summary goes like
             // its nights did. A nap still stored for it keeps the summary, as before.
             if (!db.nightsJson(key, key, false).isEmpty()) return;
             if (de <= sure) {
+                past.dayWritten(key);
                 if (db.deleteDay(key)) log.log("no data left for " + key + ", its summary was removed");
             } else if (db.dayJson(key) != null) {
                 log.log("no data left for " + key + ", its summary was kept: events after it wait for a time record");
@@ -584,17 +636,9 @@ public final class Analyzer {
             return;
         }
 
-        // history: previous 60 days of day summaries and main nights
-        List<JSONObject> prevDays = new ArrayList<JSONObject>();
-        for (String[] r : db.daysJson(day.minusDays(60).toString(), day.minusDays(1).toString())) {
-            JSONObject o = Json.parse(r[1]);
-            if (o != null) prevDays.add(o);
-        }
-        List<JSONObject> prevNights = new ArrayList<JSONObject>();
-        for (String s : db.nightsJson(day.minusDays(90).toString(), day.minusDays(1).toString(), true)) {
-            JSONObject o = Json.parse(s);
-            if (o != null) prevNights.add(o);
-        }
+        // history: previous 60 days of day summaries and 90 days of main nights
+        List<JSONObject> prevDays = past.days(day.minusDays(60), day.minusDays(1));
+        List<JSONObject> prevNights = past.nights(day.minusDays(90), day.minusDays(1), true);
 
         JSONObject out = new JSONObject();
         Json.put(out, "date", key);
@@ -643,9 +687,7 @@ public final class Analyzer {
         double[] asleep14 = new double[14];
         int[] actual = new int[14], need = new int[14];
         Map<String, Double> asleepByDay = new HashMap<String, Double>();
-        for (String s : db.nightsJson(day.minusDays(104).toString(), key, false)) {
-            JSONObject o = Json.parse(s);
-            if (o == null) continue;
+        for (JSONObject o : past.nights(day.minusDays(104), day, false)) {
             String dd = o.optString("day");
             Double prev = asleepByDay.get(dd);
             asleepByDay.put(dd, (prev == null ? 0 : prev) + o.optDouble("asleep_min", 0) * 60);
@@ -721,6 +763,8 @@ public final class Analyzer {
         Json.put(out, "steps", d.steps);
         Json.put(out, "active_kcal", d.activeKcal);
         Json.put(out, "total_kcal", d.totalKcal);
+        // only on a day still running: up to when its resting burn counts (issue #155)
+        if (!Double.isNaN(d.totalUntil)) Json.put(out, "total_until", (long) d.totalUntil);
         Json.put(out, "distance_m", d.distanceM);
         Json.put(out, "low_min", d.lowMin);
         Json.put(out, "medium_min", d.mediumMin);
@@ -795,7 +839,137 @@ public final class Analyzer {
             // Lowest, Average and Highest from this stored line (issue #72), so they are not stored apart.
             Json.put(out, "hr_day", Json.series(DayHeart.curve(beats, ds, de), DayHeart.maxPoints(ds, de)));
         }
+        past.dayWritten(key);
         db.putDay(key, out.toString());
+        if (afterDay != null) afterDay.run();
+    }
+
+    /**
+     * The earlier nights and days each day summary reads for its baselines (issue #139). Before, every day parsed
+     * the full stored JSON of about 200 of them again. Now each is read and parsed once per analysis and kept as a
+     * copy holding only the fields the summaries use, with the very values the parser gave, so every lookup
+     * returns what parsing the stored row returns. Lists keep the database order: nights by their stored start
+     * (the primary key, so no two are equal), days by date. Nights are not written while the days are analysed;
+     * a day summary written or removed is read again from the database. Entries older than a day looks back are
+     * dropped as the days move on, so memory stays flat; a day not kept is simply read again. Nothing is stored.
+     * With {@code cached} false every lookup is the database query used before (the reference in the tests).
+     */
+    static final class History {
+        static final String[] NIGHT_FIELDS = {"day", "start", "end", "asleep_min", "lowest_hr", "avg_hrv", "temp", "breath"};
+        static final String[] DAY_FIELDS = {"date", "target_kcal", "active_kcal", "covered_min", "medium_min", "high_min", "training_kcal"};
+        /** How far back a day looks: every night of 104 days (sleep balance), day summaries of 60 days. */
+        static final int NIGHTS_BACK = 104, DAYS_BACK = 60;
+        private static final JSONObject NONE = new JSONObject();
+        private static final java.util.Comparator<Object[]> BY_START = new java.util.Comparator<Object[]>() {
+            @Override
+            public int compare(Object[] a, Object[] b) {
+                return Double.compare((Double) a[0], (Double) b[0]);
+            }
+        };
+
+        final boolean cached;
+        private final Db db;
+        /** Day to its nights, each {start (Double), main (Boolean), fields (JSONObject)}, ordered by start. */
+        private final java.util.TreeMap<String, List<Object[]>> nights = new java.util.TreeMap<String, List<Object[]>>();
+        /** Day to its summary's fields, NONE when it has no readable summary. */
+        private final java.util.TreeMap<String, JSONObject> days = new java.util.TreeMap<String, JSONObject>();
+        int nightsRead, daysRead, maxKept;
+        private int kept;
+
+        History(Db db, boolean cached) {
+            this.db = db;
+            this.cached = cached;
+        }
+
+        /** The nights of the days from {@code from} to {@code to} ({@code mainOnly}: main nights), ordered by start. */
+        List<JSONObject> nights(LocalDate from, LocalDate to, boolean mainOnly) {
+            List<JSONObject> out = new ArrayList<JSONObject>();
+            if (!cached) {
+                for (String s : db.nightsJson(from.toString(), to.toString(), mainOnly)) {
+                    JSONObject o = Json.parse(s);
+                    if (o != null) out.add(o);
+                }
+                return out;
+            }
+            List<Object[]> rows = new ArrayList<Object[]>();
+            for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
+                for (Object[] r : nightsOf(d.toString())) if (!mainOnly || (Boolean) r[1]) rows.add(r);
+            }
+            java.util.Collections.sort(rows, BY_START);
+            for (Object[] r : rows) out.add((JSONObject) r[2]);
+            return out;
+        }
+
+        /** The day summaries from {@code from} to {@code to}, oldest first. */
+        List<JSONObject> days(LocalDate from, LocalDate to) {
+            List<JSONObject> out = new ArrayList<JSONObject>();
+            if (!cached) {
+                for (String[] r : db.daysJson(from.toString(), to.toString())) {
+                    JSONObject o = Json.parse(r[1]);
+                    if (o != null) out.add(o);
+                }
+                return out;
+            }
+            for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
+                String k = d.toString();
+                JSONObject o = days.get(k);
+                if (o == null) {
+                    String js = db.dayJson(k);
+                    if (js != null) daysRead++;
+                    JSONObject p = Json.parse(js);
+                    o = p == null ? NONE : copy(p, DAY_FIELDS);
+                    days.put(k, o);
+                    if (o != NONE) count(1);
+                }
+                if (o != NONE) out.add(o);
+            }
+            return out;
+        }
+
+        /** The summary of {@code day} is about to be written or removed: read it from the database next time. */
+        void dayWritten(String day) {
+            JSONObject o = days.remove(day);
+            if (o != null && o != NONE) kept--;
+        }
+
+        /** {@code day} is done: drops what the days after it no longer read. */
+        void forget(LocalDate day) {
+            java.util.SortedMap<String, List<Object[]>> old = nights.headMap(day.minusDays(NIGHTS_BACK).toString());
+            for (List<Object[]> l : old.values()) kept -= l.size();
+            old.clear();
+            java.util.SortedMap<String, JSONObject> oldDays = days.headMap(day.minusDays(DAYS_BACK).toString());
+            for (JSONObject o : oldDays.values()) if (o != NONE) kept--;
+            oldDays.clear();
+        }
+
+        private List<Object[]> nightsOf(String day) {
+            List<Object[]> l = nights.get(day);
+            if (l != null) return l;
+            l = new ArrayList<Object[]>();
+            for (Object[] r : db.nightsOfDay(day)) {
+                nightsRead++;
+                JSONObject p = Json.parse((String) r[2]);
+                if (p != null) l.add(new Object[] {r[0], r[1], copy(p, NIGHT_FIELDS)});
+            }
+            nights.put(day, l);
+            count(l.size());
+            return l;
+        }
+
+        private void count(int n) {
+            kept += n;
+            maxKept = Math.max(maxKept, kept);
+        }
+
+        /** The given fields of {@code o}, the same value objects (absent ones stay absent). */
+        static JSONObject copy(JSONObject o, String[] fields) {
+            JSONObject c = new JSONObject();
+            for (String f : fields) {
+                Object v = o.opt(f);
+                if (v != null) Json.put(c, f, v);
+            }
+            return c;
+        }
     }
 
     /** The last {@code n} values of a field from oldest to newest lists (NaN where missing). */

@@ -19,7 +19,7 @@ Nothing leaves the phone: the app has no internet permission.
 | Package | Responsibility |
 | --- | --- |
 | `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line; issues #43 and #153), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
-| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `LiveHrv`, `Stats`, `TS` (time series) |
+| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70; `WakeUps.clock` rounds every night time on the Sleep page to the nearest minute, issue #138), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night: 10 minute bins round the whole clock, each stage cell at its own clock time in the night's zone, so a clock change night keeps its clock times, issue #137; the chart draws where nights are in bed, starting after the longest empty stretch, so day sleep shows too), `ClockAverage` (Falls asleep and Wakes up averaged on the clock face, so times around 16:00 average right and normal nights keep the plain mean and spread, issue #164), `StageShare` (stage percentages that add up to 100; stage minutes rounded together so the rows add up to Total sleep and Time in bed, display only, issue #111), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
 | `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours) |
@@ -97,7 +97,12 @@ history had, before anything is written to the file the person picked; otherwise
    up in the middle of the night (up to 3 hours, the gap from 22:00 at the earliest to before 06:30, the
    sleep before it begun at 21:00 or later, the ring worn through it) joins the pieces before and after
    into one night; the time the ring calls awake in the gap counts as awake, and ring stages of both
-   pieces keep their own times (issue #42). kv `night_finder` holds the rules version. `Analyzer` then
+   pieces keep their own times (issue #42). These clock times are read in the zone the sleep was slept in
+   (`Analyzer.sleptIn`, see Time zones below), decided once per night from the end of the last piece reached
+   through gaps of up to 3 hours (`NightFinder.nightEnds`), never in the phone's zone now, so a trip does not split nights
+   analysed again later (issue #161). A period keeps where the ring's own hypnogram ends (`Period.codesEnd`), so
+   a bedtime period that makes a ring staged run longer leaves the stages at their clock times and the extra time
+   without stage data (issue #110). kv `night_finder` holds the rules version. `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
    When "Count phone use as awake" is on (default), phone use of a minute or more that overlaps the first or
    last 10 minutes of a period moves its edge past it, and a period of under 15 minutes left is dropped.
@@ -111,18 +116,28 @@ history had, before anything is written to the file the person picked; otherwise
    function on the stored `stages_raw` (`Analyzer.preview`, phone use chosen by `ScreenTime.forNight` as in the
    analysis, the ring's wake ups from the night's `ring_awake`, stored since issue #30), so it shows the night
    that saving produces.
-3. `NightAnalyzer` computes durations, efficiency, latency, wake ups, cycles, lowest heart rate, HRV,
+3. `NightAnalyzer` computes durations, efficiency (time asleep over time in bed, as Oura defines it; steps without
+   stage data count as time in bed, neither asleep nor awake, and the Sleep page shows them as "No data", issue #107; the screens and the averages work efficiency out from the
+   stored minutes, `StageShare.efficiency`, so nights analysed before agree without a re analysis), latency, wake ups, cycles, lowest heart rate, HRV,
    breathing, SpO2 and nightly skin temperature.
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep
-   35/15/10/10/10/10/10); contributor curves are transparent and based on sleep research. Baselines become
+   35/15/10/10/10/10/10); a period with no sleep at all has no Restfulness (issue #118), like REM and deep on a
+   night without stages; contributor curves are transparent and based on sleep research. Baselines become
    personal after about 14 nights.
 5. Time zones (issue #22): each night takes its zone from `zones` and stores it as `zone`; its day, sleep timing
    and clock change marker use it, and a day uses its main night's zone. Screens format each night's times
    with its own zone (`Json.zone`, falling back to the phone's zone for nights without one), so a trip does
-   not move earlier nights. A new zone row analyses the nights since the row before again.
+   not move earlier nights. A new zone row analyses the nights since the row before again. A night whose end
+   falls between two rows takes the later zone; it keeps the date it has in the zone before only when it was
+   most likely slept there, its end nearer to 07:00 on that clock (`ClockChange.sleptBefore`: a night before a
+   flight west), so a first night after crossing the date line stays on its own day (issue #162). Screens that show
+   one calendar day (Screen clock, the Body tab's day) take its clock change from `ClockChange.onDay`: a change
+   belongs to the date of the clock time it skips or repeats, also at midnight (Greenland, Cairo; issue #158),
+   while nights keep `ClockChange.find`. A touch on a lit 5 minute line of the Screen clock finds the use drawn
+   there with the step maths of `DialMath.fill` (`DialMath.touch`, issue #109).
 6. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
    when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
-   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes.
+   age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
    Each week replaces the stored nights from its start, moved back to the start of any sleep (found now or
    stored) that crosses it, so a sleep stored with an end shortened by phone use is replaced, never doubled
    (`Analyzer.boundary`, issue #132); the days of the nights it replaced are analysed again too, and the main
@@ -146,6 +161,22 @@ history had, before anything is written to the file the person picked; otherwise
    The day reads events from 30 minutes before midnight, so the values after midnight of an HRV event begun before it
    (six values, start + 0 to 25 minutes) count for the new day. kv `day_heart` holds the rules version
    (`DayHeart.VERSION`); a change analyses everything again once.
+8. The day's activity (`Wellness.day`, Activity tab) counts every real minute from midnight to midnight in the day's
+   zone once: 1440 minutes, 1380 or 1500 when the clocks change by an hour (1410 or 1470 for Lord Howe's half hour),
+   so neighbouring days never share or lose a minute (issue #114). The 96 quarter hours of "Intensity through the
+   day" and the 08:00 to 22:00 window go by each minute's clock time, like `DialMath.fill`: the repeated hour lands
+   twice on the same quarter hours (their average), the skipped one stays empty, and a line under the chart says so
+   (`ClockChange.activityText`). A sitting stretch (awake, under 1.5 MET, ended by sleep, a missing minute or more
+   movement) is a long sitting period when 60 or more of its own minutes lie between 08:00 and 22:00, also at the end
+   of the day (issue #154). Activity values count only from 0 to 25 MET (`EventCodec.plausibleMet`, issue #120);
+   higher ones are damaged bytes and count as missing minutes. A minute inside one of the day's sleeps is Rest also
+   without an activity value (issue #112; whether a Ring 4 sends values at night is not known), so every minute is in
+   exactly one of High, Medium, Low, Inactive, Rest or Not worn (`non_wear_min`); `covered_min` stays the minutes with a
+   value. Total burn (`total_kcal`) is active burn plus the resting burn (`Wellness.bmr`); a day still running when it
+   is analysed counts the resting burn only for the share of its real seconds that has passed (`Wellness.restingKcal`,
+   issue #155, as Oura's total burn grows through the day) and stores `total_until`, which the screen shows as "So far
+   (up to 08:07)"; the next analysis after the day ended stores the whole day. These rules have no version of their own: stored days
+   keep their numbers until they are analysed again (the last two days after each sync, or Re analyse all).
 
 ## Threading
 

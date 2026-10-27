@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import app.openring.core.Texts;
 import app.openring.core.analysis.Scores;
 import app.openring.core.analysis.ScreenTime;
 import app.openring.core.analysis.StageShare;
@@ -279,15 +280,26 @@ public final class Pages {
         return "Awake " + WakeUps.rule(n.optInt("stage_detail", 0)) + ", each one is in the timeline";
     }
 
-    /** Clock time rounded to the nearest minute, as every row of the timeline shows it. */
+    /**
+     * Clock time rounded to the nearest minute, as every row of the timeline shows it; every night time on the
+     * Sleep page uses it, so the same moment shows the same minute everywhere (issue #138).
+     */
     static String minute(double unix, java.time.ZoneId z) {
-        return Charts.clock(WakeUps.roundMin(unix), z);
+        return WakeUps.clock(unix, z);
     }
 
+    /**
+     * Time in bed as the Sleep page shows it: the minutes between the shown start and end times, so the window, Time in
+     * bed and the stage rows agree (issues #111, #138). -1 when unknown.
+     */
+    static long shownInBed(JSONObject n) {
+        double s = Json.d(n, "start"), e = Json.d(n, "end");
+        return Double.isNaN(s) || Double.isNaN(e) ? -1 : WakeUps.shownMinutes(s, e);
+    }
+
+    /** "+0.3", "-0.2", "0.0" near zero (not "-0.0"), with the phone's decimal sign (issues #32, #163). */
     static String signed(double v) {
-        if (Double.isNaN(v)) return "--";
-        if (Math.abs(v) < 0.05) return String.format(Locale.getDefault(), "%.1f", 0.0); // not "-0.0"
-        return String.format(Locale.getDefault(), "%+.1f", v);
+        return Texts.signed(v, Locale.getDefault());
     }
 
     // ======================================================================== SLEEP
@@ -299,7 +311,7 @@ public final class Pages {
         java.time.ZoneId nz = d.zoneOf(n);
         root.addView(hero(c, d.score("sleep"), "Sleep", Ui.SLEEP,
                 n == null ? "No main sleep recorded for this day" : "Total sleep " + Ui.hm(Json.d(n, "asleep_min"))
-                        + "  ·  " + Charts.clock(Json.d(n, "start"), nz) + " to " + Charts.clock(Json.d(n, "end"), nz)));
+                        + "  ·  " + minute(Json.d(n, "start"), nz) + " to " + minute(Json.d(n, "end"), nz)));
         if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         if (n == null) {
             root.addView(infoCard(c, "About sleep", Explain.SLEEP));
@@ -310,7 +322,7 @@ public final class Pages {
                     + "through the night, sleep stages, heart rate, HRV, blood oxygen and breathing."));
             root.addView(how);
             addNaps(c, root, d);
-            if (!d.recent.isEmpty()) root.addView(furtherAnalysis(c, d));
+            if (d.anyNight) root.addView(furtherAnalysis(c, d));
             return root;
         }
 
@@ -332,14 +344,25 @@ public final class Pages {
         hyp.addView(Ui.gap(c, 10));
         // REM, light and deep as shares of time asleep (adding up to 100), awake of time in bed (issue #32)
         double deepMin = Json.d(n, "deep_min"), lightMin = Json.d(n, "light_min"), remMin = Json.d(n, "rem_min"), awakeMin = Json.d(n, "awake_min");
+        double inBedMin = Json.d(n, "in_bed_min");
         int[] share = StageShare.sleepShares(deepMin, lightMin, remMin);
-        hyp.addView(stageRowPct(c, "Awake", awakeMin, StageShare.share(awakeMin, Json.d(n, "in_bed_min")), Ui.STAGE_AWAKE));
-        hyp.addView(stageRowPct(c, "REM", remMin, share == null ? Double.NaN : share[2], Ui.STAGE_REM));
-        hyp.addView(stageRowPct(c, "Light", lightMin, share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
-        hyp.addView(stageRowPct(c, "Deep", deepMin, share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
+        // time in bed without stage data, so the rows add up to time in bed and a low efficiency is explained (issue #107)
+        double[] none = StageShare.noData(Json.stages(n), inBedMin);
+        // the minutes shown, rounded together so they add up to Total sleep and Time in bed (issue #111)
+        double[] shown = StageShare.shownMinutes(deepMin, lightMin, remMin, awakeMin, none[0], Json.d(n, "asleep_min"), inBedMin,
+                shownInBed(n));
+        // the row only when the night really has time without stage data (review of #201)
+        String noneNote = none[0] > 0 ? StageShare.noDataNote(shown[4], none[1], Json.d(n, "asleep_min") > 0) : null;
+        hyp.addView(stageRowPct(c, "Awake", shown[3], StageShare.share(awakeMin, inBedMin), Ui.STAGE_AWAKE));
+        hyp.addView(stageRowPct(c, "REM", shown[2], share == null ? Double.NaN : share[2], Ui.STAGE_REM));
+        hyp.addView(stageRowPct(c, "Light", shown[1], share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
+        hyp.addView(stageRowPct(c, "Deep", shown[0], share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
+        if (noneNote != null) hyp.addView(stageRowPct(c, "No data", shown[4], StageShare.share(none[0], inBedMin), Ui.TEXT_3));
         hyp.addView(Ui.gap(c, 2));
-        hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. Awake is a share of your time in bed.",
+        hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. "
+                + (noneNote == null ? "Awake is a share of your time in bed." : "Awake and No data are shares of your time in bed."),
                 11, Ui.TEXT_3, Ui.REGULAR));
+        if (noneNote != null) hyp.addView(Ui.text(c, noneNote, 11, Ui.TEXT_3, Ui.REGULAR));
         String src = n.optString("source");
         hyp.addView(Ui.gap(c, 6));
         hyp.addView(Ui.text(c, "ring".equals(src) ? "Stages from your ring's own analysis"
@@ -371,14 +394,14 @@ public final class Pages {
         root.addView(hyp);
 
         root.addView(timeline(c, n, nz));
-        root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors"));
+        root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors", null, n));
         root.addView(infoCard(c, "About the sleep score", Explain.SLEEP));
 
         LinearLayout stats = Ui.card(c);
         stats.addView(Ui.caption(c, "Details"));
         // a short line under every number (issue #47); ranges as in Explain
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(Json.d(n, "in_bed_min")), "", 0, "From start to end of the sleep window"),
-                Ui.stat(c, "Efficiency", Ui.fmt(Json.d(n, "efficiency"), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(shownInBed(n) < 0 ? Double.NaN : shownInBed(n)), "", 0, "From start to end of the sleep window"),
+                Ui.stat(c, "Efficiency", Ui.fmt(nightEfficiency(n), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal"),
                 Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, wakeUpsLine(n))));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0, "Lowest heart rate while asleep"),
@@ -390,14 +413,14 @@ public final class Pages {
         root.addView(stats);
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
-        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz),
-                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : Charts.clock(Json.d(n, "lowest_hr_time"), nz)
-                        + app.openring.core.analysis.ClockChange.repeatNote(nz, Json.d(n, "lowest_hr_time")))));
-        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz),
+        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz).nearestMinute(),
+                "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : minute(Json.d(n, "lowest_hr_time"), nz)
+                        + app.openring.core.analysis.ClockChange.repeatNote(nz, WakeUps.roundMin(Json.d(n, "lowest_hr_time"))))));
+        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz).nearestMinute(),
                 "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
         JSONArray sp = n.optJSONArray("spo2_series");
         if (sp != null && sp.length() > 0) {
-            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz),
+            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz).nearestMinute(),
                     "Average " + Ui.fmt(Json.d(n, "spo2"), 1) + "%"));
         }
 
@@ -438,13 +461,14 @@ public final class Pages {
         final android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(c);
         hs.setHorizontalScrollBarEnabled(false);
         LinearLayout row = Ui.hbox(c);
-        int selIndex = -1;
+        int selIndex = -1, upTo = 0;
         String sel = d.date.toString();
         for (int i = 0; i < d.recent.size(); i++) {
             JSONObject o = d.recent.get(i);
             final String day = o.optString("day");
             boolean selected = day.equals(sel);
             if (selected) selIndex = i;
+            if (day.compareTo(sel) <= 0) upTo = i;
             LinearLayout col = Ui.vbox(c);
             col.setGravity(Gravity.CENTER_HORIZONTAL);
             JSONObject sc = o.optJSONObject("score");
@@ -467,8 +491,9 @@ public final class Pages {
         }
         hs.addView(row);
         card.addView(hs);
-        // keep the selected night in view (newest at the right)
-        final int target = selIndex < 0 ? d.recent.size() - 1 : selIndex;
+        // keep the selected night in view (newest at the right); a day without one shows the newest night up to
+        // it, as the strip also holds the nights after an older date (issue #98)
+        final int target = selIndex < 0 ? upTo : selIndex;
         hs.post(new Runnable() {
             @Override
             public void run() {
@@ -649,13 +674,15 @@ public final class Pages {
         int[] share = StageShare.sleepShares(h.deepMin, h.lightMin, h.remMin);
         double deepPct = share == null ? Double.NaN : share[0], lightPct = share == null ? Double.NaN : share[1],
                 remPct = share == null ? Double.NaN : share[2];
+        // Deep, REM and Light rounded together so they add up to Asleep (issue #111); no time in bed is shown here
+        double[] shown = StageShare.shownMinutes(h.deepMin, h.lightMin, h.remMin, h.awakeMin, 0, h.asleepMin, h.inBedMin, -1);
         out.addView(Ui.statRow(c, Ui.stat(c, "Asleep", Ui.hm(h.asleepMin), "", Ui.SLEEP, "Average per night"),
                 Ui.stat(c, "Sleep score", Ui.fmt(h.score, 0), "", Ui.SLEEP, "Average per night")));
         out.addView(Ui.statRow(c, Ui.stat(c, "Falls asleep", clockOf(h.bedtimeMin), "", 0, "Usual time you fall asleep"),
                 Ui.stat(c, "Wakes up", clockOf(h.wakeMin), "", 0, "Usual time you wake up")));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(h.deepMin), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
-                Ui.stat(c, "REM", Ui.hm(h.remMin), "", Ui.STAGE_REM, StageShare.note(remPct, "sleep", StageShare.USUAL_REM))));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(h.lightMin), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
+        out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(shown[0]), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
+                Ui.stat(c, "REM", Ui.hm(shown[2]), "", Ui.STAGE_REM, StageShare.note(remPct, "sleep", StageShare.USUAL_REM))));
+        out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(shown[1]), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
                 Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", Ui.STAGE_AWAKE, StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
         out.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(h.efficiency, 0), "%", 0, "Share of time in bed asleep"),
                 Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0,
@@ -681,7 +708,7 @@ public final class Pages {
         for (JSONObject o : d.naps) {
             nc.addView(Ui.gap(c, 6));
             java.time.ZoneId oz = d.zoneOf(o);
-            nc.addView(Ui.text(c, Charts.clock(Json.d(o, "start"), oz) + " to " + Charts.clock(Json.d(o, "end"), oz) + "   " + Ui.hm(Json.d(o, "asleep_min")) + " asleep", 15, Ui.TEXT, Ui.REGULAR));
+            nc.addView(Ui.text(c, minute(Json.d(o, "start"), oz) + " to " + minute(Json.d(o, "end"), oz) + "   " + Ui.hm(Json.d(o, "asleep_min")) + " asleep", 15, Ui.TEXT, Ui.REGULAR));
         }
         root.addView(nc);
     }
@@ -729,7 +756,7 @@ public final class Pages {
             root.addView(note);
         }
         root.addView(signals(c, d));
-        root.addView(contributors(c, sc, Ui.READY, "Contributors"));
+        root.addView(contributors(c, sc, Ui.READY, "Contributors", d.day));
 
         LinearLayout t = Ui.card(c);
         t.addView(Ui.caption(c, "Temperature vs usual"));
@@ -762,7 +789,7 @@ public final class Pages {
         card.addView(signalRow(c, "Blood oxygen", Json.d(d.day, "spo2"), usual(d, "spo2"), "%", 0, false));
         double low = Json.d(d.night, "lowest_hr_time"), s0 = Json.d(d.night, "sleep_start"), s1 = Json.d(d.night, "sleep_end");
         if (!Double.isNaN(low)) {
-            String when = Charts.clock(low, d.zoneOf(d.night));
+            String when = minute(low, d.zoneOf(d.night));
             String rel = (s1 > s0) ? ((low - s0) / (s1 - s0) <= 0.5 ? ", in the first half of the night (good)" : ", late in the night") : "";
             card.addView(Ui.gap(c, 6));
             card.addView(Ui.body(c, "Lowest heart rate reached at " + when + rel + "."));
@@ -822,7 +849,7 @@ public final class Pages {
         goal.addView(Ui.gap(c, 8));
         goal.addView(new Ui.Bar(c, target > 0 ? active / target : 0, Ui.ACTIVE), Ui.sized(c, -1, 8));
         goal.addView(Ui.statRow(c, Ui.stat(c, "Active burn", Ui.fmt(active, 0), "kcal", 0, "Calories burned by moving"),
-                Ui.stat(c, "Total burn", Ui.fmt(Json.d(day, "total_kcal"), 0), "kcal", 0, "Active burn plus what your body uses at rest")));
+                Ui.stat(c, "Total burn", Ui.fmt(Json.d(day, "total_kcal"), 0), "kcal", 0, Explain.totalBurn(Json.d(day, "total_until"), d.zone))));
         goal.addView(Ui.statRow(c, Ui.stat(c, "Steps", Ui.fmt(Json.d(day, "steps"), 0), "est.", 0, "Estimated from how much you moved, so \"est.\""),
                 Ui.stat(c, "Distance", Ui.fmt(Json.d(day, "distance_m") / 1000.0, 1), "km", 0, "Estimated from the steps")));
         root.addView(goal);
@@ -865,7 +892,11 @@ public final class Pages {
             pc.addView(Ui.gap(c, 6));
             // the bands of Wellness.day (issue #47)
             pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. While awake, under 1.5 counts as inactive, 1.5 to 3 low, "
-                    + "3 to 6 medium, 6 or more high (the bands of Daily movement); time asleep counts as rest.", 12, Ui.TEXT_3, Ui.REGULAR));
+                    + "3 to 6 medium, 6 or more high (the bands of Daily movement); time asleep counts as rest, also when the ring recorded no movement then.", 12, Ui.TEXT_3, Ui.REGULAR));
+            // a clock change day: the bars go by clock time, the numbers by real minutes (issue #114)
+            String change = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(d.zone,
+                    d.date.atStartOfDay(d.zone).toEpochSecond(), d.date.plusDays(1).atStartOfDay(d.zone).toEpochSecond()));
+            if (change != null) pc.addView(Ui.text(c, change, 12, Ui.TEXT_3, Ui.REGULAR));
             root.addView(pc);
         }
 
@@ -956,7 +987,7 @@ public final class Pages {
             return root;
         }
         int goal = in.goalMin;
-        String sub = Ui.hm(in.day.totalMin) + (goal > 0 ? " of " + hours(goal) + " goal" : "") + (today ? ", so far today" : "");
+        String sub = span(in.day.totalMin) + (goal > 0 ? " of " + hours(goal) + " goal" : "") + (today ? ", so far today" : "");
         root.addView(hero(c, in.score == null ? Double.NaN : in.score.value, "Screen", Ui.OXY, sub));
 
         // the day as a clock
@@ -971,14 +1002,14 @@ public final class Pages {
                 if (n == null) names.put(pkg, n = app.openring.data.ScreenUse.label(c, pkg));
                 return n;
             }
-        }, in.from, in.to, System.currentTimeMillis() / 1000.0, Ui.hm(in.day.totalMin), today ? "today" : "on this day")
-                .shownAs(ScreenTime.widen(in.sessions, Prefs.of(c).screenMinShowMin() * 60.0)).zone(in.zone), Ui.sized(c, -1, 300));
+        }, in.from, in.to, System.currentTimeMillis() / 1000.0, span(in.day.totalMin), today ? "today" : "on this day")
+                .shownAs(in.shown).zone(in.zone), Ui.sized(c, -1, 300));
         dial.addView(Ui.gap(c, 8));
         int minShow = Prefs.of(c).screenMinShowMin();
         dial.addView(Ui.text(c, "The day as a clock, midnight at the top. Each blue line is 5 minutes of the day with phone use, "
                 + "brighter the more of them was used. Purple: your sleep. Touch the clock and slide around it to see the times; "
                 + "tap the middle for the total again.", 12, Ui.TEXT_2, Ui.REGULAR));
-        String change = app.openring.core.analysis.ClockChange.dialText(app.openring.core.analysis.ClockChange.find(in.zone, in.from, in.to));
+        String change = app.openring.core.analysis.ClockChange.dialText(app.openring.core.analysis.ClockChange.onDay(in.zone, in.from, in.to));
         if (change != null) {
             // a day the clocks changed (issue #46): the orange arc on the clock is explained here
             dial.addView(Ui.gap(c, 4));
@@ -994,12 +1025,12 @@ public final class Pages {
         // the numbers
         LinearLayout num = Ui.card(c);
         num.addView(Ui.caption(c, "This day"));
-        num.addView(Ui.statRow(c, Ui.stat(c, "Uses", String.valueOf(in.day.turnedOn), "times", 0),
-                Ui.stat(c, "Longest", Ui.fmt(in.day.longestMin, 0), "min", 0)));
+        num.addView(Ui.statRow(c, Ui.stat(c, "Uses", String.valueOf(in.day.turnedOn), Texts.word(in.day.turnedOn, "time", "times"), 0),
+                Ui.stat(c, "Longest", span(in.day.longestMin), "", 0)));
         num.addView(Ui.statRow(c, Ui.stat(c, "First look", clock(in.firstLook, in.zone), "", 0),
-                Ui.stat(c, "Not counted", Ui.fmt(in.excludedMin, 0), "min", 0)));
-        num.addView(Ui.statRow(c, Ui.stat(c, "Before bed", Ui.fmt(in.bedMin, 0), "min", 0),
-                Ui.stat(c, "In the night", Ui.fmt(in.nightMin, 0), "min", 0)));
+                Ui.stat(c, "Not counted", span(in.excludedMin), "", 0)));
+        num.addView(Ui.statRow(c, Ui.stat(c, "Before bed", span(in.bedMin), "", 0),
+                Ui.stat(c, "In the night", span(in.nightMin), "", 0)));
         num.addView(Ui.text(c, "Uses: how often you started using the phone (unlocked it, or turned the screen on if it has no lock screen). Longest: the longest use in one go. "
                 + "First look: the first time after waking up. Not counted: time in apps you left out (below). "
                 + "Before bed: the hour before you fell asleep last night. In the night: between falling asleep and waking up. "
@@ -1012,12 +1043,12 @@ public final class Pages {
             LinearLayout sc = Ui.card(c);
             sc.addView(Ui.caption(c, "Contributors"));
             int g = goal > 0 ? goal : app.openring.core.analysis.ScreenScore.DEFAULT_GOAL_MIN;
-            sc.addView(Ui.contributor(c, "Screen time", Ui.hm(in.day.totalMin) + " of " + hours(g), in.score.amount, Ui.OXY,
+            sc.addView(Ui.contributor(c, "Screen time", span(in.day.totalMin) + " of " + hours(g), in.score.amount, Ui.OXY,
                     "Half your goal or less is best, the goal itself still good, twice the goal or more lowers this to zero."));
             if (!Double.isNaN(in.score.bedtime)) {
-                sc.addView(Ui.contributor(c, "Before bed", Ui.fmt(in.bedMin, 0) + " min", in.score.bedtime, Ui.OXY,
+                sc.addView(Ui.contributor(c, "Before bed", span(in.bedMin), in.score.bedtime, Ui.OXY,
                         "Screen light and content in the last hour keep the brain awake. 5 minutes or less is best, 45 or more lowers this to zero."));
-                sc.addView(Ui.contributor(c, "In the night", Ui.fmt(in.nightMin, 0) + " min", in.score.night, Ui.OXY,
+                sc.addView(Ui.contributor(c, "In the night", span(in.nightMin), in.score.night, Ui.OXY,
                         "Checking the phone after waking up at night makes it harder to fall asleep again. 1 minute or less is best, 20 or more lowers this to zero."));
             } else {
                 // a night is known, but the phone's log was not read for the hour before it or the night itself (issue #131)
@@ -1062,9 +1093,9 @@ public final class Pages {
         return row;
     }
 
-    /** "37m" under an hour, "1h 5m" above. */
+    /** "37 min" under an hour, "1h 5m" above: one way on the whole Screen tab (issue #99). */
     static String span(double min) {
-        return Double.isNaN(min) || min >= 59.5 ? Ui.hm(min) : Math.round(min) + "m";
+        return Texts.minutes(min);
     }
 
     /** "07:42" for a moment, "--" when unknown. */
@@ -1110,7 +1141,7 @@ public final class Pages {
                 LinearLayout row = Ui.hbox(c);
                 row.setPadding(0, Ui.dp(c, 6), 0, Ui.dp(c, 6));
                 row.addView(Ui.text(c, name, 14, out ? Ui.TEXT_3 : plain ? Ui.TEXT : Ui.TEXT_2, Ui.REGULAR), Ui.weight(1));
-                row.addView(Ui.text(c, (out ? "not counted, " : "") + (r.shownMin == 0 ? "less than 1m" : span(r.shownMin)), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
+                row.addView(Ui.text(c, (out ? "not counted, " : "") + (r.shownMin == 0 ? "less than 1 min" : span(r.shownMin)), 14, out ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR));
                 card.addView(row);
             }
         }
@@ -1180,9 +1211,9 @@ public final class Pages {
                 .show();
     }
 
-    /** "3h", "2h 30m" or "45m" for a goal in minutes. */
+    /** "3h", "2h 30m" or "45 min" for a goal in minutes. */
     static String hours(int min) {
-        if (min < 60) return min + "m";
+        if (min < 60) return span(min);
         return min % 60 == 0 ? (min / 60) + "h" : (min / 60) + "h " + (min % 60) + "m";
     }
 
@@ -1209,7 +1240,7 @@ public final class Pages {
         if (has) {
             hr.addView(Ui.text(c, "Each point of the line is a quarter hour average, midnight to midnight. Lowest and highest are its lowest and highest points. Touch the line to read any time.",
                     12, Ui.TEXT_3, Ui.REGULAR));
-            String twice = app.openring.core.analysis.ClockChange.repeatText(app.openring.core.analysis.ClockChange.find(d.zone, ds, de));
+            String twice = app.openring.core.analysis.ClockChange.repeatText(app.openring.core.analysis.ClockChange.onDay(d.zone, ds, de));
             if (twice != null) hr.addView(Ui.text(c, twice, 12, Ui.TEXT_3, Ui.REGULAR));
             double night = Json.d(day, "rhr");
             if (!Double.isNaN(night)) hr.addView(Ui.text(c, "Lowest in last night's sleep: " + Ui.fmt(night, 0) + " bpm (Resting HR on Today, from the ring's own 5 minute night readings, so it can differ by a beat or two from the line).",
@@ -1256,12 +1287,13 @@ public final class Pages {
                 LinearLayout top = Ui.hbox(c);
                 top.addView(Ui.text(c, k, 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
                 boolean flagged = a.optDouble(3) > 0;
-                top.addView(Ui.text(c, Ui.fmt(a.optDouble(0), k.startsWith("Skin") ? 2 : 1) + (flagged ? "  unusual" : ""), 13, flagged ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR));
+                top.addView(Ui.text(c, Texts.radar(k, a.optDouble(0), Json.d(day, "temp_dev"), Locale.getDefault()) + (flagged ? "  unusual" : ""), 13, flagged ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR));
                 rc.addView(top);
                 rc.addView(new Charts.RangeGauge(c, a.optDouble(0), a.optDouble(1), a.optDouble(2), flagged), Ui.sized(c, -1, 18));
             }
             rc.addView(Ui.gap(c, 6));
-            rc.addView(Ui.text(c, "A wellness signal compared with your own recent nights, not a diagnosis.", 11, Ui.TEXT_3, Ui.REGULAR));
+            rc.addView(Ui.text(c, "That night's values; skin temperature is the change from your usual. The bar under each is your normal range. "
+                    + "A wellness signal compared with your own recent nights, not a diagnosis.", 11, Ui.TEXT_3, Ui.REGULAR));
         }
         root.addView(rc);
 
@@ -1343,6 +1375,24 @@ public final class Pages {
     }
 
     static View contributors(Context c, JSONObject score, int color, String title) {
+        return contributors(c, score, color, title, null);
+    }
+
+    /**
+     * The contributor rows. With the day, the temperature row shows the day's stored change exactly as the
+     * "Temperature vs usual" card does, with the phone's decimal sign, also for days analysed before the
+     * stored detail was built that way (issue #163).
+     */
+    static View contributors(Context c, JSONObject score, int color, String title, JSONObject day) {
+        return contributors(c, score, color, title, day, null);
+    }
+
+    /**
+     * As above; with the night, the efficiency row shows the night's efficiency worked out from its stored minutes,
+     * as Details does, also for nights analysed before issue #107 (the row's score stays the stored one until the
+     * night is analysed again).
+     */
+    static View contributors(Context c, JSONObject score, int color, String title, JSONObject day, JSONObject night) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, title));
         JSONArray cs = score == null ? null : score.optJSONArray("contributors");
@@ -1352,9 +1402,20 @@ public final class Pages {
         }
         for (int i = 0; i < cs.length(); i++) {
             JSONObject o = cs.optJSONObject(i);
-            card.addView(Ui.contributor(c, o.optString("label"), o.optString("detail"), o.optDouble("score"), color, Explain.of(o.optString("key"))));
+            String detail = o.optString("detail");
+            double dev = Json.d(day, "temp_dev");
+            if ("temperature".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(dev)) detail = signed(dev) + " \u00b0C";
+            double eff = nightEfficiency(night);
+            if ("efficiency".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(eff)) detail = Math.round(eff) + "%";
+            card.addView(Ui.contributor(c, o.optString("label"), detail, o.optDouble("score"), color, Explain.of(o.optString("key"))));
         }
         return card;
+    }
+
+    /** The night's efficiency from its stored minutes (issue #107, {@link StageShare#efficiency}); NaN without a night. */
+    static double nightEfficiency(JSONObject n) {
+        if (n == null) return Double.NaN;
+        return StageShare.efficiency(Json.d(n, "asleep_min"), Json.d(n, "in_bed_min"), Json.d(n, "efficiency"));
     }
 
     static View chartCard(Context c, String title, View chart, String foot) {

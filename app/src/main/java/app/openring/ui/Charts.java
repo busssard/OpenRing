@@ -204,8 +204,9 @@ public final class Charts {
             return this;
         }
 
+        /** Night times rounded to the nearest minute, as the timeline shows them (issue #138). */
         private String clock(double t) {
-            return Charts.clock(t, zone);
+            return app.openring.core.analysis.WakeUps.clock(t, zone);
         }
 
         public Hypnogram(Context c, int[] stages, double start, double end) {
@@ -305,7 +306,7 @@ public final class Charts {
                 double ep = (end - start) / n;
                 double ta = start + a * ep, tb = start + b * ep;
                 // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
-                String label = app.openring.core.analysis.ClockChange.stageTip(zone, start + (k + 0.5) * ep, name(stages[k]), ta, tb);
+                String label = app.openring.core.analysis.ClockChange.roundedStageTip(zone, start + (k + 0.5) * ep, name(stages[k]), ta, tb);
                 drawTip(cv, labelW + (k + 0.5f) * cw, Ui.dp(getContext(), 20), bottom, label);
             }
             // time axis
@@ -382,8 +383,16 @@ public final class Charts {
             return this;
         }
 
+        private boolean nearestMinute;
+
+        /** Times rounded to the nearest minute, for the night charts on the Sleep page (issue #138). */
+        public LineChart nearestMinute() {
+            nearestMinute = true;
+            return this;
+        }
+
         private String clock(double t) {
-            return Charts.clock(t, zone);
+            return nearestMinute ? app.openring.core.analysis.WakeUps.clock(t, zone) : Charts.clock(t, zone);
         }
         private int maxDays;
         private double midAt = Double.NaN;
@@ -598,7 +607,7 @@ public final class Charts {
                 double t = series.t(idx[best]);
                 // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
                 String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t)
-                        : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, t);
+                        : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, nearestMinute ? app.openring.core.analysis.WakeUps.roundMin(t) : t);
                 cv.drawCircle(xs[best], ys[best], Ui.dp(getContext(), 4.5f), dot);
                 drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit);
             }
@@ -935,7 +944,7 @@ public final class Charts {
 
         private void prepare() {
             band5 = app.openring.core.analysis.DialMath.fill(nights, from, to, zone, 288);
-            changeArc = app.openring.core.analysis.DialMath.changeArc(app.openring.core.analysis.ClockChange.find(zone, from, to));
+            changeArc = app.openring.core.analysis.DialMath.changeArc(app.openring.core.analysis.ClockChange.onDay(zone, from, to));
         }
 
         /** Touching a mark finds its use even when short uses are drawn longer than they were. */
@@ -999,17 +1008,22 @@ public final class Charts {
             return app.openring.core.analysis.DialMath.angle(t, from, to, zone);
         }
 
+        /** The use the touch found (index into the sessions, -1 for none) and whether that moment was asleep (issue #109). */
+        private int pickedSession = -1;
+        private boolean pickedAsleep;
+
         /**
-         * The moment at a touched clock time (share of 24 hours). In the hour that repeats when the clocks
-         * go back, the one with phone use then (the earlier when both or neither have use).
+         * The moment at a touched clock time (share of 24 hours): on a lit line the use drawn there, also
+         * when it is shorter than the line or drawn longer than it was (issue #109); in the hour that repeats
+         * when the clocks go back, the pass with phone use (see {@code DialMath.touch}).
          */
         double pick(double fraction) {
             java.time.LocalDate day = Instant.ofEpochSecond((long) from).atZone(zone).toLocalDate();
-            double[] at = app.openring.core.analysis.DialMath.instants(fraction, day, zone);
-            for (double x : at) {
-                for (double[] s : shown) if (x >= s[0] && x < s[1]) return Math.max(from, Math.min(to - 1, x));
-            }
-            return Math.max(from, Math.min(to - 1, at[0]));
+            app.openring.core.analysis.DialMath.Touch tc = app.openring.core.analysis.DialMath.touch(fraction, day, from, to, zone, fill.length,
+                    sessions, shown, nights);
+            pickedSession = tc.session;
+            pickedAsleep = tc.asleep;
+            return tc.at;
         }
 
         /** The app in front at {@code at}, or null. */
@@ -1094,20 +1108,14 @@ public final class Charts {
                 p.setColor(Ui.TEXT);
                 cv.drawLine(cx + (float) Math.cos(a) * r * 0.62f, cy + (float) Math.sin(a) * r * 0.62f,
                         cx + (float) Math.cos(a) * (r1 + label * 0.2f), cy + (float) Math.sin(a) * (r1 + label * 0.2f), p);
-                double[] s = null;
-                for (int i = 0; i < shown.size() && s == null; i++) {
-                    double[] x = shown.get(i);
-                    if (picked >= x[0] && picked < x[1]) s = sessions.get(i);
-                }
+                double[] s = pickedSession >= 0 && pickedSession < sessions.size() ? sessions.get(pickedSession) : null;
                 String line1 = clock(picked), line2, line3 = null;
                 if (s != null) {
                     double m = (s[1] - s[0]) / 60.0;
-                    line2 = clock(s[0]) + " to " + clock(s[1]) + ", " + (m < 1 ? "under a minute" : Pages.span(m));
+                    line2 = clock(s[0]) + " to " + clock(s[1]) + ", " + (m < 1 ? "less than 1 min" : Pages.span(m));
                     line3 = appAt(Math.min(Math.max(picked, s[0]), s[1] - 1));
                 } else {
-                    boolean asleep = false;
-                    for (double[] x : nights) if (picked >= x[0] && picked < x[1]) asleep = true;
-                    line2 = asleep ? "asleep, phone not used" : "phone not used";
+                    line2 = pickedAsleep ? "asleep, phone not used" : "phone not used";
                 }
                 t.setColor(Ui.TEXT);
                 t.setTypeface(Ui.LIGHT);
@@ -1226,7 +1234,7 @@ public final class Charts {
                 }
                 t.setTextAlign(Paint.Align.RIGHT);
                 t.setColor(known ? (sel ? Ui.TEXT : Ui.TEXT_2) : Ui.TEXT_3);
-                cv.drawText(known ? Ui.hm(row.totalMin) : "--", w - Ui.dp(getContext(), 4), cy + t.getTextSize() * 0.35f, t);
+                cv.drawText(known ? Pages.span(row.totalMin) : "--", w - Ui.dp(getContext(), 4), cy + t.getTextSize() * 0.35f, t);
             }
         }
 

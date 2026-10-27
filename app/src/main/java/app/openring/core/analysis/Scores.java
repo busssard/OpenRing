@@ -61,9 +61,13 @@ public final class Scores {
         double waso = Stats.curve(n.wasoMin, new double[][] {{0, 100}, {20, 92}, {45, 72}, {90, 40}, {150, 15}});
         double wakes = Stats.curve(n.awakenings, new double[][] {{0, 100}, {3, 92}, {6, 78}, {10, 58}, {15, 35}});
         double restless = Stats.curve(n.restlessPct, new double[][] {{0, 100}, {10, 92}, {25, 72}, {40, 48}, {60, 20}});
-        double rest = Stats.mean(new double[] {waso, wakes, restless});
-        add(sc, "restfulness", "Restfulness", rest, 15,
-            Double.isNaN(n.wasoMin) ? "" : Texts.count(n.awakenings, "wake up", "wake ups") + ", " + hm(n.wasoMin) + " awake");
+        // no sleep at all (issue #118): wake time is unknown, and "0 wake ups" alone would score a sleepless
+        // period 100. Left out like REM and deep when not staged; every period with any sleep keeps it.
+        if (!Double.isNaN(n.wasoMin)) {
+            double rest = Stats.mean(new double[] {waso, wakes, restless});
+            add(sc, "restfulness", "Restfulness", rest, 15,
+                Texts.count(n.awakenings, "wake up", "wake ups") + ", " + hm(n.wasoMin) + " awake");
+        }
 
         boolean staged = "ring".equals(n.stageSource) || "signals".equals(n.stageSource);
         if (staged) {
@@ -126,7 +130,8 @@ public final class Scores {
         double tempScore = Double.isNaN(in.tempDev) ? Double.NaN
             : Stats.curve(Math.abs(in.tempDev) * (in.tempDev < 0 ? 0.7 : 1.0), new double[][] {{0.1, 100}, {0.3, 90}, {0.5, 72}, {1.0, 40}, {1.5, 12}});
         add(sc, "temperature", "Body temperature", tempScore, 13,
-            Double.isNaN(in.tempDev) ? "" : String.format(Locale.US, "%+.1f °C", in.tempDev));
+            // the same rule and rounding as the card (issue #163); the screen formats it again with the phone's locale
+            Double.isNaN(in.tempDev) ? "" : Texts.signed(in.tempDev, Locale.US) + " °C");
         add(sc, "recovery", "Recovery index",
             Stats.curve(in.recoveryFraction, new double[][] {{0.5, 100}, {0.6, 88}, {0.75, 62}, {0.9, 38}, {1.0, 22}}), 10,
             Double.isNaN(in.recoveryFraction) ? "" : (in.recoveryFraction <= 0.5 ? "lowest HR in first half" : "lowest HR late in the night"));
@@ -145,7 +150,7 @@ public final class Scores {
 
     public static final class ActivityInput {
         public double inactiveMin = Double.NaN;   // awake, MET below 1.5
-        public int longInactiveStreaks = -1;      // >= 60 min sedentary streaks between 8:00 and 22:00
+        public int longInactiveStreaks = -1;      // sitting stretches with 60 min or more of their sitting minutes between 8:00 and 22:00 (issue #154)
         public double targetsMetFraction = Double.NaN; // share of the last 7 days with the target met
         public int trainingDays7 = -1;            // days in 7 with >= 30 min of medium or high activity
         public double trainingKcal7 = Double.NaN; // medium + high kcal over 7 days

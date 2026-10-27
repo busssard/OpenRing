@@ -150,7 +150,7 @@ public final class NightAnalyzer {
         int len = st.length;
         double epochMin = n.inBedMin / Math.max(1, len);
         int onset = -1, last = -1;
-        int deep = 0, light = 0, rem = 0, wake = 0, unknown = 0;
+        int deep = 0, light = 0, rem = 0, wake = 0; // the rest (0) has no stage data
         for (int i = 0; i < len; i++) {
             int c = st[i];
             if (c >= 1 && c <= 3) {
@@ -161,7 +161,6 @@ public final class NightAnalyzer {
             else if (c == 2) light++;
             else if (c == 3) rem++;
             else if (c == 4) wake++;
-            else unknown++;
         }
         n.deepMin = deep * epochMin;
         n.lightMin = light * epochMin;
@@ -169,8 +168,11 @@ public final class NightAnalyzer {
         n.awakeMin = wake * epochMin;
         n.asleepMin = (deep + light + rem) * epochMin;
         if (onset < 0) return;
-        int known = len - unknown;
-        n.efficiency = known > 0 ? 100.0 * (deep + light + rem) / known : Double.NaN;
+        // efficiency is time asleep over time in bed (issue #107), as Oura defines it and as the Awake share
+        // and latency count: steps without stage data (0) are time in bed, neither asleep nor awake. The
+        // Sleep page names them ("No data"), so a low efficiency from missing data can be seen as such.
+        n.efficiency = 100.0 * (deep + light + rem) / len;
+        // time in bed before the first sleep, steps without data included (the Sleep page says how much of it had none)
         n.latencyMin = onset * epochMin;
         n.sleepStart = n.start + onset * epochMin * 60;
         n.sleepEnd = n.start + (last + 1) * epochMin * 60;
