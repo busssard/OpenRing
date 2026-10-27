@@ -352,7 +352,8 @@ public final class Pages {
         double[] shown = StageShare.shownMinutes(deepMin, lightMin, remMin, awakeMin, none[0], Json.d(n, "asleep_min"), inBedMin,
                 shownInBed(n));
         // the row only when the night really has time without stage data (review of #201)
-        String noneNote = none[0] > 0 ? StageShare.noDataNote(shown[4], none[1], Json.d(n, "asleep_min") > 0) : null;
+        String noneNote = none[0] > 0 ? StageShare.noDataNote(shown[4], StageShare.shownBefore(none[0], none[1], shown[4]),
+                Json.d(n, "asleep_min") > 0) : null;
         hyp.addView(stageRowPct(c, "Awake", shown[3], StageShare.share(awakeMin, inBedMin), Ui.STAGE_AWAKE));
         hyp.addView(stageRowPct(c, "REM", shown[2], share == null ? Double.NaN : share[2], Ui.STAGE_REM));
         hyp.addView(stageRowPct(c, "Light", shown[1], share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
