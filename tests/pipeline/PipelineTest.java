@@ -1362,6 +1362,11 @@ public class PipelineTest {
                 while (written.get() < 100 && wErr.get() == null) Thread.sleep(1);
                 long evBefore = Db.get(ec).eventCount();
                 java.io.File snap = snapshotWith(ec, vacuum);
+                // the check below needs rows written after the snapshot: wait for two more commits (the first may have
+                // been under way while the snapshot ended) instead of trusting the timing (issue #216), at most 10 s
+                int atSnap = written.get();
+                long until = System.nanoTime() + 10000L * 1000000L;
+                while (written.get() < atSnap + 2 && wErr.get() == null && System.nanoTime() < until) Thread.sleep(1);
                 stop.set(true);
                 w.join();
                 long writerEv = countIn(snap, "SELECT COUNT(*) FROM events WHERE epoch = 77"), writerKv = countIn(snap, "SELECT COUNT(*) FROM kv WHERE k LIKE 'w_%'");
@@ -1375,19 +1380,25 @@ public class PipelineTest {
         // a full backup made while another connection writes restores on a new phone
         final String bpath = ec.getDatabasePath(Db.REAL).getPath();
         final java.util.concurrent.atomic.AtomicBoolean bstop = new java.util.concurrent.atomic.AtomicBoolean();
+        final java.util.concurrent.atomic.AtomicInteger bwritten = new java.util.concurrent.atomic.AtomicInteger();
         Thread bw = new Thread(new Runnable() {
             public void run() {
                 try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + bpath);
                      java.sql.Statement st = cn.createStatement()) {
                     st.execute("PRAGMA busy_timeout = 30000");
-                    for (int k = 0; !bstop.get(); k++) st.execute("INSERT INTO kv(k, v) VALUES ('b_" + k + "', 'x')");
+                    for (int k = 0; !bstop.get(); k++) {
+                        st.execute("INSERT INTO kv(k, v) VALUES ('b_" + k + "', 'x')");
+                        bwritten.incrementAndGet();
+                    }
                 } catch (Exception x) {
                     // the check below finds a backup that is not complete
                 }
             }
         });
         bw.start();
-        Thread.sleep(50);
+        // the writer is under way before the backup starts, however slow the machine (issue #216), at most 10 s
+        long bUntil = System.nanoTime() + 10000L * 1000000L;
+        while (bwritten.get() < 10 && bw.isAlive() && System.nanoTime() < bUntil) Thread.sleep(1);
         long bEvents = Db.get(ec).eventCount();
         java.io.ByteArrayOutputStream slow = new java.io.ByteArrayOutputStream() {
             @Override
@@ -2835,6 +2846,8 @@ public class PipelineTest {
         final java.util.concurrent.CountDownLatch deleteStarted = new java.util.concurrent.CountDownLatch(1);
         final java.util.concurrent.CountDownLatch deleteDone = new java.util.concurrent.CountDownLatch(1);
         final boolean[] deletedEarly = {false};
+        final String[] waitSeen = {null};
+        final Thread[] deleter = new Thread[1];
         final Throwable[] err = new Throwable[2];
         Thread analysis = new Thread(new Runnable() {
             @Override
@@ -2846,9 +2859,11 @@ public class PipelineTest {
                             // the first week's nights are worked out and about to be stored: Delete starts now
                             if (!m.startsWith("sleep for") || paused.getCount() == 0) return;
                             paused.countDown();
+                            // no fixed sleep (issue #216): wait until Delete either finished (it did not wait) or
+                            // waits for a lock this analysis holds, so a slow machine cannot make it pass wrongly
                             try {
                                 deleteStarted.await(10, java.util.concurrent.TimeUnit.SECONDS);
-                                Thread.sleep(400); // long enough for a Delete that does not wait to finish
+                                waitSeen[0] = waitForBlocked(deleter[0], Thread.currentThread(), deleteDone, 10000);
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
                             }
@@ -2875,11 +2890,12 @@ public class PipelineTest {
                 }
             }
         });
+        deleter[0] = delete;
         delete.start();
         analysis.join(300000);
         delete.join(300000);
         check("delete during an analysis: no error", err[0] == null && err[1] == null, err[0] != null ? err[0] : err[1]);
-        check("delete during an analysis waits for it to end", !deletedEarly[0], "");
+        check("delete during an analysis waits for it to end", !deletedEarly[0] && waitSeen[0] != null && waitSeen[0].startsWith("waits"), waitSeen[0]);
         StringBuilder left = new StringBuilder();
         int tables = 0;
         android.database.Cursor cur = db.getReadableDatabase().rawQuery(
@@ -2899,6 +2915,26 @@ public class PipelineTest {
         check("after Delete the next analysis stores no nights", db.count("SELECT COUNT(*) FROM nights") == 0
                 && db.count("SELECT COUNT(*) FROM days") == 0, db.count("SELECT COUNT(*) FROM nights") + " nights");
         deleteOneTransaction(c);
+    }
+
+    /**
+     * Waits until {@code waiter} has finished ({@code done} counted down: returns "finished") or waits for a lock that
+     * {@code holder} holds (returns "waits, BLOCKED on ..."), at most {@code limitMs} (returns "neither within ...").
+     * Issue #216: replaces a fixed sleep, so the result does not depend on the machine's speed.
+     */
+    static String waitForBlocked(Thread waiter, Thread holder, java.util.concurrent.CountDownLatch done, long limitMs) throws InterruptedException {
+        java.lang.management.ThreadMXBean mx = java.lang.management.ManagementFactory.getThreadMXBean();
+        long until = System.nanoTime() + limitMs * 1000000L;
+        while (System.nanoTime() < until) {
+            if (done.getCount() == 0) return "finished";
+            Thread.State st = waiter.getState();
+            if (st == Thread.State.BLOCKED || st == Thread.State.WAITING || st == Thread.State.TIMED_WAITING) {
+                java.lang.management.ThreadInfo ti = mx.getThreadInfo(waiter.getId());
+                if (ti != null && ti.getLockOwnerId() == holder.getId()) return "waits, " + st + " on " + ti.getLockName();
+            }
+            Thread.sleep(1);
+        }
+        return "neither within " + limitMs + " ms, " + waiter.getState();
     }
 
     /**
