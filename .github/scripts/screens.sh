@@ -149,14 +149,19 @@ swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 launch --es settings top;                   shot settings
 launch --es settings stages;                shot settings-stage-detail
 # Count phone use as awake switched off and on (issue #204): when the nights are analysed again the
-# preview above redraws, its phone line goes away and comes back without leaving the page
-phone_line() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "on the phone, shown as awake"; }
-tap_phone_switch() {
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-  b=$(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+# preview above redraws, its phone line goes away and comes back without leaving the page. The card
+# opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view.
+adb shell input swipe 30 1700 30 900 1500; sleep 1
+ui_dump() { adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1; adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml 2>/dev/null; }
+phone_line() { ui_dump | grep -q "on the phone, shown as awake"; }
+SCREEN_H=$(adb shell wm size 2>/dev/null | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f2 | tr -d '\r')
+tap_phone_switch() {  # fails when the switch is not listed or its middle is off the screen
+  b=$(ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b
   [ $# -eq 4 ] || return 1
-  adb shell input tap $(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))
+  local x=$(( ($1 + $3) / 2 )) y=$(( ($2 + $4) / 2 ))
+  [ "$y" -gt 0 ] && [ "$y" -lt "${SCREEN_H:-2400}" ] || return 1
+  adb shell input tap $x $y
 }
 wait_phone_line() {  # $1: 0 gone, 1 shown; up to 60 seconds for the analysis
   for i in $(seq 1 30); do
@@ -171,8 +176,9 @@ elif ! tap_phone_switch; then
   echo "::warning::issue #204 step skipped: the switch Count phone use as awake is not on screen"
 else
   wait_phone_line 0 || { echo "::error::the stage detail preview kept its phone line after switching phone use off (issue #204)"; exit 1; }
-  shot settings-phone-off 1
-  tap_phone_switch && wait_phone_line 1 || { echo "::error::the stage detail preview did not show its phone line again after switching phone use on (issue #204)"; exit 1; }
+  shot settings-phone-off 4   # the "Updating the nights" toast (about 3.5 s) is gone by then
+  tap_phone_switch || { echo "::error::the switch Count phone use as awake was not on screen to switch it on again (issue #204)"; exit 1; }
+  wait_phone_line 1 || { echo "::error::the stage detail preview did not show its phone line again after switching phone use on (issue #204)"; exit 1; }
   log "the stage detail preview followed the phone use switch both ways"
 fi
 launch --es settings screen;                shot settings-screen-time
