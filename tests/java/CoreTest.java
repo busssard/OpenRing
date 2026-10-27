@@ -902,6 +902,7 @@ public class CoreTest {
         liveFeed();
         requests();
         auth();
+        mutationGaps();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -3945,5 +3946,214 @@ public class CoreTest {
                 && ClockChange.zone("Asia/Tokyo") != null);
         eq("minutes alone", ClockChange.travel("Asia/Kolkata", "Asia/Kathmandu", oct),
                 "Times this night are in Kathmandu time, 15 minutes ahead of where you slept the night before.");
+    }
+
+    /** Run length text of stage codes, "code x count" per run, for pinning a whole night in one line. */
+    static String rle(int[] st) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < st.length; ) {
+            int j = i;
+            while (j < st.length && st[j] == st[i]) j++;
+            sb.append(sb.length() > 0 ? " " : "").append(st[i]).append('x').append(j - i);
+            i = j;
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Checks a mutation run asked for: each one fails when the line it names is changed in a small way
+     * (a comparison, a sign, a constant) that no other check noticed. Expected values are worked out by
+     * hand from the inputs in the comments.
+     */
+    static void mutationGaps() {
+        // TS.filter: the value range and the time window both apply. 5 is below the range, 25 above it,
+        // 15 at 900 is after the window: only (200, 15) is left
+        TS ts = new TS();
+        ts.add(100, 5);
+        ts.add(200, 15);
+        ts.add(300, 25);
+        ts.add(900, 15);
+        TS fl = ts.filter(10, 20, 0, 500);
+        check("filter keeps only values in range and inside the window", fl.size() == 1 && fl.t(0) == 200 && fl.v(0) == 15);
+        // TS.interp on the last segment: halfway from (10, 10) to (20, 40) is 25
+        TS line = new TS();
+        line.add(0, 0);
+        line.add(10, 10);
+        line.add(20, 40);
+        eq("interpolation on the last segment", line.interp(15), 25.0);
+
+        // NightAnalyzer: REM runs of 2 and 10 steps of 30 s, 100 steps apart (more than the 15 minute merge gap
+        // of 30 steps); only the 10 step run reaches the 3 minute minimum (6 steps), so 1 cycle
+        NightAnalyzer.Input cy = new NightAnalyzer.Input();
+        cy.start = 1_800_000_000;
+        cy.ringStages = runs(Stager.LIGHT, 100, Stager.REM, 2, Stager.LIGHT, 100, Stager.REM, 10, Stager.LIGHT, 100);
+        cy.end = cy.start + cy.ringStages.length * 30;
+        Night cyn = NightAnalyzer.analyze(cy);
+        eq("a REM run shorter than 3 minutes is not a cycle", cyn.cycles, 1);
+        // an empty ring hypnogram covers nothing, so the night falls back to the plain window (1 hour = 120 steps)
+        NightAnalyzer.Input em = new NightAnalyzer.Input();
+        em.start = 1_800_000_000;
+        em.end = em.start + 3600;
+        em.ringStages = new int[0];
+        Night emn = NightAnalyzer.analyze(em);
+        check("an empty ring hypnogram is not used", "window".equals(emn.stageSource) && emn.stages.length == 120);
+
+        // NightFinder: 30 minutes the ring calls asleep is shorter than a derived sleep's 45 minutes: no sleep
+        double t0 = 1_800_000_000;
+        TS shortSleep = new TS();
+        for (int i = 0; i <= 30; i += 5) shortSleep.add(t0 + i * 60, 1);
+        eq("30 minutes of ring sleep alone is no night", NightFinder.find(new ArrayList<double[]>(), new ArrayList<NightFinder.RingRun>(),
+                shortSleep, new TS()).size(), 0);
+        // a bedtime of an hour is carried on by an event 380 s after it, inside the ring's asleep stretch
+        // (samples each minute from 3000 to 4800 s, awake only at 4020 and 4080). The nearest sample to the
+        // event at 3980 is 3960 (20 s, asleep), not 4020 (40 s, awake), so the night ends at 3980
+        TS st = new TS();
+        for (int s = 3000; s <= 4800; s += 60) st.add(t0 + s, s == 4020 || s == 4080 ? 0 : 1);
+        TS sup = new TS();
+        sup.add(t0 + 3980, 1);
+        List<double[]> bt = new ArrayList<double[]>();
+        bt.add(new double[] {t0, t0 + 3600});
+        List<NightFinder.Period> ext = NightFinder.find(bt, new ArrayList<NightFinder.RingRun>(), st, sup);
+        check("the nearest sleep sample before an event counts", ext.size() == 1 && ext.get(0).end == t0 + 3980);
+
+        // Scores.clock on a real time: 1,800,000,000 s is 20833 days and 28,800 s, so 08:00 UTC and 10:00 at +2 h
+        eq("clock of a real unix time", Scores.clock(1_800_000_000.0, 0), "08:00");
+        eq("clock of a real unix time with an offset", Scores.clock(1_800_000_000.0, 7200), "10:00");
+
+        // Wellness.day: a minute at exactly 3.0 MET is medium, one at exactly 6.0 is high
+        double wd = 1_800_000_000;
+        TS met = new TS();
+        met.add(wd + 10, 3.0);
+        met.add(wd + 70, 6.0);
+        Wellness.Day band = Wellness.day("d", wd, wd + 120, null, met, new ArrayList<double[]>(), 70, 1600, wd + 86400);
+        check("3.0 MET is medium and 6.0 MET is high", band.lowMin == 0 && band.mediumMin == 1 && band.highMin == 1);
+        // Wellness.sleepDebt: a day without sleep (0) is skipped. 6 h of 8 h on days 0, 2, 3, 4 with weights
+        // 1, 0.625, 0.4375, 0.25 (decay 0.1875 a day): 7200 s x 2.3125 = 16650 s, rounded to 45 minutes 16200 s;
+        // 4 valid days is not enough (5)
+        double[] debt0 = Wellness.sleepDebt(new int[] {21600, 0, 21600, 21600, 21600}, new int[] {28800, 28800, 28800, 28800, 28800});
+        eq("sleep debt skips a day without sleep", Arrays.toString(debt0), "[16200.0, 0.0]");
+        // Wellness.radar: history 9,9,9,10,10,10,11,11,11 has median 10 and MAD 1 (sd 1.4826)
+        double[] hist = {9, 10, 11, 9, 10, 11, 9, 10, 11};
+        double sd = 1.4826;
+        double[][] h4 = {hist, hist, hist, hist};
+        eq("two signs, one strong, is major", Wellness.radar(new double[] {10 + 3.5 * sd, 10 + 2.5 * sd, 10, 10}, h4).decision, 2);
+        eq("two signs, none strong, is minor", Wellness.radar(new double[] {10 + 2.5 * sd, 10 + 2.5 * sd, 10, 10}, h4).decision, 1);
+
+        // Proximity.strongest: no plausible reading, the highest raw one is the first
+        eq("strongest raw reading can be the first", Proximity.strongest(new int[] {127, -127}), 0);
+
+        // DialMath.touch: a use ending at the second the next one starts; touching that second is in the second use
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        java.time.LocalDate d = java.time.LocalDate.parse("2026-10-14");
+        double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double t1255 = zurich("2026-10-14T12:55:00");
+        List<double[]> back = new ArrayList<double[]>();
+        back.add(new double[] {t1255 + 10, t1255 + 40});
+        back.add(new double[] {t1255 + 40, t1255 + 70});
+        DialMath.Touch edge = DialMath.touch((t1255 + 40 - from) / 86400.0, d, from, to, z, 288, back, back, null);
+        check("touching the end second of a use reads the use starting there", edge.session == 1 && edge.at == t1255 + 40);
+
+        // StageShare.shownMinutes: asleep shown as 0 minutes, so light 0.3 and REM 0.3 both show 0
+        eq("a shown total of 0 rounds the stages to 0", Arrays.toString(StageShare.shownMinutes(0, 0.3, 0.3, 0, 0, 0.4, 0.6, -1)),
+                "[0.0, 0.0, 0.0, 0.0, 0.0]");
+
+        // ScreenTime.oneAtATime: two apps come to the front at the same second; the alphabetically first holds
+        // the shared time, the other keeps the rest
+        Map<String, List<double[]>> same = new LinkedHashMap<String, List<double[]>>();
+        same.put("b.app", new ArrayList<double[]>(Arrays.asList(new double[] {1000, 1100})));
+        same.put("a.app", new ArrayList<double[]>(Arrays.asList(new double[] {1000, 1050})));
+        Map<String, List<double[]>> one = ScreenTime.oneAtATime(same);
+        check("same start: the alphabetically first app wins", one.containsKey("a.app") && one.containsKey("b.app")
+                && Arrays.toString(one.get("a.app").get(0)).equals("[1000.0, 1050.0]")
+                && Arrays.toString(one.get("b.app").get(0)).equals("[1050.0, 1100.0]"));
+
+        // Tilt: no calibration sample before the first gravity reading, and no crash
+        Tilt tl = new Tilt();
+        tl.alpha = 1;
+        boolean noCrash = true;
+        try {
+            tl.startCalibration();
+            tl.calibrateSample();
+        } catch (RuntimeException e) {
+            noCrash = false;
+        }
+        check("calibrating before any gravity reading does nothing", noCrash);
+        // neutral pose gravity (2, 3, 6) / 7. By hand: the right axis comes from x, (15, -2, -4) / (7 sqrt 5), and the
+        // forward axis is neutral cross right, (0, 2, -1) / sqrt 5. The calibration sample is taken before the hand moves on
+        double[] u0 = {2 / 7.0, 3 / 7.0, 6 / 7.0};
+        double r5 = Math.sqrt(5);
+        double[] bR = {15 / (7 * r5), -2 / (7 * r5), -4 / (7 * r5)}, bF = {0, 2 / r5, -1 / r5};
+        tl.feed(200, 300, 600);
+        tl.startCalibration();
+        tl.calibrateSample();
+        tl.feed(0, 1000, 0); // the hand moves before calibration ends; the sample taken counts
+        tl.finishCalibration();
+        tl.feed(200, 300, 600);
+        double[] c0 = tl.stick();
+        check("tilt: the calibrated pose is centred", c0[0] == 0 && c0[1] == 0);
+        double c20 = Math.cos(Math.toRadians(20)), s20 = Math.sin(Math.toRadians(20));
+        // 20 degrees towards the right axis: steering (20 - 4) / 25 = 0.64 to the right, no forward part
+        tl.feed((int) Math.round(1000 * (c20 * u0[0] + s20 * bR[0])), (int) Math.round(1000 * (c20 * u0[1] + s20 * bR[1])),
+                (int) Math.round(1000 * (c20 * u0[2] + s20 * bR[2])));
+        double[] right = tl.stick();
+        check("tilt right steers right", Math.abs(right[0] - 0.64) < 0.01 && right[1] == 0);
+        tl.feed((int) Math.round(1000 * (c20 * u0[0] - s20 * bR[0])), (int) Math.round(1000 * (c20 * u0[1] - s20 * bR[1])),
+                (int) Math.round(1000 * (c20 * u0[2] - s20 * bR[2])));
+        double[] left = tl.stick();
+        check("tilt left steers left", Math.abs(left[0] + 0.64) < 0.01 && left[1] == 0);
+        tl.feed((int) Math.round(1000 * (c20 * u0[0] + s20 * bF[0])), (int) Math.round(1000 * (c20 * u0[1] + s20 * bF[1])),
+                (int) Math.round(1000 * (c20 * u0[2] + s20 * bF[2])));
+        double[] fwd = tl.stick();
+        check("tilt forward moves only the forward axis", fwd[0] == 0 && Math.abs(fwd[1] - 0.64) < 0.01);
+
+        // Stager: this pins today's output for eight fixed synthetic nights (seeds picked so that small changes
+        // in the smoothing, percentiles, window sizes and deep and REM placement each change at least one night).
+        // The other stage checks test properties and ranges only, so such changes went unnoticed. Any change in
+        // staging now fails here and must be deliberate: update the expected text in the same commit and say why.
+        // Each night is written as runs of "stage x steps" (1 deep, 2 light, 3 REM, 4 awake, 30 s steps).
+        StringBuilder pinned = new StringBuilder();
+        for (int seed : new int[] {22, 73, 145, 152, 294, 1131, 1607, 2338}) {
+            Random r = new Random(seed);
+            double hours = 2 + r.nextInt(8), ss = 1_760_000_000, se = ss + hours * 3600;
+            TS shr = new TS(), shrv = new TS(), smo = new TS();
+            double depth = r.nextDouble() * 14, period = 70 + r.nextInt(50), base = 20 + r.nextInt(50), noise = r.nextDouble() * 3;
+            double quietEdge = r.nextBoolean() ? 0 : 0.02 + r.nextDouble() * 0.05, busy = r.nextDouble() * 0.06;
+            for (double t = ss; t < se; t += 300) {
+                double f = (t - ss) / (se - ss), m = (t - ss) / 60;
+                double cyc = StrictMath.sin(2 * Math.PI * m / period);
+                shr.add(t, 60 - depth * Math.max(0, cyc) * (1.2 - f) - 4 * f + r.nextGaussian() * noise);
+                shrv.add(t, base + 20 * f + 12 * Math.max(0, -cyc) + r.nextGaussian() * 2 * noise);
+            }
+            for (double t = ss; t < se; t += 60) {
+                double f = (t - ss) / (se - ss);
+                smo.add(t, (f < quietEdge || f > 1 - quietEdge) ? 10 : (r.nextDouble() < busy ? 1 + r.nextInt(9) : 0));
+            }
+            pinned.append(pinned.length() > 0 ? " / " : "").append(rle(Stager.stageFromSignals(ss, se, shr, shrv, smo)));
+        }
+        eq("stager output for eight fixed synthetic nights is unchanged", pinned.toString(),
+                "2x27 4x3 2x7 1x36 2x4 4x3 2x21 4x3 2x106 1x26 2x39 4x3 2x53 3x4 2x19 3x6 2x9 4x5 2x7 4x3 2x34 1x22 2x87 3x63 2x56 3x7 2x19 3x15 2x26 3x126 2x1" + " / "
+                + "2x51 1x35 2x178 1x17 2x4 4x3 2x16 3x31 2x76 1x15 2x53 3x64 2x14 4x3 2x45 4x3 2x39 4x3 3x89 4x3 2x41 4x3 2x7 4x3 2x7 3x36 2x1" + " / "
+                + "2x57 1x56 2x58 4x3 2x83 1x21 2x102 3x45 2x72 4x3 2x91 3x96 2x102 3x50 2x1" + " / "
+                + "4x27 2x38 4x3 2x93 1x8 2x83 4x6 2x20 1x16 2x9 4x3 2x35 4x3 2x34 1x22 2x91 3x54 2x98 4x3 3x68 2x52 3x39 4x3 3x5 4x27" + " / "
+                + "2x68 1x56 2x25 4x3 2x146 3x40 2x32 1x22 2x92 3x58 2x108 3x74 2x79 3x1 4x4 3x55 2x4 3x16 4x3 3x53 2x21" + " / "
+                + "2x2 1x52 2x73 3x23 2x25 4x5 2x20 1x16 2x79 3x40 2x10 4x3 2x68 1x19 2x29 3x60 2x115 3x56 4x3 3x9 4x3 3x30 2x63 3x36 2x1" + " / "
+                + "2x112 3x12 2x26 1x26 2x88 3x37 2x3 1x22 2x106 3x43 2x89 3x31 4x5 3x87 2x33" + " / "
+                + "4x7 2x14 4x5 2x132 1x32 2x93 4x3 2x109 4x3 2x7 4x3 2x24 1x22 2x91 4x3 2x54 3x37 2x35 3x18 2x35 4x3 2x48 3x71 4x3 3x21 2x113 3x93 2x1");
+
+        // Scores: curve breakpoints hit exactly. 90 minutes awake gives 40; with 1 wake up (97.33) restfulness is
+        // the mean 68.67, shown 69; with 2 wake ups (94.67) 67.33, shown 67 (no restlessness data)
+        Night rw = new Night();
+        rw.wasoMin = 90;
+        rw.awakenings = 1;
+        eq("restfulness at 90 minutes awake and 1 wake up", Scores.sleep(rw, 0, 40).get("restfulness").score, 69.0);
+        rw.awakenings = 2;
+        eq("restfulness at 90 minutes awake and 2 wake ups", Scores.sleep(rw, 0, 40).get("restfulness").score, 67.0);
+        Scores.ReadinessInput ri = new Scores.ReadinessInput();
+        ri.hrvRecent = 85;
+        ri.hrvBaseline = 100;
+        ri.prevDayActivity = 0.25;
+        Night.Score rs = Scores.readiness(ri);
+        eq("HRV balance at 85% of usual is 70", rs.get("hrv").score, 70.0);
+        eq("previous day activity at a quarter of the target is 72", rs.get("prev_activity").score, 72.0);
     }
 }
