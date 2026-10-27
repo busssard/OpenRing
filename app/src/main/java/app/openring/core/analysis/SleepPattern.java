@@ -37,7 +37,9 @@ public final class SleepPattern {
         if (stages == null || stages.length == 0 || epochS <= 0) return;
         nights++;
         double step = epochS / 60.0;
-        for (int i = 0; i < stages.length; i++) put(startClockMin + (i + 0.5) * step, stages[i], step);
+        double[][] night = new double[BINS][5];
+        for (int i = 0; i < stages.length; i++) put(night, startClockMin + (i + 0.5) * step, stages[i], step);
+        addNight(night);
     }
 
     /**
@@ -50,20 +52,37 @@ public final class SleepPattern {
         nights++;
         ZoneRules rules = zone.getRules();
         double step = epochS / 60.0;
+        double[][] night = new double[BINS][5];
         for (int i = 0; i < stages.length; i++) {
             double t = startUnix + (i + 0.5) * epochS;
             int off = rules.getOffset(Instant.ofEpochSecond((long) Math.floor(t))).getTotalSeconds();
-            put((t + off) / 60.0, stages[i], step);
+            put(night, (t + off) / 60.0, stages[i], step);
+        }
+        addNight(night);
+    }
+
+    /**
+     * Adds one night's bins. A bin where this night has more than 10 minutes (both passes of the
+     * repeated hour when the clocks go back) counts as 10 minutes with the stage mix of all of them,
+     * so one night is never more than one night in bed and the other nights' shares stay right.
+     */
+    private void addNight(double[][] night) {
+        for (int b = 0; b < BINS; b++) {
+            double[] m = night[b];
+            double total = m[1] + m[2] + m[3] + m[4];
+            if (total <= 0) continue;
+            double f = Math.min(1, BIN_MIN / total);
+            for (int k = 1; k <= 4; k++) minutes[b][k] += m[k] * f;
         }
     }
 
     /** Adds {@code step} minutes of {@code stage} at clock minute {@code clock} (any value, taken round the clock). */
-    private void put(double clock, int stage, double step) {
+    private static void put(double[][] into, double clock, int stage, double step) {
         if (stage < 1 || stage > 4) return;
         double rel = clock - ANCHOR_MIN;
         rel = ((rel % SPAN_MIN) + SPAN_MIN) % SPAN_MIN;
         int bin = Math.min(BINS - 1, (int) Math.floor(rel / BIN_MIN));
-        minutes[bin][stage] += step;
+        into[bin][stage] += step;
     }
 
     public int nights() {
@@ -75,16 +94,9 @@ public final class SleepPattern {
         return ((bin % BINS) + BINS) % BINS;
     }
 
-    /**
-     * Share of nights (0 to 1) in {@code stage} during {@code bin}. A bin holding more minutes than
-     * nights times 10 (the repeated hour when the clocks go back) shows the mix of all its minutes,
-     * so the stages never add up to more than 100%.
-     */
+    /** Share of nights (0 to 1) in {@code stage} during {@code bin}. */
     public double share(int bin, int stage) {
-        if (nights == 0) return 0;
-        double[] m = minutes[wrap(bin)];
-        double total = m[1] + m[2] + m[3] + m[4];
-        return Math.min(1, m[stage] / Math.max(nights * (double) BIN_MIN, total));
+        return nights == 0 ? 0 : Math.min(1, minutes[wrap(bin)][stage] / (nights * (double) BIN_MIN));
     }
 
     /** Share of nights in bed (any stage) during {@code bin}. */
