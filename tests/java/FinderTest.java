@@ -37,6 +37,8 @@ public class FinderTest {
         turnSteps();
         noiseCircles();
         lastWorn();
+        lastWornBrief();
+        finderLayout();
         impossibleValues();
         strongestRing();
         scanRetry();
@@ -1814,6 +1816,125 @@ public class FinderTest {
     }
 
     // ------------------------------------------------------------------ impossible signal values (issue #95)
+
+    // ------------------------------------------------------------------ one screen (issue #191)
+
+    static void lastWornBrief() {
+        Locale before = Locale.getDefault();
+        Locale.setDefault(Locale.US);
+        try {
+            LastWorn.Clock clock = new LastWorn.Clock() {
+                @Override
+                public String when(double unix) {
+                    return "T" + Math.round((unix - BASE) / 60);
+                }
+            };
+            LastWorn.Clock real = new LastWorn.Clock() {
+                @Override
+                public String when(double unix) {
+                    return "yesterday at 22:14"; // the longest usual form apart from a weekday date
+                }
+            };
+            double now = BASE + H;
+            LastWorn.Result w = new LastWorn.Result();
+            w.state = LastWorn.WORN;
+            w.at = w.newest = BASE + 600;
+            w.lastHr = BASE + 480;
+            w.skinC = 33;
+            w.hasHr = w.confirmed = true;
+            briefIs("worn, confirmed", w, now, clock, "On a finger at the last reading, T10.");
+            w.confirmed = false;
+            briefIs("worn, not confirmed", w, now, clock, "Probably on a finger at the last reading, T10.");
+            LastWorn.Result u = new LastWorn.Result();
+            u.state = LastWorn.UNSURE;
+            u.at = BASE + 300;
+            u.newest = BASE + 3000;
+            briefIs("not sure", u, now, clock, "Not sure: no heart rate since T5, probably taken off then.");
+            LastWorn.Result o = new LastWorn.Result();
+            o.state = LastWorn.OFF;
+            o.at = BASE + 600;
+            o.newest = BASE + 3000;
+            o.roomC = 21;
+            briefIs("taken off", o, now, clock, "Taken off T10.");
+            o.warmNoHrNow = true;
+            briefIs("taken off, warm now without heart rate", o, now, clock, "Taken off T10. Now it reads warm without a heart rate that counts, probably the charger or somewhere warm.");
+            o.warmNoHrAt = BASE + 1200;
+            o.warmLoneHr = 1;
+            briefIs("taken off, warm since a time with a lone heart rate (review of #215)", o, now, clock,
+                    "Taken off T10. Since T20 it reads warm without a heart rate that counts, probably the charger or somewhere warm.");
+            o.warmNoHrAt = Double.NaN;
+            o.warmLoneHr = 0;
+            o.warmNoHrNow = false;
+            o.at = Double.NaN;
+            briefIs("not worn in 7 days", o, now, clock, "Not worn in the last 7 days of synced data.");
+            briefIs("no data", new LastWorn.Result(), now, clock, "No temperature readings yet. Sync once to fill this in.");
+            // old data says how old, as the full text does
+            o.at = BASE + 600;
+            briefIs("old data, hours", o, BASE + 3000 + 9 * H, clock, "Taken off T10 (synced data 9 hours old).");
+            briefIs("old data, days", o, BASE + 3000 + 3.5 * 86400, clock, "Taken off T10 (synced data 3 days old).");
+            briefIs("6 hours is not old yet", o, BASE + 3000 + 6 * H, clock, "Taken off T10.");
+            w.lastHr = BASE + 20 * H;
+            briefIs("a newer heart rate counts as newest", w, BASE + 21 * H, clock, "Probably on a finger at the last reading, T10.");
+            // the strip shows one or two lines: the usual sentences stay short (about 45 characters a line on a phone)
+            w.lastHr = BASE + 480;
+            for (LastWorn.Result r : new LastWorn.Result[] {w, u, o, new LastWorn.Result()}) {
+                String s = LastWorn.brief(r, BASE + 3000, real) + " Last heard yesterday at 22:14.";
+                check("brief fits about two lines: " + s, s.length() <= 110, s.length());
+            }
+            check("brief and full text agree on the state", LastWorn.text(o, now, clock).startsWith(LastWorn.brief(o, now, clock).replace(".", "")));
+        } finally {
+            Locale.setDefault(before);
+        }
+    }
+
+    static void briefIs(String name, LastWorn.Result r, double now, LastWorn.Clock clock, String want) {
+        String got = LastWorn.brief(r, now, clock);
+        check("brief: " + name, got.equals(want), got);
+        check("brief has no dash: " + name, !got.contains(" - ") && !got.contains("\u2013") && !got.contains("\u2014"));
+    }
+
+    static void finderLayout() {
+        // 360 x 800 dp with button navigation: about 728 dp below the status bar
+        FinderLayout.Plan p = FinderLayout.plan(728, 1);
+        check("800: fits without scrolling", p.fits && !p.compact, p.compact);
+        check("800: the planned screen is exactly as tall as the screen", Math.abs(FinderLayout.total(p, 1) - 728) < 1e-6, FinderLayout.total(p, 1));
+        check("800: a comfortable gauge and strip", p.gauge >= FinderLayout.GAUGE_MID && p.strip >= FinderLayout.STRIP_MID, p.gauge + " " + p.strip);
+        check("800: the map is the main view", p.map >= 200 && p.map > p.gauge + p.strip, p.map);
+        // 360 x 640: about 568 dp
+        FinderLayout.Plan s = FinderLayout.plan(568, 1);
+        check("640: fits, compact", s.fits && s.compact && s.pad == FinderLayout.PAD_COMPACT && s.statusSp == 12);
+        check("640: nothing below its minimum", s.gauge >= FinderLayout.GAUGE_MIN && s.strip >= FinderLayout.STRIP_MIN && s.map >= FinderLayout.MAP_MIN && s.mapMin == FinderLayout.MAP_MIN);
+        check("640: fits the height", FinderLayout.total(s, 1) <= 568 + 1e-6, FinderLayout.total(s, 1));
+        check("640: the map first gets room", s.map >= 140 && s.strip == FinderLayout.STRIP_MIN, s.map + " " + s.strip);
+        // the emulator of the screenshots (411 x 914 dp, about 842 dp)
+        FinderLayout.Plan e = FinderLayout.plan(842, 1);
+        check("emulator: full instruments and a big map", e.gauge == FinderLayout.GAUGE_MAX && e.strip == FinderLayout.STRIP_MAX && e.map > 300, e.map);
+        // bigger screens never get smaller parts
+        FinderLayout.Plan prev = FinderLayout.plan(300, 1);
+        boolean grows = true;
+        for (int h = 301; h <= 1400; h++) {
+            FinderLayout.Plan q = FinderLayout.plan(h, 1);
+            if (!(prev.compact && !q.compact) && (q.gauge < prev.gauge || q.strip < prev.strip || q.map < prev.map - 1e-9)) grows = false;
+            if (q.fits && Math.abs(FinderLayout.total(q, 1) - h) > 1e-6) grows = false;
+            prev = q;
+        }
+        check("taller screens never shrink a part, and every fitting plan fills the height exactly", grows);
+        // larger fonts: the text takes more, the plan goes compact earlier, then the page scrolls
+        FinderLayout.Plan f = FinderLayout.plan(728, 1.3);
+        check("800 at font 1.3: still fits", f.fits && f.map >= FinderLayout.MAP_MIN, f.map);
+        check("font 1.3 leaves less map than font 1", f.map < p.map);
+        FinderLayout.Plan big = FinderLayout.plan(568, 2);
+        check("640 at font 2: does not fit, the page scrolls, minimums stay", !big.fits && big.compact && big.map == FinderLayout.MAP_MIN
+                && big.strip == FinderLayout.STRIP_MIN, big.gauge + " " + big.strip + " " + big.map);
+        check("640 at font 2: the gauge only grows within its text's height", FinderLayout.total(big, 2) <= FinderLayout.total(FinderLayout.plan(-1, 2), 2) + 1e-6);
+        FinderLayout.Plan tiny = FinderLayout.plan(-50, 1);
+        check("no height yet: minimums, never negative", !tiny.fits && tiny.map == FinderLayout.MAP_MIN && tiny.gauge > 0);
+        check("a bad font scale counts as 1", FinderLayout.plan(728, 0).same(p) && FinderLayout.plan(728, Double.NaN).same(p));
+        // the gauge row is at least as tall as its text, so a gauge below the text costs nothing
+        FinderLayout.Plan g = FinderLayout.plan(728, 1.6);
+        check("font 1.6: the gauge grows into the text's height for free", g.gauge >= Math.min(FinderLayout.GAUGE_MID, 74 * 1.6) || !g.fits, g.gauge);
+        check("same plan", p.same(FinderLayout.plan(728, 1)) && !p.same(s) && !p.same(null));
+    }
 
     static void impossibleValues() {
         check("plausible range", Proximity.plausible(-1) && Proximity.plausible(-50) && Proximity.plausible(-120)

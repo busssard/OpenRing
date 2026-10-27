@@ -183,12 +183,14 @@ else
 fi
 launch --es settings screen;                shot settings-screen-time
 launch --es settings games;                 shot settings-games
-# Find my ring (issue #74): in demo a made up signal fills the meter, a made up walk shows the
-# mini map with the circle, and (finder_turn) a made up turn shows the arrow
-launch --ez finder true;                    shot finder 4
-swipe_up; swipe_up;                       shot finder-walk 2
-launch --ez finder true --ez finder_turn true; sleep 3
-swipe_up; swipe_up;                       shot finder-turn 2
+# Find my ring (issues #74, #191), all on one screen without swiping: in demo a made up signal fills
+# the gauge and the trail; finder_start shows the screen before a walk (you in the middle of the dial),
+# the default a made up walk on the map with its circle, finder_turn a made up turn with the arrow, and
+# finder_details the full last worn text and How it works opened
+launch --ez finder true --ez finder_start true; shot finder 4
+launch --ez finder true;                    shot finder-walk 3
+launch --ez finder true --ez finder_turn true; shot finder-turn 3
+launch --ez finder true --ez finder_details true; shot finder-details 3
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then

@@ -360,6 +360,32 @@ public final class LastWorn {
         return s;
     }
 
+    /**
+     * The short line of the last worn strip on Find my ring (issue #191): one sentence, at most about two
+     * lines on a phone. {@link #text} stays the full text, one tap away.
+     */
+    public static String brief(Result r, double nowUnix, Clock clock) {
+        String s;
+        if (r.state == WORN) {
+            s = (r.confirmed ? "On a finger" : "Probably on a finger") + " at the last reading, " + clock.when(r.at) + ".";
+        } else if (r.state == UNSURE) {
+            s = "Not sure: no heart rate since " + clock.when(r.at) + ", probably taken off then.";
+        } else if (r.state == OFF) {
+            s = Double.isNaN(r.at) ? "Not worn in the last 7 days of synced data." : "Taken off " + clock.when(r.at) + ".";
+            if (r.warmNoHrNow) s += (Double.isNaN(r.warmNoHrAt) ? " Now it reads warm" : " Since " + clock.when(r.warmNoHrAt) + " it reads warm")
+                    + " without a heart rate that counts, probably the charger or somewhere warm.";
+        } else {
+            return "No temperature readings yet. Sync once to fill this in.";
+        }
+        double newest = Double.isNaN(r.lastHr) ? r.newest : Math.max(r.newest, r.lastHr);
+        double age = nowUnix - newest;
+        if (age > 6 * 3600) {
+            s = s.substring(0, s.length() - 1) + " (synced data " + (age < 2 * 86400 ? Math.round(age / 3600) + " hours"
+                    : (long) Math.floor(age / 86400) + " days") + " old).";
+        }
+        return s;
+    }
+
     static String sentence(Result r, Clock clock) {
         String s;
         if (r.state == WORN) {

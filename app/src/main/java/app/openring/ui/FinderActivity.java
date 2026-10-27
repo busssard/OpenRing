@@ -22,14 +22,11 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
-import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.CompoundButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 
 import java.time.Instant;
@@ -46,6 +43,7 @@ import app.openring.ble.RingScanner;
 import app.openring.core.PermissionAsk;
 import app.openring.core.Texts;
 import app.openring.core.analysis.DemoWalk;
+import app.openring.core.analysis.FinderLayout;
 import app.openring.core.analysis.LastWorn;
 import app.openring.core.analysis.Proximity;
 import app.openring.core.analysis.ScanRetry;
@@ -60,7 +58,9 @@ import app.openring.data.RightNow;
  * Find my ring (issue #74, phases 1 and 2): where it was last (from the stored history), hot and
  * cold from the ring's Bluetooth signal with clicks and vibration, and the search walk: turning on
  * the spot gives the strongest direction, walking through the room draws the path with the signal
- * on a mini map and the circle where the ring probably is. Everything that listens (scan, sensors, sound) runs only while the screen
+ * on a mini map and the circle where the ring probably is. All on one screen (issue #191): a last worn
+ * strip that opens to the full text, the instruments (gauge, band, signal trail) and the map, which
+ * takes the height left over ({@link FinderLayout}). Everything that listens (scan, sensors, sound) runs only while the screen
  * is in front and stops in {@link #onPause}. The ring itself is never connected here, so a sync
  * can run meanwhile.
  */
@@ -124,11 +124,29 @@ public final class FinderActivity extends Activity implements SensorEventListene
             + "fine in a flat, not across a house. The circle is where to start looking (a couple of metres), not a spot. Floors are not known: "
             + "a ring upstairs or downstairs shows as a weak trail everywhere. Dots: blue is weak, warm is strong; touch one to read it.";
 
+    /** Before Start: what to do, in the status line under the map (issue #191). */
+    static final String START_HINT = "Hold the phone upright against your chest and tap Start. Walk slowly through the room, "
+            + "or turn once on the spot for only a direction.";
+    /** The line next to the gauge: what its number means. */
+    static final String SIGNAL_LINE = "dBm: closer to 0 is stronger. It tells warmer or colder, not metres.";
+
     private TextView lastText, heardText, batteryText, bandText, signalText, issueText, turnText, turnButton, soundHint;
-    private LinearLayout issueBox, trailBox;
+    private LinearLayout issueBox;
     private TextView issueButton;
     private Meter meter;
     private Dial dial;
+    // the one screen layout (issue #191): last worn strip, instruments, map
+    private ScrollView scroll;
+    private LinearLayout root, lastCard, instCard, mapCard, lastDetails, helpBox;
+    private View titleGap;
+    private android.widget.FrameLayout mapFrame;
+    private TextView lastBrief, soundChip, helpButton, trailCaption;
+    /** The free place in the last worn strip for the "on a finger?" status of issue #192 (hidden until then). */
+    private TextView fingerSlot;
+    private android.widget.ImageView lastMore;
+    private boolean detailsOpen, helpOpen;
+    private LastWorn.Result lastResult;
+    private FinderLayout.Plan plan;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -143,15 +161,18 @@ public final class FinderActivity extends Activity implements SensorEventListene
         rotation = sm == null ? null : sm.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
         accel = sm == null ? null : sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         demoTurnOnly = demo && getIntent().getBooleanExtra("demo_turn", false);
+        boolean demoFresh = demo && getIntent().getBooleanExtra("demo_start", false);
         vib = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
 
-        ScrollView sv = new ScrollView(this);
-        sv.setBackgroundColor(Ui.BG);
-        LinearLayout root = Ui.vbox(this);
-        int pad = Ui.dp(this, 16);
-        root.setPadding(pad, Ui.dp(this, 8), pad, pad);
-        sv.addView(root);
+        // one screen: the map card takes the height left over. The ScrollView only scrolls when even the
+        // compact plan does not fit (a very large font) or the details are open; nothing is ever cut.
+        scroll = new ScrollView(this);
+        scroll.setBackgroundColor(Ui.BG);
+        scroll.setFillViewport(true);
+        root = Ui.vbox(this);
+        scroll.addView(root, new android.widget.FrameLayout.LayoutParams(-1, -2));
 
+        // ---- top bar: back, title, the clicks chip ----
         LinearLayout top = Ui.hbox(this);
         android.widget.ImageView back = new android.widget.ImageView(this);
         back.setImageResource(app.openring.R.drawable.ic_chevron_left);
@@ -165,44 +186,86 @@ public final class FinderActivity extends Activity implements SensorEventListene
             }
         });
         top.addView(back, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 40)));
-        top.addView(Ui.h1(this, "Find my ring"));
-        root.addView(top);
-        root.addView(Ui.gap(this, 10));
+        TextView title = Ui.text(this, "Find my ring", 22, Ui.TEXT, Ui.LIGHT);
+        title.setSingleLine(true);
+        top.addView(title, Ui.weight(1));
+        soundChip = Ui.smallButton(this, "", Ui.ACTIVE);
+        soundChip.setMinHeight(Ui.dp(this, 34));
+        soundChip.setPadding(Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 12), Ui.dp(this, 6));
+        soundChip.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Prefs pr = Prefs.of(FinderActivity.this);
+                pr.setFinderSound(!pr.finderSound());
+                showSoundChip();
+                showSoundHint();
+            }
+        });
+        top.addView(soundChip);
+        root.addView(top, new LinearLayout.LayoutParams(-1, Ui.dp(this, 40)));
+        titleGap = Ui.gap(this, 6);
+        root.addView(titleGap);
 
-        // ---- where was it last ----
-        LinearLayout last = Ui.card(this);
-        last.addView(Ui.caption(this, "Where was it last"));
-        last.addView(Ui.gap(this, 6));
-        lastText = Ui.text(this, "Reading the ring's history", 16, Ui.TEXT, Ui.REGULAR);
+        // ---- last worn strip: one or two lines, tap for the full text ----
+        lastCard = Ui.card(this);
+        LinearLayout lastRow = Ui.hbox(this);
+        lastBrief = Ui.text(this, "Reading the ring's history", 14, Ui.TEXT, Ui.REGULAR);
+        lastBrief.setLineSpacing(0, 1.1f);
+        lastRow.addView(lastBrief, Ui.weight(1));
+        fingerSlot = Ui.text(this, "", 12, Ui.TEXT_2, Ui.MEDIUM);
+        fingerSlot.setVisibility(View.GONE);
+        LinearLayout.LayoutParams fl = new LinearLayout.LayoutParams(-2, -2);
+        fl.setMargins(Ui.dp(this, 8), 0, 0, 0);
+        lastRow.addView(fingerSlot, fl);
+        lastMore = new android.widget.ImageView(this);
+        lastMore.setImageResource(app.openring.R.drawable.ic_chevron_right);
+        lastMore.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_3));
+        lastMore.setRotation(90);
+        LinearLayout.LayoutParams ml0 = new LinearLayout.LayoutParams(Ui.dp(this, 22), Ui.dp(this, 22));
+        ml0.setMargins(Ui.dp(this, 6), 0, 0, 0);
+        lastRow.addView(lastMore, ml0);
+        lastCard.addView(lastRow);
+        lastDetails = Ui.vbox(this);
+        lastDetails.addView(Ui.gap(this, 8));
+        lastText = Ui.text(this, "", 14, Ui.TEXT, Ui.REGULAR);
         lastText.setLineSpacing(0, 1.15f);
-        last.addView(lastText);
-        last.addView(Ui.gap(this, 6));
+        lastDetails.addView(lastText);
+        lastDetails.addView(Ui.gap(this, 6));
         heardText = Ui.body(this, "");
-        last.addView(heardText);
+        lastDetails.addView(heardText);
         batteryText = Ui.body(this, "");
-        last.addView(batteryText);
-        last.addView(Ui.gap(this, 6));
-        last.addView(Ui.text(this, "From the ring's stored skin temperature (27 °C or more is a finger) and heart rate, as far as the last sync reaches. "
-                + "When the ring stores daytime heart rate, warm without one for over an hour (charger, sun, duvet) does not count as worn.", 12, Ui.TEXT_3, Ui.REGULAR));
-        root.addView(last);
+        lastDetails.addView(batteryText);
+        lastDetails.addView(Ui.gap(this, 6));
+        lastDetails.addView(Ui.text(this, Explain.FINDER_LAST, 12, Ui.TEXT_3, Ui.REGULAR));
+        lastDetails.setVisibility(View.GONE);
+        lastCard.addView(lastDetails);
+        lastCard.setClickable(true);
+        lastCard.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openDetails(!detailsOpen);
+            }
+        });
+        root.addView(lastCard, cardParams(false));
 
-        // ---- hot and cold ----
-        LinearLayout hot = Ui.card(this);
-        hot.addView(Ui.caption(this, "Hot and cold"));
-        hot.addView(Ui.gap(this, 4));
-        hot.addView(Ui.body(this, "Walk slowly around. The ring fills and the clicks get faster as you get closer."));
+        // ---- instruments: gauge with band and signal, then the trail strip ----
+        instCard = Ui.card(this);
+        LinearLayout row = Ui.hbox(this);
         meter = new Meter(this);
-        LinearLayout.LayoutParams ml = Ui.sized(this, -1, 210);
-        ml.setMargins(0, Ui.dp(this, 10), 0, Ui.dp(this, 6));
-        hot.addView(meter, ml);
-        bandText = Ui.text(this, "", 20, Ui.TEXT, Ui.LIGHT);
-        bandText.setGravity(Gravity.CENTER);
-        hot.addView(bandText, Ui.matchWrap());
+        row.addView(meter, new LinearLayout.LayoutParams(Ui.dp(this, FinderLayout.GAUGE_MIN), Ui.dp(this, FinderLayout.GAUGE_MIN)));
+        LinearLayout col = Ui.vbox(this);
+        bandText = Ui.text(this, "", 16, Ui.TEXT, Ui.REGULAR);
+        col.addView(bandText, Ui.matchWrap());
         signalText = Ui.text(this, "", 12, Ui.TEXT_3, Ui.REGULAR);
-        signalText.setGravity(Gravity.CENTER);
-        hot.addView(signalText, Ui.matchWrap());
+        LinearLayout.LayoutParams sgl = Ui.matchWrap();
+        sgl.setMargins(0, Ui.dp(this, 2), 0, 0);
+        col.addView(signalText, sgl);
+        LinearLayout.LayoutParams cl = Ui.weight(1);
+        cl.setMargins(Ui.dp(this, 12), 0, 0, 0);
+        row.addView(col, cl);
+        instCard.addView(row);
         issueBox = Ui.vbox(this);
-        issueText = Ui.text(this, "", 14, Ui.WARN, Ui.REGULAR);
+        issueText = Ui.text(this, "", 13, Ui.WARN, Ui.REGULAR);
         issueText.setLineSpacing(0, 1.15f);
         issueBox.addView(issueText);
         issueButton = Ui.button(this, "Allow", Ui.OXY, true);
@@ -210,58 +273,53 @@ public final class FinderActivity extends Activity implements SensorEventListene
         il.setMargins(0, Ui.dp(this, 8), 0, 0);
         issueBox.addView(issueButton, il);
         LinearLayout.LayoutParams ibl = Ui.matchWrap();
-        ibl.setMargins(0, Ui.dp(this, 10), 0, 0);
-        hot.addView(issueBox, ibl);
-        Switch sound = new Switch(this);
-        sound.setText("Clicks and vibration (faster when closer)");
-        sound.setTextColor(Ui.TEXT);
-        sound.setChecked(p.finderSound());
-        sound.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override
-            public void onCheckedChanged(CompoundButton bt, boolean on) {
-                Prefs.of(FinderActivity.this).setFinderSound(on);
-            }
-        });
-        LinearLayout.LayoutParams sl = Ui.matchWrap();
-        sl.setMargins(0, Ui.dp(this, 12), 0, 0);
-        hot.addView(sound, sl);
+        ibl.setMargins(0, Ui.dp(this, 8), 0, 0);
+        instCard.addView(issueBox, ibl);
+        issueBox.setVisibility(View.GONE);
         soundHint = Ui.text(this, "", 12, Ui.WARN, Ui.REGULAR);
-        hot.addView(soundHint);
-        hot.addView(Ui.gap(this, 8));
-        hot.addView(Ui.caption(this, "Signal, last 2 minutes"));
-        trailBox = Ui.vbox(this);
+        soundHint.setVisibility(View.GONE);
+        instCard.addView(soundHint);
+        trailCaption = Ui.caption(this, "Signal in dBm, last 2 minutes");
+        LinearLayout.LayoutParams tcl = Ui.matchWrap();
+        tcl.setMargins(0, Ui.dp(this, 6), 0, Ui.dp(this, 4));
+        instCard.addView(trailCaption, tcl);
         double now0 = System.currentTimeMillis() / 1000.0;
         trailChart = new Charts.LineChart(this, new TS(), now0 - 120, now0, Ui.OXY).noFill().unit(" dBm").empty("No signal yet").ago(Proximity.CHART_MIN_SPAN);
-        trailBox.addView(trailChart, Ui.sized(this, -1, 130));
-        hot.addView(trailBox, Ui.sized(this, -1, 130));
-        hot.addView(Ui.gap(this, 6));
-        hot.addView(Ui.text(this, "The signal jumps with walls, blankets, your body and the ring's angle. A ring under a duvet sounds "
-                + "farther away than it is. Walk slowly and follow the trend.", 12, Ui.TEXT_3, Ui.REGULAR));
-        root.addView(hot);
+        instCard.addView(trailChart, Ui.sized(this, -1, FinderLayout.STRIP_MIN));
+        root.addView(instCard, cardParams(false));
 
-        // ---- search walk: turn on the spot or walk through the room ----
-        LinearLayout turn = Ui.card(this);
-        turn.addView(Ui.caption(this, "Search walk"));
-        turn.addView(Ui.gap(this, 4));
-        turn.addView(Ui.body(this, "1. " + HOLD + "\n"
-                + "2. " + WALK + "\n"
-                + "3. Tap Stop when you are done."));
-        dial = new Dial(this);
-        LinearLayout.LayoutParams dl = Ui.sized(this, -1, 250);
-        dl.setMargins(0, Ui.dp(this, 10), 0, Ui.dp(this, 6));
-        turn.addView(dial, dl);
-        map = new MiniMap(this);
-        LinearLayout.LayoutParams mpl = Ui.sized(this, -1, 320);
-        mpl.setMargins(0, Ui.dp(this, 10), 0, Ui.dp(this, 6));
-        turn.addView(map, mpl);
-        map.setVisibility(View.GONE);
-        turnText = Ui.text(this, "", 14, Ui.TEXT_2, Ui.REGULAR);
-        turnText.setLineSpacing(0, 1.15f);
-        turn.addView(turnText);
+        // ---- the map: the dial with you in the middle before walking, the walked map after 1 m ----
+        mapCard = Ui.card(this);
+        helpBox = Ui.vbox(this);
+        helpBox.addView(Ui.text(this, "1. " + HOLD + "\n" + "2. " + WALK + "\n" + "3. Tap Stop when you are done.", 13, Ui.TEXT_2, Ui.REGULAR));
+        helpBox.addView(Ui.gap(this, 6));
+        walkNote = Ui.text(this, TURN_NOTE, 12, Ui.TEXT_3, Ui.REGULAR);
+        helpBox.addView(walkNote);
         stepText = Ui.text(this, "", 12, Ui.TEXT_3, Ui.REGULAR);
         LinearLayout.LayoutParams stl = Ui.matchWrap();
         stl.setMargins(0, Ui.dp(this, 4), 0, 0);
-        turn.addView(stepText, stl);
+        helpBox.addView(stepText, stl);
+        helpBox.addView(Ui.gap(this, 6));
+        helpBox.addView(Ui.text(this, Explain.FINDER_SIGNAL, 12, Ui.TEXT_3, Ui.REGULAR));
+        helpBox.addView(Ui.gap(this, 6));
+        helpBox.addView(Ui.text(this, Explain.FINDER_CLICKS, 12, Ui.TEXT_3, Ui.REGULAR));
+        helpBox.addView(Ui.gap(this, 10));
+        helpBox.setVisibility(View.GONE);
+        mapCard.addView(helpBox);
+        mapFrame = new android.widget.FrameLayout(this);
+        dial = new Dial(this);
+        mapFrame.addView(dial, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        map = new MiniMap(this);
+        mapFrame.addView(map, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        map.setVisibility(View.GONE);
+        mapFrame.setMinimumHeight(Ui.dp(this, FinderLayout.MAP_MIN));
+        mapCard.addView(mapFrame, new LinearLayout.LayoutParams(-1, 0, 1));
+        turnText = Ui.text(this, "", 13, Ui.TEXT_2, Ui.REGULAR);
+        turnText.setLineSpacing(0, 1.1f);
+        LinearLayout.LayoutParams ttl = Ui.matchWrap();
+        ttl.setMargins(0, Ui.dp(this, 6), 0, 0);
+        mapCard.addView(turnText, ttl);
+        LinearLayout buttons = Ui.hbox(this);
         turnButton = Ui.button(this, "Start", Ui.ACTIVE, true);
         turnButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -269,29 +327,107 @@ public final class FinderActivity extends Activity implements SensorEventListene
                 toggleTurn();
             }
         });
-        LinearLayout.LayoutParams tl = Ui.matchWrap();
-        tl.setMargins(0, Ui.dp(this, 10), 0, 0);
-        turn.addView(turnButton, tl);
-        turn.addView(Ui.gap(this, 6));
-        walkNote = Ui.text(this, TURN_NOTE, 12, Ui.TEXT_3, Ui.REGULAR);
-        turn.addView(walkNote);
-        root.addView(turn);
-
-        TextView done = Ui.button(this, "Done", Ui.TEXT_2, false);
-        done.setOnClickListener(new View.OnClickListener() {
+        buttons.addView(turnButton, Ui.weight(1));
+        helpButton = Ui.smallButton(this, "How it works", Ui.TEXT_2);
+        helpButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                finish();
+                openHelp(!helpOpen);
             }
         });
-        root.addView(done, Ui.matchWrap());
-        setContentView(sv);
+        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(-2, -2);
+        hl.setMargins(Ui.dp(this, 8), 0, 0, 0);
+        buttons.addView(helpButton, hl);
+        LinearLayout.LayoutParams bl = Ui.matchWrap();
+        bl.setMargins(0, Ui.dp(this, 8), 0, 0);
+        mapCard.addView(buttons, bl);
+        root.addView(mapCard, cardParams(true));
+        setContentView(scroll);
+
+        // share the height once it is known, and again when it changes (split screen, keyboard)
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        applyPlan(FinderLayout.plan(dm.heightPixels / dm.density - 24, fontScale()));
+        scroll.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int bt, int ol, int ot, int or, int ob) {
+                if (bt - t == ob - ot || bt - t <= 0) return;
+                final FinderLayout.Plan np = FinderLayout.plan((bt - t) / getResources().getDisplayMetrics().density, fontScale());
+                if (np.same(plan)) return;
+                // not inside a layout pass: apply after it
+                scroll.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        applyPlan(np);
+                    }
+                });
+            }
+        });
 
         if (demo && demoTurnOnly) demoTurn();
-        else if (demo) demoWalk();
+        else if (demo && !demoFresh) demoWalk();
         if (demo) demoTrail();
+        showSoundChip();
         loadLast();
         showTurn();
+        if (demo && getIntent().getBooleanExtra("demo_details", false)) {
+            openDetails(true);
+            openHelp(true);
+        }
+    }
+
+    float fontScale() {
+        float f = getResources().getConfiguration().fontScale;
+        return f > 0 ? f : 1;
+    }
+
+    /** A card's place in the column: the map card takes the height left over. */
+    LinearLayout.LayoutParams cardParams(boolean fill) {
+        LinearLayout.LayoutParams lp = fill ? new LinearLayout.LayoutParams(-1, 0, 1) : Ui.matchWrap();
+        lp.setMargins(0, 0, 0, Ui.dp(this, FinderLayout.GAP));
+        return lp;
+    }
+
+    /** Sizes from {@link FinderLayout}: gauge, trail strip, paddings, the map's minimum (issue #191). */
+    void applyPlan(FinderLayout.Plan np) {
+        plan = np;
+        int side = Ui.dp(this, 16);
+        root.setPadding(side, Ui.dp(this, np.compact ? 6 : 8), side, Ui.dp(this, np.compact ? 8 : 12) - Ui.dp(this, np.gap));
+        titleGap.getLayoutParams().height = Ui.dp(this, np.compact ? 2 : 6);
+        titleGap.setLayoutParams(titleGap.getLayoutParams());
+        int pad = Ui.dp(this, np.pad);
+        for (LinearLayout c : new LinearLayout[] {lastCard, instCard, mapCard}) {
+            c.setPadding(pad, pad, pad, pad);
+            ((LinearLayout.LayoutParams) c.getLayoutParams()).bottomMargin = Ui.dp(this, np.gap);
+            c.setLayoutParams(c.getLayoutParams());
+        }
+        meter.getLayoutParams().width = Ui.dp(this, np.gauge);
+        meter.getLayoutParams().height = Ui.dp(this, np.gauge);
+        meter.setLayoutParams(meter.getLayoutParams());
+        trailChart.getLayoutParams().height = Ui.dp(this, np.strip);
+        trailChart.setLayoutParams(trailChart.getLayoutParams());
+        mapFrame.setMinimumHeight(Ui.dp(this, np.mapMin));
+        turnText.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, np.statusSp);
+        root.requestLayout();
+    }
+
+    /** The full last worn text under the strip, or only the strip (Show the evidence: it stays one tap away). */
+    void openDetails(boolean open) {
+        detailsOpen = open;
+        lastDetails.setVisibility(open ? View.VISIBLE : View.GONE);
+        lastMore.setRotation(open ? -90 : 90);
+    }
+
+    /** The steps, the notes and the limits above the map. */
+    void openHelp(boolean open) {
+        helpOpen = open;
+        helpBox.setVisibility(open ? View.VISIBLE : View.GONE);
+        helpButton.setText(open ? "Close help" : "How it works");
+    }
+
+    void showSoundChip() {
+        boolean on = Prefs.of(this).finderSound();
+        soundChip.setText(on ? "Clicks on" : "Clicks off");
+        Ui.outline(this, soundChip, on ? Ui.ACTIVE : Ui.TEXT_3);
     }
 
     // ------------------------------------------------------------------ lifecycle
@@ -382,17 +518,21 @@ public final class FinderActivity extends Activity implements SensorEventListene
         }, "finder-last").start();
     }
 
+    static final LastWorn.Clock CLOCK = new LastWorn.Clock() {
+        @Override
+        public String when(double unix) {
+            return FinderActivity.when(unix);
+        }
+    };
+
     void showLast(LastWorn.Result r) {
-        lastText.setText(LastWorn.text(r, System.currentTimeMillis() / 1000.0, new LastWorn.Clock() {
-            @Override
-            public String when(double unix) {
-                return FinderActivity.when(unix);
-            }
-        }));
+        lastResult = r;
+        lastText.setText(LastWorn.text(r, System.currentTimeMillis() / 1000.0, CLOCK));
         Prefs p = Prefs.of(this);
         if (demo) {
-            heardText.setText("In the demo the signal below is made up.");
+            heardText.setText("In the demo the signal is made up.");
             batteryText.setVisibility(View.GONE);
+            showBrief();
             return;
         }
         showHeard();
@@ -412,11 +552,22 @@ public final class FinderActivity extends Activity implements SensorEventListene
         if (demo || heardText == null) return;
         if (prox.band() != Proximity.NOT_HEARD) {
             heardText.setText("This phone hears it right now.");
-            return;
+        } else {
+            long heard = Prefs.of(this).lastHeard();
+            heardText.setText(heard == 0 ? "This phone has not noted the ring yet (it starts noting this with this version)."
+                    : "This phone last heard it " + when(heard) + ".");
         }
-        long heard = Prefs.of(this).lastHeard();
-        heardText.setText(heard == 0 ? "This phone has not noted the ring yet (it starts noting this with this version)."
-                : "This phone last heard it " + when(heard) + ".");
+        showBrief();
+    }
+
+    /** The strip's one or two lines (issue #191): the short last worn sentence, then when this phone heard it. */
+    void showBrief() {
+        if (lastResult == null) return;
+        String s = LastWorn.brief(lastResult, System.currentTimeMillis() / 1000.0, CLOCK);
+        if (demo) s += " The signal is made up (demo).";
+        else if (prox.band() != Proximity.NOT_HEARD) s += " Heard right now.";
+        else if (Prefs.of(this).lastHeard() != 0) s += " Last heard " + when(Prefs.of(this).lastHeard()) + ".";
+        if (!s.contentEquals(lastBrief.getText())) lastBrief.setText(s);
     }
 
     /** "today at 22:14", "yesterday at 22:14" or "on Mon 13.10. at 22:14". */
@@ -635,7 +786,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         }
         if (band != Proximity.NOT_HEARD) {
             bandText.setText(Proximity.label(band));
-            signalText.setText("Signal " + Math.round(v) + " dBm. Closer to 0 is stronger; it tells warmer or colder, not metres.");
+            signalText.setText(SIGNAL_LINE);
             return;
         }
         if (linked()) {
@@ -676,7 +827,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
     void showSoundHint() {
         AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         boolean silent = am != null && am.getStreamVolume(AudioManager.STREAM_MUSIC) == 0;
-        soundHint.setText(silent && Prefs.of(this).finderSound() ? "Media volume is off, so you only feel the clicks. Turn the volume up to hear them." : "");
+        soundHint.setText(silent && Prefs.of(this).finderSound() ? "Media volume is off, so you only feel the clicks." : "");
         soundHint.setVisibility(soundHint.getText().length() == 0 ? View.GONE : View.VISIBLE);
     }
 
@@ -773,7 +924,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             spotDirty = true;
         } else {
             if (rotation == null && !demo) {
-                turnText.setText("This phone has no rotation sensor, so the search walk does not work on it. Hot and cold above still does.");
+                turnText.setText("This phone has no rotation sensor, so the search walk does not work on it. The gauge and the trail above still work.");
                 return;
             }
             walk = new SearchWalk().stepLength(stepLength());
@@ -840,7 +991,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         showStepLength();
         dial.invalidate();
         if (walk == null) {
-            turnText.setText(rotation == null && !demo ? "This phone has no rotation sensor, so the search walk does not work on it." : "");
+            turnText.setText(rotation == null && !demo ? "This phone has no rotation sensor, so the search walk does not work on it." : START_HINT);
             return;
         }
         if (walked) {
@@ -1063,9 +1214,9 @@ public final class FinderActivity extends Activity implements SensorEventListene
                 arc.setColor(bandColor(band));
                 cv.drawArc(oval, 135, (float) (270 * fill), false, arc);
             }
-            num.setTextSize(size * 0.24f);
+            num.setTextSize(Math.max(Ui.dp(getContext(), 18), size * 0.24f));
             cv.drawText(Double.isNaN(value) ? "--" : String.valueOf(Math.round(value)), w / 2, hh / 2 + num.getTextSize() * 0.3f, num);
-            unit.setTextSize(size * 0.075f);
+            unit.setTextSize(Math.max(Ui.dp(getContext(), 9), size * 0.075f));
             cv.drawText("dBm", w / 2, hh / 2 + num.getTextSize() * 0.3f + unit.getTextSize() * 1.6f, unit);
         }
     }
@@ -1077,6 +1228,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
     final class Dial extends View {
         private final Paint petal = new Paint(Paint.ANTI_ALIAS_FLAG), ring = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint arrow = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG), tipBg = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint you = new Paint(Paint.ANTI_ALIAS_FLAG), youDot = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF r = new RectF();
         private float touchAngle = Float.NaN;
 
@@ -1092,6 +1244,11 @@ public final class FinderActivity extends Activity implements SensorEventListene
             txt.setTextSize(Ui.dp(c, 10));
             txt.setTextAlign(Paint.Align.CENTER);
             tipBg.setColor(Ui.BG);
+            // like "you" on the map: a white dot with a tick the way you face
+            you.setColor(Ui.TEXT);
+            you.setStrokeWidth(Ui.dp(c, 2));
+            you.setStrokeCap(Paint.Cap.ROUND);
+            youDot.setColor(Ui.TEXT);
         }
 
         /** Where the person faces now, in the walk's terms (relative to the start once a walk began). */
@@ -1165,7 +1322,14 @@ public final class FinderActivity extends Activity implements SensorEventListene
             cv.drawCircle(cx, cy, rad, ring);
             cv.drawCircle(cx, cy, rad * 0.5f, ring);
             cv.drawText("You face this way", cx, Ui.dp(getContext(), 11), txt);
-            if (walk == null) return;
+            if (walk != null) drawTurn(cv, cx, cy, rad, hh);
+            // you in the middle, facing up: the map's centre before you walk (issue #191)
+            float len = Ui.dp(getContext(), 14);
+            cv.drawLine(cx, cy, cx, cy - len, you);
+            cv.drawCircle(cx, cy, Ui.dp(getContext(), 5), youDot);
+        }
+
+        void drawTurn(Canvas cv, float cx, float cy, float rad, float hh) {
             double[] means = walk.sectorMeans();
             int[] counts = walk.sectorCounts();
             double lo = Double.POSITIVE_INFINITY, hi = Double.NEGATIVE_INFINITY;
