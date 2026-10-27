@@ -2491,7 +2491,7 @@ public class CoreTest {
         check("total burn: the call without a time counts the whole day, as before (#155)", old.restingKcal == 1600 && Double.isNaN(old.totalUntil));
         eq("total burn line, a day that has ended (#155)", app.openring.ui.Explain.totalBurn(Double.NaN, ZURICH), "Active burn plus what your body uses at rest");
         eq("total burn line, so far (#155)", app.openring.ui.Explain.totalBurn(at(day + "T08:07:20", ZURICH), ZURICH),
-                "So far (up to 08:07): active burn plus what your body uses at rest");
+                "So far, up to 08:07 (active plus resting burn)");
     }
 
     static void activityDay() {

@@ -59,7 +59,7 @@ public final class Explain {
      */
     public static String totalBurn(double until, java.time.ZoneId zone) {
         if (Double.isNaN(until)) return "Active burn plus what your body uses at rest";
-        return "So far (up to " + app.openring.core.analysis.WakeUps.clock(until, zone) + "): active burn plus what your body uses at rest";
+        return "So far, up to " + app.openring.core.analysis.WakeUps.clock(until, zone) + " (active plus resting burn)";
     }
 
     /** What VO2 max and its unit mean, under the Cardio capacity card (issue #116). */
