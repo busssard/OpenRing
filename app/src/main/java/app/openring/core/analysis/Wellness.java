@@ -63,6 +63,10 @@ public final class Wellness {
         public int coveredMin;
         /** Real minutes of the day: 1440, or 1380 and 1500 when the clocks change by an hour (issue #114). */
         public int dayMin;
+        /** The resting part of {@link #totalKcal}: the whole day's resting burn, or its share up to {@link #totalUntil} (issue #155). */
+        public double restingKcal;
+        /** Unix seconds up to which the resting part counts on a day still running when analysed; NaN for a day that has ended. */
+        public double totalUntil = Double.NaN;
         public double targetKcal;
         public Night.Score score;
     }
@@ -77,11 +81,20 @@ public final class Wellness {
      * minute's own clock time, as {@link DialMath#fill} does for the screen clock. When the clocks go back both
      * passes of the repeated hour land on the same quarter hours (their average); when they go forward the skipped
      * ones stay empty. A {@code zone} of null counts the clock from {@code from}.
-     * Minutes inside {@code sleeps} count as rest. Step counts are an estimate from intensity
+     * Minutes inside {@code sleeps} count as rest, also those without a value (issue #112), so every real minute is in
+     * exactly one of high, medium, low, inactive, rest or not worn. Step counts are an estimate from intensity
      * (the ring's own step decoder is a proprietary model). Values that are not plausible
      * ({@code EventCodec.plausibleMet}) must be left out by the caller.
      */
     public static Day day(String date, double from, double to, ZoneId zone, TS met, List<double[]> sleeps, double weightKg, double bmrKcal) {
+        return day(date, from, to, zone, met, sleeps, weightKg, bmrKcal, Double.POSITIVE_INFINITY);
+    }
+
+    /**
+     * As above, analysed at {@code now} (unix seconds): on a day that has not ended by then Total burn counts the
+     * resting burn only for the share of the day that has passed (issue #155, as Oura's total burn grows through the day).
+     */
+    public static Day day(String date, double from, double to, ZoneId zone, TS met, List<double[]> sleeps, double weightKg, double bmrKcal, double now) {
         Day d = new Day();
         d.date = date;
         Arrays.fill(d.metProfile, Double.NaN);
@@ -106,7 +119,9 @@ public final class Wellness {
             int clock = clockMin(from + m * 60, from, zone);
             boolean daytime = clock >= DAYTIME_FROM_MIN && clock < DAYTIME_TO_MIN;
             if (Double.isNaN(v)) {
-                if (!asleep) d.nonWearMin++;
+                // asleep without a value is still rest (issue #112): the ring found the sleep, it was worn
+                if (asleep) d.restMin++;
+                else d.nonWearMin++;
                 if (sitting >= 60) d.longInactiveStreaks++;
                 sitting = 0;
                 continue;
@@ -150,8 +165,19 @@ public final class Wellness {
         if (d.coveredMin > 0) d.avgMet = metSum / d.coveredMin;
         d.steps = Math.round(d.steps / 10.0) * 10;
         d.distanceM = stepsToMeters(d.steps);
-        d.totalKcal = bmrKcal + d.activeKcal;
+        d.restingKcal = restingKcal(bmrKcal, from, to, now);
+        if (now < to) d.totalUntil = Math.max(from, now);
+        d.totalKcal = d.restingKcal + d.activeKcal;
         return d;
+    }
+
+    /**
+     * The resting burn of the day {@code from} to {@code to} up to {@code now} (issue #155): all of {@code bmrKcal} once
+     * the day has ended, before that the share of the day's real seconds that has passed (0 before it began).
+     */
+    public static double restingKcal(double bmrKcal, double from, double to, double now) {
+        if (!(to > from) || !(now < to)) return bmrKcal; // ended, or no time given
+        return bmrKcal * Stats.clamp((now - from) / (to - from), 0, 1);
     }
 
     /** Minutes after midnight by the clock in {@code zone} at {@code t} (0 to 1439); without a zone, minutes since {@code from}. */

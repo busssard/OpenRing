@@ -53,6 +53,15 @@ public final class Explain {
                 + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " of these 7 days.";
     }
 
+    /**
+     * The line under Total burn (issue #155): a day still running when it was analysed counts its resting burn only up
+     * to {@code until} (unix seconds, NaN for a day that has ended), shown as a clock time in {@code zone}.
+     */
+    public static String totalBurn(double until, java.time.ZoneId zone) {
+        if (Double.isNaN(until)) return "Active burn plus what your body uses at rest";
+        return "So far (up to " + app.openring.core.analysis.WakeUps.clock(until, zone) + "): active burn plus what your body uses at rest";
+    }
+
     /** What VO2 max and its unit mean, under the Cardio capacity card (issue #116). */
     public static final String VO2MAX = "VO2 max is the most oxygen your body can use per minute in hard exercise, "
             + "for each kg of body weight (ml/kg/min). Higher means fitter heart and lungs.";
