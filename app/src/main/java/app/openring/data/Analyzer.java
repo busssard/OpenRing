@@ -754,6 +754,7 @@ public final class Analyzer {
         Json.put(out, "long_inactive", d.longInactiveStreaks);
         Json.put(out, "avg_met", d.avgMet);
         Json.put(out, "covered_min", d.coveredMin);
+        Json.put(out, "day_min", d.dayMin); // real minutes of the day, marks the rule of issue #114 (review of #202)
         Json.put(out, "target_kcal", d.targetKcal);
         JSONArray prof = new JSONArray();
         for (double v : d.metProfile) prof.put(Double.isNaN(v) ? JSONObject.NULL : (Object) (Math.round(v * 100) / 100.0));

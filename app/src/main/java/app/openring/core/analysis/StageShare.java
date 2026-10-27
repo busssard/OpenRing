@@ -102,6 +102,16 @@ public final class StageShare {
     }
 
     /**
+     * The minutes before falling asleep for {@link #noDataNote}, matching the shown No data row ({@code shownNone},
+     * rounded together with the other rows): all of it when all the time without stage data was before sleep (so the
+     * note says "All of it", review of #201), else the exact minutes but never more than the row shows.
+     */
+    public static double shownBefore(double noneMin, double beforeMin, double shownNone) {
+        if (Double.isNaN(beforeMin) || Double.isNaN(shownNone)) return beforeMin;
+        return beforeMin >= noneMin ? shownNone : Math.min(beforeMin, shownNone);
+    }
+
+    /**
      * Efficiency as the screens show it (issue #107): time asleep over time in bed, worked out from the stored
      * minutes, so nights analysed before (whose stored efficiency left out the time without stage data) agree
      * without a re analysis. NaN when the stored efficiency is unknown (no sleep at all) or there is under a minute
@@ -115,9 +125,10 @@ public final class StageShare {
     /**
      * Whole minutes for parts that belong to one shown total (issue #111): each part rounded down, the minutes still
      * missing to {@code total} go to the largest remainders (ties to the earlier part), so the parts add up to the
-     * total and each one is within a minute of its exact value. Negative parts count as 0. Null when a part is NaN or
-     * the total cannot be reached that way (it is below the parts rounded down, or more than one minute per part
-     * above them).
+     * total and each one is within a minute of its exact value. Negative parts count as 0. A part that is exactly 0
+     * stays 0 and a part of half a minute or more never shows 0 (a one minute awakening never reads "Awake 0h 0m"
+     * next to a wake up, review of #201). Null when a part is NaN or the total cannot be reached that way (it is too
+     * far from the parts rounded down, or only by breaking the two rules before); the caller then rounds on its own.
      */
     public static long[] roundTogether(double[] parts, long total) {
         int n = parts.length;
@@ -134,23 +145,34 @@ public final class StageShare {
         long missing = total - given;
         if (missing < -n || missing > n) return null;
         // a part that is exactly 0 never gets a minute (no "No data 1 min" or "Deep 0h 1m" on a night without it);
-        // the others take it, a second minute only once each has had one
+        // the others take it, first a part of half a minute or more that is still 0, a second minute only once each
+        // has had one
         int[] got = new int[n];
         for (long k = 0; k < missing; k++) {
             int best = -1;
             for (int i = 0; i < n; i++) {
                 if (!(clean(parts[i]) > 0)) continue;
-                if (best < 0 || got[i] < got[best] || (got[i] == got[best] && rest[i] > rest[best])) best = i;
+                boolean need = out[i] == 0 && clean(parts[i]) >= 0.5;
+                if (best < 0) { best = i; continue; }
+                boolean bestNeed = out[best] == 0 && clean(parts[best]) >= 0.5;
+                if (need != bestNeed) { if (need) best = i; continue; }
+                if (got[i] < got[best] || (got[i] == got[best] && rest[i] > rest[best])) best = i;
             }
             if (best < 0) return null;
             out[best]++;
             got[best]++;
         }
+        // a part of half a minute or more that is still 0 here would hide it (for example a short awakening)
+        for (int i = 0; i < n; i++) if (out[i] == 0 && clean(parts[i]) >= 0.5) return null;
         // a total below the parts rounded down (the shown time in bed comes from rounded clock times): the minutes
-        // come off the smallest remainders, one per part, never below 0
+        // come off the smallest remainders, one per part, never below 0, and never from a part shown as 1 whose exact
+        // value is half a minute or more (a 1 minute awakening must not show 0 next to its wake up)
         for (long k = 0; k > missing; k--) {
             int best = -1;
-            for (int i = 0; i < n; i++) if (out[i] > 0 && rest[i] < 2 && (best < 0 || rest[i] < rest[best])) best = i;
+            for (int i = 0; i < n; i++) {
+                if (out[i] <= 0 || rest[i] >= 2 || (out[i] == 1 && clean(parts[i]) >= 0.5)) continue;
+                if (best < 0 || rest[i] < rest[best]) best = i;
+            }
             if (best < 0) return null;
             out[best]--;
             rest[best] = 2;
