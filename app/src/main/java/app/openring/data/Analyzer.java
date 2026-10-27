@@ -302,11 +302,19 @@ public final class Analyzer {
             }
         }
         List<NightFinder.RingRun> runs = NightFinder.ringRuns(pageTimes, pages);
-        // the phone's clock tells a wake up in the middle of the night from a nap (issue #42)
+        // the clock tells a wake up in the middle of the night from a nap (issue #42), the clock of the zone
+        // the sleep was slept in, not the phone's zone now (issue #161)
         NightFinder.LocalClock clock = new NightFinder.LocalClock() {
+            double lastEnd = Double.NaN;
+            ZoneId lastZone;
+
             @Override
-            public int minuteOfDay(double unix) {
-                java.time.LocalTime lt = Instant.ofEpochSecond((long) unix).atZone(zone).toLocalTime();
+            public int minuteOfDay(double unix, double end) {
+                if (lastZone == null || end != lastEnd) {
+                    lastZone = sleptIn(end);
+                    lastEnd = end;
+                }
+                java.time.LocalTime lt = Instant.ofEpochSecond((long) unix).atZone(lastZone).toLocalTime();
                 return lt.getHour() * 60 + lt.getMinute();
             }
         };
@@ -354,12 +362,14 @@ public final class Analyzer {
         for (Night n : nights) {
             String zid = db.zoneAt(n.end);
             zoneIds.put(n, zid);
-            String d = date(n.end, zoneOf(zid));
-            // a night between two notes counts in the later zone, but never on an earlier date than in the
-            // zone before (flying west, waking at 05:30 in Zurich is 23:30 in New York the day before,
-            // which would make the night before a nap)
+            ZoneId nz = zoneOf(zid);
+            String d = date(n.end, nz);
+            // a night between two notes counts in the later zone, but a night slept before the flight is never
+            // on an earlier date than in the zone before (flying west, waking at 05:30 in Zurich is 23:30 in New
+            // York the day before, which would make the night before a nap). A night slept after landing keeps
+            // its own date (issue #162: across the date line 06:45 in Los Angeles is already the next day in Auckland)
             ZoneId before = ClockChange.zone(db.zoneBeforeGap(n.end));
-            if (before != null) {
+            if (ClockChange.sleptBefore(n.end, before, nz)) {
                 String earlier = date(n.end, before);
                 if (earlier.compareTo(d) > 0) d = earlier;
             }
@@ -460,6 +470,17 @@ public final class Analyzer {
             }
         }
         return lo;
+    }
+
+    /**
+     * The zone a sleep ending at {@code end} was slept in (issues #161, #162): the zone history's at its end
+     * (between two notes the later one, "the last zone counts", #22), or the zone noted before the gap when
+     * the sleep ends in its morning ({@link ClockChange#sleptBefore}); the phone's zone without any history.
+     */
+    ZoneId sleptIn(double end) {
+        ZoneId later = zoneOf(db.zoneAt(end));
+        ZoneId before = ClockChange.zone(db.zoneBeforeGap(end));
+        return ClockChange.sleptBefore(end, before, later) ? before : later;
     }
 
     /** The zone of a noted id, the phone's zone when there is none (or the phone does not know it). */

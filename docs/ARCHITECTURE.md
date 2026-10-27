@@ -97,7 +97,9 @@ history had, before anything is written to the file the person picked; otherwise
    up in the middle of the night (up to 3 hours, the gap from 22:00 at the earliest to before 06:30, the
    sleep before it begun at 21:00 or later, the ring worn through it) joins the pieces before and after
    into one night; the time the ring calls awake in the gap counts as awake, and ring stages of both
-   pieces keep their own times (issue #42). A period keeps where the ring's own hypnogram ends (`Period.codesEnd`), so
+   pieces keep their own times (issue #42). These clock times are read in the zone the sleep was slept in
+   (`Analyzer.sleptIn`, see Time zones below), never in the phone's zone now, so a trip does not split nights
+   analysed again later (issue #161). A period keeps where the ring's own hypnogram ends (`Period.codesEnd`), so
    a bedtime period that makes a ring staged run longer leaves the stages at their clock times and the extra time
    without stage data (issue #110). kv `night_finder` holds the rules version. `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
@@ -124,7 +126,10 @@ history had, before anything is written to the file the person picked; otherwise
 5. Time zones (issue #22): each night takes its zone from `zones` and stores it as `zone`; its day, sleep timing
    and clock change marker use it, and a day uses its main night's zone. Screens format each night's times
    with its own zone (`Json.zone`, falling back to the phone's zone for nights without one), so a trip does
-   not move earlier nights. A new zone row analyses the nights since the row before again. Screens that show
+   not move earlier nights. A new zone row analyses the nights since the row before again. A night whose end
+   falls between two rows takes the later zone; it keeps the date it has in the zone before only when it was
+   most likely slept there, its end nearer to 07:00 on that clock (`ClockChange.sleptBefore`: a night before a
+   flight west), so a first night after crossing the date line stays on its own day (issue #162). Screens that show
    one calendar day (Screen clock, the Body tab's day) take its clock change from `ClockChange.onDay`: a change
    belongs to the date of the clock time it skips or repeats, also at midnight (Greenland, Cairo; issue #158),
    while nights keep `ClockChange.find`. A touch on a lit 5 minute line of the Screen clock finds the use drawn
