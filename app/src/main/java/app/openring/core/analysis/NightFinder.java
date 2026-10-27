@@ -180,8 +180,10 @@ public final class NightFinder {
     }
 
     static List<Period> merge(List<Period> ps, List<double[]> asleep, TS state, LocalClock clock) {
+        double[] nightEnd = nightEnds(ps);
         List<Period> out = new ArrayList<Period>();
-        for (Period p : ps) {
+        for (int i = 0; i < ps.size(); i++) {
+            Period p = ps.get(i);
             if (out.isEmpty()) {
                 out.add(p);
                 continue;
@@ -194,7 +196,7 @@ public final class NightFinder {
                 for (double[] r : asleep) if (r[0] < p.start && prev.end < r[1]) awakeThroughout = false;
             }
             boolean join = gap <= MAX_BREAK_S && !awakeThroughout;
-            if (!join && nightWake(prev.start, prev.end, p.start, p.end, state, clock)) {
+            if (!join && nightWake(prev.start, prev.end, p.start, nightEnd[i], state, clock)) {
                 List<double[]> gapAwake = awakeParts(prev.end, p.start, asleep);
                 // ring stages on either side keep their own times; the gap is awake (issue #42)
                 if (prev.staged || p.staged) {
@@ -225,6 +227,27 @@ public final class NightFinder {
         return out;
     }
 
+    /**
+     * For each piece, the end of the last piece reached from it through gaps of at most 3 hours (the longest
+     * night wake): the end of the night it may join. Every piece of one night gets the same end, so the zone
+     * its clock is read in is decided once per night, not per piece (issue #161, review of PR #206).
+     */
+    static double[] nightEnds(List<Period> ps) {
+        double[] out = new double[ps.size()];
+        int i = 0;
+        while (i < ps.size()) {
+            double end = ps.get(i).end;
+            int j = i + 1;
+            while (j < ps.size() && ps.get(j).start - end <= MAX_NIGHT_WAKE_S) {
+                end = Math.max(end, ps.get(j).end);
+                j++;
+            }
+            for (int k = i; k < j; k++) out[k] = end;
+            i = j;
+        }
+        return out;
+    }
+
     /** Minutes since 12:00 the day before, so a night's clock times count up across midnight. */
     static int fromNoon(LocalClock clock, double unix, double end) {
         return (clock.minuteOfDay(unix, end) + 12 * 60) % (24 * 60);
@@ -235,7 +258,8 @@ public final class NightFinder {
      * of the night: at most 3 hours, from 22:00 at the earliest to before 06:30, the sleep before it
      * begun at 21:00 or later, and the ring reporting its sleep state at least every 30 minutes
      * through it (a ring taken off is not a wake up). All three times are read on the clock of the
-     * zone the sleep was slept in, the one it ends in after the gap ({@code end}, issue #161).
+     * zone the sleep was slept in, decided from the end of the whole night ({@code end}, see
+     * {@link #nightEnds}; issue #161).
      */
     static boolean nightWake(double sleepStart, double a, double b, double end, TS state, LocalClock clock) {
         if (clock == null || b <= a || b - a > MAX_NIGHT_WAKE_S) return false;

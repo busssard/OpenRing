@@ -2099,6 +2099,36 @@ public class PipelineTest {
             }
             check("#161 Zurich nights before a flight west, analysed in Los Angeles: one night each with its wake up, on its own day",
                     lines.size() == 10 && whole == 10 && onDay == 10, lines);
+
+            // review of PR #206: the zone is decided once per night, not per piece. New York nights with three
+            // 62 minute wake ups (00:00, 01:52, 03:44); the first one lies between the last Zurich note and the
+            // first New York note. Read per piece, its later pieces end in the Zurich morning and the first
+            // piece became a nap
+            ZoneId ny = ZoneId.of("America/New_York");
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(ny));
+            t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond();
+            ev = new ArrayList<RingEvent>();
+            List<LocalDate> home = dates("2026-09-02", 5), away = dates("2026-09-08", 4);
+            zoneNights(ev, home, zh, false, t0, ds0);
+            for (LocalDate d : away) {
+                List<double[]> awake = new ArrayList<double[]>();
+                for (double h : new double[] {0, 112 / 60.0, 224 / 60.0}) awake.add(new double[] {atIn(d, h, ny), atIn(d, h, ny) + 62 * 60});
+                wornSleep(ev, atIn(d, -1, ny), atIn(d, 7, ny), awake, t0, ds0);
+            }
+            c = travelPhone("openring161m", ev, t0, ds0);
+            db = Db.get(c);
+            for (LocalDate d : home) db.noteZone(atIn(d, 8, zh), zh.getId());
+            for (LocalDate d : away) db.noteZone(atIn(d, 8, ny), ny.getId());
+            Analyzer.run(c, null);
+            lines = nightLines(db);
+            int nights = 0, naps = 0;
+            for (String l : lines) {
+                if (l.contains(" nap ")) naps++;
+                for (LocalDate d : away) if (l.startsWith(d + " main") && !l.contains(" 0 wake ups") && !l.contains(" 1 wake ups")
+                        && !l.contains(" 2 wake ups")) nights++;
+            }
+            check("#161 New York nights with three long wake ups, the first between the notes: one night each, no nap",
+                    nights == 4 && naps == 0 && lines.size() == 9, lines);
         } finally {
             java.util.TimeZone.setDefault(keep);
         }

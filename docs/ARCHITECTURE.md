@@ -98,7 +98,8 @@ history had, before anything is written to the file the person picked; otherwise
    sleep before it begun at 21:00 or later, the ring worn through it) joins the pieces before and after
    into one night; the time the ring calls awake in the gap counts as awake, and ring stages of both
    pieces keep their own times (issue #42). These clock times are read in the zone the sleep was slept in
-   (`Analyzer.sleptIn`, see Time zones below), never in the phone's zone now, so a trip does not split nights
+   (`Analyzer.sleptIn`, see Time zones below), decided once per night from the end of the last piece reached
+   through gaps of up to 3 hours (`NightFinder.nightEnds`), never in the phone's zone now, so a trip does not split nights
    analysed again later (issue #161). A period keeps where the ring's own hypnogram ends (`Period.codesEnd`), so
    a bedtime period that makes a ring staged run longer leaves the stages at their clock times and the extra time
    without stage data (issue #110). kv `night_finder` holds the rules version. `Analyzer` then
