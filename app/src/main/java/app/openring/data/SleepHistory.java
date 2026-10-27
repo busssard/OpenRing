@@ -8,6 +8,7 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+import app.openring.core.analysis.ClockAverage;
 import app.openring.core.analysis.SleepPattern;
 import app.openring.core.analysis.StageFilter;
 import app.openring.core.analysis.WakeUps;
@@ -73,12 +74,13 @@ public final class SleepHistory {
             hrv[i] = Json.d(o, "avg_hrv");
             wakes[i] = o.has("awakenings") ? o.optInt("awakenings") : Double.NaN;
             ZoneId nz = Json.zone(o, zone);
-            bed[i] = relClock(Json.d(o, "sleep_start"), nz);
-            wake[i] = relClock(Json.d(o, "sleep_end"), nz);
+            bed[i] = clockOf(Json.d(o, "sleep_start"), nz);
+            wake[i] = clockOf(Json.d(o, "sleep_end"), nz);
             double start = Json.d(o, "start"), end = Json.d(o, "end");
             int[] st = Json.stages(o);
             if (!Double.isNaN(start) && end > start && st.length > 0) {
-                h.pattern.add(clockMin(start, nz), st, (end - start) / st.length);
+                // each stage at its own clock time, so a clock change night keeps its clock times (issue #137)
+                h.pattern.add(start, st, (end - start) / st.length, nz);
             }
         }
         h.asleepMin = Stats.mean(asleep);
@@ -92,10 +94,11 @@ public final class SleepHistory {
         h.lowestHr = Stats.mean(low);
         h.hrv = Stats.mean(hrv);
         h.wakeUps = Stats.mean(wakes);
-        double b = Stats.mean(bed), w = Stats.mean(wake);
-        h.bedtimeMin = Double.isNaN(b) ? Double.NaN : ((b + SleepPattern.ANCHOR_MIN) % 1440 + 1440) % 1440;
-        h.wakeMin = Double.isNaN(w) ? Double.NaN : ((w + SleepPattern.ANCHOR_MIN) % 1440 + 1440) % 1440;
-        if (Stats.countFinite(bed) >= 2) h.bedtimeSdMin = Stats.sd(bed);
+        // on the clock face, so times around 16:00 (day sleep) average as well as those around midnight (issue #164)
+        double[] b = ClockAverage.of(bed);
+        h.bedtimeMin = b[0];
+        h.bedtimeSdMin = b[1];
+        h.wakeMin = ClockAverage.of(wake)[0];
         return h;
     }
 
@@ -104,11 +107,8 @@ public final class SleepHistory {
         return z.getHour() * 60 + z.getMinute() + z.getSecond() / 60.0;
     }
 
-    /** Minutes after 20:00, so times around midnight average correctly (NaN stays NaN). */
-    static double relClock(double unix, ZoneId zone) {
-        if (Double.isNaN(unix)) return Double.NaN;
-        double r = clockMin(unix, zone) - SleepPattern.ANCHOR_MIN;
-        if (r < -4 * 60) r += 1440;
-        return r;
+    /** Clock minutes after midnight (NaN stays NaN); {@link ClockAverage} averages them on the clock face. */
+    static double clockOf(double unix, ZoneId zone) {
+        return Double.isNaN(unix) ? Double.NaN : clockMin(unix, zone);
     }
 }

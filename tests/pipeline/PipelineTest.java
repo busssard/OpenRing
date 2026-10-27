@@ -703,6 +703,7 @@ public class PipelineTest {
         check("newest demo night has a phone check at noon", Json.d(springNewest, "phone_min") >= 1
                 && "2026-04-12".equals(springNewest.optString("day")), springNewest.optString("day"));
         app.openring.data.Demo.leave(phone3);
+        demoSwitchPattern();
 
         longWakeChecks();
         previewRingWake();
@@ -2219,6 +2220,92 @@ public class PipelineTest {
      * Issue #22: demo bed and wake times keep their clock time across a switch (median of up to 14 nights on each side
      * moves by under 30 minutes, the old bug moved it by 60), and the switch night carries the marker.
      */
+    /** Issue #137: the average night of the demo's clock change nights 2026-10-25 and 2027-03-28 keeps their clock times. */
+    static void demoSwitchPattern() throws Exception {
+        java.io.File dir = java.nio.file.Files.createTempDirectory("openring137").toFile();
+        Context phone = new Context(dir);
+        ZoneId z = ZoneId.systemDefault();
+        // "now" must lie in the past (the analysis refuses times more than a day ahead), so the spring night
+        // 2027-03-28 is checked in CoreTest with the zone rules; dstChecks checks 2025-10-26 and 2026-03-29 here
+        String[][] cases = {{"2026-10-25", "2026-10-26", "back"}};
+        for (String[] k : cases) {
+            long now = java.time.LocalDateTime.parse(k[1] + "T12:00:00").atZone(z).toEpochSecond();
+            app.openring.data.Demo.enter(phone, null, LocalDate.parse(k[1]), now);
+            Db db = Db.get(phone);
+            patternMatchesNight(db, k[0], "demo, clocks " + k[2] + " " + k[0]);
+            app.openring.data.Demo.leave(phone);
+        }
+        // issue #164: main nights ending at 15:50 and 16:10 wake at 16:00, not 04:00
+        List<JSONObject> day = new ArrayList<JSONObject>();
+        day.add(Json.parse(dayNight(java.time.LocalDateTime.parse("2026-10-10T08:00:00"), java.time.LocalDateTime.parse("2026-10-10T15:50:00"), z)));
+        day.add(Json.parse(dayNight(java.time.LocalDateTime.parse("2026-10-11T08:20:00"), java.time.LocalDateTime.parse("2026-10-11T16:10:00"), z)));
+        app.openring.data.SleepHistory dh = app.openring.data.SleepHistory.of(day, z);
+        check("history: day sleeper wakes at 16:00", Math.abs(dh.wakeMin - 16 * 60) < 0.01, dh.wakeMin);
+        check("history: day sleeper falls asleep at 08:10, varies by 10 min", Math.abs(dh.bedtimeMin - (8 * 60 + 10)) < 0.01
+                && Math.abs(dh.bedtimeSdMin - 10) < 0.01, dh.bedtimeMin + ", " + dh.bedtimeSdMin);
+        int lastBin = -1;
+        int[] r = dh.pattern.range(0.05);
+        for (int i = r[0]; i < r[1]; i++) if (dh.pattern.inBed(i) > 0) lastBin = i;
+        check("history: day sleep drawn to 16:10", app.openring.core.analysis.SleepPattern.clockMin(lastBin + 1) == 16 * 60 + 10
+                && app.openring.core.analysis.SleepPattern.clockMin(r[0]) == 7 * 60, app.openring.core.analysis.SleepPattern.clockMin(lastBin + 1));
+        // normal nights 23:00 to 07:00 and 23:30 to 07:20 keep today's numbers
+        List<JSONObject> normal = new ArrayList<JSONObject>();
+        normal.add(Json.parse(dayNight(java.time.LocalDateTime.parse("2026-10-10T23:00:00"), java.time.LocalDateTime.parse("2026-10-11T07:00:00"), z)));
+        normal.add(Json.parse(dayNight(java.time.LocalDateTime.parse("2026-10-11T23:30:00"), java.time.LocalDateTime.parse("2026-10-12T07:20:00"), z)));
+        app.openring.data.SleepHistory nh = app.openring.data.SleepHistory.of(normal, z);
+        check("history: normal nights fall asleep 23:15, wake 07:10, vary by 15 min", Math.abs(nh.bedtimeMin - (23 * 60 + 15)) < 1e-6
+                && Math.abs(nh.wakeMin - (7 * 60 + 10)) < 1e-6 && Math.abs(nh.bedtimeSdMin - 15) < 1e-6, nh.bedtimeMin + ", " + nh.wakeMin + ", " + nh.bedtimeSdMin);
+    }
+
+    /** A main night JSON from {@code a} to {@code b} (local times in {@code z}), all light sleep. */
+    static String dayNight(java.time.LocalDateTime a, java.time.LocalDateTime b, ZoneId z) {
+        long s = a.atZone(z).toEpochSecond(), e = b.atZone(z).toEpochSecond();
+        StringBuilder st = new StringBuilder();
+        for (long t = s; t < e; t += 30) st.append('2');
+        return "{\"day\":\"" + b.toLocalDate() + "\",\"main\":true,\"start\":" + s + ",\"end\":" + e + ",\"sleep_start\":" + s
+                + ",\"sleep_end\":" + e + ",\"stages\":\"" + st + "\"}";
+    }
+
+    /** The average night of {@code day} alone is in bed from the night's start to its end, on the night's own clock (issue #137). */
+    static void patternMatchesNight(Db db, String day, String what) {
+        ZoneId z = ZoneId.systemDefault();
+        List<String> main = db.nightsJson(day, day, true);
+        JSONObject n = main.isEmpty() ? null : Json.parse(main.get(0));
+        if (n == null) {
+            check(what + ": main night found", false, day);
+            return;
+        }
+        app.openring.data.SleepHistory h = app.openring.data.SleepHistory.load(db, day, day, z);
+        int first = -1, last = -1;
+        for (int i = 0; i < app.openring.core.analysis.SleepPattern.BINS; i++) {
+            if (h.pattern.inBed(i) <= 0) continue;
+            if (first < 0) first = i;
+            last = i;
+        }
+        double start = Json.d(n, "start"), end = Json.d(n, "end"), sleepEnd = Json.d(n, "sleep_end");
+        int wantFirst = binOf(start + 15, z), wantLast = binOf(end - 15, z), sleepEndBin = binOf(sleepEnd - 1, z);
+        String got = clock(first) + " to " + clock(last + 1) + ", night " + hm(start, z) + " to " + hm(end, z) + " (asleep until " + hm(sleepEnd, z) + ")";
+        check(what + ": average night starts and ends at the night's clock times", first == wantFirst && last == wantLast, got);
+        check(what + ": in bed until the bin of the wake time", last >= sleepEndBin, got);
+        check(what + ": the night crosses the change", n.has("clock_change_at"), n.optString("clock_change_min"));
+    }
+
+    static int binOf(double unix, ZoneId z) {
+        java.time.ZonedDateTime t = java.time.Instant.ofEpochSecond((long) unix).atZone(z);
+        int m = t.getHour() * 60 + t.getMinute();
+        return Math.floorMod(m - app.openring.core.analysis.SleepPattern.ANCHOR_MIN, 1440) / app.openring.core.analysis.SleepPattern.BIN_MIN;
+    }
+
+    static String clock(int bin) {
+        int m = app.openring.core.analysis.SleepPattern.clockMin(bin);
+        return String.format("%02d:%02d", m / 60, m % 60);
+    }
+
+    static String hm(double unix, ZoneId z) {
+        java.time.ZonedDateTime t = java.time.Instant.ofEpochSecond((long) unix).atZone(z);
+        return String.format("%02d:%02d", t.getHour(), t.getMinute());
+    }
+
     static void dstChecks(Db db, String way, String switchDay, String switchUtc, int minutes, String from, String to) {
         ZoneId z = ZoneId.systemDefault();
         LocalDate sw = LocalDate.parse(switchDay);
@@ -2252,6 +2339,7 @@ public class PipelineTest {
                 && from.equals(switchNight.optString("clock_change_from")) && to.equals(switchNight.optString("clock_change_to")),
                 switchNight == null ? null : switchNight.optString("clock_change_from") + " to " + switchNight.optString("clock_change_to"));
         check("only that demo night is marked", marked == 1, marked);
+        patternMatchesNight(db, switchDay, "demo, clocks " + way + " " + switchDay);
     }
 
     // ------------------------------------------------- issue #69, demo cut off by an ended app

@@ -508,8 +508,212 @@ public class CoreTest {
         int[] r = p.range(0.05);
         check("pattern: range from 22:00 to 08:00", app.openring.core.analysis.SleepPattern.clockMin(r[0]) == 22 * 60
                 && app.openring.core.analysis.SleepPattern.clockMin(r[1]) == 8 * 60);
-        p.add(13 * 60, a, 30); // an afternoon start lands after 12:00 and is ignored by the bins, but counts as a night
+        p.add(13 * 60, a, 30); // an afternoon start is kept too now, the whole clock has bins (issue #164)
         check("pattern: counts nights", p.nights() == 3);
+        check("pattern: an afternoon night is in bed at 15:00", p.inBed(binAt(15 * 60)) > 0.3);
+        patternClock();
+        clockAverage();
+    }
+
+    static int binAt(int clockMin) {
+        return Math.floorMod(clockMin - SleepPattern.ANCHOR_MIN, 1440) / SleepPattern.BIN_MIN;
+    }
+
+    /** First and last bin with someone in bed, as clock minutes {start of first, end of last}. */
+    static int[] inBedSpan(SleepPattern p) {
+        int[] r = p.range(0.05);
+        int first = -1, last = -1;
+        for (int i = r[0]; i < r[1]; i++) {
+            if (p.inBed(i) <= 0) continue;
+            if (first < 0) first = i;
+            last = i;
+        }
+        return first < 0 ? new int[] {-1, -1} : new int[] {SleepPattern.clockMin(first), SleepPattern.clockMin(last + 1)};
+    }
+
+    static long local(String t, java.time.ZoneId z) {
+        return java.time.LocalDateTime.parse(t).atZone(z).toEpochSecond();
+    }
+
+    /** Issue #137: each stage cell at its own clock time; the window round the whole clock (issue #164). */
+    static void patternClock() {
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        // a normal night through the zone gives the same bins as by its start's clock minute
+        SleepPattern byStart = new SleepPattern(), byZone = new SleepPattern();
+        int[] st = new int[8 * 120];
+        for (int i = 0; i < st.length; i++) st[i] = 1 + (i / 37) % 4;
+        byStart.add(23 * 60, st, 30);
+        byZone.add(local("2026-10-10T23:00:00", z), st, 30, z);
+        boolean same = true;
+        for (int b = 0; b < SleepPattern.BINS; b++)
+            for (int k = 1; k <= 4; k++) same &= Math.abs(byStart.share(b, k) - byZone.share(b, k)) < 1e-9;
+        check("pattern clock: a normal night gives the same bins as before", same);
+        int[] r = byZone.range(0.05);
+        check("pattern clock: normal night window 22:00 to 08:00", SleepPattern.clockMin(r[0]) == 22 * 60 && SleepPattern.clockMin(r[1]) == 8 * 60);
+
+        // autumn 2026-10-25: 23:48 to 08:03 is 9h15m of real time
+        SleepPattern fall = new SleepPattern();
+        double fs = local("2026-10-24T23:48:00", z), fe = local("2026-10-25T08:03:00", z);
+        int[] lightF = new int[(int) ((fe - fs) / 30)];
+        Arrays.fill(lightF, 2);
+        fall.add(fs, lightF, 30, z);
+        int[] fspan = inBedSpan(fall);
+        check("pattern clock: autumn night ends at 08:10 bin (08:03), not 09:00", fspan[1] == 8 * 60 + 10 && fspan[0] == 23 * 60 + 40);
+        check("pattern clock: the repeated hour never reads more than 100%", fall.inBed(binAt(2 * 60 + 30)) <= 1 + 1e-9
+                && Math.abs(fall.share(binAt(2 * 60 + 30), 2) - 1) < 1e-9);
+        // a mixed repeated hour: first pass deep, second pass REM, so the bin shows half of each
+        SleepPattern mix = new SleepPattern();
+        double ms = local("2026-10-25T02:00:00", z); // the first pass of 02:00 (java.time takes the earlier offset)
+        int[] two = new int[240];
+        for (int i = 0; i < 240; i++) two[i] = i < 120 ? 1 : 3;
+        mix.add(ms, two, 30, z);
+        int b0230 = binAt(2 * 60 + 30);
+        check("pattern clock: both passes of the repeated hour share its bins", Math.abs(mix.share(b0230, 1) - 0.5) < 1e-9
+                && Math.abs(mix.share(b0230, 3) - 0.5) < 1e-9 && Math.abs(mix.inBed(b0230) - 1) < 1e-9 && mix.inBed(binAt(3 * 60)) == 0);
+
+        // review of #205: the switch night in bed 01:30 to 08:00, six other nights 04:00 to 08:00;
+        // at 02:30 only 1 of 7 nights is in bed, even though that night has 20 minutes in the bin
+        SleepPattern week = new SleepPattern();
+        double ws = local("2026-10-25T01:30:00", z), we = local("2026-10-25T08:00:00", z);
+        int[] sw = new int[(int) ((we - ws) / 30)];
+        for (int i = 0; i < sw.length; i++) sw[i] = i % 2 == 0 ? 1 : 2;
+        week.add(ws, sw, 30, z);
+        int[] four = new int[4 * 120];
+        Arrays.fill(four, 2);
+        for (int d = 0; d < 6; d++) week.add(local("2026-10-1" + d + "T04:00:00", z), four, 30, z);
+        int w0230 = binAt(2 * 60 + 30);
+        check("pattern clock: repeated hour counts one night once (1 of 7 in bed at 02:30)", Math.abs(week.inBed(w0230) - 1 / 7.0) < 1e-9
+                && Math.abs(week.share(w0230, 1) - 0.5 / 7) < 1e-9 && Math.abs(week.inBed(binAt(5 * 60)) - 1) < 1e-9);
+
+        // spring 2027-03-28: 22:03 to 07:54 is 8h51m of real time; 02:00 to 03:00 never shows on the clock
+        SleepPattern spring = new SleepPattern();
+        double ss = local("2027-03-27T22:03:00", z), se = local("2027-03-28T07:54:00", z);
+        int[] lightS = new int[(int) ((se - ss) / 30)];
+        Arrays.fill(lightS, 2);
+        spring.add(ss, lightS, 30, z);
+        int[] sspan = inBedSpan(spring);
+        check("pattern clock: spring night ends at the 07:50 bin (07:54), not 06:50", sspan[1] == 8 * 60 && sspan[0] == 22 * 60);
+        check("pattern clock: the skipped spring hour stays empty", spring.inBed(binAt(2 * 60 + 30)) == 0
+                && spring.inBed(binAt(1 * 60 + 50)) == 1 && spring.inBed(binAt(3 * 60)) == 1);
+        // the same night by the start's clock minute (the old way) ends an hour early
+        SleepPattern oldWay = new SleepPattern();
+        oldWay.add(22 * 60 + 3, lightS, 30);
+        check("pattern clock: counted on from the start it would end at 06:50", inBedSpan(oldWay)[1] == 7 * 60);
+        // Santiago, clocks forward at midnight 2026-09-06
+        java.time.ZoneId sz = java.time.ZoneId.of("America/Santiago");
+        SleepPattern sant = new SleepPattern();
+        double as = local("2026-09-05T23:48:00", sz), ae = local("2026-09-06T08:03:00", sz);
+        int[] lightA = new int[(int) ((ae - as) / 30)];
+        Arrays.fill(lightA, 2);
+        sant.add(as, lightA, 30, sz);
+        check("pattern clock: Santiago night ends at 08:03 too", inBedSpan(sant)[1] == 8 * 60 + 10);
+
+        // a day sleeper 08:00 to 16:00 is kept whole, the window follows it
+        SleepPattern day = new SleepPattern();
+        int[] eight = new int[8 * 120];
+        Arrays.fill(eight, 2);
+        day.add(local("2026-10-10T08:00:00", z), eight, 30, z);
+        int[] dr = day.range(0.05);
+        check("pattern clock: day sleep window 07:00 to 17:00", SleepPattern.clockMin(dr[0]) == 7 * 60 && SleepPattern.clockMin(dr[1]) == 17 * 60
+                && dr[1] - dr[0] == 10 * 6);
+        check("pattern clock: day sleep kept to 16:00", day.inBed(binAt(15 * 60 + 50)) == 1 && day.inBed(binAt(16 * 60)) == 0);
+        // a start before 16:00 was dropped whole before
+        SleepPattern early = new SleepPattern();
+        early.add(15 * 60, eight, 30);
+        check("pattern clock: a 15:00 start is kept", early.inBed(binAt(15 * 60)) == 1 && early.inBed(binAt(22 * 60 + 50)) == 1);
+        // an evening night 18:00 to 02:00: the window passes 20:00 and goes on
+        SleepPattern eve = new SleepPattern();
+        eve.add(18 * 60, eight, 30);
+        int[] er = eve.range(0.05);
+        check("pattern clock: evening window 17:00 to 03:00", SleepPattern.clockMin(er[0]) == 17 * 60 && SleepPattern.clockMin(er[1]) == 3 * 60
+                && er[0] >= 0 && er[1] - er[0] == 10 * 6 && eve.inBed(er[0] + 6) == 1);
+        // a day sleeper plus one normal night: the window starts after the longest empty stretch
+        SleepPattern both = new SleepPattern();
+        both.add(8 * 60, eight, 30);
+        both.add(23 * 60, eight, 30);
+        int[] br = both.range(0.05);
+        check("pattern clock: two sleeps, one window 22:00 to 17:00", SleepPattern.clockMin(br[0]) == 22 * 60 && SleepPattern.clockMin(br[1]) == 17 * 60
+                && br[1] - br[0] == 19 * 6);
+        // in bed round the clock: the whole clock from 20:00; nobody in bed: the same
+        SleepPattern all = new SleepPattern();
+        int[] full = new int[24 * 120];
+        Arrays.fill(full, 2);
+        all.add(0, full, 30);
+        int[] ar = all.range(0.05);
+        check("pattern clock: round the clock draws 24 hours", ar[0] == 0 && ar[1] == SleepPattern.BINS);
+        SleepPattern awakeOnly = new SleepPattern();
+        awakeOnly.add(0, new int[] {0, 0, 0}, 30);
+        int[] nr = awakeOnly.range(0.05);
+        check("pattern clock: no stage data draws the whole clock", nr[0] == 0 && nr[1] == SleepPattern.BINS && awakeOnly.nights() == 1);
+        // a long stretch with a short gap: never more than 24 hours drawn
+        SleepPattern longOne = new SleepPattern();
+        int[] twentyTwo = new int[22 * 120 + 60];
+        Arrays.fill(twentyTwo, 2);
+        longOne.add(20 * 60, twentyTwo, 30);
+        int[] lr = longOne.range(0.05);
+        check("pattern clock: at most 24 hours drawn", lr[1] - lr[0] == SleepPattern.BINS && lr[0] >= 0);
+        check("pattern clock: bins past the clock wrap", SleepPattern.clockMin(SleepPattern.BINS + 6) == 21 * 60
+                && Math.abs(longOne.share(SleepPattern.BINS + 6, 2) - longOne.share(6, 2)) < 1e-12);
+        SleepPattern none = new SleepPattern();
+        none.add(0, new int[0], 30);
+        none.add(0, (int[]) null, 30);
+        none.add(0.0, new int[0], 30, z);
+        none.add(0.0, st, 0, z);
+        check("pattern clock: empty input adds no night", none.nights() == 0 && none.share(0, 1) == 0);
+    }
+
+    /** The old bedtime maths: minutes after 20:00 wrapped at 16:00, plain mean and spread. */
+    static double[] oldClockMean(double[] clock) {
+        double[] r = new double[clock.length];
+        for (int i = 0; i < clock.length; i++) {
+            double x = clock[i] - 20 * 60;
+            if (x < -4 * 60) x += 1440;
+            r[i] = Double.isNaN(clock[i]) ? Double.NaN : x;
+        }
+        double m = Stats.mean(r);
+        return new double[] {((m + 20 * 60) % 1440 + 1440) % 1440, Stats.countFinite(r) >= 2 ? Stats.sd(r) : Double.NaN};
+    }
+
+    /** Issue #164: clock times averaged on the clock face. */
+    static void clockAverage() {
+        double[] w = ClockAverage.of(new double[] {15 * 60 + 50, 16 * 60 + 10});
+        check("clock average: 15:50 and 16:10 give 16:00", Math.abs(w[0] - 16 * 60) < 1e-6 && Math.abs(w[1] - 10) < 1e-6);
+        double[] w3 = ClockAverage.of(new double[] {15 * 60 + 30, 16 * 60, 16 * 60 + 30});
+        check("clock average: 15:30, 16:00 and 16:30 give 16:00, spread 24 min", Math.abs(w3[0] - 16 * 60) < 1e-6 && Math.round(w3[1]) == 24);
+        check("clock average: the old maths gave 04:00 there", Math.abs(oldClockMean(new double[] {15 * 60 + 50, 16 * 60 + 10})[0] - 4 * 60) < 1e-6);
+        double[] mid = ClockAverage.of(new double[] {23 * 60 + 50, 10});
+        check("clock average: 23:50 and 00:10 give 00:00", Math.abs(mid[0]) < 1e-6 || Math.abs(mid[0] - 1440) < 1e-6);
+        // normal nights: exactly the old numbers
+        Random rnd = new Random(5);
+        boolean same = true;
+        for (int k = 0; k < 200; k++) {
+            int n = 1 + rnd.nextInt(30);
+            double[] bed = new double[n], wake = new double[n];
+            for (int i = 0; i < n; i++) {
+                bed[i] = Math.floorMod(21 * 60 + rnd.nextInt(5 * 60), 1440) + rnd.nextDouble(); // 21:00 to 02:00
+                wake[i] = 5 * 60 + rnd.nextInt(5 * 60) + rnd.nextDouble(); // 05:00 to 10:00
+                if (rnd.nextInt(10) == 0) bed[i] = Double.NaN;
+            }
+            double[] nb = ClockAverage.of(bed), ob = oldClockMean(bed), nw = ClockAverage.of(wake), ow = oldClockMean(wake);
+            same &= close(nb[0], ob[0]) && close(nb[1], ob[1]) && close(nw[0], ow[0]) && close(nw[1], ow[1]);
+        }
+        check("clock average: normal nights give exactly the old numbers", same);
+        double[] fixed = ClockAverage.of(new double[] {23 * 60, 23 * 60 + 30});
+        check("clock average: 23:00 and 23:30 give 23:15, spread 15", close(fixed[0], 23 * 60 + 15) && close(fixed[1], 15));
+        double[] one = ClockAverage.of(new double[] {Double.NaN, 7 * 60 + 10});
+        check("clock average: one time has no spread", close(one[0], 7 * 60 + 10) && Double.isNaN(one[1]));
+        double[] empty = ClockAverage.of(new double[] {Double.NaN});
+        check("clock average: no times give no value", Double.isNaN(empty[0]) && Double.isNaN(empty[1]));
+        double[] opposite = ClockAverage.of(new double[] {4 * 60, 16 * 60});
+        // no centre: counted from 04:00 like the old window, so 22:00 as before, and the spread says irregular
+        check("clock average: opposite times count from 04:00, large spread", close(opposite[0], 22 * 60) && close(opposite[1], 360)
+                && close(opposite[0], oldClockMean(new double[] {4 * 60, 16 * 60})[0]));
+    }
+
+    static boolean close(double a, double b) {
+        if (Double.isNaN(a) || Double.isNaN(b)) return Double.isNaN(a) && Double.isNaN(b);
+        double d = Math.abs(a - b);
+        return Math.min(d, 1440 - d) < 1e-6;
     }
 
     static byte[] b(int... v) {
