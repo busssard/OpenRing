@@ -122,6 +122,33 @@ swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 launch --es settings top;                   shot settings
 launch --es settings stages;                shot settings-stage-detail
+# Count phone use as awake switched off and on (issue #204): when the nights are analysed again the
+# preview above redraws, its phone line goes away and comes back without leaving the page
+phone_line() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "on the phone, shown as awake"; }
+tap_phone_switch() {
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  b=$(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  adb shell input tap $(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))
+}
+wait_phone_line() {  # $1: 0 gone, 1 shown; up to 60 seconds for the analysis
+  for i in $(seq 1 30); do
+    if phone_line; then [ "$1" = 1 ] && return 0; else [ "$1" = 0 ] && return 0; fi
+    sleep 2
+  done
+  return 1
+}
+if ! phone_line; then
+  echo "::warning::issue #204 step skipped: no phone line in the stage detail preview on screen"
+elif ! tap_phone_switch; then
+  echo "::warning::issue #204 step skipped: the switch Count phone use as awake is not on screen"
+else
+  wait_phone_line 0 || { echo "::error::the stage detail preview kept its phone line after switching phone use off (issue #204)"; exit 1; }
+  shot settings-phone-off 1
+  tap_phone_switch && wait_phone_line 1 || { echo "::error::the stage detail preview did not show its phone line again after switching phone use on (issue #204)"; exit 1; }
+  log "the stage detail preview followed the phone use switch both ways"
+fi
 launch --es settings screen;                shot settings-screen-time
 launch --es settings games;                 shot settings-games
 # Find my ring (issue #74): in demo a made up signal fills the meter, a made up walk shows the

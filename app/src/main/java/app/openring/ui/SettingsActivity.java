@@ -598,7 +598,40 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
                 return null;
             }
+
+            @Override
+            protected void onPostExecute(Void r) {
+                // the nights now have their new phone minutes: the Settings screen shown now (also after
+                // the phone was turned meanwhile) redraws its preview (issue #204)
+                SettingsActivity s = shownNow();
+                if (s != null) s.redrawStageDetail();
+            }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /**
+     * Redraws only the stage detail card, so typed values in the other cards stay (issue #133), and
+     * keeps what the person looks at still when the card above changes height (issue #204).
+     */
+    void redrawStageDetail() {
+        final LinearLayout card = stagesCard;
+        if (card == null) return;
+        final int y = scroll.getScrollY(), top = card.getTop(), before = card.getHeight();
+        // the new height is known once the card is laid out; the scroll then follows in post() (CLAUDE.md lesson)
+        card.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+                v.removeOnLayoutChangeListener(this);
+                final int to = app.openring.core.ScrollKeep.after(y, top, before, b - t);
+                scroll.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        scroll.scrollTo(0, to);
+                    }
+                });
+            }
+        });
+        fillStageDetail(card, Prefs.of(this));
     }
 
     /** Reads which measurements are switched on and shows them. */
