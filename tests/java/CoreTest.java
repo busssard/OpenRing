@@ -666,6 +666,7 @@ public class CoreTest {
         dayHeart();
         vo2max();
         longWake();
+        nightNumbers();
         timeline();
         activityWeek();
         live();
@@ -2449,6 +2450,169 @@ public class CoreTest {
         Night woke = NightAnalyzer.analyze(in);
         check("ring awake gap counts as awake", woke.awakeMin - calm.awakeMin >= 70 && woke.awakenings >= 1);
         check("ring awake gap lowers the score", Scores.sleep(woke, 0, 40).value < Scores.sleep(calm, 0, 40).value);
+    }
+
+    /** Ring stages from a digit string per 30 s step ("0" no data, 1 deep, 2 light, 3 REM, 4 awake), repeated. */
+    static int[] digits(Object... parts) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i += 2) for (int k = 0; k < (Integer) parts[i + 1]; k++) sb.append(parts[i]);
+        int[] out = new int[sb.length()];
+        for (int i = 0; i < out.length; i++) out[i] = sb.charAt(i) - '0';
+        return out;
+    }
+
+    static Night ringStaged(int[] stages) {
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        in.start = 1_760_000_000;
+        in.end = in.start + stages.length * 30.0;
+        in.ringStages = stages;
+        return NightAnalyzer.analyze(in);
+    }
+
+    /** Issues #107, #118 and #110: efficiency with steps without stage data, no sleep, ring stages in a longer period. */
+    static void nightNumbers() {
+        // #107 lead: 20 min without data, 2 min awake, 200 min light
+        Night lead = ringStaged(digits("0", 40, "4", 4, "2", 400));
+        check("#107 lead: ring stages used", "ring".equals(lead.stageSource));
+        check("#107 lead: efficiency is asleep over time in bed (90.1%)", Math.abs(lead.efficiency - 100.0 * 200 / 222) < 1e-6);
+        check("#107 lead: latency counts the time without data (22 min)", near(lead.latencyMin, 22));
+        double[] nd = StageShare.noData(lead.stages, lead.inBedMin);
+        check("#107 lead: 20 min without data, all before falling asleep", near(nd[0], 20) && near(nd[1], 20));
+        eq("#107 lead: the note", StageShare.noDataNote(nd[0], nd[1], true), "No data: there was no sleep stage for 20 min. It counts as time in bed, "
+                + "not as asleep or awake, so it lowers efficiency. All of it was before you fell asleep, so latency includes it.");
+        // #107 tail: 200 min light, then 100 min without data
+        Night tail = ringStaged(digits("2", 400, "0", 200));
+        check("#107 tail: efficiency 66.7%, not 100%", Math.abs(tail.efficiency - 100.0 * 200 / 300) < 1e-6);
+        check("#107 tail: awake stays 0, the missing time is not made awake", near(tail.awakeMin, 0) && tail.awakenings == 0);
+        nd = StageShare.noData(tail.stages, tail.inBedMin);
+        check("#107 tail: 100 min without data, none before falling asleep", near(nd[0], 100) && near(nd[1], 0));
+        check("#107 tail: stage minutes and no data add up to time in bed",
+                near(tail.deepMin + tail.lightMin + tail.remMin + tail.awakeMin + nd[0], tail.inBedMin));
+        eq("#107 tail: the note writes the time as the row does", StageShare.noDataNote(nd[0], nd[1], true), "No data: there was no sleep stage for 1h 40m. "
+                + "It counts as time in bed, not as asleep or awake, so it lowers efficiency.");
+        // review of #183: nights analysed before stored asleep over the time with data; the screens work it out again
+        check("#107 shown efficiency of a new night is the stored one", Math.abs(StageShare.efficiency(tail.asleepMin, tail.inBedMin, tail.efficiency) - tail.efficiency) < 1e-9
+                && Math.abs(StageShare.efficiency(lead.asleepMin, lead.inBedMin, lead.efficiency) - lead.efficiency) < 1e-9);
+        check("#107 an older night's stored 100% shows as 66.7%", Math.abs(StageShare.efficiency(200, 300, 100) - 100.0 * 200 / 300) < 1e-9);
+        check("#107 shown efficiency unknown without sleep or time in bed", Double.isNaN(StageShare.efficiency(0, 40, Double.NaN))
+                && Double.isNaN(StageShare.efficiency(10, 0.5, 90)) && Double.isNaN(StageShare.efficiency(Double.NaN, 300, 90))
+                && Double.isNaN(StageShare.efficiency(10, Double.NaN, 90)));
+        check("#107 shown efficiency stays within 0 and 100", StageShare.efficiency(310, 300, 100) == 100 && StageShare.efficiency(-5, 300, 0) == 0);
+        Night tailScore = tail;
+        check("#107 tail: the efficiency contributor reads 67%", "67%".equals(part(Scores.sleep(tailScore, 0, 40), "efficiency").detail));
+        // a night with no missing data keeps its efficiency
+        Night full = ringStaged(digits("4", 20, "2", 400, "4", 20));
+        check("#107 no missing data: efficiency as before", Math.abs(full.efficiency - 100.0 * 400 / 440) < 1e-6);
+        check("#107 no missing data: no note", StageShare.noData(full.stages, full.inBedMin)[0] == 0
+                && StageShare.noDataNote(0, 0, true) == null && StageShare.noDataNote(0.4, 0, true) == null);
+        // part before falling asleep, part later
+        nd = StageShare.noData(digits("0", 10, "2", 100, "0", 30, "2", 100), 120);
+        check("#107 split: 20 min in all, 5 before falling asleep", near(nd[0], 20) && near(nd[1], 5));
+        check("#107 split: the note names the part before", StageShare.noDataNote(nd[0], nd[1], true).endsWith(" 5 min of it was before you fell asleep, so latency includes that part."));
+        check("#107 split: an hour or more before falling asleep as on the rows",
+                StageShare.noDataNote(100, 70, true).endsWith(" 1h 10m of it was before you fell asleep, so latency includes that part."));
+        nd = StageShare.noData(digits("0", 10, "4", 50), 30);
+        check("#107 no sleep: no time before falling asleep", near(nd[0], 5) && near(nd[1], 0));
+        eq("#107 no sleep: the note leaves out efficiency and latency (both unknown)", StageShare.noDataNote(nd[0], 5, false),
+                "No data: there was no sleep stage for 5 min. It counts as time in bed, not as asleep or awake.");
+        check("#107 no stages: nothing", StageShare.noData(null, 30)[0] == 0 && StageShare.noData(new int[0], 30)[0] == 0
+                && StageShare.noData(new int[] {0}, Double.NaN)[0] == 0 && StageShare.noDataNote(Double.NaN, Double.NaN, true) == null);
+
+        // #118: a 40 minute bedtime the ring marks awake all through
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        in.start = 1_760_000_000;
+        in.end = in.start + 40 * 60;
+        for (double t = in.start; t < in.end; t += 300) in.hr5.add(t, 68);
+        for (double t = in.start; t < in.end; t += 60) {
+            in.motion.add(t, 3);
+            in.sleepState.add(t, 0);
+        }
+        Night sofa = NightAnalyzer.analyze(in);
+        Night.Score ss = Scores.sleep(sofa, 3600, 35);
+        check("#118 awake bedtime: nobody slept", sofa.asleepMin == 0 && Double.isNaN(sofa.wasoMin));
+        check("#118 awake bedtime: no Restfulness", part(ss, "restfulness") == null);
+        check("#118 awake bedtime: Total sleep still scored", part(ss, "total") != null && "0h 0m".equals(part(ss, "total").detail));
+        Night allAwake = ringStaged(digits("4", 960));
+        Night.Score sa = Scores.sleep(allAwake, 0, 35);
+        check("#118 ring stages all awake: no Restfulness", allAwake.asleepMin == 0 && part(sa, "restfulness") == null);
+        check("#118 ring stages all awake: score from the rest", sa.value >= 0 && sa.value < 40);
+        // a real night with many wake ups keeps it, wake ups counted (CLAUDE.md: never hide real awakenings)
+        Night waker = ringStaged(digits("2", 100, "4", 10, "2", 100, "4", 10, "2", 100, "4", 10, "2", 100));
+        Night.Contributor wr = part(Scores.sleep(waker, 0, 35), "restfulness");
+        check("#118 night with wake ups keeps Restfulness", wr != null && wr.detail.startsWith("3 wake ups") && wr.score < 100);
+
+        // #110: a ring run of 8 h, deep for its first 5 minutes, then light, made longer by a bedtime period
+        double r0 = 1_760_000_000L - 1_760_000_000L % 86400 - 3600, r1 = r0 + 8 * 3600;
+        int[] codes = new int[960];
+        for (int i = 0; i < codes.length; i++) codes[i] = i < 10 ? 1 : 2;
+        String[] names = {"A (bedtime 10 min before to 30 min after)", "C (bedtime of 40 min, 20 min after the run)"};
+        double[][] beds = {{r0 - 600, r1 + 1800}, {r1 + 1200, r1 + 3600}};
+        for (int k = 0; k < 2; k++) {
+            List<double[]> bedtimes = new ArrayList<double[]>();
+            bedtimes.add(beds[k]);
+            List<NightFinder.RingRun> runs = new ArrayList<NightFinder.RingRun>();
+            runs.add(new NightFinder.RingRun(r0, r1, codes));
+            List<NightFinder.Period> ps = NightFinder.find(bedtimes, runs, new TS(), new TS());
+            eq("#110 " + names[k] + ": one period", ps.size(), 1);
+            if (ps.size() != 1) continue;
+            NightFinder.Period q = ps.get(0);
+            check("#110 " + names[k] + ": period grew, staged, the run keeps its end", q.staged && q.end > r1 && near(q.codesEnd, r1));
+            int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+            int first = -1, lastCode = -1;
+            for (int i = 0; i < al.length; i++) {
+                if (al[i] == 1 && first < 0) first = i;
+                if (al[i] != 0) lastCode = i;
+            }
+            check("#110 " + names[k] + ": deep at the run's minute 0", near(q.start + first * 30.0, r0));
+            check("#110 " + names[k] + ": stages end with the run, the extra time has no data", near(q.start + (lastCode + 1) * 30.0, r1));
+            Night n = NightAnalyzer.analyze(nightInput(q, al));
+            check("#110 " + names[k] + ": ring stages used", "ring".equals(n.stageSource));
+            check("#110 " + names[k] + ": 5 min deep, sleep starts at the run", near(n.deepMin, 5) && near(n.sleepStart, r0) && near(n.sleepEnd, r1));
+        }
+        // a staged run inside a bedtime period that then joins a second piece across a night wake (issue #42):
+        // the stitched codes keep the run's own times
+        {
+            NightFinder.LocalClock utc = new NightFinder.LocalClock() {
+                @Override
+                public int minuteOfDay(double unix) {
+                    return (int) (((long) unix % 86400) / 60);
+                }
+            };
+            double day = 1_760_000_000L - 1_760_000_000L % 86400;
+            double rs = day - 3600, re = day + 2 * 3600; // ring run 23:00 to 02:00, bedtime to 02:30
+            int[] c2 = new int[(int) ((re - rs) / 30)];
+            for (int i = 0; i < c2.length; i++) c2[i] = rs + i * 30 < day ? 1 : 3;
+            List<NightFinder.RingRun> runs = new ArrayList<NightFinder.RingRun>();
+            runs.add(new NightFinder.RingRun(rs, re, c2));
+            List<double[]> bedtimes = new ArrayList<double[]>();
+            bedtimes.add(new double[] {rs, day + 2.5 * 3600});
+            TS st = ringState(-1, 7, new double[] {2.5, 3.75}, null);
+            TS support = new TS();
+            for (int i = 0; i < st.size(); i++) support.add(st.t(i), 1);
+            List<NightFinder.Period> sp = NightFinder.find(bedtimes, runs, st, support, utc);
+            eq("#110 bedtime, run and night wake: one night", sp.size(), 1);
+            if (sp.size() == 1) {
+                NightFinder.Period q = sp.get(0);
+                int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+                check("#110 stitched: deep before midnight, REM after, at their real times",
+                        al[(int) ((day - 1500 - q.start) / 30)] == 1 && al[(int) ((day + 900 - q.start) / 30)] == 3);
+                check("#110 stitched: nothing from the ring after its run ended", al[(int) ((day + 2.25 * 3600 - q.start) / 30)] == 0);
+                check("#110 stitched: the night wake is awake", al[(int) ((day + 3 * 3600 - q.start) / 30)] == 4);
+            }
+        }
+        // a period made by hand without codesEnd keeps the old meaning (codes end at its end)
+        NightFinder.Period plain = new NightFinder.Period(0, 600);
+        check("#110 period without codes: no ring run", plain.ringRun() == null);
+        plain.codes = new int[] {1, 2};
+        check("#110 period without codesEnd: codes end at its end", plain.ringRun().end == 600 && plain.ringRun().start == 540);
+    }
+
+    static NightAnalyzer.Input nightInput(NightFinder.Period q, int[] stages) {
+        NightAnalyzer.Input in = new NightAnalyzer.Input();
+        in.start = q.start;
+        in.end = q.end;
+        in.ringStages = stages;
+        return in;
     }
 
     static void timeline() {

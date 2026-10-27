@@ -1,5 +1,7 @@
 package app.openring.core.analysis;
 
+import app.openring.core.Texts;
+
 /**
  * Stage percentages for the screens (issue #32). REM, light and deep are shares of the time asleep and are rounded so
  * they always add up to 100; awake is a share of the time in bed. The usual ranges are the ones in {@code ui/Explain}.
@@ -58,6 +60,56 @@ public final class StageShare {
         if (Double.isNaN(pct)) return usual == null ? "No data yet" : "Usual " + usual + " of " + of;
         String s = Math.round(pct) + "% of " + of;
         return usual == null ? s : s + " (usual " + usual + ")";
+    }
+
+    /**
+     * Time in bed without stage data (steps 0, issue #107), worked out from the stored stages so nights analysed
+     * before show it too: {minutes in all, minutes of it before falling asleep}. Before falling asleep is 0 when
+     * there was no sleep at all (that night has no latency). Both 0 without stages or time in bed.
+     */
+    public static double[] noData(int[] stages, double inBedMin) {
+        if (stages == null || stages.length == 0 || Double.isNaN(inBedMin) || inBedMin <= 0) return new double[] {0, 0};
+        double step = inBedMin / stages.length;
+        int none = 0, before = 0, first = -1;
+        for (int i = 0; i < stages.length; i++) {
+            int c = stages[i];
+            if (c >= 1 && c <= 3 && first < 0) first = i;
+            if (c < 1 || c > 4) {
+                none++;
+                if (first < 0) before++;
+            }
+        }
+        return new double[] {none * step, first < 0 ? 0 : before * step};
+    }
+
+    /**
+     * The line under the stage rows when part of the night has no stage data, null when under a minute (issue #107):
+     * "No data: there was no sleep stage for 20 min. It counts as time in bed, not as asleep or awake, so it lowers
+     * efficiency. All of it was before you fell asleep, so latency includes it." Without any sleep ({@code slept}
+     * false) efficiency and latency are unknown, so the line stops after "awake". Durations as on the rows
+     * ({@link Texts#minutes}: "20 min", "1h 40m").
+     */
+    public static String noDataNote(double totalMin, double beforeMin, boolean slept) {
+        long all = Double.isNaN(totalMin) ? 0 : Math.round(totalMin);
+        if (all < 1) return null;
+        long before = Double.isNaN(beforeMin) || !slept ? 0 : Math.min(all, Math.round(beforeMin));
+        String s = "No data: there was no sleep stage for " + Texts.minutes(all) + ". It counts as time in bed, not as asleep or awake";
+        if (!slept) return s + ".";
+        s += ", so it lowers efficiency.";
+        if (before >= all) return s + " All of it was before you fell asleep, so latency includes it.";
+        if (before >= 1) return s + " " + Texts.minutes(before) + " of it was before you fell asleep, so latency includes that part.";
+        return s;
+    }
+
+    /**
+     * Efficiency as the screens show it (issue #107): time asleep over time in bed, worked out from the stored
+     * minutes, so nights analysed before (whose stored efficiency left out the time without stage data) agree
+     * without a re analysis. NaN when the stored efficiency is unknown (no sleep at all) or there is under a minute
+     * in bed. For nights analysed now it is the stored value.
+     */
+    public static double efficiency(double asleepMin, double inBedMin, double stored) {
+        if (Double.isNaN(stored) || Double.isNaN(asleepMin) || Double.isNaN(inBedMin) || inBedMin < MIN_BASE) return Double.NaN;
+        return 100 * Math.max(0, Math.min(asleepMin, inBedMin)) / inBedMin;
     }
 
     private static double clean(double v) {

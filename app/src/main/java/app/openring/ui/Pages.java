@@ -337,9 +337,15 @@ public final class Pages {
         hyp.addView(stageRowPct(c, "REM", remMin, share == null ? Double.NaN : share[2], Ui.STAGE_REM));
         hyp.addView(stageRowPct(c, "Light", lightMin, share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
         hyp.addView(stageRowPct(c, "Deep", deepMin, share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
+        // time in bed without stage data, so the rows add up to time in bed and a low efficiency is explained (issue #107)
+        double[] none = StageShare.noData(Json.stages(n), Json.d(n, "in_bed_min"));
+        String noneNote = StageShare.noDataNote(none[0], none[1], Json.d(n, "asleep_min") > 0);
+        if (noneNote != null) hyp.addView(stageRowPct(c, "No data", none[0], StageShare.share(none[0], Json.d(n, "in_bed_min")), Ui.TEXT_3));
         hyp.addView(Ui.gap(c, 2));
-        hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. Awake is a share of your time in bed.",
+        hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. "
+                + (noneNote == null ? "Awake is a share of your time in bed." : "Awake and No data are shares of your time in bed."),
                 11, Ui.TEXT_3, Ui.REGULAR));
+        if (noneNote != null) hyp.addView(Ui.text(c, noneNote, 11, Ui.TEXT_3, Ui.REGULAR));
         String src = n.optString("source");
         hyp.addView(Ui.gap(c, 6));
         hyp.addView(Ui.text(c, "ring".equals(src) ? "Stages from your ring's own analysis"
@@ -371,14 +377,14 @@ public final class Pages {
         root.addView(hyp);
 
         root.addView(timeline(c, n, nz));
-        root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors"));
+        root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors", null, n));
         root.addView(infoCard(c, "About the sleep score", Explain.SLEEP));
 
         LinearLayout stats = Ui.card(c);
         stats.addView(Ui.caption(c, "Details"));
         // a short line under every number (issue #47); ranges as in Explain
         stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(Json.d(n, "in_bed_min")), "", 0, "From start to end of the sleep window"),
-                Ui.stat(c, "Efficiency", Ui.fmt(Json.d(n, "efficiency"), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
+                Ui.stat(c, "Efficiency", Ui.fmt(nightEfficiency(n), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal"),
                 Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, wakeUpsLine(n))));
         stats.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0, "Lowest heart rate while asleep"),
@@ -1355,6 +1361,15 @@ public final class Pages {
      * stored detail was built that way (issue #163).
      */
     static View contributors(Context c, JSONObject score, int color, String title, JSONObject day) {
+        return contributors(c, score, color, title, day, null);
+    }
+
+    /**
+     * As above; with the night, the efficiency row shows the night's efficiency worked out from its stored minutes,
+     * as Details does, also for nights analysed before issue #107 (the row's score stays the stored one until the
+     * night is analysed again).
+     */
+    static View contributors(Context c, JSONObject score, int color, String title, JSONObject day, JSONObject night) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, title));
         JSONArray cs = score == null ? null : score.optJSONArray("contributors");
@@ -1367,9 +1382,17 @@ public final class Pages {
             String detail = o.optString("detail");
             double dev = Json.d(day, "temp_dev");
             if ("temperature".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(dev)) detail = signed(dev) + " \u00b0C";
+            double eff = nightEfficiency(night);
+            if ("efficiency".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(eff)) detail = Math.round(eff) + "%";
             card.addView(Ui.contributor(c, o.optString("label"), detail, o.optDouble("score"), color, Explain.of(o.optString("key"))));
         }
         return card;
+    }
+
+    /** The night's efficiency from its stored minutes (issue #107, {@link StageShare#efficiency}); NaN without a night. */
+    static double nightEfficiency(JSONObject n) {
+        if (n == null) return Double.NaN;
+        return StageShare.efficiency(Json.d(n, "asleep_min"), Json.d(n, "in_bed_min"), Json.d(n, "efficiency"));
     }
 
     static View chartCard(Context c, String title, View chart, String foot) {

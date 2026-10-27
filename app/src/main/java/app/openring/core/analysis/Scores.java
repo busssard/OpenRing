@@ -61,9 +61,13 @@ public final class Scores {
         double waso = Stats.curve(n.wasoMin, new double[][] {{0, 100}, {20, 92}, {45, 72}, {90, 40}, {150, 15}});
         double wakes = Stats.curve(n.awakenings, new double[][] {{0, 100}, {3, 92}, {6, 78}, {10, 58}, {15, 35}});
         double restless = Stats.curve(n.restlessPct, new double[][] {{0, 100}, {10, 92}, {25, 72}, {40, 48}, {60, 20}});
-        double rest = Stats.mean(new double[] {waso, wakes, restless});
-        add(sc, "restfulness", "Restfulness", rest, 15,
-            Double.isNaN(n.wasoMin) ? "" : Texts.count(n.awakenings, "wake up", "wake ups") + ", " + hm(n.wasoMin) + " awake");
+        // no sleep at all (issue #118): wake time is unknown, and "0 wake ups" alone would score a sleepless
+        // period 100. Left out like REM and deep when not staged; every period with any sleep keeps it.
+        if (!Double.isNaN(n.wasoMin)) {
+            double rest = Stats.mean(new double[] {waso, wakes, restless});
+            add(sc, "restfulness", "Restfulness", rest, 15,
+                Texts.count(n.awakenings, "wake up", "wake ups") + ", " + hm(n.wasoMin) + " awake");
+        }
 
         boolean staged = "ring".equals(n.stageSource) || "signals".equals(n.stageSource);
         if (staged) {

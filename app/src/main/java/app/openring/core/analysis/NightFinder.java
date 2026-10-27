@@ -44,12 +44,25 @@ public final class NightFinder {
         public double start, end;
         public boolean staged;
         public int[] codes; // ring hypnogram when staged
+        /**
+         * When the ring's hypnogram really ends (issue #110). It stays put when a merge makes the period
+         * longer (a bedtime period around or after the ring's run), so the stages keep their clock times.
+         * NaN when not staged.
+         */
+        public double codesEnd = Double.NaN;
         /** Wake ups in the middle of the night the ring calls awake {start, end} (issue #42). */
         public List<double[]> awake = new ArrayList<double[]>();
 
         public Period(double s, double e) {
             start = s;
             end = e;
+        }
+
+        /** The ring's hypnogram at its real times; a period without {@link #codesEnd} ends it at {@link #end}. */
+        public RingRun ringRun() {
+            if (codes == null) return null;
+            double e = Double.isNaN(codesEnd) ? end : codesEnd;
+            return new RingRun(e - codes.length * 30.0, e, codes);
         }
     }
 
@@ -86,6 +99,7 @@ public final class NightFinder {
             Period p = new Period(r.start, r.end);
             p.staged = true;
             p.codes = r.codes;
+            p.codesEnd = r.end;
             periods.add(p);
         }
         // nights the ring never declared: its own sleep_state, or failing that nocturnal events
@@ -183,6 +197,7 @@ public final class NightFinder {
                 if (prev.staged || p.staged) {
                     prev.codes = stitch(prev, p, gapAwake);
                     prev.staged = true;
+                    prev.codesEnd = Math.max(prev.end, p.end); // stitch ends its grid at the joined end
                 }
                 prev.awake.addAll(gapAwake);
                 prev.awake.addAll(p.awake);
@@ -193,7 +208,9 @@ public final class NightFinder {
             if (join) {
                 prev.awake.addAll(p.awake);
                 if (p.staged && !prev.staged) {
+                    // the codes keep their own end, the period may grow past it (issue #110)
                     prev.codes = p.codes;
+                    prev.codesEnd = p.codesEnd;
                     prev.staged = true;
                 }
                 prev.end = Math.max(prev.end, p.end);
@@ -239,8 +256,8 @@ public final class NightFinder {
     /**
      * Ring stages for two pieces joined across a night wake: the first piece's codes, awake (4) in
      * the gap where the ring says awake, the second piece's codes, 0 (unknown) where a piece has
-     * none. Each piece's codes end at that piece's own end (as {@code Analyzer} aligns them), and
-     * the result ends at the joined end, so every code keeps its real time.
+     * none. Each piece's codes end at that piece's {@link Period#codesEnd} (issue #110), and the
+     * result ends at the joined end, so every code keeps its real time.
      */
     static int[] stitch(Period a, Period b, List<double[]> gapAwake) {
         double end = Math.max(a.end, b.end), start = Math.min(a.start, b.start);
@@ -260,7 +277,7 @@ public final class NightFinder {
 
     private static void place(int[] out, double base, Period p) {
         if (!p.staged || p.codes == null) return;
-        double runStart = p.end - p.codes.length * 30.0;
+        double runStart = p.ringRun().start;
         for (int i = 0; i < p.codes.length; i++) {
             int idx = (int) Math.round((runStart + i * 30.0 - base) / 30);
             if (idx >= 0 && idx < out.length) out[idx] = p.codes[i];
