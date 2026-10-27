@@ -18,20 +18,24 @@ Not affiliated with Oura, not a medical device.
 <p>
 <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/today.png" width="45%" alt="Today">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/sleep.png" width="45%" alt="Sleep">
 <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/sleep-analysis.png" width="45%" alt="Average night">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/body-trends.png" width="45%" alt="Body trends">
+<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/readiness.png" width="45%" alt="Readiness">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/screen.png" width="45%" alt="Screen time clock">
 <img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/finder.png" width="45%" alt="Find my ring: hot and cold">&nbsp;<img src="https://raw.githubusercontent.com/busssard/OpenRing/screenshots/finder-walk.png" width="45%" alt="Find my ring: search walk map">
 </p>
 <sub>Demo data on an Android emulator, updated automatically from the main branch.</sub>
 
 ## What it does
 
-* Sleep stages, night timeline, your last nights and your average night. You choose how detailed
-  the sleep chart is; the numbers stay the same
-* Readiness, activity, heart rate, HRV, temperature, blood oxygen
-* Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be left out.
-  It also helps tell sleep from lying still with the phone
+* Sleep: stages, a night timeline with every wake up, your last 30 nights and your average night.
+  You choose how detailed the sleep chart is; the numbers stay the same
+* Sleep, readiness and activity scores, each with the parts it is made of
+* Heart rate through the day, HRV, skin temperature, blood oxygen and their trends
+* Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be
+  left out. Phone use at night counts as awake (can be switched off), which helps tell sleep from lying still with the phone
 * Live heart rate, HRV and blood oxygen on demand
 * Find my ring, when the ring is lost at home (see below)
-* Backups of the key and all history, and a CSV export, all as files on your phone
+* Nights keep the time zone you slept in, so a trip does not move your other nights
+* Every chart shows the exact time and value when you touch it
+* Backups of the key and all history, checked before they are saved, and a CSV export, all as files on your phone
 * A demo mode, so you can look around without a ring
 
 ### Find my ring
@@ -52,10 +56,30 @@ is within Bluetooth range.
 Android 8.0 or newer.
 
 1. Download the APK from the [latest release](https://github.com/busssard/OpenRing/releases/latest) on your phone and open it.
-2. Allow your browser to install apps when Android asks, then tap **Install**.
+2. Allow your browser to install apps when Android asks (*Install unknown apps*), then tap **Install**.
 3. If Play Protect warns you (it does for anything not from the Play Store): **More details**, then **Install anyway**.
+4. If Android says the app is from an unverified developer, see the next fold.
 
 Updates install over the old version and keep your data.
+
+<details>
+<summary>Android says "unverified developer"</summary>
+
+This is Google's new install screen for apps from outside the Play Store. Google rolls it out
+through Google Play services: some phones show it since August 2026, and Google plans it for all
+phones in 2027. To install anyway, turn on one setting once:
+
+1. Turn on the developer options: Settings, About phone, tap **Build number** seven times.
+2. In Settings, System, Developer options, open **Apps from unverified developers** and turn it on.
+   Android asks you to confirm that nobody is pressuring you.
+3. Restart the phone, then wait one day. The wait is Google's protection against scam calls.
+4. Go back to the setting, confirm with your fingerprint or PIN, and choose to allow it
+   **always** (with 7 days, updates of Open Ring fail once the 7 days are over).
+5. Open the APK again. Android warns once more, tap **Install anyway**.
+
+The developer options can be turned off again afterwards. Menu names differ a little between phone
+makers. Google's own description: [developer verification FAQ](https://developer.android.com/developer-verification/guides/faq).
+</details>
 
 <details>
 <summary>Is it safe?</summary>
@@ -66,20 +90,12 @@ Updates install over the old version and keep your data.
   its checksum, signing certificate and a link to the build, and it has a
   [provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
   (`gh attestation verify OpenRing-x.y.apk -R busssard/OpenRing`).
-* Each change runs more than 800 automated tests ([results and coverage](https://github.com/busssard/OpenRing/blob/badges/summary.md)),
+* Each change runs more than 2000 automated tests ([results and coverage](https://github.com/busssard/OpenRing/blob/badges/summary.md)),
   is tested on an Android 14 emulator ([runs](https://github.com/busssard/OpenRing/actions/workflows/emulator.yml))
   and scanned by [CodeQL](https://github.com/busssard/OpenRing/actions/workflows/codeql.yml).
 * All releases share one signing key, so nobody else can push an update to your phone.
 
 More in [SECURITY.md](SECURITY.md).
-</details>
-
-<details>
-<summary>Google's upcoming install rules</summary>
-
-Google is starting developer verification for apps outside the Play Store (some countries from
-September 2026, worldwide planned for 2027). Unverified apps will then need a one time setting in the
-developer options. This page will explain the steps if it comes to that.
 </details>
 
 ## Getting started
@@ -115,18 +131,39 @@ background (can be switched off in Settings).
 
 ## If something does not show up
 
-Open Settings, Help, **Data check and log**. It follows your data from the ring to the screen and
+A sync that fails tries again by itself and then says in plain words what to try. If data is still
+missing, open Settings, Help, **Data check and log**. It follows your data from the ring to the screen and
 shows the step where it stops, with a hint what to do. *Repair* dates and analyses everything already
 stored again, without a new sync.
 The data check contains no health values, so you can paste it into a
 [bug report](https://github.com/busssard/OpenRing/issues/new/choose).
 
-## Good to know
+## How the numbers are worked out
 
-* Scores are close to Oura's but not identical; Oura's exact formulas are not public.
-* Ring 4 does not work out sleep stages itself. Open Ring estimates them from heart rate, HRV and
-  movement: sleep versus awake is reliable, deep and REM are estimates.
-* Steps are estimated from activity. Not included: workout detection, cycle insights, firmware updates.
+Everything is calculated on your phone from what the ring stores. Oura's own formulas are not
+public, so the scores are close to Oura's but not the same.
+
+* **Sleep stages.** A Gen 3 ring sends its own stages and the app uses them. Ring 4 and Ring 5 send
+  none, so Open Ring estimates a stage for every 30 seconds from heart rate, HRV and movement, with the
+  rules of open_health. Sleep versus awake is reliable; deep and REM are estimates and have not been
+  checked against a sleep lab. Oura's app uses a machine learning model trained on over 1,200 nights in
+  sleep labs, which also uses temperature; Oura reports 79% agreement with a sleep lab for the four stages
+  ([Oura blog](https://ouraring.com/blog/new-sleep-staging-algorithm/)).
+* **Scores.** Each score is a weighted mix of its parts, with the weights open_health worked out from
+  Oura's scoring engine. For sleep: total sleep 35%, restfulness 15%, and efficiency, REM, deep sleep, time to
+  fall asleep and timing 10% each. How many points a part gives (for example for 7 hours of sleep) is not
+  public, so those curves are our own, based on sleep research and Oura's help pages, and can be read in
+  [the code](app/src/main/java/app/openring/core/analysis/Scores.java). A part the ring did not record is
+  left out instead of lowering the score.
+* **Your normal.** Readiness compares your resting heart rate, HRV and temperature with your own usual
+  values. They become personal after about 14 nights; until then the app says so and early scores move more.
+* **Known differences.** Where we know our count differs from Oura's, there is an open issue, for example
+  active calories ([#117](https://github.com/busssard/OpenRing/issues/117)) and sleep efficiency
+  ([#107](https://github.com/busssard/OpenRing/issues/107)).
+* **Not included:** workout detection, cycle insights, cardiovascular age, firmware updates. Steps are
+  estimated from activity, not counted.
+
+More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#analysis).
 
 ## For developers
 
