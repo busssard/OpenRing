@@ -1278,6 +1278,28 @@ public class CoreTest {
         check("only zero parts cannot take a minute", StageShare.roundTogether(new double[] {0, -2}, 1) == null);
         double[] noMissing = StageShare.shownMinutes(31.6, 236.6, 71.6, 8.96, 0, 339.8, 348.76, 350);
         eq("no missing data: No data stays 0 when awake takes two", noMissing[4] + "," + (noMissing[3] + noMissing[0] + noMissing[1] + noMissing[2]), "0.0,350.0");
+        // review of #201 (Must fix): a one minute awakening never shows 0 next to its wake up. Here the rounded clocks
+        // make the shown time in bed (154) a minute short and awake (1.0012) had the smallest remainder
+        double ws = 1761400001.82, we = 1761409283.35, wIb = (we - ws) / 60, wAwake = 1.0012, wAsleep = wIb - wAwake;
+        double wDeep = 55.2, wLight = 72.9, wRem = wAsleep - wDeep - wLight;
+        eq("short awakening: shown time in bed is a minute short", WakeUps.shownMinutes(ws, we), 154L);
+        double[] wake = StageShare.shownMinutes(wDeep, wLight, wRem, wAwake, 0, wAsleep, wIb, WakeUps.shownMinutes(ws, we));
+        eq("short awakening: awake keeps its minute", wake[3], 1.0);
+        eq("short awakening: sleep rows still add up to total sleep", wake[0] + wake[1] + wake[2], (double) Math.round(wAsleep));
+        check("roundTogether: a part shown as 1 from 0.5 or more does not give its minute",
+                StageShare.roundTogether(new double[] {1.0012, 0}, 0) == null);
+        eq("roundTogether: another part gives the minute instead", Arrays.toString(StageShare.roundTogether(new double[] {1.0012, 5.4}, 5)), "[1, 4]");
+        eq("roundTogether: a part of half a minute or more gets a minute first", Arrays.toString(StageShare.roundTogether(new double[] {0.6, 50.9}, 51)), "[1, 50]");
+        check("roundTogether: not enough minutes for every part of half a minute gives null",
+                StageShare.roundTogether(new double[] {0.6, 0.6, 0.6}, 1) == null);
+        // review of #201 (Should fix): the note says All of it when all the time without stage data was before sleep,
+        // also when the row was rounded up to a minute more than the exact before minutes
+        eq("note before: all of it follows the shown row", StageShare.shownBefore(20.4, 20.4, 21), 21.0);
+        eq("note before: a part stays exact", StageShare.shownBefore(20.4, 5.2, 21), 5.2);
+        eq("note before: never more than the row", StageShare.shownBefore(20.6, 20.55, 20), 20.0);
+        check("note before: all of it reads All of it", StageShare.noDataNote(21, StageShare.shownBefore(20.4, 20.4, 21), true)
+                .endsWith(" All of it was before you fell asleep, so latency includes it."));
+        check("note before: unknown stays unknown", Double.isNaN(StageShare.shownBefore(20, Double.NaN, 20)));
         // many nights: rows always add up and each stays within a minute of its exact value
         Random rnd = new Random(111);
         int bad = 0;
@@ -1290,13 +1312,19 @@ public class CoreTest {
             double dd = dN * ep, ll = lN * ep, rr = rN * ep, aa = aN * ep, nn = nN * ep;
             long shownIb = WakeUps.shownMinutes(s0, e0);
             double[] r = StageShare.shownMinutes(dd, ll, rr, aa, nn, dd + ll + rr, ib, shownIb);
-            boolean ok = r[0] + r[1] + r[2] == Math.round(dd + ll + rr) && r[0] + r[1] + r[2] + r[3] + r[4] == shownIb;
             double[] ex = {dd, ll, rr, aa, nn};
+            // a part of half a minute to under two minutes keeps its one minute even when its group then cannot add
+            // up (it would otherwise show 0): only then may the rows be a minute off their totals
+            boolean tiny = false;
+            for (double v : ex) if (v >= 0.5 && v < 2) tiny = true;
+            boolean ok = tiny || (r[0] + r[1] + r[2] == Math.round(dd + ll + rr) && r[0] + r[1] + r[2] + r[3] + r[4] == shownIb);
             for (int k = 0; k < 5; k++) if (Math.abs(r[k] - ex[k]) >= 2) ok = false;
             for (int k = 0; k < 3; k++) if (Math.abs(r[k] - ex[k]) >= 1) ok = false;
+            // a part of half a minute or more never shows 0, a part that is 0 never shows a minute (review of #201)
+            for (int k = 0; k < 5; k++) if ((ex[k] >= 0.5 && r[k] < 1) || (ex[k] == 0 && r[k] != 0)) ok = false;
             if (!ok && bad++ < 3) System.out.println("  night " + Arrays.toString(ex) + " in bed " + ib + " shown " + shownIb + " got " + Arrays.toString(r));
         }
-        eq("2000 nights: rows add up, sleep stages within a minute, awake and no data within two", bad, 0);
+        eq("2000 nights: rows add up (unless a part of under two minutes keeps its minute), sleep stages within a minute, awake and no data within two, nothing hidden", bad, 0);
         // nights without missing data never get a No data minute, nights without deep never a deep minute
         int ghost = 0;
         for (int i = 0; i < 200000; i++) {
@@ -1308,6 +1336,20 @@ public class CoreTest {
             if (r[4] != 0 || (dN == 0 && r[0] != 0)) ghost++;
         }
         eq("200000 nights: no No data or deep minute that is not there", ghost, 0);
+        // short awakenings (1 to 2.5 min) with clock times anywhere in the second: awake never shows 0 (review of #201)
+        int hidden = 0, notSum = 0;
+        for (int i = 0; i < 200000; i++) {
+            double aw = 0.5 + rnd.nextDouble() * 2, dd = rnd.nextDouble() * 100, ll = 10 + rnd.nextDouble() * 300, rr = rnd.nextDouble() * 100;
+            double nn = rnd.nextInt(3) == 0 ? rnd.nextDouble() * 3 : 0, ib = dd + ll + rr + aw + nn;
+            double s0 = 1761400000 + rnd.nextInt(60) + rnd.nextDouble(), e0 = s0 + ib * 60;
+            double[] r = StageShare.shownMinutes(dd, ll, rr, aw, nn, dd + ll + rr, ib, WakeUps.shownMinutes(s0, e0));
+            double[] ex = {dd, ll, rr, aw, nn};
+            for (int k = 0; k < 5; k++) if ((ex[k] >= 0.5 && r[k] < 1) || (ex[k] == 0 && r[k] != 0)) { hidden++; break; }
+            boolean tiny = (dd >= 0.5 && dd < 2) || (rr >= 0.5 && rr < 2);
+            if (!tiny && r[0] + r[1] + r[2] != Math.round(dd + ll + rr)) notSum++;
+        }
+        eq("200000 nights with a short awakening: no part of half a minute or more shows 0", hidden, 0);
+        eq("200000 nights with a short awakening: sleep rows add up to total sleep (unless a stage of under two minutes keeps its minute)", notSum, 0);
 
         // #138: one rounding for night times
         java.time.ZoneId utc = java.time.ZoneId.of("UTC");
@@ -3029,6 +3071,11 @@ public class CoreTest {
                 && ClockChange.activityText(null) == null);
         check("activity chart line: Lord Howe's half hour", ClockChange.activityText(ClockChange.onDay(LORD_HOWE, at("2026-04-05T00:00:00", LORD_HOWE),
                 at("2026-04-06T00:00:00", LORD_HOWE))).startsWith("The clocks went back 30 minutes on this day (02:00 became 01:30), so 01:30 to 02:00 happened twice."));
+        // review of #202: only a day analysed with real minutes (stored day_min) gets the line
+        check("activity chart line: a day stored before (no day_min) has none", ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26), 0) == null);
+        eq("activity chart line: a day analysed now has it", ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26), 1500),
+                ClockChange.activityText(ClockChange.onDay(ZURICH, z25, z26)));
+        check("activity chart line: day_min alone gives no line on other days", ClockChange.activityText(null, 1440) == null);
     }
 
     /** Issue #44: the weekly parts of the activity score look at the worn days only. */

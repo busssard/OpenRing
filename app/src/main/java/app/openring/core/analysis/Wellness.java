@@ -61,7 +61,10 @@ public final class Wellness {
         public double avgMet = Double.NaN;
         public double[] metProfile = new double[96]; // 15 minute mean MET, NaN where no data
         public int coveredMin;
-        /** Real minutes of the day: 1440, or 1380 and 1500 when the clocks change by an hour (issue #114). */
+        /**
+         * Real minutes of the day (issue #114): 1440, or 1380, 1410, 1470 or 1500 on a day the clocks change by an hour
+         * or half an hour (Lord Howe). Stored as {@code day_min}, which marks a day analysed with real minutes.
+         */
         public int dayMin;
         /** The resting part of {@link #totalKcal}: the whole day's resting burn, or its share up to {@link #totalUntil} (issue #155). */
         public double restingKcal;
