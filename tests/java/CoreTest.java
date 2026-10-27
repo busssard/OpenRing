@@ -2956,7 +2956,7 @@ public class CoreTest {
     static void longWake() {
         NightFinder.LocalClock utc = new NightFinder.LocalClock() {
             @Override
-            public int minuteOfDay(double unix) {
+            public int minuteOfDay(double unix, double end) {
                 return (int) (((long) unix % 86400) / 60);
             }
         };
@@ -3151,7 +3151,7 @@ public class CoreTest {
         {
             NightFinder.LocalClock utc = new NightFinder.LocalClock() {
                 @Override
-                public int minuteOfDay(double unix) {
+                public int minuteOfDay(double unix, double end) {
                     return (int) (((long) unix % 86400) / 60);
                 }
             };
@@ -3707,6 +3707,36 @@ public class CoreTest {
         check("text two hours", ClockChange.text(120, "02:00", "04:00").contains("forward 2 hours"));
         check("text without stored times", ClockChange.text(-60, "", null).startsWith("The clocks went back one hour that night. Sleep"));
         travel();
+        sleptBefore();
+    }
+
+    /** Issues #161 and #162: where a sleep between two zone notes was slept, from the clock its end reads on. */
+    static void sleptBefore() {
+        java.time.ZoneId zh = java.time.ZoneId.of("Europe/Zurich"), ny = java.time.ZoneId.of("America/New_York"),
+                la = java.time.ZoneId.of("America/Los_Angeles"), ak = java.time.ZoneId.of("Pacific/Auckland"),
+                tk = java.time.ZoneId.of("Asia/Tokyo"), hn = java.time.ZoneId.of("Pacific/Honolulu");
+        java.time.LocalDate d = java.time.LocalDate.of(2026, 10, 11);
+        check("Zurich night before flying to Los Angeles (06:45 there, 21:45 here)",
+                ClockChange.sleptBefore(d.atTime(6, 45).atZone(zh).toEpochSecond(), zh, la));
+        check("Zurich night before flying to New York (05:30 there, 23:30 here)",
+                ClockChange.sleptBefore(d.atTime(5, 30).atZone(zh).toEpochSecond(), zh, ny));
+        check("first night in New York after Zurich (06:45 here, 12:45 there)",
+                !ClockChange.sleptBefore(d.atTime(6, 45).atZone(ny).toEpochSecond(), zh, ny));
+        check("first night in Los Angeles after Auckland (06:45 here, 02:45 there)",
+                !ClockChange.sleptBefore(d.atTime(6, 45).atZone(la).toEpochSecond(), ak, la));
+        check("Auckland night before flying to Los Angeles (06:45 there, 10:45 here)",
+                ClockChange.sleptBefore(d.atTime(6, 45).atZone(ak).toEpochSecond(), ak, la));
+        check("Tokyo night before flying to Honolulu (06:45 there, 11:45 here)",
+                ClockChange.sleptBefore(d.atTime(6, 45).atZone(tk).toEpochSecond(), tk, hn));
+        check("first night in Honolulu after Tokyo (06:45 here, 01:45 there)",
+                !ClockChange.sleptBefore(d.atTime(6, 45).atZone(hn).toEpochSecond(), tk, hn));
+        // Zurich and Paris share the clock: a tie goes to the later zone
+        check("same clock: the later zone", !ClockChange.sleptBefore(d.atTime(7, 0).atZone(zh).toEpochSecond(), zh, java.time.ZoneId.of("Europe/Paris")));
+        check("no zone before: the later zone", !ClockChange.sleptBefore(d.atTime(7, 0).atZone(zh).toEpochSecond(), null, la)
+                && !ClockChange.sleptBefore(Double.NaN, zh, la) && !ClockChange.sleptBefore(0, zh, null));
+        eq("07:00 is the morning", ClockChange.fromMorning(java.time.LocalTime.of(7, 0)), 0);
+        eq("19:00 is the farthest from it", ClockChange.fromMorning(java.time.LocalTime.of(19, 0)), 720);
+        eq("distance across midnight", ClockChange.fromMorning(java.time.LocalTime.of(23, 30)), 450);
     }
 
     static void travel() {

@@ -64,6 +64,27 @@ public final class ClockChange {
         return null;
     }
 
+    /** A usual wake up time on the clock (minutes), to tell where a sleep between two zone notes was slept. */
+    static final int MORNING_MIN = 7 * 60;
+
+    /**
+     * A sleep ending at {@code end} between two zone notes (issues #161, #162): true when it was most likely
+     * slept in {@code before} (the zone noted last before the gap, a night before the flight), so its end is
+     * nearer to 07:00 on that clock than on the clock of {@code later} (the first zone noted after it). A tie,
+     * the same clock or a missing zone gives false: the later zone counts, as the owner decided on #22.
+     */
+    public static boolean sleptBefore(double end, ZoneId before, ZoneId later) {
+        if (before == null || later == null || Double.isNaN(end)) return false;
+        Instant t = Instant.ofEpochSecond((long) end);
+        return fromMorning(t.atZone(before).toLocalTime()) < fromMorning(t.atZone(later).toLocalTime());
+    }
+
+    /** Minutes between {@code t} and 07:00 on the clock face (0 to 720). */
+    public static int fromMorning(LocalTime t) {
+        int d = Math.abs(t.getHour() * 60 + t.getMinute() - MORNING_MIN);
+        return Math.min(d, 24 * 60 - d);
+    }
+
     private static Change change(ZoneOffsetTransition t, int min) {
         return new Change(t.getInstant().getEpochSecond(), min, hm(t.getDateTimeBefore().toLocalTime()), hm(t.getDateTimeAfter().toLocalTime()));
     }

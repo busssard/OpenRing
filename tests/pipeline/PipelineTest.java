@@ -732,6 +732,8 @@ public class PipelineTest {
         totalBurnSoFar();
         zoneTable();
         travelZones();
+        travelLongWake();
+        dateLineNights();
         zoneStorage(full.toByteArray());
         screenGaps(full.toByteArray());
         sqlForOldPhones();
@@ -1962,6 +1964,210 @@ public class PipelineTest {
             check("west: nights between the notes count in Los Angeles", la >= 3, la + " nights");
             check("west: no night lands on the day before, none becomes a nap", collide == 0
                     && wdb.count("SELECT COUNT(*) FROM nights WHERE main = 1") == rdb.count("SELECT COUNT(*) FROM nights WHERE main = 1"), collide + " collisions");
+        } finally {
+            java.util.TimeZone.setDefault(keep);
+        }
+    }
+
+    /** Hours after midnight starting {@code d} in zone {@code z} (negative: the evening before). */
+    static double atIn(LocalDate d, double hour, ZoneId z) {
+        return d.atStartOfDay(z).toEpochSecond() + hour * 3600;
+    }
+
+    /** One night per date in {@code days}, 23:00 to 07:00 in {@code z}, a 75 minute wake up from 02:30 when {@code wake}. */
+    static void zoneNights(List<RingEvent> ev, List<LocalDate> days, ZoneId z, boolean wake, long t0, long ds0) {
+        for (LocalDate d : days) {
+            List<double[]> awake = new ArrayList<double[]>();
+            if (wake) awake.add(new double[] {atIn(d, 2.5, z), atIn(d, 2.5, z) + 75 * 60});
+            wornSleep(ev, atIn(d, -1, z), atIn(d, 7, z), awake, t0, ds0);
+        }
+    }
+
+    static List<LocalDate> dates(String first, int n) {
+        List<LocalDate> out = new ArrayList<LocalDate>();
+        for (int i = 0; i < n; i++) out.add(LocalDate.parse(first).plusDays(i));
+        return out;
+    }
+
+    /** A phone with these events, nothing analysed yet (zones are noted by the caller). */
+    static Context travelPhone(String name, List<RingEvent> ev, long t0, long ds0) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        java.util.Collections.sort(ev, new java.util.Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
+        long lastDs = ev.get(ev.size() - 1).ds;
+        long last = t0 + (lastDs - ds0) / 10;
+        db.insertBatch(ev, 1, last);
+        db.insertPhoneAnchor(1, lastDs, last);
+        return c;
+    }
+
+    /** Every stored sleep as "day main start to end, asleep, wake ups, zone", in order. */
+    static List<String> nightLines(Db db) {
+        List<String> out = new ArrayList<String>();
+        for (String js : db.nightsJson("2000-01-01", "2100-01-01", false)) {
+            JSONObject o = Json.parse(js);
+            ZoneId z = Json.zone(o, ZoneId.systemDefault());
+            out.add(String.format(java.util.Locale.US, "%s %s %s to %s, %.0f min, %d wake ups, %s", o.optString("day"),
+                    o.optBoolean("main") ? "main" : "nap", hm(Json.d(o, "start"), z), hm(Json.d(o, "end"), z),
+                    o.optDouble("asleep_min"), o.optInt("awakenings"), o.optString("zone")));
+        }
+        return out;
+    }
+
+    /**
+     * Issue #161: nights with a long wake up (no bedtime marker, the #42 rule joins them) are analysed
+     * again while the phone is in another zone, both ways. Each stays one night with its wake up, read
+     * on the clock of the zone it was slept in; running again or Re analyse all gives the same nights.
+     */
+    static void travelLongWake() throws Exception {
+        java.util.TimeZone keep = java.util.TimeZone.getDefault();
+        String[][] ways = {{"America/New_York", "Europe/Zurich"}, {"Europe/Zurich", "America/New_York"}};
+        try {
+            for (String[] w : ways) {
+                ZoneId slept = ZoneId.of(w[0]), now = ZoneId.of(w[1]);
+                String how = "#161 " + slept.getId().replaceAll(".*/", "") + " nights, phone then in " + now.getId().replaceAll(".*/", "");
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(slept));
+                long t0 = LocalDate.parse("2026-09-13").atStartOfDay(slept).toEpochSecond(), ds0 = 9L * 86400 * 10;
+                List<RingEvent> ev = new ArrayList<RingEvent>();
+                List<LocalDate> days = dates("2026-09-15", 4);
+                zoneNights(ev, days, slept, true, t0, ds0);
+                Context c = travelPhone("openring161", ev, t0, ds0);
+                Db db = Db.get(c);
+                for (LocalDate d : days) db.noteZone(atIn(d, 8, slept), slept.getId());
+                Analyzer.run(c, null);
+                List<String> home = nightLines(db);
+                long events = db.count("SELECT COUNT(*) FROM events");
+                int whole = 0;
+                for (String l : home) if (l.contains(" main ") && !l.contains(" 0 wake ups")) whole++;
+                check(how + ": first analysed where slept, one night each with its wake up", home.size() == 4 && whole == 4, home);
+                // arriving: the app start notes the new zone, the nights since the row before are analysed again
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(now));
+                boolean again = Analyzer.noteZone(db, atIn(LocalDate.parse("2026-09-19"), 9, now), now, Double.NaN);
+                Analyzer.run(c, null);
+                List<String> away = nightLines(db);
+                check(how + ": analysed again in the new zone, the nights stay as they were", again && away.equals(home), away);
+                Analyzer.run(c, null);
+                check(how + ": a second run gives the same nights", nightLines(db).equals(home), nightLines(db));
+                Analyzer.runAll(c, null);
+                check(how + ": Re analyse all in the new zone gives the same nights", nightLines(db).equals(home), nightLines(db));
+                check(how + ": every event kept, no rules version change", db.count("SELECT COUNT(*) FROM events") == events
+                        && db.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION, events);
+            }
+            // flying west after a few days without opening the app: the Zurich nights between the last Zurich note
+            // and the first one in Los Angeles were slept in Zurich, so their wake ups are read on Zurich's clock too
+            ZoneId zh = ZoneId.of("Europe/Zurich"), la = ZoneId.of("America/Los_Angeles");
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(la));
+            long t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond(), ds0 = 9L * 86400 * 10;
+            List<RingEvent> ev = new ArrayList<RingEvent>();
+            List<LocalDate> days = dates("2026-09-02", 10);
+            zoneNights(ev, days, zh, true, t0, ds0);
+            Context c = travelPhone("openring161w", ev, t0, ds0);
+            Db db = Db.get(c);
+            for (int i = 0; i < 7; i++) db.noteZone(atIn(days.get(i), 8, zh), zh.getId());
+            db.noteZone(atIn(LocalDate.parse("2026-09-13"), 8, la), la.getId());
+            Analyzer.run(c, null);
+            List<String> lines = nightLines(db);
+            int whole = 0, onDay = 0;
+            for (String l : lines) {
+                if (l.contains(" main ") && !l.contains(" 0 wake ups")) whole++;
+                for (LocalDate d : days) if (l.startsWith(d + " main")) onDay++;
+            }
+            check("#161 Zurich nights before a flight west, analysed in Los Angeles: one night each with its wake up, on its own day",
+                    lines.size() == 10 && whole == 10 && onDay == 10, lines);
+
+            // review of PR #206: the zone is decided once per night, not per piece. New York nights with three
+            // 62 minute wake ups (00:00, 01:52, 03:44); the first one lies between the last Zurich note and the
+            // first New York note. Read per piece, its later pieces end in the Zurich morning and the first
+            // piece became a nap
+            ZoneId ny = ZoneId.of("America/New_York");
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(ny));
+            t0 = LocalDate.parse("2026-09-01").atStartOfDay(zh).toEpochSecond();
+            ev = new ArrayList<RingEvent>();
+            List<LocalDate> home = dates("2026-09-02", 5), away = dates("2026-09-08", 4);
+            zoneNights(ev, home, zh, false, t0, ds0);
+            for (LocalDate d : away) {
+                List<double[]> awake = new ArrayList<double[]>();
+                for (double h : new double[] {0, 112 / 60.0, 224 / 60.0}) awake.add(new double[] {atIn(d, h, ny), atIn(d, h, ny) + 62 * 60});
+                wornSleep(ev, atIn(d, -1, ny), atIn(d, 7, ny), awake, t0, ds0);
+            }
+            c = travelPhone("openring161m", ev, t0, ds0);
+            db = Db.get(c);
+            for (LocalDate d : home) db.noteZone(atIn(d, 8, zh), zh.getId());
+            for (LocalDate d : away) db.noteZone(atIn(d, 8, ny), ny.getId());
+            Analyzer.run(c, null);
+            lines = nightLines(db);
+            int nights = 0, naps = 0;
+            for (String l : lines) {
+                if (l.contains(" nap ")) naps++;
+                for (LocalDate d : away) if (l.startsWith(d + " main") && !l.contains(" 0 wake ups") && !l.contains(" 1 wake ups")
+                        && !l.contains(" 2 wake ups")) nights++;
+            }
+            check("#161 New York nights with three long wake ups, the first between the notes: one night each, no nap",
+                    nights == 4 && naps == 0 && lines.size() == 9, lines);
+        } finally {
+            java.util.TimeZone.setDefault(keep);
+        }
+    }
+
+    /**
+     * Issue #162: flying east across the date line into a zone far behind (Auckland to Los Angeles, Tokyo
+     * to Honolulu), the first night in the new zone stays on its own day when no zone was noted between
+     * landing and that morning, and the orange trip line shows on that day. Nights slept before the flight
+     * in a gap between notes keep their date of the zone before (the case the rule was made for).
+     */
+    static void dateLineNights() throws Exception {
+        java.util.TimeZone keep = java.util.TimeZone.getDefault();
+        String[][] trips = {{"Pacific/Auckland", "America/Los_Angeles"}, {"Asia/Tokyo", "Pacific/Honolulu"}};
+        try {
+            for (String[] t : trips) {
+                ZoneId from = ZoneId.of(t[0]), to = ZoneId.of(t[1]);
+                String how = "#162 " + from.getId().replaceAll(".*/", "") + " to " + to.getId().replaceAll(".*/", "");
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(to));
+                long t0 = LocalDate.parse("2026-10-04").atStartOfDay(from).toEpochSecond(), ds0 = 9L * 86400 * 10;
+                List<LocalDate> before = dates("2026-10-06", 5), after = dates("2026-10-11", 4);
+                for (int gap = 0; gap < 2; gap++) {
+                    List<RingEvent> ev = new ArrayList<RingEvent>();
+                    zoneNights(ev, before, from, false, t0, ds0);
+                    zoneNights(ev, after, to, false, t0, ds0);
+                    Context c = travelPhone("openring162", ev, t0, ds0);
+                    Db db = Db.get(c);
+                    // gap 0: a note every morning, the first one there after the first night (the issue's case);
+                    // gap 1: notes stop two days before the flight and start again two days after it
+                    for (int i = 0; i < (gap == 0 ? 5 : 3); i++) db.noteZone(atIn(before.get(i), 8, from), from.getId());
+                    for (int i = gap == 0 ? 0 : 2; i < 4; i++) db.noteZone(atIn(after.get(i), 8, to), to.getId());
+                    Analyzer.run(c, null);
+                    List<String> lines = nightLines(db);
+                    List<JSONObject> main = new ArrayList<JSONObject>();
+                    for (String js : db.nightsJson("2000-01-01", "2100-01-01", true)) main.add(Json.parse(js));
+                    StringBuilder got = new StringBuilder();
+                    boolean ok = lines.size() == 9 && main.size() == 9;
+                    String travelDay = null, line = null;
+                    for (int i = 0; i < main.size(); i++) {
+                        JSONObject o = main.get(i);
+                        LocalDate want = i < 5 ? before.get(i) : after.get(i - 5);
+                        ok &= want.toString().equals(o.optString("day"));
+                        got.append(o.optString("day")).append(' ');
+                        // as DayData.travelLine: the main night before by start
+                        String l = i == 0 ? null : app.openring.core.analysis.ClockChange.travel(main.get(i - 1).optString("zone", null),
+                                o.optString("zone", null), (Json.d(o, "start") + Json.d(o, "end")) / 2);
+                        if (l != null) {
+                            travelDay = travelDay == null ? o.optString("day") : travelDay + " and " + o.optString("day");
+                            line = l;
+                        }
+                    }
+                    String what = how + (gap == 0 ? ", first note after the first night there" : ", no notes for two days on each side");
+                    check(what + ": one main night on each day", ok, got + " / " + lines);
+                    if (gap == 0) {
+                        check(what + ": the trip line shows on the first night there", "2026-10-11".equals(travelDay)
+                                && line.contains("hours behind where you slept the night before"), travelDay + ": " + line);
+                    }
+                }
+            }
         } finally {
             java.util.TimeZone.setDefault(keep);
         }
