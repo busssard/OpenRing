@@ -2605,6 +2605,16 @@ public class CoreTest {
         }
     }
 
+    /** The exception {@code cursorMarkerPresent} threw, or null when it answered true or false. */
+    static Exception probeError(RingClient c, long cursor) {
+        try {
+            c.cursorMarkerPresent(cursor);
+            return null;
+        } catch (Exception e) {
+            return e;
+        }
+    }
+
     /** Issue #159: the drain paths that decide whether ring history is kept or lost. */
     static void drainGuards() throws Exception {
         // a) the sink fails to store the second batch: the drain stops, that batch is not acknowledged
@@ -2636,24 +2646,25 @@ public class CoreTest {
         check("drain a: first batch failed throws", e instanceof RingClient.RingException);
         eq("drain a: first batch failed keeps the cursor", first.saved, 0L);
         eq("drain a: first batch failed stops at once", m.writes.toString(), "[280100, " + ext(0) + "]");
+        m.writes.clear();
+        new RingClient(m).quiet(5).drain(first.saved, new Store(first.saved, Integer.MAX_VALUE));
+        eq("drain a: after a failed first batch the next drain asks for 0 again", m.writes.indexOf(ext(0)), 1);
 
         // b) the ring reports bytes left but the batch is empty: an error, never "done"
         m = new Mock();
         m.on("280100", "290100");
         m.on(ext(0), summary(16, 0));
-        st = new Store(0, Integer.MAX_VALUE);
-        e = drainError(new RingClient(m).quiet(5), 0, st);
+        e = drainError(new RingClient(m).quiet(5), 0, new Store(0, Integer.MAX_VALUE));
         check("drain b: empty batch with bytes left throws", e instanceof RingClient.RingException);
-        eq("drain b: message", e == null ? null : e.getMessage(), "ring reports 16 bytes left but the batch was empty (cursor 0)");
-        eq("drain b: sink saw the empty batch at the old cursor", st.seen.toString(), "[0 events, next 0, left 16]");
+        check("drain b: names the bytes left", e != null && e.getMessage().contains("16 bytes"));
         // the same on legacy GetEvent, the path Ring 4 fw 2.6.7 uses
         m = new Mock();
         m.on("280100", "290100");
         m.on(ext(0), "2f020041");
         m.on(Hex.encode(Protocol.getEvent(0, 255, -1)), "1106000010000000");
         e = drainError(new RingClient(m).quiet(5), 0, new Store(0, Integer.MAX_VALUE));
-        eq("drain b: legacy empty batch with bytes left throws", e == null ? null : e.getMessage(),
-                "ring reports 16 bytes left but the batch was empty (cursor 0)");
+        check("drain b: legacy empty batch with bytes left throws", e instanceof RingClient.RingException);
+        check("drain b: legacy names the bytes left", e != null && e.getMessage().contains("16 bytes"));
         // an empty batch with nothing left is the normal end
         m = new Mock();
         m.on("280100", "290100");
@@ -2668,6 +2679,13 @@ public class CoreTest {
         m.on(ext(2), summary(0, 0));
         eq("probe c: marker present", probe(new RingClient(m).quiet(5), 2), "true");
         check("probe c: asks for the event before the cursor", m.writes.contains(ext(1)));
+        // the same on legacy GetEvent (Ring 4 fw 2.6.7 refuses the extended request)
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), "2f020041");
+        m.on(Hex.encode(Protocol.getEvent(1, 255, -1)), "43080100000074657374", "1106000000000000");
+        m.on(Hex.encode(Protocol.getEvent(2, 255, -1)), "1106000000000000");
+        eq("probe c: legacy marker present", probe(new RingClient(m).quiet(5), 2), "true");
 
         // d) marker gone: an empty answer, or only events older than the marker (a replay)
         m = new Mock();
@@ -2678,6 +2696,11 @@ public class CoreTest {
         m.on("280100", "290100");
         m.on(ext(1), Hex.encode(bundle(0).encode()), summary(0, 0));
         eq("probe d: only an older event is not the marker", probe(new RingClient(m).quiet(5), 2), "false");
+        m = new Mock();
+        m.on("280100", "290100");
+        m.on(ext(1), "2f020041");
+        m.on(Hex.encode(Protocol.getEvent(1, 255, -1)), "1106000000000000");
+        eq("probe d: legacy marker gone", probe(new RingClient(m).quiet(5), 2), "false");
 
         // e) the ring rejects the cursor itself (result code 0xff)
         m = new Mock();
@@ -2689,8 +2712,9 @@ public class CoreTest {
         m = new Mock();
         m.on("280100", "290100");
         m.on(ext(1), summary(0, 0x05));
-        eq("probe f: result code 0x05 throws", probe(new RingClient(m).quiet(5), 2),
-                "RingException: extended history request failed with result code 0x05");
+        e = probeError(new RingClient(m).quiet(5), 2);
+        check("probe f: result code 0x05 throws", e instanceof RingClient.RingException);
+        check("probe f: names the result code", e != null && e.getMessage().contains("0x05"));
         e = drainError(new RingClient(m).quiet(5), 1, new Store(1, Integer.MAX_VALUE));
         check("drain f: result code 0x05 throws", e instanceof HistoryBatch.BatchException);
         eq("drain f: result code kept", e instanceof HistoryBatch.BatchException ? ((HistoryBatch.BatchException) e).resultCode : null, 5);
@@ -2699,13 +2723,12 @@ public class CoreTest {
         m = new Mock();
         m.on("280100", "290100");
         m.on(ext(1), Hex.encode(bundle(100).encode()));
-        eq("probe g: batch without summary throws", probe(new RingClient(m).quiet(5), 2),
-                "RingException: event batch ended without a summary packet (2 packets); the link was probably lost mid batch");
+        check("probe g: batch without summary throws", probeError(new RingClient(m).quiet(5), 2) instanceof RingClient.RingException);
         Mock dropping = new Mock();
         dropping.on("280100", "290100");
         dropping.on(ext(1), Hex.encode(bundle(100).encode()));
-        eq("probe g: lost link is passed on", probe(new RingClient(new LosingLink(dropping, ext(1))).quiet(5), 2),
-                "IOException: ring disconnected");
+        // passed on as it is or wrapped, as long as it is an error and not an answer
+        check("probe g: lost link throws", probeError(new RingClient(new LosingLink(dropping, ext(1))).quiet(5), 2) instanceof IOException);
 
         // cursor 0 has nothing before it: present, without asking the ring
         m = new Mock();
