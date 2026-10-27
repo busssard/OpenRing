@@ -600,6 +600,18 @@ public class PipelineTest {
                     && wide.score.value == di.score.value, Math.round(exactMin) + " -> " + Math.round(wideMin) + " min shown");
             check("touch readout data: sessions and apps of the day", !wide.sessions.isEmpty() && !wide.dayApps.isEmpty()
                     && app.openring.core.analysis.ScreenTime.at(wide.sessions, wide.sessions.get(0)[0] + 1) != null, null);
+            // issue #109: touching any lit line of the clock finds a use, a dark line none, also with uses drawn longer
+            for (app.openring.data.ScreenDays.Info x : new app.openring.data.ScreenDays.Info[] {di, wide}) {
+                int miss = 0, found = 0;
+                for (int k = 0; k < x.dial.length; k++) {
+                    app.openring.core.analysis.DialMath.Touch tc = app.openring.core.analysis.DialMath.touch((k + 0.5) / x.dial.length, x.date,
+                            x.from, x.to, z, x.dial.length, x.sessions, x.shown, x.nights);
+                    if ((x.dial[k] > 0) != (tc.session >= 0)) miss++;
+                    if (tc.session >= 0) found++;
+                }
+                check("touching a lit line of the clock finds its use" + (x == wide ? ", uses drawn 15 min" : ""),
+                        miss == 0 && found > 10 && x.shown.size() == x.sessions.size(), miss + " wrong, " + found + " found");
+            }
             long noApp = 0;
             for (ScreenTime.AppRow r : wide.appRows) if (r.kind == ScreenTime.AppRow.NO_APP) noApp += r.shownMin;
             check("no app in front is small in the demo", noApp < 5, noApp);

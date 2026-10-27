@@ -124,7 +124,11 @@ history had, before anything is written to the file the person picked; otherwise
 5. Time zones (issue #22): each night takes its zone from `zones` and stores it as `zone`; its day, sleep timing
    and clock change marker use it, and a day uses its main night's zone. Screens format each night's times
    with its own zone (`Json.zone`, falling back to the phone's zone for nights without one), so a trip does
-   not move earlier nights. A new zone row analyses the nights since the row before again.
+   not move earlier nights. A new zone row analyses the nights since the row before again. Screens that show
+   one calendar day (Screen clock, the Body tab's day) take its clock change from `ClockChange.onDay`: a change
+   belongs to the date of the clock time it skips or repeats, also at midnight (Greenland, Cairo; issue #158),
+   while nights keep `ClockChange.find`. A touch on a lit 5 minute line of the Screen clock finds the use drawn
+   there with the step maths of `DialMath.fill` (`DialMath.touch`, issue #109).
 6. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
    when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
    age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.

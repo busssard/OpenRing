@@ -2905,6 +2905,193 @@ public class CoreTest {
         for (double v : fi) if (v > 0) on++;
         check("a night inside the repeated hour keeps its width", on == 8 && fi[24] == 1 && fi[27] == 1 && fi[32] == 1 && fi[35] == 1 && fi[28] == 0);
         check("empty day fills nothing", DialMath.fill(twice, bFrom, bFrom, z, 288)[0] == 0);
+        dialTouch();
+        clockChangeOnDay();
+    }
+
+    /** Issue #109: touching a lit line of the screen clock finds the use drawn there. */
+    static void dialTouch() {
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        java.time.LocalDate d = java.time.LocalDate.parse("2026-10-14");
+        double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double t1255 = zurich("2026-10-14T12:55:00"), f1257 = (12 * 60 + 57) / 1440.0;
+        List<double[]> uses = new ArrayList<double[]>();
+        uses.add(new double[] {t1255 + 10, t1255 + 40});
+        List<double[]> none = new ArrayList<double[]>();
+        double[] lit = DialMath.fill(uses, from, to, z, 288);
+        check("touch: the 12:55 line is lit by a 30 s use", lit[155] > 0 && lit[156] == 0);
+        DialMath.Touch tc = DialMath.touch(f1257, d, from, to, z, 288, uses, uses, none);
+        check("touch: 12:57 on the lit line finds the use and moves into it", tc.session == 0 && tc.at == t1255 + 39 && !tc.asleep);
+        check("touch: 12:54 on the dark line before reads no use", DialMath.touch((12 * 60 + 54) / 1440.0, d, from, to, z, 288, uses, uses, none).session == -1);
+        check("touch: 13:00 on the dark line after reads no use", DialMath.touch(13 / 24.0, d, from, to, z, 288, uses, uses, none).session == -1);
+        check("touch: inside the use stays at the touched second", DialMath.touch((t1255 + 20 - from) / 86400.0, d, from, to, z, 288, uses, uses, none).at == t1255 + 20);
+        // two uses on one line: the nearer one
+        List<double[]> two = new ArrayList<double[]>();
+        two.add(new double[] {t1255 + 10, t1255 + 40});
+        two.add(new double[] {t1255 + 250, t1255 + 280});
+        DialMath.Touch near = DialMath.touch(f1257 + 60 / 86400.0, d, from, to, z, 288, two, two, none);
+        check("touch: 12:58 takes the nearer use of the line (12:59:10)", near.session == 1 && near.at == t1255 + 250);
+        DialMath.Touch before = DialMath.touch((t1255 + 5 - from) / 86400.0, d, from, to, z, 288, uses, null, null);
+        check("touch: 12:55:05 just before the use moves forward into it (no drawn list, no nights)", before.session == 0 && before.at == t1255 + 10);
+        check("touch: a dark line without nights is not asleep", !DialMath.touch(0.25, d, from, to, z, 288, uses, null, null).asleep);
+        check("touch: 12:56 takes the earlier one", DialMath.touch(f1257 - 60 / 86400.0, d, from, to, z, 288, two, two, none).session == 0);
+        // drawn at least 5 minutes: a 10 s use at 12:58:50 lights 12:55 and 13:00, both find it
+        List<double[]> real = new ArrayList<double[]>();
+        real.add(new double[] {t1255 + 230, t1255 + 240});
+        List<double[]> wide = ScreenTime.widen(real, 300);
+        double[] wl = DialMath.fill(wide, from, to, z, 288);
+        check("touch: a widened use lights two lines", wl[155] > 0 && wl[156] > 0 && wl[157] == 0);
+        DialMath.Touch w1 = DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, wide, none);
+        check("touch: 13:02 on the widened line finds the use, the hand at its real time", w1.session == 0 && w1.at == t1255 + 239);
+        DialMath.Touch w2 = DialMath.touch((13 * 60 + 4.9) / 1440.0, d, from, to, z, 288, real, wide, none);
+        check("touch: 13:04 at the end of the widened line too", w2.session == 0 && w2.at == t1255 + 239);
+        check("touch: without the widening 13:02 reads no use", DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, real, none).session == -1);
+        check("touch: a shown list of another size counts as the real one",
+                DialMath.touch((13 * 60 + 2) / 1440.0, d, from, to, z, 288, real, new ArrayList<double[]>(), none).session == -1);
+        // a use at 23:58 drawn 5 minutes long lights 00:00 of the next day
+        List<double[]> late = new ArrayList<double[]>();
+        late.add(new double[] {from - 120, from - 100});
+        List<double[]> lateW = ScreenTime.widen(late, 300);
+        check("touch: a use before midnight drawn over it lights 00:00", DialMath.fill(lateW, from, to, z, 288)[0] > 0);
+        DialMath.Touch lt = DialMath.touch(2 / 1440.0, d, from, to, z, 288, late, lateW, none);
+        check("touch: 00:02 finds it, the hand stays on this day", lt.session == 0 && lt.at == from);
+        // asleep and the repeated hour (clocks back, 2026-10-25)
+        java.time.LocalDate back = java.time.LocalDate.parse("2026-10-25");
+        double bFrom = back.atStartOfDay(z).toEpochSecond(), bTo = back.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double second0215 = java.time.Instant.parse("2026-10-25T01:15:00Z").getEpochSecond();
+        List<double[]> second = new ArrayList<double[]>();
+        second.add(new double[] {second0215 + 10, second0215 + 40});
+        DialMath.Touch rp = DialMath.touch((2 * 60 + 17) / 1440.0, back, bFrom, bTo, z, 288, second, second, none);
+        check("touch: 02:17 on the long day finds the use of the second pass", rp.session == 0 && rp.at == second0215 + 39);
+        List<double[]> night2 = new ArrayList<double[]>();
+        night2.add(new double[] {second0215 - 600, second0215 + 3600});
+        DialMath.Touch sl = DialMath.touch((2 * 60 + 40) / 1440.0, back, bFrom, bTo, z, 288, none, none, night2);
+        check("touch: asleep only in the second pass of 02:40 still reads asleep", sl.session == -1 && sl.asleep && sl.at == second0215 + 25 * 60);
+        DialMath.Touch aw = DialMath.touch(14 / 24.0, back, bFrom, bTo, z, 288, none, none, night2);
+        check("touch: 14:00 is not asleep", !aw.asleep && aw.at == zurich("2026-10-25T14:00:00"));
+        // the hour the clocks skip (2026-03-29): the switch moment, inside a use across it, else no use
+        java.time.LocalDate fwd = java.time.LocalDate.parse("2026-03-29");
+        double fFrom = fwd.atStartOfDay(z).toEpochSecond(), fTo = fwd.plusDays(1).atStartOfDay(z).toEpochSecond();
+        List<double[]> around = new ArrayList<double[]>();
+        around.add(new double[] {zurich("2026-03-29T01:59:00"), zurich("2026-03-29T03:00:30")});
+        check("touch: the skipped hour is dark and reads no use, also with a use across the switch", DialMath.fill(around, fFrom, fTo, z, 288)[30] == 0
+                && DialMath.touch(2.5 / 24, fwd, fFrom, fTo, z, 288, around, around, none).session == -1
+                && DialMath.touch(2.5 / 24, fwd, fFrom, fTo, z, 288, none, none, none).session == -1);
+        check("touch: the lines next to the skipped hour find that use", DialMath.touch(1.99 / 24, fwd, fFrom, fTo, z, 288, around, around, none).session == 0
+                && DialMath.touch(3.01 / 24, fwd, fFrom, fTo, z, 288, around, around, none).session == 0);
+        // a widened use from before does not hide a real one on the touched line
+        List<double[]> pair = new ArrayList<double[]>();
+        pair.add(new double[] {t1255 - 200, t1255 - 190});
+        pair.add(new double[] {t1255 + 240, t1255 + 250});
+        List<double[]> pairW = ScreenTime.widen(pair, 900);
+        DialMath.Touch pr = DialMath.touch((12 * 60 + 56) / 1440.0, d, from, to, z, 288, pair, pairW, none);
+        check("touch: 12:56 inside a widened earlier use takes the real use on its line", pr.session == 1 && pr.at == t1255 + 240);
+        // a day that starts at 01:00 (Cairo, the clocks skip midnight): the hand at midnight shows 01:00
+        java.time.ZoneId cairo = java.time.ZoneId.of("Africa/Cairo");
+        java.time.LocalDate cd = java.time.LocalDate.parse("2024-04-26");
+        double cFrom = cd.atStartOfDay(cairo).toEpochSecond(), cTo = cd.plusDays(1).atStartOfDay(cairo).toEpochSecond();
+        check("dial: a day starting at 01:00 has its start at the 01:00 tick", cTo - cFrom == 23 * 3600 && DialMath.fraction(cFrom, cFrom, cTo, cairo) == 1 / 24.0
+                && DialMath.fraction(cFrom - 50, cFrom, cTo, cairo) == 1 / 24.0 && DialMath.fraction(cFrom + 1800, cFrom, cTo, cairo) == 1.5 / 24);
+        check("touch: end of the day and empty day", DialMath.touch(1, d, from, to, z, 288, uses, uses, none).at == to - 1
+                && DialMath.touch(0.5, d, from, from, z, 288, uses, uses, none).session == -1);
+        // every lit line of a busy day finds a use, every dark line none: a normal day, both clock change days,
+        // the half hour changes of Lord Howe and the days of Cairo that start at 01:00 or repeat 23:00
+        touchSweep(z, "2026-10-14", 109);
+        touchSweep(z, "2026-10-25", 110);
+        touchSweep(z, "2026-03-29", 111);
+        touchSweep(java.time.ZoneId.of("Australia/Lord_Howe"), "2026-04-05", 112);
+        touchSweep(java.time.ZoneId.of("Australia/Lord_Howe"), "2026-10-04", 113);
+        touchSweep(java.time.ZoneId.of("Africa/Cairo"), "2024-04-26", 114);
+        touchSweep(java.time.ZoneId.of("Africa/Cairo"), "2024-10-31", 115);
+    }
+
+    static void touchSweep(java.time.ZoneId z, String date, long seed) {
+        java.time.LocalDate d = java.time.LocalDate.parse(date);
+        double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        List<double[]> none = new ArrayList<double[]>();
+        java.util.Random rnd = new java.util.Random(seed);
+        List<double[]> many = new ArrayList<double[]>();
+        for (double t = from - 200; t < to; t += 60 + rnd.nextInt(2400)) many.add(new double[] {t, t + 1 + rnd.nextInt(200)});
+        for (double minS : new double[] {0, 120, 900}) {
+            List<double[]> sh = ScreenTime.widen(many, minS);
+            double[] fl = DialMath.fill(sh, from, to, z, 288);
+            int bad = 0, lit = 0;
+            for (int k = 0; k < 288; k++) {
+                if (fl[k] > 0) lit++;
+                for (double part : new double[] {0.05, 0.5, 0.95}) {
+                    DialMath.Touch x = DialMath.touch((k + part) / 288, d, from, to, z, 288, many, sh, none);
+                    if ((fl[k] > 0) != (x.session >= 0)) bad++;
+                    double[] r = x.session >= 0 ? many.get(x.session) : null;
+                    // the hand on the use, or at midnight for a use of the evening before drawn over it
+                    if (r != null && !(x.at >= r[0] && x.at < Math.max(r[1], r[0] + 1) || r[1] <= from && x.at == from)) bad++;
+                }
+            }
+            check("touch " + z + " " + date + ": lit lines find a use, dark ones none, at least " + (int) minS + " s"
+                    + (bad == 0 ? "" : " (" + bad + " wrong)"), bad == 0 && lit > 50);
+        }
+    }
+
+    /** Issue #158: a change forward at midnight belongs to the day whose clock time it skips. */
+    static void clockChangeOnDay() {
+        for (String id : new String[] {"America/Nuuk", "America/Scoresbysund"}) {
+            java.time.ZoneId z = java.time.ZoneId.of(id);
+            java.time.LocalDate sat = java.time.LocalDate.parse("2027-03-27"), sun = sat.plusDays(1);
+            double s0 = sat.atStartOfDay(z).toEpochSecond(), s1 = sun.atStartOfDay(z).toEpochSecond(), s2 = sun.plusDays(1).atStartOfDay(z).toEpochSecond();
+            check(id + ": 2027-03-27 is the 23 hour day", s1 - s0 == 23 * 3600 && s2 - s1 == 24 * 3600);
+            ClockChange.Change c = ClockChange.onDay(z, s0, s1);
+            check(id + ": the change is on 2027-03-27, 23:00 became 00:00", c != null && c.minutes == 60 && c.from.equals("23:00") && c.to.equals("00:00"));
+            double[] arc = DialMath.changeArc(c);
+            check(id + ": orange arc from 23:00 for an hour", arc != null && arc[0] == 23 / 24.0 && arc[1] == 1 / 24.0);
+            check(id + ": 2027-03-28 has none", ClockChange.onDay(z, s1, s2) == null && ClockChange.dialText(ClockChange.onDay(z, s1, s2)) == null);
+            eq(id + ": dial text on 2027-03-27", ClockChange.dialText(c), "The clocks went forward one hour on this day (23:00 became 00:00), "
+                    + "so the part of the clock from 23:00 to 00:00, marked in orange, stays empty.");
+            // nights keep find: a change inside the night, wherever its days are
+            check(id + ": a night over Saturday's midnight still has it", ClockChange.find(z, s1 - 3 * 3600, s1 + 5 * 3600) != null);
+            java.time.LocalDate oct = java.time.LocalDate.parse("2027-10-30");
+            double o0 = oct.atStartOfDay(z).toEpochSecond(), o1 = oct.plusDays(1).atStartOfDay(z).toEpochSecond(), o2 = oct.plusDays(2).atStartOfDay(z).toEpochSecond();
+            ClockChange.Change b = ClockChange.onDay(z, o0, o1);
+            check(id + ": autumn stays on the 25 hour day 2027-10-30", o1 - o0 == 25 * 3600 && b != null && b.minutes == -60 && ClockChange.onDay(z, o1, o2) == null);
+        }
+        java.time.ZoneId zh = java.time.ZoneId.of("Europe/Zurich");
+        check("Zurich 2026: onDay and find agree", ClockChange.onDay(zh, zurich("2026-03-29T00:00:00"), zurich("2026-03-30T00:00:00")).at
+                == ClockChange.find(zh, zurich("2026-03-29T00:00:00"), zurich("2026-03-30T00:00:00")).at
+                && ClockChange.onDay(zh, zurich("2026-10-25T00:00:00"), zurich("2026-10-26T00:00:00")).minutes == -60
+                && ClockChange.onDay(zh, zurich("2026-10-14T00:00:00"), zurich("2026-10-15T00:00:00")) == null);
+        check("onDay without a zone or with an empty range", ClockChange.onDay(null, 0, 1) == null && ClockChange.onDay(zh, 5, 5) == null
+                && ClockChange.onDay(zh, Double.NaN, 5) == null);
+        // every zone, 2024 to 2036: each change lands on one day, the one whose length differs from 24 h by it
+        int changes = 0, wrong = 0;
+        String firstWrong = null;
+        java.time.Instant end = java.time.LocalDate.parse("2037-01-01").atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        for (String id : java.time.ZoneId.getAvailableZoneIds()) {
+            java.time.ZoneId z = java.time.ZoneId.of(id);
+            java.time.zone.ZoneOffsetTransition t = z.getRules().nextTransition(java.time.LocalDate.parse("2024-01-03").atStartOfDay(java.time.ZoneOffset.UTC).toInstant());
+            for (; t != null && t.getInstant().isBefore(end); t = z.getRules().nextTransition(t.getInstant())) {
+                int min = (t.getOffsetAfter().getTotalSeconds() - t.getOffsetBefore().getTotalSeconds()) / 60;
+                if (min == 0) continue;
+                changes++;
+                java.time.LocalDate mid = t.getInstant().atZone(z).toLocalDate();
+                int hits = 0;
+                for (java.time.LocalDate day = mid.minusDays(2); !day.isAfter(mid.plusDays(2)); day = day.plusDays(1)) {
+                    double a = day.atStartOfDay(z).toEpochSecond(), b = day.plusDays(1).atStartOfDay(z).toEpochSecond();
+                    ClockChange.Change c = ClockChange.onDay(z, a, b);
+                    boolean mine = c != null && c.at == t.getInstant().getEpochSecond();
+                    if (mine) hits++;
+                    String bad = mine && b - a != 86400 - min * 60 ? day + " is " + (b - a) / 3600.0 + " h"
+                            : b - a != 86400 && c == null ? day + " (" + (b - a) / 3600.0 + " h) has no change" : null;
+                    if (bad != null) {
+                        wrong++;
+                        if (firstWrong == null) firstWrong = id + " " + bad;
+                    }
+                }
+                if (hits != 1) {
+                    wrong++;
+                    if (firstWrong == null) firstWrong = id + " " + t + " on " + hits + " days";
+                }
+            }
+        }
+        check("every zone 2024 to 2036: each change on the day whose length differs by it (" + changes + " changes"
+                + (wrong == 0 ? "" : ", " + wrong + " wrong, first " + firstWrong) + ")", changes > 1000 && wrong == 0);
     }
 
     static double zurich(String local) {
