@@ -1214,9 +1214,9 @@ public final class FinderActivity extends Activity implements SensorEventListene
                 arc.setColor(bandColor(band));
                 cv.drawArc(oval, 135, (float) (270 * fill), false, arc);
             }
-            num.setTextSize(size * 0.24f);
+            num.setTextSize(Math.max(Ui.dp(getContext(), 18), size * 0.24f));
             cv.drawText(Double.isNaN(value) ? "--" : String.valueOf(Math.round(value)), w / 2, hh / 2 + num.getTextSize() * 0.3f, num);
-            unit.setTextSize(size * 0.075f);
+            unit.setTextSize(Math.max(Ui.dp(getContext(), 9), size * 0.075f));
             cv.drawText("dBm", w / 2, hh / 2 + num.getTextSize() * 0.3f + unit.getTextSize() * 1.6f, unit);
         }
     }

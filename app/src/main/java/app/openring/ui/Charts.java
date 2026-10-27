@@ -513,6 +513,8 @@ public final class Charts {
                 double v = lo + (hi - lo) * i / 2;
                 float y = (float) (bottom - (v - lo) / (hi - lo) * (bottom - top));
                 cv.drawLine(left, y, w, y, grid);
+                // a short chart (the finder's signal trail on a small phone) keeps only the top and bottom labels
+                if (i == 1 && bottom - top < txt.getTextSize() * 2.5f) continue;
                 cv.drawText(format(v), 0, y + Ui.dp(getContext(), 3), txt);
             }
             if (!Double.isNaN(band)) {

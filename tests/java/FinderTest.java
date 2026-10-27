@@ -1857,7 +1857,13 @@ public class FinderTest {
             o.roomC = 21;
             briefIs("taken off", o, now, clock, "Taken off T10.");
             o.warmNoHrNow = true;
-            briefIs("taken off, warm now without heart rate", o, now, clock, "Taken off T10. Now it reads warm without heart rate, probably the charger.");
+            briefIs("taken off, warm now without heart rate", o, now, clock, "Taken off T10. Now it reads warm without a heart rate that counts, probably the charger or somewhere warm.");
+            o.warmNoHrAt = BASE + 1200;
+            o.warmLoneHr = 1;
+            briefIs("taken off, warm since a time with a lone heart rate (review of #215)", o, now, clock,
+                    "Taken off T10. Since T20 it reads warm without a heart rate that counts, probably the charger or somewhere warm.");
+            o.warmNoHrAt = Double.NaN;
+            o.warmLoneHr = 0;
             o.warmNoHrNow = false;
             o.at = Double.NaN;
             briefIs("not worn in 7 days", o, now, clock, "Not worn in the last 7 days of synced data.");

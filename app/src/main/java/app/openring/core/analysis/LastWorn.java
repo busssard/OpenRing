@@ -372,7 +372,8 @@ public final class LastWorn {
             s = "Not sure: no heart rate since " + clock.when(r.at) + ", probably taken off then.";
         } else if (r.state == OFF) {
             s = Double.isNaN(r.at) ? "Not worn in the last 7 days of synced data." : "Taken off " + clock.when(r.at) + ".";
-            if (r.warmNoHrNow) s += " Now it reads warm without heart rate, probably the charger.";
+            if (r.warmNoHrNow) s += (Double.isNaN(r.warmNoHrAt) ? " Now it reads warm" : " Since " + clock.when(r.warmNoHrAt) + " it reads warm")
+                    + " without a heart rate that counts, probably the charger or somewhere warm.";
         } else {
             return "No temperature readings yet. Sync once to fill this in.";
         }
