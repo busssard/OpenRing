@@ -36,7 +36,6 @@ public class PipelineTest {
     }
 
     static final ZoneId ZONE = ZoneId.of("Europe/Zurich");
-    static final Random rnd = new Random(42);
 
     /** Ring ds counter: boots 9 days before day 0 (ds counts deciseconds since boot). */
     static long T0;
@@ -67,13 +66,17 @@ public class PipelineTest {
     /**
      * As above; on the nights of the days in {@code aohr} always on heart rate bursts (tag 0x86) take the place of the
      * HRV events and of the sleep periods' average heart rate, which the night would use first (issue #166): every 5
-     * minutes 20 values 1.92 s apart on the same heart rate curve, with one 0 and one 250 that must be left out. They
-     * draw no random numbers, so the other nights stay as they were.
+     * minutes 20 values 1.92 s apart on the same heart rate curve, with one 0 and one 250 that must be left out. Each
+     * day draws from its own seeded random numbers, so the other nights stay as they were, and a history is the same
+     * whichever tests ran before (issue #216).
      */
     static List<RingEvent> history(int days, java.util.Set<Integer> off, java.util.Set<Integer> rest, java.util.Set<Integer> aohr) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         for (int d = 0; d < days; d++) {
             if (off.contains(d)) continue;
+            // each day its own fixed seed, so a day's data depends neither on the tests before (issue #216) nor on
+            // the earlier days (off days, always on heart rate nights)
+            Random rnd = new Random(42L * 1000 + d);
             double day = T0 + d * 86400.0; // local midnight
             double bed = day - 1.25 * 3600 + rnd.nextGaussian() * 900; // ~22:45 the evening before
             double wake = day + 6.75 * 3600 + rnd.nextGaussian() * 900; // ~06:45
@@ -202,7 +205,12 @@ public class PipelineTest {
         System.out.println(r2.text);
         for (DataCheck.Step s : r2.steps) check("data check: " + s.title, s.state == 0, s.detail);
         check("data check: one of one boot segment is singular", r2.steps.get(2).detail.endsWith("1 of 1 boot segment with a time record"), r2.steps.get(2).detail);
-        check("data check: events keep their grouping", r2.steps.get(0).detail.equals("5,353 events copied from the ring"), r2.steps.get(0).detail);
+        // the history's events and the phone anchor; written out by hand with its thousands comma (the count follows
+        // from the generator's seeds, it is over 1000 so the grouping shows)
+        int copied = all.size() + 1;
+        check("data check: the made up history has a four digit event count", copied >= 1000 && copied < 10000, copied);
+        check("data check: events keep their grouping", r2.steps.get(0).detail.equals(copied / 1000 + "," + String.format("%03d", copied % 1000)
+                + " events copied from the ring"), r2.steps.get(0).detail);
         check("data check: plurals for several nights", r2.steps.get(3).detail.startsWith("3 sleep periods (3 main nights), 4 days computed"), r2.steps.get(3).detail);
         dataCheckPrivate("synthetic history, nights older than 14 days", r2.text, db);
 
@@ -777,9 +785,9 @@ public class PipelineTest {
         backupGaps(full.toByteArray());
         historyCache();
         recentWindow();
-        aohrHistory(); // last: it draws from the shared random numbers, so it changes no history before it
+        aohrHistory();
         rightNowAohr();
-        greenIbiNight(); // after aohrHistory: it draws from the shared random numbers too
+        greenIbiNight();
         rightNowSpo2Full();
         jsonSeriesMalformed();
         backupJsonLimit(full.toByteArray());
@@ -3721,6 +3729,7 @@ public class PipelineTest {
      * {@code awake} stretches and in the first and last 10 minutes), heart rate, HRV, motion, temperature.
      */
     static void wornSleep(List<RingEvent> ev, double from, double to, List<double[]> awake, long t0, long ds0) {
+        Random rnd = new Random((long) from); // a fixed seed of its own: the stretch's start (issue #216)
         for (double t = from; t < to; t += 60) {
             boolean aw = t < from + 600 || t >= to - 600;
             for (double[] a : awake) if (t >= a[0] && t < a[1]) aw = true;
@@ -3845,6 +3854,7 @@ public class PipelineTest {
             long ds0 = 9L * 86400 * 10;
             List<RingEvent> ev = new ArrayList<RingEvent>();
             double r0 = at(d, -1), r1 = at(d, 7), w0 = Math.min(r0, beds[k][0]), w1 = Math.max(r1, beds[k][1]);
+            Random rnd = new Random(110 + k); // a fixed seed of its own (issue #216)
             // worn the whole time: heart rate, HRV, motion and temperature, no sleep state (the ring's stages decide)
             for (double t = w0; t < w1; t += 60) {
                 long dd = ds0 + Math.round((t - t0) * 10);
