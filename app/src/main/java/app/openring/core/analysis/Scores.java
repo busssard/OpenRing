@@ -150,7 +150,7 @@ public final class Scores {
 
     public static final class ActivityInput {
         public double inactiveMin = Double.NaN;   // awake, MET below 1.5
-        public int longInactiveStreaks = -1;      // >= 60 min sedentary streaks between 8:00 and 22:00
+        public int longInactiveStreaks = -1;      // sitting stretches with 60 min or more of their sitting minutes between 8:00 and 22:00 (issue #154)
         public double targetsMetFraction = Double.NaN; // share of the last 7 days with the target met
         public int trainingDays7 = -1;            // days in 7 with >= 30 min of medium or high activity
         public double trainingKcal7 = Double.NaN; // medium + high kcal over 7 days

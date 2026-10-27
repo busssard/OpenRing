@@ -108,7 +108,7 @@ public final class Explain {
             case "timing": return "Whether the middle of your sleep falls around 2 to 4 a.m., in step with your body clock.";
             // activity
             case "stay_active": return "Hours spent sitting or inactive while awake.";
-            case "move_hourly": return "Long sitting periods of an hour or more during the day.";
+            case "move_hourly": return "Times you sat still for an hour or more between 08:00 and 22:00. Only the minutes in that window count, sleep never does.";
             case "targets": return "How often you reached your daily activity goal in the last 7 days. Days without the ring are left out.";
             case "frequency": return "Days in the last 7 with at least 30 minutes of medium or high activity. With fewer than 7 days of wear, it is scaled up to a week.";
             case "volume": return "Energy burned in medium and high activity in the last 7 days. With fewer than 7 days of wear, it is scaled up to a week.";

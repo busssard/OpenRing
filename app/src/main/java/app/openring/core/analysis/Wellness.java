@@ -1,5 +1,7 @@
 package app.openring.core.analysis;
 
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -59,47 +61,63 @@ public final class Wellness {
         public double avgMet = Double.NaN;
         public double[] metProfile = new double[96]; // 15 minute mean MET, NaN where no data
         public int coveredMin;
+        /**
+         * Real minutes of the day (issue #114): 1440, or 1380, 1410, 1470 or 1500 on a day the clocks change by an hour
+         * or half an hour (Lord Howe). Stored as {@code day_min}, which marks a day analysed with real minutes.
+         */
+        public int dayMin;
         public double targetKcal;
         public Night.Score score;
     }
 
+    /** Start and end of the daytime window for long sitting periods (issue #154), minutes after midnight by the clock: 08:00 to 22:00. */
+    public static final int DAYTIME_FROM_MIN = 8 * 60, DAYTIME_TO_MIN = 22 * 60;
+
     /**
-     * Build one local day of activity from per minute MET samples (unix seconds at minute start).
+     * Build one local day of activity from per minute MET samples (unix seconds at minute start) for the real day
+     * {@code from} to {@code to} (its midnights in {@code zone}, 23 or 25 hours on a clock change day, issue #114):
+     * every real minute counts once, and the chart's quarter hours and the 08:00 to 22:00 window go by each
+     * minute's own clock time, as {@link DialMath#fill} does for the screen clock. When the clocks go back both
+     * passes of the repeated hour land on the same quarter hours (their average); when they go forward the skipped
+     * ones stay empty. A {@code zone} of null counts the clock from {@code from}.
      * Minutes inside {@code sleeps} count as rest. Step counts are an estimate from intensity
-     * (the ring's own step decoder is a proprietary model).
+     * (the ring's own step decoder is a proprietary model). Values that are not plausible
+     * ({@code EventCodec.plausibleMet}) must be left out by the caller.
      */
-    public static Day day(String date, double dayStartUnix, TS met, List<double[]> sleeps, double weightKg, double bmrKcal) {
+    public static Day day(String date, double from, double to, ZoneId zone, TS met, List<double[]> sleeps, double weightKg, double bmrKcal) {
         Day d = new Day();
         d.date = date;
         Arrays.fill(d.metProfile, Double.NaN);
-        double[] perMin = new double[1440];
+        int n = (int) Math.max(0, Math.round((to - from) / 60));
+        d.dayMin = n;
+        double[] perMin = new double[n];
         Arrays.fill(perMin, Double.NaN);
         for (int i = 0; i < met.size(); i++) {
-            int m = (int) Math.floor((met.t(i) - dayStartUnix) / 60);
-            if (m < 0 || m >= 1440) continue;
+            int m = (int) Math.floor((met.t(i) - from) / 60);
+            if (m < 0 || m >= n) continue;
             perMin[m] = met.v(i);
         }
         double[] prof = new double[96];
         int[] profN = new int[96];
         double metSum = 0;
-        int streak = 0;
-        for (int m = 0; m < 1440; m++) {
-            double t = dayStartUnix + m * 60 + 30;
+        int sitting = 0; // sitting minutes of the current stretch between 08:00 and 22:00 (issue #154)
+        for (int m = 0; m < n; m++) {
+            double t = from + m * 60 + 30;
             boolean asleep = false;
             for (double[] s : sleeps) if (t >= s[0] && t < s[1]) asleep = true;
             double v = perMin[m];
-            int hour = m / 60;
-            boolean daytime = hour >= 8 && hour < 22;
+            int clock = clockMin(from + m * 60, from, zone);
+            boolean daytime = clock >= DAYTIME_FROM_MIN && clock < DAYTIME_TO_MIN;
             if (Double.isNaN(v)) {
                 if (!asleep) d.nonWearMin++;
-                if (streak >= 60 && daytime) d.longInactiveStreaks++;
-                streak = 0;
+                if (sitting >= 60) d.longInactiveStreaks++;
+                sitting = 0;
                 continue;
             }
             d.coveredMin++;
             metSum += v;
-            prof[m / 15] += v;
-            profN[m / 15]++;
+            prof[clock / 15] += v;
+            profN[clock / 15]++;
             double act = Math.max(0, v - 1) * weightKg / 60.0;
             d.activeKcal += act;
             if (asleep) {
@@ -123,19 +141,30 @@ public final class Wellness {
             }
             boolean sedentary = !asleep && v < 1.5;
             if (sedentary) {
-                streak++;
+                if (daytime) sitting++;
             } else {
-                if (streak >= 60 && daytime) d.longInactiveStreaks++;
-                streak = 0;
+                if (sitting >= 60) d.longInactiveStreaks++;
+                sitting = 0;
             }
         }
-        if (streak >= 60) d.longInactiveStreaks++;
+        // a stretch still running at the end of the day: the same rule
+        if (sitting >= 60) d.longInactiveStreaks++;
         for (int b = 0; b < 96; b++) if (profN[b] > 0) d.metProfile[b] = prof[b] / profN[b];
         if (d.coveredMin > 0) d.avgMet = metSum / d.coveredMin;
         d.steps = Math.round(d.steps / 10.0) * 10;
         d.distanceM = stepsToMeters(d.steps);
         d.totalKcal = bmrKcal + d.activeKcal;
         return d;
+    }
+
+    /** Minutes after midnight by the clock in {@code zone} at {@code t} (0 to 1439); without a zone, minutes since {@code from}. */
+    public static int clockMin(double t, double from, ZoneId zone) {
+        // Without a zone the day is read as a plain 1440 minute day from its start (no clock change);
+        // every caller in the app passes the day's zone.
+        if (zone == null) return (int) Math.min(1439, Math.max(0, Math.floor((t - from) / 60)));
+        long s = (long) Math.floor(t);
+        int off = zone.getRules().getOffset(Instant.ofEpochSecond(s)).getTotalSeconds();
+        return (int) Math.floorMod(Math.floorDiv(s + off, 60L), 1440L);
     }
 
     // ---------------------------------------------------------------------- sleep debt
