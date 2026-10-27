@@ -368,9 +368,10 @@ public final class Analyzer {
             // on an earlier date than in the zone before (flying west, waking at 05:30 in Zurich is 23:30 in New
             // York the day before, which would make the night before a nap). A night slept after landing keeps
             // its own date (issue #162: across the date line 06:45 in Los Angeles is already the next day in Auckland)
-            ZoneId before = ClockChange.zone(db.zoneBeforeGap(n.end));
-            if (ClockChange.sleptBefore(n.end, before, nz)) {
-                String earlier = date(n.end, before);
+            // the same rule as the night wake clock above (sleptIn), so the two cannot drift apart
+            ZoneId slept = sleptIn(n.end);
+            if (!slept.equals(nz)) {
+                String earlier = date(n.end, slept);
                 if (earlier.compareTo(d) > 0) d = earlier;
             }
             days.put(n, d);
