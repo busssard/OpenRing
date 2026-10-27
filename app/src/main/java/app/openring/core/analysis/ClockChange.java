@@ -163,6 +163,15 @@ public final class ClockChange {
     }
 
     /**
+     * The line under a stored day's activity chart (review of #202): {@link #activityText} only when the day was
+     * analysed with real minutes, which its day JSON marks with {@code day_min} ({@code storedDayMin} above 0). A day
+     * stored before still holds numbers for 1440 minutes, so it gets no line until it is analysed again.
+     */
+    public static String activityText(Change c, int storedDayMin) {
+        return storedDayMin > 0 ? activityText(c) : null;
+    }
+
+    /**
      * " (first time)" or " (second time)" after a clock time in the hour that happens twice when the clocks go
      * back (issue #97), so two moments that read "02:22" can be told apart; "" at every other moment.
      */
