@@ -135,6 +135,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         nav = Ui.hbox(this);
         nav.setBackgroundColor(Ui.CARD);
         nav.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 6));
+        navPx = -1;
         for (int i = 0; i < ICONS.length; i++) nav.addView(navItem(i), Ui.weight(1));
         root.addView(nav);
         setContentView(root);
@@ -496,6 +497,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         return sb.toString();
     }
 
+    /** The tab label size worked out by {@link #navTextPx} for the first tab, -1 before. */
+    float navPx = -1;
+
     View navItem(final int i) {
         LinearLayout item = Ui.vbox(this);
         item.setGravity(Gravity.CENTER);
@@ -507,7 +511,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         t.setGravity(Gravity.CENTER);
         t.setSingleLine(true);
         t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, navTextPx(t.getPaint()));
+        if (navPx < 0) navPx = navTextPx(t.getPaint()); // measured once for all six tabs
+        t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, navPx);
         item.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         item.setOnClickListener(new View.OnClickListener() {
             @Override
