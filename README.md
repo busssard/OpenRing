@@ -30,11 +30,12 @@ Not affiliated with Oura, not a medical device.
 * Sleep, readiness and activity scores, each with the parts it is made of
 * Heart rate through the day, HRV, skin temperature, blood oxygen and their trends
 * Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be
-  left out. Phone use at night counts as awake (can be switched off), which helps tell sleep from lying still with the phone
+  left out. Phone use at night counts as awake (can be switched off)
 * Live heart rate, HRV and blood oxygen on demand
 * Find my ring, when the ring is lost at home (see below)
 * Nights keep the time zone you slept in, so a trip does not move your other nights
-* Every chart shows the exact time and value when you touch it
+* Touch the night timeline, the heart rate and trend lines or the screen time clock to see the exact
+  time and value
 * Backups of the key and all history, checked before they are saved, and a CSV export, all as files on your phone
 * A demo mode, so you can look around without a ring
 
@@ -65,9 +66,9 @@ Updates install over the old version and keep your data.
 <details>
 <summary>Android says "unverified developer"</summary>
 
-This is Google's new install screen for apps from outside the Play Store. Google rolls it out
-through Google Play services: some phones show it since August 2026, and Google plans it for all
-phones in 2027. To install anyway, turn on one setting once:
+This is Google's new check for apps from outside the Play Store. The setting below exists since
+August 2026; Google plans to require it for apps from websites like this one in 2027 (a few countries
+and app stores earlier). To install anyway, turn on one setting once:
 
 1. Turn on the developer options: Settings, About phone, tap **Build number** seven times.
 2. In Settings, System, Developer options, open **Apps from unverified developers** and turn it on.
@@ -140,28 +141,34 @@ The data check contains no health values, so you can paste it into a
 
 ## How the numbers are worked out
 
-Everything is calculated on your phone from what the ring stores. Oura's own formulas are not
-public, so the scores are close to Oura's but not the same.
+Everything is calculated on your phone from what the ring stores. Oura's formulas are not public,
+so the scores are close to Oura's but not the same; deep and REM sleep are estimates.
 
-* **Sleep stages.** A Gen 3 ring sends its own stages and the app uses them. Ring 4 and Ring 5 send
-  none, so Open Ring estimates a stage for every 30 seconds from heart rate, HRV and movement, with the
-  rules of open_health. Sleep versus awake is reliable; deep and REM are estimates and have not been
-  checked against a sleep lab. Oura's app uses a machine learning model trained on over 1,200 nights in
-  sleep labs, which also uses temperature; Oura reports 79% agreement with a sleep lab for the four stages
-  ([Oura blog](https://ouraring.com/blog/new-sleep-staging-algorithm/)).
-* **Scores.** Each score is a weighted mix of its parts, with the weights open_health worked out from
-  Oura's scoring engine. For sleep: total sleep 35%, restfulness 15%, and efficiency, REM, deep sleep, time to
-  fall asleep and timing 10% each. How many points a part gives (for example for 7 hours of sleep) is not
-  public, so those curves are our own, based on sleep research and Oura's help pages, and can be read in
-  [the code](app/src/main/java/app/openring/core/analysis/Scores.java). A part the ring did not record is
-  left out instead of lowering the score.
-* **Your normal.** Readiness compares your resting heart rate, HRV and temperature with your own usual
-  values. They become personal after about 14 nights; until then the app says so and early scores move more.
-* **Known differences.** Where we know our count differs from Oura's, there is an open issue, for example
-  active calories ([#117](https://github.com/busssard/OpenRing/issues/117)) and sleep efficiency
-  ([#107](https://github.com/busssard/OpenRing/issues/107)).
 * **Not included:** workout detection, cycle insights, cardiovascular age, firmware updates. Steps are
   estimated from activity, not counted.
+
+<details>
+<summary>How it compares with Oura</summary>
+
+* **Sleep stages.** When the ring sends its own stages (Gen 3 can), the app uses them. Ring 4 and
+  Ring 5 send none, so Open Ring estimates a stage for every 30 seconds from heart rate, HRV and
+  movement, with the rules of open_health. Sleep versus awake is reliable; deep and REM are estimates
+  and have not been checked against a sleep lab. Oura's app uses a machine learning model trained on
+  over 1,200 nights in sleep labs, which also uses temperature; Oura reports 79% agreement with a sleep
+  lab for the four stages ([Oura blog](https://ouraring.com/blog/new-sleep-staging-algorithm/)).
+* **Scores.** Each score is a weighted mix of its parts, with the weights open_health worked out from
+  Oura's scoring engine. For sleep: total sleep 35%, restfulness 15%, and efficiency, REM, deep sleep,
+  time to fall asleep and timing 10% each. How many points a part gives (for example for 7 hours of
+  sleep) is not public, so those curves are our own, based on sleep research and Oura's help pages, and
+  can be read in [the code](app/src/main/java/app/openring/core/analysis/Scores.java). A part the ring
+  did not record is left out instead of lowering the score.
+* **Your normal.** Readiness compares your resting heart rate, HRV and temperature with your own usual
+  values. They become personal after about 14 nights; until then the app says so and early scores move more.
+* **Known differences.** Where we know our count differs from Oura's, there is an issue, for example
+  active calories ([#117](https://github.com/busssard/OpenRing/issues/117)) and sleep efficiency
+  ([#107](https://github.com/busssard/OpenRing/issues/107)).
+
+</details>
 
 More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#analysis).
 
