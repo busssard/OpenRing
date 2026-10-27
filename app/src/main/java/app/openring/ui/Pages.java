@@ -352,7 +352,8 @@ public final class Pages {
         double[] shown = StageShare.shownMinutes(deepMin, lightMin, remMin, awakeMin, none[0], Json.d(n, "asleep_min"), inBedMin,
                 shownInBed(n));
         // the row only when the night really has time without stage data (review of #201)
-        String noneNote = none[0] > 0 ? StageShare.noDataNote(shown[4], none[1], Json.d(n, "asleep_min") > 0) : null;
+        String noneNote = none[0] > 0 ? StageShare.noDataNote(shown[4], StageShare.shownBefore(none[0], none[1], shown[4]),
+                Json.d(n, "asleep_min") > 0) : null;
         hyp.addView(stageRowPct(c, "Awake", shown[3], StageShare.share(awakeMin, inBedMin), Ui.STAGE_AWAKE));
         hyp.addView(stageRowPct(c, "REM", shown[2], share == null ? Double.NaN : share[2], Ui.STAGE_REM));
         hyp.addView(stageRowPct(c, "Light", shown[1], share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
@@ -893,9 +894,11 @@ public final class Pages {
             // the bands of Wellness.day (issue #47)
             pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. While awake, under 1.5 counts as inactive, 1.5 to 3 low, "
                     + "3 to 6 medium, 6 or more high (the bands of Daily movement); time asleep counts as rest, also when the ring recorded no movement then.", 12, Ui.TEXT_3, Ui.REGULAR));
-            // a clock change day: the bars go by clock time, the numbers by real minutes (issue #114)
+            // a clock change day: the bars go by clock time, the numbers by real minutes (issue #114), only on a day
+            // analysed that way (it has day_min; older days keep 1440 minute numbers until analysed again, review of #202)
             String change = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(d.zone,
-                    d.date.atStartOfDay(d.zone).toEpochSecond(), d.date.plusDays(1).atStartOfDay(d.zone).toEpochSecond()));
+                    d.date.atStartOfDay(d.zone).toEpochSecond(), d.date.plusDays(1).atStartOfDay(d.zone).toEpochSecond()),
+                    day == null ? 0 : day.optInt("day_min", 0));
             if (change != null) pc.addView(Ui.text(c, change, 12, Ui.TEXT_3, Ui.REGULAR));
             root.addView(pc);
         }
