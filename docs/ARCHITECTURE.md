@@ -210,7 +210,8 @@ A task that must outlive a turned phone (screens are rebuilt, no `configChanges`
 application context and reports through a holder to the screen attached now: `DemoRun` in
 `MainActivity` (#29) and the repair in Data check (`LogActivity.REPAIR`, a `core/OneRun`, #130).
 Settings ring actions (read or switch measurements, factory reset) report to `SettingsActivity.SHOWN`, the
-screen resumed now, with the states the starting screen knew; a reset closes every Settings screen by
+screen resumed now, with the states the starting screen knew (the analysis after "Count phone use as awake"
+redraws the stage detail preview there, only that card, #204); a reset closes every Settings screen by
 opening the main screen with `CLEAR_TOP` from the application context, and Settings without a key sends
 the person there on resume, where Setup opens (#59). The main screen finishes a cut off demo whenever demo
 mode is on and no preparation runs (`Demo.finishOnStart`), also when the app is opened from the launcher

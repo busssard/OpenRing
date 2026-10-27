@@ -892,6 +892,7 @@ public class CoreTest {
         drafts();
         oneRun();
         keptHeight();
+        scrollKeep();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -1000,6 +1001,20 @@ public class CoreTest {
         k.remember(portrait, 1500);
         eq("kept height: newer result replaces older", k.get(portrait), 1500);
         eq("kept height: other layout untouched", k.get(landscape), 1100);
+    }
+
+    /** Issue #204: the page stays still when the stage detail card above the switch is redrawn. */
+    static void scrollKeep() {
+        // card from 100 to 600 (500 px), the phone line adds 40 px
+        eq("scroll keep: card fully above, it grows, the page moves with it", ScrollKeep.after(900, 100, 500, 540), 940);
+        eq("scroll keep: card fully above, it shrinks, the page moves with it", ScrollKeep.after(900, 100, 540, 500), 860);
+        eq("scroll keep: card ends exactly at the top edge counts as above", ScrollKeep.after(600, 100, 500, 540), 640);
+        eq("scroll keep: card partly on screen stays", ScrollKeep.after(599, 100, 500, 540), 599);
+        eq("scroll keep: card top on screen stays", ScrollKeep.after(50, 100, 500, 540), 50);
+        eq("scroll keep: top of the page stays", ScrollKeep.after(0, 100, 500, 460), 0);
+        eq("scroll keep: same height stays", ScrollKeep.after(900, 100, 500, 500), 900);
+        eq("scroll keep: card above shrinks to nothing", ScrollKeep.after(20, 0, 20, 0), 0);
+        eq("scroll keep: a negative start is not kept", ScrollKeep.after(-5, 100, 500, 540), 0);
     }
 
     /** One way to write the same quantity everywhere (issues #99, #163, #165). */
