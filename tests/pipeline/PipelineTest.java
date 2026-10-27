@@ -779,6 +779,10 @@ public class PipelineTest {
         recentWindow();
         aohrHistory(); // last: it draws from the shared random numbers, so it changes no history before it
         rightNowAohr();
+        greenIbiNight(); // after aohrHistory: it draws from the shared random numbers too
+        rightNowSpo2Full();
+        jsonSeriesMalformed();
+        backupJsonLimit(full.toByteArray());
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -3206,6 +3210,101 @@ public class PipelineTest {
         JSONObject d1 = dayOf(db, day0.plusDays(1).toString());
         check("always on heart rate: the night without HRV events gives the day its resting heart rate (#166)", d1 != null
                 && Math.abs(d1.optDouble("rhr") - n1.optDouble("lowest_hr")) < 1e-9, d1 == null ? null : d1.opt("rhr"));
+    }
+
+    /**
+     * Green IBI beats are the night's heart rate when the night has no HRV events and no sleep period average (the
+     * nights of {@link #history} with always on bursts, here with the bursts taken out). Night 1 gets one clean beat of
+     * 1000 ms (60 bpm) every minute from 23:00 to 06:30, so its lowest heart rate and the day's resting heart rate are
+     * 60; the same night without the beats has no heart rate of 60.
+     */
+    static void greenIbiNight() throws Exception {
+        LocalDate day0 = java.time.Instant.ofEpochSecond(T0).atZone(ZONE).toLocalDate();
+        java.util.Set<Integer> none = java.util.Collections.<Integer>emptySet();
+        List<RingEvent> base = new ArrayList<RingEvent>();
+        for (RingEvent e : history(3, none, none, java.util.Collections.singleton(1))) if (e.tag != EventCodec.AOHR_EVENT) base.add(e);
+        List<RingEvent> beats = new ArrayList<RingEvent>();
+        double mid1 = T0 + 86400.0;
+        for (double t = mid1 - 3600; t < mid1 + 6.5 * 3600; t += 60) beats.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, ds(t), new byte[] {125, 8}));
+        Db without = analysed("openring-ibi-night-control", base);
+        JSONObject c1 = mainNight(without, day0.plusDays(1));
+        Db with = analysed("openring-ibi-night", base, beats.toArray(new RingEvent[0]));
+        JSONObject n1 = mainNight(with, day0.plusDays(1));
+        JSONObject d1 = dayOf(with, day0.plusDays(1).toString());
+        check("green IBI night: beats of 1000 ms give a lowest heart rate of 60", n1 != null && Math.abs(n1.optDouble("lowest_hr") - 60) < 0.01
+                && n1.optJSONArray("hr_series") != null && n1.optJSONArray("hr_series").length() > 50,
+                n1 == null ? "no single main night" : n1.opt("lowest_hr") + ", " + (n1.optJSONArray("hr_series") == null ? 0 : n1.optJSONArray("hr_series").length()) + " points");
+        check("green IBI night: the day's resting heart rate is 60", d1 != null && Math.abs(d1.optDouble("rhr") - 60) < 0.01, d1 == null ? null : d1.opt("rhr"));
+        check("green IBI night: without the beats the night has no heart rate of 60", c1 != null && !(Math.abs(c1.optDouble("lowest_hr") - 60) < 0.5),
+                c1 == null ? "no single main night" : c1.opt("lowest_hr"));
+    }
+
+    /**
+     * Today's blood oxygen counts readings of exactly 100: {100, 100, 100, 97, 97} averages 98.8, shown as 99; without
+     * the 100s it would be 97.
+     */
+    static void rightNowSpo2Full() throws Exception {
+        Context ctx = freshDb("openring-now-spo2-100");
+        Db db = Db.get(ctx);
+        long now = System.currentTimeMillis() / 1000, start = now - 3600, base = 1000;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        byte[] ts = new byte[4];
+        Protocol.Le.putU32(ts, 0, start);
+        ev.add(new RingEvent(EventCodec.TIME_SYNC, base, ts));
+        ev.add(new RingEvent(EventCodec.SPO2_EVENT, base + 20000, new byte[] {0, 100, 100, 100, 97, 97}));
+        db.insertBatch(ev, 1, now);
+        db.rebuildTime(now);
+        app.openring.data.RightNow r = app.openring.data.RightNow.load(ctx);
+        check("Today's blood oxygen: readings of 100 count ({100, 100, 100, 97, 97} shows 99)", r.spo2 == 99, r.spo2);
+    }
+
+    /** A stored time series with malformed points (a one element pair, text, a number, null) keeps only its real pairs. */
+    static void jsonSeriesMalformed() {
+        String got;
+        try {
+            app.openring.core.analysis.TS ts = Json.series(new org.json.JSONArray("[[10,1.5],[20],\"x\",7,null,[],[30,2.5,9]]"));
+            got = ts.size() + ":" + (ts.size() == 2 ? ts.t(0) + "," + ts.v(0) + "," + ts.t(1) + "," + ts.v(1) : "");
+        } catch (RuntimeException e) {
+            got = "thrown: " + e;
+        }
+        check("a stored series skips malformed points, no crash and no NaN", "2:10.0,1.5,30.0,2.5".equals(got), got);
+    }
+
+    /**
+     * The JSON part of a backup zip is read up to 1 MB (1048576 bytes): one byte more is refused with the plain
+     * sentence and the phone keeps its history, key and settings; exactly 1 MB is read and restores key and settings.
+     */
+    static void backupJsonLimit(byte[] full) throws Exception {
+        byte[] otherKey = app.openring.core.Hex.parseKey("00112233445566778899aabbccddeeff");
+        Context ph = freshDb("openring-backup-json-limit");
+        app.openring.data.Backup.Result r0 = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(full));
+        long events = Db.get(ph).eventCount();
+        app.openring.data.Prefs pp = app.openring.data.Prefs.of(ph);
+        pp.saveKey(otherKey);
+        pp.setScreenGoalMin(45);
+        check("backup JSON limit: the phone has a history", r0.ok && events > 1000, events);
+        String head = "{\"key\":\"4431967d8bacc2659743142b68391d9a\",\"screen_goal\":90,\"pad\":\"", tail = "\"}";
+        int fill = (1 << 20) - head.length() - tail.length();
+        StringBuilder sb = new StringBuilder(1 << 20);
+        sb.append(head);
+        for (int i = 0; i < fill; i++) sb.append('a');
+        String atLimit = sb.append(tail).toString();
+        String over = head + "a" + atLimit.substring(head.length());
+        check("backup JSON limit: the test files are 1048576 and 1048577 bytes", atLimit.getBytes("UTF-8").length == 1 << 20
+                && over.getBytes("UTF-8").length == (1 << 20) + 1, atLimit.length() + " / " + over.length());
+        String big;
+        try {
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(zipWithJson(over)));
+            big = r.ok ? "accepted" : r.message;
+        } catch (java.io.IOException e) {
+            big = "thrown: " + e.getMessage();
+        }
+        check("a backup zip whose JSON is one byte over 1 MB gets the plain sentence", PLAIN_BROKEN.equals(big), big);
+        unchanged(ph, events, otherKey, "after a backup JSON over 1 MB");
+        app.openring.data.Backup.Result ok = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(zipWithJson(atLimit)));
+        check("a backup zip whose JSON is exactly 1 MB is read", ok.ok && pp.screenGoalMin() == 90
+                && Arrays.equals(pp.loadKey(), app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a")) && Db.get(ph).eventCount() == events,
+                ok.message + ", goal " + pp.screenGoalMin());
     }
 
     /**
