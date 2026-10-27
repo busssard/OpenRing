@@ -156,6 +156,8 @@ public final class Wellness {
 
     /** Minutes after midnight by the clock in {@code zone} at {@code t} (0 to 1439); without a zone, minutes since {@code from}. */
     public static int clockMin(double t, double from, ZoneId zone) {
+        // Without a zone the day is read as a plain 1440 minute day from its start (no clock change);
+        // every caller in the app passes the day's zone.
         if (zone == null) return (int) Math.min(1439, Math.max(0, Math.floor((t - from) / 60)));
         long s = (long) Math.floor(t);
         int off = zone.getRules().getOffset(Instant.ofEpochSecond(s)).getTotalSeconds();
