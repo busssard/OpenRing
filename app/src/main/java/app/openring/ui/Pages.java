@@ -850,7 +850,7 @@ public final class Pages {
         goal.addView(Ui.gap(c, 8));
         goal.addView(new Ui.Bar(c, target > 0 ? active / target : 0, Ui.ACTIVE), Ui.sized(c, -1, 8));
         goal.addView(Ui.statRow(c, Ui.stat(c, "Active burn", Ui.fmt(active, 0), "kcal", 0, "Calories burned by moving"),
-                Ui.stat(c, "Total burn", Ui.fmt(Json.d(day, "total_kcal"), 0), "kcal", 0, "Active burn plus what your body uses at rest")));
+                Ui.stat(c, "Total burn", Ui.fmt(Json.d(day, "total_kcal"), 0), "kcal", 0, Explain.totalBurn(Json.d(day, "total_until"), d.zone))));
         goal.addView(Ui.statRow(c, Ui.stat(c, "Steps", Ui.fmt(Json.d(day, "steps"), 0), "est.", 0, "Estimated from how much you moved, so \"est.\""),
                 Ui.stat(c, "Distance", Ui.fmt(Json.d(day, "distance_m") / 1000.0, 1), "km", 0, "Estimated from the steps")));
         root.addView(goal);
@@ -893,7 +893,7 @@ public final class Pages {
             pc.addView(Ui.gap(c, 6));
             // the bands of Wellness.day (issue #47)
             pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. While awake, under 1.5 counts as inactive, 1.5 to 3 low, "
-                    + "3 to 6 medium, 6 or more high (the bands of Daily movement); time asleep counts as rest.", 12, Ui.TEXT_3, Ui.REGULAR));
+                    + "3 to 6 medium, 6 or more high (the bands of Daily movement); time asleep counts as rest, also when the ring recorded no movement then.", 12, Ui.TEXT_3, Ui.REGULAR));
             // a clock change day: the bars go by clock time, the numbers by real minutes (issue #114), only on a day
             // analysed that way (it has day_min; older days keep 1440 minute numbers until analysed again, review of #202)
             String change = app.openring.core.analysis.ClockChange.activityText(app.openring.core.analysis.ClockChange.onDay(d.zone,

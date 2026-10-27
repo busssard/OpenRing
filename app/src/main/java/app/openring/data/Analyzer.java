@@ -48,6 +48,8 @@ public final class Analyzer {
     static volatile boolean cacheHistory = true;
     /** Tests only: runs after each day summary is written (a test throws from it to stop a run part way). */
     static volatile Runnable afterDay;
+    /** Tests only: when above 0, the time (unix seconds) a day still running is analysed at (issue #155). */
+    static volatile long testNow;
 
     private Analyzer(Context c, Log log) {
         db = Db.get(c);
@@ -594,7 +596,9 @@ public final class Analyzer {
         List<double[]> sleeps = new ArrayList<double[]>();
         for (JSONObject o : past.nights(day.minusDays(1), day.plusDays(1), false)) sleeps.add(new double[] {o.optDouble("start"), o.optDouble("end")});
         // every real minute of the day once, by its clock time in the day's zone (issue #114)
-        Wellness.Day d = Wellness.day(key, ds, de, dz, met, sleeps, weight, bmr);
+        // a day still running counts its resting burn only up to now (issue #155)
+        long now = testNow > 0 ? testNow : System.currentTimeMillis() / 1000;
+        Wellness.Day d = Wellness.day(key, ds, de, dz, met, sleeps, weight, bmr, now);
 
         boolean anyHr = db.count("SELECT COUNT(*) FROM events WHERE tag IN (93, 128, 134, 106) AND unix >= " + (long) ds + " AND unix < " + (long) de) > 0;
         if (d.coveredMin == 0 && mainNight == null && !anyHr) {
@@ -737,6 +741,8 @@ public final class Analyzer {
         Json.put(out, "steps", d.steps);
         Json.put(out, "active_kcal", d.activeKcal);
         Json.put(out, "total_kcal", d.totalKcal);
+        // only on a day still running: up to when its resting burn counts (issue #155)
+        if (!Double.isNaN(d.totalUntil)) Json.put(out, "total_until", (long) d.totalUntil);
         Json.put(out, "distance_m", d.distanceM);
         Json.put(out, "low_min", d.lowMin);
         Json.put(out, "medium_min", d.mediumMin);

@@ -555,6 +555,36 @@ public class PipelineTest {
             weekTexts &= tp != null && tp.optString("detail").endsWith(" of 7 days") && vp != null && vp.optString("detail").endsWith(" kcal this week");
         }
         check("first demo day counts 1 worn day", firstWorn == 1, firstWorn);
+        // issue #112: the night counts as rest although the demo sends no activity values then, and every minute of a
+        // day is in one level or not worn; issue #155: today's total burn counts its resting burn so far
+        int restDays = 0, sumDays = 0, nights112 = 0, cut112 = 0;
+        String today = LocalDate.now().toString(), todayUntil = null;
+        for (String[] r : demo.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o == null || !o.has("rest_min")) continue;
+            LocalDate dd = LocalDate.parse(r[0]);
+            java.time.ZoneId sz = java.time.ZoneId.systemDefault();
+            double len = (dd.plusDays(1).atStartOfDay(sz).toEpochSecond() - dd.atStartOfDay(sz).toEpochSecond()) / 60.0;
+            double sum = o.optDouble("high_min") + o.optDouble("medium_min") + o.optDouble("low_min") + o.optDouble("inactive_min")
+                    + o.optDouble("rest_min") + o.optDouble("non_wear_min");
+            if (Math.abs(sum - len) < 1e-6) sumDays++;
+            List<String> nj112 = demo.nightsJson(r[0], r[0], true);
+            if (!nj112.isEmpty()) {
+                // a night that ended less than 2 hours before now is the demo's cut short newest night (#123):
+                // it has less than 5 hours of rest by design, so it is left out and counted
+                if (Json.d(Json.parse(nj112.get(nj112.size() - 1)), "end") > System.currentTimeMillis() / 1000.0 - 7200) cut112++;
+                else {
+                    nights112++;
+                    if (o.optDouble("rest_min") >= 300) restDays++;
+                }
+            }
+            if (r[0].equals(today)) todayUntil = o.has("total_until") ? "yes" : "no";
+            else if (o.has("total_until")) todayUntil = "a past day " + r[0];
+        }
+        check("demo: days with a night show the night as rest (#112)", nights112 >= 28 && restDays == nights112 && cut112 <= 1, restDays + " of " + nights112 + ", " + cut112 + " night cut short left out");
+        check("demo: every minute of a day in one level or not worn (#112)", sumDays == demo.daysJson("2000-01-01", "2100-01-01").size(), sumDays);
+        // just after midnight the demo has no day for today yet (its night is still running)
+        check("demo: only today counts its resting burn so far (#155)", todayUntil == null ? demo.dayJson(today) == null : "yes".equals(todayUntil), todayUntil);
         check("demo weeks are full weeks with the old texts", weekDays >= 25 && weekTexts, weekDays + " days");
         ScreenTime.Day demoScreen = app.openring.data.ScreenDays.day(demo, LocalDate.now().minusDays(2), java.time.ZoneId.systemDefault());
         check("demo has screen time", demoScreen != null && demoScreen.totalMin > 90 && demoScreen.totalMin < 300 && demoScreen.turnedOn > 20,
@@ -698,6 +728,7 @@ public class PipelineTest {
         appRowsStored();
         activityGap();
         activityClockChange();
+        totalBurnSoFar();
         zoneTable();
         travelZones();
         zoneStorage(full.toByteArray());
@@ -983,6 +1014,44 @@ public class PipelineTest {
                 == without.count("SELECT COUNT(*) FROM events WHERE tag = " + EventCodec.ACTIVITY_INFO) + 1, null);
         fall.close();
         without.close();
+    }
+
+    /**
+     * Issue #155: a day still running when analysed counts its resting burn up to then and says so (total_until);
+     * analysed again once it has ended, it has the whole resting burn and no total_until, like a day before.
+     */
+    static void totalBurnSoFar() throws Exception {
+        ZoneId z = ZoneId.of("Europe/Zurich");
+        double a = LocalDate.parse("2026-06-09").atStartOfDay(z).toEpochSecond(), b = LocalDate.parse("2026-06-11").atStartOfDay(z).toEpochSecond();
+        double noon = java.time.LocalDateTime.parse("2026-06-10T12:00:00").atZone(z).toEpochSecond();
+        List<RingEvent> ev = metHours(a, a, noon, -1, -1, -1, false);
+        Context c = freshDb("openring-burn");
+        Db db = Db.get(c);
+        long lastDs = ev.get(ev.size() - 1).ds, lastUnix = (long) a + (lastDs - DS0) / 10;
+        db.insertBatch(ev, 1, lastUnix + 3600);
+        db.insertPhoneAnchor(1, lastDs, lastUnix);
+        try {
+            setStatic("testNow", (long) noon);
+            Analyzer.run(c, null);
+        } finally {
+            setStatic("testNow", 0L);
+        }
+        JSONObject d9 = dayOf(db, "2026-06-09"), d10 = dayOf(db, "2026-06-10");
+        double bmr = d9 == null ? -1 : d9.optDouble("total_kcal") - d9.optDouble("active_kcal");
+        double rest10 = d10 == null ? -1 : d10.optDouble("total_kcal") - d10.optDouble("active_kcal");
+        check("total burn: a day that has ended has the whole resting burn and no total_until (#155)", d9 != null && bmr > 1000 && !d9.has("total_until"),
+                d9 == null ? null : d9.opt("total_kcal") + " " + d9.opt("total_until"));
+        check("total burn: at noon the day counts half its resting burn, up to noon (#155)", d10 != null && Math.abs(rest10 - bmr / 2) < 0.01
+                && d10.optLong("total_until") == (long) noon, rest10 + " of " + bmr + ", until " + (d10 == null ? null : d10.opt("total_until")));
+        // the next sync, after the day ended: the whole day again (the last two days are analysed again)
+        db.insertBatch(metHours(a, noon, b, -1, -1, -1, false), 1, (long) b + 3600);
+        db.insertPhoneAnchor(1, DS0 + Math.round((b - 60 - a) * 10), (long) b - 60);
+        Analyzer.run(c, null);
+        JSONObject e10 = dayOf(db, "2026-06-10");
+        check("total burn: analysed after the day ended, the whole resting burn, no total_until (#155)", e10 != null && !e10.has("total_until")
+                && Math.abs(e10.optDouble("total_kcal") - e10.optDouble("active_kcal") - bmr) < 0.01 && e10.optInt("covered_min") == 1440,
+                e10 == null ? null : e10.opt("total_kcal") + " " + e10.opt("covered_min"));
+        db.close();
     }
 
     /**

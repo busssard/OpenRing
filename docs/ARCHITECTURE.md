@@ -164,7 +164,13 @@ history had, before anything is written to the file the person picked; otherwise
    day stored before has no `day_min` (its numbers still count 1440 minutes), so it gets no line. A sitting stretch (awake, under 1.5 MET, ended by sleep, a missing minute or more
    movement) is a long sitting period when 60 or more of its own minutes lie between 08:00 and 22:00, also at the end
    of the day (issue #154). Activity values count only from 0 to 25 MET (`EventCodec.plausibleMet`, issue #120);
-   higher ones are damaged bytes and count as missing minutes. These rules have no version of their own: stored days
+   higher ones are damaged bytes and count as missing minutes. A minute inside one of the day's sleeps is Rest also
+   without an activity value (issue #112; whether a Ring 4 sends values at night is not known), so every minute is in
+   exactly one of High, Medium, Low, Inactive, Rest or Not worn (`non_wear_min`); `covered_min` stays the minutes with a
+   value. Total burn (`total_kcal`) is active burn plus the resting burn (`Wellness.bmr`); a day still running when it
+   is analysed counts the resting burn only for the share of its real seconds that has passed (`Wellness.restingKcal`,
+   issue #155, as Oura's total burn grows through the day) and stores `total_until`, which the screen shows as "So far
+   (up to 08:07)"; the next analysis after the day ended stores the whole day. These rules have no version of their own: stored days
    keep their numbers until they are analysed again (the last two days after each sync, or Re analyse all).
 
 ## Threading

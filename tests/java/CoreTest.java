@@ -670,6 +670,7 @@ public class CoreTest {
         timeline();
         activityWeek();
         activityDay();
+        activityRestAndBurn();
         live();
         motion();
         pattern();
@@ -2465,6 +2466,74 @@ public class CoreTest {
             t.add(m, x);
         }
         return t;
+    }
+
+    /** The sum of every level and Not worn: each real minute in exactly one (issue #112). */
+    static double levels(Wellness.Day w) {
+        return w.highMin + w.mediumMin + w.lowMin + w.inactiveMin + w.restMin + w.nonWearMin;
+    }
+
+    /** Issue #112: the sleep counts as rest without activity values. Issue #155: Total burn of a day still running. */
+    static void activityRestAndBurn() {
+        String day = "2026-06-10";
+        double ds = at(day + "T00:00:00", ZURICH), de = at("2026-06-11T00:00:00", ZURICH), wake = at(day + "T07:00:00", ZURICH);
+        List<double[]> night = new ArrayList<double[]>();
+        night.add(new double[] {ds - 2 * 3600, wake});
+        // values from 07:00 to 23:00 only, as the demo sends: 07:00 to 08:00 a walk, the rest sitting
+        TS awake = metRun(wake, at(day + "T23:00:00", ZURICH), 1.2, 4.0, wake, wake + 3600);
+        Wellness.Day w = actDay(day, ZURICH, awake, night);
+        eq("rest: a night without activity values counts as rest (#112)", w.restMin, 420.0);
+        eq("rest: only 23:00 to midnight is not worn (#112)", w.nonWearMin, 60.0);
+        eq("rest: every minute in one level or not worn (#112)", levels(w), 1440.0);
+        eq("rest: minutes with a value stay 16 hours (#112, #44)", w.coveredMin, 960);
+        // the same day with the rule before: nothing else changes
+        Wellness.Day noSleep = actDay(day, ZURICH, awake, new ArrayList<double[]>());
+        check("rest: active burn, steps, levels and the chart unchanged by the night (#112)", Math.abs(w.activeKcal - noSleep.activeKcal) < 1e-9
+                && w.steps == noSleep.steps && w.mediumMin == noSleep.mediumMin && w.inactiveMin == noSleep.inactiveMin
+                && w.longInactiveStreaks == noSleep.longInactiveStreaks && Double.isNaN(w.metProfile[0]) && Double.isNaN(w.metProfile[27])
+                && Math.abs(w.avgMet - noSleep.avgMet) < 1e-9);
+        eq("rest: without the night those minutes are not worn (#112)", noSleep.nonWearMin, 480.0);
+        // a night with values (0.95 MET) gives the same rest and no active burn from it
+        TS withNight = metRun(ds, at(day + "T23:00:00", ZURICH), 1.2, 4.0, wake, wake + 3600);
+        TS nightVals = new TS();
+        for (int i = 0; i < withNight.size(); i++) nightVals.add(withNight.t(i), withNight.t(i) < wake ? 0.95 : withNight.v(i));
+        Wellness.Day wv = actDay(day, ZURICH, nightVals, night);
+        check("rest: a night with values gives the same rest and active burn (#112)", wv.restMin == 420 && wv.nonWearMin == 60
+                && Math.abs(wv.activeKcal - w.activeKcal) < 1e-9 && wv.coveredMin == 1380 && levels(wv) == 1440);
+        // a nap without values in the afternoon is rest too, and the 25 hour day adds up to 1500
+        List<double[]> naps = new ArrayList<double[]>(night);
+        naps.add(new double[] {at(day + "T14:00:00", ZURICH), at(day + "T14:30:00", ZURICH)});
+        TS holed = new TS();
+        for (int i = 0; i < awake.size(); i++) if (awake.t(i) < at(day + "T14:00:00", ZURICH) || awake.t(i) >= at(day + "T14:30:00", ZURICH)) holed.add(awake.t(i), awake.v(i));
+        Wellness.Day wn = actDay(day, ZURICH, holed, naps);
+        check("rest: a nap without values counts as rest (#112)", wn.restMin == 450 && wn.nonWearMin == 60 && levels(wn) == 1440);
+        double o25 = at("2026-10-25T00:00:00", ZURICH);
+        List<double[]> n25 = new ArrayList<double[]>();
+        n25.add(new double[] {o25 - 3600, at("2026-10-25T07:00:00", ZURICH)});
+        Wellness.Day w25 = actDay("2026-10-25", ZURICH, metRun(at("2026-10-25T07:00:00", ZURICH), at("2026-10-26T00:00:00", ZURICH), 1.2, 1.2), n25);
+        check("rest: 25 October, 8 real hours asleep, the day adds up to 1500 (#112, #114)", w25.restMin == 480 && w25.nonWearMin == 0 && levels(w25) == 1500);
+
+        // #155: the resting part grows with the share of the day that has passed
+        eq("resting burn: at midnight nothing yet (#155)", Wellness.restingKcal(1600, ds, de, ds), 0.0);
+        eq("resting burn: at 06:00 a quarter (#155)", Wellness.restingKcal(1600, ds, de, ds + 6 * 3600), 400.0);
+        eq("resting burn: at noon half (#155)", Wellness.restingKcal(1600, ds, de, ds + 12 * 3600), 800.0);
+        eq("resting burn: after the day the whole day (#155)", Wellness.restingKcal(1600, ds, de, de), 1600.0);
+        eq("resting burn: before the day 0 (#155)", Wellness.restingKcal(1600, ds, de, ds - 60), 0.0);
+        eq("resting burn: without a time the whole day (#155)", Wellness.restingKcal(1600, ds, de, Double.NaN), 1600.0);
+        eq("resting burn: 25 October at 12:00 by the clock, 13 of 25 real hours (#155, #114)",
+                Wellness.restingKcal(1500, o25, at("2026-10-26T00:00:00", ZURICH), at("2026-10-25T12:00:00", ZURICH)), 780.0);
+        double eight = at(day + "T08:00:00", ZURICH);
+        Wellness.Day part = Wellness.day(day, ds, de, ZURICH, metRun(ds, eight, 1.2, 4.0, wake, eight), night, 70, 1560, eight);
+        check("total burn at 08:00: active plus a third of the resting burn (#155)", Math.abs(part.restingKcal - 520) < 1e-9
+                && Math.abs(part.totalKcal - (part.activeKcal + 520)) < 1e-9 && part.activeKcal > 100 && part.totalUntil == eight);
+        Wellness.Day full = Wellness.day(day, ds, de, ZURICH, metRun(ds, eight, 1.2, 4.0, wake, eight), night, 70, 1560, de + 3600);
+        check("total burn of a day that has ended: the whole resting burn, no 'so far' (#155)", full.restingKcal == 1560
+                && Math.abs(full.totalKcal - (full.activeKcal + 1560)) < 1e-9 && Double.isNaN(full.totalUntil) && full.activeKcal == part.activeKcal);
+        Wellness.Day old = actDay(day, ZURICH, awake, night);
+        check("total burn: the call without a time counts the whole day, as before (#155)", old.restingKcal == 1600 && Double.isNaN(old.totalUntil));
+        eq("total burn line, a day that has ended (#155)", app.openring.ui.Explain.totalBurn(Double.NaN, ZURICH), "Active burn plus what your body uses at rest");
+        eq("total burn line, so far (#155)", app.openring.ui.Explain.totalBurn(at(day + "T08:07:20", ZURICH), ZURICH),
+                "So far, up to 08:07 (active plus resting burn)");
     }
 
     static void activityDay() {
