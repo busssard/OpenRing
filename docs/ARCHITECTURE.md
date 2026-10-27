@@ -160,7 +160,8 @@ history had, before anything is written to the file the person picked; otherwise
    so neighbouring days never share or lose a minute (issue #114). The 96 quarter hours of "Intensity through the
    day" and the 08:00 to 22:00 window go by each minute's clock time, like `DialMath.fill`: the repeated hour lands
    twice on the same quarter hours (their average), the skipped one stays empty, and a line under the chart says so
-   (`ClockChange.activityText`). A sitting stretch (awake, under 1.5 MET, ended by sleep, a missing minute or more
+   (`ClockChange.activityText`) on days analysed this way: the day JSON stores the real minutes as `day_min`, and a
+   day stored before has no `day_min` (its numbers still count 1440 minutes), so it gets no line. A sitting stretch (awake, under 1.5 MET, ended by sleep, a missing minute or more
    movement) is a long sitting period when 60 or more of its own minutes lie between 08:00 and 22:00, also at the end
    of the day (issue #154). Activity values count only from 0 to 25 MET (`EventCodec.plausibleMet`, issue #120);
    higher ones are damaged bytes and count as missing minutes. These rules have no version of their own: stored days
