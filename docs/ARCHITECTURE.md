@@ -242,14 +242,33 @@ can run meanwhile. Everything below stops in `onPause`.
   strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard.
 * Search walk (phase 2): `core/analysis/StepDetector` counts steps from the accelerometer (registered
   only while recording; no activity recognition permission; a second bump within 250 ms is the same
-  footfall), each step moves the person 0.41 × height along the last upright heading (relative to the
-  first upright heading after Start, since the sensor's zero is arbitrary; a step that turned more than
-  25° only moves if the next one goes straight on, so shuffling while turning stays a turn), and every
-  reading keeps its place. Once the walk spans 2 m in two
+  footfall), each step moves the person 0.41 × height along the upright heading of its own time (relative to the
+  first upright heading after Start, since the sensor's zero is arbitrary). `StepDetector` reports the first step
+  of a run only with the second (`lastTimes` gives both times), so the app passes each step with its own time
+  (`SearchWalk.step`) and a step's heading comes from the last 5 s of headings; a pair passed as `steps(t, 2)` is
+  judged as one, so the second cannot confirm the first (issue #108). Turning on the spot (issue #108): how far a
+  step turned is judged on the mean heading of the 200 ms before it; a step that turned 5° or more from the step before
+  (the first from the Start heading) waits, further steps rotating the same way wait with it (while the rotation is
+  under 60°, one step that does not turn on is allowed in between, so two corners with a step between stay two
+  corners). When the rotation ends (or at Stop, `finish`) the waiting steps move along their own headings (a corner
+  or curve), unless at least two of them rotated 150° or more in all and fast enough per step (`spinNeeds`: 20° a
+  step at 150°, falling to 10° at 300° and beyond): then they were a turn on the spot and stay where they are. The
+  app stamps headings and steps from the sensors' own time, on one clock. Limits: from the heading alone a curve and
+  a turn on the spot look the same. A U turn in 2 to 4 steps counts as a pivot and its steps stay (under a metre
+  off); a full loop around a table at 10° a step or more, or a slow turn on the spot at under 10° a step, is
+  judged wrongly, and so is a half circle walked tightly (round a table, about 2 m across, at 20° a step or more): it
+  counts as a turn on the spot and its steps stay (at 20° a step its 9 turning steps, at 30 to 45° a step 6 to 4).
+  While 2 or more steps wait, or the waiting steps turned 60° or more, the card says how many (`waitingToShow`; the
+  sway of walking keeps one step waiting most of the time, which is not worth a line). Readings taken while steps
+  waited move to those steps' places; otherwise every reading keeps its place. Once the walk spans 2 m in two
   directions (at least 1 m wide, 6 s of readings), `SearchWalk.locate` fits signal = level −
   10 n log10(distance) − body shadow over a 0.2 m grid (walk plus 2 m), n 2 to 3.5, and gives a
-  likelihood weighted centre and radius (1.8 × spread, at least 1 m; none above 3 m, at the grid's edge
-  or when the model explains under 15 % of the signal's changes). `ui/MiniMap` draws it; under 1 m
+  likelihood weighted centre and radius (1.8 × spread, at least 1 m; none above 3 m or at the grid's edge).
+  Out of hundreds of spots the best one explains some of plain noise, the more the fewer readings (issue #136),
+  so a circle also needs an F value of 5 against a flat signal with the 5 fitted values (`neededShare`: the model
+  must explain 25 / (25 + half seconds − 6) of the signal's changes, 81 % for 12 half seconds, 64 % for 20, 32 % for
+  60, never under 15 %). A circle whose middle lies outside the walked area is labelled "Here or farther out" and the
+  text says the ring may also be farther that way. `ui/MiniMap` draws it; under 1 m
   from the start the turn dial stays. The fit runs on its own thread on `SearchWalk.snapshot()` (at most 240 points). `DemoWalk` is the made up walk for demo mode.
 
 ## Known limits

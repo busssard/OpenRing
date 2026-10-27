@@ -1,7 +1,9 @@
 package app.openring.core.analysis;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -74,9 +76,17 @@ public final class SearchWalk {
     private final List<Point> path = new ArrayList<Point>();
     private final boolean[] faced = new boolean[SECTORS];
     private double heading = Double.NaN, walkHeading = Double.NaN, start = Double.NaN;
-    /** Heading of the step before, and a step taken while turning that waits for the next one. */
-    private double lastStepHeading = Double.NaN, pendingHeading = Double.NaN;
-    private long pendingAt;
+    /** Heading of the step before as judged ({@link #steadyAt}; NaN before the first step). */
+    private double lastStepHeading = Double.NaN;
+    /** Steps that wait while the heading rotates: {time ms, heading, steps, 1 if it rotated}. */
+    private final List<double[]> held = new ArrayList<double[]>();
+    /** Signed degrees the waiting steps rotated, the most reached in their direction, that direction (1 or -1). */
+    private double heldTurn, heldMost;
+    private int heldSign;
+    /** The newest waiting step kept the rotation going no further (one such pause is allowed). */
+    private boolean heldPause;
+    /** Upright headings of the last {@link #HISTORY_MS}: {time ms, heading}, for steps reported late. */
+    private final ArrayDeque<double[]> recent = new ArrayDeque<double[]>();
     private boolean upright;
     private long headingAt = Long.MIN_VALUE;
     private double stepLength = StepDetector.stepLength(175), x, y;
@@ -108,7 +118,41 @@ public final class SearchWalk {
         if (upright) {
             faced[sector(heading)] = true;
             walkHeading = heading;
+            recent.addLast(new double[] {atMs, heading});
+            while (recent.size() > 1 && recent.peekFirst()[0] < atMs - HISTORY_MS) recent.pollFirst();
         }
+    }
+
+    /** Upright headings are kept this long (ms), so a step reported late still gets the heading of its own time. */
+    public static final long HISTORY_MS = 5000;
+
+    /** The upright heading at a time: the newest one at or before it (the oldest kept when it is older still). */
+    public double headingAt(long atMs) {
+        double h = walkHeading;
+        for (Iterator<double[]> it = recent.descendingIterator(); it.hasNext(); ) {
+            double[] e = it.next();
+            h = e[1];
+            if (e[0] <= atMs) break;
+        }
+        return h;
+    }
+
+    /** How far a step turned is judged on the mean heading of this many ms up to it, so the sensor's own jitter does not count as turning. */
+    public static final long STEADY_MS = 200;
+
+    /** The mean upright heading of the {@link #STEADY_MS} up to a time, or {@link #headingAt} when there is none in that time. */
+    public double steadyAt(long atMs) {
+        double c = 0, sn = 0;
+        int k = 0;
+        for (Iterator<double[]> it = recent.descendingIterator(); it.hasNext(); ) {
+            double[] e = it.next();
+            if (e[0] > atMs) continue;
+            if (e[0] <= atMs - STEADY_MS) break;
+            c += Math.cos(Math.toRadians(e[1]));
+            sn += Math.sin(Math.toRadians(e[1]));
+            k++;
+        }
+        return k == 0 ? headingAt(atMs) : norm(Math.toDegrees(Math.atan2(sn, c)));
     }
 
     /** Records a signal reading; returns whether it counts (a fresh heading, phone upright, a {@link Proximity#plausible} value). */
@@ -119,41 +163,192 @@ public final class SearchWalk {
         return upright;
     }
 
-    /** A step that turned more than this (degrees) from the step before only counts if the next one goes straight on. */
-    public static final double TURN_STEP_DEG = 25;
+    /** A step that turned at least this much (degrees) from the step before starts a rotation, or keeps one going the same way. */
+    public static final double ROTATE_DEG = 5;
+    /**
+     * Waiting steps that rotated the same way through this many degrees in all are a turn on the spot
+     * and do not move the person: more than a room's corner (90) or the turn into a diagonal (135).
+     */
+    public static final double SPIN_DEG = 150;
+    /** ... and at least this many of them rotated (one step alone is a corner, however sharp). */
+    public static final int SPIN_STEPS = 2;
+    /**
+     * ... and turned on average at least this much per rotating step (degrees) at {@link #SPIN_DEG},
+     * falling to {@link #SPIN_MEAN_FULL_DEG} at {@link #FULL_TURN_DEG} and beyond. From the heading
+     * alone a curve and a turn on the spot look the same; the farther a rotation goes, the less it
+     * needs per step: a wide half circle walked at 15 degrees a step still moves, a shuffling full
+     * turn (18 degrees a step for 20 steps a circle) or a U turn in 2 to 4 steps does not.
+     */
+    public static final double SPIN_MEAN_DEG = 20, SPIN_MEAN_FULL_DEG = 10, FULL_TURN_DEG = 300;
+
+    /** The mean turn per rotating step a rotation of {@code total} degrees needs to count as a turn on the spot. */
+    public static double spinNeeds(double total) {
+        double f = Math.max(0, Math.min(1, (total - SPIN_DEG) / (FULL_TURN_DEG - SPIN_DEG)));
+        return SPIN_MEAN_DEG + f * (SPIN_MEAN_FULL_DEG - SPIN_MEAN_DEG);
+    }
 
     /**
-     * {@code n} steps were taken: the person moves one step length each along the newest upright
-     * heading (while the phone tilts, the last upright heading is kept). Without any heading yet the
-     * steps are counted but go nowhere. Shuffling while turning on the spot is not walking: a step
-     * that turned more than {@link #TURN_STEP_DEG} from the step before waits, and moves only when the
-     * next step goes straight on (a corner); if the next step turns again, it is dropped.
+     * A step that does not turn on is allowed inside a rotation only while it has turned less than
+     * this (degrees). Later a straight step ends it: two corners the same way with one step between
+     * (the end of a bed) are two corners, not a turn on the spot.
+     */
+    public static final double PAUSE_MAX_DEG = 60;
+
+    /**
+     * One step at its own time (ms, the clock of {@link #heading}), with the upright heading of that
+     * moment: {@link StepDetector} reports the first step of a run only with the second, so that
+     * step comes late and must not take the newer heading (issue #108).
+     */
+    public void step(long atMs) {
+        steps++;
+        if (Double.isNaN(walkHeading)) return;
+        unit(atMs, headingAt(atMs), steadyAt(atMs), 1);
+    }
+
+    /**
+     * {@code n} steps were taken now: the person moves one step length each along the newest
+     * upright heading (while the phone tilts, the last upright heading is kept). Without any heading
+     * yet the steps are counted but go nowhere. Steps that share one heading are judged as one, so
+     * the second of a pair cannot confirm the first. Shuffling while turning on the spot is not
+     * walking: a step that turned at least {@link #ROTATE_DEG} from the step before (the first one
+     * from the way the person faced at Start) waits. Further steps rotating the same way wait with
+     * it, one step that keeps the rotation no further is allowed in between while it is under
+     * {@link #PAUSE_MAX_DEG}. When the rotation ends, the waiting steps move along their own headings
+     * (a corner or a curve), unless they rotated {@link #SPIN_DEG} or more in all, fast enough per
+     * step ({@link #spinNeeds}): then they were a turn on the spot and do not move.
+     * A single waiting step (a corner taken in one step) moves with the next step that does not turn
+     * on. The readings taken while steps waited get the places of those steps once they move.
      */
     public void steps(long atMs, int n) {
         if (n <= 0) return;
         steps += n;
         if (Double.isNaN(walkHeading)) return;
+        unit(atMs, walkHeading, steadyAt(atMs), n);
+    }
+
+    /** {@code n} steps at one time and heading {@code h}, judged as one on the steadier heading {@code judge}. */
+    private void unit(long atMs, double h, double judge, int n) {
+        double turned = signed(judge - (Double.isNaN(lastStepHeading) ? 0 : lastStepHeading));
+        lastStepHeading = judge;
+        boolean rotating = Math.abs(turned) >= ROTATE_DEG;
+        int sign = turned >= 0 ? 1 : -1;
+        if (held.isEmpty()) {
+            if (rotating) hold(atMs, h, n, turned);
+            else move(atMs, h, n);
+            return;
+        }
+        double sum = heldTurn + turned;
+        if (rotating && sign == heldSign && sum * heldSign >= heldMost + ROTATE_DEG) {
+            // the rotation goes on
+            held.add(new double[] {atMs, h, n, 1});
+            heldTurn = sum;
+            heldMost = sum * heldSign;
+            heldPause = false;
+            return;
+        }
+        if (!heldPause && rotatingHeld() >= 2 && heldMost < PAUSE_MAX_DEG) {
+            // one step that does not turn on is allowed (an uneven shuffle, the heading's own noise)
+            held.add(new double[] {atMs, h, n, 0});
+            heldTurn = sum;
+            heldPause = true;
+            return;
+        }
+        release();
+        if (rotating) hold(atMs, h, n, turned);
+        else move(atMs, h, n);
+    }
+
+    private void hold(long atMs, double h, int n, double turned) {
+        held.add(new double[] {atMs, h, n, 1});
+        heldTurn = turned;
+        heldSign = turned >= 0 ? 1 : -1;
+        heldMost = Math.abs(turned);
+        heldPause = false;
+    }
+
+    private int rotatingHeld() {
+        int k = 0;
+        for (double[] e : held) if (e[3] == 1) k++;
+        return k;
+    }
+
+    /** The rotation ended: the waiting steps move (a corner or curve) or stay (a turn on the spot; a step after it still moves). */
+    private void release() {
+        int rotated = 0;
+        for (double[] e : held) if (e[3] == 1) rotated += (int) e[2];
+        boolean spin = heldMost >= SPIN_DEG && rotatingHeld() >= SPIN_STEPS && heldMost / rotated >= spinNeeds(heldMost);
+        int last = held.size() - 1;
+        for (int i = 0; i <= last; i++) {
+            double[] e = held.get(i);
+            if (spin && !(heldPause && i == last)) continue;
+            move((long) e[0], e[1], (int) e[2]);
+        }
+        held.clear();
+        heldPause = false;
+    }
+
+    /**
+     * The walk stopped (Stop, or the screen left): steps still waiting move along their headings,
+     * unless they rotated {@link #SPIN_DEG} or more (a turn on the spot). Steps after this start a
+     * new rotation check as usual.
+     */
+    public void finish() {
+        if (!held.isEmpty()) release();
+    }
+
+    /** Steps waiting for the rotation to end (they count in {@link #steps()} but have not moved the person yet). */
+    public int waiting() {
+        int k = 0;
+        for (double[] e : held) k += (int) e[2];
+        return k;
+    }
+
+    /**
+     * The card mentions waiting steps only from this many on: the body sways about 3 degrees each way
+     * with every step, so the heading turns about 6 degrees between steps (over {@link #ROTATE_DEG})
+     * and on a straight walk one step waits almost all the time. Saying so would make the line come
+     * and go with every step (review of #182).
+     */
+    public static final int SHOW_WAITING_STEPS = 2;
+    /** ... or once the waiting steps turned this much (degrees), a corner taken in one step. */
+    public static final double SHOW_WAITING_DEG = 60;
+
+    /** The waiting steps worth mentioning on the card: {@link #waiting()}, or 0 while it is only the sway of walking. */
+    public int waitingToShow() {
+        int n = waiting();
+        return n >= SHOW_WAITING_STEPS || (n > 0 && heldMost >= SHOW_WAITING_DEG) ? n : 0;
+    }
+
+    /**
+     * The shares of {@link Spot#explained} and {@link Spot#needed} as whole percent for the card:
+     * the explained one rounded down, the needed one up, so a circle that fails never reads as
+     * "explains 64 %, needs 64 %" (review of #182). {explained, needed}.
+     */
+    public static long[] percents(double explained, double needed) {
+        long e = (long) Math.floor(explained * 100 + 1e-9);
+        long n = (long) Math.ceil(needed * 100 - 1e-9);
+        if (explained < needed && e >= n) e = n - 1;
+        return new long[] {Math.max(0, e), n};
+    }
+
+    private void move(long atMs, double h, int n) {
+        double a = Math.toRadians(h);
         for (int i = 0; i < n; i++) {
-            double turned = Double.isNaN(lastStepHeading) ? 0 : diff(walkHeading, lastStepHeading);
-            lastStepHeading = walkHeading;
-            if (turned > TURN_STEP_DEG) {
-                pendingHeading = walkHeading;
-                pendingAt = atMs;
-                continue;
-            }
-            if (!Double.isNaN(pendingHeading)) {
-                move(pendingAt, pendingHeading);
-                pendingHeading = Double.NaN;
-            }
-            move(atMs, walkHeading);
+            x += stepLength * Math.sin(a);
+            y += stepLength * Math.cos(a);
+            path.add(new Point(atMs, x, y));
+        }
+        // readings taken since the step (it came late, or waited) were placed where the person stood before it
+        for (int k = samples.size() - 1; k >= 0 && samples.get(k).t > atMs; k--) {
+            Sample s = samples.get(k);
+            samples.set(k, new Sample(s.t, s.heading, s.rssi, s.upright, x, y));
         }
     }
 
-    private void move(long atMs, double h) {
-        double a = Math.toRadians(h);
-        x += stepLength * Math.sin(a);
-        y += stepLength * Math.cos(a);
-        path.add(new Point(atMs, x, y));
+    /** -180 to under 180: how far and which way (positive to the right) a heading change turned. */
+    public static double signed(double deg) {
+        double d = norm(deg);
+        return d >= 180 ? d - 360 : d;
     }
 
     /** The first upright heading after Start in the sensor's own terms (NaN before); all headings here are relative to it. */
@@ -365,6 +560,32 @@ public final class SearchWalk {
      * signal that stays the same everywhere (the ring in another room) points to no spot at all.
      */
     public static final double MIN_EXPLAINED = 0.15;
+    /**
+     * The values the fit chooses: the spot (two), the loss exponent, the level and the shadow. Out
+     * of hundreds of spots the best one always explains some of plain noise, the more so the fewer
+     * readings there are (issue #136), so the share needed grows for a short walk.
+     */
+    public static final int FIT_VALUES = 5;
+    /**
+     * How much better than a flat signal the fit has to be, as an F value (explained share per
+     * fitted value over the share left per remaining reading). Set on simulated walks with no ring
+     * signal at all (4 dB noise, other seeds than FinderTest's): on the short L walk 1 in 500 got a
+     * circle, 1 in 9 with the 15 % alone. A circle lost this way held the ring in most of the walks
+     * that had one (the price: more short walks end with "walk more").
+     */
+    public static final double MIN_F = 5;
+
+    /**
+     * The share of the signal's ups and downs the model must explain with this many half seconds of
+     * readings: {@link #FIT_VALUES} × {@link #MIN_F} / (that + bins − {@link #FIT_VALUES} − 1), at
+     * least {@link #MIN_EXPLAINED}. About 0.81 for 12 half seconds, 0.64 for 20, 0.32 for 60, 0.15 from 148 on.
+     */
+    public static double neededShare(int bins) {
+        double pf = FIT_VALUES * MIN_F, rest = bins - FIT_VALUES - 1;
+        if (rest <= 0) return 1;
+        return Math.max(MIN_EXPLAINED, pf / (pf + rest));
+    }
+
     /** A circle wider than this (radius, m) is no clear spot: the map then shows only the trail. */
     public static final double CLEAR_RADIUS_M = 3.0;
 
@@ -379,6 +600,8 @@ public final class SearchWalk {
         public int bins;
         /** Share of the signal's ups and downs along the walk that the model explains (0 to 1). */
         public double explained;
+        /** The share it needs for a clear circle with this many half seconds ({@link #neededShare}). */
+        public double needed;
         /**
          * True when the best spots lie at the outer edge of the searched area ({@link #MARGIN_M} past
          * the walk): the signal grows towards there, so the ring is probably farther that way.
@@ -389,7 +612,7 @@ public final class SearchWalk {
          * the ring may then also be farther that way, the model cannot tell far from a bit beyond.
          */
         public boolean beyond;
-        /** A circle to show: not wider than {@link #CLEAR_RADIUS_M}, not at the edge, and the model explains enough. */
+        /** A circle to show: not wider than {@link #CLEAR_RADIUS_M}, not at the edge, and the model explains at least {@link #needed}. */
         public boolean clear;
     }
 
@@ -591,7 +814,8 @@ public final class SearchWalk {
         double flat = 0;
         for (double v : r) flat += (v - rMean) * (v - rMean);
         out.explained = flat <= 0 ? 0 : Math.max(0, 1 - best / flat);
-        out.clear = out.radius <= CLEAR_RADIUS_M && !out.edge && out.explained >= MIN_EXPLAINED;
+        out.needed = neededShare(m);
+        out.clear = out.radius <= CLEAR_RADIUS_M && !out.edge && out.explained >= out.needed;
         out.bins = m;
         return out;
     }

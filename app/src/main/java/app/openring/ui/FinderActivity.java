@@ -336,6 +336,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         if (recording) {
             // a walk needs the screen; what was recorded stays and gets its circle (both sensors are released above)
             recording = false;
+            if (walk != null) walk.finish();
             spotDirty = true;
             showTurn();
         }
@@ -729,9 +730,11 @@ public final class FinderActivity extends Activity implements SensorEventListene
         if (e.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
             if (!recording || walk == null || stepper == null) return;
             // the sensor's own time stamps keep the rhythm right when Android delivers samples in bursts
-            int n = stepper.add(e.timestamp / 1000000L, e.values[0], e.values[1], e.values[2]);
+            long at = e.timestamp / 1000000L;
+            int n = stepper.add(at, e.values[0], e.values[1], e.values[2]);
             if (n > 0) {
-                walk.steps(SystemClock.elapsedRealtime(), n);
+                // each step at its own time on the walk's clock: the first of a run is reported with the second (issue #108)
+                for (long t : stepper.lastTimes()) walk.step(walkTime(t));
                 spotDirty = true;
             }
             return;
@@ -740,8 +743,21 @@ public final class FinderActivity extends Activity implements SensorEventListene
         double[] o = SearchWalk.headingOf(rot);
         facing = o[0];
         upright = o[1] <= SearchWalk.MAX_TILT_DEG;
-        if (recording && walk != null) walk.heading(SystemClock.elapsedRealtime(), facing, upright);
+        if (recording && walk != null) walk.heading(walkTime(e.timestamp / 1000000L), facing, upright);
         dial.invalidate();
+    }
+
+    /** Sensor time (ms) minus the walk's clock (elapsed realtime), the largest seen since Start (the event Android delivered fastest), so delivery delays are left out. */
+    private long sensorOffset = Long.MAX_VALUE;
+
+    /**
+     * A sensor time stamp on the walk's clock, the same for headings and steps (review of #182): both
+     * sensors' events are placed by when they were measured, not by when Android delivered them.
+     */
+    long walkTime(long sensorMs) {
+        long off = sensorMs - SystemClock.elapsedRealtime();
+        if (sensorOffset == Long.MAX_VALUE || off > sensorOffset) sensorOffset = off;
+        return sensorMs - sensorOffset;
     }
 
     @Override
@@ -752,6 +768,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
         if (recording) {
             recording = false;
             if (sm != null && accel != null) sm.unregisterListener(this, accel);
+            // steps still waiting for a turn to end move now, unless they were a turn on the spot (issue #108)
+            if (walk != null) walk.finish();
             spotDirty = true;
         } else {
             if (rotation == null && !demo) {
@@ -760,6 +778,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             }
             walk = new SearchWalk().stepLength(stepLength());
             stepper = new StepDetector();
+            sensorOffset = Long.MAX_VALUE;
             spot = null;
             spotDirty = false;
             recording = true;
@@ -842,6 +861,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             b.append("No clear direction (").append(Math.round(d.spread)).append(" dB between strongest and weakest side, under ")
                     .append(Math.round(SearchWalk.CLEAR_DB)).append("). The ring may be very close, above or below you, or the signal bounced off walls.");
         }
+        appendWaiting(b);
         if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted.");
         if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the turn needs the ring to be heard.");
         turnText.setText(b.toString());
@@ -870,19 +890,39 @@ public final class FinderActivity extends Activity implements SensorEventListene
         } else if (spot.clear) {
             b.append("\nProbably within the circle: ").append(SearchWalk.where(spot.x, spot.y)).append(" (radius ").append(Ui.fmt(spot.radius, 1))
                     .append(" m). Start looking there.");
-            if (spot.beyond) b.append(" It lies at the edge of where you walked, so the ring may also be a bit farther that way.");
+            if (spot.beyond) b.append(" The circle lies outside where you walked, so the ring may also be farther that way (the signal cannot tell how far).");
         } else if (spot.edge) {
             b.append("\nThe signal gets stronger towards the edge of where you walked (the dashed circle, ").append(SearchWalk.where(spot.x, spot.y))
                     .append("), so the ring is probably farther that way. "
                     + "Walk on in that direction and look again.");
         } else {
-            b.append("\nThe signal gave no clear spot yet (the circle would be wider than ").append(Math.round(SearchWalk.CLEAR_RADIUS_M))
-                    .append(" m, or the signal hardly changed). Walk more of the room; if that does not help, the ring may be in another room, "
+            b.append("\nThe signal gave no clear spot yet (");
+            if (spot.explained < spot.needed) {
+                // issue #136: on a short walk plain noise fits some spot, so more is needed there
+                long[] pc = SearchWalk.percents(spot.explained, spot.needed);
+                b.append("its ups and downs could be plain noise: the model explains ").append(pc[0])
+                        .append(" % of them, a walk this short needs ").append(pc[1]).append(" %");
+            } else {
+                b.append("the circle would be wider than ").append(Math.round(SearchWalk.CLEAR_RADIUS_M)).append(" m");
+            }
+            b.append("). Walk more of the room; if that does not help, the ring may be in another room, "
                     + "upstairs or downstairs, or under something thick.");
         }
+        appendWaiting(b);
         if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted, steps keep your last direction.");
         if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the walk needs the ring to be heard.");
         turnText.setText(b.toString());
+    }
+
+    /**
+     * Steps counted while turning wait until the turn ends; say so, so the step count and the map agree (issue #108).
+     * Not for the one step that waits while the body sways on a straight walk ({@link SearchWalk#waitingToShow}).
+     */
+    void appendWaiting(StringBuilder b) {
+        int n = walk.waitingToShow();
+        if (n == 0) return;
+        b.append("\n").append(Texts.count(n, "step", "steps")).append(" counted while you turned ").append(n == 1 ? "waits" : "wait")
+                .append(": they move once you walk on, or stay if it was a turn on the spot.");
     }
 
     void showStepLength() {
@@ -933,6 +973,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         walk = new SearchWalk().stepLength(stepLength());
         List<double[]> ev = DemoWalk.events();
         DemoWalk.feed(walk, ev, 0, Long.MAX_VALUE);
+        walk.finish();
         // the walk ended a minute ago
         wallOffset = System.currentTimeMillis() - 60000 - (long) ev.get(ev.size() - 1)[0];
         spot = walk.locate();

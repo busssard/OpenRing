@@ -256,7 +256,7 @@ final class MiniMap extends View {
 
         // the circle's name, bottom right next to the scale bar: on the map it would cover the trail
         if (sr > 0) {
-            String key = spot.clear ? "Probably around here" : "Farther this way";
+            String key = label(spot);
             float kr = Ui.dp(c, 5), kw = txt.measureText(key);
             float kx = w - Ui.dp(c, 4) - kw, ky = by + Ui.dp(c, 3);
             float cx0 = kx - Ui.dp(c, 6) - kr, cy0 = by - Ui.dp(c, 1);
@@ -286,7 +286,7 @@ final class MiniMap extends View {
             tip = Charts.clock(wall / 1000.0) + secs(wall) + ", " + Math.round(b[3]) + " dBm, " + Ui.fmt(Math.hypot(b[0], b[1]), 1) + " m from the start";
         } else if (picked == CIRCLE && sr > 0) {
             px = sx(spot.x);
-            tip = (spot.clear ? "Probably around here: " : "Farther this way: ") + compact(spot.x, spot.y)
+            tip = label(spot) + ": " + compact(spot.x, spot.y)
                     + (spot.clear ? " (radius " + Ui.fmt(spot.radius, 1) + " m)" : "");
         }
         if (tip != null) {
@@ -296,6 +296,16 @@ final class MiniMap extends View {
             cv.drawRoundRect(r, bh / 2, bh / 2, tipBg);
             cv.drawText(tip, left + pad, bh / 2 + tipTxt.getTextSize() * 0.36f, tipTxt);
         }
+    }
+
+    /**
+     * The circle's name: "Probably around here", or "Here or farther out" when its middle lies outside
+     * the walked area (the signal cannot tell a bit beyond from far beyond, issue #136), or "Farther
+     * this way" for the dashed circle at the edge.
+     */
+    static String label(SearchWalk.Spot s) {
+        if (!s.clear) return "Farther this way";
+        return s.beyond ? "Here or farther out" : "Probably around here";
     }
 
     /** "2.1 m ahead, 0.8 m right" from the start (short, for the readout bubble). */

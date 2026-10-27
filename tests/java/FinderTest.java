@@ -34,6 +34,8 @@ public class FinderTest {
         stepDetection();
         paths();
         walks();
+        turnSteps();
+        noiseCircles();
         lastWorn();
         impossibleValues();
         strongestRing();
@@ -423,7 +425,10 @@ public class FinderTest {
         tl.heading(5, 180, true);
         tl.heading(10, 300, false);
         tl.steps(20, 1);
-        check("a step while tilted keeps the last upright heading (relative to the start)", Math.abs(tl.x() - 1) < 1e-9 && Math.abs(tl.y()) < 1e-9, tl.x() + "," + tl.y());
+        // the first step turned 90 degrees from the way the person faced at Start, so it waits for the next one (issue #108)
+        check("a step that turned from the start waits", tl.waiting() == 1 && tl.x() == 0 && tl.steps() == 1);
+        tl.steps(30, 1);
+        check("a step while tilted keeps the last upright heading (relative to the start)", Math.abs(tl.x() - 2) < 1e-9 && Math.abs(tl.y()) < 1e-9, tl.x() + "," + tl.y());
         SearchWalk notYet = new SearchWalk();
         notYet.heading(0, 50, false);
         check("a tilted first heading does not set the start", Double.isNaN(notYet.start()) && Double.isNaN(notYet.heading()) && notYet.relative(50) == 50);
@@ -447,7 +452,8 @@ public class FinderTest {
         SearchWalk quiet = new SearchWalk().stepLength(1);
         for (int i = 0; i < 4; i++) {
             quiet.heading(i * 1000, i * 90, true);
-            quiet.steps(i * 1000 + 500, 3);
+            // one by one: a whole leg sent as one call of 3 steps would be judged as one turning step (issue #108)
+            for (int k = 0; k < 3; k++) quiet.steps(i * 1000 + 500 + k * 100, 1);
         }
         check("covered but not heard: no map", quiet.cover()[0] >= 2.9 && !quiet.mapReady() && quiet.locate() == null);
         // the fit: level and shadow come out exactly from clean data
@@ -471,9 +477,17 @@ public class FinderTest {
      * {@code noise} dB of noise per reading, a spatial ripple of up to 6 dB (multipath), up to
      * {@code shadowDb} body shadow, 20 % of readings lost and half of those from behind. With
      * {@code drift}, the true step is 0.85 to 1.15 times the assumed one and the heading drifts 2 to
-     * 6 degrees a minute, plus 3 degrees of noise. Returns {error m, radius m, 1 if inside, 1 if a spot, 1 if clear}.
+     * 6 degrees a minute, plus 3 degrees of noise. Returns {error m, radius m, 1 if inside, 1 if a spot, 1 if clear, 1 if beyond}.
      */
     static double[] searchWalk(long seed, double[][] legs, double noise, double shadowDb, boolean drift) {
+        return searchWalk(seed, legs, noise, shadowDb, drift, RING_IN, 1.5);
+    }
+
+    /** Where the simulated ring is: in the room, nowhere (a flat signal of -88 dBm, the ring in another room), or 2 to 5 m outside the walk. */
+    static final int RING_IN = 0, NO_RING = 1, RING_OUTSIDE = 2;
+
+    /** The same walk with the ring {@code where}, and a multipath ripple of up to 4 × {@code ripple} dB (1.5 above). */
+    static double[] searchWalk(long seed, double[][] legs, double noise, double shadowDb, boolean drift, int where, double ripple) {
         // neighbouring seeds give java.util.Random nearly the same first numbers (the ring would sit in
         // almost the same spot in every walk); mix the seed first so the walks are really different
         Random r = new Random(mix(seed));
@@ -490,6 +504,32 @@ public class FinderTest {
         double bias = drift ? (r.nextBoolean() ? 1 : -1) * (2 + 4 * r.nextDouble()) / 60.0 : 0;
         double[][] wp = new double[legs.length][];
         for (int i = 0; i < legs.length; i++) wp[i] = new double[] {legs[i][0] + r.nextGaussian() * 0.2, legs[i][1] + r.nextGaussian() * 0.2};
+        if (where == RING_OUTSIDE) {
+            // 2 to 5 m past one side of the walk's bounding box (issue #136)
+            double bx0 = 1e9, bx1 = -1e9, by0 = 1e9, by1 = -1e9;
+            for (double[] p : wp) {
+                bx0 = Math.min(bx0, p[0]);
+                bx1 = Math.max(bx1, p[0]);
+                by0 = Math.min(by0, p[1]);
+                by1 = Math.max(by1, p[1]);
+            }
+            double out = 2 + 3 * r.nextDouble();
+            int side = r.nextInt(4);
+            double along = r.nextDouble();
+            if (side == 0) {
+                rx = bx1 + out;
+                ry = by0 + along * (by1 - by0);
+            } else if (side == 1) {
+                rx = bx0 - out;
+                ry = by0 + along * (by1 - by0);
+            } else if (side == 2) {
+                ry = by1 + out;
+                rx = bx0 + along * (bx1 - bx0);
+            } else {
+                ry = by0 - out;
+                rx = bx0 + along * (bx1 - bx0);
+            }
+        }
         SearchWalk w = new SearchWalk().stepLength(len);
         double px = wp[0][0], py = wp[0][1], hd = 0;
         long t = 0, nextStep = 0, nextRead = 0;
@@ -513,19 +553,21 @@ public class FinderTest {
                 double dx = rx - px, dy = ry - py, flat = Math.hypot(dx, dy), d = Math.sqrt(flat * flat + hz * hz);
                 double cos = flat < 1e-6 ? 1 : (dx * Math.sin(Math.toRadians(hd)) + dy * Math.cos(Math.toRadians(hd))) / flat;
                 double behind = (1 - cos) / 2, fade = 0;
-                for (int i = 0; i < 4; i++) fade += 1.5 * Math.sin(kx[i] * px + ky[i] * py + ph[i]);
-                double v = p0 - 10 * nTrue * Math.log10(d) - shadowDb * behind + fade + r.nextGaussian() * noise;
+                for (int i = 0; i < 4; i++) fade += ripple * Math.sin(kx[i] * px + ky[i] * py + ph[i]);
+                double v = where == NO_RING ? -88 + fade + r.nextGaussian() * noise
+                        : p0 - 10 * nTrue * Math.log10(d) - shadowDb * behind + fade + r.nextGaussian() * noise;
                 if (r.nextDouble() > 0.2 && !(behind > 0.75 && r.nextDouble() < 0.5)) w.rssi(t, v);
             }
             t += 20;
         }
+        w.finish(); // Stop: steps still waiting for a turn to end move (issue #108)
         SearchWalk.Spot s = w.locate();
         if (s == null) return new double[] {Double.NaN, 0, 0, 0, 0};
         // the map starts at the first waypoint facing ahead (+y), like the room
         // the map's up is the first heading after Start: turn the truth into that frame
         double b = Math.toDegrees(Math.atan2(rx - wp[0][0], ry - wp[0][1])) - w.start(), dist = Math.hypot(rx - wp[0][0], ry - wp[0][1]);
         double e = Math.hypot(s.x - dist * Math.sin(Math.toRadians(b)), s.y - dist * Math.cos(Math.toRadians(b)));
-        return new double[] {e, s.radius, e <= s.radius ? 1 : 0, 1, s.clear ? 1 : 0};
+        return new double[] {e, s.radius, e <= s.radius ? 1 : 0, 1, s.clear ? 1 : 0, s.beyond ? 1 : 0};
     }
 
     /** A 64 bit mixer (SplitMix64's finaliser). */
@@ -689,6 +731,371 @@ public class FinderTest {
         // turning on the spot: no steps, no map; the phase 1 direction still works
         SearchWalk spin = turn(90, 3, 0);
         check("turning on the spot: no map, a direction", spin.reach() == 0 && !spin.mapReady() && spin.locate() == null && spin.direction() != null);
+    }
+
+    // ------------------------------------------------------------------ turning on the spot with steps (issue #108)
+
+    /**
+     * The issue's turn: once around in 20 s (headings every 20 ms with 3 degrees of noise, readings
+     * every 120 ms, the ring at 90 degrees with 10 dB of body shadow, steps of 0.72 m). Steps come
+     * from {@code steps}: {time ms, n} calls of {@code walk.steps(t, n)}.
+     */
+    static SearchWalk spinWith(long[][] steps, long seed) {
+        SearchWalk w = new SearchWalk().stepLength(0.72);
+        Random r = new Random(seed);
+        int next = 0;
+        for (long t = 0; t <= 20000; t += 20) {
+            double faced = 360.0 * t / 20000;
+            w.heading(t, faced + r.nextGaussian() * 3, true);
+            if (t % 120 == 0) w.rssi(t, -66 - 10 * (1 - Math.cos(Math.toRadians(faced - 90))) / 2 + r.nextGaussian() * 3);
+            while (next < steps.length && steps[next][0] <= t) {
+                w.steps(t, (int) steps[next][1]);
+                next++;
+            }
+        }
+        return w;
+    }
+
+    /**
+     * The same turn (or a walk, with {@code headingAt}) through the accelerometer: one bump and dip
+     * per footfall at the given times, fed to {@link StepDetector} at 50 samples a second, and each
+     * counted step passed on at its own time as the app does.
+     */
+    static SearchWalk throughDetector(long[] footfalls, long ms, double[] headingAt, long seed, StepDetector d) {
+        SearchWalk w = new SearchWalk().stepLength(0.72);
+        Random r = new Random(seed);
+        for (long t = 0; t <= ms; t += 20) {
+            double faced = headingAt == null ? 360.0 * t / ms : headingAt[(int) (t / 20)];
+            w.heading(t, faced + r.nextGaussian() * 3, true);
+            if (t % 120 == 0) w.rssi(t, -66 - 10 * (1 - Math.cos(Math.toRadians(faced - 90))) / 2 + r.nextGaussian() * 3);
+            double v = 0;
+            for (long f : footfalls) {
+                double dt = t - f;
+                v += 2.2 * Math.exp(-dt * dt / (60.0 * 60)) - 1.4 * Math.exp(-(dt - 200) * (dt - 200) / (80.0 * 80));
+            }
+            int n = d.add(t, r.nextGaussian() * 0.1, 9.81 + v + r.nextGaussian() * 0.1, 0);
+            if (n > 0) for (long at : d.lastTimes()) w.step(at);
+        }
+        return w;
+    }
+
+    /**
+     * A walk of steps 700 ms apart with these true headings, the heading turning smoothly to the next
+     * one before each step (3 degrees of noise), ended with Stop. Returns {steps, moved, waiting before Stop, error of the end m}.
+     */
+    static double[] shape(long seed, double[] hs) {
+        SearchWalk w = new SearchWalk().stepLength(0.72);
+        Random r = new Random(seed);
+        long t = 0;
+        double prev = hs[0], tx = 0, ty = 0;
+        w.heading(-100, hs[0], true);
+        for (double h : hs) {
+            for (long u = t; u < t + 700; u += 20) {
+                double f = Math.min(1, (u - t) / 600.0);
+                w.heading(u, prev + SearchWalk.signed(h - prev) * f + r.nextGaussian() * 3, true);
+                if (u % 120 == 0) w.rssi(u, -70);
+            }
+            t += 700;
+            w.step(t);
+            tx += 0.72 * Math.sin(Math.toRadians(h - w.start()));
+            ty += 0.72 * Math.cos(Math.toRadians(h - w.start()));
+            prev = h;
+        }
+        int waiting = w.waiting();
+        w.finish();
+        return new double[] {w.steps(), w.path().size() - 1, waiting, Math.hypot(w.x() - tx, w.y() - ty)};
+    }
+
+    /** A straight walk swaying {@code deg} each way with every step; how often the card would mention waiting steps. */
+    static int swayShown(double deg, long gap, int n, long seed) {
+        SearchWalk w = new SearchWalk().stepLength(0.72);
+        Random r = new Random(seed);
+        w.heading(-100, 0, true);
+        int shown = 0;
+        long t = 0;
+        for (int i = 0; i < n; i++) {
+            for (long u = t; u < t + gap; u += 20) {
+                w.heading(u, (i % 2 == 0 ? deg : -deg) + r.nextGaussian() * 0.5, true);
+                if (u % 120 == 0) w.rssi(u, -70);
+            }
+            t += gap;
+            w.step(t - 10);
+            if (w.waitingToShow() > 0) shown++;
+        }
+        return shown;
+    }
+
+    static long[][] every(long first, long gap, int calls, int n) {
+        long[][] out = new long[calls][];
+        for (int i = 0; i < calls; i++) out[i] = new long[] {first + i * gap, n};
+        return out;
+    }
+
+    static void turnSteps() {
+        // the issue's cases: A one step a second, B pairs every 2.5 s (what StepDetector reported), B1 single steps every 2.5 s
+        SearchWalk a = spinWith(every(1000, 1000, 20, 1), 31);
+        SearchWalk b = spinWith(every(2500, 2500, 8, 2), 32);
+        SearchWalk b1 = spinWith(every(2500, 2500, 8, 1), 33);
+        for (Object[] c : new Object[][] {{"A, a step a second", a, 20}, {"B, pairs every 2.5 s", b, 16}, {"B1, single steps every 2.5 s", b1, 8}}) {
+            SearchWalk w = (SearchWalk) c[1];
+            check("turn on the spot, " + c[0] + ": the steps are counted, no walk, the arrow stays", w.steps() == (Integer) c[2] && w.reach() < SearchWalk.SPOT_M
+                    && w.distance() < SearchWalk.SPOT_M && w.direction() != null && w.direction().clear, w.steps() + " steps, reach " + w.reach() + ", distance " + w.distance());
+            w.finish();
+            check("turn on the spot, " + c[0] + ": Stop keeps it a turn", w.reach() < SearchWalk.SPOT_M && w.waiting() == 0, w.reach());
+        }
+        // through the accelerometer: two step shuffles (600 ms apart) every 2.5 s, and a steady step a second
+        List<Long> pairs = new ArrayList<Long>();
+        for (int i = 0; i < 8; i++) {
+            pairs.add(1500L + i * 2500);
+            pairs.add(2100L + i * 2500);
+        }
+        long[] pf = new long[pairs.size()];
+        for (int i = 0; i < pf.length; i++) pf[i] = pairs.get(i);
+        StepDetector pd = new StepDetector();
+        SearchWalk ps = throughDetector(pf, 20000, null, 34, pd);
+        ps.finish();
+        check("turn with two step shuffles through the step detector: 16 steps, no walk, the arrow stays", pd.steps() == 16 && ps.steps() == 16
+                && ps.reach() < SearchWalk.SPOT_M && ps.direction() != null && ps.direction().clear, pd.steps() + " steps, reach " + ps.reach());
+        long[] steady = new long[19];
+        for (int i = 0; i < steady.length; i++) steady[i] = 1000 + i * 1000L;
+        StepDetector sd = new StepDetector();
+        SearchWalk ss = throughDetector(steady, 20000, null, 35, sd);
+        ss.finish();
+        check("turn with a step a second through the step detector: 19 steps, no walk, the arrow stays", sd.steps() == 19 && ss.reach() < SearchWalk.SPOT_M
+                && ss.direction() != null && ss.direction().clear, sd.steps() + " steps, reach " + ss.reach());
+        // the detector reports the first step of a run with the second, with both times
+        StepDetector two = new StepDetector();
+        long[] seen = null;
+        Random tr = new Random(36);
+        for (long t = 0; t <= 3000; t += 20) {
+            double v = 0;
+            for (long f : new long[] {1000, 1600}) {
+                double dt = t - f;
+                v += 2.2 * Math.exp(-dt * dt / 3600.0) - 1.4 * Math.exp(-(dt - 200) * (dt - 200) / 6400.0);
+            }
+            if (two.add(t, 0, 9.81 + v + tr.nextGaussian() * 0.05, 0) == 2) seen = two.lastTimes();
+            else if (seen == null && two.lastTimes().length != 0) seen = new long[0];
+        }
+        check("the first two steps of a run come together, each with its own time", seen != null && seen.length == 2 && Math.abs(seen[0] - 1000) <= 60
+                && Math.abs(seen[1] - 1600) <= 60, seen == null ? null : Arrays.toString(seen));
+
+        // walking still moves: an L through the detector, the corner turned while stepping (45 degrees on each of two steps)
+        int n = 20;
+        long[] lf = new long[n];
+        double[] truth = new double[n];
+        for (int i = 0; i < n; i++) {
+            lf[i] = 1000 + i * 900L;
+            truth[i] = i < 9 ? 0 : i == 9 ? 45 : 90;
+        }
+        long ms = 1000 + n * 900L;
+        double[] hd = new double[(int) (ms / 20) + 1];
+        for (int k = 0; k < hd.length; k++) {
+            long t = k * 20L;
+            int i = 0;
+            while (i < n - 1 && lf[i + 1] - 300 <= t) i++;
+            hd[k] = truth[i];
+        }
+        StepDetector ld = new StepDetector();
+        SearchWalk lw = throughDetector(lf, ms, hd, 37, ld);
+        lw.finish();
+        double tx = 0, ty = 0;
+        for (double h : truth) {
+            // in the walk's own frame: up is the (noisy) first heading
+            tx += 0.72 * Math.sin(Math.toRadians(h - lw.start()));
+            ty += 0.72 * Math.cos(Math.toRadians(h - lw.start()));
+        }
+        check("an L walked through the step detector: every step moves, along its own heading", ld.steps() == n && lw.path().size() == n + 1
+                && Math.hypot(lw.x() - tx, lw.y() - ty) < 0.3, ld.steps() + " steps, " + (lw.path().size() - 1) + " moved, at " + lw.x() + "," + lw.y() + " truth " + tx + "," + ty);
+        // swaying while walking straight (the body turns 8 degrees left and right with every step) is no turn
+        SearchWalk sway = new SearchWalk().stepLength(0.72);
+        sway.heading(-500, 0, true); // facing ahead at Start
+        for (int i = 0; i < 12; i++) {
+            long t = i * 1000L;
+            for (long u = t; u < t + 1000; u += 20) {
+                sway.heading(u, i % 2 == 0 ? 8 : -8, true);
+                if (u % 120 == 0) sway.rssi(u, -70);
+            }
+            sway.step(t + 990);
+        }
+        check("swaying while walking: at most 2 steps wait, none is lost", sway.waiting() <= 2 && sway.path().size() - 1 + sway.waiting() == 12, sway.waiting());
+        sway.finish();
+        SearchWalk.Sample lastRead = sway.samples().get(sway.samples().size() - 1);
+        check("swaying while walking: all 12 steps move ahead, the readings move with them", sway.path().size() == 13 && Math.abs(sway.y() - 12 * 0.72 * Math.cos(Math.toRadians(8))) < 1e-6
+                && Math.abs(sway.x()) < 0.2 && lastRead.y > 10 * 0.72, sway.x() + "," + sway.y() + " last reading at " + lastRead.y);
+        check("swaying while walking (8 degrees each way): the card never mentions a waiting step", swayShown(8, 1000, 40, 41) == 0, swayShown(8, 1000, 40, 41));
+        // review of #182: the usual sway is about 3 degrees each way, 6 degrees between steps, over ROTATE_DEG
+        int shown = 0;
+        for (int seed = 0; seed < 20; seed++) shown += swayShown(3, 700, 40, 100 + seed);
+        check("swaying straight walk (3 degrees each way, 20 walks of 40 steps): the card never mentions a waiting step", shown == 0, shown);
+        SearchWalk spun = new SearchWalk().stepLength(0.72);
+        spun.heading(-100, 0, true);
+        int seenSpin = 0;
+        for (int i = 1; i <= 6; i++) {
+            spun.heading(i * 1000L - 500, 18 * i, true);
+            spun.step(i * 1000L);
+            if (i == 1) check("a turn on the spot: its first step is not mentioned yet", spun.waiting() == 1 && spun.waitingToShow() == 0, spun.waitingToShow());
+            seenSpin = spun.waitingToShow();
+        }
+        check("a turn on the spot: from 2 waiting steps on the card says how many", seenSpin == 6, seenSpin);
+        SearchWalk sharp = new SearchWalk().stepLength(0.72);
+        sharp.heading(-100, 0, true);
+        sharp.step(500);
+        sharp.heading(900, 90, true);
+        sharp.step(1500);
+        check("a corner of 90 degrees in one step: the card mentions the 1 waiting step", sharp.waiting() == 1 && sharp.waitingToShow() == 1, sharp.waitingToShow());
+        check("shares: explained rounded down, needed up, never equal while the circle fails", Arrays.equals(SearchWalk.percents(0.6449, 0.6351), new long[] {64, 64})
+                && Arrays.equals(SearchWalk.percents(0.6351, 0.6449), new long[] {63, 65}) && Arrays.equals(SearchWalk.percents(0.07, 0.07), new long[] {7, 7})
+                && Arrays.equals(SearchWalk.percents(0.29, 0.57), new long[] {29, 57}) && Arrays.equals(SearchWalk.percents(0.64, 0.640001), new long[] {64, 65})
+                && Arrays.equals(SearchWalk.percents(0, 0.3), new long[] {0, 30}), Arrays.toString(SearchWalk.percents(0.64, 0.640001)));
+        boolean apart = true;
+        for (int e = 0; e <= 1000; e++) {
+            for (int d = 1; d <= 7; d++) {
+                double ex = e / 1000.0, nd = ex + d / 100000.0;
+                long[] pc = SearchWalk.percents(ex, nd);
+                apart &= pc[0] < pc[1];
+            }
+        }
+        check("shares: a failing circle always shows less explained than needed", apart);
+        // a gentle curve (90 degrees over 6 steps) moves along it; a turn on the spot then walking away keeps only the walk
+        SearchWalk curve = new SearchWalk().stepLength(0.72);
+        long t = 0;
+        double[] curveHeadings = {0, 0, 15, 30, 45, 60, 75, 90, 90, 90, 90};
+        double cx = 0, cy = 0;
+        for (double h : curveHeadings) {
+            curve.heading(t, h, true);
+            t += 1000;
+            curve.step(t);
+            cx += 0.72 * Math.sin(Math.toRadians(h));
+            cy += 0.72 * Math.cos(Math.toRadians(h));
+        }
+        check("a gentle curve is walked along its own headings", curve.path().size() == curveHeadings.length + 1 && Math.hypot(curve.x() - cx, curve.y() - cy) < 1e-6,
+                curve.x() + "," + curve.y() + " vs " + cx + "," + cy);
+        // review of #182: shapes of real walks, the heading turning smoothly before each step (a step every 700 ms)
+        double[] bed = shape(31, new double[] {0, 0, 0, 45, 90, 90, 135, 180, 180, 180, 180});
+        check("two corners the same way with one step between (the end of a bed): two corners, every step moves", bed[1] == 11 && bed[3] < 0.3, Arrays.toString(bed));
+        double[] wide = new double[17];
+        for (int i = 0; i < 17; i++) wide[i] = i < 2 ? 0 : i < 14 ? 15 * (i - 1) : 180;
+        double[] curve180 = shape(32, wide);
+        check("a wide half circle (15 degrees a step over 12 steps) is walked, not a turn on the spot", curve180[1] == 17 && curve180[3] < 0.3, Arrays.toString(curve180));
+        // limit, pinned (review of #182): a tight half circle (round a table, about 2 m across) at 20 degrees a step
+        // or more reads as a turn on the spot, so its turning steps stay
+        for (int per : new int[] {20, 30, 36, 45}) {
+            int k = (int) Math.round(180.0 / per);
+            double[] hs = new double[k + 6];
+            for (int i = 0; i < hs.length; i++) hs[i] = i < 3 ? 0 : Math.min(180, per * (i - 2));
+            double[] tight = shape(40 + per, hs);
+            check("limit: a tight half circle at " + per + " degrees a step counts as a turn on the spot, its " + k + " turning steps stay",
+                    tight[0] == hs.length && tight[1] == hs.length - k, Arrays.toString(tight));
+        }
+        double[] u4 = shape(33, new double[] {0, 0, 0, 45, 90, 135, 180, 180, 180, 180});
+        double[] u2 = shape(34, new double[] {0, 0, 0, 90, 180, 180, 180, 180});
+        // decided: a U turn in 2 to 4 steps is a pivot, close to a turn on the spot; its steps stay (an error under a metre)
+        check("a U turn in 4 steps: its 4 turning steps stay, the walk before and after moves", u4[1] == 6 && u4[0] == 10, Arrays.toString(u4));
+        check("a U turn in 2 steps: its 2 turning steps stay", u2[1] == 5 && u2[0] == 8, Arrays.toString(u2));
+        check("spin needs: 20 degrees a step at 150, 10 from a full turn on", SearchWalk.spinNeeds(150) == 20 && SearchWalk.spinNeeds(300) == 10 && SearchWalk.spinNeeds(400) == 10
+                && Math.abs(SearchWalk.spinNeeds(225) - 15) < 1e-9 && SearchWalk.spinNeeds(100) == 20);
+        // Stop in the middle of a corner: the waiting steps move with finish()
+        SearchWalk stopped = new SearchWalk().stepLength(0.72);
+        stopped.heading(-100, 0, true);
+        for (int i = 0; i < 5; i++) {
+            stopped.heading(i * 1000L, 0, true);
+            stopped.step(i * 1000L + 900);
+        }
+        stopped.heading(5000, 30, true);
+        stopped.step(5900);
+        stopped.heading(6000, 60, true);
+        stopped.step(6900);
+        check("stopping in a corner: 2 steps wait", stopped.waiting() == 2 && stopped.path().size() == 6, stopped.waiting());
+        stopped.finish();
+        check("and move at Stop, along their own headings", stopped.waiting() == 0 && stopped.path().size() == 8
+                && Math.abs(stopped.x() - 0.72 * (Math.sin(Math.toRadians(30)) + Math.sin(Math.toRadians(60)))) < 1e-6, stopped.x() + "," + stopped.y());
+        // readings during a turn on the spot keep the place where it happened
+        SearchWalk then = new SearchWalk().stepLength(0.72);
+        then.heading(-100, 0, true);
+        long tt = 0;
+        for (int i = 0; i < 3; i++) {
+            then.heading(tt, 0, true);
+            then.rssi(tt + 10, -70);
+            tt += 1000;
+            then.step(tt);
+        }
+        int before = then.samples().size();
+        for (int i = 1; i <= 20; i++) {
+            for (long u = tt; u < tt + 1000; u += 20) {
+                then.heading(u, 18 * (i - 1) + 18.0 * (u - tt) / 1000, true);
+                if (u % 120 == 0) then.rssi(u, -70);
+            }
+            tt += 1000;
+            then.step(tt);
+        }
+        then.finish();
+        boolean kept = then.samples().size() > before + 100;
+        for (int k = before; k < then.samples().size(); k++) kept &= Math.abs(then.samples().get(k).y - 3 * 0.72) < 1e-9 && Math.abs(then.samples().get(k).x) < 1e-9;
+        check("readings during a turn on the spot keep their place (where the turn happened)", kept && Math.abs(then.y() - 3 * 0.72) < 1e-9 && then.steps() == 23, then.x() + "," + then.y());
+        SearchWalk away = new SearchWalk().stepLength(0.72);
+        away.heading(-500, 0, true);
+        t = 0;
+        for (int i = 1; i <= 12; i++) {
+            away.heading(t, i * 30, true);
+            t += 1000;
+            away.step(t);
+        }
+        for (int i = 0; i < 4; i++) {
+            away.heading(t, 0, true);
+            t += 1000;
+            away.step(t);
+        }
+        check("a turn on the spot, then 4 steps away: only the 4 steps move (the first one after the turn waits for the next)", away.steps() == 16 && Math.abs(away.distance() - 4 * 0.72) < 1e-6
+                && Math.abs(away.y() - 4 * 0.72) < 1e-6, away.distance() + " m, at " + away.x() + "," + away.y());
+        // a step reported late takes the heading of its own time
+        SearchWalk late = new SearchWalk().stepLength(1);
+        late.heading(0, 0, true);
+        late.heading(500, 0, true);
+        late.heading(1000, 90, true);
+        check("a late step takes its own time's heading", late.headingAt(600) == 0 && late.headingAt(1000) == 90 && late.headingAt(-5) == 0);
+        late.step(600);
+        check("and moves that way", Math.abs(late.y() - 1) < 1e-9 && Math.abs(late.x()) < 1e-9, late.x() + "," + late.y());
+        check("turn direction: 350 to 10 is 20 to the right, 10 to 350 is 20 to the left", Math.abs(SearchWalk.signed(10 - 350) - 20) < 1e-9 && Math.abs(SearchWalk.signed(350 - 10) + 20) < 1e-9);
+    }
+
+    // ------------------------------------------------------------------ circles from noise (issue #136)
+
+    /** Runs walks with the ring {@code where}; returns {walks with a spot, clear circles, clear circles missing the ring, of those not flagged beyond}. */
+    static int[] circles(double[][] legs, int where, double noise, double ripple, long base, int runs) {
+        int[] c = new int[4];
+        for (int i = 0; i < runs; i++) {
+            double[] o = searchWalk(base + i, legs, noise, 10, true, where, ripple);
+            if (o[3] == 0) continue;
+            c[0]++;
+            if (o[4] == 0) continue;
+            c[1]++;
+            if (where == NO_RING || o[2] == 1) continue;
+            c[2]++;
+            if (o[5] == 0) c[3]++;
+        }
+        return c;
+    }
+
+    static void noiseCircles() {
+        check("needed share: grows for a short walk, 15 % for a long one", Math.abs(SearchWalk.neededShare(12) - 25.0 / 31) < 1e-9
+                && Math.abs(SearchWalk.neededShare(20) - 25.0 / 39) < 1e-9 && SearchWalk.neededShare(148) == SearchWalk.MIN_EXPLAINED
+                && SearchWalk.neededShare(240) == SearchWalk.MIN_EXPLAINED && SearchWalk.neededShare(6) == 1, SearchWalk.neededShare(12));
+        // no ring signal at all (the same faint signal everywhere, plus noise): the short L walk must not get a circle
+        // (with "15 % explained" it was 33 of 300 at 4 dB; limits written down from 300 other seeds before these ran)
+        for (double[] nr : new double[][] {{4, 0}, {2, 0}, {6, 0}, {4, 1.5}, {2, 1.5}}) {
+            int[] c = circles(PART, NO_RING, nr[0], nr[1], 400000, 300);
+            System.out.printf(Locale.US, "  no ring, L walk, noise %.0f dB, ripple up to %.0f dB: %d clear circles in %d walks%n", nr[0], 4 * nr[1], c[1], c[0]);
+            check("no ring, L walk (noise " + nr[0] + ", ripple " + 4 * nr[1] + " dB): a spot every time, a clear circle in under " + (nr[1] == 0 ? "2" : "5") + " %",
+                    c[0] == 300 && c[1] < (nr[1] == 0 ? 0.02 : 0.05) * 300, c[1]);
+        }
+        int[] around = circles(AROUND, NO_RING, 4, 0, 400000, 200);
+        check("no ring, walk around the room: no clear circle", around[1] == 0, around[1]);
+        // the ring 2 to 5 m outside the L walk: few clear circles, and a circle that misses it is almost always flagged as maybe farther
+        // (with "15 % explained": 114 clear in 300, 81 missing the ring, 13 of them not flagged)
+        int[] out = circles(PART, RING_OUTSIDE, 5, 1.5, 400000, 300);
+        System.out.printf(Locale.US, "  ring 2 to 5 m outside the L walk: %d clear circles in %d walks, %d miss the ring, %d of those not flagged beyond%n", out[1], out[0], out[2], out[3]);
+        check("ring outside the L walk: a clear circle in under a third of walks", out[1] < 100, out[1]);
+        check("ring outside the L walk: a clear circle that misses it and does not say it may be farther in under 5 % of walks", out[3] < 15, out[3]);
     }
 
     // ------------------------------------------------------------------ last worn

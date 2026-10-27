@@ -36,12 +36,16 @@ public final class StepDetector {
     /** How long after the step before its skipped second bump came (ms), 0 for none. */
     private long bump;
     private int steps;
+    private static final long[] NONE = new long[0];
+    /** The times of the steps the newest sample counted. */
+    private long[] counted = NONE;
 
     /**
      * One accelerometer sample. Returns how many steps it adds (0, 1, or 2 when it confirms the
      * first step of a run).
      */
     public int add(long tMs, double ax, double ay, double az) {
+        counted = NONE;
         double m = Math.sqrt(ax * ax + ay * ay + az * az);
         if (Double.isNaN(gravity) || tMs - lastT > 1000 || tMs < lastT) {
             gravity = m;
@@ -89,10 +93,20 @@ public final class StepDetector {
             return 0;
         }
         int add = lastStep == Long.MIN_VALUE ? 2 : 1;
+        counted = add == 2 ? new long[] {pending, tMs} : new long[] {tMs};
         lastStep = tMs;
         pending = Long.MIN_VALUE;
         steps += add;
         return add;
+    }
+
+    /**
+     * When the steps the newest {@link #add} counted were taken (ms, the times passed in), oldest
+     * first: the first step of a run with its confirming one, or one step, or none. The first step
+     * is reported late, so the search walk gives it the heading of its own time (issue #108).
+     */
+    public long[] lastTimes() {
+        return counted.clone();
     }
 
     /** All steps counted so far. */
