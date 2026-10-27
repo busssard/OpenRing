@@ -86,6 +86,19 @@ public final class Explain {
     public static final String NIGHT_SIGNALS = "Skin temperature, blood oxygen and breathing rate are measured while you sleep, "
             + "the same way the official app does it. Every night you wear the ring adds a point to the trends below after the morning sync.";
 
+    /** Find my ring, the open last worn strip: where the line above comes from (issue #74, #94). */
+    public static final String FINDER_LAST = "From the ring's stored skin temperature (27 °C or more is a finger) and heart rate, as far as the last sync reaches. "
+            + "When the ring stores daytime heart rate, warm without one for over an hour (charger, sun, duvet) does not count as worn.";
+
+    /** Find my ring, How it works: the gauge, the trail strip and their limits (issue #191). */
+    public static final String FINDER_SIGNAL = "Gauge and trail: the ring's Bluetooth signal in dBm, closer to 0 is stronger. "
+            + "The gauge fills and the clicks get faster as you get closer; the trail shows the last 2 minutes, touch it to read a moment. "
+            + "The signal jumps with walls, blankets, your body and the ring's angle. A ring under a duvet sounds farther away than it is. "
+            + "Walk slowly and follow the trend.";
+
+    /** Find my ring, How it works: the clicks chip in the top bar (issue #191). */
+    public static final String FINDER_CLICKS = "Clicks (top right): a click and a short buzz, faster as the signal gets stronger. Tap to switch them off or on.";
+
     public static String of(String key) {
         if (key == null) return null;
         switch (key) {

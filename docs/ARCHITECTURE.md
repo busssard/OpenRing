@@ -19,7 +19,7 @@ Nothing leaves the phone: the app has no internet permission.
 | Package | Responsibility |
 | --- | --- |
 | `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line; issues #43 and #153), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
-| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `LiveHrv`, `Stats`, `TS` (time series) |
+| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
 | `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours) |
@@ -237,6 +237,18 @@ can run meanwhile. Everything below stops in `onPause`.
   A dialog closed without choosing or an interrupted request keeps "Allow" (issue #140).
 * The screen is locked to portrait (the walk assumes an upright phone, and turning on the spot would
   otherwise rotate the screen and lose the walk) and handles size changes itself (issue #96).
+* One screen without scrolling (issue #191), top to bottom: a top bar with the "Clicks on/off" chip
+  (`Prefs.finderSound`), a last worn strip (`LastWorn.brief` plus when this phone heard it; a tap opens the full
+  `LastWorn.text`, last heard, battery and the explanation; its right end is the free place for the "on a finger?"
+  status of #192), the instruments (the gauge with band and signal line, then the signal trail strip of the last
+  2 minutes, touch readable), and the map card, which takes the height left over: the turn dial with you in the middle
+  before walking and while turning, the mini map after 1 m, the status line, Start and "How it works" (the steps,
+  notes, limits and step length). `core/analysis/FinderLayout.plan` shares the height (screen height in dp and font
+  scale in): the map gets 140 dp first, the gauge 72 and the strip 40, a compact plan (smaller paddings, 12 sp status)
+  when that does not fit; spare room goes to the map up to 200 dp, the gauge up to 96 and the strip up to 56, the map
+  up to 260, then gauge 104 and strip 72, the rest to the map. The screen re plans when its height changes. The texts'
+  heights are estimates; when even the compact plan does not fit (a very large font) or the details are open, the
+  page scrolls instead of cutting anything.
 * Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from
   `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the
   strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard.
