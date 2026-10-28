@@ -28,7 +28,7 @@ public final class LiveSessions {
     }
 
     /** Stop the current session: it ends at its next check of {@link #isCurrent}. */
-    public void stop() {
+    public synchronized void stop() {
         current.incrementAndGet();
     }
 

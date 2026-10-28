@@ -205,7 +205,7 @@ public class PipelineTest {
         System.out.println(r2.text);
         for (DataCheck.Step s : r2.steps) check("data check: " + s.title, s.state == 0, s.detail);
         check("data check: one of one boot segment is singular", r2.steps.get(2).detail.endsWith("1 of 1 boot segment with a time record"), r2.steps.get(2).detail);
-        // the history's events and the phone anchor; written out by hand with its thousands comma (the count follows
+        // the history's events and the one phone anchor row insertPhoneAnchor added above; written out by hand with its thousands comma (the count follows
         // from the generator's seeds, it is over 1000 so the grouping shows)
         int copied = all.size() + 1;
         check("data check: the made up history has a four digit event count", copied >= 1000 && copied < 10000, copied);
@@ -3461,6 +3461,10 @@ public class PipelineTest {
     }
 
     /** A context with a database of its own ({@code Db.get} keeps one open instance). */
+    /*
+     * Known order dependence (issue #216, not changed): freshDb swaps the shared database, so a test that calls it
+     * must not run in the middle of main's own section, which keeps using the database it opened at the start.
+     */
     static Context freshDb(String name) throws Exception {
         java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
         f.setAccessible(true);
