@@ -3689,7 +3689,9 @@ public class PipelineTest {
         long future = db.count("SELECT COUNT(*) FROM events WHERE epoch = 6 AND unix IS NULL");
         // one hour apart from an hour before now: the 9th and 10th lie more than 6 hours ahead
         check("events dated well after the download are cleared", late == 2, late);
-        check("events dated before 2015 are cleared", early > 0 && early < a5.size(), early);
+        // the time record (ds 100000) reads 1420000100, 100 s after the limit 1420000000; the 10 motion events lie
+        // 9990 s to 990 s before it, so all of them fall before the limit and only the record keeps its date
+        check("events dated before 2015 are cleared", early == 10 && a5.size() == 11, early);
         check("an anchor in the future is not used", future == a6.size(), future);
         // the time record of epoch 4 goes away: its rows must lose their dates, not keep the old ones
         db.getWritableDatabase().execSQL("DELETE FROM events WHERE epoch = 4 AND tag = 66");

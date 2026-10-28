@@ -508,7 +508,8 @@ public class CoreTest {
                 && app.openring.core.analysis.SleepPattern.clockMin(r[1]) == 8 * 60);
         p.add(13 * 60, a, 30); // an afternoon start is kept too now, the whole clock has bins (issue #164)
         check("pattern: counts nights", p.nights() == 3);
-        check("pattern: an afternoon night is in bed at 15:00", p.inBed(binAt(15 * 60)) > 0.3);
+        // only the 13:00 to 21:00 night covers 15:00, the other two do not: 1 of 3 nights
+        check("pattern: an afternoon night is in bed at 15:00", Math.abs(p.inBed(binAt(15 * 60)) - 1 / 3.0) < 1e-9);
         patternClock();
         clockAverage();
     }
@@ -2079,7 +2080,7 @@ public class CoreTest {
         check("score: twice the goal gives 0", near(ScreenScore.amount(360, 180), 0) && near(ScreenScore.amount(999, 180), 0));
         check("score: no goal uses 3 hours", near(ScreenScore.amount(180, 0), 70));
         check("score: before bed", near(ScreenScore.bedtime(5), 100) && near(ScreenScore.bedtime(25), 50) && near(ScreenScore.bedtime(60), 0));
-        check("score: night", near(ScreenScore.night(0.5), 100) && near(ScreenScore.night(20), 0) && ScreenScore.night(10) > 40 && ScreenScore.night(10) < 60);
+        check("score: night", near(ScreenScore.night(0.5), 100) && near(ScreenScore.night(20), 0) && near(ScreenScore.night(10), 100 * 10 / 19.0)); // straight from 100 at 1 min to 0 at 20
         ScreenScore.Result r = ScreenScore.of(180, 180, 25, 0);
         eq("score: weighted", r.value, (int) Math.round(0.5 * 70 + 0.3 * 50 + 0.2 * 100));
         ScreenScore.Result n = ScreenScore.of(90, 180, Double.NaN, Double.NaN);
@@ -2143,7 +2144,8 @@ public class CoreTest {
         couch.add(new double[] {9000, 11000});
         couch.add(new double[] {11300, 13000});
         double[] w3 = ScreenTime.trim(10000, 13200, couch);
-        check("screen: window used up by the phone", w3[1] - w3[0] < ScreenTime.MIN_WINDOW_S);
+        // the start moves to 11000, then past the second use to 13000; the end stays (13000 is not after the start)
+        check("screen: window used up by the phone", near(w3[0], 13000) && near(w3[1], 13200) && w3[1] - w3[0] < ScreenTime.MIN_WINDOW_S);
         double[] same = ScreenTime.trim(10000, 40000, new ArrayList<double[]>());
         check("screen: no phone use, no change", near(same[0], 10000) && near(same[1], 40000));
 
@@ -2187,9 +2189,11 @@ public class CoreTest {
         TS line = DayHeart.curve(readings, ds, de);
         DayHeart d = DayHeart.of(line, ds, de);
         double oldHigh = Stats.percentile(readings.values(), 0.98);
-        check("day heart: the old 98th percentile cut the run off", oldHigh < 70);
+        // 300 of 43 200 readings are the run (0.7 %), so the 98th percentile is one of the 60s
+        eq("day heart: the old 98th percentile cut the run off", oldHigh, 60.0);
         eq("day heart: Highest is the line's highest point", d.high, line.max());
-        check("day heart: Highest shows the run", d.high > 100);
+        // the quarter hour from 18:00: 10 minutes at 130 and 5 at 60, readings every 2 s
+        check("day heart: Highest shows the run", near(d.high, (300 * 130 + 150 * 60) / 450.0) && near(d.highAt, ds + 18 * 3600 + 450));
         check("day heart: no drawn point above Highest", d.high >= line.max() && d.points == line.size() && d.points == 96);
         eq("day heart: Lowest is the line's lowest point", d.low, line.min());
         check("day heart: Lowest is the calm quarter hour", near(d.low, 50) && near(d.lowAt, ds + 4 * 3600 + 450));
@@ -3208,7 +3212,8 @@ public class CoreTest {
         Night calm = NightAnalyzer.analyze(in);
         in.ringAwake.add(new double[] {day + 2.5 * 3600, day + 3.75 * 3600});
         Night woke = NightAnalyzer.analyze(in);
-        check("ring awake gap counts as awake", woke.awakeMin - calm.awakeMin >= 70 && woke.awakenings >= 1);
+        // 02:30 to 03:45 is 75 minutes, on the 30 s steps from 23:00; the calm night has no awake time
+        check("ring awake gap counts as awake", calm.awakeMin == 0 && woke.awakeMin == 75 && woke.awakenings == 1);
         check("ring awake gap lowers the score", Scores.sleep(woke, 0, 40).value < Scores.sleep(calm, 0, 40).value);
     }
 
@@ -3295,11 +3300,13 @@ public class CoreTest {
         Night allAwake = ringStaged(digits("4", 960));
         Night.Score sa = Scores.sleep(allAwake, 0, 35);
         check("#118 ring stages all awake: no Restfulness", allAwake.asleepMin == 0 && part(sa, "restfulness") == null);
-        check("#118 ring stages all awake: score from the rest", sa.value >= 0 && sa.value < 40);
+        // left: Total sleep 10 (0 h, below 3 h) weight 35, REM 0 and deep 0 weight 10 each: 350 / 55 = 6.4
+        eq("#118 ring stages all awake: score from the rest", sa.value, 6);
         // a real night with many wake ups keeps it, wake ups counted (CLAUDE.md: never hide real awakenings)
         Night waker = ringStaged(digits("2", 100, "4", 10, "2", 100, "4", 10, "2", 100, "4", 10, "2", 100));
         Night.Contributor wr = part(Scores.sleep(waker, 0, 35), "restfulness");
-        check("#118 night with wake ups keeps Restfulness", wr != null && wr.detail.startsWith("3 wake ups") && wr.score < 100);
+        // 3 wake ups of 10 steps (15 min awake): 94 for the wake time, 92 for 3 wake ups, no motion data: (94 + 92) / 2
+        check("#118 night with wake ups keeps Restfulness", wr != null && wr.detail.equals("3 wake ups, 0h 15m awake") && near(wr.score, 93));
 
         // #110: a ring run of 8 h, deep for its first 5 minutes, then light, made longer by a bedtime period
         double r0 = 1_760_000_000L - 1_760_000_000L % 86400 - 3600, r1 = r0 + 8 * 3600;
@@ -3447,7 +3454,8 @@ public class CoreTest {
         int[] ib = {800, 820, 790, 810, 805, 830, 795, 815, 800, 1600, 810, 790};
         for (int x : ib) h.add(x);
         double r = h.rmssd();
-        check("live rmssd ignores the doubled beat", r > 10 && r < 30);
+        // 9 pairs within 20 %: 20, -30, 20, -5, 25, -35, 20, -15 and -20 ms (sum of squares 4600); 800 to 1600 and 1600 to 810 are left out
+        check("live rmssd ignores the doubled beat", near(r, Math.sqrt(4600 / 9.0)));
     }
     /** Issues #43 and #153: which task a stop reaches, when Live rejoins, which sync shows the final line. */
     static void ringTasks() {
@@ -3768,7 +3776,8 @@ public class CoreTest {
         List<double[]> late = new ArrayList<double[]>();
         late.add(new double[] {from - 120, from - 100});
         List<double[]> lateW = ScreenTime.widen(late, 300);
-        check("touch: a use before midnight drawn over it lights 00:00", DialMath.fill(lateW, from, to, z, 288)[0] > 0);
+        // drawn from 23:58 to 00:03: 3 of the first 5 minute piece
+        check("touch: a use before midnight drawn over it lights 00:00", near(DialMath.fill(lateW, from, to, z, 288)[0], 0.6));
         DialMath.Touch lt = DialMath.touch(2 / 1440.0, d, from, to, z, 288, late, lateW, none);
         check("touch: 00:02 finds it, the hand stays on this day", lt.session == 0 && lt.at == from);
         // asleep and the repeated hour (clocks back, 2026-10-25)
@@ -3862,7 +3871,8 @@ public class CoreTest {
             eq(id + ": dial text on 2027-03-27", ClockChange.dialText(c), "The clocks went forward one hour on this day (23:00 became 00:00), "
                     + "so the part of the clock from 23:00 to 00:00, marked in orange, stays empty.");
             // nights keep find: a change inside the night, wherever its days are
-            check(id + ": a night over Saturday's midnight still has it", ClockChange.find(z, s1 - 3 * 3600, s1 + 5 * 3600) != null);
+            ClockChange.Change inNight = ClockChange.find(z, s1 - 3 * 3600, s1 + 5 * 3600);
+            check(id + ": a night over Saturday's midnight still has it", inNight != null && inNight.at == s1 && inNight.minutes == 60);
             java.time.LocalDate oct = java.time.LocalDate.parse("2027-10-30");
             double o0 = oct.atStartOfDay(z).toEpochSecond(), o1 = oct.plusDays(1).atStartOfDay(z).toEpochSecond(), o2 = oct.plusDays(2).atStartOfDay(z).toEpochSecond();
             ClockChange.Change b = ClockChange.onDay(z, o0, o1);
@@ -3931,7 +3941,8 @@ public class CoreTest {
         check("UTC has no change", ClockChange.find(java.time.ZoneOffset.UTC, 1790000000, 1790030000) == null);
         double sw = java.time.Instant.parse("2026-10-25T01:00:00Z").getEpochSecond();
         check("night ending at the switch has none", ClockChange.find(z, sw - 8 * 3600, sw) == null);
-        check("night starting at the switch has it", ClockChange.find(z, sw, sw + 3600) != null);
+        ClockChange.Change atSwitch = ClockChange.find(z, sw, sw + 3600);
+        check("night starting at the switch has it", atSwitch != null && atSwitch.at == sw && atSwitch.minutes == -60);
         check("bad window has none", ClockChange.find(z, sw, sw) == null && ClockChange.find(null, 0, 1) == null
                 && ClockChange.find(z, Double.NaN, sw) == null);
         java.time.ZoneId lh = java.time.ZoneId.of("Australia/Lord_Howe");
