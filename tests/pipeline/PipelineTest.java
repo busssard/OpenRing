@@ -4777,6 +4777,122 @@ public class PipelineTest {
      * and a full re analysis is at least twice as fast.
      */
     static void historyCache() throws Exception {
+        historyStrict();
+        // every run with the store hands out strict copies: a read of a field it does not keep fails here (issue #228)
+        setHistoryStrict(true);
+        try {
+            historyCacheRuns();
+        } catch (IllegalStateException e) {
+            if (e.getMessage() == null || !e.getMessage().startsWith("history field ")) throw e;
+            check("#228 the day summaries read only fields the history store keeps", false, e.getMessage());
+        } finally {
+            setHistoryStrict(false);
+        }
+    }
+
+    static Class<?> historyClass() throws Exception {
+        return Class.forName("app.openring.data.Analyzer$History");
+    }
+
+    static void setHistoryStrict(boolean on) throws Exception {
+        java.lang.reflect.Field f = historyClass().getDeclaredField("strict");
+        f.setAccessible(true);
+        f.set(null, on);
+    }
+
+    /** {@code History.copy(o, History.<list>)} through reflection (the class is package private). */
+    static JSONObject historyCopy(JSONObject o, String list) throws Exception {
+        java.lang.reflect.Field l = historyClass().getDeclaredField(list);
+        l.setAccessible(true);
+        java.lang.reflect.Method m = historyClass().getDeclaredMethod("copy", JSONObject.class, String[].class);
+        m.setAccessible(true);
+        return (JSONObject) m.invoke(null, o, l.get(null));
+    }
+
+    /** The message of what {@code r} throws, null when it does not throw. */
+    static String thrown(Runnable r) {
+        try {
+            r.run();
+            return null;
+        } catch (IllegalStateException e) {
+            return e.getMessage();
+        }
+    }
+
+    /** Issue #228: a strict copy gives the fields of its list and throws for any other, whatever the read. */
+    static void historyStrict() throws Exception {
+        final JSONObject night = Json.parse("{\"day\":\"2026-10-01\",\"asleep_min\":421.5,\"rmssd\":38,\"spo2\":97}");
+        final JSONObject day = Json.parse("{\"date\":\"2026-10-01\",\"active_kcal\":350,\"steps\":8000}");
+        final JSONObject plain = historyCopy(night, "NIGHT_FIELDS");
+        check("#228 with strict off a copy is a plain JSONObject", plain.getClass() == JSONObject.class
+                && Json.d(plain, "asleep_min") == 421.5 && !plain.has("rmssd"), plain.getClass() + " " + plain);
+        setHistoryStrict(true);
+        try {
+            final JSONObject n = historyCopy(night, "NIGHT_FIELDS"), d = historyCopy(day, "DAY_FIELDS");
+            check("#228 a strict night copy gives the listed fields", Json.d(n, "asleep_min") == 421.5 && n.optString("day").equals("2026-10-01")
+                    && Double.isNaN(Json.d(n, "lowest_hr")) && n.toString().equals(plain.toString()), n.toString());
+            String[] got = {
+                thrown(new Runnable() {
+                    @Override
+                    public void run() {
+                        n.optDouble("rmssd");
+                    }
+                }),
+                thrown(new Runnable() {
+                    @Override
+                    public void run() {
+                        Json.d(n, "rmssd");
+                    }
+                }),
+                thrown(new Runnable() {
+                    @Override
+                    public void run() {
+                        n.opt("spo2");
+                    }
+                }),
+                thrown(new Runnable() {
+                    @Override
+                    public void run() {
+                        d.optDouble("steps", 0);
+                    }
+                }),
+            };
+            check("#228 a strict copy throws for a field outside its list, also through Json.d",
+                    "history field rmssd is not in History.NIGHT_FIELDS".equals(got[0]) && "history field rmssd is not in History.NIGHT_FIELDS".equals(got[1])
+                    && "history field spo2 is not in History.NIGHT_FIELDS".equals(got[2]) && "history field steps is not in History.DAY_FIELDS".equals(got[3]),
+                    Arrays.toString(got));
+            check("#228 a strict day copy gives the listed fields", Json.d(d, "active_kcal") == 350 && d.optString("date").equals("2026-10-01"), d.toString());
+            // every read the copy overrides: a listed name passes, an unlisted one throws
+            int reads = 0;
+            List<String> wrong = new ArrayList<String>();
+            for (java.lang.reflect.Method m : n.getClass().getDeclaredMethods()) {
+                if (!java.lang.reflect.Modifier.isPublic(m.getModifiers())) continue;
+                m.setAccessible(true); // the class is package private
+                reads++;
+                for (String name : new String[] {"asleep_min", "day", "rmssd"}) {
+                    Object[] args = new Object[m.getParameterTypes().length];
+                    args[0] = name;
+                    if (args.length > 1) {
+                        Class<?> t = m.getParameterTypes()[1];
+                        args[1] = t == double.class ? (Object) 0.0 : t == int.class ? (Object) 0 : t == long.class ? (Object) 0L : t == boolean.class ? (Object) false : "";
+                    }
+                    String msg = null;
+                    try {
+                        m.invoke(n, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        if (e.getCause() instanceof IllegalStateException) msg = e.getCause().getMessage(); // other errors: a get of the wrong type
+                    }
+                    boolean listed = !name.equals("rmssd");
+                    if (listed ? msg != null : !("history field " + name + " is not in History.NIGHT_FIELDS").equals(msg)) wrong.add(m.getName() + "(" + name + ")");
+                }
+            }
+            check("#228 every read of a strict copy checks the name (opt, has, isNull, opt and get of each type)", reads >= 20 && wrong.isEmpty(), reads + " reads, wrong " + wrong);
+        } finally {
+            setHistoryStrict(false);
+        }
+    }
+
+    static void historyCacheRuns() throws Exception {
         final StringBuilder log = new StringBuilder();
         final long[] ms = new long[2];
         Phone139 demo = new Phone139() {
