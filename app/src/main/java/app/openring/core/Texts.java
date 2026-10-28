@@ -60,6 +60,22 @@ public final class Texts {
         return String.format(locale, "%+.1f", r);
     }
 
+    /**
+     * A number on a line chart (guide labels, low mark, touch readout): one decimal under 10 unless
+     * whole ("0.3", "12", "26"), with no sign rule, so -0.04 reads "-0.0".
+     */
+    public static String chartValue(double v, Locale locale) {
+        return Math.abs(v) < 10 && v != Math.rint(v) ? String.format(locale, "%.1f", v) : String.valueOf(Math.round(v));
+    }
+
+    /**
+     * The number a line chart shows: {@link #signed} for a chart of changes (the temperature charts,
+     * issue #226, so the touch readout matches the card above), otherwise {@link #chartValue}.
+     */
+    public static String chartValue(double v, boolean signed, Locale locale) {
+        return signed ? signed(v, locale) : chartValue(v, locale);
+    }
+
     /** A duration: "30 min" under an hour, "1h 5m" from an hour on, "--" when unknown (issue #99). */
     public static String minutes(double min) {
         if (Double.isNaN(min) || Double.isInfinite(min)) return "--";

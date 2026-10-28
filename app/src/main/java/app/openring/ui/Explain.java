@@ -122,7 +122,7 @@ public final class Explain {
             case "activity_balance": return "Your last week of activity compared with your usual month, so sudden jumps in training load show up.";
             // sleep
             case "total": return "Time actually asleep. Most adults need 7 to 9 hours.";
-            case "efficiency": return "Share of your time in bed spent asleep. 85% or more is good. Time the ring gave no sleep stage for counts as time in bed, not as sleep.";
+            case "efficiency": return "Share of your time in bed spent asleep. 85% or more is good. Time without a sleep stage counts as time in bed, not as sleep.";
             case "restfulness": return "Wake ups, time awake and restless movement during the night.";
             case "rem": return "Dreaming sleep, important for memory, learning and mood. Usually about a fifth of sleep.";
             case "deep": return "The most restorative stage, mostly in the first half of the night. Usually 13 to 23% of sleep.";

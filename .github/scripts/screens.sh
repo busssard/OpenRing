@@ -108,6 +108,33 @@ launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
 swipe_up; swipe_up;                       shot readiness-contributors 1   # temperature line as the card below (issue #163)
+# touch the "Temperature vs usual" chart (issue #226): the readout shows the newest day with its sign and
+# °C, as the big number above it. The chart has no text of its own, so it is found from the card's line
+# "Deviation from your usual ...": the chart starts 8 dp below that line and is 120 dp high (Pages.java),
+# so the tap goes 68 dp below it (the chart's middle) and 10 px inside its right end, where the newest
+# dot is (the readout takes the dot nearest the touch). Slow swipes (no fling) until the chart is on screen.
+DENSITY=$(adb shell wm density 2>/dev/null | grep -o '[0-9]\+' | tail -1)
+TEMP_H=$(adb shell wm size 2>/dev/null | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f2 | tr -d '\r')
+temp_xy() {
+  adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1; adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  b=$(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="Deviation from your usual[^"]*"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  local y=$(( $4 + 68 * ${DENSITY:-420} / 160 ))
+  [ "$y" -lt $(( ${TEMP_H:-2400} - 200 )) ] || return 1
+  echo "$(( $3 - 10 )) $y"
+}
+xy=""
+for i in 1 2 3; do
+  xy=$(temp_xy) && break
+  adb shell input swipe 30 1500 30 1000 1500; sleep 1
+done
+if [ -n "$xy" ]; then
+  log "temperature chart touch at $xy"
+  adb shell input tap $xy;                shot readiness-temp-touch 1
+else
+  echo "::warning::issue #226 step skipped: the Temperature vs usual chart was not found on screen"
+fi
 launch --ei tab 3;                          shot activity
 # third demo day: the note that the weekly parts are based on 3 days so far (issue #44)
 launch --ei tab 3 --es day "$(date -d '32 days ago' +%F)"
