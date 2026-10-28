@@ -112,7 +112,8 @@ swipe_up; swipe_up;                       shot readiness-contributors 1   # temp
 # °C, as the big number above it. The chart has no text of its own, so it is found from the card's line
 # "Deviation from your usual ...": the chart starts 8 dp below that line and is 120 dp high (Pages.java),
 # so the tap goes 68 dp below it (the chart's middle) and 10 px inside its right end, where the newest
-# dot is (the readout takes the dot nearest the touch). Slow swipes (no fling) until the chart is on screen.
+# dot is (the readout takes the dot nearest the touch). Slow swipes (no fling) until the chart is on screen
+# (the first run found nothing after 3 short swipes: the Contributors list above it is long).
 DENSITY=$(adb shell wm density 2>/dev/null | grep -o '[0-9]\+' | tail -1)
 TEMP_H=$(adb shell wm size 2>/dev/null | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f2 | tr -d '\r')
 temp_xy() {
@@ -121,19 +122,21 @@ temp_xy() {
   set -- $b
   [ $# -eq 4 ] || return 1
   local y=$(( $4 + 68 * ${DENSITY:-420} / 160 ))
-  [ "$y" -lt $(( ${TEMP_H:-2400} - 200 )) ] || return 1
+  # above the tab bar and the system buttons (about 450 px on this emulator)
+  [ "$y" -lt $(( ${TEMP_H:-2400} - 450 )) ] || return 1
   echo "$(( $3 - 10 )) $y"
 }
 xy=""
-for i in 1 2 3; do
+# the card sits below the long Contributors list, so up to 8 slow swipes of 600 px
+for i in 1 2 3 4 5 6 7 8; do
   xy=$(temp_xy) && break
-  adb shell input swipe 30 1500 30 1000 1500; sleep 1
+  adb shell input swipe 30 1500 30 900 1500; sleep 1
 done
 if [ -n "$xy" ]; then
   log "temperature chart touch at $xy"
   adb shell input tap $xy;                shot readiness-temp-touch 1
 else
-  echo "::warning::issue #226 step skipped: the Temperature vs usual chart was not found on screen"
+  echo "::warning::issue #226 step skipped: the Temperature vs usual chart was not found on screen (lines naming it in the last screen dump: $(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -c 'Deviation from your usual'))"
 fi
 launch --ei tab 3;                          shot activity
 # third demo day: the note that the weekly parts are based on 3 days so far (issue #44)
