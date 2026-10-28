@@ -104,6 +104,8 @@ launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
 launch --ei tab 1; sleep 3
 swipe_up; swipe_up;                       shot sleep-details 1
+# an older date with nights before and after it in the strip (issue #180 made it faster, #229)
+launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
@@ -150,27 +152,10 @@ launch --ei tab 5;                          shot screen
 adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fling
 # read the clock by touch (issue #109): at the trailing edge of the first blue line, so the picture shows a
 # use read from a line. The demo's uses follow the time of the run, so the line is found on the screen:
-# blue pixels on a circle of 300 px around the clock's middle (540, 950 after the swipe above), else 13:00.
+# line coloured pixels on a circle of 300 px around the clock's middle (540, 950 after the swipe above), not
+# the night band (dial_touch.py, issue #229), else 13:00.
 adb exec-out screencap > "$OUT/.dial.raw"
-xy=$(python3 - "$OUT/.dial.raw" <<'PY' 2>/dev/null
-import math, struct, sys
-d = open(sys.argv[1], "rb").read()
-w, h = struct.unpack("<II", d[:8])
-head = len(d) - w * h * 4
-lit = []
-for i in range(3600):
-    a = math.radians(i / 10.0)
-    x, y = int(540 + 300 * math.sin(a)), int(950 - 300 * math.cos(a))
-    o = head + (y * w + x) * 4
-    r, g, b = d[o], d[o + 1], d[o + 2]
-    lit.append(b > 150 and b > r + 40 and g > 100)
-for i in range(3600):
-    if lit[i] and not lit[(i + 1) % 3600]:
-        a = math.radians((i - 2) / 10.0)
-        print(int(540 + 300 * math.sin(a)), int(950 - 300 * math.cos(a)))
-        break
-PY
-)
+xy=$(python3 -I .github/scripts/dial_touch.py "$OUT/.dial.raw" 2>/dev/null)
 rm -f "$OUT/.dial.raw"
 log "clock touch at ${xy:-462 1282}"
 adb shell input tap ${xy:-462 1282};       shot screen-touch 1

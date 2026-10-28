@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests for the emulator CI scripts (issues #57 and #160), with a local bare repository as GitHub.
+# Tests for the emulator CI scripts (issues #57, #160 and #229), with a local bare repository as GitHub.
 set -u
 cd "$(dirname "$0")/.."
 here=$(pwd)
@@ -122,6 +122,48 @@ check "no shots to compare fails" '[ $code = 1 ] && echo "$out" | grep -q "::err
 echo 1 > "$t/s/settings-games.png"
 out=$("$SAME" "$t/s" 2>&1); code=$?
 check "identical shots fail and are named" '[ $code = 1 ] && echo "$out" | grep -q "Screenshots a and settings-games are the same picture"'
+
+# dial_touch.py (issues #109, #229): made up screen pictures of 200 x 200 px with the clock's middle at
+# 100 100 and a circle of 60 px; a ring from 55 to 65 px drawn from 30 to 300 degrees (clockwise from the
+# top) in a colour blended over the card, the rest the card
+DIAL="$here/.github/scripts/dial_touch.py"
+picture() {  # $1 file, $2 colour (hex, empty for none), $3 strength
+  python3 -I - "$1" "$2" "$3" <<'PY'
+import math, struct, sys
+path, colour, a = sys.argv[1], sys.argv[2], float(sys.argv[3])
+card = (0x13, 0x1A, 0x27)
+w = h = 200
+px = bytearray(bytes((card[0], card[1], card[2], 255)) * (w * h))
+if colour:
+    c = int(colour, 16)
+    rgb = tuple(round(((c >> s) & 255) * a + k * (1 - a)) for s, k in zip((16, 8, 0), card))
+    for y in range(h):
+        for x in range(w):
+            d = math.hypot(x - 100, y - 100)
+            ang = math.degrees(math.atan2(x - 100, 100 - y)) % 360
+            if 55 <= d <= 65 and 30 <= ang <= 300:
+                o = (y * w + x) * 4
+                px[o:o + 3] = bytes(rgb)
+open(path, "wb").write(struct.pack("<IIII", w, h, 1, 1) + bytes(px))
+PY
+}
+# the angle (clockwise from the top) of a printed point, empty when nothing was printed
+angle() { [ -n "$1" ] && python3 -I -c 'import math, sys; x, y = map(int, sys.argv[1:3]); print(round(math.degrees(math.atan2(x - 100, 100 - y)) % 360))' $1; }
+for strength in 1 0.6; do  # below about 53 % the blue stays under 150 (as before #229)
+  picture "$t/line.raw" 7CC8FF $strength
+  out=$(python3 -I "$DIAL" "$t/line.raw" 100 100 60); a=$(angle "$out")
+  check "dial: a use line at $strength finds its trailing edge" '[ -n "$a" ] && [ "$a" -ge 297 ] && [ "$a" -le 300 ]'
+done
+for strength in 0.55 1; do
+  picture "$t/sleep.raw" 8E9BFF $strength
+  out=$(python3 -I "$DIAL" "$t/sleep.raw" 100 100 60)
+  check "dial: the night band colour at $strength is not taken" '[ -z "$out" ]'
+done
+picture "$t/card.raw" "" 1
+out=$(python3 -I "$DIAL" "$t/card.raw" 100 100 60)
+check "dial: an empty card prints nothing" '[ -z "$out" ]'
+out=$(python3 -I "$DIAL" "$t/card.raw" 2>&1); code=$?
+check "dial: a circle off the picture (default 540 950 300) prints nothing" '[ $code = 0 ] && [ -z "$out" ]'
 
 echo "CI scripts: $passes passed, $fails failed"
 [ "$fails" = 0 ]
