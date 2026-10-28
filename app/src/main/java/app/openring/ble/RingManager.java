@@ -97,8 +97,8 @@ public final class RingManager {
     /** Syncs past their download, analysing; they no longer hold the ring (issue #21). */
     private final java.util.concurrent.atomic.AtomicInteger analysing = new java.util.concurrent.atomic.AtomicInteger();
     private volatile double progress = -1;
-    /** Token of the newest live session queued or running, 0 when none (issue #153). */
-    private final java.util.concurrent.atomic.AtomicInteger liveSession = new java.util.concurrent.atomic.AtomicInteger();
+    /** Live session tokens and the blood oxygen choice (issue #153). */
+    private final app.openring.core.LiveSessions live = new app.openring.core.LiveSessions();
     private volatile RingClient current;
     /** The sync whose download holds the ring now; a stop for a sync reaches only that one (issue #43). */
     private final app.openring.core.RingTasks.Owner downloader = new app.openring.core.RingTasks.Owner();
@@ -107,7 +107,6 @@ public final class RingManager {
     /** The final line of a sync that ended while another one still ran; the last one shows it if it has none. */
     private String endLeft;
     private volatile boolean cancelRequested;
-    private final java.util.concurrent.atomic.AtomicInteger liveToken = new java.util.concurrent.atomic.AtomicInteger();
 
     private RingManager(Context c) {
         ctx = c;
@@ -740,16 +739,14 @@ public final class RingManager {
 
     private volatile LiveListener liveListener;
 
+    public boolean liveSpo2() {
+        return live.spo2();
+    }
+
     /**
      * Start (or rejoin) a live heart rate session. A second call while one runs only swaps the
      * screen that receives the values, so repeated taps do not reconnect again and again.
      */
-    private volatile boolean liveSpo2;
-
-    public boolean liveSpo2() {
-        return liveSpo2;
-    }
-
     public void startLive(LiveListener l) {
         startLive(l, false);
     }
@@ -761,23 +758,19 @@ public final class RingManager {
     public synchronized void startLive(final LiveListener l, final boolean spo2) {
         liveListener = l;
         // rejoin only a session that is still the current one: a stopped one may still be cleaning up
-        // (a turned phone, Done and back within seconds), and would end without values (issue #153)
-        if (app.openring.core.RingTasks.rejoinLive(liveSession.get(), liveToken.get(), liveSpo2, spo2)) {
+        // (a turned phone, Done and back within seconds), and would end without values (issue #153).
+        // LiveSessions.start applies RingTasks.rejoinLive and gives 0 for a rejoin.
+        final int token = live.start(spo2);
+        if (token == 0) {
             post("Measuring, keep your hand still");
             return;
         }
         // a new session: the new token ends an older one at its next check; this task runs on the same
         // worker after it, once it has cleaned up and given the ring back. A blood oxygen switch too.
-        liveSpo2 = spo2;
-        final int token = liveToken.incrementAndGet();
-        liveSession.set(token);
         worker.execute(new Runnable() {
             @Override
             public void run() {
-                if (token != liveToken.get()) {
-                    liveSession.compareAndSet(token, 0);
-                    return;
-                }
+                if (live.stale(token)) return;
                 boolean locked;
                 try {
                     locked = op.tryLock(10, java.util.concurrent.TimeUnit.SECONDS);
@@ -786,7 +779,7 @@ public final class RingManager {
                 }
                 if (!locked) {
                     post(token, Texts.LIVE_BUSY);
-                    liveSession.compareAndSet(token, 0);
+                    live.ended(token);
                     return;
                 }
                 busy = true;
@@ -857,7 +850,7 @@ public final class RingManager {
                             return p.extTag() == 0x25;
                         }
                     };
-                    while (token == liveToken.get() && System.currentTimeMillis() - started < 30 * 60 * 1000) {
+                    while (live.isCurrent(token) && System.currentTimeMillis() - started < 30 * 60 * 1000) {
                         long nowMs = System.currentTimeMillis();
                         List<app.openring.core.Packet> packets = new ArrayList<app.openring.core.Packet>();
                         byte[] f = s.link.poll(500);
@@ -976,7 +969,7 @@ public final class RingManager {
                                 lastStatus = li.status;
                                 post(token, "Ring: " + RingClient.statusText(li.status));
                             }
-                            if (li.bpm > 0 && token == liveToken.get()) {
+                            if (li.bpm > 0 && live.isCurrent(token)) {
                                 beats++;
                                 lastBeat = nowMs;
                                 beat(li.bpm, li.ibi);
@@ -1005,7 +998,7 @@ public final class RingManager {
                     }
                     close(s);
                     // only this session's own mark: a newer one may be queued already (issue #153)
-                    liveSession.compareAndSet(token, 0);
+                    live.ended(token);
                     busy = false;
                     op.unlock();
                     notifyListeners();
@@ -1018,7 +1011,7 @@ public final class RingManager {
     public synchronized void stopLive(LiveListener l) {
         if (l != null && l != liveListener) return;
         liveListener = null;
-        liveToken.incrementAndGet();
+        live.stop();
     }
 
     private void beat(final int bpm, final int ibi) {
@@ -1185,7 +1178,7 @@ public final class RingManager {
      * the new session (issue #153).
      */
     private void post(int token, String state) {
-        if (token != liveToken.get()) {
+        if (!live.isCurrent(token)) {
             log("live (ended session): " + state);
             return;
         }

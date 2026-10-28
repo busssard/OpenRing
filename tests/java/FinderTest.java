@@ -418,7 +418,9 @@ public class FinderTest {
         t = walkLeg(w, t, 270, 6);
         check("a square comes back to the start", Math.hypot(w.x(), w.y()) < 1e-9 && Math.abs(w.reach() - Math.sqrt(18)) < 1e-9 && Math.abs(w.distance() - 12) < 1e-9 && w.steps() == 26);
         double[] c = w.cover();
-        check("a 3 m square covers 3 m or more in two directions and is 3 m wide", c[0] >= 3 && Math.abs(c[1] - 3) < 0.01, Arrays.toString(c));
+        // its widest pair of directions at right angles are the two diagonals, 3 times the square root of 2 each; it is
+        // narrowest along a side
+        check("a 3 m square covers 3 m or more in two directions and is 3 m wide", Math.abs(c[0] - 3 * Math.sqrt(2)) < 1e-9 && Math.abs(c[1] - 3) < 1e-9, Arrays.toString(c));
         check("readings keep where they were taken", w.samples().get(6).y == 3 && w.samples().get(6).x == 0 && w.samples().get(8).x == 1.0);
         check("a covered square is ready for the map", w.mapReady());
         // tilted: the step keeps the last upright heading
@@ -449,7 +451,8 @@ public class FinderTest {
         // a short L (1.5 by 1.5 m) is not enough
         SearchWalk l = new SearchWalk().stepLength(0.5);
         walkLeg(l, walkLeg(l, 0, 0, 3), 90, 3);
-        check("a short L: not enough", !l.mapReady() && l.cover()[0] < SearchWalk.COVER_M);
+        // 1.5 m along each leg, and no pair of directions at right angles sees more of it
+        check("a short L: not enough", !l.mapReady() && Math.abs(l.cover()[0] - 1.5) < 1e-9 && l.cover()[0] < SearchWalk.COVER_M, Arrays.toString(l.cover()));
         // enough walking but too few readings
         SearchWalk quiet = new SearchWalk().stepLength(1);
         for (int i = 0; i < 4; i++) {
@@ -1445,7 +1448,8 @@ public class FinderTest {
         LastWorn.Result rh = LastWorn.find(cc[0], cc[1], hrv, same(6, 1000), day, dayId);
         check("a stray six value HRV event does not move the time", rh.state == LastWorn.OFF && rh.hrRule
                 && Math.abs(rh.at - (BASE + 10 * H)) <= 300, rh.state + " " + (rh.at - BASE) / H);
-        check("the stray HRV event is reported", rh.strayHrAt >= BASE + 14 * H && rh.strayHrAt <= BASE + 14 * H + 1500, (rh.strayHrAt - BASE) / H);
+        // the newest heart rate that did not count: the event's last value, 5 times 5 minutes after its first
+        check("the stray HRV event is reported", rh.strayHrAt == BASE + 14 * H + 1500, (rh.strayHrAt - BASE) / H);
         // without event numbers its values would vouch for each other (the bug the review found)
         LastWorn.Result old = LastWorn.find(cc[0], cc[1], hrv, day);
         check("without event numbers the six values pair up (why the numbers are needed)", old.state == LastWorn.OFF

@@ -36,7 +36,6 @@ public class PipelineTest {
     }
 
     static final ZoneId ZONE = ZoneId.of("Europe/Zurich");
-    static final Random rnd = new Random(42);
 
     /** Ring ds counter: boots 9 days before day 0 (ds counts deciseconds since boot). */
     static long T0;
@@ -67,13 +66,17 @@ public class PipelineTest {
     /**
      * As above; on the nights of the days in {@code aohr} always on heart rate bursts (tag 0x86) take the place of the
      * HRV events and of the sleep periods' average heart rate, which the night would use first (issue #166): every 5
-     * minutes 20 values 1.92 s apart on the same heart rate curve, with one 0 and one 250 that must be left out. They
-     * draw no random numbers, so the other nights stay as they were.
+     * minutes 20 values 1.92 s apart on the same heart rate curve, with one 0 and one 250 that must be left out. Each
+     * day draws from its own seeded random numbers, so the other nights stay as they were, and a history is the same
+     * whichever tests ran before (issue #216).
      */
     static List<RingEvent> history(int days, java.util.Set<Integer> off, java.util.Set<Integer> rest, java.util.Set<Integer> aohr) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         for (int d = 0; d < days; d++) {
             if (off.contains(d)) continue;
+            // each day its own fixed seed, so a day's data depends neither on the tests before (issue #216) nor on
+            // the earlier days (off days, always on heart rate nights)
+            Random rnd = new Random(42L * 1000 + d);
             double day = T0 + d * 86400.0; // local midnight
             double bed = day - 1.25 * 3600 + rnd.nextGaussian() * 900; // ~22:45 the evening before
             double wake = day + 6.75 * 3600 + rnd.nextGaussian() * 900; // ~06:45
@@ -202,9 +205,21 @@ public class PipelineTest {
         System.out.println(r2.text);
         for (DataCheck.Step s : r2.steps) check("data check: " + s.title, s.state == 0, s.detail);
         check("data check: one of one boot segment is singular", r2.steps.get(2).detail.endsWith("1 of 1 boot segment with a time record"), r2.steps.get(2).detail);
-        check("data check: events keep their grouping", r2.steps.get(0).detail.equals("5,353 events copied from the ring"), r2.steps.get(0).detail);
+        // the history's events and the one phone anchor row insertPhoneAnchor added above; written out by hand with its thousands comma (the count follows
+        // from the generator's seeds, it is over 1000 so the grouping shows)
+        int copied = all.size() + 1;
+        check("data check: the made up history has a four digit event count", copied >= 1000 && copied < 10000, copied);
+        check("data check: events keep their grouping", r2.steps.get(0).detail.equals(copied / 1000 + "," + String.format("%03d", copied % 1000)
+                + " events copied from the ring"), r2.steps.get(0).detail);
         check("data check: plurals for several nights", r2.steps.get(3).detail.startsWith("3 sleep periods (3 main nights), 4 days computed"), r2.steps.get(3).detail);
-        dataCheckPrivate("synthetic history, nights older than 14 days", r2.text, db);
+        dataCheckPrivate("synthetic history, nights older than 14 days", r2.text, db, LocalDate.now());
+        // the same history as on the morning of day 3 (issue #216): the full privacy check runs on ring like nights on any
+        // day of the year, not only while the made up history is less than 14 days old
+        LocalDate onDay3 = day0.plusDays(3);
+        String r3 = DataCheck.run(ctx, onDay3).text;
+        check("data check as on day 3: the history's 3 nights are listed", r3.contains("  3 sleep periods (3 main nights, 0 naps), newest on "
+                + day0.plusDays(2) + "\n"), r3);
+        dataCheckPrivate("synthetic history, as on day 3", r3, db, onDay3);
 
         for (int d = 0; d < 3; d++) {
             String key = day0.plusDays(d).toString();
@@ -582,7 +597,7 @@ public class PipelineTest {
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
         dayHeartChecks(demo, demoNow, "demo days", 0);
-        dataCheckPrivate("demo", DataCheck.run(phone2).text, demo);
+        dataCheckPrivate("demo", DataCheck.run(phone2).text, demo, LocalDate.now());
         exportChecks(phone2, demo, demoToday);
         // issue #44: the first demo days count the worn days so far, later ones a full week as before
         int firstWorn = -1, fullWeek = 0, weekDays = 0;
@@ -777,9 +792,9 @@ public class PipelineTest {
         backupGaps(full.toByteArray());
         historyCache();
         recentWindow();
-        aohrHistory(); // last: it draws from the shared random numbers, so it changes no history before it
+        aohrHistory();
         rightNowAohr();
-        greenIbiNight(); // after aohrHistory: it draws from the shared random numbers too
+        greenIbiNight();
         rightNowSpo2Full();
         jsonSeriesMalformed();
         backupJsonLimit(full.toByteArray());
@@ -792,8 +807,8 @@ public class PipelineTest {
      * only. No clock times, minutes asleep, scores, stages or battery level of any night, but still the
      * number of sleep periods per day as the database has them.
      */
-    static void dataCheckPrivate(String label, String text, Db db) throws Exception {
-        String from = LocalDate.now().minusDays(DataCheck.NIGHT_DAYS - 1).toString();
+    static void dataCheckPrivate(String label, String text, Db db, LocalDate today) throws Exception {
+        String from = today.minusDays(DataCheck.NIGHT_DAYS - 1).toString();
         List<String> ns = db.nightsJson(from, "9999-12-31", false);
         if (ns.isEmpty()) {
             check("data check (" + label + "): no recent nights, says none", text.contains("\nSleep periods of the last 14 days (counts and dates only)\n  none\n"), text);
@@ -1354,6 +1369,11 @@ public class PipelineTest {
                 while (written.get() < 100 && wErr.get() == null) Thread.sleep(1);
                 long evBefore = Db.get(ec).eventCount();
                 java.io.File snap = snapshotWith(ec, vacuum);
+                // the check below needs rows written after the snapshot: wait for two more commits (the first may have
+                // been under way while the snapshot ended) instead of trusting the timing (issue #216), at most 10 s
+                int atSnap = written.get();
+                long until = System.nanoTime() + 10000L * 1000000L;
+                while (written.get() < atSnap + 2 && wErr.get() == null && System.nanoTime() < until) Thread.sleep(1);
                 stop.set(true);
                 w.join();
                 long writerEv = countIn(snap, "SELECT COUNT(*) FROM events WHERE epoch = 77"), writerKv = countIn(snap, "SELECT COUNT(*) FROM kv WHERE k LIKE 'w_%'");
@@ -1367,19 +1387,25 @@ public class PipelineTest {
         // a full backup made while another connection writes restores on a new phone
         final String bpath = ec.getDatabasePath(Db.REAL).getPath();
         final java.util.concurrent.atomic.AtomicBoolean bstop = new java.util.concurrent.atomic.AtomicBoolean();
+        final java.util.concurrent.atomic.AtomicInteger bwritten = new java.util.concurrent.atomic.AtomicInteger();
         Thread bw = new Thread(new Runnable() {
             public void run() {
                 try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + bpath);
                      java.sql.Statement st = cn.createStatement()) {
                     st.execute("PRAGMA busy_timeout = 30000");
-                    for (int k = 0; !bstop.get(); k++) st.execute("INSERT INTO kv(k, v) VALUES ('b_" + k + "', 'x')");
+                    for (int k = 0; !bstop.get(); k++) {
+                        st.execute("INSERT INTO kv(k, v) VALUES ('b_" + k + "', 'x')");
+                        bwritten.incrementAndGet();
+                    }
                 } catch (Exception x) {
                     // the check below finds a backup that is not complete
                 }
             }
         });
         bw.start();
-        Thread.sleep(50);
+        // the writer is under way before the backup starts, however slow the machine (issue #216), at most 10 s
+        long bUntil = System.nanoTime() + 10000L * 1000000L;
+        while (bwritten.get() < 10 && bw.isAlive() && System.nanoTime() < bUntil) Thread.sleep(1);
         long bEvents = Db.get(ec).eventCount();
         java.io.ByteArrayOutputStream slow = new java.io.ByteArrayOutputStream() {
             @Override
@@ -2827,6 +2853,8 @@ public class PipelineTest {
         final java.util.concurrent.CountDownLatch deleteStarted = new java.util.concurrent.CountDownLatch(1);
         final java.util.concurrent.CountDownLatch deleteDone = new java.util.concurrent.CountDownLatch(1);
         final boolean[] deletedEarly = {false};
+        final String[] waitSeen = {null};
+        final Thread[] deleter = new Thread[1];
         final Throwable[] err = new Throwable[2];
         Thread analysis = new Thread(new Runnable() {
             @Override
@@ -2838,9 +2866,11 @@ public class PipelineTest {
                             // the first week's nights are worked out and about to be stored: Delete starts now
                             if (!m.startsWith("sleep for") || paused.getCount() == 0) return;
                             paused.countDown();
+                            // no fixed sleep (issue #216): wait until Delete either finished (it did not wait) or
+                            // waits for a lock this analysis holds, so a slow machine cannot make it pass wrongly
                             try {
                                 deleteStarted.await(10, java.util.concurrent.TimeUnit.SECONDS);
-                                Thread.sleep(400); // long enough for a Delete that does not wait to finish
+                                waitSeen[0] = waitForBlocked(deleter[0], Thread.currentThread(), deleteDone, 10000);
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
                             }
@@ -2867,11 +2897,12 @@ public class PipelineTest {
                 }
             }
         });
+        deleter[0] = delete;
         delete.start();
         analysis.join(300000);
         delete.join(300000);
         check("delete during an analysis: no error", err[0] == null && err[1] == null, err[0] != null ? err[0] : err[1]);
-        check("delete during an analysis waits for it to end", !deletedEarly[0], "");
+        check("delete during an analysis waits for it to end", !deletedEarly[0] && waitSeen[0] != null && waitSeen[0].startsWith("waits"), waitSeen[0]);
         StringBuilder left = new StringBuilder();
         int tables = 0;
         android.database.Cursor cur = db.getReadableDatabase().rawQuery(
@@ -2891,6 +2922,26 @@ public class PipelineTest {
         check("after Delete the next analysis stores no nights", db.count("SELECT COUNT(*) FROM nights") == 0
                 && db.count("SELECT COUNT(*) FROM days") == 0, db.count("SELECT COUNT(*) FROM nights") + " nights");
         deleteOneTransaction(c);
+    }
+
+    /**
+     * Waits until {@code waiter} has finished ({@code done} counted down: returns "finished") or waits for a lock that
+     * {@code holder} holds (returns "waits, BLOCKED on ..."), at most {@code limitMs} (returns "neither within ...").
+     * Issue #216: replaces a fixed sleep, so the result does not depend on the machine's speed.
+     */
+    static String waitForBlocked(Thread waiter, Thread holder, java.util.concurrent.CountDownLatch done, long limitMs) throws InterruptedException {
+        java.lang.management.ThreadMXBean mx = java.lang.management.ManagementFactory.getThreadMXBean();
+        long until = System.nanoTime() + limitMs * 1000000L;
+        while (System.nanoTime() < until) {
+            if (done.getCount() == 0) return "finished";
+            Thread.State st = waiter.getState();
+            if (st == Thread.State.BLOCKED || st == Thread.State.WAITING || st == Thread.State.TIMED_WAITING) {
+                java.lang.management.ThreadInfo ti = mx.getThreadInfo(waiter.getId());
+                if (ti != null && ti.getLockOwnerId() == holder.getId()) return "waits, " + st + " on " + ti.getLockName();
+            }
+            Thread.sleep(1);
+        }
+        return "neither within " + limitMs + " ms, " + waiter.getState();
     }
 
     /**
@@ -3410,6 +3461,10 @@ public class PipelineTest {
     }
 
     /** A context with a database of its own ({@code Db.get} keeps one open instance). */
+    /*
+     * Known order dependence (issue #216, not changed): freshDb swaps the shared database, so a test that calls it
+     * must not run in the middle of main's own section, which keeps using the database it opened at the start.
+     */
     static Context freshDb(String name) throws Exception {
         java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
         f.setAccessible(true);
@@ -3638,7 +3693,9 @@ public class PipelineTest {
         long future = db.count("SELECT COUNT(*) FROM events WHERE epoch = 6 AND unix IS NULL");
         // one hour apart from an hour before now: the 9th and 10th lie more than 6 hours ahead
         check("events dated well after the download are cleared", late == 2, late);
-        check("events dated before 2015 are cleared", early > 0 && early < a5.size(), early);
+        // the time record (ds 100000) reads 1420000100, 100 s after the limit 1420000000; the 10 motion events lie
+        // 9990 s to 990 s before it, so all of them fall before the limit and only the record keeps its date
+        check("events dated before 2015 are cleared", early == 10 && a5.size() == 11, early);
         check("an anchor in the future is not used", future == a6.size(), future);
         // the time record of epoch 4 goes away: its rows must lose their dates, not keep the old ones
         db.getWritableDatabase().execSQL("DELETE FROM events WHERE epoch = 4 AND tag = 66");
@@ -3721,6 +3778,7 @@ public class PipelineTest {
      * {@code awake} stretches and in the first and last 10 minutes), heart rate, HRV, motion, temperature.
      */
     static void wornSleep(List<RingEvent> ev, double from, double to, List<double[]> awake, long t0, long ds0) {
+        Random rnd = new Random((long) from); // a fixed seed of its own: the stretch's start (issue #216)
         for (double t = from; t < to; t += 60) {
             boolean aw = t < from + 600 || t >= to - 600;
             for (double[] a : awake) if (t >= a[0] && t < a[1]) aw = true;
@@ -3845,6 +3903,7 @@ public class PipelineTest {
             long ds0 = 9L * 86400 * 10;
             List<RingEvent> ev = new ArrayList<RingEvent>();
             double r0 = at(d, -1), r1 = at(d, 7), w0 = Math.min(r0, beds[k][0]), w1 = Math.max(r1, beds[k][1]);
+            Random rnd = new Random(110 + k); // a fixed seed of its own (issue #216)
             // worn the whole time: heart rate, HRV, motion and temperature, no sleep state (the ring's stages decide)
             for (double t = w0; t < w1; t += 60) {
                 long dd = ds0 + Math.round((t - t0) * 10);
