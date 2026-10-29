@@ -593,8 +593,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 try {
                     ScreenUse.collect(SettingsActivity.this, true);
                     Analyzer.run(SettingsActivity.this, null);
-                } catch (RuntimeException ignored) {
-                    // the analysis stores its own error for the data check
+                } catch (Throwable ignored) {
+                    // the analysis rolled back and stores its own error for the data check, also out of memory (issue #230)
                 }
                 return null;
             }
@@ -1041,15 +1041,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 try {
                     Analyzer.runAll(SettingsActivity.this, null);
                     return true;
-                } catch (RuntimeException e) {
-                    return false; // the analysis stores its own error for the data check
+                } catch (Throwable e) {
+                    // rolled back, also out of memory; the analysis stores its own error for the data check (issue #230)
+                    return false;
                 }
             }
 
             @Override
             protected void onPostExecute(Boolean ok) {
                 if (ok) toast("Analysis updated");
-                else problem("The analysis failed. " + app.openring.core.SyncError.DETAILS);
+                else problem(Texts.ANALYSIS_FAILED);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }

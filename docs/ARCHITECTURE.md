@@ -138,6 +138,12 @@ history had, before anything is written to the file the person picked; otherwise
 6. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
    when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
    age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
+   An analysis replaces its nights and days in one transaction (`Db.inTransaction`, issue #230): the screens keep
+   reading the old ones (write ahead logging) until the new ones are all stored, and any stop or failure (also out of
+   memory, a full disk or the app being ended) rolls back to them, then `analysis_error` holds the text. Re analyse all
+   only writes kv `full_pending` first; the delete of every night and day happens inside that transaction, and a run
+   that did not commit is done again by the next analysis. `dated_count`, `event_count`, `analyzed_until` and the rule
+   versions are stored in the same commit, so they always describe the stored results.
    Each week replaces the stored nights from its start, moved back to the start of any sleep (found now or
    stored) that crosses it, so a sleep stored with an end shortened by phone use is replaced, never doubled
    (`Analyzer.boundary`, issue #132); the days of the nights it replaced are analysed again too, and the main
@@ -203,6 +209,16 @@ the current token on, and the running mark holds the token of the newest session
 gets a new session queued behind it on the worker, which waits for the lock as usual. A queued session
 that became stale, or one that ends, clears only its own mark (`stale`, `ended`), so an older session
 never clears a newer one. Messages of an ended session only go to the log.
+
+A long analysis (Re analyse all, or more than 28 days to analyse, `Analyzer.LONG_RUN_DAYS`; issue #230) keeps its
+transaction open for minutes, and on Android every write from another thread waits for it. So before it opens the
+transaction it marks the history (`Db.beginLongRun`) and waits for ring tasks that store what they read (a sync download,
+Live, factory reset; each takes `Db.holdForRing` while it holds the ring). While it runs, a sync waits before it takes
+the ring, with the status line "Re analysing your history, this takes a few minutes. The sync starts after it." (a stop
+still reaches it), and Live and factory reset do not start and say so (`SyncError.REANALYSING`). Inside the transaction
+the analysis calls nothing synchronized on `Db` (`rebuildTime` and the zone note run before it), so a thread that waits
+for the transaction can never hold what the analysis needs. Shorter runs (the analysis after a sync) are one
+transaction too and mark nothing: a write waits those seconds.
 
 Code that replaces or wipes the database first waits for a running analysis (`synchronized
 (Analyzer.class)`): restore, pairing a different ring, and "Delete all local data" (`Analyzer.deleteAll`,

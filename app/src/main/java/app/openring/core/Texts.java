@@ -28,6 +28,9 @@ public final class Texts {
     /** Settings, Delete all local data failed part way; it is one transaction, so nothing was deleted. */
     public static final String DELETE_FAILED = "Nothing was deleted, something went wrong. Diagnostics, Log tab, shows why.";
 
+    /** Settings, Re analyse all failed: it is one transaction, so the stored results are the old ones (issue #230). */
+    public static final String ANALYSIS_FAILED = "The analysis failed, your nights and days are as before. " + SyncError.DETAILS;
+
     /** Live could not get the ring within 10 seconds: a sync, a game or Delete all local data holds it (issue #43). */
     public static final String LIVE_BUSY = "The ring is busy right now (a sync or another task). Try again in a moment.";
 

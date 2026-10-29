@@ -223,7 +223,8 @@ public final class LogActivity extends Activity {
                     }
                 });
                 return "Repair done.";
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
+                // also out of memory: the analysis rolled back to the old nights and stored its error (issue #230)
                 RingManager.get(ctx).log("repair failed: " + android.util.Log.getStackTraceString(e));
                 return Texts.REPAIR_FAILED; // raw text logged above (issue #89); may show on any screen
             }

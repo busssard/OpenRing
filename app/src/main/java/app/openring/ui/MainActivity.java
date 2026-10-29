@@ -397,14 +397,16 @@ public final class MainActivity extends Activity implements RingManager.Listener
                             && db.eventCount() > 0) {
                         app.openring.data.Analyzer.run(MainActivity.this, null);
                     }
-                } catch (RuntimeException ignored) {
+                } catch (Throwable ignored) {
+                    // a failed analysis rolled back and stored its error, also out of memory (issue #230)
                 }
                 try {
                     // screen time is read on this phone (issue #13); the very first read also updates the
                     // nights of the week it brings in
                     boolean first = !app.openring.data.ScreenDays.any(app.openring.data.Db.get(MainActivity.this));
                     if (app.openring.data.ScreenUse.collect(MainActivity.this) > 0 && first) app.openring.data.Analyzer.run(MainActivity.this, null);
-                } catch (RuntimeException ignored) {
+                } catch (Throwable ignored) {
+                    // as above (issue #230)
                 }
                 latest = app.openring.data.Db.get(MainActivity.this).latestDay();
                 return DayData.load(MainActivity.this, d);
