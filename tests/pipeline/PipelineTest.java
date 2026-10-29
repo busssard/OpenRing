@@ -791,6 +791,7 @@ public class PipelineTest {
         nightSummaryCases();
         backupGaps(full.toByteArray());
         historyCache();
+        safeReanalysis();
         recentWindow();
         aohrHistory();
         rightNowAohr();
@@ -4998,5 +4999,276 @@ public class PipelineTest {
                 db.recentNights(first.minusDays(100), today).isEmpty() && db.anyMainNight(), db.recentNights(first.minusDays(100), today).size());
         check("#98 no main night stored: no Further analysis", !Db.get(freshDb("openring98-empty")).anyMainNight(), "");
         freshDb("openring98-done");
+    }
+
+    // ------------------------------------- issue #230, a full re analysis keeps the old results until the new ones are stored
+
+    static final long T230 = LocalDate.parse("2026-01-05").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+
+    /** {@code days} of demo history in one boot from {@code t0}, the zone noted before it, write ahead logging on; not analysed yet. */
+    static Context history230(String name, long t0, int days) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        wal(db);
+        ZoneId z = ZoneId.systemDefault();
+        long end = t0 + (days + 1) * 86400L + 12 * 3600;
+        db.noteZone(t0 - 86400, z.getId());
+        putBoot(db, app.openring.data.Demo.history(t0, days, end, z, new Random(230 + days)), 1, t0, end);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        return c;
+    }
+
+    /**
+     * A second connection to the history file, as a screen reads it while an analysis runs on another thread
+     * (write ahead logging, as on the phone): it sees only what was committed. Keeps the fewest nights and days seen.
+     */
+    static final class Reader230 {
+        final java.sql.Connection cn;
+        long minNights = Long.MAX_VALUE, minDays = Long.MAX_VALUE;
+        int looks;
+
+        Reader230(Context c) throws Exception {
+            cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + c.getDatabasePath(Db.REAL).getPath());
+        }
+
+        long count(String table) {
+            try (java.sql.Statement st = cn.createStatement(); java.sql.ResultSet r = st.executeQuery("SELECT COUNT(*) FROM " + table)) {
+                r.next();
+                return r.getLong(1);
+            } catch (java.sql.SQLException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        void look() {
+            minNights = Math.min(minNights, count("nights"));
+            minDays = Math.min(minDays, count("days"));
+            looks++;
+        }
+
+        void reset() {
+            minNights = minDays = Long.MAX_VALUE;
+            looks = 0;
+        }
+
+        void close() throws java.sql.SQLException {
+            cn.close();
+        }
+    }
+
+    /**
+     * Looks with {@code r} at every line the analysis logs; throws {@code stop} right after the nights of week
+     * {@code week} are stored (0: never), as a week that throws or the phone ending the app there would.
+     */
+    static Analyzer.Log watch230(final Reader230 r, final int week, final Throwable stop) {
+        return new Analyzer.Log() {
+            int weeks;
+
+            @Override
+            public void log(String m) {
+                r.look();
+                if (week > 0 && m.endsWith(" sleep periods") && ++weeks == week) {
+                    if (stop instanceof Error) throw (Error) stop;
+                    throw (RuntimeException) stop;
+                }
+            }
+        };
+    }
+
+    static String seen230(Reader230 r, long nights, long days) {
+        return "at the least " + r.minNights + " of " + nights + " nights and " + r.minDays + " of " + days + " days, " + r.looks + " looks";
+    }
+
+    /**
+     * Issue #230: a full re analysis (Re analyse all, or the whole history after a new detail level, new rules or new
+     * dates) replaces the stored nights and days in one go. Stopped in week 3 (an exception, running out of memory, the
+     * phone switched off) every old night and day is still there and an error text is stored; a screen reading meanwhile
+     * never sees fewer; the next analysis does the whole run again and gives the same rows as a run never stopped.
+     * Also an older database, a database the old code left half way, restored backups of this and an older version,
+     * and a year of history.
+     */
+    static void safeReanalysis() throws Exception {
+        // the reference: analysed after the sync, then Re analyse all, never stopped
+        Context ref = history230("openring230-ref", T230, 56);
+        Analyzer.run(ref, null);
+        List<String> first = results139(Db.get(ref));
+        Analyzer.runAll(ref, null);
+        List<String> refAll = results139(Db.get(ref));
+        List<String> refEvents = events58(Db.get(ref));
+        java.io.ByteArrayOutputStream backup = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(ref, backup, true);
+        check("#230 set up: 8 weeks analysed, Re analyse all gives the same rows as the first analysis", nightRows(refAll) >= 50
+                && refAll.size() - nightRows(refAll) >= 50 && refAll.equals(first), nightRows(refAll) + " nights, " + firstDiff(refAll, first));
+
+        // 1. Re analyse all, a week that throws in week 3
+        Context c = history230("openring230-stop", T230, 56);
+        Analyzer.run(c, null);
+        Db db = Db.get(c);
+        List<String> before = results139(db);
+        long nights0 = db.count("SELECT COUNT(*) FROM nights"), days0 = db.count("SELECT COUNT(*) FROM days");
+        long until0 = db.kvLong("analyzed_until", -1);
+        Reader230 r = new Reader230(c);
+        Throwable got = null;
+        try {
+            Analyzer.runAll(c, watch230(r, 3, new Stop()));
+        } catch (Throwable t) {
+            got = t;
+        }
+        check("#230 Re analyse all stopped in week 3: the stop reaches the caller", got instanceof Stop, got);
+        check("#230 stopped in week 3: a screen reading meanwhile never sees fewer nights or days", r.looks > 20
+                && r.minNights >= nights0 && r.minDays >= days0, seen230(r, nights0, days0));
+        check("#230 stopped in week 3: every old night and day is still there, byte for byte", results139(db).equals(before), firstDiff(results139(db), before));
+        check("#230 stopped in week 3: the error text is stored", String.valueOf(db.kv("analysis_error", null)).contains("stopped for the test"),
+                db.kv("analysis_error", null));
+        check("#230 stopped in week 3: the analysis progress is the one of the stored results", db.kvLong("analyzed_until", -1) == until0,
+                db.kvLong("analyzed_until", -1) + ", before " + until0);
+        r.reset();
+        Analyzer.run(c, watch230(r, 0, null));
+        check("#230 the next analysis after the stop does the whole run: the same rows as Re analyse all never stopped", results139(db).equals(refAll),
+                firstDiff(results139(db), refAll));
+        check("#230 the next analysis: a screen never sees fewer nights or days during it", r.looks > 20 && r.minNights >= nights0 && r.minDays >= days0,
+                seen230(r, nights0, days0));
+        check("#230 the next analysis: no error stored any more", db.kv("analysis_error", null) == null, db.kv("analysis_error", null));
+        r.close();
+
+        // 2. the automatic whole run (another stage detail level, as after a change in Settings), out of memory in week 3
+        Context c2 = history230("openring230-oom", T230, 56);
+        Analyzer.run(c2, null);
+        Db db2 = Db.get(c2);
+        List<String> before2 = results139(db2);
+        int detail = app.openring.data.Prefs.of(c2).stageDetail();
+        db2.put("stage_detail", detail + 1);
+        Reader230 r2 = new Reader230(c2);
+        got = null;
+        try {
+            Analyzer.run(c2, watch230(r2, 3, new OutOfMemoryError("test")));
+        } catch (Throwable t) {
+            got = t;
+        }
+        check("#230 whole run after a detail change, out of memory in week 3: the error reaches the caller", got instanceof OutOfMemoryError, got);
+        check("#230 out of memory: a screen never sees fewer nights or days", r2.looks > 20 && r2.minNights >= nights0 && r2.minDays >= days0,
+                seen230(r2, nights0, days0));
+        check("#230 out of memory: every old night and day is still there", results139(db2).equals(before2), firstDiff(results139(db2), before2));
+        check("#230 out of memory: the error text is stored", String.valueOf(db2.kv("analysis_error", null)).contains("OutOfMemoryError"),
+                db2.kv("analysis_error", null));
+        check("#230 out of memory: the detail level is still marked as not analysed", db2.kvLong("stage_detail", -1) == detail + 1, db2.kvLong("stage_detail", -1));
+        r2.reset();
+        Analyzer.run(c2, watch230(r2, 0, null));
+        check("#230 the next analysis after running out of memory: the same rows as a whole run never stopped", results139(db2).equals(refAll)
+                && db2.kvLong("stage_detail", -1) == detail && db2.kv("analysis_error", null) == null, firstDiff(results139(db2), refAll));
+        check("#230 the next analysis: a screen never sees fewer nights or days", r2.minNights >= nights0 && r2.minDays >= days0, seen230(r2, nights0, days0));
+        r2.close();
+
+        // 3. the phone switched off in week 3: the files as they are at that moment
+        final Context c3 = history230("openring230-off", T230, 56);
+        Analyzer.run(c3, null);
+        List<String> before3 = results139(Db.get(c3));
+        final java.io.File off = Files.createTempDirectory("openring230-off-files").toFile();
+        Analyzer.runAll(c3, new Analyzer.Log() {
+            int weeks;
+
+            @Override
+            public void log(String m) {
+                if (!m.endsWith(" sleep periods") || ++weeks != 3) return;
+                try {
+                    for (String s : new String[] {"", "-wal", "-journal"}) {
+                        java.io.File f = new java.io.File(c3.getDatabasePath(Db.REAL).getPath() + s);
+                        if (f.exists()) Files.copy(f.toPath(), new java.io.File(off, Db.REAL + s).toPath());
+                    }
+                } catch (java.io.IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        });
+        check("#230 set up: Re analyse all ran to its end", results139(Db.get(c3)).equals(refAll), firstDiff(results139(Db.get(c3)), refAll));
+        Context c3b = freshDb("openring230-off-after");
+        for (String s : new String[] {"", "-wal", "-journal"}) {
+            java.io.File f = new java.io.File(off, Db.REAL + s);
+            if (f.exists()) Files.copy(f.toPath(), new java.io.File(c3b.getDatabasePath(Db.REAL).getPath() + s).toPath());
+        }
+        Db db3 = Db.get(c3b);
+        check("#230 the phone switched off in week 3: every old night and day is there when it starts again", results139(db3).equals(before3),
+                firstDiff(results139(db3), before3));
+        Analyzer.run(c3b, null);
+        check("#230 switched off in week 3: the next analysis gives the same rows as Re analyse all never stopped", results139(db3).equals(refAll),
+                firstDiff(results139(db3), refAll));
+
+        // 4. an older database with history, analysed by the version before: the same events, nights and days after the update's
+        // analysis; and one that the old code left half way through Re analyse all (only 3 weeks of nights, no days)
+        Context c4 = history230("openring230-old", T230, 56);
+        Analyzer.run(c4, null);
+        Db db4 = Db.get(c4);
+        List<String> before4 = results139(db4);
+        Analyzer.run(c4, null);
+        check("#230 older database: after the update's analysis every event, night and day is the same", results139(db4).equals(before4)
+                && events58(db4).equals(refEvents), firstDiff(results139(db4), before4));
+        db4.getWritableDatabase().execSQL("DELETE FROM days");
+        db4.getWritableDatabase().execSQL("DELETE FROM nights WHERE stop >= ?", new Object[] {(double) (T230 + 21 * 86400L)});
+        db4.put("analyzed_until", 0);
+        Analyzer.run(c4, null);
+        check("#230 a database the old code left half way: the next analysis brings every night and day back", results139(db4).equals(refAll)
+                && events58(db4).equals(refEvents), firstDiff(results139(db4), refAll));
+
+        // 5. restoring a backup of this version and of an older one (version 4, before zones and screen reads), then Re analyse
+        // all stopped in week 3 and then complete
+        byte[] zip = backup.toByteArray();
+        java.io.File v4 = Files.createTempFile("openring230-v4", ".db").toFile();
+        Files.write(v4.toPath(), zipEntry(zip, "openring.db"));
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + v4.getPath()); java.sql.Statement st = cn.createStatement()) {
+            st.execute("DROP TABLE zones");
+            st.execute("DROP TABLE IF EXISTS screen_reads");
+            st.execute("PRAGMA user_version = 4");
+        }
+        for (int k = 0; k < 2; k++) {
+            String which = k == 0 ? "this version" : "an older version";
+            Context ph = freshDb("openring230-restore" + k);
+            app.openring.data.Backup.Result res = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(k == 0 ? zip : withDb(zip, Files.readAllBytes(v4.toPath()))));
+            Db rdb = Db.get(ph);
+            check("#230 restore of a backup from " + which + ": every event, night and day", res.ok && events58(rdb).equals(refEvents) && results139(rdb).equals(refAll),
+                    res.message + ", " + firstDiff(results139(rdb), refAll));
+            wal(rdb);
+            Reader230 rr = new Reader230(ph);
+            got = null;
+            try {
+                Analyzer.runAll(ph, watch230(rr, 3, new Stop()));
+            } catch (Throwable t) {
+                got = t;
+            }
+            check("#230 restored from " + which + ", Re analyse all stopped in week 3: nothing lost", got instanceof Stop && results139(rdb).equals(refAll)
+                    && rr.minNights >= nightRows(refAll), seen230(rr, nightRows(refAll), refAll.size() - nightRows(refAll)));
+            rr.close();
+            Analyzer.run(ph, null);
+            check("#230 restored from " + which + ", the next analysis: the same rows", results139(rdb).equals(refAll) && events58(rdb).equals(refEvents),
+                    firstDiff(results139(rdb), refAll));
+        }
+
+        // 6. a year of history
+        long tYear = LocalDate.parse("2025-01-06").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        Context y = history230("openring230-year", tYear, 365);
+        Db ydb = Db.get(y);
+        long t = System.nanoTime();
+        Analyzer.run(y, null);
+        long firstMs = (System.nanoTime() - t) / 1000000;
+        List<String> yBefore = results139(ydb);
+        long yNights = nightRows(yBefore), yDays = yBefore.size() - yNights;
+        Reader230 yr = new Reader230(y);
+        got = null;
+        try {
+            Analyzer.runAll(y, watch230(yr, 3, new Stop()));
+        } catch (Throwable e) {
+            got = e;
+        }
+        check("#230 a year of history, Re analyse all stopped in week 3: every night and day still there", got instanceof Stop && yNights >= 350
+                && results139(ydb).equals(yBefore) && yr.minNights >= yNights && yr.minDays >= yDays, seen230(yr, yNights, yDays));
+        yr.reset();
+        t = System.nanoTime();
+        Analyzer.run(y, watch230(yr, 0, null));
+        long allMs = (System.nanoTime() - t) / 1000000;
+        System.out.println("  #230: a year (" + ydb.eventCount() + " events, " + yNights + " nights) analysed in " + firstMs + " ms, the whole run after the stop in "
+                + allMs + " ms");
+        check("#230 a year: the whole run after the stop gives the same rows, a screen never saw fewer", results139(ydb).equals(yBefore)
+                && yr.minNights >= yNights && yr.minDays >= yDays, seen230(yr, yNights, yDays) + ", " + firstDiff(results139(ydb), yBefore));
+        yr.close();
+        freshDb("openring230-done");
     }
 }
