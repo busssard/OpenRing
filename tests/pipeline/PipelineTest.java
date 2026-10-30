@@ -803,6 +803,7 @@ public class PipelineTest {
         backupJsonLimit(full.toByteArray());
         finderDownload();
         pairingPrefs218();
+        swapDuringSync219(full.toByteArray());
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -5665,5 +5666,234 @@ public class PipelineTest {
             while ((n = z.read(buf)) > 0) all.write(buf, 0, n);
         }
         return all.toByteArray();
+    }
+
+    // ------------------------------------------------- issue #219: no swap of the database while a ring task stores
+
+    /** Marks the made up download's events (ring counters far above any history of the tests). */
+    static final long DS219 = 950000000L;
+
+    /**
+     * A sync as {@code RingManager.syncBlocking} runs it, without the ring: counted in the gate's sync count from its
+     * start, the ring lock held while it stores, its own {@code Db} object for the whole download (as {@code drainNew}),
+     * batch by batch with the cursor after each, then the lock given back and the analysis on {@code Db.get}.
+     */
+    static final class Download219 extends Thread {
+        final Context c;
+        final int batches;
+        final long pauseMs;
+        final java.util.concurrent.CountDownLatch first = new java.util.concurrent.CountDownLatch(1);
+        volatile Throwable err;
+        volatile int stored;
+        volatile String storedIn, analysedIn;
+        volatile long lastCursor = -1;
+
+        Download219(Context c, int batches, long pauseMs) {
+            this.c = c;
+            this.batches = batches;
+            this.pauseMs = pauseMs;
+        }
+
+        @Override
+        public void run() {
+            app.openring.core.RingGate g = app.openring.core.RingGate.RING;
+            g.syncs.incrementAndGet();
+            try {
+                g.op.lock();
+                try {
+                    Db held = Db.get(c);
+                    storedIn = held.fileName;
+                    held.holdForRing();
+                    try {
+                        long epoch = held.kvLong("epoch", 1);
+                        for (int b = 0; b < batches; b++) {
+                            List<RingEvent> ev = new ArrayList<RingEvent>();
+                            for (int i = 0; i < 50; i++) {
+                                long ds = DS219 + b * 1000L + i * 10;
+                                ev.add(new RingEvent(EventCodec.MOTION_EVENT, ds, new byte[] {(byte) b, (byte) i, 2, 19}));
+                            }
+                            held.insertBatch(ev, epoch, T0);
+                            lastCursor = DS219 + (b + 1) * 1000L;
+                            held.put("cursor", lastCursor);
+                            stored++;
+                            if (b == 0) first.countDown();
+                            Thread.sleep(pauseMs);
+                        }
+                    } finally {
+                        held.releaseForRing();
+                    }
+                } finally {
+                    g.op.unlock();
+                }
+                Db after = Db.get(c);
+                analysedIn = after.fileName;
+                Analyzer.run(c, null);
+            } catch (Throwable t) {
+                err = t;
+            } finally {
+                first.countDown();
+                g.syncs.decrementAndGet();
+            }
+        }
+    }
+
+    static long kvIn(java.io.File f, String k) throws Exception {
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement(); java.sql.ResultSet r = st.executeQuery("SELECT v FROM kv WHERE k = '" + k + "'")) {
+            return r.next() && r.getString(1) != null ? Long.parseLong(r.getString(1)) : -1;
+        }
+    }
+
+    /** Events, the sum over the events, nights and the sum over the nights, cursor and epoch of a history file. */
+    static String history219(java.io.File f) throws Exception {
+        return countIn(f, "SELECT COUNT(*) FROM events") + " events, sum " + countIn(f, EVENTS_SUM) + ", " + countIn(f, "SELECT COUNT(*) FROM nights")
+                + " nights, sum " + countIn(f, NIGHTS_SUM) + ", cursor " + kvIn(f, "cursor") + ", epoch " + kvIn(f, "epoch");
+    }
+
+    /** The same for the phone's real history (closed for it, so every write is in the file). */
+    static String phone219(Context c) throws Exception {
+        Db.get(c).close();
+        return history219(c.getDatabasePath(Db.REAL));
+    }
+
+    /**
+     * Restores {@code backup} onto {@code ph} while a made up sync download stores: the restored history must be the
+     * backup exactly (none of the download's events, its cursor and epoch), and the download stored every batch into the
+     * history it began with, before the swap.
+     */
+    static void restoreDuringDownload219(Context ph, byte[] backup, String label) throws Exception {
+        java.io.File want = fileOf(zipEntry(backup, "openring.db"));
+        String expected = history219(want);
+        Download219 dl = new Download219(ph, 20, 25);
+        dl.start();
+        check("#219 " + label + ": the download stores its first batch", dl.first.await(60, java.util.concurrent.TimeUnit.SECONDS) && dl.err == null, dl.err);
+        app.openring.data.Backup.Plan plan = app.openring.data.Backup.prepare(ph, new java.io.ByteArrayInputStream(backup));
+        app.openring.data.Backup.Result res = app.openring.data.Backup.finish(ph, plan, true);
+        dl.join(120000);
+        check("#219 " + label + ": the restore of the history works", res.ok && res.history, res.message);
+        check("#219 " + label + ": the download stored every batch, into the history it began with", dl.err == null && dl.stored == 20
+                && Db.REAL.equals(dl.storedIn) && Db.REAL.equals(dl.analysedIn), dl.err != null ? dl.err : dl.stored + " batches");
+        Db now = Db.get(ph);
+        long mixed = now.count("SELECT COUNT(*) FROM events WHERE ds >= " + DS219);
+        check("#219 " + label + ": none of the download's events in the restored history", mixed == 0, mixed + " events");
+        String got = phone219(ph);
+        check("#219 " + label + ": the restored history is the backup exactly (events, nights, cursor, epoch)", got.equals(expected), got + " / " + expected);
+        check("#219 " + label + ": no old copy and no restore file left", !new java.io.File(ph.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
+        noTemp(ph, "after the restore during a download (" + label + ")");
+    }
+
+    static void swapDuringSync219(byte[] full) throws Exception {
+        byte[] dbBytes = zipEntry(full, "openring.db");
+
+        // 1. a restore while a sync download stores (this version's backup)
+        Context ph = freshDb("openring219");
+        check("#219 set up: a phone with a history", app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(full)).ok, "");
+        Db.get(ph).put("cursor", 12345);
+        restoreDuringDownload219(ph, full, "this version");
+
+        // 2. the same with a backup of an older version (5, before the read ranges of the screen log)
+        byte[] older = withDb(full, alter(dbBytes, 5, "DROP TABLE screen_reads"));
+        restoreDuringDownload219(ph, older, "older version");
+        check("#219 older version: the restored history was upgraded", Db.get(ph).count("SELECT COUNT(*) FROM screen_reads") >= 1, "");
+
+        // 3. a large history (8 weeks, analysed) and its own backup, restored while the download stores
+        Context big = history230("openring219-large", T230, 56);
+        Analyzer.run(big, null);
+        java.io.ByteArrayOutputStream bigBackup = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(big, bigBackup, true);
+        check("#219 set up: the large history has thousands of events and its nights",
+                Db.get(big).eventCount() > 20000 && Db.get(big).count("SELECT COUNT(*) FROM nights") > 40, Db.get(big).eventCount());
+        restoreDuringDownload219(big, bigBackup.toByteArray(), "large history");
+
+        // 4. a restore that is stopped while it waits for the ring changes nothing
+        Context st = freshDb("openring219-stop");
+        app.openring.data.Backup.read(st, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Prefs.of(st).setScreenGoalMin(45);
+        Db.get(st).put("cursor", 777);
+        final String before = phone219(st);
+        final byte[] keyBefore = app.openring.data.Prefs.of(st).loadKey();
+        final Context stF = st;
+        final app.openring.data.Backup.Result[] out = new app.openring.data.Backup.Result[1];
+        final Throwable[] err = new Throwable[1];
+        final byte[] other = withDb(full, alter(dbBytes, 6, "DELETE FROM events WHERE id % 2 = 0"));
+        Thread restore = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    app.openring.data.Backup.Plan p = app.openring.data.Backup.prepare(stF, new java.io.ByteArrayInputStream(other));
+                    out[0] = app.openring.data.Backup.finish(stF, p, true);
+                } catch (Throwable t) {
+                    err[0] = t;
+                }
+            }
+        });
+        // a ring task (Live, the finder) holds the ring
+        app.openring.core.RingGate.RING.op.lock();
+        try {
+            restore.start();
+            long until = System.currentTimeMillis() + 20000;
+            while (restore.getState() != Thread.State.TIMED_WAITING && restore.isAlive() && System.currentTimeMillis() < until) Thread.sleep(1);
+            check("#219 stopped: the restore waits for the ring", restore.getState() == Thread.State.TIMED_WAITING, restore.getState());
+            restore.interrupt();
+            restore.join(60000);
+        } finally {
+            app.openring.core.RingGate.RING.op.unlock();
+        }
+        check("#219 stopped: the restore says the ring was still syncing, nothing restored", err[0] == null && out[0] != null && !out[0].ok
+                && app.openring.core.RingGate.RESTORE_REFUSED.equals(out[0].message), err[0] != null ? err[0] : out[0] == null ? null : out[0].message);
+        check("#219 stopped: the history is as it was", phone219(st).equals(before), phone219(st) + " / " + before);
+        check("#219 stopped: key and settings as they were", java.util.Arrays.equals(app.openring.data.Prefs.of(st).loadKey(), keyBefore)
+                && app.openring.data.Prefs.of(st).screenGoalMin() == 45, "");
+        check("#219 stopped: no old copy left", !new java.io.File(st.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
+        noTemp(st, "after a restore stopped while it waited");
+
+        // 5. entering demo mode while a sync downloads: it waits, the sync stays on the real history
+        Context dm = freshDb("openring219-demo");
+        app.openring.data.Backup.read(dm, new java.io.ByteArrayInputStream(full));
+        final String realBefore = phone219(dm);
+        Download219 dl = new Download219(dm, 20, 25);
+        dl.start();
+        check("#219 demo: the download stores its first batch", dl.first.await(60, java.util.concurrent.TimeUnit.SECONDS) && dl.err == null, dl.err);
+        final StringBuilder steps = new StringBuilder();
+        final Throwable[] demoErr = new Throwable[1];
+        final Context dmF = dm;
+        Thread demo = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    app.openring.data.Demo.enter(dmF, new app.openring.data.Demo.Progress() {
+                        @Override
+                        public void step(String what) {
+                            synchronized (steps) {
+                                steps.append(what).append('\n');
+                            }
+                        }
+                    }, LocalDate.parse("2026-10-22"), LocalDate.parse("2026-10-22").atTime(9, 0).atZone(ZoneId.systemDefault()).toEpochSecond());
+                } catch (Throwable t) {
+                    demoErr[0] = t;
+                }
+            }
+        });
+        demo.start();
+        Thread.sleep(150);
+        boolean offMeanwhile = !app.openring.data.Prefs.of(dm).demo() && dl.isAlive();
+        String said;
+        synchronized (steps) {
+            said = steps.toString();
+        }
+        check("#219 demo: demo mode stays off while the download stores, and the dialog says why",
+                offMeanwhile && said.startsWith(app.openring.core.RingGate.WAIT_RING), offMeanwhile + ", " + said);
+        dl.join(120000);
+        demo.join(120000);
+        check("#219 demo: the download stored every batch into the real history and analysed it there", dl.err == null && dl.stored == 20
+                && Db.REAL.equals(dl.storedIn) && Db.REAL.equals(dl.analysedIn), dl.err != null ? dl.err : dl.analysedIn);
+        check("#219 demo: then the demo was built in its own file", demoErr[0] == null && app.openring.data.Prefs.of(dm).demo()
+                && Db.DEMO.equals(Db.get(dm).fileName) && Db.get(dm).count("SELECT COUNT(*) FROM events WHERE ds >= " + DS219) == 0, demoErr[0]);
+        check("#219 demo: leaving it brings the real history back", app.openring.data.Demo.leave(dm), "");
+        Db real = Db.get(dm);
+        check("#219 demo: the real history holds every downloaded event and the download's cursor", real.count("SELECT COUNT(*) FROM events WHERE ds >= " + DS219) == 20 * 50
+                && real.kvLong("cursor", -1) == dl.lastCursor, real.count("SELECT COUNT(*) FROM events WHERE ds >= " + DS219));
+        check("#219 demo: and every event it had before", real.eventCount() == countIn(fileOf(dbBytes), "SELECT COUNT(*) FROM events") + 20 * 50, realBefore);
+        freshDb("openring219-done");
     }
 }
