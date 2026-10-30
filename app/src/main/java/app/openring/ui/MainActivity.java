@@ -196,7 +196,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * Further analysis on the Sleep page, period (int) picks its range, day (yyyy-mm-dd) a date,
      * finder (boolean) opens Find my ring, finder_turn (boolean) with it shows the demo's turn on the
      * spot instead of its walk, finder_start (boolean) the screen before any walk, finder_details
-     * (boolean) opens the full last worn text and How it works (issue #191).
+     * (boolean) opens the full last worn text and How it works (issue #191), live (boolean, demo mode
+     * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -215,6 +216,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // screen test: open Settings at a card ("stages")
         String section = i.getStringExtra("settings");
         if (section != null) startActivity(new Intent(this, SettingsActivity.class).putExtra("section", section));
+        // screen test: open Live with its made up readings (issue #185); only in demo mode, so no other app can start a
+        // ring session this way
+        if (i.getBooleanExtra("live", false) && Prefs.of(this).demo()) live(i.getBooleanExtra("live_spo2", false));
         // screen test: open Find my ring (issue #74)
         if (i.getBooleanExtra("finder", false)) {
             startActivity(new Intent(this, FinderActivity.class).putExtra("demo_turn", i.getBooleanExtra("finder_turn", false))
@@ -611,12 +615,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
     }
 
     @Override
-    public void live() {
-        if (Prefs.of(this).demo()) {
-            android.widget.Toast.makeText(this, "Live needs a real ring. Leave the demo in Settings first.", android.widget.Toast.LENGTH_LONG).show();
-            return;
-        }
-        startActivity(new Intent(this, LiveActivity.class));
+    public void live(boolean spo2) {
+        // in demo mode Live shows made up readings and never uses the ring (issue #185)
+        startActivity(new Intent(this, LiveActivity.class).putExtra("spo2", spo2));
     }
 
     @Override

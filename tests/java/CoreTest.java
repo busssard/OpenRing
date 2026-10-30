@@ -901,6 +901,9 @@ public class CoreTest {
         decoders();
         ringTasks();
         liveSessions();
+        demoRing();
+        liveScreen();
+        demoLive();
         liveFeed();
         requests();
         auth();
@@ -3567,6 +3570,126 @@ public class CoreTest {
         check("live sessions: concurrent starts made new sessions", !tokens.isEmpty());
         eq("live sessions: after concurrent starts the newest token is the one marked running", c.running(), Collections.max(tokens));
         check("live sessions: and it is the current one", c.isCurrent(c.running()));
+    }
+
+    /** Issue #185: demo mode never connects to the ring and never stores what a ring sends. */
+    static void demoRing() {
+        check("demo ring: real mode with the real file may use the ring", RingTasks.demoRefusal(false, false) == null);
+        eq("demo ring: demo mode is refused", RingTasks.demoRefusal(true, true), SyncError.DEMO_RING);
+        // switching over: the setting and the open file can differ for a moment, either one refuses
+        eq("demo ring: demo turned on, the real file still open", RingTasks.demoRefusal(true, false), SyncError.DEMO_RING);
+        eq("demo ring: demo turned off, the demo file still open", RingTasks.demoRefusal(false, true), SyncError.DEMO_RING);
+        eq("demo ring: reads as demo", SyncError.kind(SyncError.DEMO_RING), SyncError.Kind.DEMO);
+        eq("demo ring: a sync still says syncing is off", SyncError.plain(SyncError.DEMO_RING), "Syncing is off in demo mode.");
+        String other = "The ring is not used in demo mode. Leave the demo in Settings to use your ring.";
+        for (SyncError.Task t : new SyncError.Task[] {SyncError.Task.LIVE, SyncError.Task.ACTION, SyncError.Task.PAIR}) {
+            eq("demo ring: plain sentence for " + t, SyncError.plain(SyncError.DEMO_RING, t), other);
+            eq("demo ring: the sync's own text reads the same for " + t, SyncError.plain("Demo mode: syncing is off", t), other);
+        }
+        check("demo ring: not tried again", !SyncError.retryable(SyncError.DEMO_RING, true));
+        check("demo ring: no failure notice", SyncError.failureNotice(false, SyncError.DEMO_RING) == null);
+        String g = SyncError.game(SyncError.DEMO_RING);
+        eq("demo ring: game text", g, "Ring motion stopped. The ring is not used in demo mode. Touch steering works meanwhile.");
+        check("demo ring: game text fits", gameFits(g));
+    }
+
+    /** Issues #185 and #187: Live measures only in front, and in demo mode only made up readings. */
+    static void liveScreen() {
+        LiveScreen l = new LiveScreen();
+        check("live screen: nothing measures before it is in front", l.running() == null && l.restart() == null && l.pause() == null);
+        eq("live screen: in front it starts the ring", l.resume(false), LiveScreen.Source.RING);
+        eq("live screen: first start text", l.startText(), "Starting");
+        check("live screen: a second resume starts nothing", l.resume(false) == null && l.running() == LiveScreen.Source.RING);
+        eq("live screen: the blood oxygen switch restarts the ring in front", l.restart(), LiveScreen.Source.RING);
+        eq("live screen: leaving the front stops the ring", l.pause(), LiveScreen.Source.RING);
+        check("live screen: a second pause stops nothing", l.pause() == null && l.running() == null);
+        check("live screen: the switch while hidden restarts nothing", l.restart() == null);
+        eq("live screen: back in front starts the ring again", l.resume(false), LiveScreen.Source.RING);
+        eq("live screen: and says why it starts again", l.startText(), LiveScreen.AGAIN);
+        check("live screen: the text names the sync", LiveScreen.AGAIN.contains("sync can use the ring"));
+
+        LiveScreen d = new LiveScreen();
+        for (int i = 0; i < 3; i++) {
+            eq("live screen: demo mode starts demo readings, round " + i, d.resume(true), LiveScreen.Source.DEMO);
+            eq("live screen: demo text, round " + i, d.startText(), LiveScreen.DEMO_STATE);
+            eq("live screen: the switch in demo restarts demo readings, round " + i, d.restart(), LiveScreen.Source.DEMO);
+            eq("live screen: demo stops demo readings, round " + i, d.pause(), LiveScreen.Source.DEMO);
+        }
+        check("live screen: demo text says no ring is connected", LiveScreen.DEMO_STATE.contains("no ring is connected"));
+
+        // the whole sequence with the session tokens (issue #187 on top of #153): Live in front, Home, back within seconds
+        LiveScreen sc = new LiveScreen();
+        LiveSessions s = new LiveSessions();
+        check("live pause: in front", sc.resume(false) == LiveScreen.Source.RING);
+        int first = s.start(false);
+        eq("live pause: the first session", first, 1);
+        check("live pause: Home stops the ring session", sc.pause() == LiveScreen.Source.RING);
+        s.stop();
+        check("live pause: the session is no longer current, so it leaves its loop and frees the ring", !s.isCurrent(first));
+        check("live pause: back in front", sc.resume(false) == LiveScreen.Source.RING);
+        int again = s.start(false);
+        check("live pause: a new session is queued behind the one cleaning up, not joined", again != 0 && again != first && s.isCurrent(again));
+        s.ended(first);
+        eq("live pause: the old session ending keeps the new one", s.running(), again);
+        // left while the new session still waited for the ring: it is stale and clears itself
+        check("live pause: left again", sc.pause() == LiveScreen.Source.RING);
+        s.stop();
+        check("live pause: the queued session is stale and does not take the ring", s.stale(again) && s.running() == 0);
+    }
+
+    /** Issue #185: the made up Live readings of demo mode. */
+    static void demoLive() {
+        DemoLive a = new DemoLive(185), b = new DemoLive(185);
+        List<Integer> beats = new ArrayList<Integer>();
+        double sum = 0;
+        boolean same = true, plausible = true, spo2Early = false, spo2Range = true, tempRange = true;
+        int spo2Count = 0;
+        for (int k = 1; k <= 30; k++) {
+            double t = k * DemoLive.STEP_S;
+            DemoLive.Batch x = a.next(t, true), y = b.next(t, true);
+            same &= Arrays.equals(x.beats, y.beats) && Arrays.equals(x.spo2, y.spo2) && x.temp == y.temp;
+            for (int v : x.beats) {
+                beats.add(v);
+                sum += v / 1000.0;
+                plausible &= EventCodec.plausibleIbi(v);
+            }
+            if (t <= DemoLive.SPO2_AFTER_S) spo2Early |= x.spo2.length > 0;
+            for (int v : x.spo2) spo2Range &= v >= 95 && v <= 99;
+            spo2Count += x.spo2.length;
+            tempRange &= x.temp >= 33.5 && x.temp <= 34;
+        }
+        check("demo live: the same seed gives the same readings", same);
+        check("demo live: every beat is a plausible beat", plausible && !beats.isEmpty());
+        // beats follow each other without gaps: together they reach the time asked, by less than one beat more
+        check("demo live: beats cover the 120 s asked", sum >= 120 && sum < 120 + 1.3);
+        LiveHrv h = new LiveHrv(40);
+        for (int v : beats) h.add(v);
+        double r = h.rmssd();
+        check("demo live: HRV through LiveHrv is 30 to 60 ms (" + r + ")", r >= 30 && r <= 60);
+        double bpm = 60.0 * beats.size() / sum;
+        check("demo live: heart rate 55 to 72 bpm (" + bpm + ")", bpm >= 55 && bpm <= 72);
+        check("demo live: no blood oxygen in the first 20 s", !spo2Early);
+        eq("demo live: then one blood oxygen value a second", spo2Count, 100);
+        check("demo live: blood oxygen 95 to 99 %", spo2Range);
+        check("demo live: temperature 33.5 to 34 C", tempRange);
+        check("demo live: nothing new for the same time", a.next(120, true).beats.length == 0 && a.next(120, true).spo2.length == 0);
+
+        // without the switch no blood oxygen; switched on later, it waits its 20 s again
+        DemoLive c = new DemoLive(7);
+        int off = c.next(40, false).spo2.length;
+        int soon = c.next(56, true).spo2.length;
+        int later = c.next(64, true).spo2.length;
+        check("demo live: no blood oxygen without the switch", off == 0);
+        check("demo live: switched on at 40 s, nothing before 60 s", soon == 0);
+        eq("demo live: switched on at 40 s, values from 60 s", later, 4);
+
+        // paused (screen not in front) from 64 to 300 s: that time has no readings, the beats go on after it
+        c.skipTo(300);
+        DemoLive.Batch p = c.next(304, true);
+        double span = 0;
+        for (int v : p.beats) span += v / 1000.0;
+        check("demo live: after a pause only the new seconds have beats", span >= 4 && span < 4 + 1.3);
+        check("demo live: after a pause blood oxygen needs its still hand again", p.spo2.length == 0);
     }
 
     /** Issue #152: always on heart rate never becomes a beat interval, so it never feeds live HRV. */

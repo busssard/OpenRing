@@ -27,6 +27,7 @@ import app.openring.core.HistoryBatch;
 import app.openring.core.Protocol;
 import app.openring.core.RingClient;
 import app.openring.core.RingEvent;
+import app.openring.core.RingTasks;
 import app.openring.core.SyncError;
 import app.openring.core.Texts;
 import app.openring.data.Analyzer;
@@ -187,6 +188,26 @@ public final class RingManager {
         forceStatus(s);
     }
 
+    /**
+     * The demo rule of {@code core/RingTasks.demoRefusal} for now: null when a ring task may connect and store, otherwise
+     * the raw text {@link SyncError#DEMO_RING} (issue #185). Demo mode never uses the ring and its file never gets ring data.
+     */
+    private String demoRefusal() {
+        return demoRefusal(Db.get(ctx));
+    }
+
+    private String demoRefusal(Db db) {
+        return RingTasks.demoRefusal(Prefs.of(ctx).demo(), Db.DEMO.equals(db.fileName));
+    }
+
+    /** The database a ring task stores into: always the real one, never the demo file (issue #185). */
+    private Db ringDb() throws IOException {
+        Db db = Db.get(ctx);
+        String demo = demoRefusal(db);
+        if (demo != null) throw new IOException(demo);
+        return db;
+    }
+
     /** Status line of the sync itself, also while it analyses. */
     private void forceStatus(String s) {
         status = s;
@@ -209,6 +230,9 @@ public final class RingManager {
     }
 
     private Session open(boolean anyRing, Set<String> exclude) throws IOException, InterruptedException {
+        // every connection starts here: none in demo mode, whichever path asks (issue #185)
+        String demo = demoRefusal();
+        if (demo != null) throw new IOException(demo);
         BluetoothAdapter a = RingScanner.adapter(ctx);
         if (a == null) throw new IOException("This phone has no Bluetooth");
         if (!a.isEnabled()) throw new IOException(SyncError.BLUETOOTH_OFF_TEXT);
@@ -568,7 +592,8 @@ public final class RingManager {
      * before a live measurement).
      */
     private int drainNew(RingClient c, final boolean quiet, final EventObserver observer) throws IOException, InterruptedException, HistoryBatch.BatchException {
-        final Db db = Db.get(ctx);
+        // also a session opened before demo mode was turned on stores nothing into the demo file (issue #185)
+        final Db db = ringDb();
         long now = System.currentTimeMillis() / 1000;
         long epoch = db.kvLong("epoch", 1);
         long cursor = db.kvLong("cursor", 0);
@@ -800,6 +825,12 @@ public final class RingManager {
      */
     public synchronized void startLive(final LiveListener l, final boolean spo2) {
         liveListener = l;
+        // demo mode never uses the ring (issue #185): no session, no worker task; the Live screen shows demo readings
+        String demo = demoRefusal();
+        if (demo != null) {
+            post(SyncError.plain(demo, SyncError.Task.LIVE));
+            return;
+        }
         // rejoin only a session that is still the current one: a stopped one may still be cleaning up
         // (a turned phone, Done and back within seconds), and would end without values (issue #153).
         // LiveSessions.start applies RingTasks.rejoinLive and gives 0 for a rejoin.
@@ -1091,6 +1122,12 @@ public final class RingManager {
     public void startMotion(MotionListener l) {
         motionListener = l;
         final int token = motionToken.incrementAndGet();
+        // demo mode never uses the ring (issue #185): touch steering only
+        String demo = demoRefusal();
+        if (demo != null) {
+            motionState(SyncError.game(demo), false);
+            return;
+        }
         worker.execute(new Runnable() {
             @Override
             public void run() {

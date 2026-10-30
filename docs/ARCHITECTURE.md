@@ -18,7 +18,7 @@ Nothing leaves the phone: the app has no internet permission.
 
 | Package | Responsibility |
 | --- | --- |
-| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line; issues #43 and #153), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
+| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
 | `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
@@ -72,7 +72,11 @@ Nothing leaves the phone: the app has no internet permission.
 | `zones` | The phone's time zone over time (`start`, `stop`, `id`; version 5, issue #22). Noted at every app start and analysis (not in demo mode): the same zone extends the newest row, another zone opens a new one; the first row starts at 0. `Db.zoneAt` gives a night its zone from its end; between two rows the later one counts. Kept by Re analyse all, deleted by Delete all local data |
 | `battery`, `kv` | Battery history; small key value state (cursor, analysis progress, errors) |
 
-Demo mode uses a separate file (`openring-demo.db`), so demo and real data never mix.
+Demo mode uses a separate file (`openring-demo.db`), so demo and real data never mix. Demo mode never uses the ring
+(issue #185): `RingManager.open`, the start of every connection, refuses while demo mode is on or the demo file is open
+(`RingTasks.demoRefusal`, raw text `SyncError.DEMO_RING`), and `drainNew` takes its database through the same check, so
+even a session opened before demo mode was turned on cannot store into the demo file. Live and the games check it before
+they queue anything; Live in demo mode shows made up readings from `core/DemoLive` instead, and the games steer by touch.
 
 Restoring a full backup (`Backup.prepare`, then `finish`) first checks the backup's database on its own
 (`Db.inspect`: `quick_check`, a version this app can open, and every table and column the app has for that
@@ -188,7 +192,7 @@ history had, before anything is written to the file the person picked; otherwise
 ## Threading
 
 `RingManager` runs every ring task on one worker thread and guards the ring with one lock (`op`).
-Anything that holds the ring (live, games) must release it when its screen pauses. Sync waits up to
+Anything that holds the ring (live, games) must release it when its screen pauses (Live since issue #187). Sync waits up to
 15 seconds for the lock, live 10 seconds and games up to 3 minutes; Settings actions on the ring
 (read or switch measurements, factory reset) fail at once with "The ring is busy". A sync releases the
 lock as soon as its download ends, before it reads the screen log and analyses (issue #21); `busy()`
@@ -208,7 +212,9 @@ the current token on, and the running mark holds the token of the newest session
 `LiveSessions.start`); a session that was stopped (turned phone, Done and back) and is still cleaning up
 gets a new session queued behind it on the worker, which waits for the lock as usual. A queued session
 that became stale, or one that ends, clears only its own mark (`stale`, `ended`), so an older session
-never clears a newer one. Messages of an ended session only go to the log.
+never clears a newer one. Messages of an ended session only go to the log. The Live screen measures only while it is in front (issue #187,
+`core/LiveScreen`): `onPause` stops its session, so the ring is free for a background sync once the session has left its
+loop and cleaned up (seconds), and `onResume` starts a new one by the rules above. Values, charts and holds stay on screen.
 
 A long analysis (Re analyse all, or more than 28 days to analyse, `Analyzer.LONG_RUN_DAYS`; issue #230) keeps its
 transaction open for minutes, and on Android every write from another thread waits for it. So before it opens the
