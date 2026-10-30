@@ -223,8 +223,9 @@ when something is new (`Analyzer.upToDate`, issue #194): the results store what 
 `analysis_inputs`: the newest dated event, `analyzed_until`, settings, profile, rule versions, zone and date), and a
 sync that stored nothing, with no event from Live or Find my ring since, no new or changed screen session
 (`ScreenTime.firstChanged`), the same settings and day and dates the new now leaves alone, logs "nothing new since
-the last analysis" instead; `busy()`
-stays true until that analysis is done, so screens reload only then, and the status keeps saying
+the last analysis" instead and summarises only the day still running again, whose Total burn counts up to now
+(`Analyzer.skipAfterSync`, review of #249). `busy()`
+stays true until the analysis is done, so screens reload only then, and the status keeps saying
 "Analysing" (other ring tasks then only write to the log). A sync counts for `busy()` from its start,
 also while it waits for the lock, and Settings "Sync now" refuses while `busy()` like the main screen; when
 two syncs overlap anyway, only the last one to end sets the final line ("Up to date" or its error), so the
