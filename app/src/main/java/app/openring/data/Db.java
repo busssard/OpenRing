@@ -1178,10 +1178,10 @@ public final class Db extends SQLiteOpenHelper {
      * nothing changed. If the app is stopped in the middle, {@link #recoverSwap} puts the old file
      * back before the next open.
      *
-     * Nobody else writes meanwhile: restore runs only on the Setup screen after the key was
-     * cleared (or before one was ever saved), so sync and the background job cannot reach the
-     * ring and stay idle. A running analysis is waited for in {@link Backup#finish} before this
-     * is called.
+     * Nobody else writes meanwhile: {@link Backup#finish} calls this only through
+     * {@code core/RingGate.whenFree} (issue #219), with the ring lock held, no sync under way (a
+     * download keeps its own Db object, which would reopen this file by name) and the analysis
+     * lock held, so no ring task or analysis stores into either file during the swap.
      *
      * Before the rename the real file is checkpointed ({@code wal_checkpoint(TRUNCATE)}), so all
      * of the old history sits in {@code openring.db} itself and its side files hold nothing that

@@ -43,8 +43,22 @@ public final class SetupActivity extends Activity {
         app.openring.data.Backup.Plan prepared;
         app.openring.data.Backup.Result result;
         boolean busy;
-        /** The screen was closed for good: a prepare that finishes later is dropped. */
-        boolean abandoned;
+        /** What a running restore waits for (a sync, an analysis; issue #219), null while it just restores. */
+        String waiting;
+        /** The screen was closed for good: a prepare that finishes later is dropped, a restore still waiting stops. */
+        volatile boolean abandoned;
+        /** This restore counts in {@link #TASKS} (from the picked file to its end). */
+        boolean counted;
+    }
+
+    /** Restore and pairing never at once (review of #248), across rebuilt screens. */
+    static final app.openring.core.SetupTasks TASKS = new app.openring.core.SetupTasks();
+
+    /** The restore of {@code st} ended in any way: a pairing may start again. */
+    static void restoreEnded(Restore st) {
+        if (!st.counted) return;
+        st.counted = false;
+        TASKS.restoreEnded();
     }
 
     private Restore restore;
@@ -91,9 +105,16 @@ public final class SetupActivity extends Activity {
     protected void onActivityResult(int code, int result, Intent data) {
         if (code != RESTORE || result != RESULT_OK || data == null || data.getData() == null) return;
         if (restore.busy || restore.plan != null) return;
+        // a pairing started meanwhile would write a key the restore then replaces (review of #248)
+        String no = TASKS.startRestore(PAIR.running());
+        if (no != null) {
+            restoreStatus(no, Ui.WARN);
+            return;
+        }
         final android.net.Uri uri = data.getData();
         final Context appCtx = getApplicationContext();
         final Restore st = restore;
+        st.counted = true;
         st.busy = true;
         restoreStatus("Restoring", Ui.TEXT_2);
         new android.os.AsyncTask<Void, Void, app.openring.data.Backup.Plan>() {
@@ -120,6 +141,7 @@ public final class SetupActivity extends Activity {
                 st.busy = false;
                 if (st.abandoned) {
                     app.openring.data.Backup.cancel(appCtx, p);
+                    restoreEnded(st);
                     return;
                 }
                 if (st.owner == null) st.prepared = p;
@@ -130,6 +152,7 @@ public final class SetupActivity extends Activity {
 
     void prepared(app.openring.data.Backup.Plan p) {
         if (p.error != null) {
+            restoreEnded(restore);
             restoreStatus(p.error.message, Ui.WARN);
             return;
         }
@@ -194,6 +217,7 @@ public final class SetupActivity extends Activity {
         dialog = null;
         if (restore.plan == p) restore.plan = null;
         app.openring.data.Backup.cancel(this, p);
+        restoreEnded(restore);
         restoreStatus("Nothing was restored.", Ui.TEXT_2);
     }
 
@@ -203,12 +227,26 @@ public final class SetupActivity extends Activity {
         final Context appCtx = getApplicationContext();
         final Restore st = restore;
         st.busy = true;
+        st.waiting = null;
         restoreStatus("Restoring", Ui.TEXT_2);
-        new android.os.AsyncTask<Void, Void, app.openring.data.Backup.Result>() {
+        new android.os.AsyncTask<Void, String, app.openring.data.Backup.Result>() {
             @Override
             protected app.openring.data.Backup.Result doInBackground(Void... v) {
                 try {
-                    return app.openring.data.Backup.finish(appCtx, p, replaceHistory);
+                    // the history is swapped only once no sync stores into it (issue #219); until then the line says why,
+                    // and leaving Setup for good stops the wait (review of #248)
+                    final class Line implements app.openring.data.Backup.Progress, app.openring.core.RingGate.Stop {
+                        @Override
+                        public void step(String what) {
+                            publishProgress(what);
+                        }
+
+                        @Override
+                        public boolean stopped() {
+                            return st.abandoned;
+                        }
+                    }
+                    return app.openring.data.Backup.finish(appCtx, p, replaceHistory, new Line());
                 } catch (Exception e) {
                     android.util.Log.w("OpenRing", "restore: applying the backup failed", e);
                     app.openring.data.Backup.cancel(appCtx, p);
@@ -219,8 +257,16 @@ public final class SetupActivity extends Activity {
             }
 
             @Override
+            protected void onProgressUpdate(String... line) {
+                st.waiting = line[0];
+                if (!st.abandoned && st.owner != null) st.owner.restoreStatus(line[0], Ui.TEXT_2);
+            }
+
+            @Override
             protected void onPostExecute(app.openring.data.Backup.Result r) {
                 st.busy = false;
+                st.waiting = null;
+                restoreEnded(st);
                 if (st.abandoned) return;
                 if (st.owner == null) st.result = r;
                 else st.owner.restored(r);
@@ -249,7 +295,7 @@ public final class SetupActivity extends Activity {
         } else if (restore.plan != null) {
             askReplace(restore.plan);
         } else if (restore.busy) {
-            restoreStatus("Restoring", Ui.TEXT_2);
+            restoreStatus(restore.waiting != null ? restore.waiting : "Restoring", Ui.TEXT_2);
         }
     }
 
@@ -275,6 +321,8 @@ public final class SetupActivity extends Activity {
             app.openring.data.Backup.cancel(this, restore.prepared);
             restore.plan = null;
             restore.prepared = null;
+            // a task still running ends the count itself when it returns
+            if (!restore.busy) restoreEnded(restore);
         }
         super.onDestroy();
     }
@@ -661,6 +709,10 @@ public final class SetupActivity extends Activity {
         secondary(rcard, "Choose backup file", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (PAIR.running()) {
+                    restoreStatus(app.openring.core.SetupTasks.RESTORE_REFUSED, Ui.WARN);
+                    return;
+                }
                 Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 i.addCategory(Intent.CATEGORY_OPENABLE);
                 i.setType("*/*");
@@ -698,6 +750,18 @@ public final class SetupActivity extends Activity {
     void runPair(byte[] key, boolean install, int card) {
         if (!Permissions.granted(this)) {
             Permissions.request(this);
+            return;
+        }
+        // a restore under way would replace the key this pairing writes to the ring (review of #248)
+        String no = TASKS.pairRefusal();
+        if (no != null) {
+            TextView t = pairStatus[card];
+            if (t != null) {
+                t.setTextColor(Ui.WARN);
+                t.setText(no);
+            } else {
+                Toast.makeText(this, no, Toast.LENGTH_SHORT).show();
+            }
             return;
         }
         if (!PAIR.start(card)) {

@@ -94,6 +94,14 @@ public final class Analyzer {
         return RUNS.get() > 0;
     }
 
+    /** {@link #running} for the ring gate: a swap of the database waits for it without the ring held (issue #219). */
+    static final app.openring.core.RingGate.Busy RUNNING = new app.openring.core.RingGate.Busy() {
+        @Override
+        public boolean busy() {
+            return running();
+        }
+    };
+
     /**
      * What the main screen does before it loads a day (review of #243): note the phone's zone and, when a new zone
      * opened, analyse the nights since. While an analysis runs it does nothing and returns false at once, so the

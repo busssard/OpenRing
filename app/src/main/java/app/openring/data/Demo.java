@@ -84,7 +84,44 @@ public final class Demo {
         }
     }
 
-    private static boolean build(Context c, Progress p, LocalDate today, long now) {
+    /**
+     * Demo mode could not be turned on: a sync or another ring task still stored into the real history after
+     * {@link app.openring.core.RingGate#SWAP_WAIT_MS} (issue #219), or the person stopped the wait (a
+     * {@link Progress} that also implements {@code RingGate.Stop}, review of #248). Nothing changed; the message says so.
+     */
+    public static final class NotNow extends RuntimeException {
+        /** What held it up, {@code RingGate.FOR_SYNC} and so on, or {@code STOPPED}: the toast is {@code RingGate.demoRefused(why)}. */
+        public final int why;
+
+        NotNow(int why) {
+            super(app.openring.core.RingGate.demoRefused(why));
+            this.why = why;
+        }
+    }
+
+    private static boolean build(final Context c, final Progress p, final LocalDate today, final long now) {
+        if (Prefs.of(c).demo()) return buildWhenIdle(c, p, today, now);
+        // the switch closes the real database: never while a ring task stores into it (a sync download keeps its own
+        // Db object, and its analysis would run on the demo file afterwards; issue #219). The gate waits for them,
+        // holding nothing, and holds the ring while the demo is switched on and built; once it is on, no ring task
+        // connects or stores (issue #185)
+        final boolean[] built = {false};
+        int why = app.openring.core.RingGate.RING.whenFree(new Runnable() {
+            @Override
+            public void run() {
+                built[0] = buildWhenIdle(c, p, today, now);
+            }
+        }, app.openring.core.RingGate.SWAP_WAIT_MS, Analyzer.RUNNING, p == null ? null : new app.openring.core.RingGate.Wait() {
+            @Override
+            public void waiting(int why) {
+                p.step(app.openring.core.RingGate.waitLine(why));
+            }
+        }, p instanceof app.openring.core.RingGate.Stop ? (app.openring.core.RingGate.Stop) p : null);
+        if (why != app.openring.core.RingGate.RAN) throw new NotNow(why);
+        return built[0];
+    }
+
+    private static boolean buildWhenIdle(Context c, Progress p, LocalDate today, long now) {
         // the switch closes the real database: never under an analysis's open transaction (review of #243), so a
         // running one is waited for, and none starts until the demo is built
         if (Analyzer.running() && p != null) p.step(WAITING);
@@ -94,7 +131,7 @@ public final class Demo {
     }
 
     /** The demo's progress line while a re analysis of the person's history ends first (review of #243). */
-    public static final String WAITING = "Waiting for the re analysis of your history to finish";
+    public static final String WAITING = app.openring.core.RingGate.WAIT_ANALYSIS;
 
     private static boolean buildLocked(Context c, Progress p, LocalDate today, long now) {
         Prefs.of(c).setDemo(true);
