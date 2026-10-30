@@ -811,6 +811,7 @@ public class PipelineTest {
         restore220();
         largeHistory220();
         emptySync194();
+        runningDay194();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -6505,5 +6506,36 @@ public class PipelineTest {
         System.out.println("  #220 random histories: " + runs + " datings, " + fast + " of the new part only; all dated again: " + why);
         check("#220 random histories: every step as the old full rewrite, also through the step", failed == failedBefore, failed - failedBefore);
         check("#220 random histories: most datings read the new part only", fast * 2 > runs, fast + " of " + runs);
+    }
+    /**
+     * Review of #249: the newest day still running keeps its Total burn "so far" up to the latest sync attempt also when
+     * nothing new came, as a full analysis would give it.
+     */
+    static void runningDay194() throws Exception {
+        Context c = history230("openring194-today", T230, 21);
+        long t1 = T230 + 21 * 86400L + 15 * 3600;
+        setStatic("testNow", t1);
+        try {
+            Analyzer.run(c, null);
+            Db db = Db.get(c);
+            String today = LocalDate.parse("2026-01-05").plusDays(21).toString();
+            JSONObject d1 = new JSONObject(db.dayJson(today));
+            check("#194 set up: the newest day is still running at the analysis (so far up to then)", d1.optLong("total_until", -1) == t1, d1.optLong("total_until", -1));
+            long t2 = t1 + 2 * 3600;
+            setStatic("testNow", t2);
+            java.lang.reflect.Method m = Analyzer.class.getDeclaredMethod("skipAfterSync", Context.class, Analyzer.Log.class, long.class);
+            m.setAccessible(true);
+            boolean skipped = (Boolean) m.invoke(null, c, null, t2);
+            JSONObject d2 = new JSONObject(db.dayJson(today));
+            check("#194 nothing new two hours later: the analysis is skipped", skipped, null);
+            check("#194 skipped, yet the running day counts up to now: so far up to the new time, more resting burn", d2.optLong("total_until", -1) == t2
+                    && d2.optDouble("total_kcal") > d1.optDouble("total_kcal"), d2.optLong("total_until", -1) + ", " + d1.optDouble("total_kcal") + " to " + d2.optDouble("total_kcal"));
+            List<String> after = results139(db);
+            Analyzer.run(c, null);
+            check("#194 the skip with the day so far gives the nights and days of a full analysis then, byte for byte", results139(db).equals(after),
+                    firstDiff(results139(db), after));
+        } finally {
+            setStatic("testNow", 0L);
+        }
     }
 }

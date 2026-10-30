@@ -435,18 +435,19 @@ public final class RingManager {
             }
             try {
                 if (!stopped && Db.get(ctx).hasEvents()) {
-                    if (Analyzer.upToDate(ctx)) {
+                    Analyzer.Log alog = new Analyzer.Log() {
+                        @Override
+                        public void log(String m) {
+                            RingManager.this.log(m);
+                        }
+                    };
+                    if (Analyzer.skipAfterSync(ctx, alog)) {
                         // nothing stored since the last analysis (a failed attempt, nothing new on the ring): its
-                        // nights and days are what a new run would give, so it is not done again (issue #194)
+                        // nights and days are what a new run would give, so only the day so far is summarised (issue #194)
                         log("nothing new since the last analysis, not analysed again");
                     } else {
                         forceStatus("Analysing");
-                        Analyzer.run(ctx, new Analyzer.Log() {
-                            @Override
-                            public void log(String m) {
-                                RingManager.this.log(m);
-                            }
-                        });
+                        Analyzer.run(ctx, alog);
                     }
                 }
             } catch (Throwable e) {

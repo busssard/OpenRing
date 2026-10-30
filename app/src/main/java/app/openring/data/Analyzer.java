@@ -117,6 +117,38 @@ public final class Analyzer {
         return stored.equals(inputs(st.lastId, db.kvLong("analyzed_until", 0), nowUnix));
     }
 
+    /**
+     * After a sync: true when nothing is new ({@link #upToDate}); then only the day still running is summarised again,
+     * since its Total burn counts up to now ("So far (up to 08:07)", issue #155), in one transaction. False: the caller
+     * runs the analysis.
+     */
+    public static boolean skipAfterSync(Context c, Log log) {
+        return skipAfterSync(c, log, testNow > 0 ? testNow : System.currentTimeMillis() / 1000);
+    }
+
+    static synchronized boolean skipAfterSync(Context c, Log log, long nowUnix) {
+        final Analyzer a = new Analyzer(c, log);
+        if (!a.upToDate(nowUnix)) return false;
+        final String today = a.date(nowUnix);
+        String stored = a.db.dayJson(today);
+        if (stored == null || !stored.contains("\"total_until\"")) return true;
+        final double sure = a.db.undatedAfterNewest() ? a.db.timeState(nowUnix).dmax : Double.POSITIVE_INFINITY;
+        try {
+            a.db.inTransaction(new Runnable() {
+                @Override
+                public void run() {
+                    a.analyzeDay(LocalDate.parse(today), sure);
+                }
+            });
+        } catch (Throwable e) {
+            // rolled back: the day keeps its last summary; the next analysis stores its error as usual
+            a.log.log("the day so far was not updated: " + e);
+            return true;
+        }
+        a.log.log("nothing new since the last analysis, only the day so far updated");
+        return true;
+    }
+
     /** What an analysis of the events up to id {@code lastId}, analysed up to {@code until}, on the day of {@code nowUnix} depends on. */
     private String inputs(long lastId, long until, long nowUnix) {
         return lastId + " " + until + " " + prefs.stageDetail() + " " + (prefs.screenAwake() ? 1 : 0) + " " + StageFilter.VERSION + " "
@@ -235,7 +267,7 @@ public final class Analyzer {
         final double from = all || until <= 0 ? range[0] : Math.max(range[0], until - 2 * 86400);
         boolean longRun = all || range[1] - from > LONG_RUN_DAYS * 86400.0;
         // read before the run: a setting changed meanwhile is not taken as analysed (issue #194)
-        final String inputs = inputs(t.lastId, (long) range[1], now);
+        final String inputs = inputs(t.lastId, (long) range[1], testNow > 0 ? testNow : now);
         if (longRun) {
             int waited = db.beginLongRun();
             if (waited > 0) log.log("a long analysis: waited for a ring task to store its data");
