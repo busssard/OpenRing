@@ -108,6 +108,14 @@ public final class Explain {
     /** Find my ring, How it works: the clicks chip in the top bar (issue #191). */
     public static final String FINDER_CLICKS = "Clicks (top right): a click and a short buzz, faster as the signal gets stronger. Tap to switch them off or on.";
 
+    /**
+     * What a left out time does (issue #254): Settings, Advanced, and the Left out cards on Today, Sleep and Activity.
+     */
+    public static final String LEFT_OUT = "A left out time is a stretch when someone else wore your ring. Its nights, heart rate, temperature "
+            + "and activity are left out of your charts, scores and usual values (resting heart rate, HRV, skin temperature and your "
+            + "sleep pattern). Its minutes are not in your daily movement. The ring's data itself stays stored on this phone, and it counts again "
+            + "as soon as you remove the left out time in Settings, Advanced. The app cannot tell who wore the ring; you pick the time.";
+
     public static String of(String key) {
         if (key == null) return null;
         switch (key) {

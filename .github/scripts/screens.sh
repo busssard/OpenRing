@@ -214,6 +214,14 @@ launch --ez finder true --ez finder_blink true; shot finder-blink 3
 # 20 s in and arrives with the batch at 24 s, so the shot waits 26 s. Then the charts below the tiles
 launch --ez live true --ez live_spo2 true;  shot live 26
 swipe_up; swipe_up;                         shot live-charts 1
+# A time left out because someone else wore the ring (issue #254), last: the example changes the demo's results for
+# every shot after it. left_out leaves out the day before yesterday 13:00 to 17:00, only in demo mode (the demo file),
+# then the analysis runs again: the Body tab shows the grey band on Heart rate today, Today the Left out card, and
+# Settings, Advanced the time in its list
+LEFT_DAY=$(date -d '2 days ago' +%F)
+launch --ez left_out true --ei tab 4 --es day "$LEFT_DAY"; shot body-left-out 10
+launch --ei tab 0 --es day "$LEFT_DAY";     shot today-left-out
+launch --es settings advanced;              shot settings-advanced
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then

@@ -31,6 +31,11 @@ public final class DayData {
     public app.openring.data.ScreenDays.Info screen;
     /** The zone this day is shown in: its main night's, else the zone noted then, else the phone's (issue #22). */
     public java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+    /**
+     * The times left out because someone else wore the ring (issue #254) that reach this day or the day before (its night),
+     * merged, oldest first, each {start, stop}. Empty for nearly everyone.
+     */
+    public final List<double[]> leftOut = new ArrayList<double[]>();
 
     public static DayData load(Context c, LocalDate date) {
         Db db = Db.get(c);
@@ -47,6 +52,12 @@ public final class DayData {
         java.time.ZoneId phone = java.time.ZoneId.systemDefault();
         java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(date.atTime(12, 0).atZone(phone).toEpochSecond()));
         d.zone = Json.zone(d.night, noted == null ? phone : noted);
+        try {
+            double ds = d.dayStart(), de = d.dayEnd();
+            for (double[] r : db.leftOut().ranges()) if (r[1] > ds - 2 * 86400 && r[0] < de + 86400) d.leftOut.add(r);
+        } catch (RuntimeException ignored) {
+            // shown without the left out cards, the results never hold left out data anyway
+        }
         // a window around the date, so an old date loads as fast as a recent one (issue #98)
         for (String s : db.recentNights(date, LocalDate.now())) {
             JSONObject o = Json.parse(s);
@@ -123,6 +134,39 @@ public final class DayData {
     /** The orange line after a trip: the main night's zone differs from the main night before it (issue #22). */
     public String travelLine() {
         return app.openring.data.SleepHistory.travelLine(night, recent);
+    }
+
+    /** Midnight starting this day in its zone. */
+    public double dayStart() {
+        return date.atStartOfDay(zone).toEpochSecond();
+    }
+
+    /** Midnight ending this day in its zone (23 or 25 hours after the start on a clock change). */
+    public double dayEnd() {
+        return date.plusDays(1).atStartOfDay(zone).toEpochSecond();
+    }
+
+    /** The left out times that overlap this day itself, whole (issue #254). */
+    public List<double[]> leftOutToday() {
+        List<double[]> out = new ArrayList<double[]>();
+        double ds = dayStart(), de = dayEnd();
+        for (double[] r : leftOut) if (r[1] > ds && r[0] < de) out.add(r);
+        return out;
+    }
+
+    /** The left out parts of this day, cut at its midnights (issue #254). */
+    public List<double[]> leftOutPieces() {
+        return app.openring.core.analysis.LeftOut.of(leftOut).pieces(dayStart(), dayEnd());
+    }
+
+    /** Seconds of this day that are left out. */
+    public double leftOutSeconds() {
+        return app.openring.core.analysis.LeftOut.of(leftOut).seconds(dayStart(), dayEnd());
+    }
+
+    /** The whole day is left out: its screens show the Left out card instead of "No data for this day yet". */
+    public boolean allLeftOut() {
+        return !leftOut.isEmpty() && leftOutSeconds() >= dayEnd() - dayStart();
     }
 
     public boolean empty() {
