@@ -157,9 +157,15 @@ public final class Prefs {
      * Keeps a key about to be written to the ring, encrypted like the saved key, beside it (the saved key stays as it
      * is). Written to disk before it returns ({@code commit}); false when that failed, then nothing goes to the ring.
      */
-    public boolean keepPendingKey(byte[] key16) {
-        return put(sp.edit(), "pending_key_enc", "pending_key_iv", encrypt(key16)).commit();
+    public boolean keepPendingKey(byte[] key16, String serial) {
+        SharedPreferences.Editor e = put(sp.edit(), "pending_key_enc", "pending_key_iv", encrypt(key16));
+        if (serial == null) e.remove("pending_key_serial");
+        else e.putString("pending_key_serial", serial);
+        return e.commit();
     }
+
+    /** The serial of the ring the kept key was meant for, or null. */
+    public String pendingKeySerial() { return sp.getString("pending_key_serial", null); }
 
     /** The key kept from a pairing that did not finish, or null. */
     public byte[] pendingKey() {
@@ -167,18 +173,20 @@ public final class Prefs {
     }
 
     public void forgetPendingKey() {
-        sp.edit().remove("pending_key_enc").remove("pending_key_iv").commit();
+        sp.edit().remove("pending_key_enc").remove("pending_key_iv").remove("pending_key_serial").commit();
     }
 
     /**
      * A pairing the ring accepted, in one write to disk: the key, the ring's address and serial, set up, and the note
-     * that the key page was not shown yet; the kept key goes. False when the write failed.
+     * that the key page was not shown yet; the kept key goes with {@code dropPending} (it was meant for this ring).
+     * False when the write failed.
      */
-    public boolean pairDone(byte[] key16, String address, String serial, String message) {
+    public boolean pairDone(byte[] key16, String address, String serial, String message, boolean dropPending) {
         SharedPreferences.Editor e = put(sp.edit(), "key_enc", "key_iv", encrypt(key16));
         if (address != null) e.putString("address", address);
-        return e.putString("serial", serial).putBoolean("setup_done", true).putString("pair_unseen", message)
-                .remove("pending_key_enc").remove("pending_key_iv").commit();
+        e.putString("serial", serial).putBoolean("setup_done", true).putString("pair_unseen", message);
+        if (dropPending) e.remove("pending_key_enc").remove("pending_key_iv").remove("pending_key_serial");
+        return e.commit();
     }
 
     /** The message of a pairing whose key page the person has not left yet, or null. */

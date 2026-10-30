@@ -752,8 +752,13 @@ public final class RingManager {
                             }
 
                             @Override
-                            public boolean keep(byte[] key) {
-                                return prefs.keepPendingKey(key);
+                            public String keptSerial() {
+                                return prefs.pendingKeySerial();
+                            }
+
+                            @Override
+                            public boolean keep(byte[] key, String serial) {
+                                return prefs.keepPendingKey(key, serial);
                             }
 
                             @Override
@@ -771,8 +776,8 @@ public final class RingManager {
                             }
 
                             @Override
-                            public boolean done(byte[] key, String serial, String message) {
-                                return prefs.pairDone(key, s.link.device().getAddress(), serial, message);
+                            public boolean done(byte[] key, String serial, String message, boolean dropKept) {
+                                return prefs.pairDone(key, s.link.device().getAddress(), serial, message, dropKept);
                             }
                         });
                     } finally {

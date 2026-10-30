@@ -355,7 +355,7 @@ public final class SetupActivity extends Activity {
         keptCard.addView(Ui.gap(this, 4));
         keptCard.addView(Ui.body(this, Pairing.KEPT_TEXT));
         keptCard.addView(Ui.gap(this, 10));
-        keptCard.addView(Ui.caption(this, "Kept key"));
+        keptCard.addView(Ui.caption(this, Pairing.keptFor(Prefs.of(this).pendingKeySerial())));
         TextView kt = Ui.text(this, hex, 17, Ui.TEXT, Typeface());
         kt.setTextIsSelectable(true);
         keptCard.addView(kt);
@@ -720,7 +720,7 @@ public final class SetupActivity extends Activity {
         // the key is saved; never send the user back through setup for this ring
         p.setSetupDone(true);
         final String hex = Hex.encode(p.loadKey());
-        LinearLayout l = page("You're connected", message + ". Back up your key somewhere safe. It cannot be read back from the ring, "
+        LinearLayout l = page("You're connected", Pairing.sentence(message) + " Back up your key somewhere safe. It cannot be read back from the ring, "
                 + "and without it you would need to factory reset the ring to connect again.");
         LinearLayout k = Ui.card(this);
         k.addView(Ui.caption(this, "Your ring key"));

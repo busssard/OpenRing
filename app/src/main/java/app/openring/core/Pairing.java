@@ -26,7 +26,7 @@ public final class Pairing {
 
     /** Added to the message when the measurements could not be switched on after pairing. */
     public static final String MEASUREMENTS_OFF = ". Daytime heart rate and blood oxygen could not be switched on yet, "
-            + "you can do it in Settings, Measurements on the ring";
+            + "you can do it in Settings, Measurements on the ring.";
 
     /** Status lines while pairing runs. */
     public static final String WORKING = "Working, accept the pairing request if Android shows one";
@@ -34,11 +34,26 @@ public final class Pairing {
 
     /** The card on "Connect your ring" while a kept key exists. */
     public static final String KEPT_TITLE = "Key from your last try";
-    public static final String KEPT_TEXT = "Your last try wrote this key to the ring but did not finish, so the ring may need it now. "
+    public static final String KEPT_TEXT = "Your last try may have written this key to the ring and did not finish, so the ring may need it now. "
             + "Copy it and keep it somewhere safe. Pair and create a new key uses this key again instead of making another one, "
             + "so you can simply try again.";
     /** Added to the sentence of a failed try that leaves a kept key. */
-    public static final String KEPT_NOTE = "The key from this try is shown at the top of this page.";
+    public static final String KEPT_NOTE = "The key kept from a try that did not finish is shown at the top of this page.";
+
+    /** The message as a sentence for the key page: a full stop added unless it has one. */
+    public static String sentence(String message) {
+        String m = message == null ? "" : message.trim();
+        return m.endsWith(".") ? m : m + ".";
+    }
+
+    /** Under a kept key in Settings, Key and backup. */
+    public static final String KEPT_SETTINGS = "A pairing that did not finish kept this key, so the ring it was meant for may need it. "
+            + "It goes once that ring is paired again.";
+
+    /** The caption over a kept key: which ring it was meant for. */
+    public static String keptFor(String serial) {
+        return serial == null || serial.isEmpty() ? "Kept key" : "Kept key, meant for ring " + serial;
+    }
 
     /** The ring that is being paired (one open connection). */
     public interface Ring {
@@ -65,10 +80,16 @@ public final class Pairing {
         /** The key kept from an interrupted try, or null. */
         byte[] kept();
 
-        /** Stores the key on disk before it goes to the ring; false when that failed. */
-        boolean keep(byte[] key);
+        /** The serial of the ring the kept key was meant for, or null. */
+        String keptSerial();
 
-        /** Removes the kept key (the ring answered that it holds another one). */
+        /**
+         * Stores the key on disk, with the serial of the ring it goes to, before it goes to the ring; false when that
+         * failed. Only called while no key is kept, so a kept key is never overwritten.
+         */
+        boolean keep(byte[] key, String serial);
+
+        /** Removes the kept key (the ring it was meant for answered that it holds another one). */
         void forgetKept();
 
         /** Called before the key is saved: a different ring than the saved one starts a fresh history. */
@@ -76,9 +97,10 @@ public final class Pairing {
 
         /**
          * Saves key, serial and "set up" in one write to disk, notes that the key page was not shown yet, and removes the
-         * kept key. False when the write failed (the kept key then stays).
+         * kept key when {@code dropKept} (it was meant for this ring, which now holds the saved key). False when the
+         * write failed (the kept key then stays).
          */
-        boolean done(byte[] key, String serial, String message);
+        boolean done(byte[] key, String serial, String message, boolean dropKept);
     }
 
     /** What to do after the ring answered the key write with {@code status}. */
@@ -107,15 +129,26 @@ public final class Pairing {
     /**
      * Pairs: {@code typed} is the person's key (null for "Pair and create a new key", which always installs). Returns the
      * message for the key page; throws with a raw text on failure.
+     *
+     * <p>The kept key belongs to one ring (its serial) and is never overwritten: a new key reuses it (also on another
+     * ring, so both rings and the phone share it), a typed key is not kept while another key is (the person has it
+     * already), and it goes only when the ring it was meant for holds the saved key or answers "wrong key" to it.
      */
     public static String pair(byte[] typed, boolean install, Ring ring, Store store) throws IOException, InterruptedException {
         if (typed == null) install = true;
         String serial = ring.serial();
-        byte[] key = keyFor(typed, typed == null ? store.kept() : null, typed == null ? Auth.newKey() : null);
+        byte[] kept = store.kept();
+        String keptSerial = kept == null ? null : store.keptSerial();
+        byte[] key = keyFor(typed, typed == null ? kept : null, typed == null ? Auth.newKey() : null);
         int status = -1;
         if (install) {
-            // stored on the phone before the ring can take it, so the ring never holds a key the phone lost
-            if (!store.keep(key)) throw new IOException(KEY_NOT_KEPT);
+            // stored on the phone before the ring can take it, so the ring never holds a key the phone lost; a key
+            // kept from before stays as it is (a typed key is the person's own)
+            if (kept == null) {
+                if (!store.keep(key, serial)) throw new IOException(KEY_NOT_KEPT);
+                kept = key;
+                keptSerial = serial;
+            }
             ring.status("Installing the key");
             status = ring.setAuthKey(key);
             if (afterSetKey(status) == Next.REFUSED) throw new IOException(refusal(status));
@@ -124,17 +157,28 @@ public final class Pairing {
         try {
             ring.authenticate(key);
         } catch (RingClient.AuthException e) {
-            if (status == 1 && e.state == Auth.WRONG_KEY) {
-                // the ring said it holds a different key: the kept one is not the ring's
-                byte[] kept = store.kept();
-                if (kept != null && Arrays.equals(kept, key)) store.forgetKept();
+            if (status != 1 || e.state != Auth.WRONG_KEY) throw e;
+            // the ring holds another key: after a cut off try it may be the kept one
+            boolean keptWrong = kept != null && Arrays.equals(kept, key);
+            if (kept != null && !keptWrong) {
+                try {
+                    ring.authenticate(kept);
+                    key = kept;
+                } catch (RingClient.AuthException k) {
+                    if (k.state != Auth.WRONG_KEY) throw k;
+                    keptWrong = true;
+                }
+            }
+            if (keptWrong || !Arrays.equals(key, kept)) {
+                // only the ring the kept key was meant for can say it is not its key
+                if (keptWrong && serial.equals(keptSerial)) store.forgetKept();
                 throw new IOException(KEY_EXISTS);
             }
-            throw e;
         }
         store.ringIs(serial);
         String message = "Paired with " + serial;
-        if (!store.done(key, serial, message)) throw new IOException(KEY_NOT_SAVED);
+        boolean dropKept = kept != null && serial.equals(keptSerial);
+        if (!store.done(key, serial, message, dropKept)) throw new IOException(KEY_NOT_SAVED);
         // from here the pairing is done: what follows is best effort
         boolean on;
         try {

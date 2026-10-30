@@ -410,6 +410,24 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 say("Copied");
             }
         });
+        // a key kept from a pairing that did not finish, for a ring that may hold it (issue #218)
+        final byte[] keptKey = p.demo() ? null : p.pendingKey();
+        if (keptKey != null && !java.util.Arrays.equals(keptKey, p.loadKey())) {
+            key.addView(Ui.gap(this, 10));
+            key.addView(Ui.caption(this, app.openring.core.Pairing.keptFor(p.pendingKeySerial())));
+            key.addView(Ui.text(this, app.openring.core.Pairing.KEPT_SETTINGS, 12, Ui.TEXT_3, Ui.REGULAR));
+            TextView kk = Ui.text(this, Hex.encode(keptKey), 15, Ui.TEXT, android.graphics.Typeface.MONOSPACE);
+            kk.setTextIsSelectable(true);
+            key.addView(kk);
+            small(key, "Copy kept key", Ui.TEXT_2, new Runnable() {
+                @Override
+                public void run() {
+                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("Kept ring key", Hex.encode(keptKey)));
+                    say("Copied");
+                }
+            });
+        }
         key.addView(Ui.gap(this, 10));
         key.addView(Ui.text(this, "Save a backup file", 12, Ui.TEXT_3, Ui.REGULAR));
         pair(key, "Key and settings only", Ui.SLEEP, new Runnable() {

@@ -35,12 +35,16 @@ Nothing leaves the phone: the app has no internet permission.
   answers with the nonce padded to 16 bytes and encrypted with the 16 byte key (AES/ECB, `2f 11 2d`). Pairing a reset ring writes a new key (`24 10 <key>`).
   The key is stored encrypted with an Android Keystore key (`Prefs`).
   Pairing (`core/Pairing`, issue #218) stores a key on the phone (the kept key, `Prefs.keepPendingKey`, written with
-  `commit`) before it writes it to the ring, and nothing goes to the ring when that fails. A ring that answers "already has
-  a key" is tried with that same key (after an interrupted try it holds exactly the kept one); only its answer "wrong key"
-  drops the kept key. Once the ring accepts the key, one `commit` saves key, address, serial, `setup_done` and the note
-  `pair_unseen`, and removes the kept key (`Prefs.pairDone`); firmware, measurements and clock after that are best effort.
-  "Pair and create a new key" uses a kept key again instead of making a new one, and Setup shows it in a card
-  ("Key from your last try") while it exists. While `pair_unseen` is set the main screen opens Setup on the key page; leaving
+  `commit`, with the serial of the ring it goes to) before it writes it to the ring, and nothing goes to the ring when that
+  fails. A kept key is never overwritten: "Pair and create a new key" uses it again (also on another ring, which then shares
+  it), and a typed key with "Install this key" is not kept while another key is (it is the person's own). A ring that
+  answers "already has a key" is tried with the key written and then with the kept key (after an interrupted try it holds
+  exactly the kept one); only the ring the kept key was meant for (same serial) can drop it, by answering "wrong key" to it,
+  or by being paired. A clear refusal (another status) keeps it. Once the ring accepts a key, one `commit` saves key,
+  address, serial, `setup_done` and the note `pair_unseen`, and removes the kept key when it was meant for this ring
+  (`Prefs.pairDone`); firmware, measurements and clock after that are best effort. A different ring's history is reset
+  just before that commit (a limit: if that commit then fails, the history is gone while the old key stays).
+  Setup shows the kept key in a card ("Key from your last try", with the ring's serial), Settings, Key and backup too. While `pair_unseen` is set the main screen opens Setup on the key page; leaving
   that page (Start syncing, Copy key, Back) clears it, and so does clearing the key.
 * History: the ring keeps events (tag `0x41` and up) with a per boot decisecond counter. `RingClient`
   drains them in batches (extended `2f 0c 41`, or legacy GetEvent `0x10` on firmware that lacks it,

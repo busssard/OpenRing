@@ -5622,7 +5622,8 @@ public class PipelineTest {
         p.saveKey(old);
         p.setSerial("2X0001");
         p.setSetupDone(true);
-        check("pairing prefs: keeping a key", p.keepPendingKey(fresh), null);
+        check("pairing prefs: keeping a key", p.keepPendingKey(fresh, "2X0002"), null);
+        check("pairing prefs: the kept key knows its ring", "2X0002".equals(p.pendingKeySerial()), p.pendingKeySerial());
         check("pairing prefs: the kept key reads back", Arrays.equals(p.pendingKey(), fresh), null);
         check("pairing prefs: the saved key stays until the ring accepted the new one", Arrays.equals(p.loadKey(), old) && p.setupDone(), null);
         // backups carry the saved key only
@@ -5633,24 +5634,28 @@ public class PipelineTest {
                 backup.contains("4431967d8bacc2659743142b68391d9a") && !backup.contains("00112233445566778899aabbccddeeff"), null);
         // a try that did not finish: kept key stays, nothing else changed
         check("pairing prefs: kept key survives a new Prefs (another screen)", Arrays.equals(app.openring.data.Prefs.of(c).pendingKey(), fresh), null);
-        check("pairing prefs: done", p.pairDone(fresh, "AA:BB:CC:DD:EE:FF", "2X0002", "Paired with 2X0002"), null);
+        // another ring paired meanwhile: the kept key for 2X0002 stays
+        check("pairing prefs: done for another ring", p.pairDone(old, null, "2X0001", "Paired with 2X0001", false), null);
+        check("pairing prefs: the kept key stays for its ring", Arrays.equals(p.pendingKey(), fresh) && "2X0002".equals(p.pendingKeySerial()), null);
+        check("pairing prefs: done", p.pairDone(fresh, "AA:BB:CC:DD:EE:FF", "2X0002", "Paired with 2X0002", true), null);
         check("pairing prefs: done saves the new key", Arrays.equals(p.loadKey(), fresh), null);
-        check("pairing prefs: done drops the kept key", p.pendingKey() == null, null);
+        check("pairing prefs: done drops the kept key", p.pendingKey() == null && p.pendingKeySerial() == null, null);
         check("pairing prefs: done saves ring and set up", "2X0002".equals(p.serial()) && "AA:BB:CC:DD:EE:FF".equals(p.address()) && p.setupDone(), p.serial());
         check("pairing prefs: done notes the key page", "Paired with 2X0002".equals(p.pairUnseen()), p.pairUnseen());
         p.clearPairUnseen();
         check("pairing prefs: leaving the key page clears the note", p.pairUnseen() == null && p.hasKey(), null);
         // forget this ring or a factory reset: the note goes with the key
-        p.pairDone(fresh, null, "2X0002", "Paired with 2X0002");
+        p.pairDone(fresh, null, "2X0002", "Paired with 2X0002", true);
         check("pairing prefs: no address keeps the one saved", "AA:BB:CC:DD:EE:FF".equals(p.address()), p.address());
         p.clearKey();
         check("pairing prefs: clearing the key clears the note", p.pairUnseen() == null && !p.hasKey(), null);
         // a kept key is dropped only on its own
-        p.keepPendingKey(fresh);
+        p.keepPendingKey(fresh, "2X0002");
         p.forgetPendingKey();
-        check("pairing prefs: forgetting the kept key", p.pendingKey() == null && !p.hasKey(), null);
+        check("pairing prefs: forgetting the kept key", p.pendingKey() == null && p.pendingKeySerial() == null && !p.hasKey(), null);
         // a restore of a key only backup leaves a kept key alone (it may be the one the ring holds)
-        p.keepPendingKey(fresh);
+        p.keepPendingKey(fresh, null);
+        check("pairing prefs: a kept key without a ring", p.pendingKeySerial() == null, null);
         app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(ko.toByteArray()));
         check("pairing prefs: restore works with a kept key", r.ok && Arrays.equals(p.loadKey(), old), r.message);
         check("pairing prefs: restore keeps the kept key", Arrays.equals(p.pendingKey(), fresh), null);
