@@ -118,6 +118,11 @@ Check every plan and PR against these before showing it:
     Every night it also audits merged PRs (each once, listed in #167) for
     feedback nobody acted on, checks whether the problem is still in `main`, and files each real one
     as an issue labelled `review-followup` (without `[EXP]`), which the build run fixes the next night.
+* **Design round** (label `design-round`, the owner's big features): nothing is built until all three
+  runs commented once. Night 1 the build run posts "Design round: plan" (no build); the review run
+  then posts "Design review" and the experiment run "Experiment view" (one each, never more). The
+  next night the build run answers every point in "Design round: decisions" and builds phase 1;
+  later phases follow on later nights, each after the earlier one is merged.
 * Never implement an issue whose title starts with `[EXP]`, whichever session you are.
 
 ## Rules
