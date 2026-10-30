@@ -1027,6 +1027,11 @@ public class CoreTest {
         eq("backups: the new file is not the newest by name (clock set back), it is kept with the 2 newest others", new java.util.TreeSet<String>(
             Backups.folderToDelete(Arrays.asList(a, b, c2, e, nw), listed, a, 3)), new java.util.TreeSet<String>(Arrays.asList(b, c2)));
         eq("backups: the partial of the new file itself is not ours to delete", Backups.folderToDelete(Arrays.asList(nw + ".partial", nw), listed, nw, 3), Arrays.asList());
+        // the folder's permission, from the picker's result (review of #259)
+        eq("backups: read and write given: both kept", Backups.keepFlags(Backups.GRANT_READ | Backups.GRANT_WRITE | 64 | 128), 3);
+        eq("backups: the Android values", Backups.GRANT_READ + 10 * Backups.GRANT_WRITE, 21);
+        eq("backups: read only: not kept", Backups.keepFlags(Backups.GRANT_READ | 64), -1);
+        eq("backups: no flags: not kept", Backups.keepFlags(0), -1);
         // why a copy failed
         check("backups: a full disk is recognised", Backups.noSpace("write failed: ENOSPC (No space left on device)") && Backups.noSpace("SQLITE_FULL")
                 && Backups.noSpace("database or disk is full (code 13)") && !Backups.noSpace("EACCES") && !Backups.noSpace(null));
@@ -1037,7 +1042,10 @@ public class CoreTest {
         eq("backups: copy before going back", Backups.backLine(when, 212 * mb, z), "Copy from before going back (29 Oct, 212 MB)");
         eq("backups: a small copy is at least 1 MB", Backups.mb(1000), "1 MB");
         eq("backups: an empty file", Backups.mb(0), "0 MB");
-        eq("backups: going back asks", Backups.goBackText(when, z), "Your history is replaced by this copy. What was synced since 29 Oct is kept as a copy of its own.");
+        eq("backups: going back asks, and says the whole history is kept and can be put back", Backups.goBackText(when, z),
+            "Your history is replaced by this copy from 29 Oct. First your whole history as it is now is kept as \"Copy from before going back\", "
+            + "so you can put it back from this card.");
+        check("backups: the going back question names the copy's line", Backups.goBackText(when, z).contains(Backups.backLine(when, 1, z).substring(0, 26)));
         eq("backups: status after a copy", Backups.status(when, 210 * mb, 5, null, z), "Last copy: 29 Oct 03:12, 210 MB, 5 kept");
         eq("backups: status before the first copy", Backups.status(0, 0, 0, null, z), "No copy yet. The first one is made the next time the phone charges.");
         eq("backups: status after a failure", Backups.status(when, 210 * mb, 5, Backups.GONE, z),
@@ -1057,7 +1065,7 @@ public class CoreTest {
         eq("backups: another interval", Backups.every(14), "every 14 days");
         List<String> texts = new ArrayList<String>(Arrays.asList(Backups.TITLE, Backups.OFF_TEXT, Backups.CHOOSE, Backups.CHOOSE_OTHER, Backups.CHOOSE_AGAIN,
             Backups.HOW_OFTEN, Backups.HOW_MANY, Backups.ALSO_UPDATE, Backups.STOP, Backups.STOPPED, Backups.PRIVATE, Backups.NONE_YET, Backups.GO_BACK,
-            Backups.GO_BACK_TITLE, Backups.WENT_BACK, Backups.DEMO, Backups.NOT_IN_DEMO, Backups.NOTICE_SPACE, Backups.NOTICE_OTHER, Backups.COPY_EXPLAIN,
+            Backups.GO_BACK_TITLE, Backups.GOING_BACK, Backups.goBackText(when, z), Backups.WENT_BACK, Backups.DEMO, Backups.NOT_IN_DEMO, Backups.NOTICE_SPACE, Backups.NOTICE_OTHER, Backups.COPY_EXPLAIN,
             Backups.FOLDER_PICK_FAILED, Backups.badLine("1.42", when, z)));
         texts.addAll(Arrays.asList(Backups.DAY_NAMES));
         for (String r : new String[] {Backups.GONE, Backups.FULL, Backups.CHECK, Backups.SPACE, Backups.WRITE}) texts.add(Backups.status(when, 1, 1, r, z));
