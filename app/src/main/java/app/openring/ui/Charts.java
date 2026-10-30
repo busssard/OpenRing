@@ -490,6 +490,12 @@ public final class Charts {
             }
         }
 
+        /** True when a left out band lies between the moments {@code a} and {@code b}: the line breaks there (review of #263). */
+        private boolean bandBetween(double a, double b) {
+            for (double[] band : bands) if (band[0] < b && band[1] > a) return true;
+            return false;
+        }
+
         /** The band under {@code x}, null when there is none. */
         private double[] bandAt(float x, float left, float w) {
             for (double[] b : bands) {
@@ -598,7 +604,7 @@ public final class Charts {
                 if (t < from || t > to || Double.isNaN(v)) continue;
                 float x = (float) (left + (t - from) / (to - from) * (w - left));
                 float y = (float) (bottom - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (bottom - top));
-                if (!started || t - prevT > gap) {
+                if (!started || t - prevT > gap || banded && bandBetween(prevT, t)) {
                     if (started && fill) {
                         fillPath.lineTo(lastX, bottom);
                         fillPath.lineTo(firstX, bottom);

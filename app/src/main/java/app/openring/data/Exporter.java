@@ -47,10 +47,25 @@ public final class Exporter {
             JSONObject r = o.optJSONObject("readiness"), a = o.optJSONObject("activity_score");
             row.append(r == null ? "" : String.valueOf(r.optInt("value"))).append(',');
             row.append(a == null ? "" : String.valueOf(a.optInt("value"))).append(',');
-            row.append(leftOutMin(left, d[0], z)).append('\n');
+            row.append(leftOutMin(left, d[0], left.isEmpty() ? z : dayZone(db, d[0], z))).append('\n');
             w.write(row.toString());
         }
         w.flush();
+    }
+
+    /**
+     * The zone a day is counted in, as the analysis and the screens do (review of #263): its main night's, else the zone
+     * noted then, else the phone's.
+     */
+    static java.time.ZoneId dayZone(Db db, String day, java.time.ZoneId phone) {
+        try {
+            java.time.LocalDate d = java.time.LocalDate.parse(day);
+            java.util.List<String> main = db.nightsJson(day, day, true);
+            java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(d.atTime(12, 0).atZone(phone).toEpochSecond()));
+            return Json.zone(main.isEmpty() ? null : Json.parse(main.get(main.size() - 1)), noted == null ? phone : noted);
+        } catch (RuntimeException e) {
+            return phone;
+        }
     }
 
     /** Minutes of {@code day} (midnight to midnight in {@code z}) that are left out (issue #254), 0 for a date it cannot read. */

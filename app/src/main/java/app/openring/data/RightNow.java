@@ -127,7 +127,8 @@ public final class RightNow {
         // readings in a time left out because someone else wore the ring are skipped (issue #254); the newest one
         // outside it counts. Find my ring and Live are about the ring itself and keep them
         LeftOut left = db.leftOut();
-        int more = left.isEmpty() ? 1 : 2000;
+        // more rows only when a left out time reaches into what is read (review of #263); rows can lie a little in the future
+        int more = left.overlaps(since, Double.MAX_VALUE) ? 2000 : 1;
         for (Db.Row row : db.latest(TEMP_TAGS, since, more)) {
             if (left.contains(row.unix)) continue;
             double[] t = EventCodec.temps(row.body);
