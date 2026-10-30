@@ -3637,6 +3637,26 @@ public class CoreTest {
         check("live pause: left again", sc.pause() == LiveScreen.Source.RING);
         s.stop();
         check("live pause: the queued session is stale and does not take the ring", s.stale(again) && s.running() == 0);
+        // review of #244: a session paused while it waited for the ring (behind a sync) finds itself stale once it has
+        // the lock, before it connects, and gives the ring back untouched
+        check("live pause: back in front once more", sc.resume(false) == LiveScreen.Source.RING);
+        int waiting = s.start(false);
+        check("live pause: queued, current before it gets the ring", waiting != 0 && !s.stale(waiting) && s.running() == waiting);
+        check("live pause: left while it waits", sc.pause() == LiveScreen.Source.RING);
+        s.stop();
+        check("live pause: stale right after the lock, nothing left running", s.stale(waiting) && s.running() == 0);
+        // paused while connecting, checking the key or downloading: no longer current at the next step, so it ends
+        // there without the live mode; the next start gets a fresh session that the ending one does not clear
+        check("live pause: in front again", sc.resume(false) == LiveScreen.Source.RING);
+        int connecting = s.start(false);
+        check("live pause: connecting session is current", s.isCurrent(connecting) && !s.stale(connecting));
+        sc.pause();
+        s.stop();
+        check("live pause: paused while connecting, the next step sees it", !s.isCurrent(connecting));
+        sc.resume(false);
+        int next = s.start(false);
+        s.ended(connecting);
+        check("live pause: the early end keeps the next session", next != 0 && next != connecting && s.running() == next && s.isCurrent(next));
     }
 
     /** Issue #185: the made up Live readings of demo mode. */

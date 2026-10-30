@@ -866,6 +866,13 @@ public final class RingManager {
                     live.ended(token);
                     return;
                 }
+                // left (Live paused, issue #187) while it waited for the ring, for example behind a sync: give it back
+                // untouched, no connection, no download, no mode change
+                if (live.stale(token)) {
+                    op.unlock();
+                    log("live: left before it got the ring, not started");
+                    return;
+                }
                 // Live stores what it drains: not while a long analysis replaces the results (issue #230)
                 final Db held = Db.get(ctx);
                 if (!held.holdForRing()) {
@@ -880,10 +887,13 @@ public final class RingManager {
                 Session s = null;
                 boolean realtimeOn = false;
                 int spo2PrevMode = -1;
+                boolean modesTouched = false;
                 try {
                     post(token, "Connecting to your ring");
                     s = open(false, null);
+                    leftCheck(token, "while connecting");
                     s.client.authenticate(Prefs.of(ctx).loadKey());
+                    leftCheck(token, "while checking the key");
                     // fresh data first: it tells whether the ring is on a finger right now
                     post(token, "Checking the ring");
                     try {
@@ -891,6 +901,7 @@ public final class RingManager {
                     } catch (Exception e) {
                         log("live: quick download failed: " + e.getMessage());
                     }
+                    leftCheck(token, "during the first download");
                     try {
                         Db.get(ctx).rebuildTime(System.currentTimeMillis() / 1000);
                     } catch (RuntimeException e) {
@@ -902,6 +913,8 @@ public final class RingManager {
                         post(token, String.format(Locale.US, "The ring reads %.0f \u00b0C, room temperature, so it is probably not on a finger. "
                                 + "Put it on (not on the charger) and keep your hand still.", now.skinTemp));
                     }
+                    leftCheck(token, "before the live mode");
+                    modesTouched = true;
                     int[] fs = s.client.featureStatus(Protocol.FEATURE_DAYTIME_HR);
                     log("live: daytime HR feature " + (fs == null ? "status unknown" : "mode " + fs[0] + " status " + fs[1] + " state " + fs[2]));
                     if (fs != null && fs[0] == Protocol.MODE_OFF) {
@@ -1075,13 +1088,17 @@ public final class RingManager {
                     }
                     log("live: " + beats + " beats, " + frames + " live frames, " + s.link.sideSummary());
                     post(token, beats > 0 ? "Stopped" : "Stopped without a pulse. Diagnostics, Log tab, shows what the ring sent.");
+                } catch (LiveLeft e) {
+                    // Live left the front (issue #187): the ring goes back without the live mode it never got
+                    log("live: left " + e.getMessage() + ", the ring is given back");
                 } catch (Exception e) {
                     String raw = e.getMessage() == null ? e.toString() : e.getMessage();
                     log("live: stopped by " + raw);
                     post(token, "Live heart rate stopped. " + SyncError.plain(raw, SyncError.Task.LIVE));
                 } finally {
                     try {
-                        if (s != null && s.link.isConnected()) {
+                        // only modes this session changed are put back: a session that left early changed none
+                        if (modesTouched && s != null && s.link.isConnected()) {
                             if (realtimeOn) s.client.request(Protocol.realtimeOff(), null, 500);
                             s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
                             // leave blood oxygen as it was: live SpO2 drains the battery
@@ -1099,6 +1116,18 @@ public final class RingManager {
                 }
             }
         });
+    }
+
+    /** A live session that was stopped (Live left the front, issue #187) before it measured: it ends at once. */
+    private static final class LiveLeft extends Exception {
+        LiveLeft(String when) {
+            super(when);
+        }
+    }
+
+    /** Ends the session {@code token} at this step when it is no longer the current one (issue #187). */
+    private void leftCheck(int token, String when) throws LiveLeft {
+        if (!live.isCurrent(token)) throw new LiveLeft(when);
     }
 
     /** Stop the live session, but only if {@code l} is the screen that owns it. */

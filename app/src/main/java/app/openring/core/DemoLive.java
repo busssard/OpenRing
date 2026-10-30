@@ -7,7 +7,7 @@ import java.util.Random;
 /**
  * Made up Live readings for demo mode (issue #185), so the demo shows the Live screen without ever using a ring. They
  * arrive like a Ring 4 sends them (batches every few seconds): heartbeats around a sitting heart rate of about 63 bpm
- * that drifts slowly, with a breathing rhythm and some noise (live HRV about 40 to 50 ms), the sensor temperature of a
+ * that drifts slowly, with a breathing rhythm and some noise (live HRV about 35 to 50 ms), the sensor temperature of a
  * ring warming on a finger, and blood oxygen once a second from {@link #SPO2_AFTER_S} seconds after it is switched on. A fixed seed gives the same
  * readings every time, so screenshots stay the same.
  */
