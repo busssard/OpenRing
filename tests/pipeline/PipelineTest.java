@@ -806,6 +806,10 @@ public class PipelineTest {
         swapDuringSync219(full.toByteArray());
         syncDating220();
         datingRandom220();
+        upgrade220();
+        interrupted220();
+        restore220();
+        largeHistory220();
         emptySync194();
 
         System.out.println(passed + " passed, " + failed + " failed");
@@ -6114,7 +6118,257 @@ public class PipelineTest {
         Analyzer.run(c, null);
         check("#194 analysing again with nothing new changes no night or day, byte for byte (so not doing it loses nothing)",
                 results139(db).equals(before), firstDiff(results139(db), before));
+        check("#194 still up to date after that run", Analyzer.upToDate(c), null);
+        long now = System.currentTimeMillis() / 1000;
+        check("#194 the next day it is not up to date (the day before is finished then)", !upToDate194(c, now + 86400) && upToDate194(c, now), null);
+        // an event stored without dating, as Find my ring or Live do
+        db.insertBatch(rows220(app.openring.data.Demo.DS0 + 30L * 86400 * 10, 1, 1, new int[] {777}), 1, now);
+        check("#194 an event stored since (Find my ring, Live): not up to date", !Analyzer.upToDate(c), null);
+        Analyzer.run(c, null);
+        check("#194 analysed again: up to date", Analyzer.upToDate(c), null);
+        // new phone use in an analysed night asks for those nights again
+        db.reanalyseFrom(T230 + 10 * 86400);
+        check("#194 phone use for an analysed night (analyzed_until lowered): not up to date", !Analyzer.upToDate(c), null);
+        Analyzer.run(c, null);
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        int detail = p.stageDetail();
+        p.setStageDetail(detail == app.openring.core.analysis.StageFilter.BALANCED ? app.openring.core.analysis.StageFilter.BALANCED + 1
+                : app.openring.core.analysis.StageFilter.BALANCED);
+        check("#194 another stage detail level: not up to date", !Analyzer.upToDate(c), null);
+        p.setStageDetail(detail);
+        check("#194 the level set back: up to date again", Analyzer.upToDate(c), null);
+        p.setProfile(p.age() + 1, p.sex(), p.weightKg(), p.heightCm(), p.targetKcal());
+        check("#194 another age in the profile: not up to date", !Analyzer.upToDate(c), null);
+        p.setProfile(p.age() - 1, p.sex(), p.weightKg(), p.heightCm(), p.targetKcal());
+        db.put("analysis_error", "java.lang.OutOfMemoryError");
+        check("#194 the last analysis failed: not up to date", !Analyzer.upToDate(c), null);
+        db.put("analysis_error", null);
+        db.put("full_pending", 1);
+        check("#194 Re analyse all pending: not up to date", !Analyzer.upToDate(c), null);
+        db.put("full_pending", 0);
+        db.put("time_state", null);
+        check("#194 no saved dating: not up to date", !Analyzer.upToDate(c), null);
+        Analyzer.run(c, null);
+        check("#194 after the run that dated everything again: up to date", Analyzer.upToDate(c), null);
+        check("#194 the stored results are still the first ones, byte for byte", results139(db).size() == before.size(), firstDiff(results139(db), before));
+        Context empty = freshDb("openring194-empty");
+        check("#194 a phone without history: not up to date (nothing was analysed)", !Analyzer.upToDate(empty), null);
     }
+
+    static boolean upToDate194(Context c, long now) throws Exception {
+        java.lang.reflect.Method m = Analyzer.class.getDeclaredMethod("upToDate", Context.class, long.class);
+        m.setAccessible(true);
+        return (Boolean) m.invoke(null, c, now);
+    }
+
+    static void dbStatic(String field, Object v) throws Exception {
+        java.lang.reflect.Field f = Db.class.getDeclaredField(field);
+        f.setAccessible(true);
+        f.set(null, v);
+    }
+
+    /** Opens {@code c}'s history (Db.get keeps one open instance by file name). */
+    static Db open220(Context c) throws Exception {
+        java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
+        f.setAccessible(true);
+        Db o = (Db) f.get(null);
+        if (o != null) o.close();
+        f.set(null, null);
+        return Db.get(c);
+    }
+
+    /** {@code days} days of demo history synced day by day into a phone of its own, each sync analysed; not opened afterwards. */
+    static Context synced220(String name, long t0, List<List<RingEvent>> parts, int days) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        db.noteZone(t0 - 86400, ZoneId.systemDefault().getId());
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        for (int d = 0; d < days; d++) {
+            sync220(db, parts.get(d), 1, t0);
+            if (d % 7 == 6 || d == days - 1) Analyzer.run(c, null);
+        }
+        return c;
+    }
+
+    /**
+     * Issue #220, data safety: a history dated and analysed by a version before (no saved dating state) gets after the
+     * update the same events and nights, sync after sync, as a phone that dates everything every time.
+     */
+    static void upgrade220() throws Exception {
+        long t0 = T230;
+        List<List<RingEvent>> parts = perDay220(app.openring.data.Demo.history(t0, 42, t0 + 43 * 86400L, ZoneId.systemDefault(), new Random(2201)));
+        dbStatic("incremental", false);
+        Context old;
+        Context ref;
+        try {
+            old = synced220("openring220-old", t0, parts, 35);
+            ref = synced220("openring220-ref", t0, parts, 35);
+        } finally {
+            dbStatic("incremental", true);
+        }
+        // as the version before left it: no dating state, no analysis inputs
+        Db db = open220(old);
+        db.put("time_state", null);
+        db.put("analysis_inputs", null);
+        List<String> evOld = events58(db), resOld = results139(db);
+        Db rdb = open220(ref);
+        check("#220 upgrade: set up, the same history and results in both phones", evOld.equals(events58(rdb)) && resOld.equals(results139(rdb))
+                && nightRows(resOld) >= 30, nightRows(resOld) + " nights");
+        int fastRuns = 0;
+        for (int d = 35; d < parts.size(); d++) {
+            rdb = open220(ref);
+            sync220(rdb, parts.get(d), 1, t0);
+            dbStatic("incremental", false);
+            try {
+                Analyzer.run(ref, null);
+            } finally {
+                dbStatic("incremental", true);
+            }
+            List<String> evRef = events58(rdb), resRef = results139(rdb);
+            db = open220(old);
+            sync220(db, parts.get(d), 1, t0);
+            final String[] how = {null};
+            Analyzer.run(old, new Analyzer.Log() {
+                @Override
+                public void log(String m) {
+                    if (m.startsWith("time:")) how[0] = m;
+                }
+            });
+            if (how[0] != null && how[0].contains("new part only")) fastRuns++;
+            check("#220 upgrade, sync of day " + (d + 1) + ": every event with the same date as dating everything", events58(db).equals(evRef),
+                    firstDiff(events58(db), evRef));
+            check("#220 upgrade, sync of day " + (d + 1) + ": the same nights and days, byte for byte", results139(db).equals(resRef),
+                    firstDiff(results139(db), resRef) + "; " + how[0]);
+            if (d == 35) check("#220 upgrade: the first sync after the update dates everything (no saved state)", how[0] != null && how[0].contains("no saved state"), how[0]);
+        }
+        check("#220 upgrade: the syncs after the first date only the new part", fastRuns == parts.size() - 36, fastRuns + " of " + (parts.size() - 36));
+        check("#220 upgrade: every event still there", events58(db).size() == evOld.size() + countRows(parts, 35) + 2 * (parts.size() - 35),
+                events58(db).size());
+        db.close();
+    }
+
+    static int countRows(List<List<RingEvent>> parts, int from) {
+        int n = 0;
+        for (int d = from; d < parts.size(); d++) n += parts.get(d).size();
+        return n;
+    }
+
+    /** Issue #220, data safety: a dating stopped part way keeps every date and the saved state as they were; the next run is right. */
+    static void interrupted220() throws Exception {
+        long t0 = T230;
+        List<List<RingEvent>> parts = perDay220(app.openring.data.Demo.history(t0, 12, t0 + 13 * 86400L, ZoneId.systemDefault(), new Random(2202)));
+        Context c = freshDb("openring220-stop");
+        Db db = Db.get(c);
+        long now = t0 + 13 * 86400L;
+        for (int d = 0; d < 10; d++) {
+            sync220(db, parts.get(d), 1, t0);
+            db.rebuildTime(now);
+        }
+        for (boolean all : new boolean[] {false, true}) {
+            String way = all ? "dating everything" : "dating the new part";
+            sync220(db, parts.get(all ? 11 : 10), 1, t0);
+            List<long[]> before = timeRows(db);
+            String state = db.kv("time_state", null);
+            final int[] written = {0};
+            dbStatic("afterTimeRow", new Runnable() {
+                @Override
+                public void run() {
+                    if (++written[0] == 50) throw new IllegalStateException("stopped for the test");
+                }
+            });
+            Throwable got = null;
+            try {
+                db.rebuildTime(now, all);
+            } catch (Throwable t) {
+                got = t;
+            } finally {
+                dbStatic("afterTimeRow", null);
+            }
+            check("#220 " + way + " stopped after 50 rows: the stop reaches the caller", got instanceof IllegalStateException, got);
+            check("#220 " + way + " stopped: every row's segment and date as before", differences(timeRows(db), before) == 0,
+                    differences(timeRows(db), before));
+            check("#220 " + way + " stopped: the saved dating state as before", String.valueOf(state).equals(db.kv("time_state", null)), null);
+            Db.TimeReport r = sameAsOld(db, now, "#220 the run after the stop (" + way + ")");
+            if (!all) check("#220 the run after the stop dates the new part only", r.full == null, r.full);
+        }
+        db.close();
+    }
+
+    /** Issue #220, data safety: a backup made by this version and one made by a version before restore, sync and analyse alike. */
+    static void restore220() throws Exception {
+        long t0 = T230;
+        List<List<RingEvent>> parts = perDay220(app.openring.data.Demo.history(t0, 30, t0 + 31 * 86400L, ZoneId.systemDefault(), new Random(2203)));
+        Context a = synced220("openring220-backup", t0, parts, 28);
+        Db.get(a);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(a, out, true);
+        byte[] now = out.toByteArray();
+        // the same backup as a version before writes it: no dating state, no analysis inputs
+        java.io.File f = java.nio.file.Files.createTempFile("older", ".db").toFile();
+        java.nio.file.Files.write(f.toPath(), zipEntry(now, "openring.db"));
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("DELETE FROM kv WHERE k IN ('time_state', 'analysis_inputs')");
+        }
+        byte[] older = withDb(now, java.nio.file.Files.readAllBytes(f.toPath()));
+        List<String> ev = null, res = null;
+        for (int v = 0; v < 2; v++) {
+            String which = v == 0 ? "this version" : "a version before";
+            Context b = freshDb("openring220-restored");
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(v == 0 ? now : older));
+            check("#220 a backup of " + which + " restores", r.ok && r.history, r.message);
+            Db db = Db.get(b);
+            check("#220 restored backup of " + which + ": saved dating state " + (v == 0 ? "kept" : "absent"), (db.kv("time_state", null) != null) == (v == 0), null);
+            for (int d = 28; d < 30; d++) {
+                sync220(db, parts.get(d), 1, t0);
+                Db.TimeReport t = sameAsOld(db, t0 + 31 * 86400L, "#220 backup of " + which + ", sync of day " + (d + 1));
+                if (d == 28) check("#220 backup of " + which + ": the first sync dates " + (v == 0 ? "the new part only" : "everything"),
+                        v == 0 ? t.full == null : "no saved state".equals(t.full), t.full);
+            }
+            Analyzer.run(b, null);
+            if (v == 0) {
+                ev = events58(db);
+                res = results139(db);
+            } else {
+                check("#220 both backups give the same events after the syncs", events58(db).equals(ev), firstDiff(events58(db), ev));
+                check("#220 both backups give the same nights and days after the syncs, byte for byte", results139(db).equals(res), firstDiff(results139(db), res));
+            }
+        }
+    }
+
+    /** Issue #220: a year of demo history, one more day synced: rows read and time, the new part against everything. */
+    static void largeHistory220() throws Exception {
+        Context c = freshDb("openring220-year");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2025-03-03").atStartOfDay(z).toEpochSecond();
+        int days = 365;
+        long now = t0 + (days + 1) * 86400L;
+        List<List<RingEvent>> parts = perDay220(app.openring.data.Demo.history(t0, days, now, z, new Random(2204)));
+        for (int d = 0; d < parts.size() - 1; d++) sync220(db, parts.get(d), 1, t0);
+        db.rebuildTime(now);
+        List<RingEvent> last = parts.get(parts.size() - 1);
+        sync220(db, last, 1, t0);
+        List<long[]> start = timeRows(db);
+        long t = System.nanoTime();
+        Db.TimeReport fast = db.rebuildTime(now);
+        long fastMs = (System.nanoTime() - t) / 1000000;
+        List<long[]> mine = timeRows(db);
+        putTimeRows(db, start);
+        t = System.nanoTime();
+        Db.TimeReport all = db.rebuildTime(now, true);
+        long allMs = (System.nanoTime() - t) / 1000000;
+        System.out.println("  #220 a year (" + all.total + " events), one more day synced: the new part " + fastMs + " ms, " + fast.rowsRead
+                + " rows read; everything " + allMs + " ms, " + all.rowsRead + " rows read");
+        check("#220 a year: the new part only gives every row as dating everything", differences(mine, timeRows(db)) == 0 && fast.full == null,
+                differences(mine, timeRows(db)) + ", " + fast.full);
+        check("#220 a year: the same report and range", report(fast).equals(report(all)) && Arrays.equals(fast.range, all.range),
+                report(fast) + " / " + report(all));
+        check("#220 a year: one more day reads the new rows and a few before them", fast.rowsRead < 2 * (last.size() + 2) + 2 * days,
+                fast.rowsRead + " rows read, " + (last.size() + 2) + " new");
+        db.close();
+    }
+
     /** {@code count} made up rows of one boot from {@code ds0}, {@code step} apart; bodies unique through {@code mark}. */
     static List<RingEvent> rows220(long ds0, int count, long step, int[] mark) {
         List<RingEvent> out = new ArrayList<RingEvent>();

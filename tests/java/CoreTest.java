@@ -904,6 +904,8 @@ public class CoreTest {
         demoRing();
         liveScreen();
         backgroundJob();
+        dating220();
+        recent194();
         demoLive();
         liveFeed();
         requests();
@@ -5165,5 +5167,226 @@ public class CoreTest {
         for (String s : new String[] {SetupTasks.PAIR_REFUSED, SetupTasks.RESTORE_REFUSED, SetupTasks.RESTORE_RUNS}) {
             check("setup tasks: plain, no dash, fits a toast: " + s, Texts.fitsToast(s) && !s.contains(" - "));
         }
+    }
+    // ---------------------------------------------------------------------------- issues #220 and #194
+
+    /** A made up events table for the dating tests: the raw columns and the stored segment and date. */
+    static final class Table220 {
+        final List<long[]> rows = new ArrayList<long[]>(); // {id, epoch, ds, anchor, phone, time_sync}
+        final List<Integer> seg = new ArrayList<Integer>();
+        final List<Double> unix = new ArrayList<Double>();
+        Dating.State state;
+        long nextId = 1;
+
+        void add(long epoch, long ds, long anchor, boolean phone, boolean timeSync) {
+            rows.add(new long[] {nextId++, epoch, ds, anchor, phone ? 1 : 0, timeSync ? 1 : 0});
+            seg.add(-1);
+            unix.add(Double.NaN);
+        }
+
+        Dating.Rows rows(long fromId, long toId, boolean timeSyncOnly) {
+            Dating.Rows r = new Dating.Rows(4);
+            for (long[] x : rows) {
+                if (x[0] < fromId || x[0] > toId || (timeSyncOnly && x[5] == 0)) continue;
+                r.add(x[0], x[1], x[2], x[3], x[4] == 1);
+            }
+            return r;
+        }
+
+        /** Dating everything: {seg, unix bits} per row. */
+        List<long[]> all(long now) {
+            Dating.Dated d = Dating.all(rows(0, Long.MAX_VALUE, false), now);
+            List<long[]> out = new ArrayList<long[]>();
+            for (int k = 0; k < rows.size(); k++) out.add(new long[] {d.seg[k], Double.doubleToLongBits(d.unix[k])});
+            return out;
+        }
+
+        List<long[]> stored() {
+            List<long[]> out = new ArrayList<long[]>();
+            for (int k = 0; k < rows.size(); k++) out.add(new long[] {seg.get(k), Double.doubleToLongBits(unix.get(k))});
+            return out;
+        }
+
+        /** What Db.rebuildTime does with this table: the step when it can, else everything. Null, or why everything. */
+        String date(long now) {
+            String why = state == null ? "no state" : null;
+            Dating.Step st = null;
+            if (why == null) {
+                long firstLast = state.segs.isEmpty() ? 0 : state.segs.get(state.segs.size() - 1).firstId;
+                Dating.Rows fresh = rows(state.lastId + 1, Long.MAX_VALUE, false);
+                st = Dating.step(state, now, fresh, rows(firstLast, state.lastId, true));
+                why = st.full;
+            }
+            if (why != null) {
+                Dating.Dated d = Dating.all(rows(0, Long.MAX_VALUE, false), now);
+                for (int k = 0; k < rows.size(); k++) {
+                    seg.set(k, d.seg[k]);
+                    unix.set(k, d.unix[k]);
+                }
+                state = d.state;
+                return why;
+            }
+            for (int k = 0; k < rows.size(); k++) {
+                long[] x = rows.get(k);
+                if (x[0] > state.lastId || seg.get(k) != st.lastNo || x[2] < st.fromDs || st.fromDs == Long.MAX_VALUE) continue;
+                unix.set(k, st.count(unix.get(k), false, st.dateOld(x[2])));
+            }
+            int i = 0;
+            for (int k = 0; k < rows.size(); k++) {
+                if (rows.get(k)[0] <= state.lastId) continue;
+                seg.set(k, st.newSeg[i]);
+                unix.set(k, st.count(unix.get(k), true, st.newUnix[i]));
+                i++;
+            }
+            double[] range = null;
+            if (st.needsRange()) {
+                range = new double[] {Double.NaN, Double.NaN};
+                for (double u : unix) {
+                    if (Double.isNaN(u)) continue;
+                    if (!(u >= range[0])) range[0] = u;
+                    if (!(u <= range[1])) range[1] = u;
+                }
+            }
+            state = st.next(nextId - 1, 0, range);
+            return null;
+        }
+    }
+
+    /**
+     * Issue #220: dating only the new part gives every row the segment and date bits of dating everything, on many
+     * made up histories (syncs of random length, reboots with and without a new epoch, late, future and pre 2015 time
+     * records, a phone clock set back, phone anchors of an earlier boot, rows stored without dating, time passing).
+     */
+    static void dating220() {
+        int steps = 0, fast = 0, wrong = 0, wrongState = 0, wrongRange = 0;
+        Map<String, Integer> why = new TreeMap<String, Integer>();
+        for (int seed = 1; seed <= 1500; seed++) {
+            Random r = new Random(seed * 7919L);
+            Table220 t = new Table220();
+            long now = 1_780_000_000L + r.nextInt(86400);
+            long epoch = 1, ds = 1000 + r.nextInt(100000), base = now - ds / 10, bootFirst = ds;
+            List<long[]> boots = new ArrayList<long[]>();
+            for (int k = 0; k < 14; k++) {
+                int what = r.nextInt(16);
+                boolean date = true;
+                if (what == 0 || what == 1) {
+                    boots.add(new long[] {epoch, bootFirst, ds});
+                    if (what == 0) epoch++;
+                    ds = 100 + r.nextInt(5000);
+                    bootFirst = ds;
+                    base = now - ds / 10;
+                } else if (what == 2 && ds - bootFirst > 100) {
+                    long at = bootFirst + r.nextInt((int) Math.min(1 << 30, ds - bootFirst));
+                    t.add(epoch, at, base + at / 10 + 3, false, true);
+                } else if (what == 3) {
+                    t.add(epoch, ds, now + 3600L * (5 + r.nextInt(8)), false, true);
+                } else if (what == 4) {
+                    now -= 3600L * (1 + r.nextInt(8));
+                } else if (what == 5 && !boots.isEmpty()) {
+                    long[] b = boots.get(r.nextInt(boots.size()));
+                    t.add(b[0], b[2] - r.nextInt(50), now, true, true);
+                } else if (what == 6) {
+                    t.add(epoch, ds, 1_400_000_000L, false, true);
+                } else if (what == 7) {
+                    long dt = r.nextBoolean() ? -300 : 600 + r.nextInt(20 * 3600);
+                    now += dt;
+                    if (dt > 0) ds += dt * 10;
+                } else if (what == 8) {
+                    date = false;
+                } else if (what == 9) {
+                    // a rtc beacon of the ring now and then
+                    t.add(epoch, ds, base + ds / 10, false, false);
+                }
+                if (what != 4 && what != 5 && what != 7) {
+                    if (r.nextInt(5) > 0) {
+                        long gap = r.nextInt(3) == 0 ? 0 : 1 + r.nextInt(3 * 3600);
+                        ds += gap * 10;
+                        now += gap;
+                    }
+                    if (r.nextInt(4) > 0) t.add(epoch, ds, base + ds / 10 + (r.nextBoolean() ? 0 : 30), false, true);
+                    int n = 1 + r.nextInt(40);
+                    long dt = 60 + r.nextInt(20000);
+                    for (int i = 1; i <= n; i++) t.add(epoch, ds + i * dt * 10 / n, -1, false, false);
+                    if (r.nextInt(8) == 0) t.add(epoch, Math.max(bootFirst, ds - r.nextInt(30000)), -1, false, false); // an older counter
+                    ds += dt * 10;
+                    now += dt;
+                    if (what != 10 && what != 8) t.add(epoch, r.nextInt(6) == 0 ? ds - r.nextInt(2000) : ds, now, true, true);
+                }
+                if (!date) continue;
+                String w = t.date(now);
+                steps++;
+                if (w == null) fast++;
+                else why.put(w, why.containsKey(w) ? why.get(w) + 1 : 1);
+                List<long[]> all = t.all(now), got = t.stored();
+                for (int i = 0; i < all.size(); i++) if (!Arrays.equals(all.get(i), got.get(i))) {
+                    wrong++;
+                    if (wrong < 4) System.out.println("  #220 seed " + seed + " step " + k + " row " + i + " " + Arrays.toString(got.get(i))
+                            + " should be " + Arrays.toString(all.get(i)) + (w == null ? " (step)" : " (" + w + ")"));
+                    break;
+                }
+                // the state of the step is the state of dating everything (bounds aside), and survives being stored
+                Dating.State ref = Dating.all(t.rows(0, Long.MAX_VALUE, false), now).state;
+                Dating.State back = Dating.State.decode(t.state.encode());
+                if (back == null || !back.encode().equals(t.state.encode())) wrongState++;
+                if (ref.dated != t.state.dated || ref.total != t.state.total || ref.lastId != t.state.lastId || ref.segs.size() != t.state.segs.size()
+                        || Double.compare(ref.dmin, t.state.dmin) != 0 || Double.compare(ref.dmax, t.state.dmax) != 0) wrongRange++;
+                else for (int g = 0; g < ref.segs.size(); g++) {
+                    Dating.Summary a = ref.segs.get(g), b = t.state.segs.get(g);
+                    if (a.no != b.no || a.firstId != b.firstId || a.lastId != b.lastId || a.epoch != b.epoch || a.minDs != b.minDs || a.maxDs != b.maxDs
+                            || a.events != b.events || a.anchored != b.anchored) {
+                        wrongState++;
+                        break;
+                    }
+                }
+                List<String> ta = new ArrayList<String>(), tb = new ArrayList<String>();
+                for (long[] x : ref.tail) ta.add(Arrays.toString(x));
+                for (long[] x : t.state.tail) tb.add(Arrays.toString(x));
+                if (!ta.equals(tb)) wrongState++;
+            }
+        }
+        System.out.println("  #220 core: " + steps + " datings, " + fast + " of the new part only; everything dated again: " + why.size() + " reasons");
+        check("#220 dating the new part gives every row the segment and date of dating everything (" + steps + " datings)", wrong == 0);
+        check("#220 the state after a step is the one dating everything leaves: segments, last records", wrongState == 0);
+        check("#220 the state after a step: same counts and earliest and latest date", wrongRange == 0);
+        check("#220 most datings of these histories read the new part only", fast * 2 > steps);
+        // stored state: damaged, other version or empty texts read as none
+        // nothing, garbage, another version, cut short, more dated rows than rows, three tail records
+        for (String bad : new String[] {null, "", "x", "2 1 2 3", "1 1 2", "1 5 100 3 9 0 NaN NaN 1 1 1 0 0", "1 1 1 1 1 1 1 1 1 1 1 3 1 1 1 1 1 1 1 1 1 0"}) {
+            check("#220 a damaged saved state reads as none: " + bad, Dating.State.decode(bad) == null);
+        }
+        check("#220 an empty history's state reads back", Dating.State.decode("1 5 100 3 0 0 NaN NaN 9223372036854775807 -9223372036854775808 Infinity 0 0") != null);
+        Dating.State st = Dating.State.decode("1 5 100 3 0 0 NaN NaN 9223372036854775807 -9223372036854775808 Infinity 0 0");
+        check("#220 a history without boot segments dates everything", Dating.step(st, 200, new Dating.Rows(0), new Dating.Rows(0)).full != null);
+        st.futMin = 1_800_000_000L;
+        check("#220 a time record that was ahead and is due now: everything again", st.changesAt(1_800_000_000L) != null && st.changesAt(1_799_970_000L) == null);
+        st.futMin = Long.MAX_VALUE;
+        st.validMax = 1_800_000_000L;
+        check("#220 a time record in use that is ahead after the phone clock went back: everything again", st.changesAt(1_799_970_000L) != null
+                && st.changesAt(1_800_000_000L - 6 * 3600) == null);
+        st.validMax = Long.MIN_VALUE;
+        st.clampMin = 1_800_000_000.5;
+        check("#220 a date cleared as ahead that is due now: everything again", st.changesAt(1_799_978_401L) != null && st.changesAt(1_799_978_400L) == null);
+        st.clampMin = Double.POSITIVE_INFINITY;
+        st.dmax = 1_800_000_000.5;
+        check("#220 a stored date ahead of the phone clock now: everything again", st.changesAt(1_799_978_400L) != null && st.changesAt(1_799_978_401L) == null);
+        eq("#220 dates before 2015 are cleared", Double.isNaN(Dating.limit(1_419_999_999.9, 1_800_000_000L)), true);
+        eq("#220 a date 6 hours ahead is kept", Dating.limit(1_800_021_600.0, 1_800_000_000L), 1_800_021_600.0);
+    }
+
+    /** Issue #194: the rule for skipping a sync shortly after the last one, and screen sessions read again unchanged. */
+    static void recent194() {
+        long now = 1_800_000_000L;
+        check("#194 a sync 10 minutes ago is recent", BackgroundJob.recent(now, now - 600, 0));
+        check("#194 an attempt 10 minutes ago is recent (a sync a day ago)", BackgroundJob.recent(now, now - 86400, now - 600));
+        check("#194 30 minutes ago is still recent, 30 minutes and a second not", BackgroundJob.recent(now, now - 1800, 0) && !BackgroundJob.recent(now, now - 1801, 0));
+        check("#194 never synced is not recent", !BackgroundJob.recent(now, 0, 0));
+        check("#194 a last sync after now (phone clock set back) is not recent", !BackgroundJob.recent(now, now + 3600, 0));
+        List<double[]> stored = Arrays.asList(new double[] {100, 200}, new double[] {300, 400});
+        check("#194 sessions read again unchanged: nothing changed", Double.isNaN(ScreenTime.firstChanged(stored, Arrays.asList(new double[] {300, 400}))));
+        eq("#194 the newest session went on: changed from its start", ScreenTime.firstChanged(stored, Arrays.asList(new double[] {300, 450})), 300.0);
+        eq("#194 a new session after an unchanged one: from the new one", ScreenTime.firstChanged(stored,
+                Arrays.asList(new double[] {300, 400}, new double[] {500, 600})), 500.0);
+        eq("#194 nothing stored yet: from the first read", ScreenTime.firstChanged(new ArrayList<double[]>(),
+                Arrays.asList(new double[] {500, 600}, new double[] {700, 800})), 500.0);
     }
 }

@@ -625,6 +625,21 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * The state of the last dating when the stored dates are still the ones {@code nowUnix} gives and no event came
+     * since (issue #194); null otherwise (also when no dating ran yet).
+     */
+    public Dating.State timeState(long nowUnix) {
+        Dating.State st = Dating.State.decode(kv(TIME_STATE, null));
+        if (st == null || st.changesAt(nowUnix) != null) return null;
+        return count("SELECT COALESCE(MAX(id), 0) FROM events") == st.lastId ? st : null;
+    }
+
+    /** At least one event is stored (no count over the table). */
+    public boolean hasEvents() {
+        return count("SELECT EXISTS (SELECT 1 FROM events)") > 0;
+    }
+
     public long eventCount() {
         Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events", null);
         try {

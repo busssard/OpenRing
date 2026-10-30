@@ -88,12 +88,40 @@ public final class Analyzer {
      */
     private static final java.util.concurrent.atomic.AtomicInteger RUNS = new java.util.concurrent.atomic.AtomicInteger();
 
+    /** kv: what the stored nights and days were worked out from ({@link #inputs}), stored with them (issue #194). */
+    static final String INPUTS = "analysis_inputs";
+
     /**
      * True when the stored nights and days are what an analysis would give now (issue #194), so a sync that stored
-     * nothing need not analyse again. Not known yet: every sync analyses again.
+     * nothing need not date and analyse again: no event since the last analysis (also none from Live or Find my
+     * ring), nothing asked it to look again ({@code analyzed_until}: new screen use, a new zone), the same settings,
+     * profile, rule versions, zone and date (so the first sync after midnight still finishes the day before), no
+     * error or pending Re analyse all, and dates that the new now leaves as they are. Notes the phone's zone first,
+     * as the analysis would.
      */
     public static boolean upToDate(Context c) {
-        return false;
+        return upToDate(c, System.currentTimeMillis() / 1000);
+    }
+
+    static synchronized boolean upToDate(Context c, long nowUnix) {
+        return new Analyzer(c, null).upToDate(nowUnix);
+    }
+
+    private boolean upToDate(long nowUnix) {
+        if (db.kv("analysis_error", null) != null || db.kvLong(FULL_PENDING, 0) == 1) return false;
+        String stored = db.kv(INPUTS, null);
+        if (stored == null) return false;
+        app.openring.core.Dating.State st = db.timeState(nowUnix);
+        if (st == null || st.dated == 0) return false;
+        if (!prefs.demo()) noteZone(db, nowUnix, zone, st.dmax);
+        return stored.equals(inputs(st.lastId, db.kvLong("analyzed_until", 0), nowUnix));
+    }
+
+    /** What an analysis of the events up to id {@code lastId}, analysed up to {@code until}, on the day of {@code nowUnix} depends on. */
+    private String inputs(long lastId, long until, long nowUnix) {
+        return lastId + " " + until + " " + prefs.stageDetail() + " " + (prefs.screenAwake() ? 1 : 0) + " " + StageFilter.VERSION + " "
+                + NightFinder.VERSION + " " + DayHeart.VERSION + " " + ScreenTime.AWAKE_RULE + " " + prefs.age() + " " + prefs.sex() + " "
+                + prefs.weightKg() + " " + prefs.heightCm() + " " + prefs.targetKcal() + " " + zone.getId() + " " + date(nowUnix);
     }
 
     /** True while an analysis runs or waits to run. */
@@ -206,6 +234,8 @@ public final class Analyzer {
         // however long the history is
         final double from = all || until <= 0 ? range[0] : Math.max(range[0], until - 2 * 86400);
         boolean longRun = all || range[1] - from > LONG_RUN_DAYS * 86400.0;
+        // read before the run: a setting changed meanwhile is not taken as analysed (issue #194)
+        final String inputs = inputs(t.lastId, (long) range[1], now);
         if (longRun) {
             int waited = db.beginLongRun();
             if (waited > 0) log.log("a long analysis: waited for a ring task to store its data");
@@ -231,6 +261,7 @@ public final class Analyzer {
                     db.put("phone_awake", ScreenTime.AWAKE_RULE);
                     if (all) db.put(FULL_PENDING, 0);
                     db.put("last_analysis", now);
+                    db.put(INPUTS, inputs);
                 }
             });
         } finally {
