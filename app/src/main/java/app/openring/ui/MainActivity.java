@@ -355,7 +355,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         super.onResume();
         Prefs prefs = Prefs.of(this);
         if (preparingDemo) return;
-        if (!prefs.demo() && (!prefs.setupDone() || !prefs.hasKey())) {
+        // a pairing whose key page the person has not left yet opens there (issue #218)
+        if (!prefs.demo() && (!prefs.setupDone() || !prefs.hasKey() || prefs.pairUnseen() != null)) {
             startActivity(new Intent(this, SetupActivity.class));
             return;
         }

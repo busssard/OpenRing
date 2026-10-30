@@ -13,7 +13,7 @@ public final class SyncError {
     private SyncError() {}
 
     public enum Kind { BLUETOOTH_OFF, NO_BLUETOOTH, NOT_FOUND, NOT_REACHED, BROKE_OFF, CONNECTION_SETUP, PAIRING, NOT_A_RING,
-        KEY_REFUSED, RING_RESET, NO_KEY, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, REANALYSING, UNKNOWN }
+        KEY_REFUSED, RING_RESET, NO_KEY, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, KEY_NOT_KEPT, KEY_NOT_SAVED, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, REANALYSING, UNKNOWN }
 
     /** What the ring was doing: a sync, pairing in Setup, an action in Settings, live heart rate or game motion. */
     public enum Task { SYNC, PAIR, ACTION, LIVE }
@@ -116,6 +116,8 @@ public final class SyncError {
         if (s.startsWith("the ring already has a key")) return Kind.KEY_EXISTS;
         if (s.startsWith("the ring refused the key") || s.contains("unfinished factory tests") || s.startsWith("no set key response"))
             return Kind.KEY_NOT_TAKEN;
+        if (s.startsWith(Pairing.KEY_NOT_KEPT.toLowerCase(Locale.ROOT))) return Kind.KEY_NOT_KEPT;
+        if (s.startsWith(Pairing.KEY_NOT_SAVED.toLowerCase(Locale.ROOT))) return Kind.KEY_NOT_SAVED;
         if (s.equals("the ring did not accept the change")) return Kind.NOT_SAVED;
         if (s.startsWith("demo mode")) return Kind.DEMO;
         if (s.startsWith(REANALYSING.toLowerCase(Locale.ROOT))) return Kind.REANALYSING;
@@ -175,6 +177,8 @@ public final class SyncError {
             case KEY_EXISTS: return "The ring already has a key. Factory reset it first, or use the existing key.";
             case KEY_NOT_TAKEN: return "The ring did not take the new key. Check that it was factory reset (blinking blue on the dock means done), "
                     + "put it on its charger next to the phone and try again.";
+            case KEY_NOT_KEPT: return "This phone could not save the key, so nothing was written to the ring. Free some storage and try again.";
+            case KEY_NOT_SAVED: return "The ring took the key, but this phone could not save it. Free some storage and try again.";
             case NOT_SAVED: return "The ring did not save the change. Keep it close to the phone and try again.";
             case SERIAL_MISMATCH: return serialMismatch(raw);
             case OTHER_RING: return otherRing(raw);

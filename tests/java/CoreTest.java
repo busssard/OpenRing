@@ -909,6 +909,8 @@ public class CoreTest {
         requests();
         auth();
         mutationGaps();
+        pairing();
+        pairingRun();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -4437,5 +4439,441 @@ public class CoreTest {
         Night.Score rs = Scores.readiness(ri);
         eq("HRV balance at 85% of usual is 70", rs.get("hrv").score, 70.0);
         eq("previous day activity at a quarter of the target is 72", rs.get("prev_activity").score, 72.0);
+    }
+
+    /** A made up ring for {@link #pairing}: holds a key (null after a factory reset) and fails where it is told. */
+    static final class FakeRing implements Pairing.Ring {
+        byte[] key;
+        /** Where the link breaks: "serial", "write" (before the ring takes it), "afterWrite" (it took it), "auth", "after". */
+        String breakAt = "";
+        /** Status of a key write the ring refuses for its own reason (5 unfinished tests), or -1. */
+        int refuse = -1;
+        int writes, auths;
+        String id = "2X0001";
+        List<String> lines = new ArrayList<String>();
+
+        void fail(String step) throws IOException {
+            if (breakAt.equals(step)) throw new IOException("ring disconnected");
+        }
+
+        public String serial() throws IOException {
+            fail("serial");
+            return id;
+        }
+
+        public int setAuthKey(byte[] k) throws IOException {
+            writes++;
+            fail("write");
+            if (refuse >= 0) return refuse;
+            if (key != null) return 1;
+            key = k.clone();
+            fail("afterWrite");
+            return 0;
+        }
+
+        public void authenticate(byte[] k) throws IOException {
+            auths++;
+            fail("auth");
+            if (key == null) throw new RingClient.AuthException(Auth.IN_FACTORY_RESET, "authentication failed: " + Auth.describe(Auth.IN_FACTORY_RESET));
+            if (!Arrays.equals(key, k)) throw new RingClient.AuthException(Auth.WRONG_KEY, "authentication failed: " + Auth.describe(Auth.WRONG_KEY));
+        }
+
+        public void status(String line) {
+            lines.add(line);
+        }
+
+        public boolean afterPairing(boolean installed) throws InterruptedException {
+            if (breakAt.equals("after")) return !installed;
+            if (breakAt.equals("afterCrash")) throw new IllegalStateException("crash");
+            if (breakAt.equals("afterStop")) throw new InterruptedException();
+            return true;
+        }
+    }
+
+    /** A made up phone store: what Prefs keeps on disk. */
+    static final class FakeStore implements Pairing.Store {
+        byte[] kept, saved;
+        String serial, unseen, keptSerial;
+        int keeps;
+        boolean setupDone, keepFails, doneFails;
+        int resets;
+        String oldSerial;
+
+        public byte[] kept() {
+            return kept == null ? null : kept.clone();
+        }
+
+        public String keptSerial() {
+            return keptSerial;
+        }
+
+        public boolean keep(byte[] k, String s) {
+            if (keepFails) return false;
+            check("pairing store: a kept key is never overwritten", kept == null);
+            keeps++;
+            kept = k.clone();
+            keptSerial = s;
+            return true;
+        }
+
+        public void forgetKept() {
+            kept = null;
+            keptSerial = null;
+        }
+
+        public void ringIs(String s) {
+            if (serial != null && !serial.equals(s)) resets++;
+        }
+
+        public boolean done(byte[] k, String s, String message, boolean dropKept) {
+            if (doneFails) return false;
+            saved = k.clone();
+            serial = s;
+            setupDone = true;
+            unseen = message;
+            if (dropKept) forgetKept();
+            return true;
+        }
+    }
+
+    static String pairRun(FakeRing r, FakeStore st, byte[] typed, boolean install) {
+        try {
+            return Pairing.pair(typed, install, r, st);
+        } catch (Exception e) {
+            return "FAIL " + e.getMessage();
+        }
+    }
+
+    /** The owner's rule (issue #218): the ring never holds a key written here that the phone does not hold. */
+    static void keyInvariant(String name, FakeRing r, FakeStore st, byte[] before) {
+        boolean written = r.key != null && (before == null || !Arrays.equals(before, r.key));
+        check(name + ": the phone holds the key the ring took",
+                !written || Arrays.equals(r.key, st.kept) || Arrays.equals(r.key, st.saved));
+        check(name + ": a saved key comes with set up", st.saved == null || st.setupDone && st.unseen != null);
+    }
+
+    /** Issue #218: pairing stores the key before the ring can take it, and saves key and set up together. */
+    static void pairing() {
+        // a reset ring, new key, all fine
+        FakeRing r = new FakeRing();
+        FakeStore st = new FakeStore();
+        String m = pairRun(r, st, null, true);
+        eq("pairing: new key pairs", m, "Paired with 2X0001");
+        check("pairing: the ring holds the saved key", Arrays.equals(r.key, st.saved) && st.kept == null);
+        check("pairing: set up and the key page not shown yet", st.setupDone && "Paired with 2X0001".equals(st.unseen));
+        eq("pairing: status lines", r.lines.toString(), "[Installing the key, Verifying the key]");
+        keyInvariant("pairing: fine", r, st, null);
+
+        // the link breaks at each step of a new key
+        String[] steps = {"serial", "write", "afterWrite", "auth"};
+        for (String step : steps) {
+            r = new FakeRing();
+            r.breakAt = step;
+            st = new FakeStore();
+            m = pairRun(r, st, null, true);
+            check("pairing: broken at " + step + " fails", m.startsWith("FAIL"));
+            check("pairing: broken at " + step + " is not set up", !st.setupDone && st.saved == null);
+            keyInvariant("pairing: broken at " + step, r, st, null);
+            // a try again with the link back: the kept key is used again, the ring ends up with the saved key
+            byte[] keptBefore = st.kept;
+            r.breakAt = "";
+            String again = pairRun(r, st, null, true);
+            eq("pairing: try again after " + step, again, "Paired with 2X0001");
+            check("pairing: try again after " + step + " saves the ring's key", Arrays.equals(r.key, st.saved) && st.kept == null);
+            if (keptBefore != null) check("pairing: try again after " + step + " uses the kept key", Arrays.equals(keptBefore, st.saved));
+            keyInvariant("pairing: try again after " + step, r, st, null);
+        }
+
+        // the ring took the key but the check failed: retry reuses it (status 1, same key accepted)
+        r = new FakeRing();
+        r.breakAt = "auth";
+        st = new FakeStore();
+        pairRun(r, st, null, true);
+        check("pairing: the ring took the key, the phone kept it", r.key != null && Arrays.equals(r.key, st.kept));
+        r.breakAt = "";
+        int writes = r.writes;
+        eq("pairing: status 1 with the kept key pairs", pairRun(r, st, null, true), "Paired with 2X0001");
+        eq("pairing: the retry wrote once more", r.writes, writes + 1);
+
+        // the phone cannot store the key: nothing goes to the ring
+        r = new FakeRing();
+        st = new FakeStore();
+        st.keepFails = true;
+        m = pairRun(r, st, null, true);
+        eq("pairing: key not kept", m, "FAIL " + Pairing.KEY_NOT_KEPT);
+        check("pairing: key not kept writes nothing", r.writes == 0 && r.key == null);
+        eq("pairing: key not kept sentence", SyncError.plain(Pairing.KEY_NOT_KEPT, SyncError.Task.PAIR),
+                "This phone could not save the key, so nothing was written to the ring. Free some storage and try again.");
+
+        // the ring took the key, saving failed: the kept key still holds it
+        r = new FakeRing();
+        st = new FakeStore();
+        st.doneFails = true;
+        m = pairRun(r, st, null, true);
+        eq("pairing: key not saved", m, "FAIL " + Pairing.KEY_NOT_SAVED);
+        keyInvariant("pairing: key not saved", r, st, null);
+        check("pairing: key not saved keeps the kept key", Arrays.equals(r.key, st.kept) && !st.setupDone);
+        eq("pairing: key not saved sentence", SyncError.plain(Pairing.KEY_NOT_SAVED, SyncError.Task.PAIR),
+                "The ring took the key, but this phone could not save it. Free some storage and try again.");
+
+        // a ring with someone else's key: the kept key goes, the sentence stays the one of today
+        byte[] other = Hex.parseKey("00112233445566778899aabbccddeeff");
+        r = new FakeRing();
+        r.key = other.clone();
+        st = new FakeStore();
+        st.kept = Hex.parseKey("ffeeddccbbaa99887766554433221100");
+        st.keptSerial = "2X0001";
+        m = pairRun(r, st, null, true);
+        eq("pairing: ring with another key", m, "FAIL " + Pairing.KEY_EXISTS);
+        check("pairing: another key drops the kept key", st.kept == null && st.saved == null);
+        check("pairing: another key stays on the ring", Arrays.equals(r.key, other));
+        eq("pairing: already has a key sentence", SyncError.plain(Pairing.KEY_EXISTS, SyncError.Task.PAIR), Pairing.KEY_EXISTS);
+        // a typed key the ring already has, with Install ticked: verified and paired
+        r = new FakeRing();
+        r.key = other.clone();
+        st = new FakeStore();
+        eq("pairing: install a key the ring already has", pairRun(r, st, other, true), "Paired with 2X0001");
+        check("pairing: that key is saved", Arrays.equals(st.saved, other));
+        // a typed key without install: no key is kept, nothing is written
+        r = new FakeRing();
+        r.key = other.clone();
+        st = new FakeStore();
+        eq("pairing: existing key", pairRun(r, st, other, false), "Paired with 2X0001");
+        check("pairing: existing key writes and keeps nothing", r.writes == 0 && st.kept == null && Arrays.equals(st.saved, other));
+        // a wrong typed key: no change on the phone
+        st = new FakeStore();
+        m = pairRun(r, st, Hex.parseKey("ffeeddccbbaa99887766554433221100"), false);
+        check("pairing: wrong typed key fails", m.startsWith("FAIL authentication failed"));
+        check("pairing: wrong typed key saves nothing", st.saved == null && st.kept == null && !st.setupDone);
+        eq("pairing: wrong typed key sentence starts", SyncError.kind(m.substring(5)), SyncError.Kind.KEY_REFUSED);
+        // a reset ring with a typed key and no install
+        r = new FakeRing();
+        st = new FakeStore();
+        m = pairRun(r, st, other, false);
+        eq("pairing: reset ring without install", SyncError.kind(m.substring(5)), SyncError.Kind.RING_RESET);
+        // a key kept from before stays when the ring refuses for its own reason, and is used again
+        r = new FakeRing();
+        r.refuse = 5;
+        st = new FakeStore();
+        st.kept = other.clone();
+        st.keptSerial = "2X0001";
+        m = pairRun(r, st, null, true);
+        eq("pairing: unfinished factory tests", m, "FAIL The ring reports unfinished factory tests (status 5).");
+        check("pairing: refused keeps the kept key", Arrays.equals(st.kept, other));
+        eq("pairing: refused other status", Pairing.refusal(7), "The ring refused the key (status 0x07)");
+        eq("pairing: refusal sentence", SyncError.kind(Pairing.refusal(7)), SyncError.Kind.KEY_NOT_TAKEN);
+        r.refuse = -1;
+        eq("pairing: a reset ring takes the kept key", pairRun(r, st, null, true), "Paired with 2X0001");
+        check("pairing: the kept key became the saved key", Arrays.equals(st.saved, other) && Arrays.equals(r.key, other));
+
+        // after the key is saved, a lost link no longer fails the pairing
+        r = new FakeRing();
+        r.breakAt = "after";
+        st = new FakeStore();
+        m = pairRun(r, st, null, true);
+        eq("pairing: measurements not switched on", m, "Paired with 2X0001" + Pairing.MEASUREMENTS_OFF);
+        check("pairing: still set up", st.setupDone && Arrays.equals(r.key, st.saved));
+        r = new FakeRing();
+        r.breakAt = "afterCrash";
+        st = new FakeStore();
+        eq("pairing: a crash after saving still pairs", pairRun(r, st, null, true), "Paired with 2X0001" + Pairing.MEASUREMENTS_OFF);
+        r = new FakeRing();
+        r.breakAt = "afterStop";
+        st = new FakeStore();
+        eq("pairing: a stop after saving still pairs", pairRun(r, st, null, true), "Paired with 2X0001" + Pairing.MEASUREMENTS_OFF);
+        check("pairing: the stop is passed on", Thread.interrupted() && st.setupDone);
+        r = new FakeRing();
+        r.key = other.clone();
+        r.breakAt = "afterCrash";
+        st = new FakeStore();
+        eq("pairing: existing key, nothing to switch on", pairRun(r, st, other, false), "Paired with 2X0001");
+
+        // a different ring than the saved one starts a fresh history before the key is saved
+        r = new FakeRing();
+        st = new FakeStore();
+        st.serial = "2X9999";
+        pairRun(r, st, null, true);
+        eq("pairing: a different ring resets once", st.resets, 1);
+        r = new FakeRing();
+        st = new FakeStore();
+        st.serial = "2X0001";
+        pairRun(r, st, null, true);
+        eq("pairing: the same ring keeps its history", st.resets, 0);
+
+        // decisions
+        eq("pairing: status 0", Pairing.afterSetKey(0), Pairing.Next.VERIFY);
+        eq("pairing: status 1", Pairing.afterSetKey(1), Pairing.Next.VERIFY_OR_TAKEN);
+        eq("pairing: status 5", Pairing.afterSetKey(5), Pairing.Next.REFUSED);
+        eq("pairing: refusal 1", Pairing.refusal(1), Pairing.KEY_EXISTS);
+        byte[] a = {1}, b = {2}, c = {3};
+        check("pairing: typed key wins", Pairing.keyFor(a, b, c) == a);
+        check("pairing: kept key before a new one", Pairing.keyFor(null, b, c) == b);
+        check("pairing: new key without a kept one", Pairing.keyFor(null, null, c) == c);
+        // a new key is a new random key each time
+        r = new FakeRing();
+        st = new FakeStore();
+        pairRun(r, st, null, true);
+        FakeRing r2 = new FakeRing();
+        FakeStore st2 = new FakeStore();
+        pairRun(r2, st2, null, true);
+        check("pairing: two new keys differ", st.saved != null && st2.saved != null && !Arrays.equals(st.saved, st2.saved));
+        pairingKeptRings();
+        check("pairing: user texts have no dashes", !Pairing.KEPT_TEXT.contains(" - ") && !Pairing.KEPT_NOTE.contains(" - ")
+                && !Pairing.MEASUREMENTS_OFF.contains(" - "));
+    }
+
+    /** A ring holds a key the app made: the phone must hold it (kept or saved). {@code typed} is the person's own key. */
+    static void keyInvariantAll(String name, FakeRing[] rings, byte[][] before, FakeStore st, byte[] typed) {
+        for (int i = 0; i < rings.length; i++) {
+            FakeRing r = rings[i];
+            boolean madeHere = r.key != null && !Arrays.equals(r.key, before[i]) && !Arrays.equals(r.key, typed);
+            check(name + ": the phone holds the key ring " + r.id + " took",
+                    !madeHere || Arrays.equals(r.key, st.kept) || Arrays.equals(r.key, st.saved));
+        }
+        check(name + ": a saved key comes with set up", st.saved == null || st.setupDone && st.unseen != null);
+    }
+
+    /** Review of #247: the kept key is never overwritten, and only the ring it was meant for can drop it. */
+    static void pairingKeptRings() {
+        byte[] typed = Hex.parseKey("0707070707070707070707070707a0a0");
+        byte[] stranger = Hex.parseKey("5555555555555555555555555555aaaa");
+        String[] steps = {"", "serial", "write", "afterWrite", "auth", "after"};
+        for (String step : steps) {
+            // a cut off try left key K on ring A and kept on the phone; then the person types a key and ticks Install
+            FakeRing a = new FakeRing();
+            a.breakAt = "auth";
+            FakeStore st = new FakeStore();
+            pairRun(a, st, null, true);
+            byte[] k = st.kept;
+            check("kept rings: the cut off try kept K for ring A", k != null && Arrays.equals(a.key, k) && "2X0001".equals(st.keptSerial));
+            a.breakAt = step;
+            String m = pairRun(a, st, typed, true);
+            String name = "kept rings: typed install on A, broken at '" + step + "'";
+            keyInvariantAll(name, new FakeRing[] {a}, new byte[][] {null}, st, typed);
+            check(name + ": K still on the phone", Arrays.equals(st.kept, k) || Arrays.equals(st.saved, k));
+            if (step.isEmpty() || step.equals("after")) {
+                check(name + ": paired with the kept key the ring holds", m.startsWith("Paired with") && Arrays.equals(st.saved, k));
+                check(name + ": the kept key went with the pairing of its ring", st.kept == null);
+            }
+
+            // ring B (another serial) answers instead, it holds someone else's key: K for A stays
+            a = new FakeRing();
+            a.breakAt = "auth";
+            st = new FakeStore();
+            pairRun(a, st, null, true);
+            k = st.kept;
+            FakeRing b = new FakeRing();
+            b.id = "2X0002";
+            b.key = stranger.clone();
+            b.breakAt = step;
+            m = pairRun(b, st, null, true);
+            name = "kept rings: new key on ring B with another key, broken at '" + step + "'";
+            keyInvariantAll(name, new FakeRing[] {a, b}, new byte[][] {null, stranger}, st, null);
+            check(name + ": K for A stays kept", Arrays.equals(st.kept, k) && "2X0001".equals(st.keptSerial));
+            check(name + ": fails " + m, m.startsWith("FAIL"));
+
+            // a typed key with Install on ring B: K for A stays kept
+            b = new FakeRing();
+            b.id = "2X0002";
+            b.key = stranger.clone();
+            b.breakAt = step;
+            m = pairRun(b, st, typed, true);
+            name = "kept rings: typed install on ring B, broken at '" + step + "'";
+            keyInvariantAll(name, new FakeRing[] {a, b}, new byte[][] {null, stranger}, st, typed);
+            check(name + ": K for A stays kept", Arrays.equals(st.kept, k) && "2X0001".equals(st.keptSerial));
+
+            // a typed key ring B already holds, without install: paired, K for A stays kept
+            b = new FakeRing();
+            b.id = "2X0002";
+            b.key = typed.clone();
+            b.breakAt = step;
+            m = pairRun(b, st, typed, false);
+            name = "kept rings: typed key on ring B, broken at '" + step + "'";
+            keyInvariantAll(name, new FakeRing[] {a, b}, new byte[][] {null, typed}, st, typed);
+            check(name + ": K for A stays kept", Arrays.equals(st.kept, k) && "2X0001".equals(st.keptSerial));
+
+            // a new key on a reset ring B reuses K, so both rings share it; K for A stays kept
+            FakeStore st2 = new FakeStore();
+            FakeRing a2 = new FakeRing();
+            a2.breakAt = "auth";
+            pairRun(a2, st2, null, true);
+            byte[] k2 = st2.kept;
+            FakeRing b2 = new FakeRing();
+            b2.id = "2X0002";
+            b2.breakAt = step;
+            m = pairRun(b2, st2, null, true);
+            name = "kept rings: new key on reset ring B, broken at '" + step + "'";
+            keyInvariantAll(name, new FakeRing[] {a2, b2}, new byte[][] {null, null}, st2, null);
+            check(name + ": K for A stays kept", Arrays.equals(st2.kept, k2) && "2X0001".equals(st2.keptSerial));
+            if (b2.key != null) check(name + ": ring B got K", Arrays.equals(b2.key, k2));
+            eq(name + ": nothing was kept twice", st2.keeps, 1);
+        }
+        // the ring the kept key was meant for holds another key: it goes (the ring said so itself)
+        FakeRing a = new FakeRing();
+        a.breakAt = "auth";
+        FakeStore st = new FakeStore();
+        pairRun(a, st, null, true);
+        a.key = stranger.clone(); // reset and keyed elsewhere meanwhile
+        a.breakAt = "";
+        eq("kept rings: ring A with another key", pairRun(a, st, typed, true), "FAIL " + Pairing.KEY_EXISTS);
+        check("kept rings: A's wrong key answer drops the kept key", st.kept == null && st.keptSerial == null);
+        check("kept rings: a typed key is not kept while another key is", st.keeps == 1);
+        // a clear refusal keeps the kept key: it may still be on the ring from before
+        a = new FakeRing();
+        a.breakAt = "auth";
+        st = new FakeStore();
+        pairRun(a, st, null, true);
+        a.breakAt = "";
+        a.refuse = 5;
+        pairRun(a, st, null, true);
+        check("kept rings: a refusal keeps the kept key", st.kept != null);
+        eq("kept rings: caption with the ring", Pairing.keptFor("2X0001"), "Kept key, meant for ring 2X0001");
+        eq("kept rings: caption without one", Pairing.keptFor(null), "Kept key");
+        eq("kept rings: sentence adds a full stop", Pairing.sentence("Paired with 2X0001"), "Paired with 2X0001.");
+        eq("kept rings: sentence keeps one", Pairing.sentence("Paired with 2X0001" + Pairing.MEASUREMENTS_OFF),
+                "Paired with 2X0001" + Pairing.MEASUREMENTS_OFF);
+        check("kept rings: measurements note ends with a full stop", Pairing.MEASUREMENTS_OFF.endsWith("."));
+        check("kept rings: the card says may have", Pairing.KEPT_TEXT.startsWith("Your last try may have written"));
+    }
+
+    /** Issue #218: the pairing result reaches the Setup screen shown now, or waits for the next one. */
+    static void pairingRun() {
+        Pairing.Run<String> run = new Pairing.Run<String>();
+        check("pairing run: idle at first", !run.running() && run.take() == null);
+        run.attach("setup");
+        check("pairing run: start", run.start(1));
+        check("pairing run: a second start is refused", !run.start(0));
+        eq("pairing run: the card that started it", run.card(), 1);
+        // the phone is turned: Android destroys the old screen first, then builds the new one
+        run.detach("setup", false);
+        eq("pairing run: ends with no screen attached", run.finish(true, "Paired with 2X0001"), null);
+        check("pairing run: ended", !run.running());
+        run.attach("turned setup");
+        Pairing.Result res = run.take();
+        check("pairing run: the new screen gets the result", res != null && res.ok && "Paired with 2X0001".equals(res.message));
+        check("pairing run: only once", run.take() == null);
+        // the new screen attaches before the old one goes (Back from a screen above)
+        check("pairing run: start again", run.start(0));
+        run.attach("newer setup");
+        run.detach("turned setup", false);
+        eq("pairing run: tells the screen attached now", run.finish(false, "The ring could not be reached."), "newer setup");
+        res = run.take();
+        check("pairing run: a failure is handed over", res != null && !res.ok && res.message.startsWith("The ring could not"));
+        eq("pairing run: card of the last run", run.card(), 0);
+        // Setup closed for good while the result waited: it is dropped (a success is saved on the phone anyway)
+        run.start(1);
+        run.finish(false, "x");
+        run.detach("newer setup", true);
+        check("pairing run: closing for good drops a waiting result", run.take() == null);
+        // a stranger detaching changes nothing
+        run.attach("setup");
+        run.start(1);
+        run.finish(true, "y");
+        run.detach("stranger", true);
+        check("pairing run: a stranger leaves the result", run.take() != null);
+        // a new start drops a result nobody took
+        run.finish(false, "old");
+        run.start(0);
+        check("pairing run: a new start drops an old result", run.take() == null);
     }
 }

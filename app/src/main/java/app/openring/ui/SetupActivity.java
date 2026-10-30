@@ -18,6 +18,7 @@ import android.widget.Toast;
 
 import app.openring.ble.RingManager;
 import app.openring.core.Hex;
+import app.openring.core.Pairing;
 import app.openring.data.Prefs;
 import app.openring.sync.SyncJob;
 import app.openring.sync.SyncService;
@@ -48,6 +49,38 @@ public final class SetupActivity extends Activity {
 
     private Restore restore;
     private android.app.AlertDialog dialog;
+
+    /**
+     * The pairing that runs now, reported to the Setup screen attached now (issue #218): a turned phone builds a new
+     * screen, Android may end the screen, the result still arrives. Static, so a rebuilt screen sees it.
+     */
+    static final Pairing.Run<SetupActivity> PAIR = new Pairing.Run<SetupActivity>();
+    /** Cards that can start a pairing: the typed key, a new key. */
+    static final int CARD_KEY = 0, CARD_NEW = 1;
+    /** The status lines of the two cards on "Connect your ring" (null while another page is shown). */
+    private final TextView[] pairStatus = new TextView[2];
+    /** The card that shows a key kept from a try that did not finish. */
+    private LinearLayout keptCard;
+
+    /** Shows the ring's status line in the card that started the pairing, also on a rebuilt screen. */
+    private final RingManager.Listener ringStatus = new RingManager.Listener() {
+        @Override
+        public void onRingStatus() {
+            if (!PAIR.running()) return;
+            TextView t = pairStatus[PAIR.card()];
+            String st = RingManager.get(SetupActivity.this).status();
+            if (t != null && st != null && !st.isEmpty()) t.setText(st);
+        }
+    };
+
+    /** Holds no screen: tells the one attached when the pairing ends, or leaves the result for the next one. */
+    static final class PairDone implements RingManager.Callback {
+        @Override
+        public void done(boolean ok, String message) {
+            SetupActivity o = PAIR.finish(ok, message);
+            if (o != null && !o.isFinishing() && !o.isDestroyed()) o.pairResult();
+        }
+    }
 
     @Override
     public Object onRetainNonConfigurationInstance() {
@@ -234,6 +267,8 @@ public final class SetupActivity extends Activity {
             dialog = null;
         }
         restore.owner = null;
+        PAIR.detach(this, isFinishing());
+        RingManager.get(this).removeListener(ringStatus);
         if (isFinishing()) {
             restore.abandoned = true;
             app.openring.data.Backup.cancel(this, restore.plan);
@@ -259,6 +294,14 @@ public final class SetupActivity extends Activity {
         restore = last instanceof Restore ? (Restore) last : new Restore();
         restore.owner = this;
         if (!restore.busy) app.openring.data.Backup.cleanStale(this);
+        PAIR.attach(this);
+        RingManager.get(this).addListener(ringStatus);
+        // a pairing whose key page was not left yet, also after Android ended the app (issue #218)
+        Prefs pr = Prefs.of(this);
+        if (step != 5 && pr.pairUnseen() != null && pr.hasKey()) {
+            step = 5;
+            pairedMessage = pr.pairUnseen();
+        }
         show();
         resumeRestore();
     }
@@ -266,12 +309,69 @@ public final class SetupActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // a pairing that finished while this screen was being recreated
+        // a pairing that ended while this screen was being recreated or covered (issue #218)
+        if (pairResult()) return;
         Prefs p = Prefs.of(this);
-        if (step >= 3 && step != 5 && p.setupDone() && p.hasKey()) {
+        String unseen = p.pairUnseen();
+        if (step != 5 && p.hasKey() && (unseen != null || step >= 3 && p.setupDone())) {
             step = 5;
+            if (unseen != null) pairedMessage = unseen;
             show();
+        } else if (step == 3) {
+            fillKept();
         }
+    }
+
+    /** Shows a pairing result waiting for this screen; false when there is none. */
+    boolean pairResult() {
+        Pairing.Result r = PAIR.take();
+        if (r == null) return false;
+        if (r.ok) {
+            paired(r.message);
+            return true;
+        }
+        String text = r.message;
+        if (Prefs.of(this).pendingKey() != null) text += " " + Pairing.KEPT_NOTE;
+        TextView t = step == 3 ? pairStatus[PAIR.card()] : null;
+        if (t != null) {
+            t.setTextColor(Ui.WARN);
+            t.setText(text);
+            fillKept();
+        } else {
+            Toast.makeText(this, text, Toast.LENGTH_LONG).show();
+        }
+        return true;
+    }
+
+    /** "Key from your last try": shown while a key kept from a try that did not finish exists. */
+    void fillKept() {
+        if (keptCard == null) return;
+        keptCard.removeAllViews();
+        byte[] kept = Prefs.of(this).pendingKey();
+        keptCard.setVisibility(kept == null ? View.GONE : View.VISIBLE);
+        if (kept == null) return;
+        final String hex = Hex.encode(kept);
+        keptCard.addView(Ui.h2(this, Pairing.KEPT_TITLE));
+        keptCard.addView(Ui.gap(this, 4));
+        keptCard.addView(Ui.body(this, Pairing.KEPT_TEXT));
+        keptCard.addView(Ui.gap(this, 10));
+        keptCard.addView(Ui.caption(this, Pairing.keptFor(Prefs.of(this).pendingKeySerial())));
+        TextView kt = Ui.text(this, hex, 17, Ui.TEXT, Typeface());
+        kt.setTextIsSelectable(true);
+        keptCard.addView(kt);
+        secondary(keptCard, "Copy key", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                copyKey(hex);
+            }
+        });
+    }
+
+    void copyKey(String hex) {
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm == null) return;
+        cm.setPrimaryClip(ClipData.newPlainText("Ring key", hex));
+        Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show();
     }
 
     @Override
@@ -284,6 +384,7 @@ public final class SetupActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (step == 5) {
+            Prefs.of(this).clearPairUnseen();
             startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
             finish();
         } else if (step > 0) {
@@ -342,6 +443,9 @@ public final class SetupActivity extends Activity {
     }
 
     void show() {
+        pairStatus[CARD_KEY] = null;
+        pairStatus[CARD_NEW] = null;
+        keptCard = null;
         switch (step) {
             case 0:
                 welcome();
@@ -479,6 +583,10 @@ public final class SetupActivity extends Activity {
                 "The ring only talks to apps that know its 16 byte pairing key. Choose how to get one. Put the ring on its charger next to the phone, "
                         + "and close the official Oura app so it does not hold the Bluetooth link.");
 
+        keptCard = Ui.card(this);
+        l.addView(keptCard);
+        fillKept();
+
         LinearLayout a = Ui.card(this);
         a.addView(Ui.h2(this, "Use my existing key"));
         a.addView(Ui.gap(this, 4));
@@ -536,10 +644,11 @@ public final class SetupActivity extends Activity {
                     status.setTextColor(Ui.WARN);
                     return;
                 }
-                runPair(k, install.isChecked(), status);
+                runPair(k, install.isChecked(), CARD_KEY);
             }
         });
         a.addView(status);
+        pairStatus[CARD_KEY] = status;
         l.addView(a);
 
         LinearLayout rcard = Ui.card(this);
@@ -572,41 +681,36 @@ public final class SetupActivity extends Activity {
         secondary(bcard, "Pair and create a new key", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                runPair(null, true, st2);
+                runPair(null, true, CARD_NEW);
             }
         });
         bcard.addView(st2);
+        pairStatus[CARD_NEW] = st2;
         l.addView(bcard);
+        if (PAIR.running()) {
+            // a pairing started before this screen was rebuilt
+            TextView t = pairStatus[PAIR.card()];
+            t.setTextColor(Ui.TEXT_2);
+            t.setText(Pairing.WORKING);
+        }
     }
 
-    void runPair(byte[] key, boolean install, final TextView status) {
+    void runPair(byte[] key, boolean install, int card) {
         if (!Permissions.granted(this)) {
             Permissions.request(this);
             return;
         }
-        status.setTextColor(Ui.TEXT_2);
-        status.setText("Working, accept the pairing request if Android shows one");
-        final RingManager.Listener l = new RingManager.Listener() {
-            @Override
-            public void onRingStatus() {
-                String s = RingManager.get(SetupActivity.this).status();
-                if (s != null && !s.isEmpty()) status.setText(s);
-            }
-        };
-        RingManager.get(this).addListener(l);
-        RingManager.get(this).pair(key, install, new RingManager.Callback() {
-            @Override
-            public void done(boolean ok, String message) {
-                RingManager.get(SetupActivity.this).removeListener(l);
-                if (isFinishing() || isDestroyed()) return;
-                if (!ok) {
-                    status.setTextColor(Ui.WARN);
-                    status.setText(message);
-                    return;
-                }
-                paired(message);
-            }
-        });
+        if (!PAIR.start(card)) {
+            Toast.makeText(this, Pairing.ALREADY, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        TextView status = pairStatus[card];
+        if (status != null) {
+            status.setTextColor(Ui.TEXT_2);
+            status.setText(Pairing.WORKING);
+        }
+        // the callback holds no screen: the result reaches the one attached when it ends (issue #218)
+        RingManager.get(this).pair(key, install, new PairDone());
     }
 
     void paired(String message) {
@@ -616,7 +720,7 @@ public final class SetupActivity extends Activity {
         // the key is saved; never send the user back through setup for this ring
         p.setSetupDone(true);
         final String hex = Hex.encode(p.loadKey());
-        LinearLayout l = page("You're connected", message + ". Back up your key somewhere safe. It cannot be read back from the ring, "
+        LinearLayout l = page("You're connected", Pairing.sentence(message) + " Back up your key somewhere safe. It cannot be read back from the ring, "
                 + "and without it you would need to factory reset the ring to connect again.");
         LinearLayout k = Ui.card(this);
         k.addView(Ui.caption(this, "Your ring key"));
@@ -627,15 +731,15 @@ public final class SetupActivity extends Activity {
         secondary(l, "Copy key", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                cm.setPrimaryClip(ClipData.newPlainText("Ring key", hex));
-                Toast.makeText(SetupActivity.this, "Copied", Toast.LENGTH_SHORT).show();
+                p.clearPairUnseen();
+                copyKey(hex);
             }
         });
         primary(l, "Start syncing", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 p.setSetupDone(true);
+                p.clearPairUnseen();
                 SyncJob.schedule(SetupActivity.this);
                 SyncService.start(SetupActivity.this);
                 startActivity(new Intent(SetupActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));

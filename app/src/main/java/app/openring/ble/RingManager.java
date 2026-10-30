@@ -681,53 +681,105 @@ public final class RingManager {
     /**
      * Adopt a ring. With {@code existingKey} the key is verified against the ring (the official
      * app's key, or a key you backed up). Without it, a fresh key is generated and installed, which
-     * only works on a factory reset ring.
+     * only works on a factory reset ring. The steps and their order are {@code core/Pairing} (issue #218):
+     * a key is stored on the phone before it goes to the ring, and key, serial and "set up" are saved
+     * together once the ring accepted it, whatever happened to the screen that asked.
      */
     public void pair(final byte[] existingKey, final boolean install, final Callback cb) {
         runOp(SyncError.Task.PAIR, cb, new Op() {
             @Override
             public String run() throws Exception {
-                Prefs prefs = Prefs.of(ctx);
+                final Prefs prefs = Prefs.of(ctx);
                 // a sync may still analyse (it released the ring, issue #21). Wait for it before the
                 // link opens, so the link cannot go stale meanwhile, and hold the analysis lock for
                 // the few seconds of pairing: no analysis runs between the wipe of a different ring's
                 // history and the new serial, in the same order as before
                 synchronized (Analyzer.class) {
-                    Session s = open(true, null);
+                    final Session s = open(true, null);
                     try {
-                        String serial = s.client.serial();
-                        byte[] key = existingKey != null ? existingKey : Auth.newKey();
-                        if (install) {
-                            setStatus("Installing the key");
-                            int st = s.client.setAuthKey(key);
-                            if (st != 0) {
-                                throw new IOException(st == 1 ? "The ring already has a key. Factory reset it first, or use the existing key."
-                                        : st == 5 ? "The ring reports unfinished factory tests (status 5)."
-                                        : String.format(Locale.US, "The ring refused the key (status 0x%02x)", st));
+                        return app.openring.core.Pairing.pair(existingKey, install, new app.openring.core.Pairing.Ring() {
+                            @Override
+                            public String serial() throws IOException, InterruptedException {
+                                return s.client.serial();
                             }
-                        }
-                        setStatus("Verifying the key");
-                        s.client.authenticate(key);
-                        prefs.saveKey(key);
-                        prefs.setAddress(s.link.device().getAddress());
-                        if (prefs.serial() != null && !prefs.serial().equals(serial)) {
-                            // a different ring: start a fresh history
-                            Db.get(ctx).resetAll();
-                        }
-                        prefs.setSerial(serial);
-                        try {
-                            RingClient.DeviceInfo info = s.client.firmware();
-                            prefs.setFirmware(info.firmware);
-                        } catch (IOException ignored) {
-                        }
-                        if (install) {
-                            // a ring keyed outside the official app starts with daytime HR and SpO2 off
-                            s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
-                            s.client.setFeatureMode(Protocol.FEATURE_SPO2, Protocol.MODE_AUTOMATIC);
-                            long now = System.currentTimeMillis() / 1000;
-                            s.client.syncTime(now, TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1800000);
-                        }
-                        return "Paired with " + serial;
+
+                            @Override
+                            public int setAuthKey(byte[] key) throws IOException, InterruptedException {
+                                return s.client.setAuthKey(key);
+                            }
+
+                            @Override
+                            public void authenticate(byte[] key) throws IOException, InterruptedException {
+                                s.client.authenticate(key);
+                            }
+
+                            @Override
+                            public void status(String line) {
+                                setStatus(line);
+                            }
+
+                            @Override
+                            public boolean afterPairing(boolean installed) throws InterruptedException {
+                                try {
+                                    RingClient.DeviceInfo info = s.client.firmware();
+                                    prefs.setFirmware(info.firmware);
+                                } catch (IOException ignored) {
+                                }
+                                if (!installed) return true;
+                                boolean on = true;
+                                try {
+                                    // a ring keyed outside the official app starts with daytime HR and SpO2 off; the
+                                    // answers are not checked, as before: only a lost link counts as not switched on
+                                    s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
+                                    s.client.setFeatureMode(Protocol.FEATURE_SPO2, Protocol.MODE_AUTOMATIC);
+                                } catch (IOException e) {
+                                    log("paired, but the measurements were not switched on: " + e.getMessage());
+                                    on = false;
+                                }
+                                try {
+                                    long now = System.currentTimeMillis() / 1000;
+                                    s.client.syncTime(now, TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1800000);
+                                } catch (IOException e) {
+                                    // the next sync sets the clock
+                                    log("paired, but the ring clock was not set: " + e.getMessage());
+                                }
+                                return on;
+                            }
+                        }, new app.openring.core.Pairing.Store() {
+                            @Override
+                            public byte[] kept() {
+                                return prefs.pendingKey();
+                            }
+
+                            @Override
+                            public String keptSerial() {
+                                return prefs.pendingKeySerial();
+                            }
+
+                            @Override
+                            public boolean keep(byte[] key, String serial) {
+                                return prefs.keepPendingKey(key, serial);
+                            }
+
+                            @Override
+                            public void forgetKept() {
+                                prefs.forgetPendingKey();
+                                log("the ring holds a different key; the kept key was dropped");
+                            }
+
+                            @Override
+                            public void ringIs(String serial) {
+                                if (prefs.serial() != null && !prefs.serial().equals(serial)) {
+                                    // a different ring: start a fresh history
+                                    Db.get(ctx).resetAll();
+                                }
+                            }
+
+                            @Override
+                            public boolean done(byte[] key, String serial, String message, boolean dropKept) {
+                                return prefs.pairDone(key, s.link.device().getAddress(), serial, message, dropKept);
+                            }
+                        });
                     } finally {
                         close(s);
                     }
