@@ -754,11 +754,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     pick.pick(k);
                 }
             });
+            // equal heights, no vertical margins: a top margin alone pushed the outline's bottom out of the row (review of #259)
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
-            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), i == labels.length - 1 ? 0 : Ui.dp(this, 4), 0);
+            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), 0, i == labels.length - 1 ? 0 : Ui.dp(this, 4), 0);
             row.addView(chip, lp);
         }
-        parent.addView(row, Ui.matchWrap());
+        LinearLayout.LayoutParams rp = Ui.matchWrap();
+        rp.setMargins(0, Ui.dp(this, 4), 0, 0);
+        parent.addView(row, rp);
     }
 
     static int indexOf(int[] a, int v) {
