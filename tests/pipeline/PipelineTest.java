@@ -814,6 +814,7 @@ public class PipelineTest {
         runningDay194();
         redated188();
         interrupted188();
+        lateRecord188();
         upgradeRestore188();
         largeHistory188();
 
@@ -6236,6 +6237,56 @@ public class PipelineTest {
         Analyzer.run(c, null);
         check("#188 the next analysis after the dating stopped: the same as a full re analysis", results139(db).equals(refs188),
                 firstDiff(results139(db), refs188));
+
+        // 4. Live dates on its own while an analysis runs (review of #250): the mark it lowered is not overwritten
+        c = boots188("openring188-during");
+        final Db ddb = Db.get(c);
+        final boolean[] moved = {false};
+        Analyzer.run(c, new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                if (moved[0] || !m.startsWith("analysing ")) return;
+                moved[0] = true;
+                moveAnchor(ddb, 2, T2_188, 3600);
+                ddb.rebuildTime(System.currentTimeMillis() / 1000);
+            }
+        });
+        check("#188 dates moved during an analysis (Live): the lowered mark stays", moved[0] && ddb.kvLong("analyzed_until", 0) == (long) old2,
+                ddb.kvLong("analyzed_until", 0) + " / " + (long) old2);
+        Analyzer.run(c, null);
+        check("#188 dates moved during an analysis, the next analysis: the same as a full re analysis", results139(ddb).equals(refs188),
+                firstDiff(results139(ddb), refs188));
+    }
+
+    /**
+     * Issue #188 through the saved dating state (review of #250): a late time record of the newest boot, an hour behind,
+     * moves its older events without clearing the state. The analysis goes back to them and equals a full re analysis.
+     */
+    static void lateRecord188() throws Exception {
+        Context c = boots188("openring188-late");
+        Db db = Db.get(c);
+        List<String> before = results139(db);
+        String state = db.kv("time_state", null);
+        long dated = db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
+        double old3 = minUnix188(db, 3);
+        long maxDs = db.count("SELECT MAX(ds) FROM events WHERE epoch = 3");
+        long ds = maxDs - 3 * 3600 * 10;
+        List<RingEvent> rec = new ArrayList<RingEvent>();
+        rec.add(new RingEvent(EventCodec.TIME_SYNC, ds, timeSync(T3_188 + (ds - app.openring.data.Demo.DS0) / 10 - 3600)));
+        db.insertBatch(rec, 3, T3_188);
+        StringBuilder log = new StringBuilder();
+        Analyzer.run(c, collect(log));
+        double new3 = minUnix188(db, 3);
+        List<String> after = results139(db);
+        System.out.println("  #188 late time record: " + log.substring(0, log.indexOf("\n")));
+        check("#188 late time record: dated with the saved state (not cleared), boot 3 an hour earlier, one more event dated", state != null
+                && log.indexOf("no saved state") < 0 && new3 == old3 - 3600 && db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL") == dated + 1,
+                (new3 - old3) + " s");
+        check("#188 late time record: analysed again from two days before the earliest new date", log.indexOf(from188(new3)) >= 0,
+                log.toString().replace('\n', ';'));
+        List<String> full = full188(c);
+        check("#188 late time record: a full re analysis gives other nights than before (the case is real)", !full.equals(before), firstDiff(full, before));
+        check("#188 late time record: every night and day is what a full re analysis gives, byte for byte", after.equals(full), firstDiff(after, full));
     }
 
     /**

@@ -68,7 +68,8 @@ Nothing leaves the phone: the app has no internet permission.
   so the analysis does not scan for it, and the earliest date, old or new, of a row whose date it wrote (`changedFrom`,
   issue #188): in the same commit as the dates it lowers `analyzed_until` to that date, so the nights and days of
   events that moved are analysed again (from two days before it), also when as many events are dated as before and
-  when the app stops between the dating and the analysis, or Live dated on its own.
+  when the app stops between the dating and the analysis, or Live dated on its own. An analysis that finds the mark
+  lower at its end than when it started (Live dated meanwhile) keeps the lower mark, so the next one does those days.
 * Measurements on the ring (daytime heart rate `0x02`, SpO2 `0x04`, resting heart rate `0x08`) have
   modes off, automatic, requested and live. A ring paired outside the official app starts with them off.
 

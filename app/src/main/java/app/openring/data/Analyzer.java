@@ -263,7 +263,8 @@ public final class Analyzer {
             log.log("no dated events yet, nothing to analyse");
             return;
         }
-        double until = db.kvLong("analyzed_until", 0);
+        final long untilRead = db.kvLong("analyzed_until", 0);
+        double until = untilRead;
         // no age limit (issue #20): a whole run rebuilds every night; the week by week chunks keep memory flat
         // however long the history is
         final double from = all || until <= 0 ? range[0] : Math.max(range[0], until - 2 * 86400);
@@ -286,7 +287,11 @@ public final class Analyzer {
                     db.put("dated_count", t.datedAfter);
                     db.put("event_count", t.total);
                     analyze(from, range[1]);
-                    db.put("analyzed_until", (long) range[1]);
+                    // a dating since the mark was read (Live dates on its own, issue #188, review of #250) may have lowered
+                    // it: those days are not in these results, so the lower mark stays and the next analysis does them
+                    long mark = db.kvLong("analyzed_until", 0);
+                    if (mark < untilRead) log.log("dates moved during the analysis, the days from " + date(mark) + " on are analysed again next time");
+                    db.put("analyzed_until", mark < untilRead ? mark : (long) range[1]);
                     db.put("stage_detail", detail);
                     db.put("stage_filter", StageFilter.VERSION);
                     db.put("night_finder", NightFinder.VERSION);
