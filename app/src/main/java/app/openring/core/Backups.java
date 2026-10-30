@@ -233,6 +233,18 @@ public final class Backups {
         return "the file could not be written";
     }
 
+    /** Android's {@code Intent.FLAG_GRANT_READ_URI_PERMISSION} and {@code FLAG_GRANT_WRITE_URI_PERMISSION} (same values). */
+    public static final int GRANT_READ = 1, GRANT_WRITE = 2;
+
+    /**
+     * The permission to keep for a folder the picker returned, from the flags of its result (review of #259): read and
+     * write, only those, and only when the picker gave both; -1 when it did not (the folder cannot take copies).
+     */
+    public static int keepFlags(int resultFlags) {
+        int f = resultFlags & (GRANT_READ | GRANT_WRITE);
+        return f == (GRANT_READ | GRANT_WRITE) ? f : -1;
+    }
+
     /** A failure text that means a full disk (Android's ENOSPC, SQLite's full database). */
     public static boolean noSpace(String text) {
         if (text == null) return false;
@@ -254,6 +266,8 @@ public final class Backups {
     public static final String NONE_YET = "No copy yet. The first one is made the next time the phone charges.";
     public static final String GO_BACK = "Go back to this copy";
     public static final String GO_BACK_TITLE = "Go back to this copy?";
+    /** The line while going back runs (a wait for a sync or an analysis replaces it, see core/RingGate). */
+    public static final String GOING_BACK = "Going back to the copy";
     public static final String WENT_BACK = "Your history is back as it was in this copy";
     public static final String DEMO = "Demo: an example, nothing is saved.";
     public static final String NOT_IN_DEMO = "Not in demo mode.";
@@ -298,7 +312,8 @@ public final class Backups {
 
     /** The question before going back to a copy made at {@code unix}. */
     public static String goBackText(long unix, ZoneId z) {
-        return "Your history is replaced by this copy. What was synced since " + day(unix, z) + " is kept as a copy of its own.";
+        return "Your history is replaced by this copy from " + day(unix, z) + ". First your whole history as it is now is kept as "
+                + "\"Copy from before going back\", so you can put it back from this card.";
     }
 
     /** The status line of the folder copies. {@code error}: a reason code, null when the last try worked. */

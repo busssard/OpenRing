@@ -42,10 +42,15 @@ public final class SafFolder implements AutoBackup.Folder {
         return u == null ? null : new SafFolder(c.getApplicationContext(), Uri.parse(u));
     }
 
-    /** Keeps the permission for a folder just picked and returns its name; null when Android does not allow it. */
-    public static String keep(Context c, Uri tree) {
+    /**
+     * Keeps the permission for a folder just picked, with the flags of the picker's result ({@code resultFlags}), and
+     * returns its name; null when Android does not allow it or the picker gave no write access.
+     */
+    public static String keep(Context c, Uri tree, int resultFlags) {
+        int flags = Backups.keepFlags(resultFlags);
+        if (flags < 0) return null;
         try {
-            c.getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            c.getContentResolver().takePersistableUriPermission(tree, flags);
         } catch (RuntimeException e) {
             return null;
         }

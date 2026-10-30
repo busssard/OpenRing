@@ -148,13 +148,22 @@ public final class Prefs {
     /** The folder for the automatic backups (a tree URI with a kept permission), null when they are off. */
     public String backupFolder() { return sp.getString("backup_folder", null); }
     public String backupFolderName() { return sp.getString("backup_folder_name", null); }
-    /** Sets or (null) clears the folder; a new folder starts without a status and without a listed file. */
+    /**
+     * Sets or (null) clears the folder. The list of files the app wrote belongs to the folder it wrote them to
+     * ({@code auto_files_folder}): it stays when the backups are stopped and when the same folder is chosen again, so
+     * the copies already there still count and the oldest of them still go (review of #259); another folder starts with
+     * an empty list. The status starts afresh, except when the same folder is chosen again while it is set (only the
+     * reason of the last failure goes: its permission was just given again).
+     */
     public void setBackupFolder(String uri, String name) {
         SharedPreferences.Editor e = sp.edit();
+        boolean same = uri != null && uri.equals(backupFolder());
         if (uri == null) e.remove("backup_folder").remove("backup_folder_name");
         else e.putString("backup_folder", uri).putString("backup_folder_name", name);
-        e.remove("auto_error").remove("auto_last_ok").remove("auto_last_size").remove("auto_kept").remove("auto_last_try").remove("auto_last_regular")
-                .remove("auto_files").commit();
+        e.remove("auto_error");
+        if (!same) e.remove("auto_last_ok").remove("auto_last_size").remove("auto_kept").remove("auto_last_try").remove("auto_last_regular");
+        if (uri != null && !uri.equals(sp.getString("auto_files_folder", null))) e.putString("auto_files_folder", uri).remove("auto_files");
+        e.commit();
     }
     /** A copy every so many days (1, 7 or 30). */
     public int backupDays() { return sp.getInt("backup_days", app.openring.core.Backups.DEFAULT_DAYS); }

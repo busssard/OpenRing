@@ -34,6 +34,7 @@ import org.json.JSONObject;
 import app.openring.core.analysis.StageFilter;
 import app.openring.data.Analyzer;
 import app.openring.data.AutoBackup;
+import app.openring.data.Backup;
 import app.openring.data.BeforeUpdate;
 import app.openring.data.Db;
 import app.openring.data.Exporter;
@@ -766,11 +767,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     pick.pick(k);
                 }
             });
+            // equal heights, no vertical margins: a top margin alone pushed the outline's bottom out of the row (review of #259)
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
-            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), i == labels.length - 1 ? 0 : Ui.dp(this, 4), 0);
+            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), 0, i == labels.length - 1 ? 0 : Ui.dp(this, 4), 0);
             row.addView(chip, lp);
         }
-        parent.addView(row, Ui.matchWrap());
+        LinearLayout.LayoutParams rp = Ui.matchWrap();
+        rp.setMargins(0, Ui.dp(this, 4), 0, 0);
+        parent.addView(row, rp);
     }
 
     static int indexOf(int[] a, int v) {
@@ -879,6 +883,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (demo || !copies.isEmpty()) {
             card.addView(Ui.gap(this, 12));
             card.addView(Ui.divider(this));
+        }
+        // going back runs: what it does or waits for now (a sync, Live or an analysis; review of #259)
+        if (!demo && GO_BACK.running()) {
+            card.addView(Ui.gap(this, 10));
+            card.addView(Ui.text(this, goBackLine, 13, Ui.OXY, Ui.MEDIUM));
         }
         if (demo) {
             long made = java.time.LocalDate.now().minusDays(2).atTime(20, 41).atZone(z).toEpochSecond();
@@ -1147,8 +1156,6 @@ public final class SettingsActivity extends Activity implements RingManager.List
     /** Android's folder picker; the app keeps its permission for the folder (no storage permission needed). */
     void pickFolder() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-                | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
         try {
             startActivityForResult(i, PICK_FOLDER);
         } catch (android.content.ActivityNotFoundException e) {
@@ -1156,9 +1163,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }
     }
 
-    void folderPicked(Uri tree) {
+    void folderPicked(Uri tree, int resultFlags) {
         Prefs p = Prefs.of(this);
-        String name = app.openring.sync.SafFolder.keep(this, tree);
+        String name = app.openring.sync.SafFolder.keep(this, tree, resultFlags);
         if (name == null) {
             problem(Backups.FOLDER_PICK_FAILED);
             return;
@@ -1172,6 +1179,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /** A running "Go back to this copy": one at a time, its result goes to the Settings screen shown now (pattern of #130). */
     static final app.openring.core.OneRun<SettingsActivity> GO_BACK = new app.openring.core.OneRun<SettingsActivity>();
+    /** The line of the running go back, shown in the card (also on a screen rebuilt by turning the phone). */
+    static volatile String goBackLine = Backups.GOING_BACK;
 
     void goBack(final String file) {
         if (!GO_BACK.start()) {
@@ -1179,12 +1188,28 @@ public final class SettingsActivity extends Activity implements RingManager.List
             return;
         }
         final android.content.Context app = getApplicationContext();
-        toast("Going back to the copy");
+        goBackLine = Backups.GOING_BACK;
+        fillBackupsCard(Prefs.of(this));
+        // the lines of a restore's wait ("Waiting for the sync with your ring to finish", ...) as Setup shows them (#219)
+        final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        final Backup.Progress progress = new Backup.Progress() {
+            @Override
+            public void step(final String what) {
+                goBackLine = Backup.RESTORING.equals(what) ? Backups.GOING_BACK : what;
+                main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        SettingsActivity s = GO_BACK.attached();
+                        if (s != null && !s.isFinishing() && !s.isDestroyed()) s.fillBackupsCard(Prefs.of(s));
+                    }
+                });
+            }
+        };
         new AsyncTask<Void, Void, String>() {
             @Override
             protected String doInBackground(Void... v) {
                 try {
-                    app.openring.data.Backup.Result r = AutoBackup.goBack(app, file, null);
+                    Backup.Result r = AutoBackup.goBack(app, file, progress);
                     RingManager.get(app).log("go back to " + file + ": " + r.message);
                     return r.message;
                 } catch (Exception e) {
@@ -1652,7 +1677,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     protected void onActivityResult(final int code, int result, Intent data) {
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         if (code == PICK_FOLDER) {
-            folderPicked(data.getData());
+            folderPicked(data.getData(), data.getFlags());
             return;
         }
         final Uri uri = data.getData();

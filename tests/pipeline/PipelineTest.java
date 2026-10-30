@@ -7614,6 +7614,43 @@ public class PipelineTest {
             o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
             p.setDemo(false);
             check("#242 demo mode: no run", "demo mode".equals(o.skipped) && o.written.isEmpty(), o.skipped);
+            // demo mode switched on while the run waits for a sync (review of #259): the demo history is never zipped
+            setStatic242("waitMs", 20000L);
+            app.openring.core.RingGate.RING.syncs.incrementAndGet();
+            final app.openring.data.AutoBackup.Outcome[] waited = {null};
+            final long at = last + 86400L;
+            final Folder242 ff = f;
+            Thread runner = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    waited[0] = app.openring.data.AutoBackup.run(c, ff, at, false, null);
+                }
+            });
+            List<String> beforeDemo = f.list();
+            try {
+                runner.start();
+                Thread.sleep(500);
+                p.setDemo(true);
+            } finally {
+                app.openring.core.RingGate.RING.syncs.decrementAndGet();
+            }
+            runner.join();
+            p.setDemo(false);
+            setStatic242("waitMs", 5 * 60 * 1000L);
+            check("#242 demo mode switched on while the run waited: no copy of the demo history, no failure", waited[0] != null
+                    && "demo mode".equals(waited[0].skipped) && waited[0].written.isEmpty() && waited[0].error == null && f.list().equals(beforeDemo),
+                    waited[0] == null ? null : waited[0].skipped);
+            // a file the app did not write has the name of the next copy (review of #259): it is not taken for ours
+            String clash = app.openring.core.Backups.folderName(java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochSecond(at), Z58), null);
+            Files.write(new java.io.File(fdir, clash).toPath(), new byte[] {7});
+            o = app.openring.data.AutoBackup.run(c, f, at, false, null);
+            check("#242 a foreign file with the new copy's name: not written, not listed as ours, left as it is", o.written.isEmpty()
+                    && app.openring.core.Backups.WRITE.equals(o.error) && !p.autoFiles().contains(clash)
+                    && new java.io.File(fdir, clash).length() == 1, o.error + " " + p.autoFiles());
+            new java.io.File(fdir, clash).delete();
+            o = app.openring.data.AutoBackup.run(c, f, at, false, null);
+            check("#242 then the copy is made", o.written.size() == 1 && o.error == null, o.error);
+            last = at;
             app.openring.data.AutoBackup.RUN.start();
             o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
             app.openring.data.AutoBackup.RUN.finish();
@@ -7653,9 +7690,26 @@ public class PipelineTest {
 
             // stopped: the folder is forgotten, its files stay
             int inFolder = f.list().size();
+            java.util.Set<String> mine = p.autoFiles();
             p.setBackupFolder(null, null);
-            check("#242 stopped: no folder, no status, the files in the folder stay", p.backupFolder() == null && p.autoFiles().isEmpty() && p.autoLastOk() == 0
+            check("#242 stopped: no folder, no status, the files in the folder stay", p.backupFolder() == null && p.autoLastOk() == 0
                     && f.list().size() == inFolder, null);
+
+            // the same folder chosen again (review of #259): the copies already there still count, the oldest still go
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/Backups", "Backups");
+            check("#242 the same folder chosen again after stopping: the app's files there are still its own", p.autoFiles().equals(mine) && !mine.isEmpty(),
+                    p.autoFiles() + " / " + mine);
+            o = app.openring.data.AutoBackup.run(c, f, last + 10 * 86400L, false, null);
+            check("#242 the same folder again: the next copy keeps exactly 3 of the app's files, not more", o.written.size() == 1 && f.ours().size() == 3
+                    && p.autoKept() == 3, f.ours().toString());
+            long okAt = p.autoLastOk();
+            p.setAutoResult(okAt + 60, app.openring.core.Backups.GONE);
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/Backups", "Backups");
+            check("#242 Choose the folder again (same folder): the last copy stays in the status, the failure goes", p.autoLastOk() == okAt && p.autoError() == null
+                    && p.autoKept() == 3 && p.autoFiles().size() >= 3, p.autoLastOk() + " " + p.autoError());
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/Other", "Other");
+            check("#242 another folder: an empty list and no status", p.autoFiles().isEmpty() && p.autoLastOk() == 0, p.autoFiles().toString());
+            p.setBackupFolder(null, null);
 
             // the choices travel with a backup; an older backup or a value that is not a choice keeps the current ones
             p.setBackupDays(30);

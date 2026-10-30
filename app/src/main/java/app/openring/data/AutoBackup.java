@@ -150,6 +150,8 @@ public final class AutoBackup {
             byte[] key = p.loadKey();
             if (key == null) throw new IOException("no ring key saved on this phone");
             List<String> present = folder.list();
+            // a file of that name that the app did not write is never taken for one of its own (review of #259)
+            if (present.contains(name) || present.contains(partial)) throw new IOException(name + " is there already");
             if (copy == null) {
                 long size = c.getDatabasePath(Db.REAL).length() + new File(c.getDatabasePath(Db.REAL).getPath() + "-wal").length();
                 long free = BeforeUpdate.freeForTest >= 0 ? BeforeUpdate.freeForTest : c.getCacheDir().getUsableSpace();
@@ -158,6 +160,7 @@ public final class AutoBackup {
                     return err;
                 }
                 final File[] made = {null};
+                final boolean[] demo = {false};
                 final IOException[] failed = {null};
                 final Context ctx = c;
                 // the copy is made while nothing stores into the history (like a restore, issue #219); the zipping
@@ -165,6 +168,12 @@ public final class AutoBackup {
                 int why = RingGate.RING.whenFree(new Runnable() {
                     @Override
                     public void run() {
+                        // demo mode switched on while this waited: the history open now is the demo file, never a backup
+                        // (review of #259). Entering demo mode swaps through the same gate, so it cannot start meanwhile
+                        if (Prefs.of(ctx).demo()) {
+                            demo[0] = true;
+                            return;
+                        }
                         try {
                             made[0] = Exporter.snapshot(ctx);
                         } catch (IOException e) {
@@ -177,6 +186,10 @@ public final class AutoBackup {
                     if (log != null) log.log("automatic backup waits for the next run: " + RingGate.waitLine(why));
                     return null;
                 }
+                if (demo[0]) {
+                    o.skipped = "demo mode";
+                    return null;
+                }
                 if (failed[0] != null) throw failed[0];
                 snap = made[0];
             } else {
@@ -186,7 +199,6 @@ public final class AutoBackup {
             Set<String> listed = p.autoFiles();
             listed.add(name);
             if (!p.setAutoFiles(listed)) throw new IOException("the list of copies could not be saved");
-            if (present.contains(name) || present.contains(partial)) throw new IOException(name + " is there already");
             OutputStream os = folder.create(partial);
             created = true;
             try {
