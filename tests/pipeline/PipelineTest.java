@@ -804,6 +804,8 @@ public class PipelineTest {
         finderDownload();
         pairingPrefs218();
         swapDuringSync219(full.toByteArray());
+        syncDating220();
+        emptySync194();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -6051,5 +6053,62 @@ public class PipelineTest {
         String gotHistory = phone219(lr2);
         check("#219 long run: the restored history is the backup exactly", gotHistory.equals(snapHistory), gotHistory + " / " + snapHistory);
         freshDb("openring219-done");
+    }
+    // ------------------------------------------------------------------------- issues #220 and #194
+
+    /** One sync as the ring gives it: the ring's own time record first, the events, then the phone anchor at the newest one. */
+    static void sync220(Db db, List<RingEvent> part, int epoch, long t0) {
+        List<RingEvent> withRecord = new ArrayList<RingEvent>();
+        long firstDs = part.get(0).ds;
+        withRecord.add(new RingEvent(EventCodec.TIME_SYNC, firstDs, timeSync(t0 + (firstDs - app.openring.data.Demo.DS0) / 10)));
+        withRecord.addAll(part);
+        for (int i = 0; i < withRecord.size(); i += 4000) db.insertBatch(withRecord.subList(i, Math.min(withRecord.size(), i + 4000)), epoch, t0);
+        long lastDs = part.get(part.size() - 1).ds;
+        db.insertPhoneAnchor(epoch, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+    }
+
+    /** {@code ev} cut into one part per day of ring time (Demo.DS0 is the first day's start). */
+    static List<List<RingEvent>> perDay220(List<RingEvent> ev) {
+        List<List<RingEvent>> out = new ArrayList<List<RingEvent>>();
+        for (RingEvent e : ev) {
+            int d = (int) ((e.ds - app.openring.data.Demo.DS0) / (86400L * 10));
+            while (out.size() <= d) out.add(new ArrayList<RingEvent>());
+            out.get(d).add(e);
+        }
+        List<List<RingEvent>> parts = new ArrayList<List<RingEvent>>();
+        for (List<RingEvent> p : out) if (!p.isEmpty()) parts.add(p);
+        return parts;
+    }
+
+    /** Issue #220: dating one more synced day reads the new rows and a few before them, not the whole history. */
+    static void syncDating220() throws Exception {
+        Context c = freshDb("openring220-read");
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2026-02-02").atStartOfDay(z).toEpochSecond();
+        int days = 60;
+        long now = t0 + (days + 1) * 86400L;
+        List<List<RingEvent>> parts = perDay220(app.openring.data.Demo.history(t0, days, now, z, new Random(220)));
+        for (int d = 0; d < parts.size() - 1; d++) sync220(db, parts.get(d), 1, t0);
+        db.rebuildTime(now);
+        List<RingEvent> last = parts.get(parts.size() - 1);
+        sync220(db, last, 1, t0);
+        Db.TimeReport r = sameAsOld(db, now, "#220 one more synced day");
+        check("#220 dating one more day reads the new rows and a few before them, not the whole history", r.rowsRead < 2 * (last.size() + 2),
+                r.rowsRead + " of " + r.total + " rows read, " + (last.size() + 2) + " new");
+        db.close();
+    }
+
+    /** Issue #194: after an analysis, a sync that stored nothing finds it up to date, and analysing again would change nothing. */
+    static void emptySync194() throws Exception {
+        Context c = history230("openring194", T230, 21);
+        Analyzer.run(c, null);
+        Db db = Db.get(c);
+        List<String> before = results139(db);
+        check("#194 nothing new since the last analysis: it is up to date, an empty sync need not analyse", Analyzer.upToDate(c), null);
+        // what every sync did until now, also an empty one
+        Analyzer.run(c, null);
+        check("#194 analysing again with nothing new changes no night or day, byte for byte (so not doing it loses nothing)",
+                results139(db).equals(before), firstDiff(results139(db), before));
     }
 }

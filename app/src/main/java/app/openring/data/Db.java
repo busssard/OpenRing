@@ -198,6 +198,8 @@ public final class Db extends SQLiteOpenHelper {
         public long datedBefore, datedAfter, total;
         /** Rows whose segment or date was written (all other rows already held the result). */
         public long changed;
+        /** Rows of the events table this run read (issue #220). */
+        public long rowsRead;
         public List<TimeLine.Segment> segs;
     }
 
@@ -257,6 +259,7 @@ public final class Db extends SQLiteOpenHelper {
             }
             n = i;
             rep.total = n;
+            rep.rowsRead = n;
             List<TimeLine.Segment> segs = TimeLine.build(trim(id, n), trim(epoch, n), trim(ds, n), trim(anchor, n), trim(phone, n), nowUnix);
             epoch = null;
             anchor = null;

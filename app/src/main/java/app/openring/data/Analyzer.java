@@ -88,6 +88,14 @@ public final class Analyzer {
      */
     private static final java.util.concurrent.atomic.AtomicInteger RUNS = new java.util.concurrent.atomic.AtomicInteger();
 
+    /**
+     * True when the stored nights and days are what an analysis would give now (issue #194), so a sync that stored
+     * nothing need not analyse again. Not known yet: every sync analyses again.
+     */
+    public static boolean upToDate(Context c) {
+        return false;
+    }
+
     /** True while an analysis runs or waits to run. */
     public static boolean running() {
         return RUNS.get() > 0;
