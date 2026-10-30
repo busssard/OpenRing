@@ -7636,9 +7636,26 @@ public class PipelineTest {
 
             // stopped: the folder is forgotten, its files stay
             int inFolder = f.list().size();
+            java.util.Set<String> mine = p.autoFiles();
             p.setBackupFolder(null, null);
-            check("#242 stopped: no folder, no status, the files in the folder stay", p.backupFolder() == null && p.autoFiles().isEmpty() && p.autoLastOk() == 0
+            check("#242 stopped: no folder, no status, the files in the folder stay", p.backupFolder() == null && p.autoLastOk() == 0
                     && f.list().size() == inFolder, null);
+
+            // the same folder chosen again (review of #259): the copies already there still count, the oldest still go
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/Backups", "Backups");
+            check("#242 the same folder chosen again after stopping: the app's files there are still its own", p.autoFiles().equals(mine) && !mine.isEmpty(),
+                    p.autoFiles() + " / " + mine);
+            o = app.openring.data.AutoBackup.run(c, f, last + 10 * 86400L, false, null);
+            check("#242 the same folder again: the next copy keeps exactly 3 of the app's files, not more", o.written.size() == 1 && f.ours().size() == 3
+                    && p.autoKept() == 3, f.ours().toString());
+            long okAt = p.autoLastOk();
+            p.setAutoResult(okAt + 60, app.openring.core.Backups.GONE);
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/Backups", "Backups");
+            check("#242 Choose the folder again (same folder): the last copy stays in the status, the failure goes", p.autoLastOk() == okAt && p.autoError() == null
+                    && p.autoKept() == 3 && p.autoFiles().size() >= 3, p.autoLastOk() + " " + p.autoError());
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/Other", "Other");
+            check("#242 another folder: an empty list and no status", p.autoFiles().isEmpty() && p.autoLastOk() == 0, p.autoFiles().toString());
+            p.setBackupFolder(null, null);
 
             // the choices travel with a backup; an older backup or a value that is not a choice keeps the current ones
             p.setBackupDays(30);
