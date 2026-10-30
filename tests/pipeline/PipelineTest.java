@@ -4387,7 +4387,13 @@ public class PipelineTest {
     }
 
     /** Sets the time of the phone anchor of boot {@code epoch} (a stand in for time records that date the events again). */
+    /*
+     * The app never changes a stored row; a moved time record stands for a dating that changes old dates (other
+     * dating rules in a new version, #68). Those date every row again (issue #220: TimeLine.RULES), so the saved
+     * dating state goes with it.
+     */
     static void moveAnchor(Db db, int epoch, long t0, long shift) {
+        db.put("time_state", null);
         android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT id, ds FROM events WHERE tag = 66 AND epoch = ?", new String[] {String.valueOf(epoch)});
         try {
             while (c.moveToNext()) {
@@ -6104,6 +6110,11 @@ public class PipelineTest {
         Db.TimeReport r = sameAsOld(db, now, "#220 one more synced day");
         check("#220 dating one more day reads the new rows and a few before them, not the whole history", r.rowsRead < 2 * (last.size() + 2),
                 r.rowsRead + " of " + r.total + " rows read, " + (last.size() + 2) + " new");
+        // a saved state from other dating rules (a later version changed them): every row is dated again
+        db.put("time_state", db.kv("time_state", "").replaceFirst("^1 1 ", "1 0 "));
+        Db.TimeReport other = db.rebuildTime(now);
+        check("#220 a saved state of other dating rules: every row dated again", "no saved state".equals(other.full) && other.rowsRead == other.total
+                && other.changed == 0, other.full + ", " + other.rowsRead);
         db.close();
     }
 

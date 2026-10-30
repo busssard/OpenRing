@@ -18,11 +18,11 @@ Nothing leaves the phone: the app has no internet permission.
 
 | Package | Responsibility |
 | --- | --- |
-| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `FingerCheck` (Find my ring: when it asks the ring whether it is on a finger, its strip line and chip, the 30 s blink; issue #192), `PermissionAsk` (whether Android still shows the permission dialog), `BackgroundJob` (whether the background sync job is scheduled, kept or cancelled, issue #193), `Pairing` (the order of the pairing steps so a key written to a ring is never lost, and the hand over of the result to the Setup screen shown now, issue #218), `RingGate` (the ring lock and the count of syncs under way, shared with the code that swaps the database file, issue #219), `SetupTasks` (Setup never restores and pairs at once, review of #248), `Hex` |
+| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Dating` (every event's boot segment and date: all at once, or after a sync only the new part, with the state that needs, issue #220), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `FingerCheck` (Find my ring: when it asks the ring whether it is on a finger, its strip line and chip, the 30 s blink; issue #192), `PermissionAsk` (whether Android still shows the permission dialog), `BackgroundJob` (whether the background sync job is scheduled, kept or cancelled, issue #193; a sync or attempt under 30 minutes ago makes the job and the main screen skip theirs, issue #194), `Pairing` (the order of the pairing steps so a key written to a ring is never lost, and the hand over of the result to the Setup screen shown now, issue #218), `RingGate` (the ring lock and the count of syncs under way, shared with the code that swaps the database file, issue #219), `SetupTasks` (Setup never restores and pairs at once, review of #248), `Hex` |
 | `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `FingerNow` (on a finger now, from what the finder just downloaded, issue #192), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
-| `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours; scheduled only when no equal job is pending, since replacing a job stops it while it runs, `core/BackgroundJob`, issue #193) |
+| `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours; scheduled only when no equal job is pending, since replacing a job stops it while it runs, `core/BackgroundJob`, issue #193; skips a run within 30 minutes of the last sync or attempt, issue #194) |
 | `ui/` | `MainActivity` (tabs, date, follows the newest day), `Pages` (content of every tab), `Charts` (hand drawn views; `Scrub` adds touch readout), `Ui` (colors, cards, buttons, inputs), `Explain` (texts), `DayData`, `SetupActivity`, `SettingsActivity`, `LiveActivity`, `LogActivity`, `Permissions`, `games/` |
 
 ## Talking to the ring
@@ -52,9 +52,20 @@ Nothing leaves the phone: the app has no internet permission.
   makes the next sync continue where the last stopped.
 * Time: the counter becomes a date through time records: the ring's `time_sync` (`0x42`) and
   `rtc_beacon` (`0x85`) events plus a phone anchor written at the end of each drain. `Db.rebuildTime`
-  maps every boot segment from scratch after each sync, which also repairs interrupted syncs. It works
-  the result out in Java and writes only the rows whose segment or date changed (issue #21); the
-  pipeline test keeps the old full SQL rewrite as the reference and checks every row against it.
+  dates the events after each sync, which also repairs interrupted syncs. It works the result out in Java
+  and writes only the rows whose segment or date changed (issue #21); the pipeline test keeps the old full
+  SQL rewrite as the reference and checks every row against it. Since issue #220 it does not read every row
+  each time: kv `time_state` (written with the dates in one transaction) keeps per boot segment its id and
+  counter range, the last two time records of the newest one, counts, the range of dated rows and bounds for
+  the 6 hour limit. With it `core/Dating.step` reads only the new rows, the old rows of the newest segment from
+  the midpoint between its last two time records on (index `ev_seg_ds`; only those can get another date when
+  new records follow the old ones) and that segment's `time_sync` rows (a phone anchor can change segment when
+  it grows). Everything is dated again from scratch (`Dating.all`, the same code as before) without a readable
+  state (first run after the update, a backup from an older version), for Re analyse all and Repair, after a
+  change of `TimeLine.RULES`, and whenever a case is not plainly one of those (a late or re downloaded time
+  record, a phone anchor between two boots or moving to another one, a time record row gone, a record or date
+  crossing the 6 hour limit with the new now, a phone clock set back). The report gives the range of dated rows,
+  so the analysis does not scan for it.
 * Measurements on the ring (daytime heart rate `0x02`, SpO2 `0x04`, resting heart rate `0x08`) have
   modes off, automatic, requested and live. A ring paired outside the official app starts with them off.
 
@@ -207,7 +218,12 @@ history had, before anything is written to the file the person picked; otherwise
 Anything that holds the ring (live, games) must release it when its screen pauses (Live since issue #187). Sync waits up to
 15 seconds for the lock, live 10 seconds and games up to 3 minutes; Settings actions on the ring
 (read or switch measurements, factory reset) fail at once with "The ring is busy". A sync releases the
-lock as soon as its download ends, before it reads the screen log and analyses (issue #21); `busy()`
+lock as soon as its download ends, before it reads the screen log and analyses (issue #21). It analyses only
+when something is new (`Analyzer.upToDate`, issue #194): the results store what they were worked out from (kv
+`analysis_inputs`: the newest dated event, `analyzed_until`, settings, profile, rule versions, zone and date), and a
+sync that stored nothing, with no event from Live or Find my ring since, no new or changed screen session
+(`ScreenTime.firstChanged`), the same settings and day and dates the new now leaves alone, logs "nothing new since
+the last analysis" instead; `busy()`
 stays true until that analysis is done, so screens reload only then, and the status keeps saying
 "Analysing" (other ring tasks then only write to the log). A sync counts for `busy()` from its start,
 also while it waits for the lock, and Settings "Sync now" refuses while `busy()` like the main screen; when

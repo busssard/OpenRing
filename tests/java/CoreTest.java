@@ -5350,12 +5350,12 @@ public class CoreTest {
         check("#220 the state after a step: same counts and earliest and latest date", wrongRange == 0);
         check("#220 most datings of these histories read the new part only", fast * 2 > steps);
         // stored state: damaged, other version or empty texts read as none
-        // nothing, garbage, another version, cut short, more dated rows than rows, three tail records
-        for (String bad : new String[] {null, "", "x", "2 1 2 3", "1 1 2", "1 5 100 3 9 0 NaN NaN 1 1 1 0 0", "1 1 1 1 1 1 1 1 1 1 1 3 1 1 1 1 1 1 1 1 1 0"}) {
+        // nothing, garbage, another version, cut short, more dated rows than rows, three tail records, other dating rules
+        for (String bad : new String[] {null, "", "x", "2 1 2 3", "1 1 2", "1 1 5 100 3 9 0 NaN NaN 1 1 1 0 0", "1 1 1 1 1 1 1 1 1 1 1 1 3 1 1 1 1 1 1 1 1 1 0", "1 2 5 100 3 0 0 NaN NaN 9223372036854775807 -9223372036854775808 Infinity 0 0"}) {
             check("#220 a damaged saved state reads as none: " + bad, Dating.State.decode(bad) == null);
         }
-        check("#220 an empty history's state reads back", Dating.State.decode("1 5 100 3 0 0 NaN NaN 9223372036854775807 -9223372036854775808 Infinity 0 0") != null);
-        Dating.State st = Dating.State.decode("1 5 100 3 0 0 NaN NaN 9223372036854775807 -9223372036854775808 Infinity 0 0");
+        check("#220 an empty history's state reads back", Dating.State.decode("1 1 5 100 3 0 0 NaN NaN 9223372036854775807 -9223372036854775808 Infinity 0 0") != null);
+        Dating.State st = Dating.State.decode("1 1 5 100 3 0 0 NaN NaN 9223372036854775807 -9223372036854775808 Infinity 0 0");
         check("#220 a history without boot segments dates everything", Dating.step(st, 200, new Dating.Rows(0), new Dating.Rows(0)).full != null);
         st.futMin = 1_800_000_000L;
         check("#220 a time record that was ahead and is due now: everything again", st.changesAt(1_800_000_000L) != null && st.changesAt(1_799_970_000L) == null);

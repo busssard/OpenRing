@@ -114,7 +114,7 @@ public final class Dating {
 
         public String encode() {
             StringBuilder b = new StringBuilder();
-            b.append(VERSION).append(' ').append(lastId).append(' ').append(now).append(' ').append(total).append(' ').append(dated)
+            b.append(VERSION).append(' ').append(TimeLine.RULES).append(' ').append(lastId).append(' ').append(now).append(' ').append(total).append(' ').append(dated)
                     .append(' ').append(anchorRows).append(' ').append(Double.toString(dmin)).append(' ').append(Double.toString(dmax))
                     .append(' ').append(futMin).append(' ').append(validMax).append(' ').append(Double.toString(clampMin));
             b.append(' ').append(tail.size());
@@ -127,13 +127,15 @@ public final class Dating {
             return b.toString();
         }
 
-        /** The state in {@code text}; null when there is none, it is damaged or from another version. */
+        /** The state in {@code text}; null when there is none, it is damaged, from another version or other dating rules. */
         public static State decode(String text) {
             if (text == null) return null;
             try {
                 String[] t = text.trim().split(" ");
                 int i = 0;
                 if (Integer.parseInt(t[i++]) != VERSION) return null;
+                // dates stored under other dating rules are all worked out again
+                if (Integer.parseInt(t[i++]) != TimeLine.RULES) return null;
                 State s = new State();
                 s.lastId = Long.parseLong(t[i++]);
                 s.now = Long.parseLong(t[i++]);

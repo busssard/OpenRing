@@ -17,6 +17,13 @@ import java.util.List;
 public final class TimeLine {
     private TimeLine() {}
 
+    /**
+     * Version of the dating rules (segments, which time records count, regions, limits). Raise it with any change to
+     * them: dates stored under other rules are then worked out again for every row, not only for the new part
+     * ({@link Dating.State}, issue #220).
+     */
+    public static final int RULES = 1;
+
     /** A drop of more than this many ds starts a new boot segment (6 hours, as open_health). */
     public static final long RESET_SLACK_DS = 6L * 3600 * 10;
 
