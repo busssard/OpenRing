@@ -400,6 +400,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             Permissions.request(this);
         }
         SyncJob.schedule(this);
+        // the automatic backups' daily job, and the check of a copy made before an update (issue #242)
+        app.openring.sync.BackupJob.schedule(this);
         RingManager.get(this).addListener(this);
         wasBusy = RingManager.get(this).busy();
         updateStatus();
@@ -496,6 +498,26 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 break;
             default:
                 content = Pages.today(this, data, this, syncLine());
+        }
+        // no copy could be made before this update (issue #242): said once on Today, until OK
+        final Prefs np = Prefs.of(this);
+        if (tab == Pages.TODAY && !np.demo() && np.beforeUpdateUnseen() && content instanceof LinearLayout) {
+            final LinearLayout notice = Ui.card(this);
+            notice.setBackground(Ui.rounded(Ui.alpha(Ui.WARN, 0.14f), Ui.dp(this, 14)));
+            notice.addView(Ui.text(this, app.openring.core.Backups.SPACE.equals(np.beforeUpdateNote()) ? app.openring.core.Backups.NOTICE_SPACE
+                    : app.openring.core.Backups.NOTICE_OTHER, 14, Ui.TEXT, Ui.MEDIUM));
+            TextView ok = Ui.smallButton(this, "OK", Ui.TEXT_2);
+            ok.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    np.clearBeforeUpdateUnseen();
+                    notice.setVisibility(View.GONE);
+                }
+            });
+            LinearLayout.LayoutParams olp = Ui.matchWrap();
+            olp.setMargins(0, Ui.dp(this, 8), 0, 0);
+            notice.addView(ok, olp);
+            ((LinearLayout) content).addView(notice, 0);
         }
         if (Prefs.of(this).demo() && content instanceof LinearLayout) {
             LinearLayout banner = Ui.card(this);

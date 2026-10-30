@@ -27,23 +27,27 @@ import app.openring.ble.RingManager;
 import app.openring.core.Drafts;
 import app.openring.core.Hex;
 import app.openring.core.Protocol;
+import app.openring.core.Backups;
 import app.openring.core.Texts;
 import org.json.JSONObject;
 
 import app.openring.core.analysis.StageFilter;
 import app.openring.data.Analyzer;
+import app.openring.data.AutoBackup;
+import app.openring.data.BeforeUpdate;
 import app.openring.data.Db;
 import app.openring.data.Exporter;
 import app.openring.data.Json;
 import app.openring.data.Prefs;
 import app.openring.data.ScreenDays;
 import app.openring.data.ScreenUse;
+import app.openring.sync.BackupJob;
 import app.openring.sync.SyncJob;
 import app.openring.sync.SyncService;
 
 /** Ring, profile, key, data and advanced settings. */
 public final class SettingsActivity extends Activity implements RingManager.Listener {
-    private static final int EXPORT_CSV = 11, EXPORT_DB = 12, BACKUP_KEY = 13, BACKUP_FULL = 14;
+    private static final int EXPORT_CSV = 11, EXPORT_DB = 12, BACKUP_KEY = 13, BACKUP_FULL = 14, PICK_FOLDER = 15;
     private ScrollView scroll;
     private LinearLayout chips;
     private LinearLayout root;
@@ -65,6 +69,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         DELETE.attach(this);
+        GO_BACK.attach(this);
         getWindow().setStatusBarColor(Ui.BG);
         getWindow().setNavigationBarColor(Ui.BG);
         ScrollView s = new ScrollView(this);
@@ -141,6 +146,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         boolean allowedNow = ScreenUse.allowed(this);
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
+        if (backupsCard != null) fillBackupsCard(p); // a copy made or checked meanwhile
         if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !ScreenDays.any(Db.get(this))) {
             screenRead = true;
             updateNights("Reading screen time");
@@ -234,6 +240,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             root.addView(screenCard);
             gamesCard = app.openring.ui.games.GamesActivity.settingsCard(this);
             root.addView(gamesCard);
+            backupsCard = Ui.card(this);
+            fillBackupsCard(p);
+            root.addView(backupsCard);
             LinearLayout about = Ui.card(this);
             about.addView(Ui.caption(this, "About"));
             about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
@@ -445,6 +454,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         key.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(key);
 
+        // ---- automatic backups (issue #242) ----
+        backupsCard = Ui.card(this);
+        fillBackupsCard(p);
+        root.addView(backupsCard);
+
         // ---- data ----
         LinearLayout data = Ui.card(this);
         data.addView(Ui.caption(this, "Export"));
@@ -507,7 +521,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         small(danger, "Delete all local data", Ui.WARN, new Runnable() {
             @Override
             public void run() {
-                confirm("Delete everything?", "All synced events and results on this phone are erased. The ring keeps its key.", new Runnable() {
+                confirm("Delete everything?", "All synced events and results on this phone are erased. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
                     @Override
                     public void run() {
                         deleteAll();
@@ -523,8 +537,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. The Screen tab follows the idea of ScreenTime by Markus Fisch. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Export", "Help", "Careful", "About"};
-        View[] targets = {updates, ring, prof, stagesCard, screenCard, gamesCard, feat, key, data, help, danger, about};
+        String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
+            "Careful", "About"};
+        View[] targets = {updates, ring, prof, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -544,7 +559,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         scrollToSection();
     }
 
-    private LinearLayout screenCard, gamesCard;
+    private LinearLayout screenCard, gamesCard, backupsCard;
     /** Usage access as shown in the Screen time card, to refresh it only when it changed. */
     private boolean screenAllowedShown;
     /** The first read of the screen log was started (once per app run, even if the log was empty). */
@@ -721,13 +736,238 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return card;
     }
 
+    /** One choice of a chip row. */
+    interface Pick {
+        void pick(int i);
+    }
+
+    /** A row of equal chips, the chosen one filled (the profile's style). */
+    void chipRow(LinearLayout parent, String[] labels, int chosen, int color, final Pick pick) {
+        LinearLayout row = Ui.hbox(this);
+        for (int i = 0; i < labels.length; i++) {
+            final int k = i;
+            TextView chip = Ui.smallButton(this, labels[i], i == chosen ? color : Ui.TEXT_3);
+            if (i == chosen) chip.setBackground(Ui.rounded(Ui.alpha(color, 0.18f), Ui.dp(this, 24)));
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    pick.pick(k);
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
+            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), i == labels.length - 1 ? 0 : Ui.dp(this, 4), 0);
+            row.addView(chip, lp);
+        }
+        parent.addView(row, Ui.matchWrap());
+    }
+
+    static int indexOf(int[] a, int v) {
+        for (int i = 0; i < a.length; i++) if (a[i] == v) return i;
+        return -1;
+    }
+
     /**
-     * Opens at a card when started with the extra {@code section} ("stages", "screen" or "games"), used by the screen test.
+     * Automatic backups (issue #242): the copies before updates on this phone with "Go back to this copy", and the
+     * folder that gets regular copies (how often, how many, the last result). Demo mode shows an example only.
+     */
+    void fillBackupsCard(final Prefs p) {
+        final LinearLayout card = backupsCard;
+        if (card == null) return;
+        card.removeAllViews();
+        final boolean demo = p.demo();
+        final Runnable notInDemo = new Runnable() {
+            @Override
+            public void run() {
+                toast(Backups.NOT_IN_DEMO);
+            }
+        };
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        long now = System.currentTimeMillis() / 1000;
+        card.addView(Ui.caption(this, Backups.TITLE));
+        if (demo) card.addView(Ui.text(this, Backups.DEMO, 12, Ui.OXY, Ui.REGULAR));
+        String folder = demo ? "Backups" : p.backupFolderName();
+        if (!demo && p.backupFolder() == null) {
+            card.addView(Ui.body(this, Backups.OFF_TEXT));
+            action(card, Backups.CHOOSE, Ui.SLEEP, new Runnable() {
+                @Override
+                public void run() {
+                    pickFolder();
+                }
+            });
+        } else {
+            card.addView(Ui.gap(this, 4));
+            card.addView(Ui.text(this, "Folder: " + folder, 14, Ui.TEXT, Ui.REGULAR));
+            card.addView(Ui.gap(this, 8));
+            card.addView(Ui.text(this, Backups.HOW_OFTEN, 12, Ui.TEXT_3, Ui.REGULAR));
+            chipRow(card, Backups.DAY_NAMES, indexOf(Backups.DAYS, demo ? Backups.DEFAULT_DAYS : p.backupDays()), Ui.SLEEP, new Pick() {
+                @Override
+                public void pick(int i) {
+                    if (demo) {
+                        notInDemo.run();
+                        return;
+                    }
+                    // the one daily job stays as it is; each run decides whether a copy is due (issue #193)
+                    p.setBackupDays(Backups.DAYS[i]);
+                    fillBackupsCard(p);
+                }
+            });
+            card.addView(Ui.gap(this, 8));
+            card.addView(Ui.text(this, Backups.HOW_MANY, 12, Ui.TEXT_3, Ui.REGULAR));
+            String[] keep = new String[Backups.KEEP.length];
+            for (int i = 0; i < keep.length; i++) keep[i] = String.valueOf(Backups.KEEP[i]);
+            chipRow(card, keep, indexOf(Backups.KEEP, demo ? Backups.DEFAULT_KEEP : p.backupKeep()), Ui.SLEEP, new Pick() {
+                @Override
+                public void pick(int i) {
+                    if (demo) {
+                        notInDemo.run();
+                        return;
+                    }
+                    p.setBackupKeep(Backups.KEEP[i]);
+                    fillBackupsCard(p);
+                }
+            });
+            card.addView(Ui.gap(this, 8));
+            card.addView(Ui.text(this, Backups.ALSO_UPDATE, 12, Ui.TEXT_2, Ui.REGULAR));
+            card.addView(Ui.gap(this, 8));
+            long lastOk = demo ? java.time.LocalDate.now().minusDays(1).atTime(3, 12).atZone(z).toEpochSecond() : p.autoLastOk();
+            long size = demo ? 210L * 1024 * 1024 : p.autoLastSize();
+            int kept = demo ? 5 : p.autoKept();
+            String error = demo ? null : p.autoError();
+            card.addView(Ui.text(this, Backups.status(lastOk, size, kept, error, z), 14, error != null ? Ui.WARN : Ui.TEXT, Ui.REGULAR));
+            if (error == null && lastOk > 0) card.addView(Ui.text(this, Backups.statusExplain(size, kept), 12, Ui.TEXT_3, Ui.REGULAR));
+            if (Backups.GONE.equals(error)) {
+                small(card, Backups.CHOOSE_AGAIN, Ui.SLEEP, new Runnable() {
+                    @Override
+                    public void run() {
+                        pickFolder();
+                    }
+                });
+            }
+            small(card, Backups.CHOOSE_OTHER, Ui.TEXT_2, demo ? notInDemo : new Runnable() {
+                @Override
+                public void run() {
+                    pickFolder();
+                }
+            });
+            small(card, Backups.STOP, Ui.WARN, demo ? notInDemo : new Runnable() {
+                @Override
+                public void run() {
+                    app.openring.sync.SafFolder.release(getApplicationContext(), p.backupFolder());
+                    p.setBackupFolder(null, null);
+                    BackupJob.schedule(getApplicationContext());
+                    toast(Backups.STOPPED);
+                    fillBackupsCard(p);
+                }
+            });
+        }
+        card.addView(Ui.gap(this, 8));
+        card.addView(Ui.text(this, Backups.PRIVATE, 12, Ui.TEXT_3, Ui.REGULAR));
+        // the copies made before updates, on this phone
+        java.util.List<BeforeUpdate.Entry> copies = demo ? java.util.Collections.<BeforeUpdate.Entry>emptyList() : BeforeUpdate.list(this);
+        if (demo || !copies.isEmpty()) {
+            card.addView(Ui.gap(this, 12));
+            card.addView(Ui.divider(this));
+        }
+        if (demo) {
+            long made = java.time.LocalDate.now().minusDays(2).atTime(20, 41).atZone(z).toEpochSecond();
+            card.addView(Ui.gap(this, 10));
+            card.addView(Ui.text(this, Backups.copyLine(version(), made, 208L * 1024 * 1024, z), 14, Ui.TEXT, Ui.REGULAR));
+            small(card, Backups.GO_BACK, Ui.TEXT_2, notInDemo);
+        }
+        for (final BeforeUpdate.Entry e : copies) {
+            card.addView(Ui.gap(this, 10));
+            String line = e.copy.back ? Backups.backLine(e.time, e.bytes, z) : e.usable() ? Backups.copyLine(e.copy.version, e.time, e.bytes, z)
+                    : Backups.badLine(e.copy.version, e.time, z);
+            card.addView(Ui.text(this, line, 14, e.usable() ? Ui.TEXT : Ui.TEXT_3, Ui.REGULAR));
+            if (!e.usable()) continue;
+            small(card, Backups.GO_BACK, Ui.TEXT_2, new Runnable() {
+                @Override
+                public void run() {
+                    confirm(Backups.GO_BACK_TITLE, Backups.goBackText(e.time, java.time.ZoneId.systemDefault()), new Runnable() {
+                        @Override
+                        public void run() {
+                            goBack(e.copy.file);
+                        }
+                    });
+                }
+            });
+        }
+        if (demo || !copies.isEmpty()) {
+            card.addView(Ui.gap(this, 6));
+            card.addView(Ui.text(this, Backups.COPY_EXPLAIN, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
+    }
+
+    /** Android's folder picker; the app keeps its permission for the folder (no storage permission needed). */
+    void pickFolder() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        try {
+            startActivityForResult(i, PICK_FOLDER);
+        } catch (android.content.ActivityNotFoundException e) {
+            problem(Backups.FOLDER_PICK_FAILED);
+        }
+    }
+
+    void folderPicked(Uri tree) {
+        Prefs p = Prefs.of(this);
+        String name = app.openring.sync.SafFolder.keep(this, tree);
+        if (name == null) {
+            problem(Backups.FOLDER_PICK_FAILED);
+            return;
+        }
+        String old = p.backupFolder();
+        if (old != null && !old.equals(tree.toString())) app.openring.sync.SafFolder.release(getApplicationContext(), old);
+        AutoBackup.folderChosen(this, tree.toString(), name);
+        BackupJob.schedule(getApplicationContext());
+        fillBackupsCard(p);
+    }
+
+    /** A running "Go back to this copy": one at a time, its result goes to the Settings screen shown now (pattern of #130). */
+    static final app.openring.core.OneRun<SettingsActivity> GO_BACK = new app.openring.core.OneRun<SettingsActivity>();
+
+    void goBack(final String file) {
+        if (!GO_BACK.start()) {
+            toast("Going back to the copy, please wait");
+            return;
+        }
+        final android.content.Context app = getApplicationContext();
+        toast("Going back to the copy");
+        new AsyncTask<Void, Void, String>() {
+            @Override
+            protected String doInBackground(Void... v) {
+                try {
+                    app.openring.data.Backup.Result r = AutoBackup.goBack(app, file, null);
+                    RingManager.get(app).log("go back to " + file + ": " + r.message);
+                    return r.message;
+                } catch (Exception e) {
+                    RingManager.get(app).log("go back failed: " + android.util.Log.getStackTraceString(e));
+                    return "Going back did not work, nothing was changed.";
+                }
+            }
+
+            @Override
+            protected void onPostExecute(String m) {
+                SettingsActivity s = GO_BACK.finish();
+                if (s != null && !s.isFinishing() && !s.isDestroyed()) {
+                    s.say(m);
+                    s.build();
+                } else {
+                    Toast.makeText(app, m, Toast.LENGTH_LONG).show();
+                }
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /**
+     * Opens at a card when started with the extra {@code section} ("stages", "screen", "games" or "backups"), used by the screen test.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard : null;
+        final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
+                : "backups".equals(section) ? backupsCard : null;
         if (card == null) return;
         // the demo page is short: room below the last card, so every card can reach the top (issue #160)
         root.addView(new View(this), new LinearLayout.LayoutParams(1, getResources().getDisplayMetrics().heightPixels));
@@ -1007,6 +1247,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     @Override
     protected void onDestroy() {
         DELETE.detach(this);
+        GO_BACK.detach(this);
         super.onDestroy();
     }
 
@@ -1030,6 +1271,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         @Override
                         public void run() {
                             Analyzer.deleteAll(app);
+                            // the copies before updates hold the same history; the folder's copies stay (issue #242)
+                            BeforeUpdate.deleteAll(app);
                         }
                     });
                 } catch (RuntimeException e) {
@@ -1162,6 +1405,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
     @Override
     protected void onActivityResult(final int code, int result, Intent data) {
         if (result != RESULT_OK || data == null || data.getData() == null) return;
+        if (code == PICK_FOLDER) {
+            folderPicked(data.getData());
+            return;
+        }
         final Uri uri = data.getData();
         final boolean backup = code == BACKUP_KEY || code == BACKUP_FULL;
         // set when the copy of the history did not pass its check (issue #115): the file got nothing

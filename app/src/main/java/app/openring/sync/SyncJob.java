@@ -33,7 +33,7 @@ public final class SyncJob extends JobService {
             JobInfo p = js.getPendingJob(JOB_ID);
             if (p != null) {
                 pending = new BackgroundJob.Spec(p.getService() == null ? null : p.getService().flattenToString(),
-                        p.isPeriodic(), p.getIntervalMillis(), p.getFlexMillis(), p.isPersisted(), p.isRequireBatteryNotLow());
+                        p.isPeriodic(), p.getIntervalMillis(), p.getFlexMillis(), p.isPersisted(), p.isRequireBatteryNotLow(), p.isRequireCharging());
             }
         } catch (RuntimeException e) {
             known = false;

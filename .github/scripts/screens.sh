@@ -198,6 +198,7 @@ else
 fi
 launch --es settings screen;                shot settings-screen-time
 launch --es settings games;                 shot settings-games
+launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
 # Find my ring (issues #74, #191), all on one screen without swiping: in demo a made up signal fills
 # the gauge and the trail; finder_start shows the screen before a walk (you in the middle of the dial),
 # the default a made up walk on the map with its circle, finder_turn a made up turn with the arrow, and

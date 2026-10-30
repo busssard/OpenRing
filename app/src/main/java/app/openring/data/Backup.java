@@ -53,7 +53,8 @@ public final class Backup {
         }
     }
 
-    private static void write(Prefs p, byte[] key, OutputStream os, File snap) throws IOException {
+    /** The backup file around a checked single file copy of the history ({@code snap}, null for key and settings only). */
+    static void write(Prefs p, byte[] key, OutputStream os, File snap) throws IOException {
         JSONObject o = new JSONObject();
         Json.put(o, "format", "openring-backup");
         Json.put(o, "version", 1);
@@ -78,6 +79,9 @@ public final class Backup {
         Json.put(o, "screen_min_show", p.screenMinShowMin());
         Json.put(o, "stage_detail", p.stageDetail());
         Json.put(o, "finder_sound", p.finderSound());
+        // the automatic backups' choices (issue #242); the folder is not in the file, its permission belongs to this installation
+        Json.put(o, "backup_days", p.backupDays());
+        Json.put(o, "backup_keep", p.backupKeep());
         ZipOutputStream z = new ZipOutputStream(os);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
@@ -112,6 +116,26 @@ public final class Backup {
         File db;
         long backupEvents;
     }
+
+    /**
+     * A plan that puts back a checked copy of the history from this phone ({@code db}, a temp file from {@link #newTemp}
+     * that the plan then owns) with the key saved now and without settings (issue #242): key and settings stay.
+     */
+    static Plan fromCopy(File db, byte[] key, long events) {
+        Plan p = new Plan();
+        p.db = db;
+        p.key = key;
+        p.history = true;
+        p.backupEvents = events;
+        return p;
+    }
+
+    /** Runs inside the swap, before the history is replaced (with the ring and the analysis lock held). */
+    interface Before {
+        void run() throws IOException;
+    }
+
+    static final String NOT_KEPT = "Your history could not be kept as a copy first, nothing was changed.";
 
     static final String DAMAGED = "The history in this backup is damaged, nothing was changed.";
     static final String NEWER = "This backup comes from a newer Open Ring. Update the app first, nothing was changed.";
@@ -224,11 +248,17 @@ public final class Backup {
      * waits, nothing is restored ({@link app.openring.core.RingGate#restoreRefused}).
      */
     public static Result finish(final Context c, final Plan p, boolean replaceHistory, final Progress progress) throws IOException {
+        return finish(c, p, replaceHistory, progress, null);
+    }
+
+    /** As above; {@code before} runs in the swap first, and when it fails nothing is replaced ({@link #NOT_KEPT}). */
+    static Result finish(final Context c, final Plan p, boolean replaceHistory, final Progress progress, final Before before) throws IOException {
         if (p.error != null) return p.error;
         Result r = new Result();
         try {
             if (p.db != null && replaceHistory) {
                 final IOException[] failed = {null};
+                final boolean[] notKept = {false};
                 final boolean[] waited = {false};
                 // demo mode is switched off only once the swap worked (applySettings). The order is the ring lock, then
                 // the analysis lock (as pairing): an analysis that may still run after a sync no longer holds the ring
@@ -240,6 +270,14 @@ public final class Backup {
                         if (waited[0]) progress.step(RESTORING);
                         synchronized (Analyzer.class) {
                             try {
+                                if (before != null) {
+                                    try {
+                                        before.run();
+                                    } catch (IOException | RuntimeException e) {
+                                        notKept[0] = true;
+                                        throw new IOException(e);
+                                    }
+                                }
                                 Db.replaceWith(c, p.db, p.backupEvents);
                             } catch (IOException e) {
                                 failed[0] = e;
@@ -254,7 +292,7 @@ public final class Backup {
                     return r;
                 }
                 if (failed[0] != null) {
-                    r.message = NOT_OPENED;
+                    r.message = notKept[0] ? NOT_KEPT : NOT_OPENED;
                     return r;
                 }
                 r.history = true;
@@ -322,7 +360,7 @@ public final class Backup {
     /** Temp files of plans in this process; anything else named restore*.db in the cache is left over. */
     private static final java.util.Set<String> LIVE = new java.util.HashSet<String>();
 
-    private static File newTemp(Context c) throws IOException {
+    static File newTemp(Context c) throws IOException {
         File f = File.createTempFile("restore-", ".db", c.getCacheDir());
         synchronized (LIVE) {
             LIVE.add(f.getName());
@@ -330,7 +368,7 @@ public final class Backup {
         return f;
     }
 
-    private static void release(File f) {
+    static void release(File f) {
         if (f == null) return;
         for (String s : new String[] {"", "-wal", "-shm", "-journal"}) new File(f.getPath() + s).delete();
         synchronized (LIVE) {
@@ -396,6 +434,9 @@ public final class Backup {
             if (d >= StageFilter.DETAILED && d <= StageFilter.CALM) p.setStageDetail(d);
         }
         if (o.has("finder_sound")) p.setFinderSound(o.optBoolean("finder_sound", true));
+        // a value that is not one of the choices, or an older backup without them, keeps the current ones
+        if (app.openring.core.Backups.validDays(o.optInt("backup_days", -1))) p.setBackupDays(o.optInt("backup_days"));
+        if (app.openring.core.Backups.validKeep(o.optInt("backup_keep", -1))) p.setBackupKeep(o.optInt("backup_keep"));
     }
 
     static int clamp(int v, int lo, int hi) {

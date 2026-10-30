@@ -817,6 +817,11 @@ public class PipelineTest {
         lateRecord188();
         upgradeRestore188();
         largeHistory188();
+        beforeUpdate242();
+        check242();
+        goBack242();
+        folder242();
+        largeHistory242();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -6949,6 +6954,758 @@ public class PipelineTest {
                     firstDiff(results139(db), after));
         } finally {
             setStatic("testNow", 0L);
+        }
+    }
+
+    // ------------------------------------------------------------------------- issue #242: automatic backups
+
+    /** Deletes a test folder and everything in it (issue #214). */
+    static void rmTree(java.io.File f) {
+        java.io.File[] fs = f.listFiles();
+        if (fs != null) for (java.io.File x : fs) rmTree(x);
+        f.delete();
+    }
+
+    /** A new process: nothing open, the first open not handled yet. */
+    static void restart242() throws Exception {
+        java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
+        f.setAccessible(true);
+        Db open = (Db) f.get(null);
+        if (open != null) open.close();
+        f.set(null, null);
+        java.lang.reflect.Field h = app.openring.data.BeforeUpdate.class.getDeclaredField("HANDLED");
+        h.setAccessible(true);
+        ((java.util.Set<?>) h.get(null)).clear();
+    }
+
+    /** The installed version: code 43 is "1.42" (as the app counts them); 0 is unknown. */
+    static void version242(int code) {
+        Context.versionCode = code;
+        Context.versionName = code == 0 ? "test" : "1." + (code - 1);
+    }
+
+    static void free242(long bytes) throws Exception {
+        java.lang.reflect.Field f = app.openring.data.BeforeUpdate.class.getDeclaredField("freeForTest");
+        f.setAccessible(true);
+        f.set(null, bytes);
+    }
+
+    static java.io.File copies242(Context c) {
+        return new java.io.File(c.getFilesDir(), "before-update");
+    }
+
+    static List<String> copyFiles242(Context c) {
+        String[] fs = copies242(c).list();
+        List<String> out = new ArrayList<String>(fs == null ? java.util.Collections.<String>emptyList() : Arrays.asList(fs));
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    /** {user_version, events} of a database file, read on its own; events -1 without the table. */
+    static long[] fileInfo242(java.io.File f) throws Exception {
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            long v, n = -1;
+            try (java.sql.ResultSet r = st.executeQuery("PRAGMA user_version")) {
+                r.next();
+                v = r.getLong(1);
+            }
+            try (java.sql.ResultSet r = st.executeQuery("SELECT COUNT(*) FROM events")) {
+                r.next();
+                n = r.getLong(1);
+            } catch (java.sql.SQLException e) {
+                n = -1;
+            }
+            return new long[] {v, n};
+        }
+    }
+
+    static final byte[] KEY242 = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+
+    /**
+     * A phone with {@code days} days of analysed history, left by the version before (schema v5, version code 42
+     * noted), with a ring key and a screen goal of 45. Then this version (43, "1.42") is installed: nothing is open yet.
+     */
+    static Context oldPhone242(String name, int days) throws Exception {
+        version242(0);
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        add58(db, 1, T58 - days * 86400L, days, 0);
+        Analyzer.run(c, null);
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.saveKey(KEY242);
+        p.setScreenGoalMin(45);
+        p.setSetupDone(true);
+        db.close();
+        restart242();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + c.getDatabasePath(Db.REAL).getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("DROP TABLE screen_reads");
+            st.execute("PRAGMA user_version = 5");
+        }
+        p.noteVersion(42);
+        version242(43);
+        return c;
+    }
+
+    static void beforeUpdate242() throws Exception {
+        List<Context> made = new ArrayList<Context>();
+        try {
+            // an update: the v5 history is copied as it is, then the helper makes the live one v6
+            Context c = oldPhone242("openring242-update", 12);
+            made.add(c);
+            java.io.File real = c.getDatabasePath(Db.REAL);
+            long[] before = fileInfo242(real);
+            Db db = Db.get(c);
+            long live = db.eventCount();
+            java.io.File raw = new java.io.File(copies242(c), "before-43-1.42.raw");
+            long[] copy = fileInfo242(raw);
+            check("#242 update: the history is copied before it is opened, as the version before left it (v5)", copyFiles242(c).equals(Arrays.asList("before-43-1.42.raw"))
+                    && copy[0] == 5 && copy[1] == before[1] && before[0] == 5, copyFiles242(c) + " " + Arrays.toString(copy) + " " + Arrays.toString(before));
+            check("#242 update: the live history is opened and upgraded after the copy (v6, the same events)", fileInfo242(real)[0] == 6 && live == before[1],
+                    fileInfo242(real)[0] + " " + live);
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            check("#242 update: the new version is noted, no note of a failure", p.notedVersion() == 43 && p.beforeUpdateNote() == null && !p.beforeUpdateUnseen(),
+                    p.notedVersion() + " " + p.beforeUpdateNote());
+            long made1 = raw.lastModified();
+            List<app.openring.data.BeforeUpdate.Entry> l = app.openring.data.BeforeUpdate.list(c);
+            check("#242 update: Settings lists the copy, usable before its check, with its size", l.size() == 1 && l.get(0).usable() && "1.42".equals(l.get(0).copy.version)
+                    && l.get(0).bytes == raw.length() && app.openring.data.BeforeUpdate.pending(c), l.size() + "");
+
+            // the same version again, and a second start: no new copy
+            db.getWritableDatabase();
+            restart242();
+            Db.get(c).eventCount();
+            restart242();
+            Db.get(c).eventCount();
+            check("#242 no version change, two more starts: no copy made", copyFiles242(c).equals(Arrays.asList("before-43-1.42.raw")) && raw.lastModified() == made1
+                    && fileInfo242(raw)[0] == 5, copyFiles242(c).toString());
+
+            // a stop after the copy was complete but before the version was noted: the copy stays as it is
+            p.noteVersion(42);
+            restart242();
+            Db.get(c).eventCount();
+            check("#242 a stop before the note: the complete copy is kept, not replaced by the upgraded history", fileInfo242(raw)[0] == 5 && p.notedVersion() == 43
+                    && copyFiles242(c).size() == 1, Arrays.toString(fileInfo242(raw)));
+
+            // the first opener is the data check, an export or a restore: the copy comes first all the same
+            String[] openers = {"DataCheck", "Exporter", "replaceWith"};
+            byte[] other = null;
+            {
+                version242(0);
+                Context o = freshDb("openring242-other");
+                made.add(o);
+                Db odb = Db.get(o);
+                add58(odb, 1, T58, 8, 0);
+                Analyzer.run(o, null);
+                app.openring.data.Prefs.of(o).saveKey(KEY242);
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                app.openring.data.Backup.write(o, out, true);
+                other = out.toByteArray();
+                odb.close();
+            }
+            for (String opener : openers) {
+                Context k = oldPhone242("openring242-" + opener, 4);
+                made.add(k);
+                long[] b = fileInfo242(k.getDatabasePath(Db.REAL));
+                restart242();
+                String seen = "";
+                if (opener.equals("DataCheck")) {
+                    seen = DataCheck.run(k).text;
+                } else if (opener.equals("Exporter")) {
+                    java.io.ByteArrayOutputStream sink = new java.io.ByteArrayOutputStream();
+                    app.openring.data.Exporter.database(k, sink);
+                } else {
+                    app.openring.data.Backup.Result r = app.openring.data.Backup.read(k, new java.io.ByteArrayInputStream(other));
+                    seen = r.message;
+                }
+                java.io.File kr = new java.io.File(copies242(k), "before-43-1.42.raw");
+                long[] kc = kr.isFile() ? fileInfo242(kr) : new long[] {-1, -1};
+                check("#242 first opener " + opener + ": the history from before the update is copied first", kc[0] == 5 && kc[1] == b[1], Arrays.toString(kc));
+                if (opener.equals("DataCheck")) {
+                    check("#242 data check lists the copy (version, date, size, not checked yet), no health values", seen.contains("Copies before updates: 1.42 (")
+                            && seen.contains("not checked yet") && seen.contains("Automatic backups: off"), seen.substring(Math.max(0, seen.indexOf("Copies")), seen.indexOf("Time records")).trim());
+                }
+                if (opener.equals("replaceWith")) {
+                    check("#242 restore as the first thing: the backup's history is in place afterwards", Db.get(k).eventCount() == fileInfo242(zipFile242(other))[1],
+                            Db.get(k).eventCount());
+                }
+            }
+
+            // demo mode: the real file is copied, the demo file never
+            Context d = oldPhone242("openring242-demo", 4);
+            made.add(d);
+            long[] real4 = fileInfo242(d.getDatabasePath(Db.REAL));
+            app.openring.data.Prefs.of(d).setDemo(true);
+            restart242();
+            Db.get(d).eventCount();
+            java.io.File dr = new java.io.File(copies242(d), "before-43-1.42.raw");
+            check("#242 demo mode at the first start: the real history is copied, not the demo file", copyFiles242(d).size() == 1 && dr.isFile()
+                    && fileInfo242(dr)[1] == real4[1] && "openring-demo.db".equals(Db.get(d).fileName), copyFiles242(d).toString());
+            app.openring.data.Prefs.of(d).setDemo(false);
+            restart242();
+            version242(43);
+            Context nd = freshDb("openring242-demo-only");
+            made.add(nd);
+            app.openring.data.Prefs.of(nd).setDemo(true);
+            Db.get(nd).eventCount();
+            check("#242 a new installation in demo mode: nothing to copy, the version is noted", copyFiles242(nd).isEmpty()
+                    && app.openring.data.Prefs.of(nd).notedVersion() == 43, copyFiles242(nd).toString());
+
+            // an interrupted copy: the half written files go and the copy is made again
+            Context ic = oldPhone242("openring242-cut", 4);
+            made.add(ic);
+            long[] ib = fileInfo242(ic.getDatabasePath(Db.REAL));
+            copies242(ic).mkdirs();
+            Files.write(new java.io.File(copies242(ic), "before-43-1.42.partial").toPath(), new byte[] {1, 2, 3});
+            Files.write(new java.io.File(copies242(ic), "before-43-1.42.partial-wal").toPath(), new byte[] {1, 2, 3});
+            Files.write(new java.io.File(copies242(ic), "before-40-1.39.raw-wal").toPath(), new byte[] {1, 2, 3});
+            Files.write(new java.io.File(copies242(ic), "before-40-1.39.db-shm").toPath(), new byte[] {1, 2, 3});
+            restart242();
+            Db.get(ic).eventCount();
+            java.io.File icr = new java.io.File(copies242(ic), "before-43-1.42.raw");
+            check("#242 an interrupted copy is never counted: the partial files go and the copy is made again", copyFiles242(ic).equals(Arrays.asList("before-43-1.42.raw"))
+                    && fileInfo242(icr)[1] == ib[1], copyFiles242(ic).toString());
+
+            // with the write ahead log of a history that was not closed: the log is copied along and folded in by the check
+            Context wc = oldPhone242("openring242-wal", 4);
+            made.add(wc);
+            java.io.File wr = wc.getDatabasePath(Db.REAL);
+            long walEvents;
+            try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + wr.getPath());
+                 java.sql.Statement st = cn.createStatement()) {
+                st.execute("PRAGMA journal_mode=WAL");
+                st.execute("PRAGMA wal_autocheckpoint=0");
+                st.execute("INSERT INTO kv(k, v) VALUES ('wal242', 'only in the log')");
+                st.execute("INSERT INTO events(epoch, tag, ds, body, captured) VALUES (9, 99, 1, x'01', 0)");
+                walEvents = fileInfo242(wr)[1];
+                check("#242 the test history has a log with rows in it", new java.io.File(wr.getPath() + "-wal").length() > 0, new java.io.File(wr.getPath() + "-wal").length());
+                restart242();
+                Db.get(wc);
+                check("#242 the log is copied next to the copy", new java.io.File(copies242(wc), "before-43-1.42.raw-wal").length() > 0, copyFiles242(wc).toString());
+            }
+            Db.get(wc).eventCount();
+            app.openring.data.AutoBackup.Outcome oc = app.openring.data.AutoBackup.run(wc, null, T58, true, null);
+            java.io.File wdb = new java.io.File(copies242(wc), "before-43-1.42.db");
+            check("#242 the check folds the log in: the copy is one file with the rows of the log, and it passed", oc.checked == 1 && wdb.isFile()
+                    && fileInfo242(wdb)[1] == walEvents && copyFiles242(wc).equals(Arrays.asList("before-43-1.42.db")), copyFiles242(wc) + " " + oc.checked);
+
+            // not enough free space: no copy, the reason is kept, the app opens anyway
+            Context sc = oldPhone242("openring242-space", 4);
+            made.add(sc);
+            long[] sb = fileInfo242(sc.getDatabasePath(Db.REAL));
+            free242(sc.getDatabasePath(Db.REAL).length());
+            restart242();
+            long opened = Db.get(sc).eventCount();
+            free242(-1);
+            app.openring.data.Prefs sp = app.openring.data.Prefs.of(sc);
+            check("#242 not enough space: no copy, the history opens, the reason is kept for the main screen", copyFiles242(sc).isEmpty() && opened == sb[1]
+                    && app.openring.core.Backups.SPACE.equals(sp.beforeUpdateNote()) && sp.beforeUpdateUnseen() && sp.notedVersion() == 43, sp.beforeUpdateNote());
+            check("#242 not enough space: the data check says so", DataCheck.run(sc).text.contains("Copies before updates: none. Last update: no copy, not enough free space"),
+                    null);
+
+            // the copy cannot be written (its folder is a file): the reason is kept, the app opens anyway
+            Context fc = oldPhone242("openring242-fail", 4);
+            made.add(fc);
+            Files.write(copies242(fc).toPath(), new byte[] {1});
+            restart242();
+            long fo = Db.get(fc).eventCount();
+            app.openring.data.Prefs fp = app.openring.data.Prefs.of(fc);
+            check("#242 the copy fails: the history opens, the reason is kept, the version noted", fo > 0 && fp.beforeUpdateNote() != null
+                    && fp.beforeUpdateNote().startsWith("error: ") && fp.beforeUpdateUnseen() && fp.notedVersion() == 43, fp.beforeUpdateNote());
+            check("#242 the copy fails: the data check gives the reason", DataCheck.run(fc).text.contains("Last update: no copy, error: "), null);
+            fp.clearBeforeUpdateUnseen();
+            check("#242 OK on the main screen's note: it is not shown again, the reason stays for Data check", !fp.beforeUpdateUnseen() && fp.beforeUpdateNote() != null, null);
+
+            // the copy stops half way (its file cannot be written): nothing half written is left, the app opens
+            Context hc = oldPhone242("openring242-half", 4);
+            made.add(hc);
+            new java.io.File(copies242(hc), "before-43-1.42.partial/inside").mkdirs();
+            restart242();
+            long ho = Db.get(hc).eventCount();
+            app.openring.data.Prefs hp = app.openring.data.Prefs.of(hc);
+            check("#242 the copy fails half way: no copy counted, the reason kept, the history opens", ho > 0 && !new java.io.File(copies242(hc), "before-43-1.42.raw").exists()
+                    && hp.beforeUpdateNote() != null && hp.beforeUpdateNote().startsWith("error: ") && hp.notedVersion() == 43, hp.beforeUpdateNote());
+
+            // the version cannot be read: nothing is compared or copied, the history opens
+            Context uc = oldPhone242("openring242-unknown", 4);
+            made.add(uc);
+            Context.packageFails = true;
+            try {
+                restart242();
+                long uo = Db.get(uc).eventCount();
+                check("#242 the version cannot be read: no copy, the history opens as before", uo > 0 && copyFiles242(uc).isEmpty()
+                        && app.openring.data.Prefs.of(uc).notedVersion() == 42, copyFiles242(uc).toString());
+            } finally {
+                Context.packageFails = false;
+            }
+        } finally {
+            version242(0);
+            free242(-1);
+            restart242();
+            for (Context c : made) rmTree(c.dir);
+        }
+    }
+
+    /** The history file inside a backup, as a temp file (deleted when the test ends). */
+    static java.io.File zipFile242(byte[] zip) throws Exception {
+        java.io.File f = Files.createTempFile("zip242", ".db").toFile();
+        f.deleteOnExit();
+        Files.write(f.toPath(), zipEntry(zip, "openring.db"));
+        return f;
+    }
+
+    /** Copies before updates: checked, a damaged one marked and kept, the two newest stay. */
+    static void check242() throws Exception {
+        version242(0);
+        Context c = freshDb("openring242-check");
+        try {
+            Db db = Db.get(c);
+            add58(db, 1, T58, 3, 0);
+            db.close();
+            restart242();
+            java.io.File dir = copies242(c);
+            dir.mkdirs();
+            byte[] good = Files.readAllBytes(c.getDatabasePath(Db.REAL).toPath());
+            Files.write(new java.io.File(dir, "before-40-1.39.db").toPath(), good);
+            Files.write(new java.io.File(dir, "before-41-1.40.raw").toPath(), good);
+            Files.write(new java.io.File(dir, "before-42-1.41.raw").toPath(), "not a database at all, a damaged copy".getBytes("UTF-8"));
+            Files.write(new java.io.File(dir, "back-1700000000.db").toPath(), good);
+            Files.write(new java.io.File(dir, "notes.txt").toPath(), good);
+            app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, null, T58, true, null);
+            check("#242 check: a good copy becomes .db, a damaged one .bad, the older checked copy stays (only one newer passed)",
+                    o.checked == 1 && copyFiles242(c).equals(Arrays.asList("back-1700000000.db", "before-40-1.39.db", "before-41-1.40.db", "before-42-1.41.bad", "notes.txt")),
+                    copyFiles242(c).toString());
+            List<app.openring.data.BeforeUpdate.Entry> l = app.openring.data.BeforeUpdate.list(c);
+            check("#242 check: Settings lists the bad copy as not usable, the copy before going back last", l.size() == 4 && !l.get(0).usable()
+                    && l.get(3).copy.back && l.get(3).time == 1700000000L, l.size() + "");
+            String dc = DataCheck.run(c).text;
+            check("#242 data check: each copy with its state", dc.contains("1.41 (") && dc.contains("failed its check") && dc.contains("checked)")
+                    && dc.contains("before going back ("), dc.substring(dc.indexOf("Copies"), dc.indexOf("Time records")).trim());
+            Files.write(new java.io.File(dir, "before-43-1.42.raw").toPath(), good);
+            Files.write(new java.io.File(dir, "back-1800000000.db").toPath(), good);
+            o = app.openring.data.AutoBackup.run(c, null, T58, true, null);
+            check("#242 check: with two newer copies checked the oldest goes, the damaged one waits for two newer; the newest copy before going back stays",
+                    o.checked == 1 && copyFiles242(c).equals(Arrays.asList("back-1800000000.db", "before-41-1.40.db", "before-42-1.41.bad", "before-43-1.42.db", "notes.txt")),
+                    copyFiles242(c).toString());
+            check("#242 no copy waits for its check", !app.openring.data.BeforeUpdate.pending(c), null);
+            // a copy whose new name is taken (a folder there): it stays unchecked and is tried again
+            Files.write(new java.io.File(dir, "before-44-1.43.raw").toPath(), good);
+            new java.io.File(dir, "before-44-1.43.db/inside").mkdirs();
+            StringBuilder clog = new StringBuilder();
+            o = app.openring.data.AutoBackup.run(c, null, T58, true, collect(clog));
+            check("#242 check: a copy that cannot be renamed stays as it is, to be checked again", o.checked == 0 && app.openring.data.BeforeUpdate.pending(c)
+                    && clog.indexOf("not renamed") >= 0, clog.toString());
+            rmTree(new java.io.File(dir, "before-44-1.43.db"));
+            app.openring.data.BeforeUpdate.deleteAll(c);
+            check("#242 Delete all local data: the phone copies go", copyFiles242(c).isEmpty(), copyFiles242(c).toString());
+            java.io.File fdir = Files.createTempDirectory("openring242-nocopy").toFile();
+            try {
+                o = app.openring.data.AutoBackup.run(c, new Folder242(fdir), T58, true, null);
+                check("#242 with a folder but no copy before an update: nothing to send", o.written.isEmpty() && o.error == null, o.skipped);
+            } finally {
+                rmTree(fdir);
+            }
+        } finally {
+            restart242();
+            rmTree(c.dir);
+        }
+    }
+
+    /** Going back to a copy: the same events and nights as in the copy, the replaced history kept as a copy of its own. */
+    static void goBack242() throws Exception {
+        Context c = oldPhone242("openring242-back", 10);
+        try {
+            Db db = Db.get(c);
+            List<String> results = results139(db), events = events58(db);
+            app.openring.data.AutoBackup.run(c, null, T58, true, null);
+            // a week more is synced and analysed with this version
+            add58(db, 2, T58 + 86400L, 7, 0);
+            Analyzer.run(c, null);
+            long newer = db.eventCount();
+            check("#242 go back: the history grew after the update", newer > events.size(), newer + " " + events.size());
+
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            p.setDemo(true);
+            app.openring.data.Backup.Result r = app.openring.data.AutoBackup.goBack(c, "before-43-1.42.db", null);
+            p.setDemo(false);
+            check("#242 go back in demo mode: refused", !r.ok && app.openring.core.Backups.NOT_IN_DEMO.equals(r.message), r.message);
+            p.clearKey();
+            r = app.openring.data.AutoBackup.goBack(c, "before-43-1.42.db", null);
+            p.saveKey(KEY242);
+            check("#242 go back without a ring key: refused, nothing changed", !r.ok && Db.get(c).eventCount() == newer, r.message);
+            r = app.openring.data.AutoBackup.goBack(c, "before-99-1.98.db", null);
+            check("#242 go back to a copy that is gone: nothing changed", !r.ok && Db.get(c).eventCount() == newer, r.message);
+
+            r = app.openring.data.AutoBackup.goBack(c, "before-43-1.42.db", null);
+            db = Db.get(c);
+            check("#242 go back: the same events and nights as before the update, byte for byte", r.ok && r.history && events58(db).equals(events)
+                    && results139(db).equals(results), r.message);
+            check("#242 go back: key and settings stay", Arrays.equals(p.loadKey(), KEY242) && p.screenGoalMin() == 45 && !p.demo(), null);
+            List<app.openring.data.BeforeUpdate.Entry> l = app.openring.data.BeforeUpdate.list(c);
+            app.openring.data.BeforeUpdate.Entry back = l.get(l.size() - 1);
+            check("#242 go back: the replaced history is kept as a copy of its own, with every event", back.copy.back
+                    && fileInfo242(new java.io.File(copies242(c), back.copy.file))[1] == newer, back.copy.file);
+            check("#242 go back: no restore file left", c.getCacheDir().list(new java.io.FilenameFilter() {
+                public boolean accept(java.io.File d, String n) {
+                    return n.startsWith("restore") || n.startsWith("export-");
+                }
+            }).length == 0, null);
+
+            // and forward again: the copy before going back holds the newer history
+            Thread.sleep(1100); // its own second, so the next copy before going back has another name
+            r = app.openring.data.AutoBackup.goBack(c, back.copy.file, null);
+            int backs = 0;
+            for (app.openring.data.BeforeUpdate.Entry e : app.openring.data.BeforeUpdate.list(c)) if (e.copy.back) backs++;
+            check("#242 back to the copy before going back: the newer history returns, one copy before going back stays", r.ok
+                    && Db.get(c).eventCount() == newer && backs == 1, r.message + " " + backs);
+
+            // the current history cannot be kept first (its file name is taken by a folder): nothing is replaced
+            java.io.File dir = copies242(c);
+            String keepName = app.openring.data.BeforeUpdate.list(c).get(0).copy.file;
+            setStatic242("nowForTest", 1234L);
+            java.io.File blocker = new java.io.File(dir, app.openring.core.Backups.backName(1234, app.openring.core.Backups.PARTIAL));
+            new java.io.File(blocker, "inside").mkdirs();
+            r = app.openring.data.AutoBackup.goBack(c, keepName, null);
+            setStatic242("nowForTest", 0L);
+            check("#242 go back: when the current history cannot be kept as a copy first, nothing is replaced", !r.ok
+                    && Db.get(c).eventCount() == newer && "Your history could not be kept as a copy first, nothing was changed.".equals(r.message), r.message);
+            rmTree(blocker);
+
+            // a damaged copy cannot be gone back to
+            Files.write(new java.io.File(dir, "before-50-1.49.raw").toPath(), "damaged".getBytes("UTF-8"));
+            r = app.openring.data.AutoBackup.goBack(c, "before-50-1.49.raw", null);
+            check("#242 go back to a damaged copy: refused, nothing changed", !r.ok && Db.get(c).eventCount() == newer, r.message);
+        } finally {
+            version242(0);
+            restart242();
+            rmTree(c.dir);
+        }
+    }
+
+    static void setStatic242(String field, Object v) throws Exception {
+        java.lang.reflect.Field f = app.openring.data.AutoBackup.class.getDeclaredField(field);
+        f.setAccessible(true);
+        f.set(null, v);
+    }
+
+    /** A folder the person picked, as a plain directory, with the failures a phone can give. */
+    static final class Folder242 implements app.openring.data.AutoBackup.Folder {
+        final java.io.File dir;
+        boolean gone, failRename, damage, failDelete, fullTyped;
+        long fullAfter = -1;
+
+        Folder242(java.io.File dir) {
+            this.dir = dir;
+            dir.mkdirs();
+        }
+
+        @Override
+        public List<String> list() throws java.io.IOException {
+            if (gone) throw new app.openring.data.AutoBackup.Gone("test: the card was removed", null);
+            String[] n = dir.list();
+            List<String> out = new ArrayList<String>(Arrays.asList(n == null ? new String[0] : n));
+            java.util.Collections.sort(out);
+            return out;
+        }
+
+        @Override
+        public java.io.OutputStream create(String name) throws java.io.IOException {
+            if (gone) throw new app.openring.data.AutoBackup.Gone("test: gone", null);
+            java.io.File f = new java.io.File(dir, name);
+            if (f.exists()) throw new java.io.IOException("exists");
+            final java.io.OutputStream os = new java.io.FileOutputStream(f);
+            return new java.io.OutputStream() {
+                long n;
+
+                @Override
+                public void write(int b) throws java.io.IOException {
+                    write(new byte[] {(byte) b}, 0, 1);
+                }
+
+                @Override
+                public void write(byte[] b, int off, int len) throws java.io.IOException {
+                    if (fullAfter >= 0 && n + len > fullAfter) {
+                        if (fullTyped) throw new app.openring.data.AutoBackup.Full("test: full", null);
+                        throw new java.io.IOException("write failed: ENOSPC (No space left on device)");
+                    }
+                    n += len;
+                    os.write(b, off, len);
+                }
+
+                @Override
+                public void close() throws java.io.IOException {
+                    os.close();
+                    if (damage) { // a card that loses the end of the file
+                        java.io.RandomAccessFile r = new java.io.RandomAccessFile(new java.io.File(dir, name), "rw");
+                        r.setLength(r.length() / 2);
+                        r.close();
+                    }
+                }
+            };
+        }
+
+        @Override
+        public java.io.InputStream open(String name) throws java.io.IOException {
+            return new java.io.FileInputStream(new java.io.File(dir, name));
+        }
+
+        @Override
+        public void rename(String from, String to) throws java.io.IOException {
+            if (failRename || !new java.io.File(dir, from).renameTo(new java.io.File(dir, to))) throw new java.io.IOException("rename failed");
+        }
+
+        @Override
+        public void delete(String name) throws java.io.IOException {
+            if (failDelete || !new java.io.File(dir, name).delete()) throw new java.io.IOException("delete failed");
+        }
+
+        /** The app's complete copies in the folder. */
+        List<String> ours() throws java.io.IOException {
+            List<String> out = new ArrayList<String>();
+            for (String n : list()) if (n.endsWith(".zip") && n.startsWith("openring-backup-") && !n.startsWith("openring-backup-2020")) out.add(n);
+            return out;
+        }
+    }
+
+    /** The automatic backups into a folder: the schedule, N kept, foreign files, failures, the copy before an update. */
+    static void folder242() throws Exception {
+        Context c = oldPhone242("openring242-folder", 6);
+        List<Context> more = new ArrayList<Context>();
+        java.io.File fdir = Files.createTempDirectory("openring242-picked").toFile();
+        try {
+            Db db = Db.get(c);
+            long events = db.eventCount();
+            StringBuilder log = new StringBuilder();
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            Folder242 f = new Folder242(fdir);
+            Files.write(new java.io.File(fdir, "notes.txt").toPath(), new byte[] {1, 2});
+            Files.write(new java.io.File(fdir, "openring-backup-2020-01-01-0000.zip").toPath(), new byte[] {1, 2}); // the person's own, unlisted
+            Files.write(new java.io.File(fdir, "openring-backup-2020-01-02-0000.zip.partial").toPath(), new byte[] {1, 2});
+            // the copy made before this update existed before the folder was chosen: it does not go there
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/Backups", "Backups");
+            p.setBackupKeep(3);
+            check("#242 folder chosen: no copy yet, weekly by default", p.backupDays() == 7 && p.autoLastOk() == 0 && "Backups".equals(p.backupFolderName())
+                    && app.openring.core.Backups.NONE_YET.equals(app.openring.core.Backups.status(p.autoLastOk(), 0, 0, p.autoError(), Z58)), p.backupDays());
+            long now = T58 + 3 * 3600;
+            List<String> written = new ArrayList<String>();
+            for (int i = 0; i < 5; i++) {
+                app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, f, now + i * 7 * 86400L, false, collect(log));
+                written.addAll(o.written);
+                if (i == 0) check("#242 first run: the copy before the update stays on the phone only, one regular copy is written", o.written.size() == 1
+                        && !o.written.get(0).contains("before") && o.checked == 1, o.written.toString());
+            }
+            check("#242 five weekly runs: five files written, exactly 3 kept (the newest)", written.size() == 5 && f.ours().equals(written.subList(2, 5)), f.ours().toString());
+            check("#242 files the app did not write stay, also one named like ours", new java.io.File(fdir, "notes.txt").isFile()
+                    && new java.io.File(fdir, "openring-backup-2020-01-01-0000.zip").isFile() && new java.io.File(fdir, "openring-backup-2020-01-02-0000.zip.partial").isFile(), f.list().toString());
+            check("#242 status: last copy, its size and how many are kept", p.autoKept() == 3 && p.autoLastOk() == now + 28 * 86400L && p.autoError() == null
+                    && app.openring.core.Backups.status(p.autoLastOk(), p.autoLastSize(), p.autoKept(), null, Z58).endsWith(", 3 kept")
+                    && p.autoLastSize() == new java.io.File(fdir, written.get(4)).length(), p.autoLastSize());
+            // every file restores the whole history on another phone
+            version242(0);
+            Context other = freshDb("openring242-restored");
+            more.add(other);
+            app.openring.data.Backup.Result rr = app.openring.data.Backup.read(other, new java.io.FileInputStream(new java.io.File(fdir, written.get(4))));
+            check("#242 a folder copy restores the whole history, key and settings", rr.ok && rr.history && Db.get(other).eventCount() == events
+                    && app.openring.data.Prefs.of(other).screenGoalMin() == 45, rr.message);
+            restart242();
+            version242(43);
+            db = Db.get(c);
+
+            long last = now + 28 * 86400L;
+            app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
+            check("#242 a day later with a weekly copy: not due, nothing written", o.written.isEmpty() && "not due".equals(o.skipped), o.skipped);
+            p.setBackupDays(1);
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
+            check("#242 every day: a day later a copy is written", o.written.size() == 1, o.skipped);
+            o = app.openring.data.AutoBackup.run(c, f, last - 40 * 86400L, false, null);
+            check("#242 the phone clock set back: the last copy lies in the future, a copy is written", o.written.size() == 1, o.skipped);
+            last = last - 40 * 86400L;
+
+            // a stop while writing left a .partial of ours: the next run deletes it, a foreign partial stays
+            String cut = app.openring.core.Backups.folderName(java.time.LocalDateTime.of(2026, 1, 1, 1, 1), null);
+            java.util.Set<String> listed = p.autoFiles();
+            listed.add(cut);
+            p.setAutoFiles(listed);
+            Files.write(new java.io.File(fdir, cut + ".partial").toPath(), new byte[] {1, 2, 3});
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
+            check("#242 a .partial of ours left by a stop is deleted, never counted", o.written.size() == 1 && !new java.io.File(fdir, cut + ".partial").exists()
+                    && !p.autoFiles().contains(cut) && p.autoKept() == 3, f.list().toString());
+            last += 86400L;
+
+            // failures: a plain reason, the history unchanged, nothing half written left behind
+            long sum = db.count(EVENTS_SUM);
+            List<String> beforeFail = f.list();
+            String[][] cases = {{"gone", app.openring.core.Backups.GONE}, {"full", app.openring.core.Backups.FULL}, {"fullTyped", app.openring.core.Backups.FULL},
+                {"damage", app.openring.core.Backups.CHECK}, {"rename", app.openring.core.Backups.WRITE}, {"renameAndDelete", app.openring.core.Backups.WRITE},
+                {"badCopy", app.openring.core.Backups.CHECK}, {"space", app.openring.core.Backups.SPACE}};
+            for (String[] k : cases) {
+                f.gone = k[0].equals("gone");
+                f.fullAfter = k[0].startsWith("full") ? 2000 : -1;
+                f.fullTyped = k[0].equals("fullTyped");
+                f.damage = k[0].equals("damage");
+                f.failRename = k[0].startsWith("rename");
+                f.failDelete = k[0].equals("renameAndDelete");
+                if (k[0].equals("space")) free242(c.getDatabasePath(Db.REAL).length());
+                if (k[0].equals("badCopy")) db.getWritableDatabase().execSQL("DROP TABLE zones"); // the snapshot fails its check (#115)
+                last += 86400L;
+                o = app.openring.data.AutoBackup.run(c, f, last, false, null);
+                free242(-1);
+                if (k[0].equals("badCopy")) db.getWritableDatabase().execSQL("CREATE TABLE zones (start REAL PRIMARY KEY, stop REAL NOT NULL, id TEXT NOT NULL)");
+                f.gone = false;
+                f.failDelete = false;
+                if (k[0].equals("renameAndDelete")) {
+                    for (String n : f.list()) if (n.endsWith(".partial") && !beforeFail.contains(n)) f.delete(n); // left for the next run, removed here to compare
+                }
+                String status = app.openring.core.Backups.status(p.autoLastOk(), p.autoLastSize(), p.autoKept(), p.autoError(), Z58);
+                check("#242 folder " + k[0] + ": the reason is kept and shown, the history unchanged, no file left", k[1].equals(o.error) && k[1].equals(p.autoError())
+                        && status.equals("The last copy failed: " + app.openring.core.Backups.reason(k[1]) + ".") && db.count(EVENTS_SUM) == sum
+                        && f.list().equals(beforeFail), o.error + " " + status + " " + f.list());
+            }
+            f.fullAfter = -1;
+            f.damage = false;
+            f.failRename = false;
+            String dc = DataCheck.run(c).text;
+            check("#242 data check: the automatic backups' settings, last copy and the last try's reason", dc.contains("Automatic backups: every day, keep 3, last copy ")
+                    && dc.contains("last try failed: not enough free space on this phone for the copy"), dc.substring(dc.indexOf("Automatic"), dc.indexOf("Time records")).trim());
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
+            check("#242 after the failures the next run works and clears the reason", o.written.size() == 1 && p.autoError() == null, o.error);
+            last += 86400L;
+            f.failDelete = true;
+            StringBuilder dlog = new StringBuilder();
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, collect(dlog));
+            f.failDelete = false;
+            last += 86400L;
+            check("#242 an older file that cannot be deleted stays listed and is tried again; the new copy counts", o.written.size() == 1 && o.error == null
+                    && dlog.indexOf("older backup not deleted") >= 0 && p.autoKept() == 4, p.autoKept() + " " + dlog);
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
+            last += 86400L;
+            check("#242 the next run deletes it", o.written.size() == 1 && p.autoKept() == 3 && f.ours().size() == 3, f.ours().toString());
+
+            // busy: a sync under way for longer than the wait, demo mode, a run already going
+            setStatic242("waitMs", 300L);
+            app.openring.core.RingGate.RING.syncs.incrementAndGet();
+            try {
+                o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, collect(log));
+            } finally {
+                app.openring.core.RingGate.RING.syncs.decrementAndGet();
+                setStatic242("waitMs", 5 * 60 * 1000L);
+            }
+            check("#242 a sync stays under way: no copy, no failure, tried again at the next run", o.written.isEmpty() && o.error == null
+                    && o.skipped != null && p.autoError() == null, o.skipped);
+            p.setDemo(true);
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
+            p.setDemo(false);
+            check("#242 demo mode: no run", "demo mode".equals(o.skipped) && o.written.isEmpty(), o.skipped);
+            app.openring.data.AutoBackup.RUN.start();
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
+            app.openring.data.AutoBackup.RUN.finish();
+            check("#242 never two runs at once", o.skipped != null && o.skipped.contains("already") && o.written.isEmpty(), o.skipped);
+
+            // the next update: the copy from before it goes to the phone and, once checked, to the folder
+            long beforeUpdate = db.eventCount();
+            version242(44);
+            restart242();
+            db = Db.get(c);
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, true, collect(log));
+            String up = o.written.isEmpty() ? null : o.written.get(0);
+            check("#242 an update: the checked phone copy is zipped into the folder, named for the update", o.checked == 1 && up != null
+                    && up.endsWith("-before-1.43.zip") && p.updateCopySent() == 44, o.written.toString());
+            if (up != null) {
+                java.io.File inside = zipFile242(Files.readAllBytes(new java.io.File(fdir, up).toPath()));
+                long[] in = fileInfo242(inside);
+                inside.delete();
+                check("#242 the folder's update copy is the history the version before left (v6, its events)", in[0] == 6 && in[1] == beforeUpdate, Arrays.toString(in));
+            }
+            o = app.openring.data.AutoBackup.run(c, f, last + 86400L, true, null);
+            check("#242 the update copy goes to the folder once", o.written.isEmpty(), o.written.toString());
+            check("#242 update copies count among the kept files", f.ours().size() == 3, f.ours().toString());
+
+            // a folder that is gone keeps the update copy for the next run
+            version242(45);
+            restart242();
+            db = Db.get(c);
+            f.gone = true;
+            o = app.openring.data.AutoBackup.run(c, f, last + 2 * 86400L, true, null);
+            f.gone = false;
+            check("#242 the folder is gone at an update: the reason is kept, the copy waits on the phone", app.openring.core.Backups.GONE.equals(o.error)
+                    && p.updateCopySent() == 44, o.error);
+            o = app.openring.data.AutoBackup.run(c, f, last + 2 * 86400L, true, null);
+            check("#242 the folder is back: the update copy goes there now", o.written.size() == 1 && o.written.get(0).endsWith("-before-1.44.zip")
+                    && p.updateCopySent() == 45, o.written.toString());
+
+            // stopped: the folder is forgotten, its files stay
+            int inFolder = f.list().size();
+            p.setBackupFolder(null, null);
+            check("#242 stopped: no folder, no status, the files in the folder stay", p.backupFolder() == null && p.autoFiles().isEmpty() && p.autoLastOk() == 0
+                    && f.list().size() == inFolder, null);
+
+            // the choices travel with a backup; an older backup or a value that is not a choice keeps the current ones
+            p.setBackupDays(30);
+            p.setBackupKeep(10);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            app.openring.data.Backup.write(c, out, false);
+            String json = new String(zipEntry(out.toByteArray(), "openring-backup.json"), "UTF-8");
+            check("#242 the backup file holds how often and how many, not the folder", json.contains("\"backup_days\":30") && json.contains("\"backup_keep\":10")
+                    && !json.contains("content://"), null);
+            version242(0);
+            String[][] restores = {{json, "30", "10"}, {json.replace("\"backup_days\":30", "\"backup_days\":2").replace("\"backup_keep\":10", "\"backup_keep\":4"), "7", "5"},
+                {json.replace(",\"backup_days\":30", "").replace(",\"backup_keep\":10", "").replace("\"backup_days\":30,", "").replace("\"backup_keep\":10,", ""), "7", "5"}};
+            for (String[] rs : restores) {
+                Context k = freshDb("openring242-settings");
+                more.add(k);
+                app.openring.data.Backup.Result r = app.openring.data.Backup.read(k, new java.io.ByteArrayInputStream(zipWithJson(rs[0])));
+                app.openring.data.Prefs kp = app.openring.data.Prefs.of(k);
+                check("#242 restored settings: every " + rs[1] + " days, keep " + rs[2] + ", no folder", r.ok && kp.backupDays() == Integer.parseInt(rs[1])
+                        && kp.backupKeep() == Integer.parseInt(rs[2]) && kp.backupFolder() == null, kp.backupDays() + " " + kp.backupKeep());
+            }
+            check("#242 the log names each step", log.indexOf("automatic backup written") >= 0 && log.indexOf("older backup deleted") >= 0
+                    && log.indexOf("passed its check") >= 0 && log.indexOf("waits for the next run") >= 0, null);
+        } finally {
+            version242(0);
+            free242(-1);
+            restart242();
+            rmTree(c.dir);
+            rmTree(fdir);
+            for (Context k : more) rmTree(k.dir);
+        }
+    }
+
+    /** Three years of history: the copy before an update, its check and both folder copies, timed; every file deleted after. */
+    static void largeHistory242() throws Exception {
+        version242(0);
+        Context c = freshDb("openring242-years");
+        java.io.File fdir = Files.createTempDirectory("openring242-years-folder").toFile();
+        try {
+            Db db = Db.get(c);
+            long t0 = LocalDate.parse("2023-10-01").atStartOfDay(Z58).toEpochSecond();
+            for (int y = 0; y < 3; y++) add58(db, y + 1, t0 + y * 365 * 86400L, 365, 0);
+            long events = db.eventCount();
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            p.saveKey(KEY242);
+            db.close();
+            restart242();
+            long size = c.getDatabasePath(Db.REAL).length();
+            p.noteVersion(42);
+            version242(43);
+            long t = System.nanoTime();
+            Db.get(c);
+            long copyMs = (System.nanoTime() - t) / 1000000;
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/Backups", "Backups");
+            p.setUpdateCopySent(0); // as if the folder was chosen before this update
+            Folder242 f = new Folder242(fdir);
+            t = System.nanoTime();
+            app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, f, T58, false, null);
+            long runMs = (System.nanoTime() - t) / 1000000;
+            System.out.println("  #242 three years (" + events + " events, " + size / (1024 * 1024) + " MB): copy before the update " + copyMs
+                    + " ms; check, update copy and regular copy into the folder " + runMs + " ms");
+            check("#242 three years: copied and checked, both folder copies written and read back", o.checked == 1 && o.written.size() == 2 && o.error == null
+                    && fileInfo242(new java.io.File(copies242(c), "before-43-1.42.db"))[1] == events, o.written + " " + o.error);
+        } finally {
+            version242(0);
+            restart242();
+            rmTree(c.dir);
+            rmTree(fdir);
         }
     }
 }

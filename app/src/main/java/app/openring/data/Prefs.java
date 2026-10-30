@@ -131,6 +131,75 @@ public final class Prefs {
     public boolean demo() { return sp.getBoolean("demo", false); }
     public void setDemo(boolean b) { sp.edit().putBoolean("demo", b).commit(); }
 
+    // ---- automatic backups (issue #242) ----
+    /** The version code noted at the last start, 0 when none was noted yet. */
+    public int notedVersion() { return sp.getInt("version_noted", 0); }
+    /** Notes this version, written to disk before it returns: the copy before the update is complete (or not possible). */
+    public boolean noteVersion(int code) { return sp.edit().putInt("version_noted", code).commit(); }
+    /** Why no copy was made before the last update ({@code core/Backups.SPACE} or an error text), null when it was made. */
+    public String beforeUpdateNote() { return sp.getString("before_note", null); }
+    /** Whether the main screen still shows that no copy was made (until "OK"). */
+    public boolean beforeUpdateUnseen() { return sp.getBoolean("before_unseen", false); }
+    public void setBeforeUpdateNote(String note, boolean unseen) { sp.edit().putString("before_note", note).putBoolean("before_unseen", unseen).commit(); }
+    public void clearBeforeUpdateUnseen() { sp.edit().putBoolean("before_unseen", false).apply(); }
+    /** The newest update copy (its version code) that already went to the folder, 0 for none. */
+    public int updateCopySent() { return sp.getInt("update_sent", 0); }
+    public void setUpdateCopySent(int code) { sp.edit().putInt("update_sent", code).commit(); }
+    /** The folder for the automatic backups (a tree URI with a kept permission), null when they are off. */
+    public String backupFolder() { return sp.getString("backup_folder", null); }
+    public String backupFolderName() { return sp.getString("backup_folder_name", null); }
+    /** Sets or (null) clears the folder; a new folder starts without a status and without a listed file. */
+    public void setBackupFolder(String uri, String name) {
+        SharedPreferences.Editor e = sp.edit();
+        if (uri == null) e.remove("backup_folder").remove("backup_folder_name");
+        else e.putString("backup_folder", uri).putString("backup_folder_name", name);
+        e.remove("auto_error").remove("auto_last_ok").remove("auto_last_size").remove("auto_kept").remove("auto_last_try").remove("auto_last_regular")
+                .remove("auto_files").commit();
+    }
+    /** A copy every so many days (1, 7 or 30). */
+    public int backupDays() { return sp.getInt("backup_days", app.openring.core.Backups.DEFAULT_DAYS); }
+    public void setBackupDays(int d) { sp.edit().putInt("backup_days", d).apply(); }
+    /** How many copies the folder keeps (3, 5 or 10). */
+    public int backupKeep() { return sp.getInt("backup_keep", app.openring.core.Backups.DEFAULT_KEEP); }
+    public void setBackupKeep(int k) { sp.edit().putInt("backup_keep", k).apply(); }
+    /** The last good folder copy: when (unix seconds, 0 none), its size, how many copies the folder kept after it. */
+    public long autoLastOk() { return sp.getLong("auto_last_ok", 0); }
+    public long autoLastSize() { return sp.getLong("auto_last_size", 0); }
+    public int autoKept() { return sp.getInt("auto_kept", 0); }
+    /** The last good regular copy (not an update copy), which the schedule counts from. */
+    public long autoLastRegular() { return sp.getLong("auto_last_regular", 0); }
+    public long autoLastTry() { return sp.getLong("auto_last_try", 0); }
+    /** Why the last try failed ({@code core/Backups} reason code), null when it worked. */
+    public String autoError() { return sp.getString("auto_error", null); }
+    public void setAutoResult(long tried, String error) {
+        SharedPreferences.Editor e = sp.edit().putLong("auto_last_try", tried);
+        if (error == null) e.remove("auto_error");
+        else e.putString("auto_error", error);
+        e.commit();
+    }
+    public void setAutoOk(long at, long size, int kept, boolean regular) {
+        SharedPreferences.Editor e = sp.edit().putLong("auto_last_try", at).remove("auto_error").putLong("auto_last_ok", at).putLong("auto_last_size", size)
+                .putInt("auto_kept", kept);
+        if (regular) e.putLong("auto_last_regular", at);
+        e.commit();
+    }
+    /** The folder files this app wrote (names, also of a file still being written), so it never deletes other files. */
+    public java.util.Set<String> autoFiles() {
+        java.util.Set<String> out = new java.util.TreeSet<String>();
+        for (String x : sp.getString("auto_files", "").split("/")) if (!x.isEmpty()) out.add(x);
+        return out;
+    }
+    /** Saved to disk before it returns, so a file is listed before it is created. */
+    public boolean setAutoFiles(java.util.Collection<String> names) {
+        StringBuilder b = new StringBuilder();
+        for (String x : new java.util.TreeSet<String>(names)) {
+            if (x == null || x.isEmpty() || x.contains("/")) continue;
+            if (b.length() > 0) b.append('/');
+            b.append(x);
+        }
+        return sp.edit().putString("auto_files", b.toString()).commit();
+    }
+
     public boolean setupDone() { return sp.getBoolean("setup_done", false); }
     public void setSetupDone(boolean b) { sp.edit().putBoolean("setup_done", b).apply(); }
 
