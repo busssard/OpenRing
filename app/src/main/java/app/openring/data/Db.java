@@ -207,6 +207,11 @@ public final class Db extends SQLiteOpenHelper {
         public double[] range;
         /** The newest event id this run dated (0 for none). */
         public long lastId;
+        /**
+         * The earliest date, before or after, of a row whose date this run wrote (issue #188), NaN when none changed. A night
+         * can move away from one day and into another, so the old date counts as much as the new one.
+         */
+        public double changedFrom = Double.NaN;
         /** The segments; after a run that dated only the new part they carry no time records or strays. */
         public List<TimeLine.Segment> segs;
     }

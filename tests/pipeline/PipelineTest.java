@@ -812,6 +812,10 @@ public class PipelineTest {
         largeHistory220();
         emptySync194();
         runningDay194();
+        redated188();
+        interrupted188();
+        upgradeRestore188();
+        largeHistory188();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -3602,6 +3606,15 @@ public class PipelineTest {
                 Arrays.toString(fresh.range) + " / " + Arrays.toString(db.datedRange()));
         long changedRows = differences(start, mine);
         check(step + ": rows written are the rows that changed", fresh.changed == changedRows, fresh.changed + " / " + changedRows);
+        double from = Double.NaN;
+        for (int i = 0; i < start.size(); i++) {
+            if (Arrays.equals(start.get(i), mine.get(i))) continue;
+            for (long bits : new long[] {start.get(i)[2], mine.get(i)[2]}) {
+                if (bits != Long.MIN_VALUE && !(Double.longBitsToDouble(bits) >= from)) from = Double.longBitsToDouble(bits);
+            }
+        }
+        check(step + ": the earliest old or new date of a row written is reported (#188)", Double.compare(fresh.changedFrom, from) == 0,
+                fresh.changedFrom + " / " + from);
         Db.TimeReport again = db.rebuildTime(now);
         check(step + ": a second run writes nothing", again.changed == 0 && differences(timeRows(db), theirs) == 0, again.changed);
         return fresh;
@@ -6068,6 +6081,239 @@ public class PipelineTest {
         String gotHistory = phone219(lr2);
         check("#219 long run: the restored history is the backup exactly", gotHistory.equals(snapHistory), gotHistory + " / " + snapHistory);
         freshDb("openring219-done");
+    }
+    // ------------------------------------------------------------------------------------------- issue #188
+
+    static final long T188 = LocalDate.parse("2026-07-06").atStartOfDay(Z58).toEpochSecond();
+    /** Start of boot 2 and 3 of {@link #boots188}: 15 and 26 days after boot 1. */
+    static final long T2_188 = T188 + 15 * 86400L, T3_188 = T188 + 26 * 86400L;
+
+    /** A phone with three boots (14, 10 and 10 days of demo history, a day off between), analysed once. */
+    static Context boots188(String name) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        add58(db, 1, T188, 14, 0);
+        add58(db, 2, T2_188, 10, 0);
+        add58(db, 3, T3_188, 10, 0);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        Analyzer.run(c, null);
+        return c;
+    }
+
+    static double minUnix188(Db db, int epoch) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT MIN(unix) FROM events WHERE epoch = ?", new String[] {String.valueOf(epoch)});
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getDouble(0) : Double.NaN;
+        } finally {
+            c.close();
+        }
+    }
+
+    /** The date the analysis of a run starts on when the earliest changed date is {@code changed} (two days before). */
+    static String from188(double changed) {
+        return "analysing " + date58((long) changed - 2 * 86400);
+    }
+
+    /** Results of {@code c} after Re analyse all (the reference: every night and day from scratch). */
+    static List<String> full188(Context c) {
+        Analyzer.runAll(c, null);
+        return results139(Db.get(c));
+    }
+
+    /**
+     * Issue #188: events of an older boot get other dates (a later time record, other dating rules in a new version)
+     * while every dated event stays dated. The nights and days of those dates are analysed again, not only the last two
+     * days, and give exactly what a full re analysis gives.
+     */
+    static void redated188() throws Exception {
+        List<String> ref = null;
+        for (long shift : new long[] {3600, -3600}) {
+            String way = shift > 0 ? "an hour later" : "an hour earlier";
+            Context c = boots188("openring188");
+            Db db = Db.get(c);
+            List<String> before = results139(db);
+            long dated = db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
+            double old2 = minUnix188(db, 2);
+            moveAnchor(db, 2, T2_188, shift);
+            List<String> evBefore = events58(db);
+            StringBuilder log = new StringBuilder();
+            Analyzer.run(c, collect(log));
+            double new2 = minUnix188(db, 2);
+            List<String> after = results139(db);
+            check("#188 boot 2 dated " + way + ": as many events dated as before", new2 == old2 + shift
+                    && db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL") == dated, (new2 - old2) + " s");
+            check("#188 boot 2 dated " + way + ": analysed again from two days before its earliest old or new date",
+                    log.indexOf(from188(Math.min(old2, new2))) >= 0, log.toString().replace('\n', ';'));
+            List<String> full = full188(c);
+            check("#188 boot 2 dated " + way + ": a full re analysis gives other nights than before (the case is real)", !full.equals(before)
+                    && nightRows(full) == nightRows(before) && nightRows(full) >= 30, firstDiff(full, before));
+            check("#188 boot 2 dated " + way + ": every night and day is what a full re analysis gives, byte for byte", after.equals(full),
+                    firstDiff(after, full));
+            check("#188 boot 2 dated " + way + ": no raw event changed, only dates", sameExceptDates188(events58(db), evBefore), null);
+            if (shift > 0) ref = full;
+            // nothing new: the analysis keeps to the last two days
+            StringBuilder again = new StringBuilder();
+            Analyzer.run(c, collect(again));
+            check("#188 a dating that changes no date leaves the analysed range alone (the last two days)", again.indexOf("dates written") < 0
+                    && again.indexOf(from188(db.datedRange()[1])) >= 0 && results139(db).equals(full), again.toString().replace('\n', ';'));
+        }
+        refs188 = ref;
+    }
+
+    /** The result of {@link #redated188} with boot 2 an hour later: every night and day from scratch. */
+    static List<String> refs188;
+
+    /** Same rows except the date (id, tag, ds, body). */
+    static boolean sameExceptDates188(List<String> a, List<String> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) if (!a.get(i).substring(0, a.get(i).lastIndexOf(' ')).equals(b.get(i).substring(0, b.get(i).lastIndexOf(' ')))) return false;
+        return true;
+    }
+
+    /**
+     * Issue #188, data safety: stopped between dating and analysis (the app ended, or Live dating on its own), stopped
+     * while finding sleeps, stopped while dating. No old night or day is lost, and the next analysis still analyses the
+     * moved dates again.
+     */
+    static void interrupted188() throws Exception {
+        // 1. dated in its own commit (as Live does, or the app ended right after the dating): the next analysis still knows
+        Context c = boots188("openring188-live");
+        Db db = Db.get(c);
+        List<String> before = results139(db);
+        double old2 = minUnix188(db, 2);
+        moveAnchor(db, 2, T2_188, 3600);
+        Db.TimeReport t = db.rebuildTime(System.currentTimeMillis() / 1000);
+        check("#188 dated on its own: the earliest changed date is reported", t.changedFrom == old2, t.changedFrom + " / " + old2);
+        check("#188 dated on its own: analyzed_until lowered in the dating's commit, the results not touched yet",
+                db.kvLong("analyzed_until", 0) == (long) old2 && results139(db).equals(before), db.kvLong("analyzed_until", 0));
+        StringBuilder log = new StringBuilder();
+        Analyzer.run(c, collect(log));
+        check("#188 dated on its own, the next analysis: from two days before the changed dates, the same as a full re analysis",
+                log.indexOf(from188(old2)) >= 0 && results139(db).equals(refs188), firstDiff(results139(db), refs188));
+
+        // 2. the analysis stopped while finding sleeps: the old results stay, the mark stays, the next run is right
+        c = boots188("openring188-stop");
+        db = Db.get(c);
+        before = results139(db);
+        moveAnchor(db, 2, T2_188, 3600);
+        boolean stopped = false;
+        try {
+            Analyzer.run(c, stopAt("sleep periods"));
+        } catch (Stop e) {
+            stopped = true;
+        }
+        check("#188 analysis stopped after the new dates: every old night and day still there, byte for byte", stopped && results139(db).equals(before),
+                firstDiff(results139(db), before));
+        check("#188 analysis stopped: the days of the new dates are still marked to analyse", db.kvLong("analyzed_until", 0) == (long) old2,
+                db.kvLong("analyzed_until", 0));
+        Analyzer.run(c, null);
+        check("#188 the next analysis after the stop: the same as a full re analysis", results139(db).equals(refs188), firstDiff(results139(db), refs188));
+
+        // 3. the dating stopped part way: no date, no mark and no result changed; the next run does it all
+        c = boots188("openring188-datestop");
+        db = Db.get(c);
+        before = results139(db);
+        List<long[]> rows = timeRows(db);
+        long until = db.kvLong("analyzed_until", 0);
+        moveAnchor(db, 2, T2_188, 3600);
+        final int[] written = {0};
+        dbStatic("afterTimeRow", new Runnable() {
+            @Override
+            public void run() {
+                if (++written[0] == 50) throw new IllegalStateException("stopped for the test");
+            }
+        });
+        Throwable got = null;
+        try {
+            Analyzer.run(c, null);
+        } catch (Throwable e) {
+            got = e;
+        } finally {
+            dbStatic("afterTimeRow", null);
+        }
+        check("#188 dating stopped after 50 rows: dates, analysed range and results as before", got instanceof IllegalStateException
+                && differences(timeRows(db), rows) == 0 && db.kvLong("analyzed_until", 0) == until && results139(db).equals(before), got);
+        Analyzer.run(c, null);
+        check("#188 the next analysis after the dating stopped: the same as a full re analysis", results139(db).equals(refs188),
+                firstDiff(results139(db), refs188));
+    }
+
+    /**
+     * Issue #188, data safety: a history of the version before (no saved dating state, no analysis inputs) keeps every
+     * event and night after the update, and analyses only the last two days when no date moved; a moved date after the
+     * update is analysed again. A backup of this version and of the version before restores and does the same.
+     */
+    static void upgradeRestore188() throws Exception {
+        Context c = boots188("openring188-old");
+        Db db = Db.get(c);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, out, true);
+        byte[] now = out.toByteArray();
+        db.put("time_state", null);
+        db.put("analysis_inputs", null);
+        List<String> before = results139(db), ev = events58(db);
+        StringBuilder log = new StringBuilder();
+        Analyzer.run(c, collect(log));
+        check("#188 upgrade: the first analysis dates everything (no saved state) and moves no date", log.indexOf("no saved state") >= 0
+                && log.indexOf("dates written") < 0, log.toString().replace('\n', ';'));
+        check("#188 upgrade: only the last two days analysed, every event and night the same, byte for byte", log.indexOf(from188(db.datedRange()[1])) >= 0
+                && results139(db).equals(before) && events58(db).equals(ev), firstDiff(results139(db), before));
+        double old2 = minUnix188(db, 2);
+        moveAnchor(db, 2, T2_188, 3600);
+        Analyzer.run(c, null);
+        check("#188 upgrade, then boot 2 dated an hour later: the same as a full re analysis", results139(db).equals(refs188), firstDiff(results139(db), refs188));
+
+        // backups: this version, and the version before (no dating state, no analysis inputs)
+        java.io.File f = java.nio.file.Files.createTempFile("older188", ".db").toFile();
+        java.nio.file.Files.write(f.toPath(), zipEntry(now, "openring.db"));
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("DELETE FROM kv WHERE k IN ('time_state', 'analysis_inputs')");
+        }
+        byte[] older = withDb(now, java.nio.file.Files.readAllBytes(f.toPath()));
+        f.delete();
+        for (int v = 0; v < 2; v++) {
+            String which = v == 0 ? "this version" : "the version before";
+            Context b = freshDb("openring188-restored");
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(v == 0 ? now : older));
+            Db rdb = Db.get(b);
+            check("#188 a backup of " + which + " restores with every night and day", r.ok && r.history && results139(rdb).equals(before), r.message);
+            log = new StringBuilder();
+            Analyzer.run(b, collect(log));
+            check("#188 restored backup of " + which + ": no date moved, the last two days analysed, nothing changed", log.indexOf("dates written") < 0
+                    && log.indexOf(from188(rdb.datedRange()[1])) >= 0 && results139(rdb).equals(before), log.toString().replace('\n', ';'));
+            moveAnchor(rdb, 2, T2_188, 3600);
+            Analyzer.run(b, null);
+            check("#188 restored backup of " + which + ", boot 2 dated an hour later: the same as a full re analysis", results139(rdb).equals(refs188)
+                    && minUnix188(rdb, 2) == old2 + 3600, firstDiff(results139(rdb), refs188));
+        }
+    }
+
+    /** Issue #188: a year in two boots, the second (two months) dated an hour later: only those months analysed again, as a full run. */
+    static void largeHistory188() throws Exception {
+        Context c = freshDb("openring188-year");
+        Db db = Db.get(c);
+        long t0 = LocalDate.parse("2025-09-01").atStartOfDay(Z58).toEpochSecond();
+        long t2 = t0 + 301 * 86400L;
+        add58(db, 1, t0, 300, 0);
+        add58(db, 2, t2, 63, 0);
+        Analyzer.run(c, null);
+        double old2 = minUnix188(db, 2);
+        moveAnchor(db, 2, t2, 3600);
+        StringBuilder log = new StringBuilder();
+        long t = System.nanoTime();
+        Analyzer.run(c, collect(log));
+        long partMs = (System.nanoTime() - t) / 1000000;
+        List<String> after = results139(db);
+        t = System.nanoTime();
+        List<String> full = full188(c);
+        long fullMs = (System.nanoTime() - t) / 1000000;
+        System.out.println("  #188 a year (" + db.eventCount() + " events), two months dated again: analysed again in " + partMs + " ms, Re analyse all "
+                + fullMs + " ms");
+        check("#188 a year, two months dated again: analysed from two days before them, not the whole year", log.indexOf(from188(old2)) >= 0
+                && nightRows(full) >= 330, nightRows(full) + " nights; " + log.toString().replace('\n', ';'));
+        check("#188 a year: every night and day is what Re analyse all gives, byte for byte", after.equals(full), firstDiff(after, full));
+        db.close();
     }
     // ------------------------------------------------------------------------- issues #220 and #194
 
