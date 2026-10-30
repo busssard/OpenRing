@@ -482,6 +482,18 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * Every undated event arrived after the last dating (Find my ring stores its quick download undated, issue #192): the
+     * next analysis dates them, so nothing waits for a missing time record. False when an event the last dating saw is
+     * still undated, or no analysis ran yet.
+     */
+    public boolean undatedAllNew() {
+        long seen = kvLong("event_count", -1);
+        if (seen < 0) return false;
+        long undated = undatedCount();
+        return undated > 0 && undated == eventCount() - seen;
+    }
+
     public long undatedCount() {
         Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events WHERE unix IS NULL", null);
         try {

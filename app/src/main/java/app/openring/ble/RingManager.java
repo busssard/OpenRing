@@ -1168,6 +1168,9 @@ public final class RingManager {
     private final java.util.concurrent.atomic.AtomicInteger fingerToken = new java.util.concurrent.atomic.AtomicInteger();
     /** The finder's client while its download runs, so a stop can end the download (the cursor is kept per batch). */
     private volatile RingClient fingerDrain;
+    /** The finder's readings with their ring time, kept across asks for one boot epoch of one ring (worker thread only). */
+    private app.openring.core.analysis.FingerNow.Reader fingerReader;
+    private String fingerReaderKey;
 
     /** Another task holds the ring right now (a sync download, Live, a game, a Settings action, the finder). */
     public boolean ringHeld() {
@@ -1224,15 +1227,26 @@ public final class RingManager {
                     Prefs prefs = Prefs.of(ctx);
                     s = open(false, null);
                     s.client.authenticate(prefs.loadKey());
+                    int charging = -1;
                     try {
                         int[] b = s.client.battery();
                         long now = System.currentTimeMillis() / 1000;
                         prefs.setBattery(b[0], now);
                         held.addBattery(now, b[0]);
+                        // rising since the read before (at least 10 minutes older, Prefs): charging, which decides a warm
+                        // ring without a heart rate near it
+                        charging = app.openring.core.analysis.LastWorn.charging(prefs.batteryBefore(), b[0]);
                     } catch (IOException e) {
                         log("finder: battery read failed: " + e.getMessage());
                     }
-                    final app.openring.core.analysis.FingerNow.Reader reader = new app.openring.core.analysis.FingerNow.Reader();
+                    // the readings of earlier asks stay with their ring time: their events are stored undated until the next
+                    // analysis, so the stored readings do not have them yet (review of #245). A new boot epoch or another
+                    // ring starts afresh, the ring's counter no longer matches.
+                    String key = held.kvLong("epoch", 1) + ":" + prefs.serial();
+                    if (fingerReader == null || !key.equals(fingerReaderKey)) fingerReader = new app.openring.core.analysis.FingerNow.Reader();
+                    fingerReaderKey = key;
+                    final app.openring.core.analysis.FingerNow.Reader reader = fingerReader;
+                    final int chargingNow = charging;
                     EventObserver watch = new EventObserver() {
                         @Override
                         public void onEvents(List<RingEvent> events) {
@@ -1242,6 +1256,7 @@ public final class RingManager {
                     fingerDrain = s.client;
                     if (token != fingerToken.get()) throw new IOException("cancelled");
                     int got;
+                    boolean drained = false;
                     try {
                         got = drainNew(s.client, true, watch, new Left() {
                             @Override
@@ -1255,14 +1270,20 @@ public final class RingManager {
                                 });
                             }
                         });
+                        reader.mark(System.currentTimeMillis() / 1000.0);
+                        drained = true;
                     } finally {
                         fingerDrain = null;
+                        // a download cut off has no "now" for its newest event: keep nothing for the next ask
+                        if (!drained) fingerReader = null;
                     }
                     log("finder: " + got + " new events read");
-                    fingerAnswer(token, reader);
+                    fingerAnswer(token, reader, chargingNow);
                     if (blink && token == fingerToken.get()) {
                         int[] fs = s.client.featureStatus(Protocol.FEATURE_DAYTIME_HR);
                         prevMode = fs == null ? Protocol.MODE_AUTOMATIC : fs[0];
+                        // like Live: a ring with daytime heart rate off may refuse live mode, so automatic first
+                        if (prevMode == Protocol.MODE_OFF) s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
                         boolean modeOk = s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_CONNECTED_LIVE);
                         measuring = true;
                         List<app.openring.core.Packet> r = s.client.request(Protocol.realtime(Protocol.REALTIME_ON_DEMAND, 1), null, 1500, false);
@@ -1285,7 +1306,8 @@ public final class RingManager {
                                 lastDrain = System.currentTimeMillis();
                                 try {
                                     drainNew(s.client, true, watch);
-                                    fingerAnswer(token, reader);
+                                    reader.mark(System.currentTimeMillis() / 1000.0);
+                                    fingerAnswer(token, reader, chargingNow);
                                 } catch (Exception e) {
                                     log("finder: refresh failed: " + e.getMessage());
                                 }
@@ -1296,13 +1318,20 @@ public final class RingManager {
                     raw = e.getMessage() == null ? e.toString() : e.getMessage();
                     log("finder: stopped by " + raw);
                 } finally {
-                    try {
-                        if (measuring && s != null && s.link.isConnected()) {
+                    // each step on its own, so a failed stop of the measurement still gives the person's mode back (review
+                    // of #245). After a lost link the ring falls back to automatic by itself after about 48 s, not to off.
+                    if (measuring && s != null && s.link.isConnected()) {
+                        try {
                             s.client.request(Protocol.realtimeOff(), null, 500);
-                            // back to the mode the ring had (Live puts automatic; the finder keeps the person's choice)
-                            s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, prevMode);
+                        } catch (Exception e) {
+                            log("finder: measurement not switched off: " + e.getMessage());
                         }
-                    } catch (Exception ignored) {
+                        try {
+                            // back to the mode the ring had (Live puts automatic; the finder keeps the person's choice)
+                            if (!s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, prevMode)) log("finder: heart rate mode " + prevMode + " not put back");
+                        } catch (Exception e) {
+                            log("finder: heart rate mode " + prevMode + " not put back: " + e.getMessage());
+                        }
                     }
                     close(s);
                     busy = false;
@@ -1325,10 +1354,11 @@ public final class RingManager {
         if (c != null) c.cancel();
     }
 
-    private void fingerAnswer(int token, app.openring.core.analysis.FingerNow.Reader reader) {
+    private void fingerAnswer(int token, app.openring.core.analysis.FingerNow.Reader reader, int charging) {
         app.openring.data.RightNow stored = app.openring.data.RightNow.load(ctx);
         final app.openring.core.analysis.FingerNow a = reader.result(System.currentTimeMillis() / 1000.0,
                 stored.skinTemp, stored.skinTempAt, stored.hr, stored.hrAt);
+        a.charging = charging;
         log("finder: " + a.brief());
         fingerPost(token, new Runnable() {
             @Override
