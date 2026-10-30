@@ -793,6 +793,7 @@ public class PipelineTest {
         historyCache();
         safeReanalysis();
         ringGate230();
+        loadDuringRun243();
         recentWindow();
         aohrHistory();
         rightNowAohr();
@@ -5197,14 +5198,16 @@ public class PipelineTest {
         check("#230 switched off in week 3: the next analysis gives the same rows as Re analyse all never stopped", results139(db3).equals(refAll),
                 firstDiff(results139(db3), refAll));
 
-        // 4. an older database with history, analysed by the version before: the same events, nights and days after the update's
-        // analysis; and one that the old code left half way through Re analyse all (only 3 weeks of nights, no days)
+        // 4. a database with stored history: the same events, nights and days after the next analysis; and one in the state the
+        // old code left half way through Re analyse all (only 3 weeks of nights, no days, analyzed_until 0)
         Context c4 = history230("openring230-old", T230, 56);
         Analyzer.run(c4, null);
         Db db4 = Db.get(c4);
         List<String> before4 = results139(db4);
         Analyzer.run(c4, null);
-        check("#230 older database: after the update's analysis every event, night and day is the same", results139(db4).equals(before4)
+        // the stored format is unchanged, so this database is what the version before leaves too (except full_pending, which
+        // it never wrote); built here, by this version's first analysis
+        check("#230 a database with stored history (the format the version before leaves): the next analysis keeps every event, night and day", results139(db4).equals(before4)
                 && events58(db4).equals(refEvents), firstDiff(results139(db4), before4));
         db4.getWritableDatabase().execSQL("DELETE FROM days");
         db4.getWritableDatabase().execSQL("DELETE FROM nights WHERE stop >= ?", new Object[] {(double) (T230 + 21 * 86400L)});
@@ -5436,5 +5439,115 @@ public class PipelineTest {
                 udb.count("SELECT COUNT(*) FROM nights") == 1 && udb.count("SELECT COUNT(*) FROM days") == 1 && udb.kvLong("full_pending", 0) == 1
                         && udb.kv("analysis_error", null) == null, udb.count("SELECT COUNT(*) FROM nights") + " nights");
         freshDb("openring230-gate-done");
+    }
+
+    /** Runs Re analyse all of {@code c} on its own thread, paused right after week 2 is stored until {@code go} opens. */
+    static Thread paused243(final Context c, final java.util.concurrent.CountDownLatch inside, final java.util.concurrent.CountDownLatch go,
+            final Throwable[] err) {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Analyzer.runAll(c, new Analyzer.Log() {
+                        int weeks;
+
+                        @Override
+                        public void log(String m) {
+                            if (!m.endsWith(" sleep periods") || ++weeks != 2) return;
+                            inside.countDown();
+                            try {
+                                go.await(120, java.util.concurrent.TimeUnit.SECONDS);
+                            } catch (InterruptedException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    });
+                } catch (Throwable x) {
+                    err[0] = x;
+                }
+            }
+        });
+        t.start();
+        return t;
+    }
+
+    /**
+     * Review of PR #243: while a long analysis has its transaction open, the main screen's load does not wait for it
+     * (it shows the stored nights at once), entering demo mode waits for it instead of closing the database under it,
+     * and leaving demo mode is refused while the demo's own analysis runs.
+     */
+    static void loadDuringRun243() throws Exception {
+        final Context c = history230("openring243-load", T230, 56);
+        Analyzer.run(c, null);
+        final Db db = Db.get(c);
+        List<String> before = results139(db);
+        long nights0 = nightRows(before);
+        Reader230 r = new Reader230(c);
+
+        // 1. the main screen's load while Re analyse all runs on another thread
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1), go = new java.util.concurrent.CountDownLatch(1);
+        Throwable[] err = new Throwable[1];
+        Thread run = paused243(c, inside, go, err);
+        check("#243 set up: Re analyse all is inside its transaction", inside.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        long t = System.nanoTime();
+        boolean did = Analyzer.beforeLoad(c);
+        long ms = (System.nanoTime() - t) / 1000000;
+        check("#243 the main screen's load during a long run: returns at once without the zone note or an analysis, the stored nights show",
+                !did && ms < 2000 && Analyzer.running() && r.count("nights") == nights0 && r.count("days") == before.size() - nights0, ms + " ms");
+        go.countDown();
+        run.join(120000);
+        check("#243 the run then ends normally", err[0] == null && !run.isAlive() && results139(db).equals(before), err[0]);
+        check("#243 the next load notes the zone again (no analysis runs)", !Analyzer.running() && Analyzer.beforeLoad(c), "");
+
+        // 2. entering demo mode during the run waits for it; the real run is not broken
+        inside = new java.util.concurrent.CountDownLatch(1);
+        go = new java.util.concurrent.CountDownLatch(1);
+        err[0] = null;
+        run = paused243(c, inside, go, err);
+        check("#243 set up: Re analyse all is inside its transaction again", inside.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        final StringBuilder steps = new StringBuilder();
+        final Throwable[] demoErr = new Throwable[1];
+        final java.util.concurrent.CountDownLatch demoDone = new java.util.concurrent.CountDownLatch(1);
+        Thread demo = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    app.openring.data.Demo.enter(c, new app.openring.data.Demo.Progress() {
+                        @Override
+                        public void step(String what) {
+                            steps.append(what).append('\n');
+                        }
+                    }, LocalDate.parse("2026-10-22"), LocalDate.parse("2026-10-22").atTime(9, 0).atZone(ZoneId.systemDefault()).toEpochSecond());
+                } catch (Throwable x) {
+                    demoErr[0] = x;
+                } finally {
+                    demoDone.countDown();
+                }
+            }
+        });
+        demo.start();
+        String seen = waitForBlocked(demo, run, demoDone, 10000);
+        check("#243 entering demo mode during a long run waits for it, and says so", seen.startsWith("waits") && !app.openring.data.Prefs.of(c).demo()
+                && steps.toString().startsWith(app.openring.data.Demo.WAITING), seen + ", " + steps);
+        go.countDown();
+        run.join(120000);
+        demo.join(120000);
+        check("#243 the real run ended normally, then the demo was built", err[0] == null && demoErr[0] == null && app.openring.data.Prefs.of(c).demo()
+                && Db.get(c).count("SELECT COUNT(*) FROM nights") > 20, err[0] != null ? err[0] : demoErr[0]);
+
+        // 3. leaving demo mode while the demo's analysis runs is refused, afterwards it works
+        inside = new java.util.concurrent.CountDownLatch(1);
+        go = new java.util.concurrent.CountDownLatch(1);
+        err[0] = null;
+        run = paused243(c, inside, go, err);
+        check("#243 set up: the demo's Re analyse all is inside its transaction", inside.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        boolean left = app.openring.data.Demo.leave(c);
+        check("#243 leaving demo mode during its analysis is refused, nothing switched", !left && app.openring.data.Prefs.of(c).demo(), "");
+        go.countDown();
+        run.join(120000);
+        check("#243 the demo's run ended normally, then leaving works and the real history is back", err[0] == null && app.openring.data.Demo.leave(c)
+                && !app.openring.data.Prefs.of(c).demo() && results139(Db.get(c)).equals(before), err[0]);
+        r.close();
+        freshDb("openring243-done");
     }
 }

@@ -224,7 +224,12 @@ the ring, with the status line "Re analysing your history, this takes a few minu
 still reaches it), and Live and factory reset do not start and say so (`SyncError.REANALYSING`). Inside the transaction
 the analysis calls nothing synchronized on `Db` (`rebuildTime` and the zone note run before it), so a thread that waits
 for the transaction can never hold what the analysis needs. Shorter runs (the analysis after a sync) are one
-transaction too and mark nothing: a write waits those seconds.
+transaction too and mark nothing: a write waits those seconds. `Analyzer.running()` counts analyses running or waiting
+for the lock (review of #243): while one does, the main screen's load skips the zone note, the screen log and their
+analysis (`Analyzer.beforeLoad`) and shows the stored nights at once; entering demo mode waits for the analysis (its
+progress says "Waiting for the re analysis of your history to finish"), and leaving it is refused with "Re analysing
+your history, this takes a few minutes. Try again then." (`Demo.leave`, `Analyzer.whenIdle`), since the switch closes
+the database the analysis writes in. Re analyse all started while a ring task runs says it waits for that task first.
 
 Code that replaces or wipes the database first waits for a running analysis (`synchronized
 (Analyzer.class)`): restore, pairing a different ring, and "Delete all local data" (`Analyzer.deleteAll`,

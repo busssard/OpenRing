@@ -73,7 +73,54 @@ public final class Analyzer {
      * Incremental: re analyse from a little before the last analysed point up to now. Any failure, also running out
      * of memory, rolls the results back to the old ones and stores its text in {@code analysis_error} (issue #230).
      */
-    public static synchronized void run(Context c, Log log) {
+    public static void run(Context c, Log log) {
+        RUNS.incrementAndGet();
+        try {
+            runLocked(c, log);
+        } finally {
+            RUNS.decrementAndGet();
+        }
+    }
+
+    /**
+     * Analyses running or waiting for the analysis lock, counted before they take it (review of #243): the main screen
+     * and the demo switch ask this instead of waiting minutes for a long run.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger RUNS = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** True while an analysis runs or waits to run. */
+    public static boolean running() {
+        return RUNS.get() > 0;
+    }
+
+    /**
+     * What the main screen does before it loads a day (review of #243): note the phone's zone and, when a new zone
+     * opened, analyse the nights since. While an analysis runs it does nothing and returns false at once, so the
+     * screen shows the stored (old) nights instead of waiting for the run; the running analysis notes the zone itself.
+     */
+    public static boolean beforeLoad(Context c) {
+        if (running()) return false;
+        if (Prefs.of(c).demo()) return true;
+        Db db = Db.get(c);
+        if (noteZone(db, System.currentTimeMillis() / 1000.0, ZoneId.systemDefault(), Double.NaN) && db.eventCount() > 0) run(c, null);
+        return true;
+    }
+
+    /**
+     * Runs {@code r} (the switch into or out of demo mode, which closes the database in use) only when no analysis
+     * runs or waits, holding the analysis lock so none starts meanwhile; false, and {@code r} does not run, otherwise
+     * (review of #243: closing the database under a long run's transaction made the run fail).
+     */
+    static boolean whenIdle(Runnable r) {
+        if (running()) return false;
+        synchronized (Analyzer.class) {
+            if (running()) return false;
+            r.run();
+            return true;
+        }
+    }
+
+    private static synchronized void runLocked(Context c, Log log) {
         Analyzer a = new Analyzer(c, log);
         try {
             a.runInner();
@@ -190,7 +237,16 @@ public final class Analyzer {
      * days are replaced in the analysis's one transaction (issue #230), and a run that does not finish is done again
      * by the next analysis.
      */
-    public static synchronized void runAll(Context c, Log log) {
+    public static void runAll(Context c, Log log) {
+        RUNS.incrementAndGet();
+        try {
+            runAllLocked(c, log);
+        } finally {
+            RUNS.decrementAndGet();
+        }
+    }
+
+    private static synchronized void runAllLocked(Context c, Log log) {
         Analyzer a = new Analyzer(c, log);
         try {
             a.db.put(FULL_PENDING, 1);
@@ -198,7 +254,7 @@ public final class Analyzer {
             a.failed(e);
             throw e;
         }
-        run(c, log);
+        runLocked(c, log);
     }
 
     /**

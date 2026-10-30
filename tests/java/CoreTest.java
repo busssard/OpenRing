@@ -1453,6 +1453,8 @@ public class CoreTest {
         eq("re analysing: Live", SyncError.plain(SyncError.REANALYSING, SyncError.Task.LIVE), "Re analysing your history, this takes a few minutes. Try Live again then.");
         eq("re analysing: a Settings action", SyncError.plain(SyncError.REANALYSING, SyncError.Task.ACTION), "Re analysing your history, this takes a few minutes. Try again then.");
         eq("re analysing: a sync", SyncError.plain(SyncError.REANALYSING), "Re analysing your history, this takes a few minutes. Sync again then.");
+        eq("re analysing: Re analyse all waits for the ring task", Texts.REANALYSE_WAITS,
+                "Waiting for the ring to finish its current task, then re analysing all nights. This can take a few minutes.");
         eq("re analysing: Re analyse all failed", Texts.ANALYSIS_FAILED, "The analysis failed, your nights and days are as before. " + SyncError.DETAILS);
         ringError(cases);
     }
