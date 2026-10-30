@@ -104,10 +104,42 @@ launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
 launch --ei tab 1; sleep 3
 swipe_up; swipe_up;                       shot sleep-details 1
+# an older date with nights before and after it in the strip (issue #180 made it faster, #229)
+launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
 swipe_up; swipe_up;                       shot readiness-contributors 1   # temperature line as the card below (issue #163)
+# touch the "Temperature vs usual" chart (issue #226): the readout shows the newest day with its sign and
+# °C, as the big number above it. The chart has no text of its own, so it is found from the card's line
+# "Deviation from your usual ...": the chart starts 8 dp below that line and is 120 dp high (Pages.java),
+# so the tap goes 68 dp below it (the chart's middle) and 10 px inside its right end, where the newest
+# dot is (the readout takes the dot nearest the touch). Slow swipes (no fling) until the chart is on screen
+# (the first run found nothing after 3 short swipes: the Contributors list above it is long).
+DENSITY=$(adb shell wm density 2>/dev/null | grep -o '[0-9]\+' | tail -1)
+TEMP_H=$(adb shell wm size 2>/dev/null | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f2 | tr -d '\r')
+temp_xy() {
+  adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1; adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  b=$(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="Deviation from your usual[^"]*"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  local y=$(( $4 + 68 * ${DENSITY:-420} / 160 ))
+  # above the tab bar and the system buttons (about 450 px on this emulator)
+  [ "$y" -lt $(( ${TEMP_H:-2400} - 450 )) ] || return 1
+  echo "$(( $3 - 10 )) $y"
+}
+xy=""
+# the card sits below the long Contributors list, so up to 8 slow swipes of 600 px
+for i in 1 2 3 4 5 6 7 8; do
+  xy=$(temp_xy) && break
+  adb shell input swipe 30 1500 30 900 1500; sleep 1
+done
+if [ -n "$xy" ]; then
+  log "temperature chart touch at $xy"
+  adb shell input tap $xy;                shot readiness-temp-touch 1
+else
+  echo "::warning::issue #226 step skipped: the Temperature vs usual chart was not found on screen (lines naming it in the last screen dump: $(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -c 'Deviation from your usual'))"
+fi
 launch --ei tab 3;                          shot activity
 # third demo day: the note that the weekly parts are based on 3 days so far (issue #44)
 launch --ei tab 3 --es day "$(date -d '32 days ago' +%F)"
@@ -120,27 +152,10 @@ launch --ei tab 5;                          shot screen
 adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fling
 # read the clock by touch (issue #109): at the trailing edge of the first blue line, so the picture shows a
 # use read from a line. The demo's uses follow the time of the run, so the line is found on the screen:
-# blue pixels on a circle of 300 px around the clock's middle (540, 950 after the swipe above), else 13:00.
+# line coloured pixels on a circle of 300 px around the clock's middle (540, 950 after the swipe above), not
+# the night band (dial_touch.py, issue #229), else 13:00.
 adb exec-out screencap > "$OUT/.dial.raw"
-xy=$(python3 - "$OUT/.dial.raw" <<'PY' 2>/dev/null
-import math, struct, sys
-d = open(sys.argv[1], "rb").read()
-w, h = struct.unpack("<II", d[:8])
-head = len(d) - w * h * 4
-lit = []
-for i in range(3600):
-    a = math.radians(i / 10.0)
-    x, y = int(540 + 300 * math.sin(a)), int(950 - 300 * math.cos(a))
-    o = head + (y * w + x) * 4
-    r, g, b = d[o], d[o + 1], d[o + 2]
-    lit.append(b > 150 and b > r + 40 and g > 100)
-for i in range(3600):
-    if lit[i] and not lit[(i + 1) % 3600]:
-        a = math.radians((i - 2) / 10.0)
-        print(int(540 + 300 * math.sin(a)), int(950 - 300 * math.cos(a)))
-        break
-PY
-)
+xy=$(python3 -I .github/scripts/dial_touch.py "$OUT/.dial.raw" 2>/dev/null)
 rm -f "$OUT/.dial.raw"
 log "clock touch at ${xy:-462 1282}"
 adb shell input tap ${xy:-462 1282};       shot screen-touch 1

@@ -3,6 +3,7 @@ package app.openring.data;
 import android.content.Context;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.time.Instant;
@@ -744,6 +745,8 @@ public final class Analyzer {
         }
 
         // history: previous 60 days of day summaries and 90 days of main nights
+        // Every field read from past.nights and past.days must be in History.NIGHT_FIELDS or DAY_FIELDS
+        // (the store keeps only those; the pipeline test fails on any other, issue #228)
         List<JSONObject> prevDays = past.days(day.minusDays(60), day.minusDays(1));
         List<JSONObject> prevNights = past.nights(day.minusDays(90), day.minusDays(1), true);
 
@@ -967,6 +970,8 @@ public final class Analyzer {
         static final String[] DAY_FIELDS = {"date", "target_kcal", "active_kcal", "covered_min", "medium_min", "high_min", "training_kcal"};
         /** How far back a day looks: every night of 104 days (sleep balance), day summaries of 60 days. */
         static final int NIGHTS_BACK = 104, DAYS_BACK = 60;
+        /** Tests only (issue #228): the copies throw when a field outside their list is read. Off in the app. */
+        static volatile boolean strict;
         private static final JSONObject NONE = new JSONObject();
         private static final java.util.Comparator<Object[]> BY_START = new java.util.Comparator<Object[]>() {
             @Override
@@ -1071,12 +1076,156 @@ public final class Analyzer {
 
         /** The given fields of {@code o}, the same value objects (absent ones stay absent). */
         static JSONObject copy(JSONObject o, String[] fields) {
-            JSONObject c = new JSONObject();
+            JSONObject c = strict ? new Strict(fields) : new JSONObject();
             for (String f : fields) {
                 Object v = o.opt(f);
                 if (v != null) Json.put(c, f, v);
             }
             return c;
+        }
+
+        /**
+         * Tests only (issue #228): a copy that throws when code reads a name outside its list, so a new read the
+         * store does not keep fails the pipeline test instead of giving NaN. Overrides every read by name that
+         * Android's JSONObject and the org.json of the tests share.
+         */
+        static final class Strict extends JSONObject {
+            private final String[] fields;
+
+            Strict(String[] fields) {
+                this.fields = fields;
+            }
+
+            private void check(String name) {
+                for (String f : fields) if (f.equals(name)) return;
+                throw new IllegalStateException("history field " + name + " is not in History." + (fields == NIGHT_FIELDS ? "NIGHT_FIELDS" : "DAY_FIELDS"));
+            }
+
+            @Override
+            public Object opt(String name) {
+                check(name);
+                return super.opt(name);
+            }
+
+            @Override
+            public boolean has(String name) {
+                check(name);
+                return super.has(name);
+            }
+
+            @Override
+            public boolean isNull(String name) {
+                check(name);
+                return super.isNull(name);
+            }
+
+            @Override
+            public double optDouble(String name) {
+                check(name);
+                return super.optDouble(name);
+            }
+
+            @Override
+            public double optDouble(String name, double fallback) {
+                check(name);
+                return super.optDouble(name, fallback);
+            }
+
+            @Override
+            public String optString(String name) {
+                check(name);
+                return super.optString(name);
+            }
+
+            @Override
+            public String optString(String name, String fallback) {
+                check(name);
+                return super.optString(name, fallback);
+            }
+
+            @Override
+            public int optInt(String name) {
+                check(name);
+                return super.optInt(name);
+            }
+
+            @Override
+            public int optInt(String name, int fallback) {
+                check(name);
+                return super.optInt(name, fallback);
+            }
+
+            @Override
+            public long optLong(String name) {
+                check(name);
+                return super.optLong(name);
+            }
+
+            @Override
+            public long optLong(String name, long fallback) {
+                check(name);
+                return super.optLong(name, fallback);
+            }
+
+            @Override
+            public boolean optBoolean(String name) {
+                check(name);
+                return super.optBoolean(name);
+            }
+
+            @Override
+            public boolean optBoolean(String name, boolean fallback) {
+                check(name);
+                return super.optBoolean(name, fallback);
+            }
+
+            @Override
+            public JSONArray optJSONArray(String name) {
+                check(name);
+                return super.optJSONArray(name);
+            }
+
+            @Override
+            public JSONObject optJSONObject(String name) {
+                check(name);
+                return super.optJSONObject(name);
+            }
+
+            @Override
+            public Object get(String name) throws JSONException {
+                check(name);
+                return super.get(name);
+            }
+
+            @Override
+            public double getDouble(String name) throws JSONException {
+                check(name);
+                return super.getDouble(name);
+            }
+
+            @Override
+            public String getString(String name) throws JSONException {
+                check(name);
+                return super.getString(name);
+            }
+
+            @Override
+            public int getInt(String name) throws JSONException {
+                check(name);
+                return super.getInt(name);
+            }
+
+            @Override
+            public long getLong(String name) throws JSONException {
+                check(name);
+                return super.getLong(name);
+            }
+
+            @Override
+            public boolean getBoolean(String name) throws JSONException {
+                check(name);
+                return super.getBoolean(name);
+            }
         }
     }
 

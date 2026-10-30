@@ -431,6 +431,14 @@ public final class Charts {
             return this;
         }
 
+        private boolean signed;
+
+        /** Values are changes: labels and readout with their sign, "+0.3" and "0.0", never "-0.0" (issue #226). */
+        public LineChart signed() {
+            signed = true;
+            return this;
+        }
+
         public LineChart markMin() {
             markMin = true;
             return this;
@@ -629,8 +637,8 @@ public final class Charts {
             return clock(t);
         }
 
-        private static String format(double v) {
-            return Math.abs(v) < 10 && v != Math.rint(v) ? String.format(Locale.getDefault(), "%.1f", v) : String.valueOf(Math.round(v));
+        private String format(double v) {
+            return app.openring.core.Texts.chartValue(v, signed, Locale.getDefault());
         }
     }
 
