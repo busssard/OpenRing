@@ -32,8 +32,8 @@ public final class RingGate {
     public static final String WAIT_RING = "Waiting for the sync with your ring to finish";
     /** A restore that gave up waiting: nothing was changed. */
     public static final String RESTORE_REFUSED = "The ring was still syncing, nothing was restored. Try again once the sync has finished.";
-    /** Entering demo mode gave up waiting: the real data stays as it is. */
-    public static final String DEMO_REFUSED = "The ring was still syncing, demo mode was not turned on. Try again once the sync has finished.";
+    /** Entering demo mode gave up waiting: the real data stays as it is. A toast, so it fits two lines (issue #89). */
+    public static final String DEMO_REFUSED = "A sync was still running, demo mode stays off. Try again.";
 
     /** Something else a swap waits for first, without the ring held (an analysis). */
     public interface Busy {

@@ -159,6 +159,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         /** Message shown now, null while nothing needs to be shown. */
         String step;
         boolean running;
+        /** Why the demo was not turned on (issue #219), shown once instead of the general failure. */
+        String refused;
     }
 
     private DemoRun demoRun = new DemoRun();
@@ -281,6 +283,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 // the emulator test looks for "demo: finish check, built now" after ending the app (issue #69)
                 android.util.Log.i("OpenRing", "demo: " + (fresh ? "start" : "finish check") + (built ? ", built now" : ", nothing to do"));
                 return built ? BUILT : KEPT;
+            } catch (app.openring.data.Demo.NotNow e) {
+                // a sync still stored into the real history (issue #219): nothing changed, demo mode stays off
+                android.util.Log.i("OpenRing", "demo: not turned on, the ring was still syncing");
+                run.refused = app.openring.core.RingGate.DEMO_REFUSED;
+                return FAILED;
             } catch (RuntimeException e) {
                 android.util.Log.w("OpenRing", "demo: preparing the demo data failed", e);
                 // back to the person's own data (or Setup), so the demo can be started again
@@ -328,7 +335,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
             demoDialog = null;
         }
         if (failed) {
-            android.widget.Toast.makeText(this, "Demo data could not be prepared. Please try again.", android.widget.Toast.LENGTH_LONG).show();
+            String why = demoRun.refused != null ? demoRun.refused : "Demo data could not be prepared. Please try again.";
+            demoRun.refused = null;
+            android.widget.Toast.makeText(this, why, android.widget.Toast.LENGTH_LONG).show();
             Prefs prefs = Prefs.of(this);
             if (!prefs.setupDone() || !prefs.hasKey()) {
                 startActivity(new Intent(this, SetupActivity.class));

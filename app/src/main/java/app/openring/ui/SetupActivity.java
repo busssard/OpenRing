@@ -43,6 +43,8 @@ public final class SetupActivity extends Activity {
         app.openring.data.Backup.Plan prepared;
         app.openring.data.Backup.Result result;
         boolean busy;
+        /** What a running restore waits for (a sync, an analysis; issue #219), null while it just restores. */
+        String waiting;
         /** The screen was closed for good: a prepare that finishes later is dropped. */
         boolean abandoned;
     }
@@ -203,12 +205,19 @@ public final class SetupActivity extends Activity {
         final Context appCtx = getApplicationContext();
         final Restore st = restore;
         st.busy = true;
+        st.waiting = null;
         restoreStatus("Restoring", Ui.TEXT_2);
-        new android.os.AsyncTask<Void, Void, app.openring.data.Backup.Result>() {
+        new android.os.AsyncTask<Void, String, app.openring.data.Backup.Result>() {
             @Override
             protected app.openring.data.Backup.Result doInBackground(Void... v) {
                 try {
-                    return app.openring.data.Backup.finish(appCtx, p, replaceHistory);
+                    // the history is swapped only once no sync stores into it (issue #219); until then the line says why
+                    return app.openring.data.Backup.finish(appCtx, p, replaceHistory, new app.openring.data.Backup.Progress() {
+                        @Override
+                        public void step(String what) {
+                            publishProgress(what);
+                        }
+                    });
                 } catch (Exception e) {
                     android.util.Log.w("OpenRing", "restore: applying the backup failed", e);
                     app.openring.data.Backup.cancel(appCtx, p);
@@ -219,8 +228,15 @@ public final class SetupActivity extends Activity {
             }
 
             @Override
+            protected void onProgressUpdate(String... line) {
+                st.waiting = line[0];
+                if (!st.abandoned && st.owner != null) st.owner.restoreStatus(line[0], Ui.TEXT_2);
+            }
+
+            @Override
             protected void onPostExecute(app.openring.data.Backup.Result r) {
                 st.busy = false;
+                st.waiting = null;
                 if (st.abandoned) return;
                 if (st.owner == null) st.result = r;
                 else st.owner.restored(r);
@@ -249,7 +265,7 @@ public final class SetupActivity extends Activity {
         } else if (restore.plan != null) {
             askReplace(restore.plan);
         } else if (restore.busy) {
-            restoreStatus("Restoring", Ui.TEXT_2);
+            restoreStatus(restore.waiting != null ? restore.waiting : "Restoring", Ui.TEXT_2);
         }
     }
 

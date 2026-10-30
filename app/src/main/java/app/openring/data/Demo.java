@@ -84,7 +84,39 @@ public final class Demo {
         }
     }
 
-    private static boolean build(Context c, Progress p, LocalDate today, long now) {
+    /**
+     * Demo mode could not be turned on: a sync or another ring task still stored into the real history after
+     * {@link app.openring.core.RingGate#SWAP_WAIT_MS} (issue #219). Nothing changed; the message says so.
+     */
+    public static final class NotNow extends RuntimeException {
+        NotNow(String message) {
+            super(message);
+        }
+    }
+
+    private static boolean build(final Context c, final Progress p, final LocalDate today, final long now) {
+        if (Prefs.of(c).demo()) return buildWhenIdle(c, p, today, now);
+        // the switch closes the real database: never while a ring task stores into it (a sync download keeps its own
+        // Db object, and its analysis would run on the demo file afterwards; issue #219). The gate waits for them,
+        // holding nothing, and holds the ring while the demo is switched on and built; once it is on, no ring task
+        // connects or stores (issue #185)
+        final boolean[] built = {false};
+        boolean ran = app.openring.core.RingGate.RING.whenFree(new Runnable() {
+            @Override
+            public void run() {
+                built[0] = buildWhenIdle(c, p, today, now);
+            }
+        }, app.openring.core.RingGate.SWAP_WAIT_MS, Analyzer.RUNNING, p == null ? null : new app.openring.core.RingGate.Wait() {
+            @Override
+            public void waiting(int why) {
+                p.step(why == app.openring.core.RingGate.FOR_RING ? app.openring.core.RingGate.WAIT_RING : WAITING);
+            }
+        });
+        if (!ran) throw new NotNow(app.openring.core.RingGate.DEMO_REFUSED);
+        return built[0];
+    }
+
+    private static boolean buildWhenIdle(Context c, Progress p, LocalDate today, long now) {
         // the switch closes the real database: never under an analysis's open transaction (review of #243), so a
         // running one is waited for, and none starts until the demo is built
         if (Analyzer.running() && p != null) p.step(WAITING);

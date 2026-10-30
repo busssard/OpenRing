@@ -202,18 +202,53 @@ public final class Backup {
      * If the restored history does not open, the old one is put back and nothing is restored.
      */
     public static Result finish(Context c, Plan p, boolean replaceHistory) throws IOException {
+        return finish(c, p, replaceHistory, null);
+    }
+
+    /** Setup's line while a restore runs. */
+    public static final String RESTORING = "Restoring";
+
+    /** What a restore waits for, shown instead of {@link #RESTORING} (issue #219). */
+    public interface Progress {
+        void step(String what);
+    }
+
+    /**
+     * As above; {@code progress} gets a line when the swap has to wait for a sync or an analysis first. The swap of the
+     * history runs only while no ring task can store (issue #219, {@link app.openring.core.RingGate#whenFree}): a download
+     * under way ends first, with every batch in the old history, and none starts until the new one is in place. When
+     * the ring stays busy for {@link app.openring.core.RingGate#SWAP_WAIT_MS}, or the thread is interrupted while it
+     * waits, nothing is restored ({@link app.openring.core.RingGate#RESTORE_REFUSED}).
+     */
+    public static Result finish(final Context c, final Plan p, boolean replaceHistory, final Progress progress) throws IOException {
         if (p.error != null) return p.error;
         Result r = new Result();
         try {
             if (p.db != null && replaceHistory) {
-                try {
-                    // demo mode is switched off only once the swap worked (applySettings).
-                    // Wait for an analysis that may still run after a sync (it no longer holds the
-                    // ring, issue #21): closing its database under it would break it
-                    synchronized (Analyzer.class) {
-                        Db.replaceWith(c, p.db, p.backupEvents);
+                final IOException[] failed = {null};
+                final boolean[] waited = {false};
+                // demo mode is switched off only once the swap worked (applySettings). The order is the ring lock, then
+                // the analysis lock (as pairing): an analysis that may still run after a sync no longer holds the ring
+                // (issue #21), and closing its database under it would break it
+                boolean ran = app.openring.core.RingGate.RING.whenFree(new Runnable() {
+                    @Override
+                    public void run() {
+                        // the wait is over: the line goes back to what happens now
+                        if (waited[0]) progress.step(RESTORING);
+                        synchronized (Analyzer.class) {
+                            try {
+                                Db.replaceWith(c, p.db, p.backupEvents);
+                            } catch (IOException e) {
+                                failed[0] = e;
+                            }
+                        }
                     }
-                } catch (IOException e) {
+                }, app.openring.core.RingGate.SWAP_WAIT_MS, Analyzer.RUNNING, waitLine(progress, waited));
+                if (!ran) {
+                    r.message = app.openring.core.RingGate.RESTORE_REFUSED;
+                    return r;
+                }
+                if (failed[0] != null) {
                     r.message = NOT_OPENED;
                     return r;
                 }
@@ -235,6 +270,18 @@ public final class Backup {
         else if (p.history) r.message = "Restored your key and settings, the history on this phone stays";
         else r.message = "Restored your key and settings";
         return r;
+    }
+
+    /** The gate's reason to wait as a line for {@code p}: a ring task, or an analysis (issue #219). */
+    static app.openring.core.RingGate.Wait waitLine(final Progress p, final boolean[] waited) {
+        if (p == null) return null;
+        return new app.openring.core.RingGate.Wait() {
+            @Override
+            public void waiting(int why) {
+                waited[0] = true;
+                p.step(why == app.openring.core.RingGate.FOR_RING ? app.openring.core.RingGate.WAIT_RING : Demo.WAITING);
+            }
+        };
     }
 
     /** Drop a plan without restoring anything (removes its own temp file). */

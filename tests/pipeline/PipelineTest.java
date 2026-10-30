@@ -5529,7 +5529,13 @@ public class PipelineTest {
             }
         });
         demo.start();
-        String seen = waitForBlocked(demo, run, demoDone, 10000);
+        // since #219 it waits in the ring gate, holding nothing, until no analysis runs (before, on the analysis lock)
+        long waitUntil = System.currentTimeMillis() + 10000;
+        while (!steps.toString().startsWith(app.openring.data.Demo.WAITING) && demoDone.getCount() > 0 && System.currentTimeMillis() < waitUntil) Thread.sleep(1);
+        Thread.sleep(300);
+        String seen = demoDone.getCount() > 0 ? "waits, " + demo.getState() : "finished";
+        check("#219 entering demo mode during a long run does not hold the ring while it waits", app.openring.core.RingGate.RING.op.tryLock(), seen);
+        app.openring.core.RingGate.RING.op.unlock();
         check("#243 entering demo mode during a long run waits for it, and says so", seen.startsWith("waits") && !app.openring.data.Prefs.of(c).demo()
                 && steps.toString().startsWith(app.openring.data.Demo.WAITING), seen + ", " + steps);
         go.countDown();
@@ -5894,6 +5900,93 @@ public class PipelineTest {
         check("#219 demo: the real history holds every downloaded event and the download's cursor", real.count("SELECT COUNT(*) FROM events WHERE ds >= " + DS219) == 20 * 50
                 && real.kvLong("cursor", -1) == dl.lastCursor, real.count("SELECT COUNT(*) FROM events WHERE ds >= " + DS219));
         check("#219 demo: and every event it had before", real.eventCount() == countIn(fileOf(dbBytes), "SELECT COUNT(*) FROM events") + 20 * 50, realBefore);
+
+        // 6. Setup's restore line while it waits for a download
+        Context ln = freshDb("openring219-line");
+        app.openring.data.Backup.read(ln, new java.io.ByteArrayInputStream(full));
+        Download219 dl2 = new Download219(ln, 12, 25);
+        dl2.start();
+        dl2.first.await(60, java.util.concurrent.TimeUnit.SECONDS);
+        final List<String> lines = new ArrayList<String>();
+        app.openring.data.Backup.Result lr = app.openring.data.Backup.finish(ln, app.openring.data.Backup.prepare(ln, new java.io.ByteArrayInputStream(full)), true,
+                new app.openring.data.Backup.Progress() {
+                    @Override
+                    public void step(String what) {
+                        lines.add(what);
+                    }
+                });
+        dl2.join(120000);
+        check("#219 restore line: it says it waits for the sync, then restores", lr.ok && lr.history && !lines.isEmpty()
+                && lines.equals(java.util.Arrays.asList(app.openring.core.RingGate.WAIT_RING, app.openring.data.Backup.RESTORING)), lines + " " + lr.message);
+        // restoring key and settings only swaps nothing: it never waits
+        app.openring.core.RingGate.RING.op.lock();
+        long t0 = System.currentTimeMillis();
+        app.openring.data.Backup.Result keyOnly;
+        try {
+            keyOnly = app.openring.data.Backup.finish(ln, app.openring.data.Backup.prepare(ln, new java.io.ByteArrayInputStream(full)), false);
+        } finally {
+            app.openring.core.RingGate.RING.op.unlock();
+        }
+        check("#219 key and settings only: no wait for the ring", keyOnly.ok && !keyOnly.history && System.currentTimeMillis() - t0 < 5000, keyOnly.message);
+        noTemp(ln, "after key and settings only");
+
+        // 7. a restore while Re analyse all is inside its transaction (issue #230): it waits holding no ring lock, a ring
+        // task can take the ring meanwhile, and the restore goes on once the run ended (no deadlock with the long run gate)
+        final Context lr2 = history230("openring219-longrun", T230, 56);
+        Analyzer.run(lr2, null);
+        java.io.ByteArrayOutputStream snap = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(lr2, snap, true);
+        final byte[] snapBytes = snap.toByteArray();
+        String snapHistory = history219(fileOf(zipEntry(snapBytes, "openring.db")));
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1), go = new java.util.concurrent.CountDownLatch(1);
+        Throwable[] runErr = new Throwable[1];
+        Thread run = paused243(lr2, inside, go, runErr);
+        check("#219 set up: Re analyse all is inside its transaction", inside.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        final app.openring.data.Backup.Result[] rr = new app.openring.data.Backup.Result[1];
+        final List<String> rlines = new ArrayList<String>();
+        final Throwable[] rErr = new Throwable[1];
+        Thread rest = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    rr[0] = app.openring.data.Backup.finish(lr2, app.openring.data.Backup.prepare(lr2, new java.io.ByteArrayInputStream(snapBytes)), true,
+                            new app.openring.data.Backup.Progress() {
+                                @Override
+                                public void step(String what) {
+                                    synchronized (rlines) {
+                                        rlines.add(what);
+                                    }
+                                }
+                            });
+                } catch (Throwable t) {
+                    rErr[0] = t;
+                }
+            }
+        });
+        rest.start();
+        long until = System.currentTimeMillis() + 20000;
+        while (System.currentTimeMillis() < until) {
+            synchronized (rlines) {
+                if (!rlines.isEmpty()) break;
+            }
+            Thread.sleep(1);
+        }
+        Thread.sleep(200);
+        boolean ringFree = app.openring.core.RingGate.RING.op.tryLock();
+        if (ringFree) app.openring.core.RingGate.RING.op.unlock();
+        String firstLine;
+        synchronized (rlines) {
+            firstLine = rlines.isEmpty() ? null : rlines.get(0);
+        }
+        check("#219 long run: the restore waits for the analysis, says so, and holds no ring lock meanwhile", ringFree && rest.isAlive()
+                && app.openring.data.Demo.WAITING.equals(firstLine) && rr[0] == null, firstLine + ", ring free " + ringFree);
+        go.countDown();
+        run.join(120000);
+        rest.join(120000);
+        check("#219 long run: the run ended normally, then the history was restored", runErr[0] == null && rErr[0] == null && rr[0] != null
+                && rr[0].ok && rr[0].history, runErr[0] != null ? runErr[0] : rErr[0] != null ? rErr[0] : rr[0] == null ? null : rr[0].message);
+        String gotHistory = phone219(lr2);
+        check("#219 long run: the restored history is the backup exactly", gotHistory.equals(snapHistory), gotHistory + " / " + snapHistory);
         freshDb("openring219-done");
     }
 }

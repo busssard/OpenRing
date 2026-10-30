@@ -88,13 +88,17 @@ public final class RingManager {
     private final Context ctx;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private final ReentrantLock op = new ReentrantLock();
+    /**
+     * The ring lock, shared with the code that swaps the database file (restore, entering demo mode), which runs only
+     * while it holds it and no sync is counted (core/RingGate, issue #219).
+     */
+    private final ReentrantLock op = app.openring.core.RingGate.RING.op;
     private final List<Listener> listeners = new ArrayList<Listener>();
     private final LinkedList<String> logLines = new LinkedList<String>();
     private volatile String status = "";
     private volatile boolean busy;
-    /** Syncs running, download or analysis (issue #21). */
-    private final java.util.concurrent.atomic.AtomicInteger syncs = new java.util.concurrent.atomic.AtomicInteger();
+    /** Syncs running, download or analysis (issue #21); a swap of the database waits for them (issue #219). */
+    private final java.util.concurrent.atomic.AtomicInteger syncs = app.openring.core.RingGate.RING.syncs;
     /** Syncs past their download, analysing; they no longer hold the ring (issue #21). */
     private final java.util.concurrent.atomic.AtomicInteger analysing = new java.util.concurrent.atomic.AtomicInteger();
     private volatile double progress = -1;
@@ -308,7 +312,8 @@ public final class RingManager {
     /**
      * Runs {@code r} with the ring lock held, so no sync or ring task can start meanwhile, and only when
      * no sync is under way (download, screen log or analysis). False, and {@code r} does not run, when
-     * the ring is busy. Used by Delete all local data (issue #43).
+     * the ring is busy. Used by Delete all local data (issue #43). Restore and entering demo mode use the same lock and
+     * count through {@code core/RingGate.whenFree}, which waits instead of refusing (issue #219).
      */
     public boolean whileRingFree(Runnable r) {
         if (syncs.get() > 0 || !op.tryLock()) return false;
@@ -381,6 +386,14 @@ public final class RingManager {
                     return res;
                 }
                 held = Db.get(ctx);
+                // demo mode turned on between the check above and this sync's count (issue #219): end before connecting,
+                // so neither the download nor the screen log and analysis after it reach the demo file
+                if (demoRefusal(held) != null) {
+                    op.unlock();
+                    res.message = "Demo mode: syncing is off";
+                    log("sync not started: demo mode was turned on");
+                    return res;
+                }
                 if (held.holdForRing()) break;
                 // a long analysis began meanwhile: give the ring back and wait for it
                 op.unlock();

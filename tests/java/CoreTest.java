@@ -911,6 +911,7 @@ public class CoreTest {
         mutationGaps();
         pairing();
         pairingRun();
+        ringGate();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -4730,5 +4731,215 @@ public class CoreTest {
         run.finish(false, "old");
         run.start(0);
         check("pairing run: a new start drops an old result", run.take() == null);
+    }
+
+    /** Holds {@code g}'s ring lock on its own thread until {@code go} opens (a Live session, the finder). */
+    static Thread holdRing(final RingGate g, final java.util.concurrent.CountDownLatch held, final java.util.concurrent.CountDownLatch go) {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                g.op.lock();
+                try {
+                    held.countDown();
+                    go.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException ignored) {
+                } finally {
+                    g.op.unlock();
+                }
+            }
+        });
+        t.start();
+        return t;
+    }
+
+    /** Issue #219: a swap of the database runs only while no ring task can store, waits holding nothing, never forever. */
+    static void ringGate() throws Exception {
+        final RingGate g = new RingGate();
+        final int[] ran = {0};
+        final List<Integer> why = new ArrayList<Integer>();
+        Runnable swap = new Runnable() {
+            @Override
+            public void run() {
+                ran[0]++;
+                check("ring gate: the swap holds the ring", g.op.isHeldByCurrentThread());
+            }
+        };
+        RingGate.Wait note = new RingGate.Wait() {
+            @Override
+            public void waiting(int w) {
+                synchronized (why) {
+                    why.add(w);
+                }
+            }
+        };
+        check("ring gate: free, the swap runs at once", g.whenFree(swap, 0, null, note) && ran[0] == 1 && why.isEmpty() && !g.op.isLocked());
+
+        // a ring task holds the ring: the swap waits, says why once, and runs after it gave the ring back
+        java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1), go = new java.util.concurrent.CountDownLatch(1);
+        Thread live = holdRing(g, held, go);
+        held.await();
+        final boolean[] result = {false};
+        Thread waiter = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                result[0] = g.whenFree(new Runnable() {
+                    @Override
+                    public void run() {
+                        ran[0]++;
+                    }
+                }, 30000, null, new RingGate.Wait() {
+                    @Override
+                    public void waiting(int w) {
+                        synchronized (why) {
+                            why.add(w);
+                        }
+                    }
+                });
+            }
+        });
+        waiter.start();
+        Thread.sleep(250);
+        check("ring gate: a held ring makes the swap wait", ran[0] == 1 && waiter.isAlive());
+        go.countDown();
+        waiter.join(10000);
+        live.join(10000);
+        check("ring gate: after the ring task the swap runs", result[0] && ran[0] == 2 && !g.op.isLocked());
+        eq("ring gate: the wait was told once, for the ring", why.toString(), "[" + RingGate.FOR_RING + "]");
+
+        // a counted sync (also one that waits for the ring or analyses after its download): the swap waits for its end
+        why.clear();
+        g.syncs.incrementAndGet();
+        final boolean[] syncResult = {false};
+        waiter = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                syncResult[0] = g.whenFree(new Runnable() {
+                    @Override
+                    public void run() {
+                        ran[0]++;
+                    }
+                }, 30000, null, null);
+            }
+        });
+        waiter.start();
+        Thread.sleep(250);
+        check("ring gate: a sync under way makes the swap wait, the ring stays free for it", ran[0] == 2 && waiter.isAlive() && !g.op.isLocked());
+        g.syncs.decrementAndGet();
+        waiter.join(10000);
+        check("ring gate: after the sync the swap runs", syncResult[0] && ran[0] == 3);
+
+        // an analysis runs: the swap waits for it without the ring, so a ring task can take it meanwhile
+        why.clear();
+        final boolean[] analysing = {true};
+        RingGate.Busy analysis = new RingGate.Busy() {
+            @Override
+            public boolean busy() {
+                return analysing[0];
+            }
+        };
+        final RingGate.Busy analysisF = analysis;
+        final RingGate.Wait noteF = note;
+        final boolean[] otherResult = {false};
+        waiter = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                otherResult[0] = g.whenFree(new Runnable() {
+                    @Override
+                    public void run() {
+                        ran[0]++;
+                    }
+                }, 30000, analysisF, noteF);
+            }
+        });
+        waiter.start();
+        Thread.sleep(250);
+        boolean free = g.op.tryLock();
+        if (free) g.op.unlock();
+        check("ring gate: waiting for an analysis holds no ring lock", free && ran[0] == 3 && waiter.isAlive());
+        analysing[0] = false;
+        waiter.join(10000);
+        check("ring gate: after the analysis the swap runs", otherResult[0] && ran[0] == 4);
+        eq("ring gate: the wait was told once, for the analysis", why.toString(), "[" + RingGate.FOR_OTHER + "]");
+
+        // the reason changes: told again
+        why.clear();
+        analysing[0] = true;
+        g.syncs.incrementAndGet();
+        waiter = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                g.whenFree(new Runnable() {
+                    @Override
+                    public void run() {
+                        ran[0]++;
+                    }
+                }, 30000, analysisF, noteF);
+            }
+        });
+        waiter.start();
+        Thread.sleep(250);
+        g.syncs.decrementAndGet();
+        Thread.sleep(250);
+        analysing[0] = false;
+        waiter.join(10000);
+        eq("ring gate: a sync, then the analysis after it", why.toString(), "[" + RingGate.FOR_RING + ", " + RingGate.FOR_OTHER + "]");
+        check("ring gate: then the swap ran", ran[0] == 5);
+
+        // nothing waits forever: the time runs out, the swap does not run, the ring stays with its task
+        held = new java.util.concurrent.CountDownLatch(1);
+        go = new java.util.concurrent.CountDownLatch(1);
+        live = holdRing(g, held, go);
+        held.await();
+        long t0 = System.currentTimeMillis();
+        boolean late = g.whenFree(swap, 300, null, null);
+        long took = System.currentTimeMillis() - t0;
+        check("ring gate: the time ran out, the swap did not run", !late && ran[0] == 5 && took >= 290 && took < 5000);
+        check("ring gate: no time to wait, a held ring refuses at once", !g.whenFree(swap, 0, null, null) && ran[0] == 5);
+        g.syncs.incrementAndGet();
+        check("ring gate: no time to wait, a sync refuses at once", !g.whenFree(swap, 0, null, null) && ran[0] == 5);
+        g.syncs.decrementAndGet();
+
+        // interrupted while waiting: refused, the interrupt kept
+        final boolean[] interrupted = {false, true};
+        waiter = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                interrupted[1] = g.whenFree(new Runnable() {
+                    @Override
+                    public void run() {
+                        ran[0]++;
+                    }
+                }, 30000, null, null);
+                interrupted[0] = Thread.currentThread().isInterrupted();
+            }
+        });
+        waiter.start();
+        Thread.sleep(150);
+        waiter.interrupt();
+        waiter.join(10000);
+        check("ring gate: interrupted while waiting, the swap does not run and the interrupt stays", interrupted[0] && !interrupted[1] && ran[0] == 5);
+        go.countDown();
+        live.join(10000);
+
+        // a swap that fails gives the ring back, its error reaches the caller
+        String error = null;
+        try {
+            g.whenFree(new Runnable() {
+                @Override
+                public void run() {
+                    throw new IllegalStateException("copy failed");
+                }
+            }, 0, null, null);
+        } catch (IllegalStateException e) {
+            error = e.getMessage();
+        }
+        check("ring gate: a failed swap reaches the caller and frees the ring", "copy failed".equals(error) && !g.op.isLocked());
+
+        // the texts: plain, no dashes; the demo's fits a toast (issue #89)
+        for (String t : new String[] {RingGate.WAIT_RING, RingGate.RESTORE_REFUSED, RingGate.DEMO_REFUSED}) {
+            check("ring gate: no dash as punctuation in \"" + t + "\"", !t.contains(" - ") && !t.contains("–") && !t.contains("—"));
+        }
+        check("ring gate: the demo refusal fits a toast", Texts.fitsToast(RingGate.DEMO_REFUSED));
+        check("ring gate: the app has one gate", RingGate.RING == RingGate.RING && RingGate.SWAP_WAIT_MS == 600000L);
     }
 }
