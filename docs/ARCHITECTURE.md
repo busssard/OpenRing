@@ -214,7 +214,10 @@ gets a new session queued behind it on the worker, which waits for the lock as u
 that became stale, or one that ends, clears only its own mark (`stale`, `ended`), so an older session
 never clears a newer one. Messages of an ended session only go to the log. The Live screen measures only while it is in front (issue #187,
 `core/LiveScreen`): `onPause` stops its session, so the ring is free for a background sync once the session has left its
-loop and cleaned up (seconds), and `onResume` starts a new one by the rules above. Values, charts and holds stay on screen.
+loop and cleaned up (seconds), and `onResume` starts a new one by the rules above. A session that was stopped
+while it waited for the ring gives the lock back untouched once it gets it, and one stopped while it connects, checks
+the key or does its first download ends at the next of those steps, before any live mode is switched on (and then puts
+no mode back). Values, charts and holds stay on screen.
 
 A long analysis (Re analyse all, or more than 28 days to analyse, `Analyzer.LONG_RUN_DAYS`; issue #230) keeps its
 transaction open for minutes, and on Android every write from another thread waits for it. So before it opens the
