@@ -916,6 +916,7 @@ public class CoreTest {
         pairingRun();
         ringGate();
         setupTasks();
+        leftOut254();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -5534,5 +5535,94 @@ public class CoreTest {
                 Arrays.asList(new double[] {300, 400}, new double[] {500, 600})), 500.0);
         eq("#194 nothing stored yet: from the first read", ScreenTime.firstChanged(new ArrayList<double[]>(),
                 Arrays.asList(new double[] {500, 600}, new double[] {700, 800})), 500.0);
+    }
+
+    static List<double[]> ranges(double... v) {
+        List<double[]> out = new ArrayList<double[]>();
+        for (int i = 0; i + 1 < v.length; i += 2) out.add(new double[] {v[i], v[i + 1]});
+        return out;
+    }
+
+    /** Issue #254: the left out times, merged; the sleep window without them; pieces across midnight and a clock change; the texts. */
+    static void leftOut254() {
+        LeftOut none = LeftOut.of(new ArrayList<double[]>());
+        check("left out: none is empty and the same as NONE", none.isEmpty() && none == LeftOut.NONE && LeftOut.of(null).isEmpty()
+                && !none.contains(5) && none.key().isEmpty() && none.size() == 0);
+        double[] w = none.window(100, 5000);
+        check("left out: none leaves a window as it is", w[0] == 100 && w[1] == 5000);
+        // merge: overlapping, touching, inside, out of order, broken rows skipped
+        LeftOut l = LeftOut.of(ranges(5000, 6000, 1000, 2000, 1500, 3000, 3000, 3500, 1200, 1300, 9000, 8000, 7000, 7000));
+        eq("left out: merged ranges", l.ranges().size() + " " + l.key(), "2 1000-3500,5000-6000");
+        check("left out: contains its start, not its stop", l.contains(1000) && l.contains(3499.9) && !l.contains(3500) && !l.contains(999.9)
+                && l.contains(5000) && !l.contains(4000) && !l.contains(6000) && !l.contains(10000) && !l.contains(0));
+        check("left out: overlaps and covers", l.overlaps(3400, 3600) && !l.overlaps(3500, 5000) && l.covers(1100, 3500) && !l.covers(900, 2000)
+                && !l.covers(3000, 5500) && !l.covers(4000, 4500));
+        eq("left out: seconds of a range", l.seconds(0, 10000), 3500.0);
+        eq("left out: seconds clipped", l.seconds(3000, 5500), 1000.0);
+        List<double[]> p = l.pieces(2000, 5500);
+        check("left out: pieces clipped to the range", p.size() == 2 && p.get(0)[0] == 2000 && p.get(0)[1] == 3500 && p.get(1)[0] == 5000 && p.get(1)[1] == 5500);
+        // window: at the start, the end, the middle, under 15 minutes
+        LeftOut n = LeftOut.of(ranges(0, 3600));
+        w = n.window(1800, 30000);
+        check("left out at the start of a window: the rest", w != null && w[0] == 3600 && w[1] == 30000);
+        n = LeftOut.of(ranges(20000, 40000));
+        w = n.window(1800, 30000);
+        check("left out at the end of a window: the part before", w != null && w[0] == 1800 && w[1] == 20000);
+        n = LeftOut.of(ranges(10000, 12000));
+        w = n.window(1800, 30000);
+        check("left out in the middle: the longer piece", w != null && w[0] == 12000 && w[1] == 30000);
+        w = n.window(0, 22000);
+        check("left out in the middle, two as long: the earlier piece", w != null && w[0] == 0 && w[1] == 10000);
+        check("left out: a window under 15 minutes is dropped", n.window(9500, 12500) == null && n.window(10500, 11000) == null);
+        w = n.window(9100, 12000);
+        check("left out: exactly 15 minutes stays", w != null && w[0] == 9100 && w[1] == 10000);
+        check("left out: a window inside is dropped", LeftOut.of(ranges(0, 100000)).window(1000, 50000) == null);
+        // problems
+        double now = 50000;
+        eq("left out: end before start", l.problem(2000, 2000, now), "The end must be after the start.");
+        eq("left out: the start in the future", l.problem(60000, 70000, now), "The start cannot be in the future.");
+        eq("left out: the same time again", l.problem(1000, 3500, now), "This time is already left out.");
+        eq("left out: part of it is new", l.problem(3000, 4000, now), null);
+        // texts in Zurich: 3 Oct 2026 18:00 to 4 Oct 09:00
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        double a = java.time.LocalDateTime.parse("2026-10-03T18:00").atZone(z).toEpochSecond();
+        double b = java.time.LocalDateTime.parse("2026-10-04T09:00").atZone(z).toEpochSecond();
+        eq("left out: list line", LeftOut.listLine(a, b, z), "3 Oct 18:00 to 4 Oct 09:00 (15 h)");
+        eq("left out: card", LeftOut.card(a, b, z), "From 3 Oct 18:00 to 4 Oct 09:00 is left out (someone else wore the ring). To bring it back: Settings, Advanced.");
+        eq("left out: timeline row", LeftOut.timelineRow(a, b, z), "Left out from 18:00 to 09:00 (someone else wore the ring)");
+        eq("left out: timeline row of more than a day", LeftOut.timelineRow(a, b + 86400, z), "Left out from 3 Oct 18:00 to 5 Oct 09:00 (someone else wore the ring)");
+        double mid = java.time.LocalDate.parse("2026-10-04").atStartOfDay(z).toEpochSecond();
+        eq("left out: the band's readout, cut at midnight", LeftOut.bandTip(a, mid, z), "Left out, 18:00 to 00:00 (someone else wore the ring)");
+        eq("left out: activity line", LeftOut.activityLine(3 * 3600), "3 h of this day are left out and count as Not worn.");
+        eq("left out: activity line, one hour", LeftOut.activityLine(3600), "1 h of this day is left out and counts as Not worn.");
+        eq("left out: lengths", LeftOut.length(45 * 60) + ", " + LeftOut.length(15.5 * 3600) + ", " + LeftOut.length(3 * 86400 + 4 * 3600) + ", "
+                + LeftOut.length(2 * 86400), "45 min, 15 h 30 min, 3 days 4 h, 2 days");
+        java.time.LocalDate today = java.time.LocalDate.parse("2026-10-30");
+        eq("left out: the preview", LeftOut.preview(a, b, 1, 14, today, z, 28), "From 3 Oct 18:00 to 4 Oct 09:00: 1 night, 2 days and 14 hours of heart rate or "
+                + "temperature are left out of all charts, scores and usual values. The ring's data stays stored and comes back if you remove this. "
+                + "Your days from 1 Oct to today are worked out again (30 days). This takes a few minutes.");
+        String recent = LeftOut.preview(java.time.LocalDateTime.parse("2026-10-28T13:00").atZone(z).toEpochSecond(),
+                java.time.LocalDateTime.parse("2026-10-28T17:00").atZone(z).toEpochSecond(), 0, 4, today, z, 28);
+        eq("left out: a short preview", recent, "From 28 Oct 13:00 to 28 Oct 17:00: 0 nights, 1 day and 4 hours of heart rate or temperature are "
+                + "left out of all charts, scores and usual values. The ring's data stays stored and comes back if you remove this. Your days from "
+                + "26 Oct to today are worked out again (5 days).");
+        eq("left out: bring back", LeftOut.bringBackText(a, z), "It counts again in your charts, scores and usual values. Your days from 1 Oct on are worked out again.");
+        // calendar days and pieces across midnight and the clock change of 25 Oct 2026 (the night has 25 hours)
+        double e24 = java.time.LocalDateTime.parse("2026-10-24T22:00").atZone(z).toEpochSecond();
+        double m25 = java.time.LocalDate.parse("2026-10-25").atStartOfDay(z).toEpochSecond(), m26 = java.time.LocalDate.parse("2026-10-26").atStartOfDay(z).toEpochSecond();
+        double e25 = java.time.LocalDateTime.parse("2026-10-25T09:00").atZone(z).toEpochSecond();
+        LeftOut dst = LeftOut.of(ranges(e24, e25));
+        eq("left out across the clock change: 12 real hours (22:00 to 09:00 with an hour twice)", dst.seconds(0, 1e10), 12 * 3600.0);
+        eq("left out across midnight: 2 calendar days", LeftOut.days(e24, e25, z), 2L);
+        eq("left out to midnight: 1 calendar day", LeftOut.days(e24, m25, z), 1L);
+        eq("left out on the 25 hour day: 10 real hours of it", dst.seconds(m25, m26), 10 * 3600.0);
+        eq("left out on the evening before: 2 hours", dst.seconds(m25 - 86400, m25), 2 * 3600.0);
+        eq("left out across the clock change: list line", LeftOut.listLine(e24, e25, z), "24 Oct 22:00 to 25 Oct 09:00 (12 h)");
+        w = dst.window(java.time.LocalDateTime.parse("2026-10-24T23:00").atZone(z).toEpochSecond(), java.time.LocalDateTime.parse("2026-10-25T10:00").atZone(z).toEpochSecond());
+        check("left out across the clock change: the hour after it is the window", w != null && w[0] == e25 && w[1] - w[0] == 3600);
+        for (String t : new String[] {LeftOut.preview(a, b, 1, 14, today, z, 28), LeftOut.card(a, b, z), LeftOut.bandTip(a, b, z), LeftOut.timelineRow(a, b, z),
+            LeftOut.activityLine(5400), LeftOut.bringBackText(a, z), app.openring.ui.Explain.LEFT_OUT, l.problem(1, 0, 0), l.problem(9e9, 1e10, 0), l.problem(1000, 2000, 1e10)}) {
+            check("left out texts: no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("–") && !t.contains("—") && !t.isEmpty());
+        }
     }
 }

@@ -204,7 +204,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * spot instead of its walk, finder_start (boolean) the screen before any walk, finder_details
      * (boolean) opens the full last worn text and How it works (issue #191), finder_blink (boolean) the demo's
      * Make it blink (issue #192; the demo never connects), live (boolean, demo mode
-     * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185).
+     * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185), left_out
+     * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -226,6 +227,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // screen test: open Live with its made up readings (issue #185); only in demo mode, so no other app can start a
         // ring session this way
         if (i.getBooleanExtra("live", false) && Prefs.of(this).demo()) live(i.getBooleanExtra("live_spo2", false));
+        // screen test: a left out time in the demo (issue #254); Analyzer.leaveOutDemo writes only into the demo file
+        if (i.getBooleanExtra("left_out", false) && Prefs.of(this).demo()) leftOutDemo();
         // screen test: open Find my ring (issue #74)
         if (i.getBooleanExtra("finder", false)) {
             startActivity(new Intent(this, FinderActivity.class).putExtra("demo_turn", i.getBooleanExtra("finder_turn", false))
@@ -233,6 +236,28 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     .putExtra("demo_details", i.getBooleanExtra("finder_details", false))
                     .putExtra("demo_blink", i.getBooleanExtra("finder_blink", false)));
         }
+    }
+
+    /** The demo's example of a left out time (screen test, issue #254), then the day is loaded again. */
+    void leftOutDemo() {
+        final android.content.Context ctx = getApplicationContext();
+        new android.os.AsyncTask<Void, Void, Boolean>() {
+            @Override
+            protected Boolean doInBackground(Void... v) {
+                try {
+                    java.time.ZoneId z = java.time.ZoneId.systemDefault();
+                    LocalDate d = LocalDate.now(z).minusDays(2);
+                    return app.openring.data.Analyzer.leaveOutDemo(ctx, d.atTime(13, 0).atZone(z).toEpochSecond(), d.atTime(17, 0).atZone(z).toEpochSecond());
+                } catch (Throwable e) {
+                    return false;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Boolean ok) {
+                if (ok && !isFinishing() && !isDestroyed() && scroll != null && !preparingDemo) load();
+            }
+        }.executeOnExecutor(android.os.AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     @Override

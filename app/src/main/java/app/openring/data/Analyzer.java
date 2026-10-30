@@ -18,6 +18,7 @@ import java.util.Map;
 import app.openring.core.EventCodec;
 import app.openring.core.analysis.ClockChange;
 import app.openring.core.analysis.DayHeart;
+import app.openring.core.analysis.LeftOut;
 import app.openring.core.analysis.Night;
 import app.openring.core.analysis.NightAnalyzer;
 import app.openring.core.analysis.NightFinder;
@@ -51,10 +52,16 @@ public final class Analyzer {
     static volatile Runnable afterDay;
     /** Tests only: when above 0, the time (unix seconds) a day still running is analysed at (issue #155). */
     static volatile long testNow;
+    /**
+     * The times left out because someone else wore the ring (issue #254), read once per analysis. Every reading whose own
+     * time lies inside is dropped; with none (nearly everyone) every check below answers at once and nothing changes.
+     */
+    private final LeftOut left;
 
     private Analyzer(Context c, Log log) {
         db = Db.get(c);
         prefs = Prefs.of(c);
+        left = db.leftOut();
         this.log = log == null ? new Log() {
             @Override
             public void log(String m) {}
@@ -68,7 +75,7 @@ public final class Analyzer {
      * instead of hanging on its open transaction with the ring held. 28 days take up to about 10 seconds on a
      * phone; the analysis after a sync (the last two days) stays far below.
      */
-    static final int LONG_RUN_DAYS = 28;
+    public static final int LONG_RUN_DAYS = 28;
 
     /**
      * Incremental: re analyse from a little before the last analysed point up to now. Any failure, also running out
@@ -154,7 +161,79 @@ public final class Analyzer {
     private String inputs(long lastId, long until, long nowUnix) {
         return lastId + " " + until + " " + prefs.stageDetail() + " " + (prefs.screenAwake() ? 1 : 0) + " " + StageFilter.VERSION + " "
                 + NightFinder.VERSION + " " + DayHeart.VERSION + " " + ScreenTime.AWAKE_RULE + " " + prefs.age() + " " + prefs.sex() + " "
-                + prefs.weightKg() + " " + prefs.heightCm() + " " + prefs.targetKcal() + " " + zone.getId() + " " + date(nowUnix);
+                + prefs.weightKg() + " " + prefs.heightCm() + " " + prefs.targetKcal() + " " + zone.getId() + " " + date(nowUnix)
+                // only when something is left out (issue #254), so everyone else keeps the inputs they had
+                + (left.isEmpty() ? "" : " left " + left.key());
+    }
+
+    /**
+     * The events of {@code tags} in [from, to) without those left out (issue #254). An event with one time is dropped when
+     * its time is left out; events that hold values over a span (HRV over 25 minutes, activity, always on heart rate, SpO2)
+     * stay, and their values are checked one by one with {@link #out}. So does the ring's bedtime record: it is dated at
+     * its end, and a night whose end is left out keeps its start from it (the sleep window is cut with {@link LeftOut#window}).
+     */
+    List<Db.Row> events(int[] tags, double from, double to) {
+        List<Db.Row> rows = db.events(tags, from, to);
+        if (left.isEmpty()) return rows;
+        List<Db.Row> keep = new ArrayList<Db.Row>(rows.size());
+        for (Db.Row r : rows) if (spans(r.tag) || !left.contains(r.unix)) keep.add(r);
+        return keep;
+    }
+
+    /** True for the events whose values each have their own time (checked one by one with {@link #out}). */
+    static boolean spans(int tag) {
+        return tag == EventCodec.HRV_EVENT || tag == EventCodec.ACTIVITY_INFO || tag == EventCodec.AOHR_EVENT || tag == EventCodec.SPO2_EVENT
+                || tag == EventCodec.SPO2_R_PI || tag == EventCodec.BEDTIME_PERIOD;
+    }
+
+    /** True when a value measured at {@code t} is left out (issue #254). */
+    boolean out(double t) {
+        return left.contains(t);
+    }
+
+    /** Leave out [start, stop) because someone else wore the ring (issue #254), then analyse; see {@link #changeLeftOut}. */
+    public static void leaveOut(Context c, double start, double stop, Log log) {
+        changeLeftOut(c, start, stop, Double.NaN, false, log);
+    }
+
+    /** Bring the left out time {@code made} back and analyse again (issue #254). */
+    public static void bringBack(Context c, double made, Log log) {
+        changeLeftOut(c, Double.NaN, Double.NaN, made, false, log);
+    }
+
+    /**
+     * The screen test's example (issue #254): the day before yesterday 13:00 to 17:00, only when the demo file is open, so
+     * it can never reach real data. False when not in demo mode or when it is left out already.
+     */
+    public static boolean leaveOutDemo(Context c, double start, double stop) {
+        return changeLeftOut(c, start, stop, Double.NaN, true, null);
+    }
+
+    /**
+     * Adds ({@code made} NaN) or removes a left out time, then analyses. Holds the analysis lock, so no analysis runs with
+     * the old times meanwhile. The row and the lowered mark are one commit ({@link Db#addExcluded}); the analysis then
+     * replaces the nights and days in its one transaction (issue #230), so a stop keeps the old results and the next
+     * analysis finishes the work. False when nothing was changed.
+     */
+    private static boolean changeLeftOut(Context c, double start, double stop, double made, boolean demoOnly, Log log) {
+        RUNS.incrementAndGet();
+        try {
+            synchronized (Analyzer.class) {
+                Analyzer a = new Analyzer(c, log);
+                try {
+                    if (demoOnly && (!a.prefs.demo() || !Db.DEMO.equals(a.db.fileName) || a.left.covers(start, stop))) return false;
+                    if (Double.isNaN(made)) a.db.addExcluded(start, stop, System.currentTimeMillis() / 1000.0);
+                    else if (!a.db.removeExcluded(made)) return false;
+                } catch (Throwable e) {
+                    a.failed(e);
+                    throw e;
+                }
+                runLocked(c, log);
+                return true;
+            }
+        } finally {
+            RUNS.decrementAndGet();
+        }
     }
 
     /** True while an analysis runs or waits to run. */
@@ -462,7 +541,7 @@ public final class Analyzer {
         // ring hypnogram pages: only sleep_phase_data (0x5a) is validated as numbered pages
         int[] tags = {EventCodec.BEDTIME_PERIOD, EventCodec.SLEEP_PHASE_DATA,
             EventCodec.SLEEP_PERIOD_INFO_2, EventCodec.HRV_EVENT, EventCodec.SLEEP_TEMP_EVENT, EventCodec.SLEEP_ACM_PERIOD};
-        List<Db.Row> rows = db.events(tags, from - 12 * 3600, to + 3600);
+        List<Db.Row> rows = events(tags, from - 12 * 3600, to + 3600);
         List<double[]> bedtimes = new ArrayList<double[]>();
         List<double[]> pageTimes = new ArrayList<double[]>();
         List<int[]> pages = new ArrayList<int[]>();
@@ -473,7 +552,8 @@ public final class Analyzer {
                     long[] bt = EventCodec.bedtime(r.body);
                     if (bt == null) break;
                     double s = r.unix + (bt[0] - r.ds) / 10.0, e = r.unix + (bt[1] - r.ds) / 10.0;
-                    if (e > s && e - s < 20 * 3600 && s > r.unix - 48 * 3600 && e <= r.unix + 3600) bedtimes.add(new double[] {s, e});
+                    // a bedtime wholly inside a left out time is no sleep of this person (issue #254)
+                    if (e > s && e - s < 20 * 3600 && s > r.unix - 48 * 3600 && e <= r.unix + 3600 && !left.covers(s, e)) bedtimes.add(new double[] {s, e});
                     break;
                 }
                 case EventCodec.SLEEP_PHASE_DATA: {
@@ -495,7 +575,8 @@ public final class Analyzer {
                     break;
                 }
                 default:
-                    support.add(r.unix, 1);
+                    // an HRV event stays for its values; inside a left out time it is no sign of sleep (issue #254)
+                    if (!out(r.unix)) support.add(r.unix, 1);
             }
         }
         List<NightFinder.RingRun> runs = NightFinder.ringRuns(pageTimes, pages);
@@ -534,6 +615,18 @@ public final class Analyzer {
                 if (w[1] - w[0] < ScreenTime.MIN_WINDOW_S) {
                     ZoneId pz = zoneAt(p.end);
                     log.log("skipped a sleep window " + clock(p.start, pz) + " to " + clock(p.end, pz) + ": the phone was in use");
+                    continue;
+                }
+                start = w[0];
+                end = w[1];
+            }
+            if (!left.isEmpty()) {
+                // a left out time (issue #254): the longest piece outside it, as after phone use. The ring's bedtime record
+                // is dated at its end, so it could rebuild a sleep across the left out time
+                double[] w = left.window(start, end);
+                if (w == null) {
+                    ZoneId pz = zoneAt(p.end);
+                    log.log("skipped a sleep window " + clock(start, pz) + " to " + clock(end, pz) + ": left out");
                     continue;
                 }
                 start = w[0];
@@ -704,7 +797,7 @@ public final class Analyzer {
     Night analyzeNight(NightFinder.Period p, double start, double end, List<double[]> screen) {
         int[] tags = {EventCodec.HRV_EVENT, EventCodec.MOTION_EVENT, EventCodec.SLEEP_PERIOD_INFO_2, EventCodec.GREEN_IBI_QUALITY,
             EventCodec.SLEEP_TEMP_EVENT, EventCodec.SPO2_EVENT, EventCodec.SPO2_R_PI, EventCodec.AOHR_EVENT};
-        List<Db.Row> rows = db.events(tags, start - 900, end + 900);
+        List<Db.Row> rows = events(tags, start - 900, end + 900);
         NightAnalyzer.Input in = new NightAnalyzer.Input();
         in.start = start;
         in.end = end;
@@ -719,6 +812,7 @@ public final class Analyzer {
                     if (h == null) break;
                     for (int i = 0; i < h[0].length; i++) {
                         double t = r.unix + i * EventCodec.HRV_INTERVAL_S;
+                        if (out(t)) continue;
                         if (h[0][i] > 0) in.hr5.add(t, h[0][i]);
                         if (h[1][i] > 0) in.hrv5.add(t, h[1][i]);
                     }
@@ -749,7 +843,10 @@ public final class Analyzer {
                 case EventCodec.AOHR_EVENT: {
                     int[][] a = EventCodec.aohr(r.body);
                     if (a == null) break;
-                    for (int i = 0; i < a[0].length; i++) if (EventCodec.plausibleHr(a[0][i])) in.beats.add(r.unix + i * EventCodec.AOHR_INTERVAL_S, a[0][i]);
+                    for (int i = 0; i < a[0].length; i++) {
+                        double t = r.unix + i * EventCodec.AOHR_INTERVAL_S;
+                        if (EventCodec.plausibleHr(a[0][i]) && !out(t)) in.beats.add(t, a[0][i]);
+                    }
                     break;
                 }
                 case EventCodec.SLEEP_TEMP_EVENT: {
@@ -761,12 +858,12 @@ public final class Analyzer {
                 }
                 case EventCodec.SPO2_EVENT: {
                     int[] s = EventCodec.spo2(r.body);
-                    if (s != null) for (int i = 0; i < s.length; i++) if (s[i] >= 70 && s[i] <= 100) in.spo2.add(r.unix + i, s[i]);
+                    if (s != null) for (int i = 0; i < s.length; i++) if (s[i] >= 70 && s[i] <= 100 && !out(r.unix + i)) in.spo2.add(r.unix + i, s[i]);
                     break;
                 }
                 case EventCodec.SPO2_R_PI: {
                     double[] rr = EventCodec.spo2R(r.body);
-                    if (rr != null) for (int i = 0; i < rr.length; i++) if (rr[i] > 0.2 && rr[i] < 1.6) in.spo2.add(r.unix + i, EventCodec.spo2FromR(rr[i]));
+                    if (rr != null) for (int i = 0; i < rr.length; i++) if (rr[i] > 0.2 && rr[i] < 1.6 && !out(r.unix + i)) in.spo2.add(r.unix + i, EventCodec.spo2FromR(rr[i]));
                     break;
                 }
                 default:
@@ -806,11 +903,11 @@ public final class Analyzer {
 
         // ---- activity ----
         TS met = new TS();
-        for (Db.Row r : db.events(new int[] {EventCodec.ACTIVITY_INFO}, ds - 3 * 3600, de)) {
+        for (Db.Row r : events(new int[] {EventCodec.ACTIVITY_INFO}, ds - 3 * 3600, de)) {
             double[] m = EventCodec.activityMet(r.body);
             if (m == null) continue;
-            // impossible values (a damaged byte) count as missing minutes (issue #120)
-            for (int i = 0; i < m.length; i++) if (EventCodec.plausibleMet(m[i])) met.add(r.unix + i * 60, m[i]);
+            // impossible values (a damaged byte) count as missing minutes (issue #120), left out ones too (issue #254)
+            for (int i = 0; i < m.length; i++) if (EventCodec.plausibleMet(m[i]) && !out(r.unix + i * 60)) met.add(r.unix + i * 60, m[i]);
         }
         List<double[]> sleeps = new ArrayList<double[]>();
         for (JSONObject o : past.nights(day.minusDays(1), day.plusDays(1), false)) sleeps.add(new double[] {o.optDouble("start"), o.optDouble("end")});
@@ -819,7 +916,8 @@ public final class Analyzer {
         long now = testNow > 0 ? testNow : System.currentTimeMillis() / 1000;
         Wellness.Day d = Wellness.day(key, ds, de, dz, met, sleeps, weight, bmr, now);
 
-        boolean anyHr = db.count("SELECT COUNT(*) FROM events WHERE tag IN (93, 128, 134, 106) AND unix >= " + (long) ds + " AND unix < " + (long) de) > 0;
+        boolean anyHr = db.count("SELECT COUNT(*) FROM events WHERE tag IN (93, 128, 134, 106) AND unix >= " + (long) ds + " AND unix < " + (long) de
+                + notLeftOut(ds, de)) > 0;
         if (d.coveredMin == 0 && mainNight == null && !anyHr) {
             // nothing behind this day any more (its events were dated again, issue #58): the summary goes like
             // its nights did. A nap still stored for it keeps the summary, as before.
@@ -1018,17 +1116,23 @@ public final class Analyzer {
         // are read too: an HRV event holds six values 5 minutes apart, so one starting at 23:50 has three after
         // midnight; the quarter hours keep only the values inside the day.
         TS beats = new TS();
-        for (Db.Row r : db.events(new int[] {EventCodec.GREEN_IBI_QUALITY, EventCodec.AOHR_EVENT, EventCodec.HRV_EVENT, EventCodec.SLEEP_PERIOD_INFO_2},
+        for (Db.Row r : events(new int[] {EventCodec.GREEN_IBI_QUALITY, EventCodec.AOHR_EVENT, EventCodec.HRV_EVENT, EventCodec.SLEEP_PERIOD_INFO_2},
                 ds - DayHeart.LOOK_BACK_S, de)) {
             if (r.tag == EventCodec.GREEN_IBI_QUALITY) {
                 int[][] g = EventCodec.greenIbi(r.body);
                 if (g != null) for (int i = 0; i < g[0].length; i++) if (g[1][i] == 1 && EventCodec.plausibleIbi(g[0][i])) beats.add(r.unix, 60000.0 / g[0][i]);
             } else if (r.tag == EventCodec.AOHR_EVENT) {
                 int[][] a = EventCodec.aohr(r.body);
-                if (a != null) for (int i = 0; i < a[0].length; i++) if (EventCodec.plausibleHr(a[0][i])) beats.add(r.unix + i * EventCodec.AOHR_INTERVAL_S, a[0][i]);
+                if (a != null) for (int i = 0; i < a[0].length; i++) {
+                    double t = r.unix + i * EventCodec.AOHR_INTERVAL_S;
+                    if (EventCodec.plausibleHr(a[0][i]) && !out(t)) beats.add(t, a[0][i]);
+                }
             } else if (r.tag == EventCodec.HRV_EVENT) {
                 int[][] h = EventCodec.hrv(r.body);
-                if (h != null) for (int i = 0; i < h[0].length; i++) if (EventCodec.plausibleHr(h[0][i])) beats.add(r.unix + i * EventCodec.HRV_INTERVAL_S, h[0][i]);
+                if (h != null) for (int i = 0; i < h[0].length; i++) {
+                    double t = r.unix + i * EventCodec.HRV_INTERVAL_S;
+                    if (EventCodec.plausibleHr(h[0][i]) && !out(t)) beats.add(t, h[0][i]);
+                }
             } else {
                 EventCodec.SleepPeriod sp = EventCodec.sleepPeriod(r.body);
                 if (sp != null && EventCodec.plausibleHr(sp.avgHr)) beats.add(r.unix, sp.avgHr);
@@ -1316,6 +1420,15 @@ public final class Analyzer {
                 return super.getBoolean(name);
             }
         }
+    }
+
+    /** SQL that leaves out the events dated in a left out time within [from, to) (issue #254); empty when none is. */
+    String notLeftOut(double from, double to) {
+        StringBuilder sb = new StringBuilder();
+        for (double[] p : left.pieces(from, to)) {
+            sb.append(" AND NOT (unix >= ").append(p[0]).append(" AND unix < ").append(p[1]).append(')');
+        }
+        return sb.toString();
     }
 
     /** The last {@code n} values of a field from oldest to newest lists (NaN where missing). */

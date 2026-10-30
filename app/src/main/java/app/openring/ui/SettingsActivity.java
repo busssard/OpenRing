@@ -84,6 +84,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
             drafts = Drafts.fromArray(b.getStringArray("drafts"));
             sexChoice = b.getInt("sex", -1);
             detailChoice = b.getInt("detail", -1);
+            leftFrom = b.getLong("left_from", -1);
+            leftTo = b.getLong("left_to", -1);
             int[] modes = b.getIntArray("modes");
             // what the ring said holds only for a turn of the phone, not after Android ended the app hours ago
             if (modes != null && modes.length == featureModes.length && Drafts.recent(b.getLong("modes_at", 0), System.currentTimeMillis()))
@@ -108,6 +110,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         out.putStringArray("drafts", drafts.toArray());
         out.putInt("sex", sexChoice);
         out.putInt("detail", detailChoice);
+        out.putLong("left_from", leftFrom);
+        out.putLong("left_to", leftTo);
         // a switch or read still running would leave the saved states wrong: the new page shows "?" then
         if (!ringPending) {
             out.putIntArray("modes", featureModes);
@@ -243,6 +247,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             backupsCard = Ui.card(this);
             fillBackupsCard(p);
             root.addView(backupsCard);
+            advancedCard = Ui.card(this);
+            fillAdvancedCard();
+            root.addView(advancedCard);
             LinearLayout about = Ui.card(this);
             about.addView(Ui.caption(this, "About"));
             about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
@@ -494,6 +501,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         });
         root.addView(help);
 
+        // ---- advanced: a time someone else wore the ring (issue #254) ----
+        advancedCard = Ui.card(this);
+        fillAdvancedCard();
+        root.addView(advancedCard);
+
         // ---- danger ----
         LinearLayout danger = Ui.card(this);
         danger.addView(Ui.caption(this, "Careful"));
@@ -538,8 +550,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "Not a medical device."));
         root.addView(about);
         String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
-            "Careful", "About"};
-        View[] targets = {updates, ring, prof, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, danger, about};
+            "Advanced", "Careful", "About"};
+        View[] targets = {updates, ring, prof, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, advancedCard, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -559,7 +571,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         scrollToSection();
     }
 
-    private LinearLayout screenCard, gamesCard, backupsCard;
+    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard;
     /** Usage access as shown in the Screen time card, to refresh it only when it changed. */
     private boolean screenAllowedShown;
     /** The first read of the screen log was started (once per app run, even if the log was empty). */
@@ -898,6 +910,236 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }
     }
 
+    // ------------------------------------------------------------------- left out times (issue #254)
+
+    /** The time picked in the Advanced card, unix seconds; -1 until the card sets its default (yesterday, midnight to midnight). */
+    private long leftFrom = -1, leftTo = -1;
+    private TextView leftPreview, leftFromDay, leftFromTime, leftToDay, leftToTime;
+    /** A left out time is being added or removed (one at a time). */
+    private static boolean leftBusy;
+
+    private static final java.time.format.DateTimeFormatter PICK_DAY = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM yyyy", Locale.ENGLISH),
+            PICK_TIME = java.time.format.DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH);
+
+    /**
+     * Advanced (issue #254): leave out a time when someone else wore the ring, with a preview of what goes, and the list of
+     * left out times with Remove. Also in demo mode (the demo has its own history file).
+     */
+    void fillAdvancedCard() {
+        final LinearLayout card = advancedCard;
+        if (card == null) return;
+        card.removeAllViews();
+        final java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        if (leftFrom < 0 || leftTo <= 0) {
+            java.time.LocalDate today = java.time.LocalDate.now(z);
+            leftFrom = today.minusDays(1).atStartOfDay(z).toEpochSecond();
+            leftTo = today.atStartOfDay(z).toEpochSecond();
+        }
+        card.addView(Ui.caption(this, "Advanced"));
+        card.addView(Ui.gap(this, 4));
+        card.addView(Ui.text(this, "Leave out a time when someone else wore the ring", 15, Ui.TEXT, Ui.MEDIUM));
+        card.addView(Ui.gap(this, 4));
+        card.addView(Ui.body(this, "Their nights and values are left out of your charts, scores and usual values. The ring's data stays stored, "
+                + "and you can bring it back at any time."));
+        leftFromDay = Ui.smallButton(this, "", Ui.TEXT_2);
+        leftFromTime = Ui.smallButton(this, "", Ui.TEXT_2);
+        leftToDay = Ui.smallButton(this, "", Ui.TEXT_2);
+        leftToTime = Ui.smallButton(this, "", Ui.TEXT_2);
+        pickRow(card, "From", leftFromDay, leftFromTime, true);
+        pickRow(card, "To", leftToDay, leftToTime, false);
+        card.addView(Ui.gap(this, 8));
+        leftPreview = Ui.text(this, "", 13, Ui.TEXT_2, Ui.REGULAR);
+        card.addView(leftPreview);
+        showPicked();
+        action(card, "Leave out this time", Ui.SLEEP, new Runnable() {
+            @Override
+            public void run() {
+                leaveOut();
+            }
+        });
+        card.addView(Ui.gap(this, 12));
+        card.addView(Ui.divider(this));
+        card.addView(Ui.gap(this, 8));
+        card.addView(Ui.text(this, "Left out times", 12, Ui.TEXT_3, Ui.REGULAR));
+        java.util.List<double[]> rows;
+        try {
+            rows = Db.get(this).excluded();
+        } catch (RuntimeException e) {
+            rows = new java.util.ArrayList<double[]>();
+        }
+        if (rows.isEmpty()) {
+            card.addView(Ui.gap(this, 4));
+            card.addView(Ui.text(this, "Nothing is left out.", 14, Ui.TEXT, Ui.REGULAR));
+        }
+        for (final double[] r : rows) {
+            card.addView(Ui.gap(this, 6));
+            card.addView(Ui.text(this, app.openring.core.analysis.LeftOut.listLine(r[0], r[1], z), 14, Ui.TEXT, Ui.REGULAR));
+            small(card, "Remove", Ui.WARN, new Runnable() {
+                @Override
+                public void run() {
+                    confirm("Bring this time back?", app.openring.core.analysis.LeftOut.bringBackText(r[0], java.time.ZoneId.systemDefault()), new Runnable() {
+                        @Override
+                        public void run() {
+                            changeLeftOut(Double.NaN, Double.NaN, r[2]);
+                        }
+                    });
+                }
+            });
+        }
+        card.addView(Ui.gap(this, 8));
+        card.addView(Ui.text(this, Explain.LEFT_OUT, 12, Ui.TEXT_3, Ui.REGULAR));
+    }
+
+    /** "From" or "To" with a date and a time button, each opening Android's picker. */
+    void pickRow(LinearLayout card, String label, final TextView day, final TextView time, final boolean isFrom) {
+        card.addView(Ui.gap(this, 8));
+        card.addView(Ui.text(this, label, 12, Ui.TEXT_3, Ui.REGULAR));
+        LinearLayout row = Ui.hbox(this);
+        LinearLayout.LayoutParams la = new LinearLayout.LayoutParams(0, -2, 3);
+        la.setMargins(0, Ui.dp(this, 4), Ui.dp(this, 4), 0);
+        LinearLayout.LayoutParams lb = new LinearLayout.LayoutParams(0, -2, 2);
+        lb.setMargins(Ui.dp(this, 4), Ui.dp(this, 4), 0, 0);
+        row.addView(day, la);
+        row.addView(time, lb);
+        card.addView(row, Ui.matchWrap());
+        day.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                final java.time.ZoneId z = java.time.ZoneId.systemDefault();
+                final java.time.ZonedDateTime at = java.time.Instant.ofEpochSecond(isFrom ? leftFrom : leftTo).atZone(z);
+                new android.app.DatePickerDialog(SettingsActivity.this, new android.app.DatePickerDialog.OnDateSetListener() {
+                    @Override
+                    public void onDateSet(android.widget.DatePicker p, int y, int m, int d) {
+                        long t = java.time.LocalDate.of(y, m + 1, d).atTime(at.toLocalTime()).atZone(z).toEpochSecond();
+                        if (isFrom) leftFrom = t;
+                        else leftTo = t;
+                        showPicked();
+                    }
+                }, at.getYear(), at.getMonthValue() - 1, at.getDayOfMonth()).show();
+            }
+        });
+        time.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                final java.time.ZoneId z = java.time.ZoneId.systemDefault();
+                final java.time.ZonedDateTime at = java.time.Instant.ofEpochSecond(isFrom ? leftFrom : leftTo).atZone(z);
+                new android.app.TimePickerDialog(SettingsActivity.this, new android.app.TimePickerDialog.OnTimeSetListener() {
+                    @Override
+                    public void onTimeSet(android.widget.TimePicker p, int h, int m) {
+                        long t = at.toLocalDate().atTime(h, m).atZone(z).toEpochSecond();
+                        if (isFrom) leftFrom = t;
+                        else leftTo = t;
+                        showPicked();
+                    }
+                }, at.getHour(), at.getMinute(), true).show();
+            }
+        });
+    }
+
+    /** The picked times on their buttons, and the preview worked out in the background (it counts nights and hours). */
+    void showPicked() {
+        if (leftPreview == null) return;
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        leftFromDay.setText(java.time.Instant.ofEpochSecond(leftFrom).atZone(z).format(PICK_DAY));
+        leftFromTime.setText(java.time.Instant.ofEpochSecond(leftFrom).atZone(z).format(PICK_TIME));
+        leftToDay.setText(java.time.Instant.ofEpochSecond(leftTo).atZone(z).format(PICK_DAY));
+        leftToTime.setText(java.time.Instant.ofEpochSecond(leftTo).atZone(z).format(PICK_TIME));
+        final long a = leftFrom, b = leftTo;
+        final android.content.Context app = getApplicationContext();
+        new AsyncTask<Void, Void, String[]>() {
+            @Override
+            protected String[] doInBackground(Void... v) {
+                return leftText(app, a, b);
+            }
+
+            @Override
+            protected void onPostExecute(String[] r) {
+                SettingsActivity s = shownNow();
+                if (s == null || s.leftPreview == null || s.leftFrom != a || s.leftTo != b) return; // another time was picked meanwhile
+                s.leftPreview.setText(r[1] != null ? r[1] : r[0]);
+                s.leftPreview.setTextColor(r[1] != null ? Ui.WARN : Ui.TEXT_2);
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** {preview, problem} for leaving out [a, b); the problem is null when it can be saved. Reads the history. */
+    static String[] leftText(android.content.Context c, long a, long b) {
+        try {
+            Db db = Db.get(c);
+            java.time.ZoneId z = java.time.ZoneId.systemDefault();
+            double now = System.currentTimeMillis() / 1000.0;
+            String problem = db.leftOut().problem(a, b, now);
+            if (problem != null) return new String[] {null, problem};
+            return new String[] {app.openring.core.analysis.LeftOut.preview(a, b, db.nightsOverlapping(a, b), db.hoursWithReadings(a, b),
+                    java.time.LocalDate.now(z), z, Analyzer.LONG_RUN_DAYS), null};
+        } catch (RuntimeException e) {
+            return new String[] {"", null};
+        }
+    }
+
+    /** "Leave out this time": checked again, then the row and the analysis in the background. */
+    void leaveOut() {
+        final long a = leftFrom, b = leftTo;
+        final android.content.Context app = getApplicationContext();
+        new AsyncTask<Void, Void, String[]>() {
+            @Override
+            protected String[] doInBackground(Void... v) {
+                return leftText(app, a, b);
+            }
+
+            @Override
+            protected void onPostExecute(String[] r) {
+                SettingsActivity s = shownNow();
+                if (s == null) return;
+                if (r[1] != null) s.problem(r[1]);
+                else s.changeLeftOut(a, b, Double.NaN);
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /**
+     * Adds [a, b) ({@code made} NaN) or removes the left out time {@code made}, then analyses (Analyzer.leaveOut, bringBack). The
+     * result goes to the Settings screen shown now, also after a turn of the phone.
+     */
+    void changeLeftOut(final double a, final double b, final double made) {
+        if (leftBusy) {
+            toast("Working, please wait");
+            return;
+        }
+        leftBusy = true;
+        final boolean add = Double.isNaN(made);
+        final android.content.Context app = getApplicationContext();
+        toast(add ? "Leaving out this time" : "Bringing this time back");
+        new AsyncTask<Void, Void, Boolean>() {
+            @Override
+            protected Boolean doInBackground(Void... v) {
+                try {
+                    if (add) Analyzer.leaveOut(app, a, b, null);
+                    else Analyzer.bringBack(app, made, null);
+                    RingManager.get(app).log(add ? "a time was left out" : "a left out time was brought back");
+                    return true;
+                } catch (Throwable e) {
+                    // the change is stored and the analysis rolled back; the next analysis finishes it (issue #230)
+                    RingManager.get(app).log("left out time: " + e);
+                    return false;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Boolean ok) {
+                leftBusy = false;
+                SettingsActivity s = shownNow();
+                if (s == null) {
+                    if (ok) Toast.makeText(app, add ? "Left out" : "Brought back", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (ok) s.say(add ? "Left out. Your charts and scores are updated." : "Brought back. Your charts and scores are updated.");
+                else s.problem(Texts.ANALYSIS_FAILED);
+                s.fillAdvancedCard();
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
     /** Android's folder picker; the app keeps its permission for the folder (no storage permission needed). */
     void pickFolder() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -961,13 +1203,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Opens at a card when started with the extra {@code section} ("stages", "screen", "games" or "backups"), used by the screen test.
+     * Opens at a card when started with the extra {@code section} ("stages", "screen", "games", "backups" or "advanced"), used by the screen test.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
         final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
-                : "backups".equals(section) ? backupsCard : null;
+                : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
         // the demo page is short: room below the last card, so every card can reach the top (issue #160)
         root.addView(new View(this), new LinearLayout.LayoutParams(1, getResources().getDisplayMetrics().heightPixels));

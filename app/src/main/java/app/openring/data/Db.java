@@ -24,7 +24,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 6;
+    static final int VERSION = 7;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -87,6 +87,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo4(db);
         upgradeTo5(db);
         upgradeTo6(db);
+        upgradeTo7(db);
     }
 
     @Override
@@ -96,6 +97,15 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 4) upgradeTo4(db);
         if (oldV < 5) upgradeTo5(db);
         if (oldV < 6) upgradeTo6(db);
+        if (oldV < 7) upgradeTo7(db);
+    }
+
+    /**
+     * v7: the times the person left out because someone else wore the ring (issue #254). Only adds a table, safe to run
+     * twice; an older database (and a restored older backup) gets it empty, so nothing is left out.
+     */
+    private static void upgradeTo7(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS excluded (start REAL NOT NULL, stop REAL NOT NULL, made REAL PRIMARY KEY, note TEXT)");
     }
 
     /**
@@ -1104,6 +1114,86 @@ public final class Db extends SQLiteOpenHelper {
         if (until > 0 && unix < until) put("analyzed_until", Math.max(1, (long) unix));
     }
 
+    // ------------------------------------------------------------- left out times (issue #254)
+
+    /** The left out times as stored, {start, stop, made}, oldest start first (the analysis merges them, {@code LeftOut}). */
+    public List<double[]> excluded() {
+        List<double[]> out = new ArrayList<double[]>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT start, stop, made FROM excluded ORDER BY start, made", null);
+        try {
+            while (c.moveToNext()) out.add(new double[] {c.getDouble(0), c.getDouble(1), c.getDouble(2)});
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** The merged left out times; nothing left out when there are none (no table yet counts as none). */
+    public app.openring.core.analysis.LeftOut leftOut() {
+        return app.openring.core.analysis.LeftOut.of(excluded());
+    }
+
+    /**
+     * Leaves out [start, stop) (issue #254): the row and the lowered analysis mark ({@link #reanalyseFrom}, two days before
+     * {@code start} are analysed again) in one commit, so a stop before the analysis still redoes those days. The raw
+     * events are not touched. {@code made} (unix seconds, unique) names the row; a row with the same {@code made} stays.
+     */
+    public void addExcluded(double start, double stop, double made) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.execSQL("INSERT OR IGNORE INTO excluded(start, stop, made) VALUES (?, ?, ?)", new Object[] {start, stop, made});
+            reanalyseFrom(start);
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** Brings the left out time {@code made} back: the row goes and its days are marked to analyse, in one commit. False when there was none. */
+    public boolean removeExcluded(double made) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            Cursor c = db.rawQuery("SELECT start FROM excluded WHERE made = ?", new String[] {String.valueOf(made)});
+            double start;
+            try {
+                if (!c.moveToFirst()) return false;
+                start = c.getDouble(0);
+            } finally {
+                c.close();
+            }
+            db.execSQL("DELETE FROM excluded WHERE made = ?", new Object[] {made});
+            reanalyseFrom(start);
+            db.setTransactionSuccessful();
+            return true;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** Stored nights that overlap [from, to), for the preview in Settings. */
+    public long nightsOverlapping(double from, double to) {
+        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM nights WHERE start < ? AND stop > ?", new String[] {String.valueOf(to), String.valueOf(from)});
+        try {
+            return c.moveToFirst() ? c.getLong(0) : 0;
+        } finally {
+            c.close();
+        }
+    }
+
+    /** Distinct hours in [from, to) with a heart rate or skin temperature event, for the preview in Settings. */
+    public long hoursWithReadings(double from, double to) {
+        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(DISTINCT CAST(unix / 3600 AS INTEGER)) FROM events WHERE tag IN ("
+                + EventCodec.GREEN_IBI_QUALITY + "," + EventCodec.AOHR_EVENT + "," + EventCodec.HRV_EVENT + "," + EventCodec.TEMP_EVENT + ","
+                + EventCodec.SLEEP_TEMP_EVENT + ") AND unix >= ? AND unix < ?", new String[] {String.valueOf(from), String.valueOf(to)});
+        try {
+            return c.moveToFirst() ? c.getLong(0) : 0;
+        } finally {
+            c.close();
+        }
+    }
+
     // ---------------------------------------------------------------------------- zones
 
     /**
@@ -1230,6 +1320,7 @@ public final class Db extends SQLiteOpenHelper {
         {"apps", 4, new String[] {"pkg", "start", "stop"}},
         {"zones", 5, new String[] {"start", "stop", "id"}},
         {"screen_reads", 6, new String[] {"start", "stop"}},
+        {"excluded", 7, new String[] {"start", "stop", "made", "note"}},
     };
 
     /**
@@ -1463,7 +1554,7 @@ public final class Db extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones", "screen_reads"}) db.execSQL("DELETE FROM " + t);
+            for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones", "screen_reads", "excluded"}) db.execSQL("DELETE FROM " + t);
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();

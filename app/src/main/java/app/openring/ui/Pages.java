@@ -70,8 +70,13 @@ public final class Pages {
         fl.setMargins(0, Ui.dp(c, 12), 0, 0);
         rings.addView(find, fl);
         root.addView(rings);
+        // a time left out because someone else wore the ring (issue #254); a day left out as a whole shows only this
+        View left = leftOutCard(c, d);
+        if (left != null) root.addView(left);
 
-        if (d.empty()) {
+        if (d.empty() && d.allLeftOut()) {
+            // nothing to show: the Left out card above says why
+        } else if (d.empty()) {
             LinearLayout e = Ui.card(c);
             e.addView(Ui.h2(c, "No data for this day yet"));
             e.addView(Ui.gap(c, 6));
@@ -224,7 +229,7 @@ public final class Pages {
      * ones Wake ups counts, issue #70), lowest HR, waking. Times are rounded to whole minutes so the
      * clock times and the minutes between them agree.
      */
-    static View timeline(Context c, JSONObject n, java.time.ZoneId z) {
+    static View timeline(Context c, JSONObject n, java.time.ZoneId z, List<double[]> leftOut) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Night timeline"));
         String note = n.has("stage_detail") ? WakeUps.levelNote(n.optInt("stage_detail")) : null;
@@ -235,6 +240,15 @@ public final class Pages {
         double s = Json.d(n, "start"), e = Json.d(n, "end");
         double ep = st.length == 0 ? 30 : (e - s) / st.length;
         List<String[]> rows = new ArrayList<String[]>();
+        // a time left out because someone else wore the ring next to this night (issue #254): before or after it
+        List<String[]> leftBefore = new ArrayList<String[]>(), leftAfter = new ArrayList<String[]>();
+        for (double[] r : leftOut) {
+            if (r[1] < s - 3600 || r[0] > e + 3600) continue;
+            String[] row = {minute(r[0], z), app.openring.core.analysis.LeftOut.timelineRow(r[0], r[1], z)};
+            if (r[1] <= s + 60) leftBefore.add(row);
+            else leftAfter.add(row);
+        }
+        rows.addAll(leftBefore);
         rows.add(new String[] {minute(s, z), "Start of the sleep window"});
         int first = -1, last = -1;
         for (int i = 0; i < st.length; i++) if (st[i] >= 1 && st[i] <= 3) {
@@ -259,6 +273,7 @@ public final class Pages {
             rows.add(new String[] {minute(s + (last + 1) * ep, z), "Woke up"});
         }
         rows.add(new String[] {minute(e, z), "End of the sleep window"});
+        rows.addAll(leftAfter);
         for (String[] r : rows) {
             LinearLayout row = Ui.hbox(c);
             row.setPadding(0, Ui.dp(c, 3), 0, Ui.dp(c, 3));
@@ -273,6 +288,24 @@ public final class Pages {
             card.addView(Ui.text(c, "Also " + brief + (brief == 1 ? " moment" : " moments")
                     + " awake under a minute, drawn on the chart but not counted as wake ups.", 11, Ui.TEXT_3, Ui.REGULAR));
         }
+        return card;
+    }
+
+    /**
+     * The card "Left out" on Today, Sleep and Activity (issue #254): each time left out on this day, how to bring it back
+     * and what leaving out does. Null when nothing of the day is left out.
+     */
+    static View leftOutCard(Context c, DayData d) {
+        List<double[]> l = d.leftOutToday();
+        if (l.isEmpty()) return null;
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Left out"));
+        for (double[] r : l) {
+            card.addView(Ui.gap(c, 4));
+            card.addView(Ui.body(c, app.openring.core.analysis.LeftOut.card(r[0], r[1], d.zone)));
+        }
+        card.addView(Ui.gap(c, 6));
+        card.addView(Ui.text(c, Explain.LEFT_OUT, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
     }
 
@@ -314,6 +347,8 @@ public final class Pages {
                 n == null ? "No main sleep recorded for this day" : "Total sleep " + Ui.hm(Json.d(n, "asleep_min"))
                         + "  ·  " + minute(Json.d(n, "start"), nz) + " to " + minute(Json.d(n, "end"), nz)));
         if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
+        View left = leftOutCard(c, d);
+        if (left != null) root.addView(left);
         if (n == null) {
             root.addView(infoCard(c, "About sleep", Explain.SLEEP));
             LinearLayout how = Ui.card(c);
@@ -395,7 +430,7 @@ public final class Pages {
         }
         root.addView(hyp);
 
-        root.addView(timeline(c, n, nz));
+        root.addView(timeline(c, n, nz, d.leftOut));
         root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors", null, n));
         root.addView(infoCard(c, "About the sleep score", Explain.SLEEP));
 
@@ -844,6 +879,8 @@ public final class Pages {
         double active = Json.d(day, "active_kcal"), target = Json.d(day, "target_kcal");
         root.addView(hero(c, d.score("activity_score"), "Activity", Ui.ACTIVE,
                 day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal"));
+        View left = leftOutCard(c, d);
+        if (left != null) root.addView(left);
         if (day == null) return root;
 
         LinearLayout goal = Ui.card(c);
@@ -866,6 +903,11 @@ public final class Pages {
         intensity.addView(stageRow(c, "Low", low, tot, 0xFFFFDDA8));
         intensity.addView(stageRow(c, "Inactive", inact, tot, Ui.TEXT_3));
         intensity.addView(stageRow(c, "Rest", rest, tot, Ui.STAGE_LIGHT));
+        double leftS = d.leftOutSeconds();
+        if (leftS >= 60) {
+            intensity.addView(Ui.gap(c, 4));
+            intensity.addView(Ui.text(c, app.openring.core.analysis.LeftOut.activityLine(leftS), 12, Ui.TEXT_3, Ui.REGULAR));
+        }
         root.addView(intensity);
 
         JSONArray prof = day.optJSONArray("met_profile");
@@ -1251,7 +1293,8 @@ public final class Pages {
         }
         // the middle label at noon, also when the day has 23 or 25 hours
         double noon = d.date.atTime(12, 0).atZone(d.zone).toEpochSecond();
-        hr.addView(new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon), Ui.sized(c, -1, 140));
+        // a time left out because someone else wore the ring: a grey band, readable by touch (issue #254)
+        hr.addView(new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon).leftOut(d.leftOutPieces()), Ui.sized(c, -1, 140));
         hr.addView(Ui.gap(c, 10));
         TextView live = Ui.button(c, "Measure live heart rate and HRV", Ui.HEART, false);
         live.setOnClickListener(new View.OnClickListener() {

@@ -5,6 +5,7 @@ import android.content.Context;
 import java.util.List;
 
 import app.openring.core.EventCodec;
+import app.openring.core.analysis.LeftOut;
 
 /**
  * The most recent readings the ring stored (from the last sync), and whether it looks worn.
@@ -30,15 +31,26 @@ public final class RightNow {
      * ({@link EventCodec#plausibleHr}, for beat intervals {@link EventCodec#plausibleIbi}, issue #148).
      */
     static double[] newest(Db.Row row) {
+        return newest(row, LeftOut.NONE);
+    }
+
+    /** As {@link #newest(Db.Row)}, without the values measured in a time left out because someone else wore the ring (issue #254). */
+    static double[] newest(Db.Row row, LeftOut left) {
         if (row.tag == EventCodec.GREEN_IBI_QUALITY) {
             int[][] g = EventCodec.greenIbi(row.body);
-            if (g != null) for (int i = g[0].length - 1; i >= 0; i--) if (g[1][i] == 1 && EventCodec.plausibleIbi(g[0][i])) return new double[] {60000.0 / g[0][i], row.unix};
+            if (g != null && !left.contains(row.unix)) for (int i = g[0].length - 1; i >= 0; i--) if (g[1][i] == 1 && EventCodec.plausibleIbi(g[0][i])) return new double[] {60000.0 / g[0][i], row.unix};
         } else if (row.tag == EventCodec.AOHR_EVENT) {
             int[][] a = EventCodec.aohr(row.body);
-            if (a != null) for (int i = a[0].length - 1; i >= 0; i--) if (EventCodec.plausibleHr(a[0][i])) return new double[] {a[0][i], row.unix + i * EventCodec.AOHR_INTERVAL_S};
+            if (a != null) for (int i = a[0].length - 1; i >= 0; i--) {
+                double t = row.unix + i * EventCodec.AOHR_INTERVAL_S;
+                if (EventCodec.plausibleHr(a[0][i]) && !left.contains(t)) return new double[] {a[0][i], t};
+            }
         } else {
             int[][] h = EventCodec.hrv(row.body);
-            if (h != null) for (int i = h[0].length - 1; i >= 0; i--) if (EventCodec.plausibleHr(h[0][i])) return new double[] {h[0][i], row.unix + i * EventCodec.HRV_INTERVAL_S};
+            if (h != null) for (int i = h[0].length - 1; i >= 0; i--) {
+                double t = row.unix + i * EventCodec.HRV_INTERVAL_S;
+                if (EventCodec.plausibleHr(h[0][i]) && !left.contains(t)) return new double[] {h[0][i], t};
+            }
         }
         return null;
     }
@@ -112,28 +124,33 @@ public final class RightNow {
         Db db = Db.get(c);
         RightNow r = new RightNow();
         double since = System.currentTimeMillis() / 1000.0 - 36 * 3600;
-        List<Db.Row> temps = db.latest(TEMP_TAGS, since, 1);
-        if (!temps.isEmpty()) {
-            double[] t = EventCodec.temps(temps.get(0).body);
+        // readings in a time left out because someone else wore the ring are skipped (issue #254); the newest one
+        // outside it counts. Find my ring and Live are about the ring itself and keep them
+        LeftOut left = db.leftOut();
+        int more = left.isEmpty() ? 1 : 2000;
+        for (Db.Row row : db.latest(TEMP_TAGS, since, more)) {
+            if (left.contains(row.unix)) continue;
+            double[] t = EventCodec.temps(row.body);
             if (t != null && t.length > 0) {
                 r.skinTemp = t[0];
-                r.skinTempAt = temps.get(0).unix;
+                r.skinTempAt = row.unix;
                 // only trust the wear verdict for a reading from the last 20 minutes
                 if (System.currentTimeMillis() / 1000.0 - r.skinTempAt < 20 * 60) r.worn = t[0] >= WORN_MIN_C ? 1 : 0;
             }
+            break;
         }
         // the newest value by its own time, not its event's start (an HRV event's last value is 25 minutes
         // after it, issue #97), so an event that began earlier but reaches later can win
-        for (Db.Row row : db.latest(HR_TAGS, since, 60)) {
-            double[] v = newest(row);
+        for (Db.Row row : db.latest(HR_TAGS, since, 60 * more)) {
+            double[] v = newest(row, left);
             if (v != null && (Double.isNaN(r.hrAt) || v[1] > r.hrAt)) {
                 r.hr = Math.round(v[0]);
                 r.hrAt = v[1];
             }
         }
-        for (Db.Row row : db.latest(new int[] {EventCodec.SPO2_EVENT}, since, 30)) {
+        for (Db.Row row : db.latest(new int[] {EventCodec.SPO2_EVENT}, since, 30 * more)) {
             int[] s = EventCodec.spo2(row.body);
-            if (s == null) continue;
+            if (s == null || left.contains(row.unix)) continue;
             double sum = 0;
             int n = 0;
             for (int v : s) if (v >= 70 && v <= 100) { sum += v; n++; }

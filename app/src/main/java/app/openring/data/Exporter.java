@@ -28,9 +28,14 @@ public final class Exporter {
         Writer w = new OutputStreamWriter(os, StandardCharsets.UTF_8);
         StringBuilder head = new StringBuilder();
         for (String col : COLS) head.append(col).append(',');
-        head.append("readiness_score,activity_score\n");
+        // the last column: minutes of the day left out because someone else wore the ring (issue #254). The other
+        // columns never hold left out data: the analysis drops it before anything is stored
+        head.append("readiness_score,activity_score,left_out_min\n");
         w.write(head.toString());
-        List<String[]> days = Db.get(c).daysJson("0000-00-00", "9999-99-99");
+        Db db = Db.get(c);
+        app.openring.core.analysis.LeftOut left = db.leftOut();
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        List<String[]> days = db.daysJson("0000-00-00", "9999-99-99");
         for (String[] d : days) {
             JSONObject o = Json.parse(d[1]);
             if (o == null) continue;
@@ -41,10 +46,22 @@ public final class Exporter {
             }
             JSONObject r = o.optJSONObject("readiness"), a = o.optJSONObject("activity_score");
             row.append(r == null ? "" : String.valueOf(r.optInt("value"))).append(',');
-            row.append(a == null ? "" : String.valueOf(a.optInt("value"))).append('\n');
+            row.append(a == null ? "" : String.valueOf(a.optInt("value"))).append(',');
+            row.append(leftOutMin(left, d[0], z)).append('\n');
             w.write(row.toString());
         }
         w.flush();
+    }
+
+    /** Minutes of {@code day} (midnight to midnight in {@code z}) that are left out (issue #254), 0 for a date it cannot read. */
+    static long leftOutMin(app.openring.core.analysis.LeftOut left, String day, java.time.ZoneId z) {
+        if (left.isEmpty()) return 0;
+        try {
+            java.time.LocalDate d = java.time.LocalDate.parse(day);
+            return Math.round(left.seconds(d.atStartOfDay(z).toEpochSecond(), d.plusDays(1).atStartOfDay(z).toEpochSecond()) / 60);
+        } catch (RuntimeException e) {
+            return 0;
+        }
     }
 
     /** The copy of the history did not pass its check (issue #115); nothing was written to the file. */

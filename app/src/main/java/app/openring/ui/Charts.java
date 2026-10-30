@@ -471,6 +471,35 @@ public final class Charts {
             return this;
         }
 
+        /** Times left out because someone else wore the ring (issue #254), each {start, stop}: grey bands, read by touch. */
+        private java.util.List<double[]> bands = java.util.Collections.emptyList();
+        private final Paint bandPaint = new Paint();
+
+        public LineChart leftOut(java.util.List<double[]> pieces) {
+            if (pieces != null) bands = pieces;
+            bandPaint.setColor(Ui.alpha(Ui.TEXT_3, 0.22f));
+            return this;
+        }
+
+        /** Draws the grey bands between {@code top} and {@code bottom}. */
+        private void drawBands(Canvas cv, float left, float w, float top, float bottom) {
+            for (double[] b : bands) {
+                float x0 = (float) (left + (Math.max(from, b[0]) - from) / (to - from) * (w - left));
+                float x1 = (float) (left + (Math.min(to, b[1]) - from) / (to - from) * (w - left));
+                if (x1 > x0) cv.drawRect(x0, top, x1, bottom, bandPaint);
+            }
+        }
+
+        /** The band under {@code x}, null when there is none. */
+        private double[] bandAt(float x, float left, float w) {
+            for (double[] b : bands) {
+                float x0 = (float) (left + (Math.max(from, b[0]) - from) / (to - from) * (w - left));
+                float x1 = (float) (left + (Math.min(to, b[1]) - from) / (to - from) * (w - left));
+                if (x >= x0 && x <= x1) return b;
+            }
+            return null;
+        }
+
         /**
          * A live chart (the ring finder, issue #74): the time axis reads "2 min ago" to "now" and the
          * readout says how long ago; the automatic y range spans at least {@code minSpan}.
@@ -493,9 +522,23 @@ public final class Charts {
         protected void onDraw(Canvas cv) {
             float w = getWidth(), h = getHeight();
             float left = Ui.dp(getContext(), 30), bottom = h - Ui.dp(getContext(), 18), top = Ui.dp(getContext(), 8);
+            boolean banded = !bands.isEmpty() && !daily && to > from;
+            if (banded) drawBands(cv, left, w, top, bottom);
             if (series.size() == 0) {
                 txt.setTextAlign(Paint.Align.CENTER);
-                cv.drawText(emptyText, w / 2, h / 2, txt);
+                if (!banded) {
+                    cv.drawText(emptyText, w / 2, h / 2, txt);
+                    return;
+                }
+                // a day left out as a whole: the band with its time axis, readable by touch
+                float base = h - Ui.dp(getContext(), 3);
+                txt.setTextAlign(Paint.Align.LEFT);
+                cv.drawText(clockOrDate(from), left, base, txt);
+                txt.setTextAlign(Paint.Align.RIGHT);
+                cv.drawText(clockOrDate(to), w, base, txt);
+                txt.setTextAlign(Paint.Align.LEFT);
+                double[] b = Float.isNaN(scrubX) ? null : bandAt(scrubX, left, w);
+                if (b != null) drawTip(cv, scrubX, Ui.dp(getContext(), 22), bottom, app.openring.core.analysis.LeftOut.bandTip(Math.max(from, b[0]), Math.min(to, b[1]), zone));
                 return;
             }
             double lo = yMin, hi = yMax;
@@ -611,7 +654,11 @@ public final class Charts {
             txt.setTextAlign(Paint.Align.RIGHT);
             cv.drawText(clockOrDate(daily ? to - 43200 : to), w, base, txt);
             txt.setTextAlign(Paint.Align.LEFT);
-            if (!Float.isNaN(scrubX) && shown > 0) {
+            double[] band = banded && !Float.isNaN(scrubX) ? bandAt(scrubX, left, w) : null;
+            if (band != null) {
+                // a touch on a left out time reads it, not the nearest value outside it (issue #254)
+                drawTip(cv, scrubX, Ui.dp(getContext(), 22), bottom, app.openring.core.analysis.LeftOut.bandTip(Math.max(from, band[0]), Math.min(to, band[1]), zone));
+            } else if (!Float.isNaN(scrubX) && shown > 0) {
                 int best = 0;
                 for (int k = 1; k < shown; k++) if (Math.abs(xs[k] - scrubX) < Math.abs(xs[best] - scrubX)) best = k;
                 double t = series.t(idx[best]);
