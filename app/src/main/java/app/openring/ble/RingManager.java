@@ -484,6 +484,10 @@ public final class RingManager {
                 Session s = null;
                 try {
                     s = open(false, exclude);
+                    // a stop that came while open() connected found no client to cancel (current was still null);
+                    // open() set current before this check and both are volatile, so one of the two sees the other
+                    // and the next request ends the sync as stopped (issue #193)
+                    if (cancelRequested) s.client.cancel();
                     res.events += syncSession(s, key, prefs);
                     res.ok = true;
                     res.message = "Sync complete";

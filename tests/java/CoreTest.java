@@ -903,6 +903,7 @@ public class CoreTest {
         liveSessions();
         demoRing();
         liveScreen();
+        backgroundJob();
         demoLive();
         liveFeed();
         requests();
@@ -3593,6 +3594,42 @@ public class CoreTest {
         String g = SyncError.game(SyncError.DEMO_RING);
         eq("demo ring: game text", g, "Ring motion stopped. The ring is not used in demo mode. Touch steering works meanwhile.");
         check("demo ring: game text fits", gameFits(g));
+    }
+
+    /** Issue #193: opening the app keeps a pending or running background job instead of replacing (and so stopping) it. */
+    static void backgroundJob() {
+        String svc = "app.openring/.sync.SyncJob";
+        BackgroundJob.Spec want = BackgroundJob.wanted(svc);
+        eq("background job: every 3 hours", want.interval, 3 * 60 * 60 * 1000L);
+        eq("background job: within the last hour", want.flex, 60 * 60 * 1000L);
+        check("background job: periodic, persisted, battery not low", want.periodic && want.persisted && want.batteryNotLow);
+        BackgroundJob.Spec same = new BackgroundJob.Spec(svc, true, 3 * 60 * 60 * 1000L, 60 * 60 * 1000L, true, true);
+        check("background job: an equal job is equal", same.equals(want) && same.hashCode() == want.hashCode());
+        for (int i = 1; i <= 3; i++) {
+            eq("background job: resume " + i + " with the same job pending or running keeps it", BackgroundJob.decide(true, true, same, want), BackgroundJob.Action.KEEP);
+        }
+        eq("background job: none pending schedules", BackgroundJob.decide(true, true, null, want), BackgroundJob.Action.SCHEDULE);
+        BackgroundJob.Spec[] differ = {
+            new BackgroundJob.Spec(svc, true, 2 * 60 * 60 * 1000L, 60 * 60 * 1000L, true, true),
+            new BackgroundJob.Spec(svc, true, 3 * 60 * 60 * 1000L, 30 * 60 * 1000L, true, true),
+            new BackgroundJob.Spec(svc, true, 3 * 60 * 60 * 1000L, 60 * 60 * 1000L, false, true),
+            new BackgroundJob.Spec(svc, true, 3 * 60 * 60 * 1000L, 60 * 60 * 1000L, true, false),
+            new BackgroundJob.Spec("other/.Job", true, 3 * 60 * 60 * 1000L, 60 * 60 * 1000L, true, true),
+            new BackgroundJob.Spec(null, true, 3 * 60 * 60 * 1000L, 60 * 60 * 1000L, true, true),
+            new BackgroundJob.Spec(svc, false, 3 * 60 * 60 * 1000L, 60 * 60 * 1000L, true, true),
+        };
+        for (int i = 0; i < differ.length; i++) {
+            check("background job: differing job " + i + " is not equal", !differ[i].equals(want) && !want.equals(differ[i]));
+            eq("background job: differing job " + i + " is replaced", BackgroundJob.decide(true, true, differ[i], want), BackgroundJob.Action.SCHEDULE);
+        }
+        check("background job: null service equals only null service", differ[5].equals(new BackgroundJob.Spec(null, true, 3 * 60 * 60 * 1000L, 60 * 60 * 1000L, true, true)));
+        check("background job: not equal to other things", !want.equals(null) && !want.equals(svc));
+        eq("background job: off with a job pending cancels it", BackgroundJob.decide(false, true, same, want), BackgroundJob.Action.CANCEL);
+        eq("background job: off with none pending does nothing", BackgroundJob.decide(false, true, null, want), BackgroundJob.Action.KEEP);
+        eq("background job: pending unreadable, on schedules as before", BackgroundJob.decide(true, false, null, want), BackgroundJob.Action.SCHEDULE);
+        eq("background job: pending unreadable, off cancels as before", BackgroundJob.decide(false, false, null, want), BackgroundJob.Action.CANCEL);
+        check("background job: the log text names the period", want.toString().contains("every 180 min (flex 60)") && want.toString().contains("battery not low"));
+        check("background job: a one off job says so", differ[6].toString().contains(" once") && !differ[2].toString().contains("persisted"));
     }
 
     /** Issues #185 and #187: Live measures only in front, and in demo mode only made up readings. */

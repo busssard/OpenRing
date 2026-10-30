@@ -8,6 +8,7 @@ import android.content.ComponentName;
 import android.content.Context;
 
 import app.openring.ble.RingManager;
+import app.openring.core.BackgroundJob;
 import app.openring.data.Prefs;
 
 /**
@@ -17,18 +18,45 @@ import app.openring.data.Prefs;
 public final class SyncJob extends JobService {
     static final int JOB_ID = 4711;
 
+    /**
+     * Schedules the job, keeps it or cancels it, as the settings say. Called on every resume of the main
+     * screen, so an equal pending job is kept: {@code schedule} would replace it, and Android stops a job
+     * that runs when it is replaced, which cut off background syncs whenever the app was opened (issue #193).
+     */
     public static void schedule(Context c) {
         JobScheduler js = (JobScheduler) c.getSystemService(Context.JOB_SCHEDULER_SERVICE);
-        if (!Prefs.of(c).backgroundSync() || !Prefs.of(c).hasKey()) {
-            js.cancel(JOB_ID);
-            return;
+        ComponentName service = new ComponentName(c, SyncJob.class);
+        BackgroundJob.Spec wanted = BackgroundJob.wanted(service.flattenToString());
+        boolean known = true;
+        BackgroundJob.Spec pending = null;
+        try {
+            JobInfo p = js.getPendingJob(JOB_ID);
+            if (p != null) {
+                pending = new BackgroundJob.Spec(p.getService() == null ? null : p.getService().flattenToString(),
+                        p.isPeriodic(), p.getIntervalMillis(), p.getFlexMillis(), p.isPersisted(), p.isRequireBatteryNotLow());
+            }
+        } catch (RuntimeException e) {
+            known = false;
         }
-        JobInfo info = new JobInfo.Builder(JOB_ID, new ComponentName(c, SyncJob.class))
-                .setPeriodic(3 * 60 * 60 * 1000L, 60 * 60 * 1000L)
-                .setPersisted(true)
-                .setRequiresBatteryNotLow(true)
-                .build();
-        js.schedule(info);
+        Prefs prefs = Prefs.of(c);
+        switch (BackgroundJob.decide(prefs.backgroundSync() && prefs.hasKey(), known, pending, wanted)) {
+            case CANCEL:
+                js.cancel(JOB_ID);
+                RingManager.get(c).log("background sync off");
+                break;
+            case SCHEDULE:
+                JobInfo info = new JobInfo.Builder(JOB_ID, service)
+                        .setPeriodic(BackgroundJob.INTERVAL_MS, BackgroundJob.FLEX_MS)
+                        .setPersisted(true)
+                        .setRequiresBatteryNotLow(true)
+                        .build();
+                js.schedule(info);
+                RingManager.get(c).log("background sync scheduled" + (pending != null ? " (replaced " + pending + ")" : ""));
+                break;
+            default:
+                // the same job is pending or running: leave it, so a running sync goes on (issue #193)
+                break;
+        }
     }
 
     /** This job's sync, so a stop by Android ends only it (issue #43). */
