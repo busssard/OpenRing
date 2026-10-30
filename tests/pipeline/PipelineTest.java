@@ -3608,12 +3608,12 @@ public class PipelineTest {
         check(step + ": rows written are the rows that changed", fresh.changed == changedRows, fresh.changed + " / " + changedRows);
         double from = Double.NaN;
         for (int i = 0; i < start.size(); i++) {
-            if (Arrays.equals(start.get(i), mine.get(i))) continue;
+            if (start.get(i)[2] == mine.get(i)[2]) continue;
             for (long bits : new long[] {start.get(i)[2], mine.get(i)[2]}) {
                 if (bits != Long.MIN_VALUE && !(Double.longBitsToDouble(bits) >= from)) from = Double.longBitsToDouble(bits);
             }
         }
-        check(step + ": the earliest old or new date of a row written is reported (#188)", Double.compare(fresh.changedFrom, from) == 0,
+        check(step + ": the earliest old or new date of a row whose date changed is reported (#188)", Double.compare(fresh.changedFrom, from) == 0,
                 fresh.changedFrom + " / " + from);
         Db.TimeReport again = db.rebuildTime(now);
         check(step + ": a second run writes nothing", again.changed == 0 && differences(timeRows(db), theirs) == 0, again.changed);

@@ -224,6 +224,8 @@ public final class Analyzer {
         log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written, %d read, %s",
                 t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed, t.rowsRead,
                 t.full == null ? "dated the new part only" : "all events dated again (" + t.full + ")"));
+        // a date that changed lowered analyzed_until already, in the dating's own commit (issue #188)
+        if (!Double.isNaN(t.changedFrom)) log.log("dates written from " + date(t.changedFrom) + " on");
         long lastDated = db.kvLong("dated_count", -1), lastTotal = db.kvLong("event_count", -1);
         // the checks below only lower analyzed_until ("analyse again from here"), so they are stored at once: a run that
         // fails after them is done again, never skipped (issue #230)

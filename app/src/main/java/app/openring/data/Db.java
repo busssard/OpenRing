@@ -261,6 +261,9 @@ public final class Db extends SQLiteOpenHelper {
                 rep = allTime(db, nowUnix);
                 rep.full = why;
             }
+            // dates changed: those days are analysed again (issue #188). Stored in this commit with the dates, so a stop
+            // between the dating and the analysis cannot lose it; it only ever lowers analyzed_until
+            if (!Double.isNaN(rep.changedFrom)) reanalyseFrom(rep.changedFrom);
             db.setTransactionSuccessful();
             return rep;
         } finally {
@@ -319,7 +322,7 @@ public final class Db extends SQLiteOpenHelper {
         SQLiteStatement up = db.compileStatement("UPDATE events SET seg = ?, unix = ? WHERE id = ?");
         try {
             for (int k = 0; k < n; k++) {
-                if (write(up, id[k], oldSeg[k], oldUnix[k], d.seg[k], d.unix[k])) rep.changed++;
+                if (write(up, id[k], oldSeg[k], oldUnix[k], d.seg[k], d.unix[k])) changed(rep, oldUnix[k], d.unix[k]);
             }
         } finally {
             up.close();
@@ -345,6 +348,17 @@ public final class Db extends SQLiteOpenHelper {
         Runnable hook = afterTimeRow;
         if (hook != null) hook.run();
         return true;
+    }
+
+    /**
+     * Counts a written row and, when its date changed (not only its segment), keeps the earliest of its old and new date
+     * (issue #188; undated, NaN, counts for neither).
+     */
+    private static void changed(TimeReport rep, double was, double now) {
+        rep.changed++;
+        if (Double.doubleToLongBits(was) == Double.doubleToLongBits(now)) return;
+        if (!Double.isNaN(was) && !(was >= rep.changedFrom)) rep.changedFrom = was;
+        if (!Double.isNaN(now) && !(now >= rep.changedFrom)) rep.changedFrom = now;
     }
 
     private static void report(TimeReport rep, Dating.State st) {
@@ -455,12 +469,12 @@ public final class Db extends SQLiteOpenHelper {
                 long[] r = oldIds.get(k);
                 double was = oldUnix.get(k);
                 double u = step.count(was, false, step.dateOld(r[1]));
-                if (write(up, r[0], (int) r[2], was, step.lastNo, u)) rep.changed++;
+                if (write(up, r[0], (int) r[2], was, step.lastNo, u)) changed(rep, was, u);
             }
             for (int i = 0; i < fresh.n; i++) {
                 double was = freshOldUnix.get(i);
                 double u = step.count(was, true, step.newUnix[i]);
-                if (write(up, fresh.id[i], freshOldSeg.get(i), was, step.newSeg[i], u)) rep.changed++;
+                if (write(up, fresh.id[i], freshOldSeg.get(i), was, step.newSeg[i], u)) changed(rep, was, u);
             }
         } finally {
             up.close();
