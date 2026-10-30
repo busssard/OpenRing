@@ -138,34 +138,86 @@ public final class Prefs {
     public boolean hasKey() { return sp.contains("key_enc"); }
 
     public void saveKey(byte[] key16) {
+        String[] e = encrypt(key16);
+        put(sp.edit(), "key_enc", "key_iv", e).apply();
+    }
+
+    public byte[] loadKey() {
+        return decrypt("key_enc", "key_iv");
+    }
+
+    /** Also drops the note that the key page was not shown yet (issue #218). */
+    public void clearKey() {
+        sp.edit().remove("key_enc").remove("key_iv").remove("pair_unseen").apply();
+    }
+
+    // ---- pairing (issue #218) ----
+
+    /**
+     * Keeps a key about to be written to the ring, encrypted like the saved key, beside it (the saved key stays as it
+     * is). Written to disk before it returns ({@code commit}); false when that failed, then nothing goes to the ring.
+     */
+    public boolean keepPendingKey(byte[] key16) {
+        return put(sp.edit(), "pending_key_enc", "pending_key_iv", encrypt(key16)).commit();
+    }
+
+    /** The key kept from a pairing that did not finish, or null. */
+    public byte[] pendingKey() {
+        return decrypt("pending_key_enc", "pending_key_iv");
+    }
+
+    public void forgetPendingKey() {
+        sp.edit().remove("pending_key_enc").remove("pending_key_iv").commit();
+    }
+
+    /**
+     * A pairing the ring accepted, in one write to disk: the key, the ring's address and serial, set up, and the note
+     * that the key page was not shown yet; the kept key goes. False when the write failed.
+     */
+    public boolean pairDone(byte[] key16, String address, String serial, String message) {
+        SharedPreferences.Editor e = put(sp.edit(), "key_enc", "key_iv", encrypt(key16));
+        if (address != null) e.putString("address", address);
+        return e.putString("serial", serial).putBoolean("setup_done", true).putString("pair_unseen", message)
+                .remove("pending_key_enc").remove("pending_key_iv").commit();
+    }
+
+    /** The message of a pairing whose key page the person has not left yet, or null. */
+    public String pairUnseen() { return sp.getString("pair_unseen", null); }
+
+    public void clearPairUnseen() { sp.edit().remove("pair_unseen").commit(); }
+
+    /** {enc, iv}: the key encrypted with the Keystore key, or {"plain:hex", null} when the Keystore is unavailable. */
+    private static String[] encrypt(byte[] key16) {
         try {
             Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
             c.init(Cipher.ENCRYPT_MODE, wrapKey());
             byte[] enc = c.doFinal(key16);
-            sp.edit().putString("key_enc", Base64.encodeToString(enc, Base64.NO_WRAP))
-                    .putString("key_iv", Base64.encodeToString(c.getIV(), Base64.NO_WRAP)).apply();
+            return new String[]{Base64.encodeToString(enc, Base64.NO_WRAP), Base64.encodeToString(c.getIV(), Base64.NO_WRAP)};
         } catch (Exception e) {
             // Keystore unavailable (rare): fall back to app private storage
-            sp.edit().putString("key_enc", "plain:" + Hex.encode(key16)).remove("key_iv").apply();
+            return new String[]{"plain:" + Hex.encode(key16), null};
         }
     }
 
-    public byte[] loadKey() {
-        String enc = sp.getString("key_enc", null);
+    private static SharedPreferences.Editor put(SharedPreferences.Editor e, String encName, String ivName, String[] v) {
+        e.putString(encName, v[0]);
+        if (v[1] == null) e.remove(ivName);
+        else e.putString(ivName, v[1]);
+        return e;
+    }
+
+    private byte[] decrypt(String encName, String ivName) {
+        String enc = sp.getString(encName, null);
         if (enc == null) return null;
         if (enc.startsWith("plain:")) return Hex.parseKey(enc.substring(6));
         try {
-            byte[] iv = Base64.decode(sp.getString("key_iv", ""), Base64.NO_WRAP);
+            byte[] iv = Base64.decode(sp.getString(ivName, ""), Base64.NO_WRAP);
             Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
             c.init(Cipher.DECRYPT_MODE, wrapKey(), new GCMParameterSpec(128, iv));
             return c.doFinal(Base64.decode(enc, Base64.NO_WRAP));
         } catch (Exception e) {
             return null;
         }
-    }
-
-    public void clearKey() {
-        sp.edit().remove("key_enc").remove("key_iv").apply();
     }
 
     private static SecretKey wrapKey() throws Exception {
