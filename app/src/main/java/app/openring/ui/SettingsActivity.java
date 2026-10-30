@@ -216,7 +216,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
             action(demo, p.hasKey() ? "Leave the demo, back to my ring" : "Leave the demo and connect a ring", Ui.SLEEP, new Runnable() {
                 @Override
                 public void run() {
-                    app.openring.data.Demo.leave(SettingsActivity.this);
+                    if (!app.openring.data.Demo.leave(SettingsActivity.this)) {
+                        // the demo history is being analysed again; switching now would break that run (review of #243)
+                        problem(app.openring.core.SyncError.plain(app.openring.core.SyncError.REANALYSING, app.openring.core.SyncError.Task.ACTION));
+                        return;
+                    }
                     startActivity(new Intent(SettingsActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
                     finish();
                 }
@@ -593,8 +597,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 try {
                     ScreenUse.collect(SettingsActivity.this, true);
                     Analyzer.run(SettingsActivity.this, null);
-                } catch (RuntimeException ignored) {
-                    // the analysis stores its own error for the data check
+                } catch (Throwable ignored) {
+                    // the analysis rolled back and stores its own error for the data check, also out of memory (issue #230)
                 }
                 return null;
             }
@@ -1034,22 +1038,24 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     void reanalyse() {
-        toast("Re analysing all nights, this can take a few minutes.");
+        // a sync or Live storing data finishes first (issue #230); say so instead of waiting without a word
+        toast(RingManager.get(this).busy() ? Texts.REANALYSE_WAITS : "Re analysing all nights, this can take a few minutes.");
         new AsyncTask<Void, Void, Boolean>() {
             @Override
             protected Boolean doInBackground(Void... v) {
                 try {
                     Analyzer.runAll(SettingsActivity.this, null);
                     return true;
-                } catch (RuntimeException e) {
-                    return false; // the analysis stores its own error for the data check
+                } catch (Throwable e) {
+                    // rolled back, also out of memory; the analysis stores its own error for the data check (issue #230)
+                    return false;
                 }
             }
 
             @Override
             protected void onPostExecute(Boolean ok) {
                 if (ok) toast("Analysis updated");
-                else problem("The analysis failed. " + app.openring.core.SyncError.DETAILS);
+                else problem(Texts.ANALYSIS_FAILED);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }

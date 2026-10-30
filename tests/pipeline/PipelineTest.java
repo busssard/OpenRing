@@ -791,6 +791,9 @@ public class PipelineTest {
         nightSummaryCases();
         backupGaps(full.toByteArray());
         historyCache();
+        safeReanalysis();
+        ringGate230();
+        loadDuringRun243();
         recentWindow();
         aohrHistory();
         rightNowAohr();
@@ -1965,7 +1968,7 @@ public class PipelineTest {
         db.noteZone(4000, "Europe/Zurich");
         db.noteZone(5000, "Europe/Zurich");
         db.noteZone(6000, "Europe/Zurich");
-        db.resetAnalysis();
+        db.clearResults();
         check("a full re analysis keeps the zone history", db.zones().size() == 3, db.zones().size());
         db.resetAll();
         check("delete all local data deletes it", db.zones().isEmpty(), db.zones().size());
@@ -4535,9 +4538,9 @@ public class PipelineTest {
             stopped = true;
         }
         java.util.TreeMap<String, String> mid = days58(db);
-        boolean kept = true;
-        for (String k : refDays.keySet()) kept &= mid.containsKey(k);
-        check("#58 stopped after removing the first stale day: every day with data is still there", stopped && kept && mid.size() > refDays.size(), keys(mid));
+        // issue #230: the stop rolls the whole analysis back, so not even the stale day is gone (before, the days written
+        // until the stop stayed)
+        check("#58 stopped after removing the first stale day: every day as before the run (rolled back)", stopped && mid.equals(before), keys(mid));
         check("#58 the stop is recorded as an analysis error", db.kv("analysis_error", null) != null, db.kv("analysis_error", null));
         Analyzer.run(c, null);
         check("#58 run again after the stop: the same days and nights as dated right at once",
@@ -4954,6 +4957,7 @@ public class PipelineTest {
             @Override
             public void run(Context c) throws Exception {
                 Analyzer.run(c, null);
+                final long days0 = Db.get(c).count("SELECT COUNT(*) FROM days");
                 setStatic("afterDay", new Runnable() {
                     @Override
                     public void run() {
@@ -4967,8 +4971,10 @@ public class PipelineTest {
                     setStatic("afterDay", null);
                 }
                 Db db = Db.get(c);
-                check("#139 set up: the run stopped after 40 days", count[0] == 40 && db.count("SELECT COUNT(*) FROM days") < DAYS139 - 40
-                        && db.kvLong("analyzed_until", -1) == 0, count[0] + " days, " + db.count("SELECT COUNT(*) FROM days") + " stored");
+                // issue #230: the stop rolls back, every day stays and the whole run is still pending (before, it left the
+                // first 40 days only)
+                check("#139 set up: the run stopped after 40 days, every day still stored", count[0] == 40 && days0 >= DAYS139 - 5
+                        && db.count("SELECT COUNT(*) FROM days") == days0 && db.kvLong("full_pending", 0) == 1, count[0] + " days, " + db.count("SELECT COUNT(*) FROM days") + " stored");
                 Analyzer.run(c, null);
             }
         }, true);
@@ -5114,5 +5120,550 @@ public class PipelineTest {
                 db.recentNights(first.minusDays(100), today).isEmpty() && db.anyMainNight(), db.recentNights(first.minusDays(100), today).size());
         check("#98 no main night stored: no Further analysis", !Db.get(freshDb("openring98-empty")).anyMainNight(), "");
         freshDb("openring98-done");
+    }
+
+    // ------------------------------------- issue #230, a full re analysis keeps the old results until the new ones are stored
+
+    static final long T230 = LocalDate.parse("2026-01-05").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+
+    /** {@code days} of demo history in one boot from {@code t0}, the zone noted before it, write ahead logging on; not analysed yet. */
+    static Context history230(String name, long t0, int days) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        wal(db);
+        ZoneId z = ZoneId.systemDefault();
+        long end = t0 + (days + 1) * 86400L + 12 * 3600;
+        db.noteZone(t0 - 86400, z.getId());
+        putBoot(db, app.openring.data.Demo.history(t0, days, end, z, new Random(230 + days)), 1, t0, end);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        return c;
+    }
+
+    /**
+     * A second connection to the history file, as a screen reads it while an analysis runs on another thread
+     * (write ahead logging, as on the phone): it sees only what was committed. Keeps the fewest nights and days seen.
+     */
+    static final class Reader230 {
+        final java.sql.Connection cn;
+        long minNights = Long.MAX_VALUE, minDays = Long.MAX_VALUE;
+        int looks;
+
+        Reader230(Context c) throws Exception {
+            cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + c.getDatabasePath(Db.REAL).getPath());
+        }
+
+        long count(String table) {
+            try (java.sql.Statement st = cn.createStatement(); java.sql.ResultSet r = st.executeQuery("SELECT COUNT(*) FROM " + table)) {
+                r.next();
+                return r.getLong(1);
+            } catch (java.sql.SQLException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        void look() {
+            minNights = Math.min(minNights, count("nights"));
+            minDays = Math.min(minDays, count("days"));
+            looks++;
+        }
+
+        void reset() {
+            minNights = minDays = Long.MAX_VALUE;
+            looks = 0;
+        }
+
+        void close() throws java.sql.SQLException {
+            cn.close();
+        }
+    }
+
+    /**
+     * Looks with {@code r} at every line the analysis logs; throws {@code stop} right after the nights of week
+     * {@code week} are stored (0: never), as a week that throws or the phone ending the app there would.
+     */
+    static Analyzer.Log watch230(final Reader230 r, final int week, final Throwable stop) {
+        return new Analyzer.Log() {
+            int weeks;
+
+            @Override
+            public void log(String m) {
+                r.look();
+                if (week > 0 && m.endsWith(" sleep periods") && ++weeks == week) {
+                    if (stop instanceof Error) throw (Error) stop;
+                    throw (RuntimeException) stop;
+                }
+            }
+        };
+    }
+
+    static String seen230(Reader230 r, long nights, long days) {
+        return "at the least " + r.minNights + " of " + nights + " nights and " + r.minDays + " of " + days + " days, " + r.looks + " looks";
+    }
+
+    /**
+     * Issue #230: a full re analysis (Re analyse all, or the whole history after a new detail level, new rules or new
+     * dates) replaces the stored nights and days in one go. Stopped in week 3 (an exception, running out of memory, the
+     * phone switched off) every old night and day is still there and an error text is stored; a screen reading meanwhile
+     * never sees fewer; the next analysis does the whole run again and gives the same rows as a run never stopped.
+     * Also an older database, a database the old code left half way, restored backups of this and an older version,
+     * and a year of history.
+     */
+    static void safeReanalysis() throws Exception {
+        // the reference: analysed after the sync, then Re analyse all, never stopped
+        Context ref = history230("openring230-ref", T230, 56);
+        Analyzer.run(ref, null);
+        List<String> first = results139(Db.get(ref));
+        Analyzer.runAll(ref, null);
+        List<String> refAll = results139(Db.get(ref));
+        List<String> refEvents = events58(Db.get(ref));
+        java.io.ByteArrayOutputStream backup = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(ref, backup, true);
+        check("#230 set up: 8 weeks analysed, Re analyse all gives the same rows as the first analysis", nightRows(refAll) >= 50
+                && refAll.size() - nightRows(refAll) >= 50 && refAll.equals(first), nightRows(refAll) + " nights, " + firstDiff(refAll, first));
+
+        // 1. Re analyse all, a week that throws in week 3
+        Context c = history230("openring230-stop", T230, 56);
+        Analyzer.run(c, null);
+        Db db = Db.get(c);
+        List<String> before = results139(db);
+        long nights0 = db.count("SELECT COUNT(*) FROM nights"), days0 = db.count("SELECT COUNT(*) FROM days");
+        long until0 = db.kvLong("analyzed_until", -1);
+        Reader230 r = new Reader230(c);
+        Throwable got = null;
+        try {
+            Analyzer.runAll(c, watch230(r, 3, new Stop()));
+        } catch (Throwable t) {
+            got = t;
+        }
+        check("#230 Re analyse all stopped in week 3: the stop reaches the caller", got instanceof Stop, got);
+        check("#230 stopped in week 3: a screen reading meanwhile never sees fewer nights or days", r.looks > 20
+                && r.minNights >= nights0 && r.minDays >= days0, seen230(r, nights0, days0));
+        check("#230 stopped in week 3: every old night and day is still there, byte for byte", results139(db).equals(before), firstDiff(results139(db), before));
+        check("#230 stopped in week 3: the error text is stored", String.valueOf(db.kv("analysis_error", null)).contains("stopped for the test"),
+                db.kv("analysis_error", null));
+        check("#230 stopped in week 3: the analysis progress is the one of the stored results", db.kvLong("analyzed_until", -1) == until0,
+                db.kvLong("analyzed_until", -1) + ", before " + until0);
+        r.reset();
+        Analyzer.run(c, watch230(r, 0, null));
+        check("#230 the next analysis after the stop does the whole run: the same rows as Re analyse all never stopped", results139(db).equals(refAll),
+                firstDiff(results139(db), refAll));
+        check("#230 the next analysis: a screen never sees fewer nights or days during it", r.looks > 20 && r.minNights >= nights0 && r.minDays >= days0,
+                seen230(r, nights0, days0));
+        check("#230 the next analysis: no error stored any more", db.kv("analysis_error", null) == null, db.kv("analysis_error", null));
+        r.close();
+
+        // 2. the automatic whole run (another stage detail level, as after a change in Settings), out of memory in week 3
+        Context c2 = history230("openring230-oom", T230, 56);
+        Analyzer.run(c2, null);
+        Db db2 = Db.get(c2);
+        List<String> before2 = results139(db2);
+        int detail = app.openring.data.Prefs.of(c2).stageDetail();
+        db2.put("stage_detail", detail + 1);
+        Reader230 r2 = new Reader230(c2);
+        got = null;
+        try {
+            Analyzer.run(c2, watch230(r2, 3, new OutOfMemoryError("test")));
+        } catch (Throwable t) {
+            got = t;
+        }
+        check("#230 whole run after a detail change, out of memory in week 3: the error reaches the caller", got instanceof OutOfMemoryError, got);
+        check("#230 out of memory: a screen never sees fewer nights or days", r2.looks > 20 && r2.minNights >= nights0 && r2.minDays >= days0,
+                seen230(r2, nights0, days0));
+        check("#230 out of memory: every old night and day is still there", results139(db2).equals(before2), firstDiff(results139(db2), before2));
+        check("#230 out of memory: the error text is stored", String.valueOf(db2.kv("analysis_error", null)).contains("OutOfMemoryError"),
+                db2.kv("analysis_error", null));
+        check("#230 out of memory: the detail level is still marked as not analysed", db2.kvLong("stage_detail", -1) == detail + 1, db2.kvLong("stage_detail", -1));
+        r2.reset();
+        Analyzer.run(c2, watch230(r2, 0, null));
+        check("#230 the next analysis after running out of memory: the same rows as a whole run never stopped", results139(db2).equals(refAll)
+                && db2.kvLong("stage_detail", -1) == detail && db2.kv("analysis_error", null) == null, firstDiff(results139(db2), refAll));
+        check("#230 the next analysis: a screen never sees fewer nights or days", r2.minNights >= nights0 && r2.minDays >= days0, seen230(r2, nights0, days0));
+        r2.close();
+
+        // 3. the phone switched off in week 3: the files as they are at that moment
+        final Context c3 = history230("openring230-off", T230, 56);
+        Analyzer.run(c3, null);
+        List<String> before3 = results139(Db.get(c3));
+        final java.io.File off = Files.createTempDirectory("openring230-off-files").toFile();
+        Analyzer.runAll(c3, new Analyzer.Log() {
+            int weeks;
+
+            @Override
+            public void log(String m) {
+                if (!m.endsWith(" sleep periods") || ++weeks != 3) return;
+                try {
+                    for (String s : new String[] {"", "-wal", "-journal"}) {
+                        java.io.File f = new java.io.File(c3.getDatabasePath(Db.REAL).getPath() + s);
+                        if (f.exists()) Files.copy(f.toPath(), new java.io.File(off, Db.REAL + s).toPath());
+                    }
+                } catch (java.io.IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        });
+        check("#230 set up: Re analyse all ran to its end", results139(Db.get(c3)).equals(refAll), firstDiff(results139(Db.get(c3)), refAll));
+        Context c3b = freshDb("openring230-off-after");
+        for (String s : new String[] {"", "-wal", "-journal"}) {
+            java.io.File f = new java.io.File(off, Db.REAL + s);
+            if (f.exists()) Files.copy(f.toPath(), new java.io.File(c3b.getDatabasePath(Db.REAL).getPath() + s).toPath());
+        }
+        Db db3 = Db.get(c3b);
+        check("#230 the phone switched off in week 3: every old night and day is there when it starts again", results139(db3).equals(before3),
+                firstDiff(results139(db3), before3));
+        Analyzer.run(c3b, null);
+        check("#230 switched off in week 3: the next analysis gives the same rows as Re analyse all never stopped", results139(db3).equals(refAll),
+                firstDiff(results139(db3), refAll));
+
+        // 4. a database with stored history: the same events, nights and days after the next analysis; and one in the state the
+        // old code left half way through Re analyse all (only 3 weeks of nights, no days, analyzed_until 0)
+        Context c4 = history230("openring230-old", T230, 56);
+        Analyzer.run(c4, null);
+        Db db4 = Db.get(c4);
+        List<String> before4 = results139(db4);
+        Analyzer.run(c4, null);
+        // the stored format is unchanged, so this database is what the version before leaves too (except full_pending, which
+        // it never wrote); built here, by this version's first analysis
+        check("#230 a database with stored history (the format the version before leaves): the next analysis keeps every event, night and day", results139(db4).equals(before4)
+                && events58(db4).equals(refEvents), firstDiff(results139(db4), before4));
+        db4.getWritableDatabase().execSQL("DELETE FROM days");
+        db4.getWritableDatabase().execSQL("DELETE FROM nights WHERE stop >= ?", new Object[] {(double) (T230 + 21 * 86400L)});
+        db4.put("analyzed_until", 0);
+        Analyzer.run(c4, null);
+        check("#230 a database the old code left half way: the next analysis brings every night and day back", results139(db4).equals(refAll)
+                && events58(db4).equals(refEvents), firstDiff(results139(db4), refAll));
+
+        // 5. restoring a backup of this version and of an older one (version 4, before zones and screen reads), then Re analyse
+        // all stopped in week 3 and then complete
+        byte[] zip = backup.toByteArray();
+        java.io.File v4 = Files.createTempFile("openring230-v4", ".db").toFile();
+        Files.write(v4.toPath(), zipEntry(zip, "openring.db"));
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + v4.getPath()); java.sql.Statement st = cn.createStatement()) {
+            st.execute("DROP TABLE zones");
+            st.execute("DROP TABLE IF EXISTS screen_reads");
+            st.execute("PRAGMA user_version = 4");
+        }
+        byte[] oldZip = withDb(zip, Files.readAllBytes(v4.toPath()));
+        // an older backup has no zone history, so a whole run stores the nights without their zone: its reference is the
+        // same backup restored and analysed as a whole without a stop
+        Context refPhone = freshDb("openring230-restore-ref");
+        app.openring.data.Backup.read(refPhone, new java.io.ByteArrayInputStream(oldZip));
+        Analyzer.runAll(refPhone, null);
+        List<String> refOld = results139(Db.get(refPhone));
+        for (int k = 0; k < 2; k++) {
+            String which = k == 0 ? "this version" : "an older version";
+            List<String> want = k == 0 ? refAll : refOld;
+            Context ph = freshDb("openring230-restore" + k);
+            app.openring.data.Backup.Result res = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream(k == 0 ? zip : oldZip));
+            Db rdb = Db.get(ph);
+            check("#230 restore of a backup from " + which + ": every event, night and day", res.ok && events58(rdb).equals(refEvents) && results139(rdb).equals(refAll),
+                    res.message + ", " + firstDiff(results139(rdb), refAll));
+            wal(rdb);
+            Reader230 rr = new Reader230(ph);
+            got = null;
+            try {
+                Analyzer.runAll(ph, watch230(rr, 3, new Stop()));
+            } catch (Throwable t) {
+                got = t;
+            }
+            check("#230 restored from " + which + ", Re analyse all stopped in week 3: nothing lost", got instanceof Stop && results139(rdb).equals(refAll)
+                    && rr.minNights >= nightRows(refAll), seen230(rr, nightRows(refAll), refAll.size() - nightRows(refAll)));
+            rr.close();
+            Analyzer.run(ph, null);
+            check("#230 restored from " + which + ", the next analysis: the same rows as a whole run never stopped", results139(rdb).equals(want)
+                    && events58(rdb).equals(refEvents) && nightRows(want) == nightRows(refAll), firstDiff(results139(rdb), want));
+        }
+
+        // 6. a year of history
+        long tYear = LocalDate.parse("2025-01-06").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        Context y = history230("openring230-year", tYear, 365);
+        Db ydb = Db.get(y);
+        long t = System.nanoTime();
+        Analyzer.run(y, null);
+        long firstMs = (System.nanoTime() - t) / 1000000;
+        List<String> yBefore = results139(ydb);
+        long yNights = nightRows(yBefore), yDays = yBefore.size() - yNights;
+        Reader230 yr = new Reader230(y);
+        got = null;
+        try {
+            Analyzer.runAll(y, watch230(yr, 3, new Stop()));
+        } catch (Throwable e) {
+            got = e;
+        }
+        check("#230 a year of history, Re analyse all stopped in week 3: every night and day still there", got instanceof Stop && yNights >= 350
+                && results139(ydb).equals(yBefore) && yr.minNights >= yNights && yr.minDays >= yDays, seen230(yr, yNights, yDays));
+        yr.reset();
+        t = System.nanoTime();
+        Analyzer.run(y, watch230(yr, 0, null));
+        long allMs = (System.nanoTime() - t) / 1000000;
+        System.out.println("  #230: a year (" + ydb.eventCount() + " events, " + yNights + " nights) analysed in " + firstMs + " ms, the whole run after the stop in "
+                + allMs + " ms");
+        check("#230 a year: the whole run after the stop gives the same rows, a screen never saw fewer", results139(ydb).equals(yBefore)
+                && yr.minNights >= yNights && yr.minDays >= yDays, seen230(yr, yNights, yDays) + ", " + firstDiff(results139(ydb), yBefore));
+        yr.close();
+        freshDb("openring230-done");
+    }
+
+    /**
+     * Issue #230, the ring side: a long analysis waits for a ring task that is storing what it read (a sync download,
+     * Live), refuses new ones while its transaction is open, and lets them start again once it ended, also after a
+     * failure; a waiting sync wakes after the commit. The analysis after a sync (two days) marks nothing.
+     */
+    static void ringGate230() throws Exception {
+        final Context c = history230("openring230-gate", T230, 56);
+        Analyzer.run(c, null);
+        final Db db = Db.get(c);
+        List<String> before = results139(db);
+        // a sync download holds the ring and stores: Re analyse all waits for it before it opens its transaction
+        check("#230 gate: nothing runs, a ring task may store", !db.longRun() && db.holdForRing(), "");
+        final StringBuilder log = new StringBuilder();
+        final Throwable[] err = new Throwable[1];
+        Thread all = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Analyzer.runAll(c, collect(log));
+                } catch (Throwable t) {
+                    err[0] = t;
+                }
+            }
+        });
+        all.start();
+        long until = System.currentTimeMillis() + 20000;
+        while (!db.longRun() && System.currentTimeMillis() < until) Thread.sleep(1);
+        Thread.State st = all.getState();
+        while (st != Thread.State.TIMED_WAITING && st != Thread.State.WAITING && System.currentTimeMillis() < until) {
+            Thread.sleep(1);
+            st = all.getState();
+        }
+        boolean refused = !db.holdForRing();
+        db.put("cursor", 4711); // the download still stores (no transaction is open yet)
+        check("#230 gate: Re analyse all waits for the download that holds the ring, a new ring task is refused", db.longRun() && refused
+                && (st == Thread.State.TIMED_WAITING || st == Thread.State.WAITING) && !log.toString().contains("analysing ")
+                && db.kvLong("cursor", 0) == 4711, st + ", " + log.length() + " characters logged");
+        db.releaseForRing();
+        all.join(120000);
+        check("#230 gate: once the download is done the analysis runs, the same rows", err[0] == null && !all.isAlive()
+                && log.toString().contains("a long analysis: waited for a ring task to store its data") && results139(db).equals(before), err[0]);
+        check("#230 gate: after the long analysis a ring task may store again", !db.longRun() && db.holdForRing(), "");
+        db.releaseForRing();
+
+        // inside the transaction: ring tasks are refused; a sync waiting for it wakes after the commit
+        final Reader230 r = new Reader230(c);
+        final boolean[] inside = new boolean[4];
+        final Thread[] waiter = new Thread[1];
+        Analyzer.runAll(c, new Analyzer.Log() {
+            int weeks;
+
+            @Override
+            public void log(String m) {
+                if (!m.endsWith(" sleep periods") || ++weeks != 2) return;
+                try {
+                    inside[0] = db.longRun() && !db.holdForRing() && !db.awaitLongRun(5);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                waiter[0] = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            inside[1] = db.awaitLongRun(120000);
+                            // the reader sees the committed mark, so the results were stored before the waiter woke
+                            java.sql.Statement q = r.cn.createStatement();
+                            java.sql.ResultSet rs = q.executeQuery("SELECT v FROM kv WHERE k = 'full_pending'");
+                            inside[2] = rs.next() && "0".equals(rs.getString(1));
+                            q.close();
+                        } catch (Exception e) {
+                            inside[2] = false;
+                        }
+                    }
+                });
+                waiter[0].start();
+            }
+        });
+        waiter[0].join(120000);
+        r.close();
+        check("#230 gate: during the transaction a ring task is refused and a sync waits", inside[0], "");
+        check("#230 gate: the waiting sync wakes once the new results are committed", inside[1] && inside[2], inside[1] + " " + inside[2]);
+
+        // a long analysis that fails lets ring tasks store again
+        try {
+            Analyzer.runAll(c, stopAt("sleep periods"));
+        } catch (Stop expected) {
+        }
+        check("#230 gate: after a failed long analysis a ring task may store again", !db.longRun() && db.holdForRing() && results139(db).equals(before), "");
+        db.releaseForRing();
+        // the analysis after a sync (the last two days) marks nothing: Live may start meanwhile
+        Analyzer.run(c, null); // the pending whole run of the stop above
+        final boolean[] shortRun = {false, false};
+        Analyzer.run(c, new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                if (!m.endsWith(" sleep periods") || shortRun[1]) return;
+                shortRun[1] = true;
+                shortRun[0] = !db.longRun() && db.holdForRing();
+                db.releaseForRing();
+            }
+        });
+        check("#230 gate: the analysis after a sync is not a long one", shortRun[0] && shortRun[1] && results139(db).equals(before), "");
+        // the bound itself: more than 28 days to analyse is a long run
+        db.put("analyzed_until", (long) (db.datedRange()[1] - 31 * 86400.0));
+        final boolean[] month = {false};
+        Analyzer.run(c, new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                if (m.endsWith(" sleep periods")) month[0] |= db.longRun();
+            }
+        });
+        check("#230 gate: 29 days and more to analyse is a long run", month[0] && results139(db).equals(before), "");
+
+        // a long analysis interrupted while it waits for a ring task goes on (a write that waits is slower, never lost)
+        check("#230 gate: a ring task holds the ring again", db.holdForRing(), "");
+        final boolean[] interrupted = {false};
+        final Throwable[] err2 = new Throwable[1];
+        Thread waits = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Analyzer.runAll(c, null);
+                    interrupted[0] = Thread.currentThread().isInterrupted();
+                } catch (Throwable t) {
+                    err2[0] = t;
+                }
+            }
+        });
+        waits.start();
+        until = System.currentTimeMillis() + 20000;
+        while (waits.getState() != Thread.State.TIMED_WAITING && System.currentTimeMillis() < until) Thread.sleep(1);
+        waits.interrupt();
+        waits.join(120000);
+        db.releaseForRing();
+        check("#230 gate: interrupted while waiting for a ring task, the analysis still runs to its end", err2[0] == null && interrupted[0]
+                && !waits.isAlive() && results139(db).equals(before) && db.kvLong("full_pending", -1) == 0 && !db.longRun(), err2[0]);
+
+        // Re analyse all of a history without any dated event keeps the stored nights; it stays pending until dates are known
+        Context u = freshDb("openring230-undated");
+        Db udb = Db.get(u);
+        List<Object[]> one = new ArrayList<Object[]>();
+        one.add(new Object[] {(double) T230, T230 + 8 * 3600.0, "2026-01-05", 1, 80, "{\"day\":\"2026-01-05\"}"});
+        udb.replaceNights(0, Double.MAX_VALUE, one);
+        udb.putDay("2026-01-05", "{\"date\":\"2026-01-05\"}");
+        List<RingEvent> undated = new ArrayList<RingEvent>();
+        undated.add(new RingEvent(EventCodec.MOTION_EVENT, 1000, new byte[] {1, 1, 2, 3}));
+        udb.insertBatch(undated, 1, T230);
+        Analyzer.runAll(u, null);
+        check("#230 Re analyse all without dated events keeps the stored nights and days, the whole run stays pending",
+                udb.count("SELECT COUNT(*) FROM nights") == 1 && udb.count("SELECT COUNT(*) FROM days") == 1 && udb.kvLong("full_pending", 0) == 1
+                        && udb.kv("analysis_error", null) == null, udb.count("SELECT COUNT(*) FROM nights") + " nights");
+        freshDb("openring230-gate-done");
+    }
+
+    /** Runs Re analyse all of {@code c} on its own thread, paused right after week 2 is stored until {@code go} opens. */
+    static Thread paused243(final Context c, final java.util.concurrent.CountDownLatch inside, final java.util.concurrent.CountDownLatch go,
+            final Throwable[] err) {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Analyzer.runAll(c, new Analyzer.Log() {
+                        int weeks;
+
+                        @Override
+                        public void log(String m) {
+                            if (!m.endsWith(" sleep periods") || ++weeks != 2) return;
+                            inside.countDown();
+                            try {
+                                go.await(120, java.util.concurrent.TimeUnit.SECONDS);
+                            } catch (InterruptedException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    });
+                } catch (Throwable x) {
+                    err[0] = x;
+                }
+            }
+        });
+        t.start();
+        return t;
+    }
+
+    /**
+     * Review of PR #243: while a long analysis has its transaction open, the main screen's load does not wait for it
+     * (it shows the stored nights at once), entering demo mode waits for it instead of closing the database under it,
+     * and leaving demo mode is refused while the demo's own analysis runs.
+     */
+    static void loadDuringRun243() throws Exception {
+        final Context c = history230("openring243-load", T230, 56);
+        Analyzer.run(c, null);
+        final Db db = Db.get(c);
+        List<String> before = results139(db);
+        long nights0 = nightRows(before);
+        Reader230 r = new Reader230(c);
+
+        // 1. the main screen's load while Re analyse all runs on another thread
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1), go = new java.util.concurrent.CountDownLatch(1);
+        Throwable[] err = new Throwable[1];
+        Thread run = paused243(c, inside, go, err);
+        check("#243 set up: Re analyse all is inside its transaction", inside.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        long t = System.nanoTime();
+        boolean did = Analyzer.beforeLoad(c);
+        long ms = (System.nanoTime() - t) / 1000000;
+        check("#243 the main screen's load during a long run: returns at once without the zone note or an analysis, the stored nights show",
+                !did && ms < 2000 && Analyzer.running() && r.count("nights") == nights0 && r.count("days") == before.size() - nights0, ms + " ms");
+        go.countDown();
+        run.join(120000);
+        check("#243 the run then ends normally", err[0] == null && !run.isAlive() && results139(db).equals(before), err[0]);
+        check("#243 the next load notes the zone again (no analysis runs)", !Analyzer.running() && Analyzer.beforeLoad(c), "");
+
+        // 2. entering demo mode during the run waits for it; the real run is not broken
+        inside = new java.util.concurrent.CountDownLatch(1);
+        go = new java.util.concurrent.CountDownLatch(1);
+        err[0] = null;
+        run = paused243(c, inside, go, err);
+        check("#243 set up: Re analyse all is inside its transaction again", inside.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        final StringBuilder steps = new StringBuilder();
+        final Throwable[] demoErr = new Throwable[1];
+        final java.util.concurrent.CountDownLatch demoDone = new java.util.concurrent.CountDownLatch(1);
+        Thread demo = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    app.openring.data.Demo.enter(c, new app.openring.data.Demo.Progress() {
+                        @Override
+                        public void step(String what) {
+                            steps.append(what).append('\n');
+                        }
+                    }, LocalDate.parse("2026-10-22"), LocalDate.parse("2026-10-22").atTime(9, 0).atZone(ZoneId.systemDefault()).toEpochSecond());
+                } catch (Throwable x) {
+                    demoErr[0] = x;
+                } finally {
+                    demoDone.countDown();
+                }
+            }
+        });
+        demo.start();
+        String seen = waitForBlocked(demo, run, demoDone, 10000);
+        check("#243 entering demo mode during a long run waits for it, and says so", seen.startsWith("waits") && !app.openring.data.Prefs.of(c).demo()
+                && steps.toString().startsWith(app.openring.data.Demo.WAITING), seen + ", " + steps);
+        go.countDown();
+        run.join(120000);
+        demo.join(120000);
+        check("#243 the real run ended normally, then the demo was built", err[0] == null && demoErr[0] == null && app.openring.data.Prefs.of(c).demo()
+                && Db.get(c).count("SELECT COUNT(*) FROM nights") > 20, err[0] != null ? err[0] : demoErr[0]);
+
+        // 3. leaving demo mode while the demo's analysis runs is refused, afterwards it works
+        inside = new java.util.concurrent.CountDownLatch(1);
+        go = new java.util.concurrent.CountDownLatch(1);
+        err[0] = null;
+        run = paused243(c, inside, go, err);
+        check("#243 set up: the demo's Re analyse all is inside its transaction", inside.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        boolean left = app.openring.data.Demo.leave(c);
+        check("#243 leaving demo mode during its analysis is refused, nothing switched", !left && app.openring.data.Prefs.of(c).demo(), "");
+        go.countDown();
+        run.join(120000);
+        check("#243 the demo's run ended normally, then leaving works and the real history is back", err[0] == null && app.openring.data.Demo.leave(c)
+                && !app.openring.data.Prefs.of(c).demo() && results139(Db.get(c)).equals(before), err[0]);
+        r.close();
+        freshDb("openring243-done");
     }
 }

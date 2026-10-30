@@ -335,17 +335,31 @@ public final class RingManager {
         boolean analysingRaised = false;
         String own = null;
         try {
-            // a game or live session that just ended may still be closing its link
-            boolean locked;
-            try {
-                locked = op.tryLock(15, java.util.concurrent.TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                locked = false;
-            }
-            if (!locked) {
-                res.message = "The ring is busy with another task";
-                log("sync skipped: the ring is busy with another task");
-                return res;
+            Db held;
+            while (true) {
+                // a long analysis replaces the results (issue #230): wait for it without the ring, every write of the
+                // download would wait for it with the ring held
+                if (!waitForLongRun(ticket)) {
+                    res.message = "Sync stopped";
+                    log("sync stopped while it waited for the analysis");
+                    return res;
+                }
+                // a game or live session that just ended may still be closing its link
+                boolean locked;
+                try {
+                    locked = op.tryLock(15, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    locked = false;
+                }
+                if (!locked) {
+                    res.message = "The ring is busy with another task";
+                    log("sync skipped: the ring is busy with another task");
+                    return res;
+                }
+                held = Db.get(ctx);
+                if (held.holdForRing()) break;
+                // a long analysis began meanwhile: give the ring back and wait for it
+                op.unlock();
             }
             boolean stopped = false;
             try {
@@ -372,6 +386,7 @@ public final class RingManager {
                     analysingRaised = true;
                     progress = -1;
                     busy = false;
+                    held.releaseForRing();
                     op.unlock();
                 }
             }
@@ -391,7 +406,8 @@ public final class RingManager {
                         }
                     });
                 }
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
+                // also out of memory: the analysis rolled back and stored its error (issue #230), the sync goes on
                 log("analysis failed: " + android.util.Log.getStackTraceString(e));
             }
         } finally {
@@ -408,6 +424,28 @@ public final class RingManager {
             else if (own != null) log("sync ended (" + own + "), another sync is still under way");
         }
         return res;
+    }
+
+    /**
+     * Waits while a long analysis replaces the stored results (issue #230), with the status line saying why; false
+     * when the sync was stopped meanwhile. Holds nothing, so Settings and the screens stay usable.
+     */
+    private boolean waitForLongRun(SyncTicket ticket) {
+        boolean said = false;
+        while (Db.get(ctx).longRun()) {
+            if (ticket.stop) return false;
+            if (!said) {
+                setStatus(SyncError.SYNC_WAITS);
+                notifyListeners();
+                said = true;
+            }
+            try {
+                Db.get(ctx).awaitLongRun(1000);
+            } catch (InterruptedException e) {
+                return false;
+            }
+        }
+        return !ticket.stop;
     }
 
     /** The connect and download attempts of a sync; fills {@code res}. Runs with the ring lock held. */
@@ -709,8 +747,12 @@ public final class RingManager {
             @Override
             public String run() throws Exception {
                 Prefs prefs = Prefs.of(ctx);
-                Session s = open(false, null);
+                // it stores the new cursor after the reset: not while a long analysis replaces the results (issue #230)
+                final Db db = Db.get(ctx);
+                if (!db.holdForRing()) throw new IOException(SyncError.REANALYSING);
+                Session s = null;
                 try {
+                    s = open(false, null);
                     String serial = s.client.serial();
                     if (!serial.equalsIgnoreCase(confirmSerial.trim())) {
                         // the saved serial typed correctly means another ring answered, not a typo (issue #60)
@@ -724,12 +766,13 @@ public final class RingManager {
                     s.client.factoryReset();
                     prefs.clearKey();
                     prefs.setSetupDone(false);
-                    Db.get(ctx).put("cursor", 0);
-                    Db.get(ctx).put("epoch", Db.get(ctx).kvLong("epoch", 1) + 1);
+                    db.put("cursor", 0);
+                    db.put("epoch", db.kvLong("epoch", 1) + 1);
                     log(serial + " was reset");
                     return Texts.RING_RESET_DONE; // a toast, Settings closes right after
                 } finally {
                     close(s);
+                    db.releaseForRing();
                 }
             }
         });
@@ -779,6 +822,15 @@ public final class RingManager {
                 }
                 if (!locked) {
                     post(token, Texts.LIVE_BUSY);
+                    live.ended(token);
+                    return;
+                }
+                // Live stores what it drains: not while a long analysis replaces the results (issue #230)
+                final Db held = Db.get(ctx);
+                if (!held.holdForRing()) {
+                    op.unlock();
+                    log("live: not started, a long analysis runs");
+                    post(token, SyncError.plain(SyncError.REANALYSING, SyncError.Task.LIVE));
                     live.ended(token);
                     return;
                 }
@@ -1000,6 +1052,7 @@ public final class RingManager {
                     // only this session's own mark: a newer one may be queued already (issue #153)
                     live.ended(token);
                     busy = false;
+                    held.releaseForRing();
                     op.unlock();
                     notifyListeners();
                 }

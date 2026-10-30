@@ -13,7 +13,7 @@ public final class SyncError {
     private SyncError() {}
 
     public enum Kind { BLUETOOTH_OFF, NO_BLUETOOTH, NOT_FOUND, NOT_REACHED, BROKE_OFF, CONNECTION_SETUP, PAIRING, NOT_A_RING,
-        KEY_REFUSED, RING_RESET, NO_KEY, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, UNKNOWN }
+        KEY_REFUSED, RING_RESET, NO_KEY, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, REANALYSING, UNKNOWN }
 
     /** What the ring was doing: a sync, pairing in Setup, an action in Settings, live heart rate or game motion. */
     public enum Task { SYNC, PAIR, ACTION, LIVE }
@@ -46,6 +46,15 @@ public final class SyncError {
         if (ok) return null;
         return raw == null || raw.trim().isEmpty() ? NO_REASON : raw;
     }
+
+    /**
+     * Raw text of a ring task that does not start while a long analysis replaces the stored nights and days (issue #230):
+     * every write it makes would wait minutes for the analysis with the ring held.
+     */
+    public static final String REANALYSING = "Re analysing your history, this takes a few minutes";
+
+    /** The status line of a sync that waits for a long analysis before it takes the ring (issue #230). */
+    public static final String SYNC_WAITS = REANALYSING + ". The sync starts after it.";
 
     /** The text RingManager and RingScanner give when the phone's Bluetooth is off. */
     public static final String BLUETOOTH_OFF_TEXT = "Bluetooth is off";
@@ -102,6 +111,7 @@ public final class SyncError {
             return Kind.KEY_NOT_TAKEN;
         if (s.equals("the ring did not accept the change")) return Kind.NOT_SAVED;
         if (s.startsWith("demo mode")) return Kind.DEMO;
+        if (s.startsWith(REANALYSING.toLowerCase(Locale.ROOT))) return Kind.REANALYSING;
         if (s.startsWith("no ring key saved")) return Kind.NO_KEY;
         if (s.contains("ring is busy")) return Kind.BUSY;
         if (s.equals("sync stopped") || s.equals("interrupted") || s.equals("cancelled")) return Kind.STOPPED;
@@ -154,6 +164,7 @@ public final class SyncError {
                     : "The ring is busy with a sync, live heart rate or a game. Try again in a minute.";
             case STOPPED: return sync ? "The sync was stopped. Sync again when you like." : "This was stopped before it finished. Try again when you like.";
             case DEMO: return "Syncing is off in demo mode.";
+            case REANALYSING: return REANALYSING + ". " + (sync ? "Sync again then." : live ? "Try Live again then." : "Try again then.");
             case KEY_EXISTS: return "The ring already has a key. Factory reset it first, or use the existing key.";
             case KEY_NOT_TAKEN: return "The ring did not take the new key. Check that it was factory reset (blinking blue on the dock means done), "
                     + "put it on its charger next to the phone and try again.";

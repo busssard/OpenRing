@@ -1443,6 +1443,7 @@ public class CoreTest {
             {"Interrupted", SyncError.Kind.STOPPED},
             {"cancelled", SyncError.Kind.STOPPED},
             {"Demo mode: syncing is off", SyncError.Kind.DEMO},
+            {SyncError.REANALYSING, SyncError.Kind.REANALYSING},
             {"The ring already has a key. Factory reset it first, or use the existing key.", SyncError.Kind.KEY_EXISTS},
             {"The ring reports unfinished factory tests (status 5).", SyncError.Kind.KEY_NOT_TAKEN},
             {"The ring refused the key (status 0x03)", SyncError.Kind.KEY_NOT_TAKEN},
@@ -1462,6 +1463,14 @@ public class CoreTest {
         check("sync error: unknown names the details", SyncError.plain("Unexpected error: java.lang.IllegalStateException").endsWith(SyncError.DETAILS)
                 && SyncError.plain(null).endsWith(SyncError.DETAILS));
         check("sync error: key refused says how to set up again", SyncError.plain("authentication failed: x").endsWith(SyncError.SETUP_AGAIN));
+        // issue #230: a sync waits for a long analysis, Live and Settings actions on the ring say why they do not start
+        eq("re analysing: the status line of a waiting sync", SyncError.SYNC_WAITS, "Re analysing your history, this takes a few minutes. The sync starts after it.");
+        eq("re analysing: Live", SyncError.plain(SyncError.REANALYSING, SyncError.Task.LIVE), "Re analysing your history, this takes a few minutes. Try Live again then.");
+        eq("re analysing: a Settings action", SyncError.plain(SyncError.REANALYSING, SyncError.Task.ACTION), "Re analysing your history, this takes a few minutes. Try again then.");
+        eq("re analysing: a sync", SyncError.plain(SyncError.REANALYSING), "Re analysing your history, this takes a few minutes. Sync again then.");
+        eq("re analysing: Re analyse all waits for the ring task", Texts.REANALYSE_WAITS,
+                "Waiting for the ring to finish its current task, then re analysing all nights. This can take a few minutes.");
+        eq("re analysing: Re analyse all failed", Texts.ANALYSIS_FAILED, "The analysis failed, your nights and days are as before. " + SyncError.DETAILS);
         ringError(cases);
     }
 

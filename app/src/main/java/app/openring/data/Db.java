@@ -1268,11 +1268,111 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
-    /** Forget computed results so the next analysis rebuilds everything from raw events. */
-    public void resetAnalysis() {
+    /**
+     * Deletes every stored night and day summary, for Re analyse all. Only called inside the analysis's own
+     * {@link #inTransaction}, so the old results stay until the new ones are stored with them (issue #230).
+     */
+    public void clearResults() {
         SQLiteDatabase db = getWritableDatabase();
         db.execSQL("DELETE FROM nights");
         db.execSQL("DELETE FROM days");
-        put("analyzed_until", 0);
+    }
+
+    /**
+     * Runs {@code r} as one transaction (issue #230): everything it writes is stored together when it returns, and
+     * nothing of it when it throws anything (also an Error) or the app is ended meanwhile. Reads of this thread see
+     * its own writes; other connections (the screens) see the state before until it is committed. Writes from other
+     * threads wait until it ends, so {@code r} must not wait for them (nor call a method synchronized on this Db).
+     */
+    public void inTransaction(Runnable r) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            r.run();
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    // ------------------------------------------------- a long analysis and the ring tasks (issue #230)
+
+    private final Object ringGate = new Object();
+    /** Ring tasks storing what they read right now (sync download, Live, factory reset). */
+    private int ringWriters;
+    /** A long analysis has the results open in its transaction; ring tasks do not start storing meanwhile. */
+    private boolean longRun;
+
+    /**
+     * A ring task that will store what it reads (a sync download, Live, factory reset) starts: true, and it calls
+     * {@link #releaseForRing} when it is done. False while a long analysis replaces the results: every write would
+     * wait minutes for it, with the ring held, so the task waits before it takes the ring or does not start.
+     */
+    public boolean holdForRing() {
+        synchronized (ringGate) {
+            if (longRun) return false;
+            ringWriters++;
+            return true;
+        }
+    }
+
+    /** The ring task of {@link #holdForRing} stores nothing more. */
+    public void releaseForRing() {
+        synchronized (ringGate) {
+            if (ringWriters > 0) ringWriters--;
+            ringGate.notifyAll();
+        }
+    }
+
+    /** A long analysis replaces the results now (a sync waits for it, Live does not start). */
+    public boolean longRun() {
+        synchronized (ringGate) {
+            return longRun;
+        }
+    }
+
+    /** Waits at most {@code ms} for a long analysis to end; true when none runs (any more). */
+    public boolean awaitLongRun(long ms) throws InterruptedException {
+        long until = System.currentTimeMillis() + ms;
+        synchronized (ringGate) {
+            while (longRun) {
+                long left = until - System.currentTimeMillis();
+                if (left <= 0) return false;
+                ringGate.wait(left);
+            }
+            return true;
+        }
+    }
+
+    /**
+     * A long analysis starts: from now on no ring task starts storing, and this waits for those storing right now to
+     * end, so none of them can hang on the analysis's transaction with the ring held. Returns how many it waited for.
+     * Called before the transaction opens, never inside it; {@link #endLongRun} follows in a finally.
+     */
+    int beginLongRun() {
+        synchronized (ringGate) {
+            longRun = true;
+            int waited = ringWriters;
+            boolean interrupted = false;
+            while (ringWriters > 0) {
+                try {
+                    ringGate.wait(1000);
+                } catch (InterruptedException e) {
+                    // the analysis goes on: a write that waits is only slower, never lost
+                    interrupted = true;
+                    break;
+                }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
+            return waited;
+        }
+    }
+
+    /** The long analysis has ended (stored or rolled back): ring tasks may store again. */
+    void endLongRun() {
+        synchronized (ringGate) {
+            longRun = false;
+            ringGate.notifyAll();
+        }
     }
 }

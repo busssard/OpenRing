@@ -85,6 +85,18 @@ public final class Demo {
     }
 
     private static boolean build(Context c, Progress p, LocalDate today, long now) {
+        // the switch closes the real database: never under an analysis's open transaction (review of #243), so a
+        // running one is waited for, and none starts until the demo is built
+        if (Analyzer.running() && p != null) p.step(WAITING);
+        synchronized (Analyzer.class) {
+            return buildLocked(c, p, today, now);
+        }
+    }
+
+    /** The demo's progress line while a re analysis of the person's history ends first (review of #243). */
+    public static final String WAITING = "Waiting for the re analysis of your history to finish";
+
+    private static boolean buildLocked(Context c, Progress p, LocalDate today, long now) {
         Prefs.of(c).setDemo(true);
         Db db = Db.get(c);
         // built completely today: nothing to do. Not "the newest day is today", which is still
@@ -111,9 +123,18 @@ public final class Demo {
         return true;
     }
 
-    public static void leave(Context c) {
-        Prefs.of(c).setDemo(false);
-        Db.get(c); // reopens the real database
+    /**
+     * Back to the person's own data. False, and nothing changes, while an analysis runs or waits (review of #243):
+     * the switch closes the database that analysis writes in one transaction, so the caller says to try again.
+     */
+    public static boolean leave(final Context c) {
+        return Analyzer.whenIdle(new Runnable() {
+            @Override
+            public void run() {
+                Prefs.of(c).setDemo(false);
+                Db.get(c); // reopens the real database
+            }
+        });
     }
 
     /**

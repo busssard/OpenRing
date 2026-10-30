@@ -61,29 +61,99 @@ public final class Analyzer {
         } : log;
     }
 
-    /** Incremental: re analyse from a little before the last analysed point up to now. */
-    public static synchronized void run(Context c, Log log) {
+    /** kv: Re analyse all was asked for and has not been stored yet; the next analysis does it (issue #230). */
+    static final String FULL_PENDING = "full_pending";
+    /**
+     * An analysis of more than this many days is a long one (issue #230): ring tasks that store data wait for it
+     * instead of hanging on its open transaction with the ring held. 28 days take up to about 10 seconds on a
+     * phone; the analysis after a sync (the last two days) stays far below.
+     */
+    static final int LONG_RUN_DAYS = 28;
+
+    /**
+     * Incremental: re analyse from a little before the last analysed point up to now. Any failure, also running out
+     * of memory, rolls the results back to the old ones and stores its text in {@code analysis_error} (issue #230).
+     */
+    public static void run(Context c, Log log) {
+        RUNS.incrementAndGet();
+        try {
+            runLocked(c, log);
+        } finally {
+            RUNS.decrementAndGet();
+        }
+    }
+
+    /**
+     * Analyses running or waiting for the analysis lock, counted before they take it (review of #243): the main screen
+     * and the demo switch ask this instead of waiting minutes for a long run.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger RUNS = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** True while an analysis runs or waits to run. */
+    public static boolean running() {
+        return RUNS.get() > 0;
+    }
+
+    /**
+     * What the main screen does before it loads a day (review of #243): note the phone's zone and, when a new zone
+     * opened, analyse the nights since. While an analysis runs it does nothing and returns false at once, so the
+     * screen shows the stored (old) nights instead of waiting for the run; the running analysis notes the zone itself.
+     */
+    public static boolean beforeLoad(Context c) {
+        if (running()) return false;
+        if (Prefs.of(c).demo()) return true;
+        Db db = Db.get(c);
+        if (noteZone(db, System.currentTimeMillis() / 1000.0, ZoneId.systemDefault(), Double.NaN) && db.eventCount() > 0) run(c, null);
+        return true;
+    }
+
+    /**
+     * Runs {@code r} (the switch into or out of demo mode, which closes the database in use) only when no analysis
+     * runs or waits, holding the analysis lock so none starts meanwhile; false, and {@code r} does not run, otherwise
+     * (review of #243: closing the database under a long run's transaction made the run fail).
+     */
+    static boolean whenIdle(Runnable r) {
+        if (running()) return false;
+        synchronized (Analyzer.class) {
+            if (running()) return false;
+            r.run();
+            return true;
+        }
+    }
+
+    private static synchronized void runLocked(Context c, Log log) {
         Analyzer a = new Analyzer(c, log);
         try {
             a.runInner();
             a.db.put("analysis_error", null);
-        } catch (RuntimeException e) {
-            a.db.put("analysis_error", e.toString());
+        } catch (Throwable e) {
+            a.failed(e);
             throw e;
         }
     }
 
+    /** Stores the error of a failed run (after its roll back); never throws, also when the database cannot be written. */
+    private void failed(Throwable e) {
+        try {
+            db.put("analysis_error", e.toString());
+        } catch (Throwable ignored) {
+            // nothing more can be done here; the caller gets the error itself
+        }
+    }
+
     void runInner() {
-        long now = System.currentTimeMillis() / 1000;
-        Db.TimeReport t = db.rebuildTime(now);
+        final long now = System.currentTimeMillis() / 1000;
+        final Db.TimeReport t = db.rebuildTime(now);
         log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written",
                 t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed));
         long lastDated = db.kvLong("dated_count", -1), lastTotal = db.kvLong("event_count", -1);
+        // the checks below only lower analyzed_until ("analyse again from here"), so they are stored at once: a run that
+        // fails after them is done again, never skipped (issue #230)
         // older events gained (or lost) a date: their days must be analysed again
         if (lastDated < 0 || t.datedAfter > lastDated + (t.total - lastTotal) || t.datedAfter < lastDated) db.put("analyzed_until", 0);
         // the nights were staged with another detail level (changed in Settings, maybe while in demo
         // mode, or analysed by a version before 1.11): analyse everything again
-        int detail = prefs.stageDetail();
+        final int detail = prefs.stageDetail();
         if (db.kvLong("stage_detail", -1) != detail) db.put("analyzed_until", 0);
         // the detail filter's rules changed (issue #28): nights from older rules are analysed again once;
         // databases from before the version existed read as version 1
@@ -95,35 +165,59 @@ public final class Analyzer {
         // older rules are analysed again once; databases from before the version existed read as version 1
         if (db.kvLong("day_heart", 1) != DayHeart.VERSION) db.put("analyzed_until", 0);
         // "count phone use as awake" switched (issue #13): only nights since the first screen data change
-        long screenAwake = prefs.screenAwake() ? 1 : 0;
+        final long screenAwake = prefs.screenAwake() ? 1 : 0;
         double firstScreen = db.screenStart(true);
         if (db.kvLong("screen_awake", screenAwake) != screenAwake && firstScreen >= 0) db.reanalyseFrom(firstScreen);
         // the rule for which steps phone use marks awake changed (issue #41): nights with screen data
         // are analysed again once; databases from before the version existed read as rule 1
         if (screenAwake == 1 && db.kvLong("phone_awake", 1) != ScreenTime.AWAKE_RULE && firstScreen >= 0) db.reanalyseFrom(firstScreen);
-        db.put("dated_count", t.datedAfter);
-        db.put("event_count", t.total);
-        double[] range = db.datedRange();
+        final double[] range = db.datedRange();
         // the phone's time zone, noted at every sync (issue #22), never later than a day after the newest
         // dated event (a phone clock set far ahead for a moment). Demo mode has no zone history.
         if (!prefs.demo()) noteZone(db, now, zone, range == null ? Double.NaN : range[1]);
         if (range == null) {
+            // Re analyse all stays pending: the stored nights are kept until there are dated events to analyse
+            db.put("dated_count", t.datedAfter);
+            db.put("event_count", t.total);
             log.log("no dated events yet, nothing to analyse");
             return;
         }
+        final boolean all = db.kvLong(FULL_PENDING, 0) == 1;
         double until = db.kvLong("analyzed_until", 0);
-        // no age limit (issue #20): a full re analysis must rebuild every night resetAnalysis deleted;
-        // the week by week chunks keep memory flat however long the history is
-        double from = until > 0 ? Math.max(range[0], until - 2 * 86400) : range[0];
-        analyze(from, range[1]);
-        db.put("analyzed_until", (long) range[1]);
-        db.put("stage_detail", detail);
-        db.put("stage_filter", StageFilter.VERSION);
-        db.put("night_finder", NightFinder.VERSION);
-        db.put("day_heart", DayHeart.VERSION);
-        db.put("screen_awake", screenAwake);
-        db.put("phone_awake", ScreenTime.AWAKE_RULE);
-        db.put("last_analysis", now);
+        // no age limit (issue #20): a whole run rebuilds every night; the week by week chunks keep memory flat
+        // however long the history is
+        final double from = all || until <= 0 ? range[0] : Math.max(range[0], until - 2 * 86400);
+        boolean longRun = all || range[1] - from > LONG_RUN_DAYS * 86400.0;
+        if (longRun) {
+            int waited = db.beginLongRun();
+            if (waited > 0) log.log("a long analysis: waited for a ring task to store its data");
+        }
+        try {
+            // one transaction for all results (issue #230): the old nights and days stay, also for the screens reading
+            // meanwhile, until the new ones are all stored; any stop or failure rolls back to them
+            db.inTransaction(new Runnable() {
+                @Override
+                public void run() {
+                    if (all) db.clearResults();
+                    // the dating these results are worked out from: stored with them, so a run that did not finish
+                    // still sees the change next time
+                    db.put("dated_count", t.datedAfter);
+                    db.put("event_count", t.total);
+                    analyze(from, range[1]);
+                    db.put("analyzed_until", (long) range[1]);
+                    db.put("stage_detail", detail);
+                    db.put("stage_filter", StageFilter.VERSION);
+                    db.put("night_finder", NightFinder.VERSION);
+                    db.put("day_heart", DayHeart.VERSION);
+                    db.put("screen_awake", screenAwake);
+                    db.put("phone_awake", ScreenTime.AWAKE_RULE);
+                    if (all) db.put(FULL_PENDING, 0);
+                    db.put("last_analysis", now);
+                }
+            });
+        } finally {
+            if (longRun) db.endLongRun();
+        }
     }
 
     /**
@@ -139,16 +233,29 @@ public final class Analyzer {
         db.resetAll();
     }
 
-    /** Rebuild everything from the raw events. */
-    public static synchronized void runAll(Context c, Log log) {
+    /**
+     * Rebuild everything from the raw events. Only a mark is written first ({@link #FULL_PENDING}); the old nights and
+     * days are replaced in the analysis's one transaction (issue #230), and a run that does not finish is done again
+     * by the next analysis.
+     */
+    public static void runAll(Context c, Log log) {
+        RUNS.incrementAndGet();
+        try {
+            runAllLocked(c, log);
+        } finally {
+            RUNS.decrementAndGet();
+        }
+    }
+
+    private static synchronized void runAllLocked(Context c, Log log) {
         Analyzer a = new Analyzer(c, log);
         try {
-            a.db.resetAnalysis();
-        } catch (RuntimeException e) {
-            a.db.put("analysis_error", e.toString());
+            a.db.put(FULL_PENDING, 1);
+        } catch (Throwable e) {
+            a.failed(e);
             throw e;
         }
-        run(c, log);
+        runLocked(c, log);
     }
 
     /**

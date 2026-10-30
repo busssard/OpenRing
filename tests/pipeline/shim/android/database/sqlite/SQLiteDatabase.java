@@ -6,7 +6,7 @@ import java.sql.*;
 public class SQLiteDatabase {
     public static final int CONFLICT_REPLACE = 5;
     public final Connection conn;
-    int depth; boolean ok;
+    int depth;
     public static final int OPEN_READWRITE = 0, OPEN_READONLY = 1, NO_LOCALIZED_COLLATORS = 16;
     public interface CursorFactory {}
     SQLiteDatabase(Connection c) { conn = c; }
@@ -51,9 +51,18 @@ public class SQLiteDatabase {
         execSQL("INSERT OR REPLACE INTO " + table + "(" + cols + ") VALUES (" + q + ")", cv.map.values().toArray());
         return 1;
     }
-    public void beginTransaction() { try { if (depth++ == 0) { conn.setAutoCommit(false); ok = false; } } catch (SQLException e) { throw wrap(e); } }
-    public void setTransactionSuccessful() { ok = true; }
+    /** Like Android: each level marks its own success; the outermost commits only when it and every inner level did (issue #230). */
+    final java.util.ArrayDeque<boolean[]> levels = new java.util.ArrayDeque<boolean[]>();
+    boolean childFailed;
+    public void beginTransaction() {
+        try { if (depth++ == 0) { conn.setAutoCommit(false); childFailed = false; } levels.push(new boolean[1]); } catch (SQLException e) { throw wrap(e); }
+    }
+    public void setTransactionSuccessful() { levels.peek()[0] = true; }
     public void endTransaction() {
-        try { if (--depth == 0) { if (ok) conn.commit(); else conn.rollback(); conn.setAutoCommit(true); } } catch (SQLException e) { throw wrap(e); }
+        boolean marked = levels.pop()[0];
+        try {
+            if (--depth == 0) { if (marked && !childFailed) conn.commit(); else conn.rollback(); conn.setAutoCommit(true); }
+            else if (!marked) childFailed = true;
+        } catch (SQLException e) { throw wrap(e); }
     }
 }
