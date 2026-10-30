@@ -18,8 +18,8 @@ Nothing leaves the phone: the app has no internet permission.
 
 | Package | Responsibility |
 | --- | --- |
-| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
-| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `LiveHrv`, `Stats`, `TS` (time series) |
+| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `FingerCheck` (Find my ring: when it asks the ring whether it is on a finger, its strip line and chip, the 30 s blink; issue #192), `PermissionAsk` (whether Android still shows the permission dialog), `Hex` |
+| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `FingerNow` (on a finger now, from what the finder just downloaded, issue #192), `LiveHrv`, `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
 | `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours) |
@@ -252,8 +252,8 @@ after Android ended it (#69).
 
 ## Ring finder (issue #74)
 
-`ui/FinderActivity` (Today under the score rings, Settings, Ring) never connects to the ring, so a sync
-can run meanwhile. Everything below stops in `onPause`.
+`ui/FinderActivity` (Today under the score rings, Settings, Ring) listens without connecting, so a sync
+can run meanwhile; only the "on a finger now" check and Make it blink connect, for seconds (below). Everything stops in `onPause`.
 
 * Where was it last: `RightNow.lastWorn` reads 7 days of skin temperature and heart rate back from the
   newest stored temperature reading (not from now, so an old sync still has its history), dating heart
@@ -305,8 +305,8 @@ can run meanwhile. Everything below stops in `onPause`.
   otherwise rotate the screen and lose the walk) and handles size changes itself (issue #96).
 * One screen without scrolling (issue #191), top to bottom: a top bar with the "Clicks on/off" chip
   (`Prefs.finderSound`), a last worn strip (`LastWorn.brief` plus when this phone heard it; a tap opens the full
-  `LastWorn.text`, last heard, battery and the explanation; its right end is the free place for the "on a finger?"
-  status of #192), the instruments (the gauge with band and signal line, then the signal trail strip of the last
+  `LastWorn.text`, last heard, battery and the explanation; its right end holds the chip of the "on a finger now"
+  check of #192), the instruments (the gauge with band and signal line, then the signal trail strip of the last
   2 minutes, touch readable), and the map card, which takes the height left over: the turn dial with you in the middle
   before walking and while turning, the mini map after 1 m, the status line, Start and "How it works" (the steps,
   notes, limits and step length). `core/analysis/FinderLayout.plan` shares the height (screen height in dp and font
@@ -315,6 +315,29 @@ can run meanwhile. Everything below stops in `onPause`.
   up to 260, then gauge 104 and strip 72, the rest to the map. The screen re plans when its height changes. The texts'
   heights are estimates; when even the compact plan does not fit (a very large font) or the details are open, the
   page scrolls instead of cutting anything.
+* On a finger now (issue #192, `core/FingerCheck`): once per visit, as soon as the ring is heard, Bluetooth is on, no walk
+  is recorded and no other task holds the ring (`RingManager.ringHeld`, `Db.longRun`; both make it wait and ask by itself
+  afterwards), `RingManager.askFinger` takes the ring like Live (the `op` lock for up to 10 s, `Db.holdForRing`, refused in
+  demo mode by `open`), reads the battery, downloads what is new with `drainNew` (stored like Live and a sync) and lets go.
+  It does not run `rebuildTime` (issue #121): `core/analysis/FingerNow.Reader` reads the newest skin temperature and heart
+  rate from the downloaded events, the newest event being "now" (the phone anchor's rule), a jump back of the counter by
+  over a minute starting again (reboot). `RingManager` keeps that reader across asks for one boot epoch of one ring (its
+  events are stored undated, so `RightNow.load` does not see them yet) and ages it by the phone time since its download;
+  of each reading the newer of the kept one and the stored one (`RightNow.load`) counts. The next analysis dates the new
+  events first, so the check's time does not grow with the history; until then Settings, Ring calls them "Dated at the
+  next sync" (`Db.undatedAllNew`) instead of "Waiting for a time anchor". Rule (last 20 minutes): 27 °C or more with a
+  heart rate within 5 minutes of the newest temperature (or of now) is a finger; without one it is "probably the charger"
+  when the battery went up since the read before (`LastWorn.charging`, read at each ask), else "finger or charger"
+  (review of #245: a heart rate from before the ring went onto a warm charger must not vouch for it); cool with a heart
+  rate in the last 5 minutes is a finger (cold hands), with one 5 to 20 minutes old it stays open ("cold hands or just
+  taken off"), without any it is not on a finger. The answer replaces the strip's line and its evidence leads the opened strip; an answer under
+  2 minutes old is kept when the screen comes back. The strip's chip: "Make it blink" (connects again, notes the daytime
+  heart rate mode, switches an off mode to automatic first like Live, switches it to live and starts the on demand
+  measurement for 30 s, downloading every 5 s so a measured heart rate updates the answer, then switches the measurement
+  off and puts the mode back, each step on its own; after a lost link the ring falls back to automatic by itself, not to
+  off), "Stop" while connected, "Ask again" after a failure, nothing while a walk or turn is recorded (Start stops a
+  running ask or blink first, `FingerCheck.walkStarts`). Waiting for another ring task says "Asks the ring once it is free." While the finder holds the ring the instruments say hot and cold pauses. Demo mode never
+  connects: a made up "not on a finger" answer that fits the demo walk, and a blink that only counts down.
 * Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from
   `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the
   strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard.

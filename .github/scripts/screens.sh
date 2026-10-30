@@ -201,11 +201,14 @@ launch --es settings games;                 shot settings-games
 # Find my ring (issues #74, #191), all on one screen without swiping: in demo a made up signal fills
 # the gauge and the trail; finder_start shows the screen before a walk (you in the middle of the dial),
 # the default a made up walk on the map with its circle, finder_turn a made up turn with the arrow, and
-# finder_details the full last worn text and How it works opened
+# finder_details the full last worn text and How it works opened. Every one shows the demo's made up
+# "on a finger now" answer in the last worn strip (issue #192)
 launch --ez finder true --ez finder_start true; shot finder 4
 launch --ez finder true;                    shot finder-walk 3
 launch --ez finder true --ez finder_turn true; shot finder-turn 3
 launch --ez finder true --ez finder_details true; shot finder-details 3
+# Make it blink (issue #192): the demo counts the 30 s down, the made up signal pauses as with a connected ring
+launch --ez finder true --ez finder_blink true; shot finder-blink 3
 # Live in demo mode (issue #185): made up readings, never the ring; with blood oxygen on, whose first value comes
 # 20 s in and arrives with the batch at 24 s, so the shot waits 26 s. Then the charts below the tiles
 launch --ez live true --ez live_spo2 true;  shot live 26

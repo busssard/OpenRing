@@ -196,7 +196,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * Further analysis on the Sleep page, period (int) picks its range, day (yyyy-mm-dd) a date,
      * finder (boolean) opens Find my ring, finder_turn (boolean) with it shows the demo's turn on the
      * spot instead of its walk, finder_start (boolean) the screen before any walk, finder_details
-     * (boolean) opens the full last worn text and How it works (issue #191), live (boolean, demo mode
+     * (boolean) opens the full last worn text and How it works (issue #191), finder_blink (boolean) the demo's
+     * Make it blink (issue #192; the demo never connects), live (boolean, demo mode
      * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185).
      */
     void handleExtras(Intent i) {
@@ -223,7 +224,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("finder", false)) {
             startActivity(new Intent(this, FinderActivity.class).putExtra("demo_turn", i.getBooleanExtra("finder_turn", false))
                     .putExtra("demo_start", i.getBooleanExtra("finder_start", false))
-                    .putExtra("demo_details", i.getBooleanExtra("finder_details", false)));
+                    .putExtra("demo_details", i.getBooleanExtra("finder_details", false))
+                    .putExtra("demo_blink", i.getBooleanExtra("finder_blink", false)));
         }
     }
 

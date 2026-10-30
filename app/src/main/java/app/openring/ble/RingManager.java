@@ -592,6 +592,15 @@ public final class RingManager {
      * before a live measurement).
      */
     private int drainNew(RingClient c, final boolean quiet, final EventObserver observer) throws IOException, InterruptedException, HistoryBatch.BatchException {
+        return drainNew(c, quiet, observer, null);
+    }
+
+    /** Bytes a quiet download still has to fetch, as the ring reports them (Find my ring shows them, issue #192). */
+    interface Left {
+        void left(long bytes);
+    }
+
+    private int drainNew(RingClient c, final boolean quiet, final EventObserver observer, final Left leftCb) throws IOException, InterruptedException, HistoryBatch.BatchException {
         // also a session opened before demo mode was turned on stores nothing into the demo file (issue #185)
         final Db db = ringDb();
         long now = System.currentTimeMillis() / 1000;
@@ -622,6 +631,7 @@ public final class RingManager {
                     log("storage error: " + e);
                     return false;
                 }
+                if (leftCb != null) leftCb.left(left);
                 if (quiet) return true;
                 if (firstLeft < 0 && left > 0) firstLeft = left;
                 progress = firstLeft > 0 ? Math.max(0, Math.min(1, 1 - left / (double) firstLeft)) : -1;
@@ -1133,6 +1143,248 @@ public final class RingManager {
             public void run() {
                 LiveListener l = liveListener;
                 if (l != null) l.onBeat(bpm, ibi);
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ on a finger now (Find my ring)
+
+    /** Find my ring asks the ring whether it is on a finger and makes it blink (issue #192). Calls arrive on the main thread. */
+    public interface FingerListener {
+        /** Bytes the quick download still has to fetch. */
+        void onFingerLeft(long bytes);
+
+        /** A new answer: once after the quick download, then after every download while blinking. */
+        void onFingerAnswer(app.openring.core.analysis.FingerNow answer);
+
+        /** The ring measures now, so on a finger its light flashes, for {@link app.openring.core.FingerCheck#BLINK_MS}. */
+        void onBlinkStarted();
+
+        /** The task ended and let go of the ring; {@code raw} is its raw error text, null when it worked. */
+        void onFingerDone(String raw);
+    }
+
+    private volatile FingerListener fingerListener;
+    private final java.util.concurrent.atomic.AtomicInteger fingerToken = new java.util.concurrent.atomic.AtomicInteger();
+    /** The finder's client while its download runs, so a stop can end the download (the cursor is kept per batch). */
+    private volatile RingClient fingerDrain;
+    /** The finder's readings with their ring time, kept across asks for one boot epoch of one ring (worker thread only). */
+    private app.openring.core.analysis.FingerNow.Reader fingerReader;
+    private String fingerReaderKey;
+
+    /** Another task holds the ring right now (a sync download, Live, a game, a Settings action, the finder). */
+    public boolean ringHeld() {
+        return op.isLocked();
+    }
+
+    /**
+     * Asks the ring whether it is on a finger (issue #192): connects, downloads what is new with the same quick download
+     * as Live ({@link #drainNew}: raw events, cursor and phone anchor stored as by a sync, never into the demo file), reads
+     * the newest skin temperature and heart rate from what came ({@code core/analysis/FingerNow.Reader}) and lets go.
+     * It does not date the history (issue #121): the next analysis does that first, so its time does not grow with the
+     * history. With {@code blink} it then measures heart rate for {@link app.openring.core.FingerCheck#BLINK_MS}, so the
+     * ring's light flashes on a finger, downloading again every 5 seconds, and puts the ring's heart rate mode back.
+     * Waits up to 10 s for the ring like Live; refuses in demo mode and during a long re analysis (issue #230).
+     */
+    public void askFinger(final FingerListener l, final boolean blink) {
+        fingerListener = l;
+        final int token = fingerToken.incrementAndGet();
+        String demo = demoRefusal();
+        if (demo != null) {
+            fingerDone(token, demo);
+            return;
+        }
+        worker.execute(new Runnable() {
+            @Override
+            public void run() {
+                if (token != fingerToken.get()) return;
+                boolean locked;
+                try {
+                    locked = op.tryLock(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    locked = false;
+                }
+                if (!locked) {
+                    log("finder: the ring is busy with another task");
+                    fingerDone(token, "The ring is busy with another task");
+                    return;
+                }
+                final Db held = Db.get(ctx);
+                if (!held.holdForRing()) {
+                    op.unlock();
+                    log("finder: not asked, a long analysis runs");
+                    fingerDone(token, SyncError.REANALYSING);
+                    return;
+                }
+                busy = true;
+                notifyListeners();
+                Session s = null;
+                boolean measuring = false;
+                int prevMode = -1;
+                String raw = null;
+                try {
+                    if (token != fingerToken.get()) throw new IOException("cancelled");
+                    Prefs prefs = Prefs.of(ctx);
+                    s = open(false, null);
+                    s.client.authenticate(prefs.loadKey());
+                    int charging = -1;
+                    try {
+                        int[] b = s.client.battery();
+                        long now = System.currentTimeMillis() / 1000;
+                        prefs.setBattery(b[0], now);
+                        held.addBattery(now, b[0]);
+                        // rising since the read before (at least 10 minutes older, Prefs): charging, which decides a warm
+                        // ring without a heart rate near it
+                        charging = app.openring.core.analysis.LastWorn.charging(prefs.batteryBefore(), b[0]);
+                    } catch (IOException e) {
+                        log("finder: battery read failed: " + e.getMessage());
+                    }
+                    // the readings of earlier asks stay with their ring time: their events are stored undated until the next
+                    // analysis, so the stored readings do not have them yet (review of #245). A new boot epoch or another
+                    // ring starts afresh, the ring's counter no longer matches.
+                    String key = held.kvLong("epoch", 1) + ":" + prefs.serial();
+                    if (fingerReader == null || !key.equals(fingerReaderKey)) fingerReader = new app.openring.core.analysis.FingerNow.Reader();
+                    fingerReaderKey = key;
+                    final app.openring.core.analysis.FingerNow.Reader reader = fingerReader;
+                    final int chargingNow = charging;
+                    EventObserver watch = new EventObserver() {
+                        @Override
+                        public void onEvents(List<RingEvent> events) {
+                            reader.add(events);
+                        }
+                    };
+                    fingerDrain = s.client;
+                    if (token != fingerToken.get()) throw new IOException("cancelled");
+                    int got;
+                    boolean drained = false;
+                    try {
+                        got = drainNew(s.client, true, watch, new Left() {
+                            @Override
+                            public void left(final long bytes) {
+                                fingerPost(token, new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        FingerListener fl = fingerListener;
+                                        if (fl != null) fl.onFingerLeft(bytes);
+                                    }
+                                });
+                            }
+                        });
+                        reader.mark(System.currentTimeMillis() / 1000.0);
+                        drained = true;
+                    } finally {
+                        fingerDrain = null;
+                        // a download cut off has no "now" for its newest event: keep nothing for the next ask
+                        if (!drained) fingerReader = null;
+                    }
+                    log("finder: " + got + " new events read");
+                    fingerAnswer(token, reader, chargingNow);
+                    if (blink && token == fingerToken.get()) {
+                        int[] fs = s.client.featureStatus(Protocol.FEATURE_DAYTIME_HR);
+                        prevMode = fs == null ? Protocol.MODE_AUTOMATIC : fs[0];
+                        // like Live: a ring with daytime heart rate off may refuse live mode, so automatic first
+                        if (prevMode == Protocol.MODE_OFF) s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
+                        boolean modeOk = s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_CONNECTED_LIVE);
+                        measuring = true;
+                        List<app.openring.core.Packet> r = s.client.request(Protocol.realtime(Protocol.REALTIME_ON_DEMAND, 1), null, 1500, false);
+                        log("finder: blink, heart rate was mode " + prevMode + ", live mode " + (modeOk ? "accepted" : "NOT accepted") + ", on demand reply " + r);
+                        fingerPost(token, new Runnable() {
+                            @Override
+                            public void run() {
+                                FingerListener fl = fingerListener;
+                                if (fl != null) fl.onBlinkStarted();
+                            }
+                        });
+                        long started = System.currentTimeMillis(), lastDrain = started;
+                        while (token == fingerToken.get() && System.currentTimeMillis() - started < app.openring.core.FingerCheck.BLINK_MS) {
+                            s.link.poll(500);
+                            while (s.link.pollSide() != null) {
+                                // live frames are not needed here: the downloads below read what the ring measured
+                            }
+                            if (!s.link.isConnected()) throw new IOException("the ring disconnected");
+                            if (System.currentTimeMillis() - lastDrain >= 5000) {
+                                lastDrain = System.currentTimeMillis();
+                                try {
+                                    drainNew(s.client, true, watch);
+                                    reader.mark(System.currentTimeMillis() / 1000.0);
+                                    fingerAnswer(token, reader, chargingNow);
+                                } catch (Exception e) {
+                                    log("finder: refresh failed: " + e.getMessage());
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    raw = e.getMessage() == null ? e.toString() : e.getMessage();
+                    log("finder: stopped by " + raw);
+                } finally {
+                    // each step on its own, so a failed stop of the measurement still gives the person's mode back (review
+                    // of #245). After a lost link the ring falls back to automatic by itself after about 48 s, not to off.
+                    if (measuring && s != null && s.link.isConnected()) {
+                        try {
+                            s.client.request(Protocol.realtimeOff(), null, 500);
+                        } catch (Exception e) {
+                            log("finder: measurement not switched off: " + e.getMessage());
+                        }
+                        try {
+                            // back to the mode the ring had (Live puts automatic; the finder keeps the person's choice)
+                            if (!s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, prevMode)) log("finder: heart rate mode " + prevMode + " not put back");
+                        } catch (Exception e) {
+                            log("finder: heart rate mode " + prevMode + " not put back: " + e.getMessage());
+                        }
+                    }
+                    close(s);
+                    busy = false;
+                    held.releaseForRing();
+                    op.unlock();
+                    notifyListeners();
+                    fingerDone(token, raw);
+                }
+            }
+        });
+    }
+
+    /** Ends the finder's ring task of {@code l} (Stop, or the screen left the front): the ring is free within seconds. */
+    public void stopFinger(FingerListener l) {
+        if (l != null && fingerListener != null && l != fingerListener) return;
+        fingerListener = null;
+        fingerToken.incrementAndGet();
+        // a download stops at its next batch (what came is stored); a blink leaves its loop and cleans up
+        RingClient c = fingerDrain;
+        if (c != null) c.cancel();
+    }
+
+    private void fingerAnswer(int token, app.openring.core.analysis.FingerNow.Reader reader, int charging) {
+        app.openring.data.RightNow stored = app.openring.data.RightNow.load(ctx);
+        final app.openring.core.analysis.FingerNow a = reader.result(System.currentTimeMillis() / 1000.0,
+                stored.skinTemp, stored.skinTempAt, stored.hr, stored.hrAt);
+        a.charging = charging;
+        log("finder: " + a.brief());
+        fingerPost(token, new Runnable() {
+            @Override
+            public void run() {
+                FingerListener fl = fingerListener;
+                if (fl != null) fl.onFingerAnswer(a);
+            }
+        });
+    }
+
+    private void fingerDone(int token, final String raw) {
+        fingerPost(token, new Runnable() {
+            @Override
+            public void run() {
+                FingerListener fl = fingerListener;
+                if (fl != null) fl.onFingerDone(raw);
+            }
+        });
+    }
+
+    /** Runs {@code r} on the main thread while {@code token} is still the finder's current task. */
+    private void fingerPost(final int token, final Runnable r) {
+        main.post(new Runnable() {
+            @Override
+            public void run() {
+                if (token == fingerToken.get()) r.run();
             }
         });
     }
