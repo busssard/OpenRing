@@ -31,6 +31,9 @@ public final class Texts {
     /** Settings, Re analyse all failed: it is one transaction, so the stored results are the old ones (issue #230). */
     public static final String ANALYSIS_FAILED = "The analysis failed, your nights and days are as before. " + SyncError.DETAILS;
 
+    /** Settings, Re analyse all while a sync or Live uses the ring: it waits for that task first (review of #243). */
+    public static final String REANALYSE_WAITS = "Waiting for the ring to finish its current task, then re analysing all nights. This can take a few minutes.";
+
     /** Live could not get the ring within 10 seconds: a sync, a game or Delete all local data holds it (issue #43). */
     public static final String LIVE_BUSY = "The ring is busy right now (a sync or another task). Try again in a moment.";
 
