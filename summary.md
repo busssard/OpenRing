@@ -1,16 +1,16 @@
 ## Test results
 
-**2805 tests passed, 0 failed** (JVM unit and pipeline tests).
+**2969 tests passed, 0 failed** (JVM unit and pipeline tests).
 
 ## Coverage of the code the JVM tests can run
 
 | Package | Lines covered | Branches covered |
 | --- | ---: | ---: |
-| `core` | 92% (999/1085) | 81% |
-| `core.analysis` | 99% (2937/2961) | 92% |
-| `data` | 96% (2406/2494) | 85% |
-| **core and data** | **97%** (6342/6540) | **88%** |
+| `core` | 93% (1106/1193) | 83% |
+| `core.analysis` | 99% (3035/3061) | 92% |
+| `data` | 96% (2410/2498) | 85% |
+| **core and data** | **97%** (6551/6752) | **88%** |
 
-Not counted: about 9029 lines in `ui/`, `ble/` and `sync/` need Android. The emulator test opens every
+Not counted: about 9357 lines in `ui/`, `ble/` and `sync/` need Android. The emulator test opens every
 screen with demo data and fails on crashes; Bluetooth is tested with real rings. Counting those lines as
 untested, the JVM tests reach about 41% of all app code.
