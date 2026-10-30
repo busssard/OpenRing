@@ -211,19 +211,40 @@ public final class LeftOut {
     }
 
     /**
-     * The preview in Settings before leaving out [a, b): what goes, that the ring's data stays, and which days are worked
-     * out again (from two days before the start to {@code today}); past {@code longDays} days it says that takes a few
-     * minutes. {@code nights}: stored nights that overlap it, {@code hours}: hours with a heart rate or temperature reading.
+     * What [a, b) is, in words (review of #263): a whole day "28 Oct (24 h)", whole days "28 Oct to 30 Oct (3 days)", within
+     * one day "13:00 to 17:00 on 28 Oct (4 h)", else "3 Oct 18:00 to 4 Oct 09:00 (15 h)".
      */
-    public static String preview(double a, double b, long nights, long hours, LocalDate today, ZoneId z, int longDays) {
+    public static String what(double a, double b, ZoneId z) {
+        LocalDate d0 = date(a, z), dl = date(Math.max(a, b - 1), z);
+        boolean midA = d0.atStartOfDay(z).toEpochSecond() == a, midB = dl.plusDays(1).atStartOfDay(z).toEpochSecond() == b;
+        if (midA && midB) {
+            long n = ChronoUnit.DAYS.between(d0, dl) + 1;
+            return n == 1 ? d0.format(DAY) + " (" + length(b - a) + ")" : d0.format(DAY) + " to " + dl.format(DAY) + " (" + count(n, "day", "days") + ")";
+        }
+        if (d0.equals(dl)) return clock(a, z) + " to " + clock(b, z) + " on " + d0.format(DAY) + " (" + length(b - a) + ")";
+        return span(a, b, z) + " (" + length(b - a) + ")";
+    }
+
+    /**
+     * The preview in Settings before leaving out [a, b) (reworded after the review of #263): what goes and how many of its
+     * hours hold heart rate or temperature, the stored nights inside it (left out) and those that reach into it (cut at its
+     * edges), that the ring's data stays, which days are worked out again (from two days before the start to {@code today};
+     * past {@code longDays} days it says that takes a few minutes), and when the end lies after {@code now}, that what the ring
+     * records until then is left out too.
+     */
+    public static String preview(double a, double b, long inside, long cut, long hours, LocalDate today, double now, ZoneId z, int longDays) {
         LocalDate from = againFrom(a, z);
         long again = Math.max(1, ChronoUnit.DAYS.between(from, today) + 1);
-        long days = days(a, b, z);
-        String s = "From " + span(a, b, z) + ": " + count(nights, "night", "nights") + ", " + count(days, "day", "days") + " and "
-                + count(hours, "hour", "hours") + " of heart rate or temperature are left out of all charts, scores and usual values. "
-                + "The ring's data stays stored and comes back if you remove this. Your days from " + from.format(DAY) + " to today are worked out again ("
-                + count(again, "day", "days") + ").";
-        return again > longDays ? s + " This takes a few minutes." : s;
+        StringBuilder s = new StringBuilder("Left out: ").append(what(a, b, z));
+        if (hours == 0) s.append(", with no heart rate or temperature in it.");
+        else s.append(", with heart rate or temperature in ").append(hours).append(" of those hours.");
+        if (inside > 0) s.append(' ').append(count(inside, "night", "nights")).append(inside == 1 ? " inside it is left out." : " inside it are left out.");
+        if (cut > 0) s.append(' ').append(count(cut, "night", "nights")).append(cut == 1 ? " that reaches into it is cut at its edge." : " that reach into it are cut at its edges.");
+        s.append(" The ring's data stays stored and comes back if you remove this. Your days from ").append(from.format(DAY))
+                .append(" to today are worked out again (").append(count(again, "day", "days")).append(").");
+        if (again > longDays) s.append(" This takes a few minutes.");
+        if (b > now) s.append(" This also leaves out what the ring records until ").append(dayTime(b, z)).append('.');
+        return s.toString();
     }
 
     /** The question's text before bringing [a, b) back. */
@@ -247,11 +268,11 @@ public final class LeftOut {
         return "Left out from " + when + " (someone else wore the ring)";
     }
 
-    /** The line on Activity: "3 h of this day are left out and count as Not worn." */
+    /** The line under Daily movement on Activity: "3 h of this day are left out, so they are not in these minutes." */
     public static String activityLine(double seconds) {
         long min = Math.round(seconds / 60);
         boolean one = min == 60 || min == 1;
-        return length(seconds) + " of this day " + (one ? "is" : "are") + " left out and " + (one ? "counts" : "count") + " as Not worn.";
+        return length(seconds) + " of this day " + (one ? "is left out, so it is" : "are left out, so they are") + " not in these minutes.";
     }
 
     static String count(long n, String one, String many) {

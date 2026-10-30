@@ -970,20 +970,42 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.addView(Ui.divider(this));
         card.addView(Ui.gap(this, 8));
         card.addView(Ui.text(this, "Left out times", 12, Ui.TEXT_3, Ui.REGULAR));
-        java.util.List<double[]> rows;
-        try {
-            rows = Db.get(this).excluded();
-        } catch (RuntimeException e) {
-            rows = new java.util.ArrayList<double[]>();
-        }
+        // the list is read in the background like the other cards' data (review of #263), then filled in
+        final LinearLayout list = Ui.vbox(this);
+        card.addView(list, Ui.matchWrap());
+        final android.content.Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, java.util.List<double[]>>() {
+            @Override
+            protected java.util.List<double[]> doInBackground(Void... v) {
+                try {
+                    return Db.get(ctx).excluded();
+                } catch (RuntimeException e) {
+                    return new java.util.ArrayList<double[]>();
+                }
+            }
+
+            @Override
+            protected void onPostExecute(java.util.List<double[]> rows) {
+                if (isFinishing() || isDestroyed() || advancedCard != card) return; // the card was built again meanwhile
+                fillLeftList(list, rows);
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        card.addView(Ui.gap(this, 8));
+        card.addView(Ui.text(this, Explain.LEFT_OUT, 12, Ui.TEXT_3, Ui.REGULAR));
+    }
+
+    /** The left out times, each with Remove, or "Nothing is left out." */
+    void fillLeftList(LinearLayout list, java.util.List<double[]> rows) {
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        list.removeAllViews();
         if (rows.isEmpty()) {
-            card.addView(Ui.gap(this, 4));
-            card.addView(Ui.text(this, "Nothing is left out.", 14, Ui.TEXT, Ui.REGULAR));
+            list.addView(Ui.gap(this, 4));
+            list.addView(Ui.text(this, "Nothing is left out.", 14, Ui.TEXT, Ui.REGULAR));
         }
         for (final double[] r : rows) {
-            card.addView(Ui.gap(this, 6));
-            card.addView(Ui.text(this, app.openring.core.analysis.LeftOut.listLine(r[0], r[1], z), 14, Ui.TEXT, Ui.REGULAR));
-            small(card, "Remove", Ui.WARN, new Runnable() {
+            list.addView(Ui.gap(this, 6));
+            list.addView(Ui.text(this, app.openring.core.analysis.LeftOut.listLine(r[0], r[1], z), 14, Ui.TEXT, Ui.REGULAR));
+            small(list, "Remove", Ui.WARN, new Runnable() {
                 @Override
                 public void run() {
                     confirm("Bring this time back?", app.openring.core.analysis.LeftOut.bringBackText(r[0], java.time.ZoneId.systemDefault()), new Runnable() {
@@ -995,8 +1017,6 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
             });
         }
-        card.addView(Ui.gap(this, 8));
-        card.addView(Ui.text(this, Explain.LEFT_OUT, 12, Ui.TEXT_3, Ui.REGULAR));
     }
 
     /** "From" or "To" with a date and a time button, each opening Android's picker. */
@@ -1083,8 +1103,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             double now = System.currentTimeMillis() / 1000.0;
             String problem = db.leftOut().problem(a, b, now);
             if (problem != null) return new String[] {null, problem};
-            return new String[] {app.openring.core.analysis.LeftOut.preview(a, b, db.nightsOverlapping(a, b), db.hoursWithReadings(a, b),
-                    java.time.LocalDate.now(z), z, Analyzer.LONG_RUN_DAYS), null};
+            long inside = db.nightsInside(a, b);
+            return new String[] {app.openring.core.analysis.LeftOut.preview(a, b, inside, db.nightsOverlapping(a, b) - inside, db.hoursWithReadings(a, b),
+                    java.time.LocalDate.now(z), now, z, Analyzer.LONG_RUN_DAYS), null};
         } catch (RuntimeException e) {
             return new String[] {"", null};
         }

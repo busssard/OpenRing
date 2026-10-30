@@ -5601,19 +5601,29 @@ public class CoreTest {
         eq("left out: timeline row of more than a day", LeftOut.timelineRow(a, b + 86400, z), "Left out from 3 Oct 18:00 to 5 Oct 09:00 (someone else wore the ring)");
         double mid = java.time.LocalDate.parse("2026-10-04").atStartOfDay(z).toEpochSecond();
         eq("left out: the band's readout, cut at midnight", LeftOut.bandTip(a, mid, z), "Left out, 18:00 to 00:00 (someone else wore the ring)");
-        eq("left out: activity line", LeftOut.activityLine(3 * 3600), "3 h of this day are left out and count as Not worn.");
-        eq("left out: activity line, one hour", LeftOut.activityLine(3600), "1 h of this day is left out and counts as Not worn.");
+        eq("left out: activity line", LeftOut.activityLine(3 * 3600), "3 h of this day are left out, so they are not in these minutes.");
+        eq("left out: activity line, one hour", LeftOut.activityLine(3600), "1 h of this day is left out, so it is not in these minutes.");
         eq("left out: lengths", LeftOut.length(45 * 60) + ", " + LeftOut.length(15.5 * 3600) + ", " + LeftOut.length(3 * 86400 + 4 * 3600) + ", "
                 + LeftOut.length(2 * 86400), "45 min, 15 h 30 min, 3 days 4 h, 2 days");
         java.time.LocalDate today = java.time.LocalDate.parse("2026-10-30");
-        eq("left out: the preview", LeftOut.preview(a, b, 1, 14, today, z, 28), "From 3 Oct 18:00 to 4 Oct 09:00: 1 night, 2 days and 14 hours of heart rate or "
-                + "temperature are left out of all charts, scores and usual values. The ring's data stays stored and comes back if you remove this. "
-                + "Your days from 1 Oct to today are worked out again (30 days). This takes a few minutes.");
-        String recent = LeftOut.preview(java.time.LocalDateTime.parse("2026-10-28T13:00").atZone(z).toEpochSecond(),
-                java.time.LocalDateTime.parse("2026-10-28T17:00").atZone(z).toEpochSecond(), 0, 4, today, z, 28);
-        eq("left out: a short preview", recent, "From 28 Oct 13:00 to 28 Oct 17:00: 0 nights, 1 day and 4 hours of heart rate or temperature are "
-                + "left out of all charts, scores and usual values. The ring's data stays stored and comes back if you remove this. Your days from "
-                + "26 Oct to today are worked out again (5 days).");
+        double now30 = java.time.LocalDateTime.parse("2026-10-30T10:00").atZone(z).toEpochSecond();
+        eq("left out: the preview across two days", LeftOut.preview(a, b, 0, 2, 14, today, now30, z, 28), "Left out: 3 Oct 18:00 to 4 Oct 09:00 (15 h), "
+                + "with heart rate or temperature in 14 of those hours. 2 nights that reach into it are cut at its edges. The ring's data stays stored "
+                + "and comes back if you remove this. Your days from 1 Oct to today are worked out again (30 days). This takes a few minutes.");
+        double d28 = java.time.LocalDate.parse("2026-10-28").atStartOfDay(z).toEpochSecond();
+        String recent = LeftOut.preview(d28 + 13 * 3600, d28 + 17 * 3600, 0, 0, 4, today, now30, z, 28);
+        eq("left out: a few hours of one day", recent, "Left out: 13:00 to 17:00 on 28 Oct (4 h), with heart rate or temperature in 4 of those hours. "
+                + "The ring's data stays stored and comes back if you remove this. Your days from 26 Oct to today are worked out again (5 days).");
+        double d29 = java.time.LocalDate.parse("2026-10-29").atStartOfDay(z).toEpochSecond(), d30 = java.time.LocalDate.parse("2026-10-30").atStartOfDay(z).toEpochSecond();
+        eq("left out: a whole day, one night inside, two cut", LeftOut.preview(d29, d30, 1, 2, 24, today, now30, z, 28), "Left out: 29 Oct (24 h), with heart "
+                + "rate or temperature in 24 of those hours. 1 night inside it is left out. 2 nights that reach into it are cut at its edges. The ring's data "
+                + "stays stored and comes back if you remove this. Your days from 27 Oct to today are worked out again (4 days).");
+        eq("left out: whole days, one night cut, no readings, an end after now", LeftOut.preview(d28, d30 + 86400, 0, 1, 0, today, now30, z, 28),
+                "Left out: 28 Oct to 30 Oct (3 days), with no heart rate or temperature in it. 1 night that reaches into it is cut at its edge. The ring's data "
+                + "stays stored and comes back if you remove this. Your days from 26 Oct to today are worked out again (5 days). This also leaves out what "
+                + "the ring records until 31 Oct 00:00.");
+        eq("left out: what, the 25 hour day of the clock change", LeftOut.what(java.time.LocalDate.parse("2026-10-25").atStartOfDay(z).toEpochSecond(),
+                java.time.LocalDate.parse("2026-10-26").atStartOfDay(z).toEpochSecond(), z), "25 Oct (25 h)");
         eq("left out: bring back", LeftOut.bringBackText(a, z), "It counts again in your charts, scores and usual values. Your days from 1 Oct on are worked out again.");
         // calendar days and pieces across midnight and the clock change of 25 Oct 2026 (the night has 25 hours)
         double e24 = java.time.LocalDateTime.parse("2026-10-24T22:00").atZone(z).toEpochSecond();
@@ -5628,7 +5638,7 @@ public class CoreTest {
         eq("left out across the clock change: list line", LeftOut.listLine(e24, e25, z), "24 Oct 22:00 to 25 Oct 09:00 (12 h)");
         w = dst.window(java.time.LocalDateTime.parse("2026-10-24T23:00").atZone(z).toEpochSecond(), java.time.LocalDateTime.parse("2026-10-25T10:00").atZone(z).toEpochSecond());
         check("left out across the clock change: the hour after it is the window", w != null && w[0] == e25 && w[1] - w[0] == 3600);
-        for (String t : new String[] {LeftOut.preview(a, b, 1, 14, today, z, 28), LeftOut.card(a, b, z), LeftOut.bandTip(a, b, z), LeftOut.timelineRow(a, b, z),
+        for (String t : new String[] {LeftOut.preview(a, b, 1, 1, 14, today, a, z, 28), LeftOut.card(a, b, z), LeftOut.bandTip(a, b, z), LeftOut.timelineRow(a, b, z),
             LeftOut.activityLine(5400), LeftOut.bringBackText(a, z), app.openring.ui.Explain.LEFT_OUT, l.problem(1, 0, 0), l.problem(9e9, 1e10, 0), l.problem(1000, 2000, 1e10)}) {
             check("left out texts: no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("–") && !t.contains("—") && !t.isEmpty());
         }

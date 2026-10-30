@@ -1182,6 +1182,16 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /** Stored nights wholly inside [from, to) (left out, not cut), for the preview in Settings. */
+    public long nightsInside(double from, double to) {
+        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM nights WHERE start >= ? AND stop <= ?", new String[] {String.valueOf(from), String.valueOf(to)});
+        try {
+            return c.moveToFirst() ? c.getLong(0) : 0;
+        } finally {
+            c.close();
+        }
+    }
+
     /** Distinct hours in [from, to) with a heart rate or skin temperature event, for the preview in Settings. */
     public long hoursWithReadings(double from, double to) {
         Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(DISTINCT CAST(unix / 3600 AS INTEGER)) FROM events WHERE tag IN ("

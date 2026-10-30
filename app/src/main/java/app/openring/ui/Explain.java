@@ -113,7 +113,7 @@ public final class Explain {
      */
     public static final String LEFT_OUT = "A left out time is a stretch when someone else wore your ring. Its nights, heart rate, temperature "
             + "and activity are left out of your charts, scores and usual values (resting heart rate, HRV, skin temperature and your "
-            + "sleep pattern). Its minutes count as Not worn. The ring's data itself stays stored on this phone, and it counts again "
+            + "sleep pattern). Its minutes are not in your daily movement. The ring's data itself stays stored on this phone, and it counts again "
             + "as soon as you remove the left out time in Settings, Advanced. The app cannot tell who wore the ring; you pick the time.";
 
     public static String of(String key) {
