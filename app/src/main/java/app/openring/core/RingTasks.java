@@ -3,7 +3,7 @@ package app.openring.core;
 /**
  * The decisions behind the one ring lock (issues #43 and #153), kept apart from Bluetooth so the JVM
  * tests cover them: which task a stop reaches, when Live rejoins a running session, and which sync
- * shows the final status line. {@code ble/RingManager} applies them.
+ * shows the final status line, and that demo mode never reaches the ring (issue #185). {@code ble/RingManager} applies them.
  */
 public final class RingTasks {
     private RingTasks() {
@@ -60,5 +60,14 @@ public final class RingTasks {
     public static String syncEndStatus(int syncsLeft, String own, String leftBehind) {
         if (syncsLeft > 0) return null;
         return own != null ? own : leftBehind;
+    }
+
+    /**
+     * Null when a ring task may connect to the ring and store what it reads: demo mode is off and the database open
+     * now is the real file. Otherwise the raw text {@link SyncError#DEMO_RING} (issue #185): demo mode lives in its own
+     * file and never uses the ring, also when demo mode was turned on or off while a session ran ({@code demoFile}).
+     */
+    public static String demoRefusal(boolean demo, boolean demoFile) {
+        return demo || demoFile ? SyncError.DEMO_RING : null;
     }
 }

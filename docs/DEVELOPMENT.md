@@ -93,7 +93,7 @@ these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
 (boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd),
 `settings` (opens Settings at a card: `top`, `stages`, `screen` or `games`; with a card the page gets
-an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened).
+an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened), `live` (boolean, demo mode only: opens Live with its made up readings), `live_spo2` (boolean, with `live`: blood oxygen on).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.

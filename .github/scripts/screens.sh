@@ -206,6 +206,10 @@ launch --ez finder true --ez finder_start true; shot finder 4
 launch --ez finder true;                    shot finder-walk 3
 launch --ez finder true --ez finder_turn true; shot finder-turn 3
 launch --ez finder true --ez finder_details true; shot finder-details 3
+# Live in demo mode (issue #185): made up readings, never the ring; with blood oxygen on, whose first value comes
+# 20 s in and arrives with the batch at 24 s, so the shot waits 26 s. Then the charts below the tiles
+launch --ez live true --ez live_spo2 true;  shot live 26
+swipe_up; swipe_up;                         shot live-charts 1
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then

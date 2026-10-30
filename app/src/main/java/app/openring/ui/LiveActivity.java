@@ -20,12 +20,16 @@ import java.util.List;
 import java.util.Locale;
 
 import app.openring.ble.RingManager;
+import app.openring.core.DemoLive;
+import app.openring.core.LiveScreen;
 import app.openring.core.analysis.LiveHrv;
 import app.openring.core.analysis.TS;
 
 /**
  * Live measurement: heart rate and HRV from live beats, blood oxygen on demand (experimental),
- * the ring's sensor temperature, and a breath hold timer for dry apnea training.
+ * the ring's sensor temperature, and a breath hold timer for dry apnea training. It holds the ring only
+ * while it is in front (issue #187); in demo mode it shows made up readings and never uses the ring
+ * (issue #185). {@code core/LiveScreen} decides which.
  */
 public final class LiveActivity extends Activity implements RingManager.LiveListener {
     private TextView state, source, hrV, hrvV, hrvNote, spo2V, tempV, holdBtn, holdTime, summary;
@@ -39,8 +43,12 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
     private double holdStart = Double.NaN;
     private double started;
     private double spo2Min = Double.NaN;
-    private boolean spo2;
+    private boolean spo2, demo;
     private final Handler h = new Handler(Looper.getMainLooper());
+    private final LiveScreen screen = new LiveScreen();
+    /** Demo mode: the made up readings and when they began (issue #185). */
+    private DemoLive demoLive;
+    private double demoStart;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -49,6 +57,7 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
         getWindow().setNavigationBarColor(Ui.BG);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         spo2 = getIntent().getBooleanExtra("spo2", false);
+        demo = app.openring.data.Prefs.of(this).demo();
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(Ui.BG);
         LinearLayout root = Ui.vbox(this);
@@ -87,8 +96,11 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
             @Override
             public void onCheckedChanged(CompoundButton bt, boolean on) {
                 spo2 = on;
-                state.setText("Restarting");
-                RingManager.get(LiveActivity.this).startLive(LiveActivity.this, spo2);
+                // a ring session starts again with the new choice; demo readings take it at their next batch
+                if (screen.restart() == LiveScreen.Source.RING) {
+                    state.setText("Restarting");
+                    RingManager.get(LiveActivity.this).startLive(LiveActivity.this, spo2);
+                }
             }
         });
         opt.addView(sw);
@@ -129,8 +141,54 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
         root.addView(done, Ui.matchWrap());
         setContentView(sv);
         started = now();
-        RingManager.get(this).startLive(this, spo2);
+    }
+
+    /** In front: measure (the ring, or demo readings in demo mode). */
+    @Override
+    protected void onResume() {
+        super.onResume();
+        LiveScreen.Source s = screen.resume(demo);
+        if (s == null) return;
+        state.setText(screen.startText());
         h.post(tick);
+        if (s == LiveScreen.Source.DEMO) {
+            source.setText(LiveScreen.DEMO_SOURCE);
+            if (demoLive == null) {
+                demoLive = new DemoLive(185);
+                demoStart = now();
+            } else {
+                demoLive.skipTo(now() - demoStart);
+            }
+            h.postDelayed(demoTick, (long) (DemoLive.STEP_S * 1000));
+        } else {
+            RingManager.get(this).startLive(this, spo2);
+        }
+    }
+
+    /** Not in front (Home, another app, screen off): give the ring back at once, so a sync can use it (issue #187). */
+    @Override
+    protected void onPause() {
+        super.onPause();
+        h.removeCallbacks(tick);
+        h.removeCallbacks(demoTick);
+        if (screen.pause() == LiveScreen.Source.RING) RingManager.get(this).stopLive(this);
+    }
+
+    /** Demo mode: the next batch of made up readings, through the same steps as the ring's (issue #185). */
+    final Runnable demoTick = new Runnable() {
+        @Override
+        public void run() {
+            DemoLive.Batch b = demoLive.next(now() - demoStart, spo2);
+            onValue("temp", b.temp);
+            if (b.beats.length > 0) onSeries("ibi", b.beats);
+            if (b.spo2.length > 0) onSeries("spo2", b.spo2);
+            h.postDelayed(this, (long) (DemoLive.STEP_S * 1000));
+        }
+    };
+
+    /** The line under the status: where the readings come from; in demo mode always that they are made up. */
+    void showSource(String text) {
+        source.setText(demo ? LiveScreen.DEMO_SOURCE : text);
     }
 
     /** A big live number with its label, unit and one line saying what it is. */
@@ -192,6 +250,8 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
     protected void onDestroy() {
         super.onDestroy();
         h.removeCallbacks(tick);
+        h.removeCallbacks(demoTick);
+        // does nothing once onPause stopped it: only the screen that owns the session stops it
         RingManager.get(this).stopLive(this);
     }
 
@@ -199,10 +259,10 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
     public void onBeat(int b, int ibi) {
         hrV.setText(String.valueOf(b));
         if (ibi == 0) {
-            source.setText("Showing the ring's latest stored reading while waiting for live beats");
+            showSource("Showing the ring's latest stored reading while waiting for live beats");
             return;
         }
-        source.setText("Live from the ring");
+        showSource("Live from the ring");
         hrSeries.add(now(), b);
         hrv.add(ibi);
         showHrv();
@@ -250,7 +310,7 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
             java.util.Arrays.sort(last);
             hrV.setText(String.valueOf(Math.round(60000.0 / last[n / 2])));
             showHrv();
-            source.setText("From the ring's measurements, updated every few seconds");
+            showSource("From the ring's measurements, updated every few seconds");
         } else if ("hr".equals(kind)) {
             // always on heart rate: averages about 1.92 s apart, for the number and the chart only
             for (int i = 0; i < v.length; i++) hrSeries.add(t - (v.length - 1 - i) * app.openring.core.analysis.LiveFeed.HR_STEP_S, v[i]);
@@ -260,7 +320,7 @@ public final class LiveActivity extends Activity implements RingManager.LiveList
             java.util.Arrays.sort(last);
             hrV.setText(String.valueOf(last[n / 2]));
             showHrv();
-            source.setText("From the ring's heart rate readings, updated every few seconds");
+            showSource("From the ring's heart rate readings, updated every few seconds");
         } else if ("spo2".equals(kind)) {
             for (int i = 0; i < v.length; i++) {
                 double x = v[i];

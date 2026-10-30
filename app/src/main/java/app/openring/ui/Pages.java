@@ -32,7 +32,8 @@ public final class Pages {
     public interface Nav {
         void go(int tab);
 
-        void live();
+        /** Open Live; {@code spo2} with blood oxygen switched on. Demo mode shows made up readings there (issue #185). */
+        void live(boolean spo2);
 
         void sync();
 
@@ -143,7 +144,7 @@ public final class Pages {
         lb.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                nav.live();
+                nav.live(false);
             }
         });
         lr.addView(lb);
@@ -1256,7 +1257,7 @@ public final class Pages {
         live.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                nav.live();
+                nav.live(false);
             }
         });
         hr.addView(live, Ui.matchWrap());
@@ -1265,7 +1266,8 @@ public final class Pages {
         ox.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                c.startActivity(new android.content.Intent(c, LiveActivity.class).putExtra("spo2", true));
+                // the same way as the heart rate button, so demo mode never reaches the ring (issue #185)
+                nav.live(true);
             }
         });
         hr.addView(ox, Ui.matchWrap());

@@ -27,6 +27,7 @@ import app.openring.core.HistoryBatch;
 import app.openring.core.Protocol;
 import app.openring.core.RingClient;
 import app.openring.core.RingEvent;
+import app.openring.core.RingTasks;
 import app.openring.core.SyncError;
 import app.openring.core.Texts;
 import app.openring.data.Analyzer;
@@ -187,6 +188,26 @@ public final class RingManager {
         forceStatus(s);
     }
 
+    /**
+     * The demo rule of {@code core/RingTasks.demoRefusal} for now: null when a ring task may connect and store, otherwise
+     * the raw text {@link SyncError#DEMO_RING} (issue #185). Demo mode never uses the ring and its file never gets ring data.
+     */
+    private String demoRefusal() {
+        return demoRefusal(Db.get(ctx));
+    }
+
+    private String demoRefusal(Db db) {
+        return RingTasks.demoRefusal(Prefs.of(ctx).demo(), Db.DEMO.equals(db.fileName));
+    }
+
+    /** The database a ring task stores into: always the real one, never the demo file (issue #185). */
+    private Db ringDb() throws IOException {
+        Db db = Db.get(ctx);
+        String demo = demoRefusal(db);
+        if (demo != null) throw new IOException(demo);
+        return db;
+    }
+
     /** Status line of the sync itself, also while it analyses. */
     private void forceStatus(String s) {
         status = s;
@@ -209,6 +230,9 @@ public final class RingManager {
     }
 
     private Session open(boolean anyRing, Set<String> exclude) throws IOException, InterruptedException {
+        // every connection starts here: none in demo mode, whichever path asks (issue #185)
+        String demo = demoRefusal();
+        if (demo != null) throw new IOException(demo);
         BluetoothAdapter a = RingScanner.adapter(ctx);
         if (a == null) throw new IOException("This phone has no Bluetooth");
         if (!a.isEnabled()) throw new IOException(SyncError.BLUETOOTH_OFF_TEXT);
@@ -568,7 +592,8 @@ public final class RingManager {
      * before a live measurement).
      */
     private int drainNew(RingClient c, final boolean quiet, final EventObserver observer) throws IOException, InterruptedException, HistoryBatch.BatchException {
-        final Db db = Db.get(ctx);
+        // also a session opened before demo mode was turned on stores nothing into the demo file (issue #185)
+        final Db db = ringDb();
         long now = System.currentTimeMillis() / 1000;
         long epoch = db.kvLong("epoch", 1);
         long cursor = db.kvLong("cursor", 0);
@@ -800,6 +825,12 @@ public final class RingManager {
      */
     public synchronized void startLive(final LiveListener l, final boolean spo2) {
         liveListener = l;
+        // demo mode never uses the ring (issue #185): no session, no worker task; the Live screen shows demo readings
+        String demo = demoRefusal();
+        if (demo != null) {
+            post(SyncError.plain(demo, SyncError.Task.LIVE));
+            return;
+        }
         // rejoin only a session that is still the current one: a stopped one may still be cleaning up
         // (a turned phone, Done and back within seconds), and would end without values (issue #153).
         // LiveSessions.start applies RingTasks.rejoinLive and gives 0 for a rejoin.
@@ -825,6 +856,13 @@ public final class RingManager {
                     live.ended(token);
                     return;
                 }
+                // left (Live paused, issue #187) while it waited for the ring, for example behind a sync: give it back
+                // untouched, no connection, no download, no mode change
+                if (live.stale(token)) {
+                    op.unlock();
+                    log("live: left before it got the ring, not started");
+                    return;
+                }
                 // Live stores what it drains: not while a long analysis replaces the results (issue #230)
                 final Db held = Db.get(ctx);
                 if (!held.holdForRing()) {
@@ -839,10 +877,13 @@ public final class RingManager {
                 Session s = null;
                 boolean realtimeOn = false;
                 int spo2PrevMode = -1;
+                boolean modesTouched = false;
                 try {
                     post(token, "Connecting to your ring");
                     s = open(false, null);
+                    leftCheck(token, "while connecting");
                     s.client.authenticate(Prefs.of(ctx).loadKey());
+                    leftCheck(token, "while checking the key");
                     // fresh data first: it tells whether the ring is on a finger right now
                     post(token, "Checking the ring");
                     try {
@@ -850,6 +891,7 @@ public final class RingManager {
                     } catch (Exception e) {
                         log("live: quick download failed: " + e.getMessage());
                     }
+                    leftCheck(token, "during the first download");
                     try {
                         Db.get(ctx).rebuildTime(System.currentTimeMillis() / 1000);
                     } catch (RuntimeException e) {
@@ -861,6 +903,8 @@ public final class RingManager {
                         post(token, String.format(Locale.US, "The ring reads %.0f \u00b0C, room temperature, so it is probably not on a finger. "
                                 + "Put it on (not on the charger) and keep your hand still.", now.skinTemp));
                     }
+                    leftCheck(token, "before the live mode");
+                    modesTouched = true;
                     int[] fs = s.client.featureStatus(Protocol.FEATURE_DAYTIME_HR);
                     log("live: daytime HR feature " + (fs == null ? "status unknown" : "mode " + fs[0] + " status " + fs[1] + " state " + fs[2]));
                     if (fs != null && fs[0] == Protocol.MODE_OFF) {
@@ -1034,13 +1078,17 @@ public final class RingManager {
                     }
                     log("live: " + beats + " beats, " + frames + " live frames, " + s.link.sideSummary());
                     post(token, beats > 0 ? "Stopped" : "Stopped without a pulse. Diagnostics, Log tab, shows what the ring sent.");
+                } catch (LiveLeft e) {
+                    // Live left the front (issue #187): the ring goes back without the live mode it never got
+                    log("live: left " + e.getMessage() + ", the ring is given back");
                 } catch (Exception e) {
                     String raw = e.getMessage() == null ? e.toString() : e.getMessage();
                     log("live: stopped by " + raw);
                     post(token, "Live heart rate stopped. " + SyncError.plain(raw, SyncError.Task.LIVE));
                 } finally {
                     try {
-                        if (s != null && s.link.isConnected()) {
+                        // only modes this session changed are put back: a session that left early changed none
+                        if (modesTouched && s != null && s.link.isConnected()) {
                             if (realtimeOn) s.client.request(Protocol.realtimeOff(), null, 500);
                             s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
                             // leave blood oxygen as it was: live SpO2 drains the battery
@@ -1058,6 +1106,18 @@ public final class RingManager {
                 }
             }
         });
+    }
+
+    /** A live session that was stopped (Live left the front, issue #187) before it measured: it ends at once. */
+    private static final class LiveLeft extends Exception {
+        LiveLeft(String when) {
+            super(when);
+        }
+    }
+
+    /** Ends the session {@code token} at this step when it is no longer the current one (issue #187). */
+    private void leftCheck(int token, String when) throws LiveLeft {
+        if (!live.isCurrent(token)) throw new LiveLeft(when);
     }
 
     /** Stop the live session, but only if {@code l} is the screen that owns it. */
@@ -1091,6 +1151,12 @@ public final class RingManager {
     public void startMotion(MotionListener l) {
         motionListener = l;
         final int token = motionToken.incrementAndGet();
+        // demo mode never uses the ring (issue #185): touch steering only
+        String demo = demoRefusal();
+        if (demo != null) {
+            motionState(SyncError.game(demo), false);
+            return;
+        }
         worker.execute(new Runnable() {
             @Override
             public void run() {

@@ -56,6 +56,12 @@ public final class SyncError {
     /** The status line of a sync that waits for a long analysis before it takes the ring (issue #230). */
     public static final String SYNC_WAITS = REANALYSING + ". The sync starts after it.";
 
+    /**
+     * Raw text of a ring task refused in demo mode (issue #185): the demo never connects to a ring and never stores what
+     * a ring sends. Starts with "Demo mode" like the sync's own "Demo mode: syncing is off", so both read as {@link Kind#DEMO}.
+     */
+    public static final String DEMO_RING = "Demo mode: the ring is not used";
+
     /** The text RingManager and RingScanner give when the phone's Bluetooth is off. */
     public static final String BLUETOOTH_OFF_TEXT = "Bluetooth is off";
 
@@ -80,7 +86,7 @@ public final class SyncError {
 
     /**
      * Whether another sync attempt can help after the failure {@code raw}: not with Bluetooth off (the adapter, or the
-     * text says so), no Bluetooth, no ring found (a whole scan already ran), a key the ring refuses, no key or a stop. Passing Bluetooth errors such as
+     * text says so), no Bluetooth, no ring found (a whole scan already ran), a key the ring refuses, no key, demo mode or a stop. Passing Bluetooth errors such as
      * a refused write, a failed scan or a refused GATT connection are retried (issue #157).
      */
     public static boolean retryable(String raw, boolean bluetoothOn) {
@@ -93,6 +99,7 @@ public final class SyncError {
             case KEY_REFUSED:
             case RING_RESET:
             case NO_KEY:
+            case DEMO:
                 return false;
             default:
                 return true;
@@ -163,7 +170,7 @@ public final class SyncError {
             case BUSY: return sync ? "The ring is busy with live heart rate or a game. Sync again in a minute."
                     : "The ring is busy with a sync, live heart rate or a game. Try again in a minute.";
             case STOPPED: return sync ? "The sync was stopped. Sync again when you like." : "This was stopped before it finished. Try again when you like.";
-            case DEMO: return "Syncing is off in demo mode.";
+            case DEMO: return sync ? "Syncing is off in demo mode." : "The ring is not used in demo mode. Leave the demo in Settings to use your ring.";
             case REANALYSING: return REANALYSING + ". " + (sync ? "Sync again then." : live ? "Try Live again then." : "Try again then.");
             case KEY_EXISTS: return "The ring already has a key. Factory reset it first, or use the existing key.";
             case KEY_NOT_TAKEN: return "The ring did not take the new key. Check that it was factory reset (blinking blue on the dock means done), "
