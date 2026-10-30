@@ -5850,8 +5850,8 @@ public class PipelineTest {
         } finally {
             app.openring.core.RingGate.RING.op.unlock();
         }
-        check("#219 stopped: the restore says the ring was still syncing, nothing restored", err[0] == null && out[0] != null && !out[0].ok
-                && app.openring.core.RingGate.RESTORE_REFUSED.equals(out[0].message), err[0] != null ? err[0] : out[0] == null ? null : out[0].message);
+        check("#219 stopped: the restore says it was stopped, nothing restored", err[0] == null && out[0] != null && !out[0].ok
+                && app.openring.core.RingGate.restoreRefused(app.openring.core.RingGate.STOPPED).equals(out[0].message), err[0] != null ? err[0] : out[0] == null ? null : out[0].message);
         check("#219 stopped: the history is as it was", phone219(st).equals(before), phone219(st) + " / " + before);
         check("#219 stopped: key and settings as they were", java.util.Arrays.equals(app.openring.data.Prefs.of(st).loadKey(), keyBefore)
                 && app.openring.data.Prefs.of(st).screenGoalMin() == 45, "");
@@ -5893,7 +5893,7 @@ public class PipelineTest {
             said = steps.toString();
         }
         check("#219 demo: demo mode stays off while the download stores, and the dialog says why",
-                offMeanwhile && said.startsWith(app.openring.core.RingGate.WAIT_RING), offMeanwhile + ", " + said);
+                offMeanwhile && said.startsWith(app.openring.core.RingGate.WAIT_SYNC), offMeanwhile + ", " + said);
         dl.join(120000);
         demo.join(120000);
         check("#219 demo: the download stored every batch into the real history and analysed it there", dl.err == null && dl.stored == 20
@@ -5905,6 +5905,64 @@ public class PipelineTest {
         check("#219 demo: the real history holds every downloaded event and the download's cursor", real.count("SELECT COUNT(*) FROM events WHERE ds >= " + DS219) == 20 * 50
                 && real.kvLong("cursor", -1) == dl.lastCursor, real.count("SELECT COUNT(*) FROM events WHERE ds >= " + DS219));
         check("#219 demo: and every event it had before", real.eventCount() == countIn(fileOf(dbBytes), "SELECT COUNT(*) FROM events") + 20 * 50, realBefore);
+
+        // review of #248: Back on the demo dialog stops its wait for a download; nothing changes, the sync goes on
+        Context bk = freshDb("openring219-back");
+        app.openring.data.Backup.read(bk, new java.io.ByteArrayInputStream(full));
+        long bkEvents = Db.get(bk).eventCount();
+        Download219 dl3 = new Download219(bk, 20, 25);
+        dl3.start();
+        dl3.first.await(60, java.util.concurrent.TimeUnit.SECONDS);
+        final boolean[] back = {false};
+        final List<String> bsteps = new ArrayList<String>();
+        final class BackSteps implements app.openring.data.Demo.Progress, app.openring.core.RingGate.Stop {
+            @Override
+            public void step(String what) {
+                synchronized (bsteps) {
+                    bsteps.add(what);
+                }
+                back[0] = true; // the person presses Back as soon as the wait shows
+            }
+
+            @Override
+            public boolean stopped() {
+                return back[0];
+            }
+        }
+        Integer demoWhy = null;
+        try {
+            app.openring.data.Demo.enter(bk, new BackSteps(), LocalDate.parse("2026-10-22"), LocalDate.parse("2026-10-22").atTime(9, 0).atZone(ZoneId.systemDefault()).toEpochSecond());
+        } catch (app.openring.data.Demo.NotNow e) {
+            demoWhy = e.why;
+        }
+        boolean syncStillRuns = dl3.isAlive();
+        dl3.join(120000);
+        check("#248 Back stops the demo's wait: nothing switched, the download goes on into the real history", demoWhy != null
+                && demoWhy == app.openring.core.RingGate.STOPPED && !app.openring.data.Prefs.of(bk).demo() && syncStillRuns && dl3.err == null
+                && dl3.stored == 20 && Db.REAL.equals(Db.get(bk).fileName) && Db.get(bk).eventCount() == bkEvents + 20 * 50, demoWhy + " " + bsteps);
+        // and a restore whose Setup was left for good while it waited: nothing restored, the history as it was
+        // the same made up batches again (stored once, the history keeps its rows), so the history must stay exactly that
+        Download219 dl4 = new Download219(bk, 20, 25);
+        dl4.start();
+        dl4.first.await(60, java.util.concurrent.TimeUnit.SECONDS);
+        final boolean[] left = {false};
+        final class LeftSetup implements app.openring.data.Backup.Progress, app.openring.core.RingGate.Stop {
+            @Override
+            public void step(String what) {
+                left[0] = true;
+            }
+
+            @Override
+            public boolean stopped() {
+                return left[0];
+            }
+        }
+        app.openring.data.Backup.Result lres = app.openring.data.Backup.finish(bk, app.openring.data.Backup.prepare(bk, new java.io.ByteArrayInputStream(other)), true, new LeftSetup());
+        dl4.join(120000);
+        check("#248 Setup left while the restore waits: stopped, nothing restored, the download kept every batch", !lres.ok
+                && app.openring.core.RingGate.restoreRefused(app.openring.core.RingGate.STOPPED).equals(lres.message) && dl4.err == null
+                && dl4.stored == 20 && Db.get(bk).eventCount() == bkEvents + 20 * 50 && Db.get(bk).kvLong("cursor", -1) == dl4.lastCursor, lres.message + ", " + Db.get(bk).eventCount());
+        noTemp(bk, "after a restore stopped by leaving Setup");
 
         // 6. Setup's restore line while it waits for a download
         Context ln = freshDb("openring219-line");
@@ -5922,7 +5980,7 @@ public class PipelineTest {
                 });
         dl2.join(120000);
         check("#219 restore line: it says it waits for the sync, then restores", lr.ok && lr.history && !lines.isEmpty()
-                && lines.equals(java.util.Arrays.asList(app.openring.core.RingGate.WAIT_RING, app.openring.data.Backup.RESTORING)), lines + " " + lr.message);
+                && lines.equals(java.util.Arrays.asList(app.openring.core.RingGate.WAIT_SYNC, app.openring.data.Backup.RESTORING)), lines + " " + lr.message);
         // restoring key and settings only swaps nothing: it never waits
         app.openring.core.RingGate.RING.op.lock();
         long t0 = System.currentTimeMillis();

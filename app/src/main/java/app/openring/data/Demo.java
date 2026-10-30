@@ -86,11 +86,16 @@ public final class Demo {
 
     /**
      * Demo mode could not be turned on: a sync or another ring task still stored into the real history after
-     * {@link app.openring.core.RingGate#SWAP_WAIT_MS} (issue #219). Nothing changed; the message says so.
+     * {@link app.openring.core.RingGate#SWAP_WAIT_MS} (issue #219), or the person stopped the wait (a
+     * {@link Progress} that also implements {@code RingGate.Stop}, review of #248). Nothing changed; the message says so.
      */
     public static final class NotNow extends RuntimeException {
-        NotNow(String message) {
-            super(message);
+        /** What held it up, {@code RingGate.FOR_SYNC} and so on, or {@code STOPPED}: the toast is {@code RingGate.demoRefused(why)}. */
+        public final int why;
+
+        NotNow(int why) {
+            super(app.openring.core.RingGate.demoRefused(why));
+            this.why = why;
         }
     }
 
@@ -101,7 +106,7 @@ public final class Demo {
         // holding nothing, and holds the ring while the demo is switched on and built; once it is on, no ring task
         // connects or stores (issue #185)
         final boolean[] built = {false};
-        boolean ran = app.openring.core.RingGate.RING.whenFree(new Runnable() {
+        int why = app.openring.core.RingGate.RING.whenFree(new Runnable() {
             @Override
             public void run() {
                 built[0] = buildWhenIdle(c, p, today, now);
@@ -109,10 +114,10 @@ public final class Demo {
         }, app.openring.core.RingGate.SWAP_WAIT_MS, Analyzer.RUNNING, p == null ? null : new app.openring.core.RingGate.Wait() {
             @Override
             public void waiting(int why) {
-                p.step(why == app.openring.core.RingGate.FOR_RING ? app.openring.core.RingGate.WAIT_RING : WAITING);
+                p.step(app.openring.core.RingGate.waitLine(why));
             }
-        });
-        if (!ran) throw new NotNow(app.openring.core.RingGate.DEMO_REFUSED);
+        }, p instanceof app.openring.core.RingGate.Stop ? (app.openring.core.RingGate.Stop) p : null);
+        if (why != app.openring.core.RingGate.RAN) throw new NotNow(why);
         return built[0];
     }
 
@@ -126,7 +131,7 @@ public final class Demo {
     }
 
     /** The demo's progress line while a re analysis of the person's history ends first (review of #243). */
-    public static final String WAITING = "Waiting for the re analysis of your history to finish";
+    public static final String WAITING = app.openring.core.RingGate.WAIT_ANALYSIS;
 
     private static boolean buildLocked(Context c, Progress p, LocalDate today, long now) {
         Prefs.of(c).setDemo(true);

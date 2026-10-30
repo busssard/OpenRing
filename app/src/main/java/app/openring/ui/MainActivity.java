@@ -161,6 +161,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
         boolean running;
         /** Why the demo was not turned on (issue #219), shown once instead of the general failure. */
         String refused;
+        /** The step shown is a wait for the ring or an analysis: Back may stop it (review of #248). */
+        boolean waiting;
+        /** Back stopped the wait; nothing changes. */
+        volatile boolean stop;
     }
 
     private DemoRun demoRun = new DemoRun();
@@ -253,6 +257,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (demoRun.running) return; // one preparation at a time (issue #29)
         demoRun.running = true;
         demoRun.step = fresh ? "Preparing demo data" : null;
+        demoRun.waiting = false;
+        demoRun.stop = false;
         showDemoDialog();
         new DemoTask(getApplicationContext(), demoRun, fresh).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
@@ -272,21 +278,28 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
         @Override
         protected Integer doInBackground(Void... v) {
-            app.openring.data.Demo.Progress p = new app.openring.data.Demo.Progress() {
+            // Back stops a wait for the ring (review of #248); a build that has begun always ends
+            final class Steps implements app.openring.data.Demo.Progress, app.openring.core.RingGate.Stop {
                 @Override
                 public void step(String what) {
                     publishProgress(what);
                 }
-            };
+
+                @Override
+                public boolean stopped() {
+                    return run.stop;
+                }
+            }
+            app.openring.data.Demo.Progress p = new Steps();
             try {
                 boolean built = fresh ? app.openring.data.Demo.enter(ctx, p) : app.openring.data.Demo.complete(ctx, p);
                 // the emulator test looks for "demo: finish check, built now" after ending the app (issue #69)
                 android.util.Log.i("OpenRing", "demo: " + (fresh ? "start" : "finish check") + (built ? ", built now" : ", nothing to do"));
                 return built ? BUILT : KEPT;
             } catch (app.openring.data.Demo.NotNow e) {
-                // a sync still stored into the real history (issue #219): nothing changed, demo mode stays off
-                android.util.Log.i("OpenRing", "demo: not turned on, the ring was still syncing");
-                run.refused = app.openring.core.RingGate.DEMO_REFUSED;
+                // a ring task or an analysis still ran, or Back stopped the wait (issue #219): nothing changed, demo mode stays off
+                android.util.Log.i("OpenRing", "demo: not turned on, reason " + e.why);
+                run.refused = app.openring.core.RingGate.demoRefused(e.why);
                 return FAILED;
             } catch (RuntimeException e) {
                 android.util.Log.w("OpenRing", "demo: preparing the demo data failed", e);
@@ -302,6 +315,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         @Override
         protected void onProgressUpdate(String... s) {
             run.step = s[0];
+            run.waiting = s[0].equals(app.openring.core.RingGate.WAIT_SYNC) || s[0].equals(app.openring.core.RingGate.WAIT_RING)
+                    || s[0].equals(app.openring.core.RingGate.WAIT_ANALYSIS);
             if (run.owner != null) run.owner.showDemoDialog();
         }
 
@@ -318,8 +333,17 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (demoRun.step == null || isDestroyed()) return;
         if (demoDialog == null) {
             demoDialog = new android.app.ProgressDialog(this);
-            demoDialog.setCancelable(false);
+            demoDialog.setOnCancelListener(new android.content.DialogInterface.OnCancelListener() {
+                @Override
+                public void onCancel(android.content.DialogInterface d) {
+                    // the wait ends at its next look (a tenth of a second), nothing changed; demoReady says so
+                    demoRun.stop = true;
+                    demoDialog = null;
+                }
+            });
         }
+        demoDialog.setCancelable(demoRun.waiting);
+        demoDialog.setCanceledOnTouchOutside(false);
         demoDialog.setMessage(demoRun.step);
         if (!demoDialog.isShowing()) demoDialog.show();
     }
