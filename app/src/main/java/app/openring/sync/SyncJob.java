@@ -65,6 +65,12 @@ public final class SyncJob extends JobService {
     @Override
     public boolean onStartJob(final JobParameters params) {
         if (RingManager.get(this).busy()) return false;
+        // a sync of the person's own, or an attempt, a few minutes ago: nothing new to fetch yet (issue #194)
+        Prefs prefs = Prefs.of(this);
+        if (BackgroundJob.recent(System.currentTimeMillis() / 1000, prefs.lastSync(), prefs.lastAttempt())) {
+            RingManager.get(this).log("background sync skipped: the last sync was less than 30 minutes ago");
+            return false;
+        }
         final RingManager.SyncTicket t = new RingManager.SyncTicket();
         ticket = t;
         new Thread(new Runnable() {

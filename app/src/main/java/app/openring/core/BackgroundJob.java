@@ -14,6 +14,19 @@ public final class BackgroundJob {
 
     public enum Action { KEEP, SCHEDULE, CANCEL }
 
+    /** A sync or sync attempt less than this long ago (seconds) makes the main screen and the job skip theirs (issue #194). */
+    public static final long RECENT_S = 30 * 60;
+
+    /**
+     * True when the last sync or attempt ({@code lastSync}, {@code lastAttempt}, unix seconds, 0 for none) is at most
+     * {@link #RECENT_S} before {@code now}. One that lies after now (the phone clock was set back) is not recent, so it
+     * cannot hold off syncing until the clock catches up.
+     */
+    public static boolean recent(long now, long lastSync, long lastAttempt) {
+        long since = now - Math.max(lastSync, lastAttempt);
+        return since >= 0 && since <= RECENT_S;
+    }
+
     /** The parts of a job this app sets; a pending job is compared with the wanted one by these. */
     public static final class Spec {
         public final String service;

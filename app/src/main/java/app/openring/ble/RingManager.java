@@ -434,14 +434,21 @@ public final class RingManager {
                 log("screen time not read: " + e);
             }
             try {
-                if (Db.get(ctx).eventCount() > 0 && !stopped) {
-                    forceStatus("Analysing");
-                    Analyzer.run(ctx, new Analyzer.Log() {
+                if (!stopped && Db.get(ctx).hasEvents()) {
+                    Analyzer.Log alog = new Analyzer.Log() {
                         @Override
                         public void log(String m) {
                             RingManager.this.log(m);
                         }
-                    });
+                    };
+                    if (Analyzer.skipAfterSync(ctx, alog)) {
+                        // nothing stored since the last analysis (a failed attempt, nothing new on the ring): its
+                        // nights and days are what a new run would give, so only the day so far is summarised (issue #194)
+                        log("nothing new since the last analysis, not analysed again");
+                    } else {
+                        forceStatus("Analysing");
+                        Analyzer.run(ctx, alog);
+                    }
                 }
             } catch (Throwable e) {
                 // also out of memory: the analysis rolled back and stored its error (issue #230), the sync goes on

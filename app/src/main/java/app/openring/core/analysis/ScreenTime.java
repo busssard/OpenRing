@@ -498,6 +498,23 @@ public final class ScreenTime {
     public static final double LOG_SURE_S = 7 * 86400;
 
     /**
+     * The start of the first session of {@code read} that is not stored exactly so ({@code stored}: the stored sessions
+     * from the read's first start on, {start, stop}), NaN when every one is: only then the nights it touches need a new
+     * analysis (issue #194; each read takes the newest stored session again, mostly unchanged).
+     */
+    public static double firstChanged(List<double[]> stored, List<double[]> read) {
+        java.util.Map<Double, Double> by = new java.util.HashMap<Double, Double>();
+        for (double[] s : stored) by.put(s[0], s[1]);
+        double first = Double.NaN;
+        for (double[] s : read) {
+            Double stop = by.get(s[0]);
+            if (stop != null && Double.doubleToLongBits(stop) == Double.doubleToLongBits(s[1])) continue;
+            if (!(s[0] >= first)) first = s[0];
+        }
+        return first;
+    }
+
+    /**
      * Where a read of the usage log asked to start at {@code from} really covers from (issue #131).
      * Within {@link #LOG_SURE_S} of {@code now} Android still has everything, so from {@code from}.
      * Earlier, only as far back as Android returned anything: its oldest event ({@code oldest}, NaN

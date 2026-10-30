@@ -127,10 +127,12 @@ public final class ScreenUse {
             db.putScreenRead(readFrom, now / 1000.0);
             return 0;
         }
+        // only a session that is new or changed asks for the nights again, not the newest one read again unchanged (issue #194)
+        double changed = ScreenTime.firstChanged(db.screen(sessions.get(0)[0], Double.MAX_VALUE), sessions);
         db.putScreen(sessions);
         db.putScreenRead(readFrom, now / 1000.0);
         // phone use for nights already analysed: the next analysis looks at them again
-        if (p.screenAwake()) db.reanalyseFrom(sessions.get(0)[0]);
+        if (p.screenAwake() && !Double.isNaN(changed)) db.reanalyseFrom(changed);
         return sessions.size();
     }
 

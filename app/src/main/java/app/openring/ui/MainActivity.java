@@ -404,8 +404,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         wasBusy = RingManager.get(this).busy();
         updateStatus();
         load();
-        long since = System.currentTimeMillis() / 1000 - Math.max(prefs.lastSync(), prefs.lastAttempt());
-        if (!prefs.demo() && since > 30 * 60 && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
+        boolean recent = app.openring.core.BackgroundJob.recent(System.currentTimeMillis() / 1000, prefs.lastSync(), prefs.lastAttempt());
+        if (!prefs.demo() && !recent && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
     }
 
     @Override

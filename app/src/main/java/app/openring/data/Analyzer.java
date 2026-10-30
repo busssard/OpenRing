@@ -89,6 +89,74 @@ public final class Analyzer {
      */
     private static final java.util.concurrent.atomic.AtomicInteger RUNS = new java.util.concurrent.atomic.AtomicInteger();
 
+    /** kv: what the stored nights and days were worked out from ({@link #inputs}), stored with them (issue #194). */
+    static final String INPUTS = "analysis_inputs";
+
+    /**
+     * True when the stored nights and days are what an analysis would give now (issue #194), so a sync that stored
+     * nothing need not date and analyse again: no event since the last analysis (also none from Live or Find my
+     * ring), nothing asked it to look again ({@code analyzed_until}: new screen use, a new zone), the same settings,
+     * profile, rule versions, zone and date (so the first sync after midnight still finishes the day before), no
+     * error or pending Re analyse all, and dates that the new now leaves as they are. Notes the phone's zone first,
+     * as the analysis would.
+     */
+    public static boolean upToDate(Context c) {
+        return upToDate(c, System.currentTimeMillis() / 1000);
+    }
+
+    static synchronized boolean upToDate(Context c, long nowUnix) {
+        return new Analyzer(c, null).upToDate(nowUnix);
+    }
+
+    private boolean upToDate(long nowUnix) {
+        if (db.kv("analysis_error", null) != null || db.kvLong(FULL_PENDING, 0) == 1) return false;
+        String stored = db.kv(INPUTS, null);
+        if (stored == null) return false;
+        app.openring.core.Dating.State st = db.timeState(nowUnix);
+        if (st == null || st.dated == 0) return false;
+        if (!prefs.demo()) noteZone(db, nowUnix, zone, st.dmax);
+        return stored.equals(inputs(st.lastId, db.kvLong("analyzed_until", 0), nowUnix));
+    }
+
+    /**
+     * After a sync: true when nothing is new ({@link #upToDate}); then only the day still running is summarised again,
+     * since its Total burn counts up to now ("So far (up to 08:07)", issue #155), in one transaction. False: the caller
+     * runs the analysis.
+     */
+    public static boolean skipAfterSync(Context c, Log log) {
+        return skipAfterSync(c, log, testNow > 0 ? testNow : System.currentTimeMillis() / 1000);
+    }
+
+    static synchronized boolean skipAfterSync(Context c, Log log, long nowUnix) {
+        final Analyzer a = new Analyzer(c, log);
+        if (!a.upToDate(nowUnix)) return false;
+        final String today = a.date(nowUnix);
+        String stored = a.db.dayJson(today);
+        if (stored == null || !stored.contains("\"total_until\"")) return true;
+        final double sure = a.db.undatedAfterNewest() ? a.db.timeState(nowUnix).dmax : Double.POSITIVE_INFINITY;
+        try {
+            a.db.inTransaction(new Runnable() {
+                @Override
+                public void run() {
+                    a.analyzeDay(LocalDate.parse(today), sure);
+                }
+            });
+        } catch (Throwable e) {
+            // rolled back: the day keeps its last summary; the next analysis stores its error as usual
+            a.log.log("the day so far was not updated: " + e);
+            return true;
+        }
+        a.log.log("nothing new since the last analysis, only the day so far updated");
+        return true;
+    }
+
+    /** What an analysis of the events up to id {@code lastId}, analysed up to {@code until}, on the day of {@code nowUnix} depends on. */
+    private String inputs(long lastId, long until, long nowUnix) {
+        return lastId + " " + until + " " + prefs.stageDetail() + " " + (prefs.screenAwake() ? 1 : 0) + " " + StageFilter.VERSION + " "
+                + NightFinder.VERSION + " " + DayHeart.VERSION + " " + ScreenTime.AWAKE_RULE + " " + prefs.age() + " " + prefs.sex() + " "
+                + prefs.weightKg() + " " + prefs.heightCm() + " " + prefs.targetKcal() + " " + zone.getId() + " " + date(nowUnix);
+    }
+
     /** True while an analysis runs or waits to run. */
     public static boolean running() {
         return RUNS.get() > 0;
@@ -151,9 +219,12 @@ public final class Analyzer {
 
     void runInner() {
         final long now = System.currentTimeMillis() / 1000;
-        final Db.TimeReport t = db.rebuildTime(now);
-        log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written",
-                t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed));
+        final boolean all = db.kvLong(FULL_PENDING, 0) == 1;
+        // Re analyse all (also Repair) dates every event again; otherwise only the new part (issue #220)
+        final Db.TimeReport t = db.rebuildTime(now, all);
+        log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written, %d read, %s",
+                t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed, t.rowsRead,
+                t.full == null ? "dated the new part only" : "all events dated again (" + t.full + ")"));
         long lastDated = db.kvLong("dated_count", -1), lastTotal = db.kvLong("event_count", -1);
         // the checks below only lower analyzed_until ("analyse again from here"), so they are stored at once: a run that
         // fails after them is done again, never skipped (issue #230)
@@ -179,7 +250,8 @@ public final class Analyzer {
         // the rule for which steps phone use marks awake changed (issue #41): nights with screen data
         // are analysed again once; databases from before the version existed read as rule 1
         if (screenAwake == 1 && db.kvLong("phone_awake", 1) != ScreenTime.AWAKE_RULE && firstScreen >= 0) db.reanalyseFrom(firstScreen);
-        final double[] range = db.datedRange();
+        // the dating knows the range of the dated rows, no scan of the table for it (issue #220)
+        final double[] range = t.range;
         // the phone's time zone, noted at every sync (issue #22), never later than a day after the newest
         // dated event (a phone clock set far ahead for a moment). Demo mode has no zone history.
         if (!prefs.demo()) noteZone(db, now, zone, range == null ? Double.NaN : range[1]);
@@ -190,12 +262,13 @@ public final class Analyzer {
             log.log("no dated events yet, nothing to analyse");
             return;
         }
-        final boolean all = db.kvLong(FULL_PENDING, 0) == 1;
         double until = db.kvLong("analyzed_until", 0);
         // no age limit (issue #20): a whole run rebuilds every night; the week by week chunks keep memory flat
         // however long the history is
         final double from = all || until <= 0 ? range[0] : Math.max(range[0], until - 2 * 86400);
         boolean longRun = all || range[1] - from > LONG_RUN_DAYS * 86400.0;
+        // read before the run: a setting changed meanwhile is not taken as analysed (issue #194)
+        final String inputs = inputs(t.lastId, (long) range[1], testNow > 0 ? testNow : now);
         if (longRun) {
             int waited = db.beginLongRun();
             if (waited > 0) log.log("a long analysis: waited for a ring task to store its data");
@@ -221,6 +294,7 @@ public final class Analyzer {
                     db.put("phone_awake", ScreenTime.AWAKE_RULE);
                     if (all) db.put(FULL_PENDING, 0);
                     db.put("last_analysis", now);
+                    db.put(INPUTS, inputs);
                 }
             });
         } finally {
