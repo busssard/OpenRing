@@ -65,7 +65,10 @@ Nothing leaves the phone: the app has no internet permission.
   change of `TimeLine.RULES`, and whenever a case is not plainly one of those (a late or re downloaded time
   record, a phone anchor between two boots or moving to another one, a time record row gone, a record or date
   crossing the 6 hour limit with the new now, a phone clock set back). The report gives the range of dated rows,
-  so the analysis does not scan for it.
+  so the analysis does not scan for it, and the earliest date, old or new, of a row whose date it wrote (`changedFrom`,
+  issue #188): in the same commit as the dates it lowers `analyzed_until` to that date, so the nights and days of
+  events that moved are analysed again (from two days before it), also when as many events are dated as before and
+  when the app stops between the dating and the analysis, or Live dated on its own.
 * Measurements on the ring (daytime heart rate `0x02`, SpO2 `0x04`, resting heart rate `0x08`) have
   modes off, automatic, requested and live. A ring paired outside the official app starts with them off.
 
@@ -162,8 +165,9 @@ history had, before anything is written to the file the person picked; otherwise
    belongs to the date of the clock time it skips or repeats, also at midnight (Greenland, Cairo; issue #158),
    while nights keep `ClockChange.find`. A touch on a lit 5 minute line of the Screen clock finds the use drawn
    there with the step maths of `DialMath.fill` (`DialMath.touch`, issue #109).
-6. `Analyzer` writes nights and days; it re analyses the last two days after each sync and everything
-   when dating changed or the user asks (Settings, Help). "Everything" is the whole stored history with no
+6. `Analyzer` writes nights and days; it re analyses the last two days after each sync, from two days before
+   the earliest date the dating moved (issue #188), and everything when the number of dated events does not add up
+   or the user asks (Settings, Help). "Everything" is the whole stored history with no
    age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
    An analysis replaces its nights and days in one transaction (`Db.inTransaction`, issue #230): the screens keep
    reading the old ones (write ahead logging) until the new ones are all stored, and any stop or failure (also out of
