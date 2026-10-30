@@ -994,14 +994,18 @@ public final class SettingsActivity extends Activity implements RingManager.List
     void pickRow(LinearLayout card, String label, final TextView day, final TextView time, final boolean isFrom) {
         card.addView(Ui.gap(this, 8));
         card.addView(Ui.text(this, label, 12, Ui.TEXT_3, Ui.REGULAR));
+        // laid out like pair(): the buttons fill the row's height, the row keeps the gap (the outline is not cut)
         LinearLayout row = Ui.hbox(this);
-        LinearLayout.LayoutParams la = new LinearLayout.LayoutParams(0, -2, 3);
-        la.setMargins(0, Ui.dp(this, 4), Ui.dp(this, 4), 0);
-        LinearLayout.LayoutParams lb = new LinearLayout.LayoutParams(0, -2, 2);
-        lb.setMargins(Ui.dp(this, 4), Ui.dp(this, 4), 0, 0);
+        row.setGravity(android.view.Gravity.TOP);
+        LinearLayout.LayoutParams la = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 3);
+        la.setMargins(0, 0, Ui.dp(this, 4), 0);
+        LinearLayout.LayoutParams lb = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 2);
+        lb.setMargins(Ui.dp(this, 4), 0, 0, 0);
         row.addView(day, la);
         row.addView(time, lb);
-        card.addView(row, Ui.matchWrap());
+        LinearLayout.LayoutParams lp = Ui.matchWrap();
+        lp.setMargins(0, Ui.dp(this, 4), 0, 0);
+        card.addView(row, lp);
         day.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
