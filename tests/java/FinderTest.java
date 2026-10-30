@@ -1,4 +1,8 @@
+import app.openring.core.EventCodec;
+import app.openring.core.FingerCheck;
 import app.openring.core.PermissionAsk;
+import app.openring.core.RingEvent;
+import app.openring.core.SyncError;
 import app.openring.core.analysis.*;
 
 import java.util.*;
@@ -43,6 +47,8 @@ public class FinderTest {
         strongestRing();
         scanRetry();
         permissionAsk();
+        fingerNow();
+        fingerCheck();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -2090,5 +2096,291 @@ public class FinderTest {
         ScanRetry z = new ScanRetry();
         z.failed(0, 6);
         check("retry: a failure at clock 0 still waits", z.waiting(0) && z.waiting(34999) && !z.waiting(35000));
+    }
+
+    // ------------------------------------------------------------------ on a finger now (issue #192)
+
+    static byte[] temp(double c) {
+        int v = (int) Math.round(c * 100);
+        return new byte[] {(byte) v, (byte) (v >> 8)};
+    }
+
+    static byte[] ibi(int ms) {
+        return new byte[] {(byte) (ms >> 3), (byte) ((ms & 7) | (1 << 3))};
+    }
+
+    static final LastWorn.Clock AT = new LastWorn.Clock() {
+        @Override
+        public String when(double unix) {
+            return "today at 14:02";
+        }
+    };
+
+    static void fingerNow() {
+        // the rule at its borders
+        check("finger: warm with a heart rate is a finger", FingerNow.of(36.1, 60, 64, 120, 0).state() == FingerNow.ON);
+        check("finger: 27 °C exactly counts as warm", FingerNow.of(27.0, 60, 64, 60, 0).state() == FingerNow.ON);
+        check("finger: warm, heart rate 20 minutes old still counts", FingerNow.of(33, 60, 64, FingerNow.FRESH_S, 0).state() == FingerNow.ON);
+        check("finger: warm, heart rate older than 20 minutes is finger or charger", FingerNow.of(33, 60, 64, FingerNow.FRESH_S + 1, 0).state() == FingerNow.WARM);
+        check("finger: warm without any heart rate is finger or charger", FingerNow.of(33.2, 60, Double.NaN, Double.NaN, 0).state() == FingerNow.WARM);
+        check("finger: cool without a heart rate is not on a finger", FingerNow.of(24, 60, Double.NaN, Double.NaN, 0).state() == FingerNow.OFF);
+        check("finger: 26.9 °C is cool", FingerNow.of(26.9, 60, 64, 600, 0).state() == FingerNow.OFF);
+        check("finger: cool with a heart rate 5 minutes old is a finger (cold hands)", FingerNow.of(25.3, 60, 60, 300, 0).state() == FingerNow.ON);
+        check("finger: cool with a heart rate 6 minutes old is not", FingerNow.of(25.3, 60, 60, 360, 0).state() == FingerNow.OFF);
+        check("finger: temperature 21 minutes old does not count", FingerNow.of(36, 21 * 60, Double.NaN, Double.NaN, 0).state() == FingerNow.NO_READING);
+        check("finger: old temperature but a heart rate just now is a finger", FingerNow.of(36, 3 * 3600, 70, 30, 0).state() == FingerNow.ON);
+        check("finger: nothing at all tells nothing", new FingerNow().state() == FingerNow.NO_READING);
+        check("finger: a negative age counts as now", FingerNow.of(36, -5, 64, -1, 0).skinAge == 0 && FingerNow.of(36, -5, 64, -1, 0).hrAge == 0);
+
+        // the strip's line, short enough to share the strip with the chip
+        String on = FingerNow.of(36.1, 60, 64, 70, 0).brief();
+        check("finger: on, line", on.equals("On a finger now (" + String.format(Locale.getDefault(), "%.1f", 36.1) + " °C, heart rate 64)."), on);
+        check("finger: cool on, line", FingerNow.of(25.3, 60, 60, 30, 0).brief().startsWith("On a finger now (heart rate 60, cool skin "));
+        check("finger: heart rate only, line", FingerNow.of(Double.NaN, Double.NaN, 70, 30, 0).brief().equals("On a finger now (heart rate 70)."));
+        check("finger: off, line", FingerNow.of(24, 60, Double.NaN, Double.NaN, 0).brief().startsWith("Not on a finger now ("));
+        check("finger: warm, line", FingerNow.of(33.2, 60, Double.NaN, Double.NaN, 0).brief().endsWith("no heart rate: finger or charger."));
+        check("finger: nothing, line", new FingerNow().brief().equals("No reading from the last 20 minutes to tell."));
+        double[][] cases = {{36.1, 60, 64, 70}, {25.3, 60, 60, 30}, {24, 60, Double.NaN, Double.NaN}, {33.2, 60, Double.NaN, Double.NaN}, {Double.NaN, Double.NaN, 70, 30}};
+        for (double[] c : cases) {
+            String b = FingerNow.of(c[0], c[1], c[2], c[3], 0).brief();
+            check("finger: line fits two short lines (" + b + ")", b.length() <= 52, b.length());
+            check("finger: no dash as punctuation (" + b + ")", !b.contains(" - ") && !b.contains("—"));
+        }
+
+        // the evidence
+        String d = FingerNow.of(36.1, 50, 64, 200, 0).detail(AT);
+        check("finger: detail names when and both readings with their age", d.startsWith("Asked the ring today at 14:02. Newest skin temperature ")
+                && d.contains("(just before)") && d.contains("newest heart rate 64 bpm (3 minutes before)") && d.contains("27 °C or more"), d);
+        check("finger: detail without heart rate", FingerNow.of(24, 90, Double.NaN, Double.NaN, 0).detail(AT).contains("(a minute before), no heart rate. Under 27 °C"));
+        check("finger: detail of warm names the charger and the blink", FingerNow.of(33, 60, Double.NaN, Double.NaN, 0).detail(AT).contains("or the charger. Make it blink measures one."));
+        check("finger: detail of cool skin names cold hands", FingerNow.of(25, 60, 60, 60, 0).detail(AT).contains("cold hands"));
+        check("finger: detail of nothing", new FingerNow().detail(AT).contains("No skin temperature, no heart rate. The ring stored no temperature"));
+        check("finger: hours ago", FingerNow.of(36, 60, 64, 3 * 3600, 0).detail(AT).contains("(3 hours before)"));
+        FingerNow demo = FingerNow.demo(0);
+        check("finger: the demo ring lies in the room (the demo walk finds it there)", demo.state() == FingerNow.OFF && demo.demo
+                && demo.detail(AT).endsWith("In the demo this answer is made up."));
+
+        // reading the download: the newest event is now, ages in ring time (deciseconds)
+        FingerNow.Reader r = new FingerNow.Reader();
+        r.add(new RingEvent(EventCodec.TEMP_EVENT, 10000, temp(35.5)));
+        r.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, 10600, ibi(1000)));
+        r.add(new RingEvent(EventCodec.TEMP_EVENT, 11000, temp(36.2)));
+        r.add(new RingEvent(EventCodec.MOTION_EVENT, 11600, new byte[] {1, 2}));
+        FingerNow a = r.result(5000, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: newest temperature and its age", a.skinC == 36.2 && Math.abs(a.skinAge - 60) < 1e-9, a.skinC + " " + a.skinAge);
+        check("reader: green beat at its start, 60000 / interval", Math.abs(a.hr - 60) < 1e-9 && Math.abs(a.hrAge - 100) < 1e-9, a.hr + " " + a.hrAge);
+        check("reader: answer is a finger", a.state() == FingerNow.ON && a.at == 5000 && r.events() == 4);
+        // an unclean beat or an impossible interval does not count; an older temperature after a newer one does not win
+        FingerNow.Reader q = new FingerNow.Reader();
+        q.add(new RingEvent(EventCodec.TEMP_EVENT, 5000, temp(24)));
+        q.add(new RingEvent(EventCodec.TEMP_EVENT, 4990, temp(33)));
+        q.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, 5000, new byte[] {(byte) (1000 >> 3), (byte) (1000 & 7)}));
+        q.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, 5000, ibi(250)));
+        q.add(new RingEvent(EventCodec.TEMP_EVENT, 5000, new byte[] {1}));
+        FingerNow b = q.result(0, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: the newest temperature by ring time, bad values and beats left out", b.skinC == 24 && Double.isNaN(b.hr) && b.state() == FingerNow.OFF, b.skinC + " " + b.hr);
+        // HRV values 5 minutes apart and always on heart rate 1.92 s apart, implausible values skipped
+        FingerNow.Reader h = new FingerNow.Reader();
+        h.add(new RingEvent(EventCodec.HRV_EVENT, 0, new byte[] {55, 40, 54, 41, (byte) 250, 10}));
+        h.add(new RingEvent(EventCodec.TEMP_EVENT, 6000, temp(35)));
+        FingerNow hv = h.result(0, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: HRV value 2 counts at start + 300 s (value 3 is impossible)", hv.hr == 54 && Math.abs(hv.hrAge - 300) < 1e-9, hv.hr + " " + hv.hrAge);
+        FingerNow.Reader ao = new FingerNow.Reader();
+        ao.add(new RingEvent(EventCodec.AOHR_EVENT, 1000, new byte[] {0, 0, 3, 70, 1, 72, 1, 10, 1}));
+        ao.add(new RingEvent(EventCodec.TEMP_EVENT, 1100, temp(34)));
+        FingerNow av = ao.result(0, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: always on value 2 at start + 1.92 s, value 3 impossible", av.hr == 72 && Math.abs(av.hrAge - (100 - 19.2) / 10) < 1e-9, av.hr + " " + av.hrAge);
+        // a reboot inside the download: the counter starts again, older readings have no common clock and go
+        FingerNow.Reader rb = new FingerNow.Reader();
+        rb.add(new RingEvent(EventCodec.TEMP_EVENT, 900000, temp(36)));
+        rb.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, 900000, ibi(900)));
+        rb.add(new RingEvent(EventCodec.TEMP_EVENT, 300, temp(23)));
+        FingerNow rbv = rb.result(0, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: after a reboot only the new boot counts", rbv.skinC == 23 && Double.isNaN(rbv.hr) && rbv.state() == FingerNow.OFF, rbv.skinC + " " + rbv.hr);
+        FingerNow.Reader small = new FingerNow.Reader();
+        small.add(new RingEvent(EventCodec.TEMP_EVENT, 5000, temp(36)));
+        small.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, 4500, ibi(900)));
+        check("reader: a small step back is not a reboot", small.result(0, Double.NaN, Double.NaN, Double.NaN, Double.NaN).state() == FingerNow.ON);
+        // nothing new downloaded: the stored, dated readings answer
+        FingerNow none = new FingerNow.Reader().result(10000, 35.0, 10000 - 120, 66, 10000 - 60);
+        check("reader: nothing new, the stored readings with their ages", none.skinC == 35 && none.skinAge == 120 && none.hr == 66 && none.hrAge == 60 && none.state() == FingerNow.ON);
+        FingerNow.Reader onlyTemp = new FingerNow.Reader();
+        onlyTemp.add(new RingEvent(EventCodec.TEMP_EVENT, 100, temp(34)));
+        FingerNow mixed = onlyTemp.result(10000, 20, 9000, 66, 10000 - 200);
+        check("reader: what the download lacks comes from the stored readings", mixed.skinC == 34 && mixed.hr == 66 && mixed.hrAge == 200 && mixed.state() == FingerNow.ON);
+        check("reader: no stored readings either", new FingerNow.Reader().result(0, Double.NaN, Double.NaN, Double.NaN, Double.NaN).state() == FingerNow.NO_READING);
+    }
+
+    static FingerCheck.Now now(long ms) {
+        FingerCheck.Now n = new FingerCheck.Now();
+        n.ms = ms;
+        n.paired = n.bluetoothOn = n.heard = true;
+        return n;
+    }
+
+    static void fingerCheck() {
+        FingerCheck f = new FingerCheck();
+        eq("check: idle at first", f.phase(), FingerCheck.Phase.IDLE);
+        eq("check: the stored line before any answer", f.brief("Taken off yesterday at 22:14."), "Taken off yesterday at 22:14.");
+        check("check: no chip while not heard", f.chip(0, true, false) == null && f.action(true, false) == FingerCheck.Action.NONE);
+        eq("check: heard, the chip offers the blink", f.chip(0, true, true), "Make it blink");
+        check("check: no detail before an answer", f.detail(AT) == null);
+        // when it asks by itself
+        FingerCheck.Now n = now(1000);
+        n.demo = true;
+        check("check: never in demo mode", !f.autoAsk(n));
+        n = now(1000);
+        n.paired = false;
+        check("check: not without a paired ring", !f.autoAsk(n));
+        check("check: no chip without a paired ring", f.chip(0, false, true) == null);
+        n = now(1000);
+        n.bluetoothOn = false;
+        check("check: not with Bluetooth off", !f.autoAsk(n));
+        n = now(1000);
+        n.heard = false;
+        check("check: not before the ring is heard", !f.autoAsk(n));
+        n = now(1000);
+        n.recording = true;
+        check("check: not during a walk", !f.autoAsk(n));
+        n = now(1000);
+        n.ringHeld = true;
+        check("check: not while another task holds the ring", !f.autoAsk(n) && f.phase() == FingerCheck.Phase.WAITING);
+        eq("check: says it waits for the sync", f.brief("x"), FingerCheck.WAIT_SYNC);
+        check("check: nothing to tap while waiting", f.chip(0, true, true) == null);
+        n = now(1000);
+        n.longRun = true;
+        check("check: not during a long re analysis", !f.autoAsk(n));
+        eq("check: says it waits for the re analysis", f.brief("x"), FingerCheck.WAIT_ANALYSIS);
+        check("check: the waiting reason in the detail", f.detail(AT).startsWith(FingerCheck.WAIT_ANALYSIS));
+        check("check: asks once the ring is free", f.autoAsk(now(1000)));
+        // asking
+        f.start(1000, false);
+        check("check: asking holds the ring", f.holding() && f.phase() == FingerCheck.Phase.ASKING);
+        check("check: no second ask while asking", !f.autoAsk(now(1100)));
+        eq("check: asking line", f.brief("x"), FingerCheck.ASKING);
+        f.downloading(500);
+        eq("check: a small download shows no KB", f.brief("x"), FingerCheck.ASKING);
+        f.downloading(123 * 1024);
+        eq("check: a long download shows what is left", f.brief("x"), "Asking the ring if it is on a finger now, 123 KB left.");
+        eq("check: stop while asking", f.chip(0, true, true), "Stop");
+        eq("check: the instruments say hot and cold pauses", f.blind(false), FingerCheck.BLIND_ASKING);
+        f.answered(5000, null);
+        check("check: no answer keeps asking", f.answer() == null);
+        FingerNow ans = FingerNow.of(36.1, 60, 64, 70, 0);
+        f.answered(5000, ans);
+        eq("check: the answer as soon as it is there", f.brief("x"), ans.brief());
+        f.done(6000, null);
+        eq("check: answered", f.phase(), FingerCheck.Phase.ANSWERED);
+        check("check: hot and cold back", !f.holding() && f.blind(false) == null);
+        eq("check: answered, the chip offers the blink", f.chip(0, true, false), "Make it blink");
+        check("check: detail is the evidence then the blink note", f.detail(AT).startsWith("Asked the ring today at 14:02.") && f.detail(AT).endsWith(FingerCheck.BLINK_NOTE));
+        check("check: one automatic ask per visit", !f.autoAsk(now(9000)));
+        // the blink
+        f.start(10000, true);
+        eq("check: while connecting for the blink the answer stays", f.brief("x"), ans.brief());
+        f.blinking(11000);
+        eq("check: blinking", f.phase(), FingerCheck.Phase.BLINKING);
+        eq("check: countdown at the start", f.chip(11000, true, true), "Stop, 30 s");
+        eq("check: countdown rounds up", f.chip(11000 + 5500, true, true), "Stop, 25 s");
+        check("check: not over at 29.9 s", !f.blinkOver(11000 + FingerCheck.BLINK_MS - 1));
+        check("check: over at 30 s", f.blinkOver(11000 + FingerCheck.BLINK_MS) && f.blinkLeft(11000 + FingerCheck.BLINK_MS + 5000) == 0);
+        eq("check: the instruments say hot and cold is blind", f.blind(false), FingerCheck.BLIND_BLINKING);
+        eq("check: the demo says nothing blinks", f.blind(true), FingerCheck.BLIND_DEMO);
+        FingerNow later = FingerNow.of(35.8, 30, 66, 4, 0);
+        f.answered(20000, later);
+        eq("check: a heart rate measured while blinking updates the line", f.brief("x"), later.brief());
+        f.done(41000, null);
+        check("check: after the blink, answered again", f.phase() == FingerCheck.Phase.ANSWERED && f.blinkLeft(41000) == 0);
+        // stop by the person
+        f.start(50000, true);
+        f.blinking(52000);
+        f.stopped(53000);
+        check("check: stop ends the blink, the answer stays", f.phase() == FingerCheck.Phase.ANSWERED && f.answer() == later);
+        FingerCheck g = new FingerCheck();
+        g.start(0, false);
+        g.stopped(100);
+        check("check: stop before an answer", g.phase() == FingerCheck.Phase.FAILED && g.brief("x").equals(FingerCheck.STOPPED));
+        eq("check: then the chip asks again", g.chip(0, true, true), "Ask again");
+        eq("check: the detail says it was stopped", g.detail(AT).split("\n")[0], FingerCheck.STOPPED);
+        g.stopped(200);
+        eq("check: a second stop changes nothing", g.phase(), FingerCheck.Phase.FAILED);
+        // failures
+        FingerCheck e = new FingerCheck();
+        e.start(0, false);
+        e.done(1000, "No ring found. Put it on its charger next to the phone");
+        check("check: a failure waits for Ask again", e.phase() == FingerCheck.Phase.FAILED && e.brief("x").equals(FingerCheck.NOT_ASKED) && !e.autoAsk(now(99999)));
+        check("check: the plain reason in the detail", e.detail(AT).startsWith("Could not ask the ring. Your ring was not found."), e.detail(AT));
+        e.start(2000, false);
+        e.done(3000, null);
+        check("check: worked without an answer counts as not asked", e.phase() == FingerCheck.Phase.FAILED && e.brief("x").equals(FingerCheck.NOT_ASKED));
+        check("check: no detail line for that", e.detail(AT) == null);
+        FingerCheck busy = new FingerCheck();
+        busy.start(0, false);
+        busy.done(1000, "The ring is busy with another task");
+        check("check: refused by a busy ring, it waits", busy.phase() == FingerCheck.Phase.WAITING && busy.brief("x").equals(FingerCheck.WAIT_SYNC));
+        check("check: and asks again, not before 5 s", !busy.autoAsk(now(1000 + FingerCheck.RETRY_MS - 1)) && busy.autoAsk(now(1000 + FingerCheck.RETRY_MS)));
+        FingerCheck re = new FingerCheck();
+        re.start(0, false);
+        re.done(1000, SyncError.REANALYSING);
+        eq("check: refused during a re analysis, it waits for it", re.brief("x"), FingerCheck.WAIT_ANALYSIS);
+        FingerCheck bb = new FingerCheck();
+        bb.answered(0, ans);
+        bb.start(0, true);
+        bb.done(1000, "The ring is busy with another task");
+        check("check: a blink refused by a busy ring says so and keeps the answer", bb.phase() == FingerCheck.Phase.FAILED
+                && bb.brief("x").equals(ans.brief()) && bb.detail(AT).contains("The ring is busy") && bb.chip(0, true, true).equals("Make it blink"));
+        FingerCheck dm = new FingerCheck();
+        dm.start(0, false);
+        dm.done(1000, SyncError.DEMO_RING);
+        check("check: refused in demo mode", dm.phase() == FingerCheck.Phase.FAILED && dm.detail(AT).contains("demo mode"));
+        // leaving the screen and coming back
+        FingerCheck p = new FingerCheck();
+        p.start(0, false);
+        p.paused(500);
+        check("check: leaving while asking lets go, the next visit asks", p.phase() == FingerCheck.Phase.IDLE && !p.holding());
+        p.resumed(1000);
+        check("check: back, asks again", p.autoAsk(now(1000)));
+        p.start(1000, false);
+        p.answered(2000, ans);
+        p.done(2000, null);
+        p.paused(3000);
+        p.resumed(2000 + FingerCheck.KEEP_MS - 1);
+        check("check: back within 2 minutes keeps the answer, no new ask", p.answer() == ans && !p.autoAsk(now(2000 + FingerCheck.KEEP_MS)));
+        p.paused(2000 + FingerCheck.KEEP_MS);
+        p.resumed(2000 + FingerCheck.KEEP_MS);
+        check("check: back after 2 minutes asks again", p.answer() == null && p.phase() == FingerCheck.Phase.IDLE && p.autoAsk(now(2000 + FingerCheck.KEEP_MS)));
+        FingerCheck pb = new FingerCheck();
+        pb.answered(0, ans);
+        pb.start(0, true);
+        pb.blinking(100);
+        pb.paused(200);
+        check("check: leaving while blinking ends the blink, the answer stays", pb.phase() == FingerCheck.Phase.ANSWERED && !pb.holding());
+        FingerCheck pw = new FingerCheck();
+        FingerCheck.Now held = now(0);
+        held.ringHeld = true;
+        pw.autoAsk(held);
+        pw.paused(10);
+        eq("check: leaving while waiting forgets the wait", pw.phase(), FingerCheck.Phase.IDLE);
+        // demo mode
+        FingerCheck d = new FingerCheck();
+        d.demoAnswer(0, 100);
+        check("check: demo answers at once, made up", d.phase() == FingerCheck.Phase.ANSWERED && d.answer().demo && d.answer().state() == FingerNow.OFF);
+        eq("check: demo offers the blink without a paired ring", d.chip(0, false, true), "Make it blink");
+        d.resumed(10 * FingerCheck.KEEP_MS);
+        check("check: the demo answer stays", d.answer() != null);
+        d.start(0, true);
+        d.blinking(0);
+        eq("check: demo blink counts down", d.chip(1000, false, true), "Stop, 29 s");
+        check("check: the demo never asks the ring", !d.autoAsk(now(0)));
+        for (String t : new String[] {FingerCheck.ASKING, FingerCheck.BLINK_CONNECTING, FingerCheck.WAIT_SYNC, FingerCheck.WAIT_ANALYSIS, FingerCheck.NOT_ASKED, FingerCheck.STOPPED}) {
+            check("check: short line (" + t + ")", t.length() <= 52);
+        }
+        for (String t : new String[] {FingerCheck.BLIND_ASKING, FingerCheck.BLIND_BLINKING, FingerCheck.BLIND_DEMO, FingerCheck.BLINK_NOTE, FingerCheck.ASKING}) {
+            check("check: no dash as punctuation (" + t + ")", !t.contains(" - ") && !t.contains("—"));
+        }
+    }
+
+    static void eq(String name, Object got, Object want) {
+        check(name, want == null ? got == null : want.equals(got), got);
     }
 }

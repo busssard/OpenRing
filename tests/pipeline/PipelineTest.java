@@ -801,6 +801,7 @@ public class PipelineTest {
         rightNowSpo2Full();
         jsonSeriesMalformed();
         backupJsonLimit(full.toByteArray());
+        finderDownload();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -5549,5 +5550,56 @@ public class PipelineTest {
                 && !app.openring.data.Prefs.of(c).demo() && results139(Db.get(c)).equals(before), err[0]);
         r.close();
         freshDb("openring243-done");
+    }
+
+    /**
+     * Issue #192: Find my ring stores what it downloads through the same path as Live and a sync (raw batches, then the phone
+     * anchor), but does not date the history (issue #121). Nothing stored changes until the next analysis, which dates the
+     * new events first: the dates and nights then are the same as when the history was dated right after the download.
+     */
+    static String[] finderRun(boolean dateAtOnce) throws Exception {
+        List<RingEvent> all = history(3);
+        int cut = all.size() - 200;
+        long now = T0 + 3 * 86400 + 7 * 3600 + 1800;
+        Context ctx = freshDb(dateAtOnce ? "finder-live" : "finder");
+        Db db = Db.get(ctx);
+        // the last sync
+        for (int i = 0; i < cut; i += 4096) db.insertBatch(all.subList(i, Math.min(cut, i + 4096)), 1, now - 3600);
+        long cutDs = all.get(cut - 1).ds;
+        db.insertPhoneAnchor(1, cutDs, T0 + (cutDs - DS0) / 10);
+        Analyzer.run(ctx, null);
+        String first = day0().toString(), last = day0().plusDays(3).toString();
+        String nightsBefore = db.nightsJson(first, last, false).toString();
+        long datedBefore = db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
+        // the finder's quick download: the newest 200 events and the phone anchor
+        db.insertBatch(all.subList(cut, all.size()), 1, now);
+        long lastDs = all.get(all.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, T0 + (lastDs - DS0) / 10);
+        if (dateAtOnce) {
+            db.rebuildTime(now);
+        } else {
+            check("finder: every downloaded event is stored", db.count("SELECT COUNT(*) FROM events WHERE tag <> 66") == all.size(), null);
+            check("finder: the new events wait for the next analysis to be dated",
+                    db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL AND tag <> 66") == 200, db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL AND tag <> 66"));
+            check("finder: no stored date changed", db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL") == datedBefore, null);
+            check("finder: the stored nights stay as they were", db.nightsJson(first, last, false).toString().equals(nightsBefore), null);
+        }
+        // the next sync's analysis
+        Analyzer.run(ctx, null);
+        check("finder" + (dateAtOnce ? " (dated at once)" : "") + ": every event dated after the next analysis",
+                db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL") == 0, db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL"));
+        StringBuilder rows = new StringBuilder();
+        for (long[] r : timeRows(db)) rows.append(r[0]).append(':').append(r[1]).append(':').append(r[2]).append(';');
+        return new String[] {rows.toString(), db.nightsJson(first, last, false).toString()};
+    }
+
+    static java.time.LocalDate day0() {
+        return java.time.Instant.ofEpochSecond(T0).atZone(ZONE).toLocalDate();
+    }
+
+    static void finderDownload() throws Exception {
+        String[] finder = finderRun(false), live = finderRun(true);
+        check("finder: every event gets the same date as when Live dates at once", finder[0].equals(live[0]), null);
+        check("finder: the same nights as when Live dates at once", finder[1].equals(live[1]) && finder[1].length() > 100, null);
     }
 }

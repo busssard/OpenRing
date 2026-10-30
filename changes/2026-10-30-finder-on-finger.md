@@ -1,0 +1,2 @@
+* Find my ring asks the ring once, as soon as it hears it, whether it is on a finger right now, for example "On a finger now (36.1 °C, heart rate 64)". Hot and cold pauses for those few seconds. Tap the line to see the readings behind it.
+* New "Make it blink" on Find my ring: the ring measures heart rate for 30 seconds, so on a finger its green light flashes and whoever wears it notices. Off a finger it may stay dark, that is not tested yet. Hot and cold is blind for those 30 seconds.

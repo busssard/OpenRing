@@ -40,10 +40,12 @@ import java.util.Random;
 
 import app.openring.ble.RingManager;
 import app.openring.ble.RingScanner;
+import app.openring.core.FingerCheck;
 import app.openring.core.PermissionAsk;
 import app.openring.core.Texts;
 import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.FinderLayout;
+import app.openring.core.analysis.FingerNow;
 import app.openring.core.analysis.LastWorn;
 import app.openring.core.analysis.Proximity;
 import app.openring.core.analysis.ScanRetry;
@@ -61,8 +63,10 @@ import app.openring.data.RightNow;
  * on a mini map and the circle where the ring probably is. All on one screen (issue #191): a last worn
  * strip that opens to the full text, the instruments (gauge, band, signal trail) and the map, which
  * takes the height left over ({@link FinderLayout}). Everything that listens (scan, sensors, sound) runs only while the screen
- * is in front and stops in {@link #onPause}. The ring itself is never connected here, so a sync
- * can run meanwhile.
+ * is in front and stops in {@link #onPause}. Hot and cold never connects, so a sync can run meanwhile. Once per visit,
+ * when the ring is heard, the screen asks the ring for a few seconds whether it is on a finger, and "Make it blink"
+ * makes it measure for 30 seconds so its light flashes (issue #192, {@link FingerCheck}); both let go of the ring when
+ * done and in {@link #onPause}.
  */
 public final class FinderActivity extends Activity implements SensorEventListener {
     private final Handler h = new Handler(Looper.getMainLooper());
@@ -141,8 +145,35 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private View titleGap;
     private android.widget.FrameLayout mapFrame;
     private TextView lastBrief, soundChip, helpButton, trailCaption;
-    /** The free place in the last worn strip for the "on a finger?" status of issue #192 (hidden until then). */
+    /** The chip at the right end of the last worn strip (issue #192): Make it blink, Stop, Ask again. */
     private TextView fingerSlot;
+    /** On a finger now? (issue #192): when to ask, the strip's line and chip. */
+    private final FingerCheck finger = new FingerCheck();
+    private final RingManager.FingerListener fingerL = new RingManager.FingerListener() {
+        @Override
+        public void onFingerLeft(long bytes) {
+            finger.downloading(bytes);
+            showFinger();
+        }
+
+        @Override
+        public void onFingerAnswer(FingerNow a) {
+            finger.answered(SystemClock.elapsedRealtime(), a);
+            showFinger();
+        }
+
+        @Override
+        public void onBlinkStarted() {
+            finger.blinking(SystemClock.elapsedRealtime());
+            showFinger();
+        }
+
+        @Override
+        public void onFingerDone(String raw) {
+            finger.done(SystemClock.elapsedRealtime(), raw);
+            showFinger();
+        }
+    };
     private android.widget.ImageView lastMore;
     private boolean detailsOpen, helpOpen;
     private LastWorn.Result lastResult;
@@ -212,8 +243,16 @@ public final class FinderActivity extends Activity implements SensorEventListene
         lastBrief = Ui.text(this, "Reading the ring's history", 14, Ui.TEXT, Ui.REGULAR);
         lastBrief.setLineSpacing(0, 1.1f);
         lastRow.addView(lastBrief, Ui.weight(1));
-        fingerSlot = Ui.text(this, "", 12, Ui.TEXT_2, Ui.MEDIUM);
+        fingerSlot = Ui.smallButton(this, "", Ui.ACTIVE);
+        fingerSlot.setMinHeight(Ui.dp(this, 32));
+        fingerSlot.setPadding(Ui.dp(this, 10), Ui.dp(this, 4), Ui.dp(this, 10), Ui.dp(this, 4));
         fingerSlot.setVisibility(View.GONE);
+        fingerSlot.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                fingerTap();
+            }
+        });
         LinearLayout.LayoutParams fl = new LinearLayout.LayoutParams(-2, -2);
         fl.setMargins(Ui.dp(this, 8), 0, 0, 0);
         lastRow.addView(fingerSlot, fl);
@@ -366,6 +405,11 @@ public final class FinderActivity extends Activity implements SensorEventListene
         if (demo && demoTurnOnly) demoTurn();
         else if (demo && !demoFresh) demoWalk();
         if (demo) demoTrail();
+        if (demo) {
+            // demo mode never connects (issue #185): a made up answer that fits the demo walk, at once
+            finger.demoAnswer(SystemClock.elapsedRealtime(), System.currentTimeMillis() / 1000.0);
+            if (getIntent().getBooleanExtra("demo_blink", false)) fingerStart(true);
+        }
         showSoundChip();
         loadLast();
         showTurn();
@@ -437,6 +481,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         super.onResume();
         resumed = true;
         listenSince = SystemClock.elapsedRealtime();
+        finger.resumed(listenSince);
         if (!demo) {
             // granted in the app's settings meanwhile: forget the refusal, Android asks afresh if it takes it back (#140)
             if (Permissions.granted(this)) permissionBlocked = quietDenial = false;
@@ -463,6 +508,10 @@ public final class FinderActivity extends Activity implements SensorEventListene
         h.removeCallbacks(demoSignal);
         h.removeCallbacks(retryScan);
         stopScan();
+        // the ring task gives the ring back within seconds; the next visit asks again (issue #192)
+        if (finger.holding() && !demo) RingManager.get(this).stopFinger(fingerL);
+        finger.paused(SystemClock.elapsedRealtime());
+        showFinger();
         if (sm != null) sm.unregisterListener(this);
         if (tone != null) {
             tone.release();
@@ -527,7 +576,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
 
     void showLast(LastWorn.Result r) {
         lastResult = r;
-        lastText.setText(LastWorn.text(r, System.currentTimeMillis() / 1000.0, CLOCK));
+        showLastText();
         Prefs p = Prefs.of(this);
         if (demo) {
             heardText.setText("In the demo the signal is made up.");
@@ -560,14 +609,95 @@ public final class FinderActivity extends Activity implements SensorEventListene
         showBrief();
     }
 
-    /** The strip's one or two lines (issue #191): the short last worn sentence, then when this phone heard it. */
+    /**
+     * The strip's one or two lines (issue #191): whether it is on a finger now once the ring was asked (issue #192),
+     * otherwise the short last worn sentence, then when this phone heard it.
+     */
     void showBrief() {
         if (lastResult == null) return;
         String s = LastWorn.brief(lastResult, System.currentTimeMillis() / 1000.0, CLOCK);
         if (demo) s += " The signal is made up (demo).";
         else if (prox.band() != Proximity.NOT_HEARD) s += " Heard right now.";
         else if (Prefs.of(this).lastHeard() != 0) s += " Last heard " + when(Prefs.of(this).lastHeard()) + ".";
+        s = finger.brief(s);
         if (!s.contentEquals(lastBrief.getText())) lastBrief.setText(s);
+    }
+
+    /** The opened strip: the answer with its evidence (issue #192), then the stored last worn text. */
+    void showLastText() {
+        String stored = lastResult == null ? "" : LastWorn.text(lastResult, System.currentTimeMillis() / 1000.0, CLOCK);
+        String now = finger.detail(CLOCK);
+        String s = now == null ? stored : stored.isEmpty() ? now : now + "\n\nFrom the synced history: " + stored;
+        if (!s.contentEquals(lastText.getText())) lastText.setText(s);
+    }
+
+    // ------------------------------------------------------------------ on a finger now (issue #192)
+
+    boolean paired() {
+        return address != null && Prefs.of(this).hasKey();
+    }
+
+    /** Asks the ring (or, with {@code blink}, makes it blink); demo mode only pretends, it never connects. */
+    void fingerStart(boolean blink) {
+        long now = SystemClock.elapsedRealtime();
+        finger.start(now, blink);
+        if (demo) {
+            // the made up answer stays; only the blink is played, so the screen shows what a real one does
+            if (blink) finger.blinking(now);
+            else finger.done(now, null);
+        } else {
+            RingManager.get(this).askFinger(fingerL, blink);
+        }
+        showFinger();
+    }
+
+    void fingerTap() {
+        switch (finger.action(paired(), prox.band() != Proximity.NOT_HEARD)) {
+            case STOP:
+                if (!demo) RingManager.get(this).stopFinger(fingerL);
+                finger.stopped(SystemClock.elapsedRealtime());
+                showFinger();
+                break;
+            case ASK:
+                fingerStart(false);
+                break;
+            case BLINK:
+                fingerStart(true);
+                break;
+            default:
+                break;
+        }
+    }
+
+    /** Every tick: ask by itself when the rules say so, end the demo's blink, redraw the strip. */
+    void fingerTick(long now, boolean btOn) {
+        if (demo) {
+            if (finger.blinkOver(now)) finger.done(now, null);
+        } else {
+            FingerCheck.Now n = new FingerCheck.Now();
+            n.ms = now;
+            n.paired = paired();
+            n.bluetoothOn = btOn;
+            n.heard = prox.band() != Proximity.NOT_HEARD;
+            n.recording = recording;
+            n.ringHeld = RingManager.get(this).ringHeld();
+            n.longRun = Db.get(getApplicationContext()).longRun();
+            if (Permissions.granted(this) && finger.autoAsk(n)) fingerStart(false);
+        }
+        showFinger();
+    }
+
+    void showFinger() {
+        if (lastBrief == null) return;
+        String chip = finger.chip(SystemClock.elapsedRealtime(), paired(), prox.band() != Proximity.NOT_HEARD);
+        if (chip == null) {
+            fingerSlot.setVisibility(View.GONE);
+        } else {
+            if (!chip.contentEquals(fingerSlot.getText())) fingerSlot.setText(chip);
+            fingerSlot.setVisibility(View.VISIBLE);
+        }
+        showBrief();
+        showLastText();
     }
 
     /** "today at 22:14", "yesterday at 22:14" or "on Mon 13.10. at 22:14". */
@@ -714,6 +844,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
                 h.removeCallbacks(retryScan);
             }
             if (!demo && retry.shouldStart(now, on, watch != null)) startScan();
+            fingerTick(now, on);
             showSignal(now, on);
             showHeard();
             showSoundHint();
@@ -782,6 +913,13 @@ public final class FinderActivity extends Activity implements SensorEventListene
                     }
                 }
             });
+            return;
+        }
+        // the finder itself holds the ring (issue #192): it sends no signal meanwhile, say why and for how long
+        String blind = finger.blind(demo);
+        if (blind != null) {
+            bandText.setText("Connected");
+            issue(blind, null, null);
             return;
         }
         if (band != Proximity.NOT_HEARD) {
@@ -1107,6 +1245,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
                 walk.heading(now, facing, true);
             } else if (Double.isNaN(facing)) {
                 facing = 0;
+            }
+            if (finger.holding()) {
+                // a connected ring sends no signal: the made up one pauses too while the demo blinks
+                dial.invalidate();
+                h.postDelayed(this, 150);
+                return;
             }
             double toward = Math.toRadians(SearchWalk.diff(facing, DEMO_RING_AT));
             double v = -60 + 3 * Math.sin(now / 7000.0) - 8 * (1 - Math.cos(toward)) / 2 + demoNoise.nextGaussian() * 2.5;
