@@ -1033,6 +1033,24 @@ public class CoreTest {
         eq("signed: phone's decimal sign", Texts.signed(0.26, de), "+0,3");
         eq("signed: near zero with the phone's decimal sign", Texts.signed(-0.04, de), "0,0");
         eq("signed: unknown", Texts.signed(Double.NaN, Locale.US), "--");
+        // line chart numbers: today's plain format for every chart, the signed one for the temperature charts (issue #226)
+        eq("chart value: whole number", Texts.chartValue(12, Locale.US), "12");
+        eq("chart value: one decimal under 10", Texts.chartValue(0.3, Locale.US), "0.3");
+        eq("chart value: no sign rule, -0.04 is -0.0", Texts.chartValue(-0.04, Locale.US), "-0.0");
+        eq("chart value: rounded from 10 on", Texts.chartValue(25.6, Locale.US), "26");
+        eq("chart value: whole number under 10", Texts.chartValue(-1.5 * 2, Locale.US), "-3");
+        eq("chart value: phone's decimal sign", Texts.chartValue(0.3, de), "0,3");
+        eq("chart value: unknown reads 0 as before", Texts.chartValue(Double.NaN, Locale.US), "0");
+        eq("chart value: plain when not signed", Texts.chartValue(-0.04, false, Locale.US), "-0.0");
+        eq("chart value signed: -0.04 is 0.0", Texts.chartValue(-0.04, true, Locale.US), "0.0");
+        eq("chart value signed: 0.0 is 0.0", Texts.chartValue(0.0, true, Locale.US), "0.0");
+        eq("chart value signed: 0.25 is +0.3", Texts.chartValue(0.25, true, Locale.US), "+0.3");
+        eq("chart value signed: guide labels", Texts.chartValue(1.5, true, Locale.US) + " " + Texts.chartValue(-1.5, true, Locale.US), "+1.5 -1.5");
+        eq("chart value signed: as the card above", Texts.chartValue(0.31, true, Locale.US) + " \u00b0C", Texts.radar("Skin temperature", 0.31, Locale.US));
+        // the efficiency explanation says it plainly, as the Sleep page note (issue #227)
+        String effText = app.openring.ui.Explain.of("efficiency");
+        check("efficiency explanation: time without a stage", effText.endsWith("Time without a sleep stage counts as time in bed, not as sleep."));
+        check("efficiency explanation: no longer says the ring gave the stages", !effText.contains("the ring gave"));
         Scores.ReadinessInput ri = new Scores.ReadinessInput();
         for (double v : new double[] {-0.04, 0.04, 0.05, -0.03, 0.0496, 0.6}) {
             ri.tempDev = v;

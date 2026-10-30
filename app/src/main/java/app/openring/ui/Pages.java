@@ -764,7 +764,7 @@ public final class Pages {
         t.addView(Ui.text(c, signed(Json.d(d.day, "temp_dev")) + " \u00b0C", 26, Ui.TEXT, Ui.LIGHT));
         t.addView(Ui.body(c, "Deviation from your usual nightly skin temperature. Within about half a degree is normal."));
         t.addView(Ui.gap(c, 8));
-        t.addView(new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill(), Ui.sized(c, -1, 120));
+        t.addView(new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), Ui.sized(c, -1, 120));
         root.addView(t);
 
         root.addView(chartCard(c, "HRV, last 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"),
@@ -1216,8 +1216,7 @@ public final class Pages {
 
     /** "3h", "2h 30m" or "45 min" for a goal in minutes. */
     static String hours(int min) {
-        if (min < 60) return span(min);
-        return min % 60 == 0 ? (min / 60) + "h" : (min / 60) + "h " + (min % 60) + "m";
+        return min >= 60 && min % 60 == 0 ? (min / 60) + "h" : span(min);
     }
 
     // ========================================================================== BODY
@@ -1315,7 +1314,7 @@ public final class Pages {
         root.addView(chartCard(c, "HRV, 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"), null));
         root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).unit("/min"), null));
         root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).range(88, 100).unit("%"), null));
-        root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill(), null));
+        root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
         return root;
     }
 
@@ -1403,12 +1402,11 @@ public final class Pages {
             card.addView(Ui.body(c, "Not enough data yet"));
             return card;
         }
+        double dev = Json.d(day, "temp_dev"), eff = nightEfficiency(night);
         for (int i = 0; i < cs.length(); i++) {
             JSONObject o = cs.optJSONObject(i);
             String detail = o.optString("detail");
-            double dev = Json.d(day, "temp_dev");
             if ("temperature".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(dev)) detail = signed(dev) + " \u00b0C";
-            double eff = nightEfficiency(night);
             if ("efficiency".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(eff)) detail = Math.round(eff) + "%";
             card.addView(Ui.contributor(c, o.optString("label"), detail, o.optDouble("score"), color, Explain.of(o.optString("key"))));
         }
