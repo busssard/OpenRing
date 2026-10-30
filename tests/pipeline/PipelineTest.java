@@ -805,6 +805,7 @@ public class PipelineTest {
         pairingPrefs218();
         swapDuringSync219(full.toByteArray());
         syncDating220();
+        datingRandom220();
         emptySync194();
 
         System.out.println(passed + " passed, " + failed + " failed");
@@ -3590,7 +3591,10 @@ public class PipelineTest {
         List<long[]> theirs = timeRows(db);
         int diff = differences(mine, theirs);
         check(step + ": seg and date of every row as the old full rewrite", diff == 0, diff + " rows differ of " + mine.size());
-        check(step + ": same dating report", report(fresh).equals(report(ref)) && fresh.segs.size() == ref.segs.size(), report(fresh) + " / " + report(ref));
+        check(step + ": same dating report", report(fresh).equals(report(ref)) && fresh.segs.size() == ref.segs.size(), report(fresh) + " / " + report(ref)
+                + (fresh.full == null ? ", only the new part dated" : ", all dated: " + fresh.full));
+        check(step + ": the reported range of dated rows is the table's (#220)", Arrays.equals(fresh.range, db.datedRange()),
+                Arrays.toString(fresh.range) + " / " + Arrays.toString(db.datedRange()));
         long changedRows = differences(start, mine);
         check(step + ": rows written are the rows that changed", fresh.changed == changedRows, fresh.changed + " / " + changedRows);
         Db.TimeReport again = db.rebuildTime(now);
@@ -6110,5 +6114,131 @@ public class PipelineTest {
         Analyzer.run(c, null);
         check("#194 analysing again with nothing new changes no night or day, byte for byte (so not doing it loses nothing)",
                 results139(db).equals(before), firstDiff(results139(db), before));
+    }
+    /** {@code count} made up rows of one boot from {@code ds0}, {@code step} apart; bodies unique through {@code mark}. */
+    static List<RingEvent> rows220(long ds0, int count, long step, int[] mark) {
+        List<RingEvent> out = new ArrayList<RingEvent>();
+        for (int k = 0; k < count; k++) {
+            int m = mark[0]++;
+            out.add(new RingEvent(EventCodec.MOTION_EVENT, ds0 + k * step, new byte[] {1, (byte) m, (byte) (m >> 8), (byte) (m >> 16)}));
+        }
+        return out;
+    }
+
+    /**
+     * Issue #220: the dating of only the new part against the old full SQL rewrite (#21) on many made up histories:
+     * syncs of random length, interrupted syncs, reboots with and without a new epoch, late, future and pre 2015 time
+     * records, a phone clock set back, re downloaded old ranges, phone anchors of an earlier boot, Find my ring storing
+     * without dating, time passing without a sync, a deleted time record. Every step: every row's segment and date
+     * bits, the report and the range as the reference.
+     */
+    static void datingRandom220() throws Exception {
+        int runs = 0, fast = 0;
+        java.util.Map<String, Integer> why = new java.util.TreeMap<String, Integer>();
+        int failedBefore = failed;
+        for (int seed = 1; seed <= 30; seed++) {
+            Context c = freshDb("openring220-random");
+            Db db = Db.get(c);
+            Random r = new Random(2200 + seed);
+            long now = 1_780_000_000L + r.nextInt(86400);
+            long skew = 0; // phone clock minus true time
+            int epoch = 1;
+            long ds = 1000 + r.nextInt(100000);
+            long base = now - ds / 10; // true time = base + ds / 10 in this boot
+            int[] mark = {0};
+            List<long[]> boots = new ArrayList<long[]>(); // {epoch, first ds, last ds} of earlier boots
+            long bootFirst = ds;
+            for (int k = 0; k < 18; k++) {
+                int what = r.nextInt(20);
+                String label = "#220 history " + seed + " step " + k;
+                List<RingEvent> ev = new ArrayList<RingEvent>();
+                boolean phoneAnchor = true, date = true;
+                if (what == 10 || what == 11) {
+                    // a reboot: the counter restarts near zero, with (10) or without (11, issue #134) a new epoch
+                    boots.add(new long[] {epoch, bootFirst, ds});
+                    if (what == 10) epoch++;
+                    ds = 100 + r.nextInt(5000);
+                    bootFirst = ds;
+                    base = now - skew - ds / 10;
+                    label += what == 10 ? " reboot, new epoch" : " reboot, same epoch";
+                } else if (what == 12 && ds - bootFirst > 20000) {
+                    // a late time record of the ring, inside what is stored of this boot
+                    long at = bootFirst + 1 + r.nextInt((int) Math.min(Integer.MAX_VALUE - 1, ds - bootFirst - 10));
+                    ev.add(new RingEvent(EventCodec.TIME_SYNC, at, timeSync(base + at / 10 + 5)));
+                    label += " late time record";
+                } else if (what == 13) {
+                    ev.add(new RingEvent(EventCodec.TIME_SYNC, ds, timeSync(now + 3600L * (7 + r.nextInt(24)))));
+                    label += " time record in the future";
+                } else if (what == 14) {
+                    skew -= 7 * 3600;
+                    now -= 7 * 3600;
+                    label += " phone clock set back by 7 hours";
+                } else if (what == 15 && db.eventCount() > 0) {
+                    // re downloaded: old rows again (ignored as equal) and a few new ones with older counters of this boot
+                    ev.addAll(db.recentEvents(5).isEmpty() ? new ArrayList<RingEvent>() : new ArrayList<RingEvent>());
+                    for (int i = 0; i < 3; i++) ev.addAll(rows220(Math.max(bootFirst, ds - 1000 - r.nextInt(30000)), 1, 1, mark));
+                    phoneAnchor = false;
+                    label += " re downloaded older range";
+                } else if (what == 16) {
+                    phoneAnchor = false;
+                    date = false;
+                    label += " Find my ring stores without dating";
+                } else if (what == 17 && !boots.isEmpty()) {
+                    long[] b = boots.get(boots.size() - 1);
+                    db.insertPhoneAnchor(b[0], b[2] - r.nextInt(100), now);
+                    label += " phone anchor of the boot before";
+                } else if (what == 18) {
+                    ev.add(new RingEvent(EventCodec.TIME_SYNC, ds, timeSync(1_400_000_000L)));
+                    label += " time record before 2015";
+                } else if (what == 19) {
+                    long dt = r.nextBoolean() ? -600 : 1800 + r.nextInt(30 * 3600);
+                    now += dt;
+                    if (dt > 0) ds += dt * 10;
+                    phoneAnchor = false;
+                    label += " time passes (" + dt + " s), no sync";
+                } else if (what == 9) {
+                    phoneAnchor = false;
+                    label += " interrupted sync";
+                } else {
+                    label += " sync";
+                }
+                if (what != 19 && what != 17) {
+                    // time passes before the sync (mostly), then the ring's own time record (not always) and the events
+                    if (r.nextInt(5) > 0) {
+                        long gap = 10 + r.nextInt(3 * 3600);
+                        ds += gap * 10;
+                        now += gap;
+                    }
+                    if (r.nextInt(4) > 0 && what != 12) ev.add(0, new RingEvent(EventCodec.TIME_SYNC, ds, timeSync(base + ds / 10 + (r.nextBoolean() ? 0 : 30))));
+                    long dt = 600 + r.nextInt(20000);
+                    int n = 5 + r.nextInt(60);
+                    ev.addAll(rows220(ds + 1, n, dt * 10 / n, mark));
+                    ds += dt * 10;
+                    now += dt;
+                }
+                if (!ev.isEmpty()) db.insertBatch(ev, epoch, now);
+                if (phoneAnchor && what != 17 && what != 19) db.insertPhoneAnchor(epoch, ds, now);
+                if (seed % 6 == 0 && k == 9) {
+                    db.getWritableDatabase().execSQL("DELETE FROM events WHERE id = (SELECT MAX(id) FROM events WHERE tag = 66)");
+                    label += ", a time record row deleted";
+                }
+                if (!date) continue;
+                Db.TimeReport t = sameAsOld(db, now, label);
+                runs++;
+                if (t.full == null) fast++;
+                else {
+                    String reason = t.full.replaceAll(":.*", "");
+                    why.put(reason, why.containsKey(reason) ? why.get(reason) + 1 : 1);
+                }
+            }
+            // and once more from scratch after the last step's rows are dated: nothing to write
+            db.rebuildTime(now);
+            Db.TimeReport t = db.rebuildTime(now, true);
+            check("#220 history " + seed + ": dating everything again afterwards writes nothing", t.changed == 0, t.changed);
+            db.close();
+        }
+        System.out.println("  #220 random histories: " + runs + " datings, " + fast + " of the new part only; all dated again: " + why);
+        check("#220 random histories: every step as the old full rewrite, also through the step", failed == failedBefore, failed - failedBefore);
+        check("#220 random histories: most datings read the new part only", fast * 2 > runs, fast + " of " + runs);
     }
 }

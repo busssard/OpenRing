@@ -158,9 +158,12 @@ public final class Analyzer {
 
     void runInner() {
         final long now = System.currentTimeMillis() / 1000;
-        final Db.TimeReport t = db.rebuildTime(now);
-        log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written",
-                t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed));
+        final boolean all = db.kvLong(FULL_PENDING, 0) == 1;
+        // Re analyse all (also Repair) dates every event again; otherwise only the new part (issue #220)
+        final Db.TimeReport t = db.rebuildTime(now, all);
+        log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written, %d read, %s",
+                t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed, t.rowsRead,
+                t.full == null ? "dated the new part only" : "all events dated again (" + t.full + ")"));
         long lastDated = db.kvLong("dated_count", -1), lastTotal = db.kvLong("event_count", -1);
         // the checks below only lower analyzed_until ("analyse again from here"), so they are stored at once: a run that
         // fails after them is done again, never skipped (issue #230)
@@ -186,7 +189,8 @@ public final class Analyzer {
         // the rule for which steps phone use marks awake changed (issue #41): nights with screen data
         // are analysed again once; databases from before the version existed read as rule 1
         if (screenAwake == 1 && db.kvLong("phone_awake", 1) != ScreenTime.AWAKE_RULE && firstScreen >= 0) db.reanalyseFrom(firstScreen);
-        final double[] range = db.datedRange();
+        // the dating knows the range of the dated rows, no scan of the table for it (issue #220)
+        final double[] range = t.range;
         // the phone's time zone, noted at every sync (issue #22), never later than a day after the newest
         // dated event (a phone clock set far ahead for a moment). Demo mode has no zone history.
         if (!prefs.demo()) noteZone(db, now, zone, range == null ? Double.NaN : range[1]);
@@ -197,7 +201,6 @@ public final class Analyzer {
             log.log("no dated events yet, nothing to analyse");
             return;
         }
-        final boolean all = db.kvLong(FULL_PENDING, 0) == 1;
         double until = db.kvLong("analyzed_until", 0);
         // no age limit (issue #20): a whole run rebuilds every night; the week by week chunks keep memory flat
         // however long the history is
