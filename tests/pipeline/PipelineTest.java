@@ -825,6 +825,7 @@ public class PipelineTest {
         none254();
         wholeNight254();
         halfNight254();
+        wholeDay254();
         overlapping254();
         clockChange254();
         interrupted254();
@@ -7972,6 +7973,34 @@ public class PipelineTest {
         clean254();
     }
 
+    /**
+     * Review of #263: a whole day left out (the default, midnight to midnight). The night ending on its morning began the
+     * evening before; its piece before midnight must not stay as that day's sleep with a score and a usual value. The day
+     * has no night and no summary left; the next day keeps its night; brought back byte for byte.
+     */
+    static void wholeDay254() throws Exception {
+        Context c = phone254("openring254-day");
+        Db db = Db.get(c);
+        List<String> before = results139(db);
+        LocalDate d = LocalDate.parse(date58(T188 + 8 * 86400L));
+        double a = d.atStartOfDay(Z58).toEpochSecond(), b = d.plusDays(1).atStartOfDay(Z58).toEpochSecond();
+        List<String> was = db.nightsJson(d.toString(), d.toString(), true);
+        check("#254 whole day: its night began the evening before (the case is real)", was.size() == 1 && Json.d(Json.parse(was.get(0)), "start") < a,
+                was.size());
+        StringBuilder log = new StringBuilder();
+        Analyzer.leaveOut(c, a, b, collect(log));
+        check("#254 whole day left out: no sleep of any length stored for it, not even the evening piece before midnight",
+                db.count("SELECT COUNT(*) FROM nights WHERE day = '" + d + "'") == 0 && log.indexOf("its day " + d + " is left out") >= 0,
+                db.count("SELECT COUNT(*) FROM nights WHERE day = '" + d + "'") + "; " + log.toString().replace('\n', ';'));
+        check("#254 whole day left out: the day has no summary (no score, no usual value from it)", db.dayJson(d.toString()) == null, db.dayJson(d.toString()));
+        check("#254 whole day left out: the next day keeps its night, nothing overlaps the day", nightsOfDay254(db, d.plusDays(1)) == 1
+                && db.nightsOverlapping(a, b) == 0, db.nightsOverlapping(a, b));
+        check("#254 whole day left out: the same as Re analyse all", results139(db).equals(full254(c)), null);
+        Analyzer.bringBack(c, made254(db, a), null);
+        check("#254 whole day brought back: byte for byte as before", results139(db).equals(before), firstDiff(results139(db), before));
+        clean254();
+    }
+
     /** Issue #254: two overlapping left out times; removing one gives exactly what only the other gives; the second one back gives the start. */
     static void overlapping254() throws Exception {
         Context c = phone254("openring254-two");
@@ -7984,6 +8013,11 @@ public class PipelineTest {
         Analyzer.leaveOut(c, ya, yb, null);
         check("#254 two overlapping left out times: merged into one, no stored night overlaps them", db.leftOut().size() == 1 && db.excluded().size() == 2
                 && db.nightsOverlapping(xa, yb) == 0, db.leftOut().ranges().size());
+        // the merged time is refused again (review of #263: checked while both are stored, so it can fail), a time reaching
+        // an hour before it is not
+        check("#254 the same time again is refused, one reaching before it is not", "This time is already left out.".equals(db.leftOut().problem(xa, yb, yb + 1))
+                && "This time is already left out.".equals(db.leftOut().problem(xa + 60, xb, yb + 1)) && db.leftOut().problem(xa - 3600, xb, yb + 1) == null,
+                db.leftOut().problem(xa - 3600, xb, yb + 1));
         Analyzer.bringBack(c, made254(db, xa), null);
         List<String> onlyY = results139(db);
         Context o = phone254("openring254-only");
@@ -7994,8 +8028,6 @@ public class PipelineTest {
         check("#254 the first one brought back: exactly what leaving out only the second gives", onlyY.equals(ref) && !ref.equals(before), firstDiff(onlyY, ref));
         Analyzer.bringBack(c, made254(db, ya), null);
         check("#254 both brought back: byte for byte as before", results139(db).equals(before), firstDiff(results139(db), before));
-        check("#254 the same time again is refused, a new one is not", db.leftOut().problem(xa, xb, xb + 1) == null
-                && app.openring.core.analysis.LeftOut.of(java.util.Collections.singletonList(new double[] {xa, xb})).problem(xa + 60, xb - 60, xb + 1) != null, null);
         clean254();
     }
 

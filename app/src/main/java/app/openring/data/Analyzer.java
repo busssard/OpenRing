@@ -649,7 +649,8 @@ public final class Analyzer {
         // each night in the zone it ended in (issue #22): the later zone counts for the whole night
         Map<Night, String> zoneIds = new HashMap<Night, String>();
         Map<Night, String> days = new HashMap<Night, String>();
-        for (Night n : nights) {
+        for (java.util.Iterator<Night> it = nights.iterator(); it.hasNext(); ) {
+            Night n = it.next();
             String zid = db.zoneAt(n.end);
             zoneIds.put(n, zid);
             ZoneId nz = zoneOf(zid);
@@ -663,6 +664,17 @@ public final class Analyzer {
             if (!slept.equals(nz)) {
                 String earlier = date(n.end, slept);
                 if (earlier.compareTo(d) > 0) d = earlier;
+            }
+            if (!left.isEmpty()) {
+                // a piece of a night whose day is left out as a whole is not stored (review of #263): the evening before
+                // a left out day would otherwise give that day a sleep, a score and a usual value of someone else's night
+                LocalDate ld = LocalDate.parse(d);
+                if (left.covers(ld.atStartOfDay(nz).toEpochSecond(), ld.plusDays(1).atStartOfDay(nz).toEpochSecond())) {
+                    log.log("skipped a sleep window " + clock(n.start, nz) + " to " + clock(n.end, nz) + ": its day " + d + " is left out");
+                    it.remove();
+                    zoneIds.remove(n);
+                    continue;
+                }
             }
             days.put(n, d);
         }
