@@ -5350,7 +5350,21 @@ public class CoreTest {
         check("#220 the state after a step: same counts and earliest and latest date", wrongRange == 0);
         check("#220 most datings of these histories read the new part only", fast * 2 > steps);
         // stored state: damaged, other version or empty texts read as none
-        // nothing, garbage, another version, cut short, more dated rows than rows, three tail records, other dating rules
+        // a stored phone anchor too far ahead of its boot's counters, inside its rows: the boot grows and takes it as a record
+        Table220 g = new Table220();
+        long gnow = 1_800_000_000L, gbase = gnow - 300_000;
+        g.add(1, 1_000_000, gbase + 100_000, false, true);
+        for (int i = 0; i < 10; i++) g.add(1, 1_000_000 + i * 1000, -1, false, false);
+        long far = 1_009_000 + TimeLine.RESET_SLACK_DS + 5000;
+        g.add(1, far, gbase + far / 10 + 50, true, true);
+        g.add(1, 1_009_500, -1, false, false);
+        eq("#220 stored phone anchor out of its boot's reach: first dating does everything", g.date(gnow), "no state");
+        for (int i = 0; i < 4; i++) g.add(1, 1_010_000 + i * 8000, -1, false, false);
+        String gw = g.date(gnow);
+        List<long[]> gall = g.all(gnow), ggot = g.stored();
+        boolean gsame = gall.size() == ggot.size();
+        for (int i = 0; gsame && i < gall.size(); i++) gsame = Arrays.equals(gall.get(i), ggot.get(i));
+        check("#220 the boot grew and took the stored phone anchor: the new part only, every row as dating everything", gw == null && gsame);
         for (String bad : new String[] {null, "", "x", "2 1 2 3", "1 1 2", "1 1 5 100 3 9 0 NaN NaN 1 1 1 0 0", "1 1 1 1 1 1 1 1 1 1 1 1 3 1 1 1 1 1 1 1 1 1 0", "1 2 5 100 3 0 0 NaN NaN 9223372036854775807 -9223372036854775808 Infinity 0 0"}) {
             check("#220 a damaged saved state reads as none: " + bad, Dating.State.decode(bad) == null);
         }
