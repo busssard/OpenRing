@@ -15,5 +15,5 @@ javac -nowarn -source 8 -target 8 -Xlint:-options -d "$OUT" \
   app/src/main/java/app/openring/data/Db.java app/src/main/java/app/openring/data/Prefs.java \
   app/src/main/java/app/openring/data/Json.java app/src/main/java/app/openring/data/Analyzer.java \
   app/src/main/java/app/openring/data/DataCheck.java app/src/main/java/app/openring/data/RightNow.java app/src/main/java/app/openring/data/Backup.java app/src/main/java/app/openring/data/SleepHistory.java app/src/main/java/app/openring/data/Demo.java app/src/main/java/app/openring/data/ScreenDays.java \
-  app/src/main/java/app/openring/data/Exporter.java tests/pipeline/PipelineTest.java
+  app/src/main/java/app/openring/data/Exporter.java app/src/main/java/app/openring/data/BeforeUpdate.java app/src/main/java/app/openring/data/AutoBackup.java tests/pipeline/PipelineTest.java
 TZ=Europe/Zurich java $JAVA_OPTS -cp "$OUT:$DEPS/sqlite-jdbc.jar" PipelineTest

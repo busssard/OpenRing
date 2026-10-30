@@ -38,6 +38,8 @@ public final class Db extends SQLiteOpenHelper {
         }
         if (instance == null) {
             if (REAL.equals(name)) recoverSwap(c);
+            // the first open after an update copies the history first, before the helper upgrades it (issue #242)
+            BeforeUpdate.ensure(c);
             instance = new Db(c.getApplicationContext(), name);
         }
         return instance;
@@ -1379,6 +1381,8 @@ public final class Db extends SQLiteOpenHelper {
         String old = dst.getPath() + ".old";
         // an unfinished earlier swap: its kept history comes back first, it is never deleted
         recoverSwap(c);
+        // a restore as the first thing after an update: the history from before it is copied first (issue #242)
+        BeforeUpdate.ensure(c);
         if (new java.io.File(old).exists()) throw new java.io.IOException("an earlier restore could not be undone");
         // side files of a .old that is gone (a cleanup cut off half way) belong to nothing
         for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();

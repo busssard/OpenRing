@@ -63,5 +63,10 @@
             android:name="app.openring.sync.SyncJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+        <!-- automatic backups (issue #242): a copy into the folder the person picked, while the phone charges -->
+        <service
+            android:name="app.openring.sync.BackupJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 </manifest>

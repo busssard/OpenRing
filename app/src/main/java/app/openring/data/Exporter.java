@@ -154,7 +154,7 @@ public final class Exporter {
     }
 
     /** Fold a copied log into the copy and switch it to one file, so it can be streamed and checked. */
-    private static void singleFile(File tmp) throws IOException {
+    static void singleFile(File tmp) throws IOException {
         SQLiteDatabase d = SQLiteDatabase.openDatabase(tmp.getPath(), null,
                 SQLiteDatabase.OPEN_READWRITE | SQLiteDatabase.NO_LOCALIZED_COLLATORS, KEEP_FILE);
         try {

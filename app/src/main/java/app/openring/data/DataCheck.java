@@ -140,6 +140,11 @@ public final class DataCheck {
         for (double[] ts : tags) {
             t.append(String.format(Locale.US, "  %-34s %8d %8d  %s  %s%n", EventCodec.name((int) ts[0]), (long) ts[1], (long) ts[2], date(ts[3]), date(ts[4])));
         }
+        // the automatic backups (issue #242): versions, dates, sizes and the last result, no health values
+        java.time.ZoneId z = ZoneId.systemDefault();
+        t.append('\n').append(BeforeUpdate.checkLine(c, z)).append('\n');
+        t.append(app.openring.core.Backups.checkAuto(p.backupFolder() != null, p.backupDays(), p.backupKeep(), p.autoLastOk(), p.autoLastSize(),
+                p.autoLastTry(), p.autoError(), z)).append('\n');
         t.append("\nTime records: ").append(anchors).append(", boot segments: ").append(segs).append(", sync epoch ")
                 .append(db.kvLong("epoch", 1)).append(", cursor ").append(db.kvLong("cursor", 0)).append('\n');
         // the nights themselves, counts and dates only (issue #40): which day each sleep period was given

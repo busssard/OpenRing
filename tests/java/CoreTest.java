@@ -890,6 +890,7 @@ public class CoreTest {
         unitTexts();
         drafts();
         oneRun();
+        backups242();
         keptHeight();
         scrollKeep();
         screenTime();
@@ -954,6 +955,127 @@ public class CoreTest {
     }
 
     /** Issue #130: one repair at a time, reported to the screen shown now (a turned phone builds a new one). */
+    /** Issue #242: the rules and texts of the automatic backups. */
+    static void backups242() {
+        // the copy before an update
+        eq("backups: same version, nothing", Backups.beforeUpdate(43, 43, true), Backups.SAME);
+        eq("backups: another version with a history, copy first", Backups.beforeUpdate(42, 43, true), Backups.COPY);
+        eq("backups: nothing noted yet but a history (updating from a version that noted nothing), copy first", Backups.beforeUpdate(0, 43, true), Backups.COPY);
+        eq("backups: a new installation, note only", Backups.beforeUpdate(0, 43, false), Backups.NOTE);
+        eq("backups: another version without a history, note only", Backups.beforeUpdate(42, 43, false), Backups.NOTE);
+        eq("backups: a lower version (reinstalled older app), copy first", Backups.beforeUpdate(44, 43, true), Backups.COPY);
+        eq("backups: the version cannot be read, nothing", Backups.beforeUpdate(42, 0, true), Backups.SAME);
+        long mb = 1024 * 1024;
+        check("backups: room for the copy and 50 MB", Backups.enoughSpace(260 * mb, 210 * mb));
+        check("backups: 1 byte short of the 50 MB, no copy", !Backups.enoughSpace(260 * mb - 1, 210 * mb));
+        check("backups: free space unknown (0), no copy", !Backups.enoughSpace(0, 1));
+        // names of the phone copies
+        eq("backups: copy name", Backups.copyName(43, "1.42", Backups.RAW), "before-43-1.42.raw");
+        eq("backups: odd characters left out of a version name", Backups.copyName(43, "1.42-beta /x", Backups.CHECKED), "before-43-1.42betax.db");
+        eq("backups: no version name", Backups.copyName(43, null, Backups.CHECKED), "before-43-unknown.db");
+        Backups.Copy cp = Backups.parse("before-43-1.42.raw");
+        check("backups: a copy parses back", cp != null && cp.code == 43 && "1.42".equals(cp.version) && Backups.RAW.equals(cp.state) && !cp.back);
+        eq("backups: the same copy after its check", cp.named(Backups.CHECKED), "before-43-1.42.db");
+        Backups.Copy bk = Backups.parse("back-1793000000.db");
+        check("backups: a copy before going back parses", bk != null && bk.back && bk.code == 1793000000L && bk.version == null);
+        eq("backups: the copy before going back after its check", bk.named(Backups.BAD), "back-1793000000.bad");
+        for (String n : new String[] {"before-43-1.42.raw-wal", "before-43-1.42.db-shm", "notes.txt", "before-x-1.42.db", "back-1.raw", null,
+            "before-99999999999-1.42.db"}) check("backups: not a copy: " + n, Backups.parse(n) == null);
+        // which phone copies go
+        List<String> fs = Arrays.asList("before-40-1.39.db", "before-41-1.40.db", "before-42-1.41.bad", "before-43-1.42.raw", "before-44-1.43.partial",
+            "back-10.db", "back-20.db", "back-30.partial", "notes.txt");
+        eq("backups: two checked copies newer than 40 (41 and none else): nothing goes yet", Backups.phoneToDelete(Arrays.asList("before-40-1.39.db", "before-41-1.40.db",
+            "before-42-1.41.bad", "before-43-1.42.raw")), Arrays.asList());
+        eq("backups: the older copy before going back goes, nothing of the copies before updates", Backups.phoneToDelete(fs), Arrays.asList("back-10.db"));
+        eq("backups: once two newer passed, older checked and bad copies go", Backups.phoneToDelete(Arrays.asList("before-40-1.39.db", "before-41-1.40.bad",
+            "before-42-1.41.db", "before-43-1.42.db", "before-44-1.43.raw")), Arrays.asList("before-41-1.40.bad", "before-40-1.39.db"));
+        // the job and when a copy is due
+        BackgroundJob.Spec job = Backups.jobSpec("app.openring/.sync.BackupJob");
+        check("backups: one daily job, flex 6 hours, persisted, battery not low, while charging", job.periodic && job.interval == 24 * 3600 * 1000L
+                && job.flex == 6 * 3600 * 1000L && job.persisted && job.batteryNotLow && job.charging);
+        eq("backups: the same job pending is kept", BackgroundJob.decide(true, true, Backups.jobSpec("app.openring/.sync.BackupJob"), job), BackgroundJob.Action.KEEP);
+        eq("backups: the sync's job is not the backup job (charging differs)", BackgroundJob.decide(true, true,
+            new BackgroundJob.Spec("app.openring/.sync.BackupJob", true, 24 * 3600 * 1000L, 6 * 3600 * 1000L, true, true), job), BackgroundJob.Action.SCHEDULE);
+        check("backups: a spec says it charges", job.toString().contains("charging") && !BackgroundJob.wanted("s").toString().contains("charging"));
+        check("backups: specs equal by charging too", !job.equals(new BackgroundJob.Spec(job.service, true, job.interval, job.flex, true, true, false))
+                && job.hashCode() == Backups.jobSpec(job.service).hashCode());
+        long now = 1793000000L, h = 3600, d = 86400;
+        check("backups: no copy yet, due", Backups.due(now, 0, 7));
+        for (int days : Backups.DAYS) {
+            check("backups: every " + days + " days, 6 hours before the full interval: due", Backups.due(now, now - days * d + 6 * h, days));
+            check("backups: every " + days + " days, a minute earlier: not due", !Backups.due(now, now - days * d + 6 * h + 60, days));
+        }
+        check("backups: the last copy lies in the future (clock set back), due", Backups.due(now, now + d, 30));
+        check("backups: choices", Backups.validDays(1) && Backups.validDays(7) && Backups.validDays(30) && !Backups.validDays(2) && !Backups.validDays(0)
+                && Backups.validKeep(3) && Backups.validKeep(5) && Backups.validKeep(10) && !Backups.validKeep(4) && Backups.validDays(Backups.DEFAULT_DAYS)
+                && Backups.validKeep(Backups.DEFAULT_KEEP));
+        // folder names and which files go
+        java.time.LocalDateTime t = java.time.LocalDateTime.of(2026, 10, 29, 3, 12);
+        eq("backups: folder name", Backups.folderName(t, null), "openring-backup-2026-10-29-0312.zip");
+        eq("backups: folder name of an update copy", Backups.folderName(t, "1.42"), "openring-backup-2026-10-29-0312-before-1.42.zip");
+        check("backups: our names", Backups.folderFile("openring-backup-2026-10-29-0312.zip") && Backups.folderFile("openring-backup-2026-10-29-0312-before-1.42.zip")
+                && !Backups.folderFile("openring-backup-2026-10-29-0312.zip.partial") && !Backups.folderFile("openring-backup-2026-10-29.zip")
+                && !Backups.folderFile("open-ring-full-backup.zip") && !Backups.folderFile(null));
+        String a = "openring-backup-2026-10-01-0300.zip", b = "openring-backup-2026-10-08-0300.zip", c2 = "openring-backup-2026-10-15-0300-before-1.42.zip",
+            e = "openring-backup-2026-10-22-0300.zip", nw = "openring-backup-2026-10-29-0300.zip", foreign = "openring-backup-2020-01-01-0000.zip";
+        List<String> present = Arrays.asList(a, b, c2, e, nw, foreign, "notes.txt", a + ".partial", foreign + ".partial", "openring-backup-2026-10-02-0300.zip.partial");
+        List<String> listed = Arrays.asList(a, b, c2, e, nw, "openring-backup-2026-10-02-0300.zip");
+        eq("backups: keep 3, the oldest listed ones go, our partials too, foreign files stay", new java.util.TreeSet<String>(Backups.folderToDelete(present, listed, nw, 3)),
+            new java.util.TreeSet<String>(Arrays.asList(a, b, a + ".partial", "openring-backup-2026-10-02-0300.zip.partial")));
+        eq("backups: keep 10, only our partials go", Backups.folderToDelete(present, listed, nw, 10), Arrays.asList(a + ".partial", "openring-backup-2026-10-02-0300.zip.partial"));
+        eq("backups: the new file is not there, nothing complete goes", Backups.folderToDelete(Arrays.asList(a, b, c2, e), listed, nw, 3), Arrays.asList());
+        eq("backups: the new file is not the newest by name (clock set back), it is kept with the 2 newest others", new java.util.TreeSet<String>(
+            Backups.folderToDelete(Arrays.asList(a, b, c2, e, nw), listed, a, 3)), new java.util.TreeSet<String>(Arrays.asList(b, c2)));
+        eq("backups: the partial of the new file itself is not ours to delete", Backups.folderToDelete(Arrays.asList(nw + ".partial", nw), listed, nw, 3), Arrays.asList());
+        // the folder's permission, from the picker's result (review of #259)
+        eq("backups: read and write given: both kept", Backups.keepFlags(Backups.GRANT_READ | Backups.GRANT_WRITE | 64 | 128), 3);
+        eq("backups: the Android values", Backups.GRANT_READ + 10 * Backups.GRANT_WRITE, 21);
+        eq("backups: read only: not kept", Backups.keepFlags(Backups.GRANT_READ | 64), -1);
+        eq("backups: no flags: not kept", Backups.keepFlags(0), -1);
+        // why a copy failed
+        check("backups: a full disk is recognised", Backups.noSpace("write failed: ENOSPC (No space left on device)") && Backups.noSpace("SQLITE_FULL")
+                && Backups.noSpace("database or disk is full (code 13)") && !Backups.noSpace("EACCES") && !Backups.noSpace(null));
+        // texts, word for word
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        long when = java.time.LocalDateTime.of(2026, 10, 29, 3, 12).atZone(z).toEpochSecond();
+        eq("backups: copy line", Backups.copyLine("1.42", when, 210 * mb, z), "Copy from before the update to 1.42 (29 Oct, 210 MB)");
+        eq("backups: copy before going back", Backups.backLine(when, 212 * mb, z), "Copy from before going back (29 Oct, 212 MB)");
+        eq("backups: a small copy is at least 1 MB", Backups.mb(1000), "1 MB");
+        eq("backups: an empty file", Backups.mb(0), "0 MB");
+        eq("backups: going back asks, and says the whole history is kept and can be put back", Backups.goBackText(when, z),
+            "Your history is replaced by this copy from 29 Oct. First your whole history as it is now is kept as \"Copy from before going back\", "
+            + "so you can put it back from this card.");
+        check("backups: the going back question names the copy's line", Backups.goBackText(when, z).contains(Backups.backLine(when, 1, z).substring(0, 26)));
+        eq("backups: status after a copy", Backups.status(when, 210 * mb, 5, null, z), "Last copy: 29 Oct 03:12, 210 MB, 5 kept");
+        eq("backups: status before the first copy", Backups.status(0, 0, 0, null, z), "No copy yet. The first one is made the next time the phone charges.");
+        eq("backups: status after a failure", Backups.status(when, 210 * mb, 5, Backups.GONE, z),
+            "The last copy failed: the folder is gone or Open Ring may no longer use it.");
+        eq("backups: the numbers explained", Backups.statusExplain(210 * mb, 5),
+            "210 MB is the size of the last copy, 5 kept is how many copies are in the folder now. Copies are made while the phone charges.");
+        eq("backups: data check, copies", Backups.checkCopies(Collections.singletonList(new String[] {"1.42", "29 Oct, 210 MB, checked"}), null),
+            "Copies before updates: 1.42 (29 Oct, 210 MB, checked)");
+        eq("backups: data check, no copies and why", Backups.checkCopies(new ArrayList<String[]>(), "no copy, not enough free space"),
+            "Copies before updates: none. Last update: no copy, not enough free space");
+        eq("backups: data check, folder copies", Backups.checkAuto(true, 7, 5, when, 210 * mb, when, null, z),
+            "Automatic backups: every week, keep 5, last copy 29 Oct 03:12 (210 MB), last try ok");
+        eq("backups: data check, a failed try", Backups.checkAuto(true, 30, 10, 0, 0, when, Backups.FULL, z),
+            "Automatic backups: every month, keep 10, no copy yet, last try failed: the folder is full");
+        eq("backups: data check, never tried", Backups.checkAuto(true, 1, 3, 0, 0, 0, null, z), "Automatic backups: every day, keep 3, no copy yet");
+        eq("backups: data check, off", Backups.checkAuto(false, 7, 5, 0, 0, 0, null, z), "Automatic backups: off");
+        eq("backups: another interval", Backups.every(14), "every 14 days");
+        List<String> texts = new ArrayList<String>(Arrays.asList(Backups.TITLE, Backups.OFF_TEXT, Backups.CHOOSE, Backups.CHOOSE_OTHER, Backups.CHOOSE_AGAIN,
+            Backups.HOW_OFTEN, Backups.HOW_MANY, Backups.ALSO_UPDATE, Backups.STOP, Backups.STOPPED, Backups.PRIVATE, Backups.NONE_YET, Backups.GO_BACK,
+            Backups.GO_BACK_TITLE, Backups.GOING_BACK, Backups.goBackText(when, z), Backups.WENT_BACK, Backups.DEMO, Backups.NOT_IN_DEMO, Backups.NOTICE_SPACE, Backups.NOTICE_OTHER, Backups.COPY_EXPLAIN,
+            Backups.FOLDER_PICK_FAILED, Backups.badLine("1.42", when, z)));
+        texts.addAll(Arrays.asList(Backups.DAY_NAMES));
+        for (String r : new String[] {Backups.GONE, Backups.FULL, Backups.CHECK, Backups.SPACE, Backups.WRITE}) texts.add(Backups.status(when, 1, 1, r, z));
+        for (String x : texts) check("backups: plain, no dash as punctuation: " + x, !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014") && !x.isEmpty());
+        eq("backups: the five reasons", Arrays.asList(Backups.reason(Backups.GONE), Backups.reason(Backups.FULL), Backups.reason(Backups.CHECK), Backups.reason(Backups.SPACE),
+            Backups.reason(Backups.WRITE)), Arrays.asList("the folder is gone or Open Ring may no longer use it", "the folder is full", "the copy did not pass its check",
+            "not enough free space on this phone for the copy", "the file could not be written"));
+        check("backups: short notes fit a toast", Texts.fitsToast(Backups.STOPPED) && Texts.fitsToast(Backups.NOT_IN_DEMO) && Texts.fitsToast(Backups.WENT_BACK));
+    }
+
     static void oneRun() {
         OneRun<String> r = new OneRun<String>();
         check("one run: idle at first", !r.running());

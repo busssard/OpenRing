@@ -31,15 +31,22 @@ public final class BackgroundJob {
     public static final class Spec {
         public final String service;
         public final boolean periodic, persisted, batteryNotLow;
+        /** Runs only while the phone charges (the automatic backup, issue #242); false for the sync. */
+        public final boolean charging;
         public final long interval, flex;
 
         public Spec(String service, boolean periodic, long interval, long flex, boolean persisted, boolean batteryNotLow) {
+            this(service, periodic, interval, flex, persisted, batteryNotLow, false);
+        }
+
+        public Spec(String service, boolean periodic, long interval, long flex, boolean persisted, boolean batteryNotLow, boolean charging) {
             this.service = service;
             this.periodic = periodic;
             this.interval = interval;
             this.flex = flex;
             this.persisted = persisted;
             this.batteryNotLow = batteryNotLow;
+            this.charging = charging;
         }
 
         @Override
@@ -47,7 +54,8 @@ public final class BackgroundJob {
             if (!(o instanceof Spec)) return false;
             Spec s = (Spec) o;
             return (service == null ? s.service == null : service.equals(s.service)) && periodic == s.periodic
-                    && interval == s.interval && flex == s.flex && persisted == s.persisted && batteryNotLow == s.batteryNotLow;
+                    && interval == s.interval && flex == s.flex && persisted == s.persisted && batteryNotLow == s.batteryNotLow
+                    && charging == s.charging;
         }
 
         @Override
@@ -57,13 +65,14 @@ public final class BackgroundJob {
             h = 31 * h + (int) (interval ^ (interval >>> 32));
             h = 31 * h + (int) (flex ^ (flex >>> 32));
             h = 31 * h + (persisted ? 1 : 0);
-            return 31 * h + (batteryNotLow ? 1 : 0);
+            h = 31 * h + (batteryNotLow ? 1 : 0);
+            return 31 * h + (charging ? 1 : 0);
         }
 
         @Override
         public String toString() {
             return service + (periodic ? " every " + interval / 60000 + " min (flex " + flex / 60000 + ")" : " once")
-                    + (persisted ? ", persisted" : "") + (batteryNotLow ? ", battery not low" : "");
+                    + (persisted ? ", persisted" : "") + (batteryNotLow ? ", battery not low" : "") + (charging ? ", charging" : "");
         }
     }
 
