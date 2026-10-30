@@ -652,7 +652,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
     }
 
     void fingerTap() {
-        switch (finger.action(paired(), prox.band() != Proximity.NOT_HEARD)) {
+        switch (finger.action(paired(), prox.band() != Proximity.NOT_HEARD, recording)) {
             case STOP:
                 if (!demo) RingManager.get(this).stopFinger(fingerL);
                 finger.stopped(SystemClock.elapsedRealtime());
@@ -689,7 +689,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
 
     void showFinger() {
         if (lastBrief == null) return;
-        String chip = finger.chip(SystemClock.elapsedRealtime(), paired(), prox.band() != Proximity.NOT_HEARD);
+        String chip = finger.chip(SystemClock.elapsedRealtime(), paired(), prox.band() != Proximity.NOT_HEARD, recording);
         if (chip == null) {
             fingerSlot.setVisibility(View.GONE);
         } else {
@@ -1064,6 +1064,11 @@ public final class FinderActivity extends Activity implements SensorEventListene
             if (rotation == null && !demo) {
                 turnText.setText("This phone has no rotation sensor, so the search walk does not work on it. The gauge and the trail above still work.");
                 return;
+            }
+            // the ring sends no signal while the finder holds it: give it back before the walk listens (review of #245)
+            if (finger.walkStarts(SystemClock.elapsedRealtime())) {
+                if (!demo) RingManager.get(this).stopFinger(fingerL);
+                showFinger();
             }
             walk = new SearchWalk().stepLength(stepLength());
             stepper = new StepDetector();

@@ -28,7 +28,8 @@ public final class FingerCheck {
 
     public static final String ASKING = "Asking the ring if it is on a finger now.";
     public static final String BLINK_CONNECTING = "Connecting to make the ring blink.";
-    public static final String WAIT_SYNC = "Asks the ring once the sync is done.";
+    /** A sync, Live, a game or a Settings action holds the ring (review of #245: not only a sync). */
+    public static final String WAIT_RING = "Asks the ring once it is free.";
     public static final String WAIT_ANALYSIS = "Asks the ring after the re analysis.";
     public static final String NOT_ASKED = "Could not ask the ring now.";
     public static final String STOPPED = "Stopped before the ring answered.";
@@ -83,7 +84,7 @@ public final class FingerCheck {
         if (asked && phase != Phase.WAITING) return false;
         if (!n.bluetoothOn || !n.heard || n.recording) return false;
         if (n.ringHeld) {
-            waitFor(WAIT_SYNC);
+            waitFor(WAIT_RING);
             return false;
         }
         if (n.longRun) {
@@ -159,7 +160,7 @@ public final class FingerCheck {
         if ((k == SyncError.Kind.BUSY || k == SyncError.Kind.REANALYSING) && !blinkWanted) {
             asked = false;
             notBefore = ms + RETRY_MS;
-            waitFor(k == SyncError.Kind.BUSY ? WAIT_SYNC : WAIT_ANALYSIS);
+            waitFor(k == SyncError.Kind.BUSY ? WAIT_RING : WAIT_ANALYSIS);
             return;
         }
         phase = Phase.FAILED;
@@ -170,6 +171,16 @@ public final class FingerCheck {
     public void stopped(long ms) {
         if (phase == Phase.BLINKING) phase = answer != null ? Phase.ANSWERED : Phase.FAILED;
         else if (phase == Phase.ASKING) done(ms, "cancelled");
+    }
+
+    /**
+     * Start of a walk or turn: true when the finder holds the ring, which the screen then stops first (the ring sends
+     * no signal while connected, so the walk would hear nothing, review of #245).
+     */
+    public boolean walkStarts(long ms) {
+        if (!holding()) return false;
+        stopped(ms);
+        return true;
     }
 
     /** The screen left the front: the ring task stops, and the next visit asks again. */
@@ -209,8 +220,8 @@ public final class FingerCheck {
     }
 
     /** The chip at the right end of the strip, null for none. */
-    public String chip(long ms, boolean paired, boolean heard) {
-        switch (action(paired, heard)) {
+    public String chip(long ms, boolean paired, boolean heard, boolean recording) {
+        switch (action(paired, heard, recording)) {
             case STOP: return phase == Phase.BLINKING ? "Stop, " + blinkLeft(ms) + " s" : "Stop";
             case ASK: return "Ask again";
             case BLINK: return "Make it blink";
@@ -218,8 +229,12 @@ public final class FingerCheck {
         }
     }
 
-    /** What a tap on the chip does. */
-    public Action action(boolean paired, boolean heard) {
+    /**
+     * What a tap on the chip does. Nothing while a walk or turn is recorded: the ring sends no signal while connected,
+     * which would spoil the walk (review of #245).
+     */
+    public Action action(boolean paired, boolean heard, boolean recording) {
+        if (recording) return Action.NONE;
         if (!paired && (answer == null || !answer.demo)) return Action.NONE;
         switch (phase) {
             case ASKING:

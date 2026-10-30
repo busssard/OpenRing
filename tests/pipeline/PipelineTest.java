@@ -5553,9 +5553,11 @@ public class PipelineTest {
     }
 
     /**
-     * Issue #192: Find my ring stores what it downloads through the same path as Live and a sync (raw batches, then the phone
-     * anchor), but does not date the history (issue #121). Nothing stored changes until the next analysis, which dates the
-     * new events first: the dates and nights then are the same as when the history was dated right after the download.
+     * Issue #192: Find my ring stores what it downloads through {@code RingManager.drainNew}, the path of Live and a sync
+     * (raw batches, then the phone anchor), but does not date the history (issue #121). {@code drainNew} needs a ring, so
+     * this test makes the same two storage calls it makes ({@code insertBatch}, {@code insertPhoneAnchor}) and checks what
+     * leaving out the dating does: nothing stored changes until the next analysis, which dates the new events first, and
+     * the dates and nights then are the same as when the history was dated right after the download (Live's way).
      */
     static String[] finderRun(boolean dateAtOnce) throws Exception {
         List<RingEvent> all = history(3);
@@ -5571,6 +5573,7 @@ public class PipelineTest {
         String first = day0().toString(), last = day0().plusDays(3).toString();
         String nightsBefore = db.nightsJson(first, last, false).toString();
         long datedBefore = db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
+        check("finder: after the sync nothing is undated, so nothing reads as new", !db.undatedAllNew(), db.undatedCount());
         // the finder's quick download: the newest 200 events and the phone anchor
         db.insertBatch(all.subList(cut, all.size()), 1, now);
         long lastDs = all.get(all.size() - 1).ds;
@@ -5578,15 +5581,17 @@ public class PipelineTest {
         if (dateAtOnce) {
             db.rebuildTime(now);
         } else {
-            check("finder: every downloaded event is stored", db.count("SELECT COUNT(*) FROM events WHERE tag <> 66") == all.size(), null);
-            check("finder: the new events wait for the next analysis to be dated",
+            check("finder (its storage calls): every downloaded event is stored", db.count("SELECT COUNT(*) FROM events WHERE tag <> 66") == all.size(), null);
+            check("finder (its storage calls): the new events wait for the next analysis to be dated",
                     db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL AND tag <> 66") == 200, db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL AND tag <> 66"));
-            check("finder: no stored date changed", db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL") == datedBefore, null);
-            check("finder: the stored nights stay as they were", db.nightsJson(first, last, false).toString().equals(nightsBefore), null);
+            check("finder (its storage calls): no stored date changed", db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL") == datedBefore, null);
+            check("finder (its storage calls): the stored nights stay as they were", db.nightsJson(first, last, false).toString().equals(nightsBefore), null);
+            check("finder (its storage calls): Settings says the next sync dates them, not a missing time anchor", db.undatedAllNew(), db.undatedCount());
         }
         // the next sync's analysis
         Analyzer.run(ctx, null);
-        check("finder" + (dateAtOnce ? " (dated at once)" : "") + ": every event dated after the next analysis",
+        check("finder: no undated event left after the next analysis, so Settings shows no line", !db.undatedAllNew() && db.undatedCount() == 0, db.undatedCount());
+        check("finder" + (dateAtOnce ? " (dated at once)" : " (its storage calls)") + ": every event dated after the next analysis",
                 db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL") == 0, db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL"));
         StringBuilder rows = new StringBuilder();
         for (long[] r : timeRows(db)) rows.append(r[0]).append(':').append(r[1]).append(':').append(r[2]).append(';');
@@ -5599,7 +5604,7 @@ public class PipelineTest {
 
     static void finderDownload() throws Exception {
         String[] finder = finderRun(false), live = finderRun(true);
-        check("finder: every event gets the same date as when Live dates at once", finder[0].equals(live[0]), null);
-        check("finder: the same nights as when Live dates at once", finder[1].equals(live[1]) && finder[1].length() > 100, null);
+        check("finder (its storage calls): every event gets the same date as when Live dates at once", finder[0].equals(live[0]), null);
+        check("finder (its storage calls): the same nights as when Live dates at once", finder[1].equals(live[1]) && finder[1].length() > 100, null);
     }
 }

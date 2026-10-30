@@ -322,14 +322,22 @@ can run meanwhile; only the "on a finger now" check and Make it blink connect, f
   demo mode by `open`), reads the battery, downloads what is new with `drainNew` (stored like Live and a sync) and lets go.
   It does not run `rebuildTime` (issue #121): `core/analysis/FingerNow.Reader` reads the newest skin temperature and heart
   rate from the downloaded events, the newest event being "now" (the phone anchor's rule), a jump back of the counter by
-  over a minute starting again (reboot); what the download lacks comes from `RightNow.load`. The next analysis dates the
-  new events first, so the check's time does not grow with the history. Rule (last 20 minutes): 27 °C or more with a heart
-  rate is a finger, without one "finger or charger"; cool with a heart rate in the last 5 minutes is a finger (cold
-  hands), without one not. The answer replaces the strip's line and its evidence leads the opened strip; an answer under
+  over a minute starting again (reboot). `RingManager` keeps that reader across asks for one boot epoch of one ring (its
+  events are stored undated, so `RightNow.load` does not see them yet) and ages it by the phone time since its download;
+  of each reading the newer of the kept one and the stored one (`RightNow.load`) counts. The next analysis dates the new
+  events first, so the check's time does not grow with the history; until then Settings, Ring calls them "Dated at the
+  next sync" (`Db.undatedAllNew`) instead of "Waiting for a time anchor". Rule (last 20 minutes): 27 °C or more with a
+  heart rate within 5 minutes of the newest temperature (or of now) is a finger; without one it is "probably the charger"
+  when the battery went up since the read before (`LastWorn.charging`, read at each ask), else "finger or charger"
+  (review of #245: a heart rate from before the ring went onto a warm charger must not vouch for it); cool with a heart
+  rate in the last 5 minutes is a finger (cold hands), with one 5 to 20 minutes old it stays open ("cold hands or just
+  taken off"), without any it is not on a finger. The answer replaces the strip's line and its evidence leads the opened strip; an answer under
   2 minutes old is kept when the screen comes back. The strip's chip: "Make it blink" (connects again, notes the daytime
-  heart rate mode, switches it to live and starts the on demand measurement for 30 s, downloading every 5 s so a
-  measured heart rate updates the answer, then switches it off and puts the mode back), "Stop" while connected, "Ask
-  again" after a failure. While the finder holds the ring the instruments say hot and cold pauses. Demo mode never
+  heart rate mode, switches an off mode to automatic first like Live, switches it to live and starts the on demand
+  measurement for 30 s, downloading every 5 s so a measured heart rate updates the answer, then switches the measurement
+  off and puts the mode back, each step on its own; after a lost link the ring falls back to automatic by itself, not to
+  off), "Stop" while connected, "Ask again" after a failure, nothing while a walk or turn is recorded (Start stops a
+  running ask or blink first, `FingerCheck.walkStarts`). Waiting for another ring task says "Asks the ring once it is free." While the finder holds the ring the instruments say hot and cold pauses. Demo mode never
   connects: a made up "not on a finger" answer that fits the demo walk, and a blink that only counts down.
 * Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from
   `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the

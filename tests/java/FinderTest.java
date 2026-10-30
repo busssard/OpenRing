@@ -2120,13 +2120,36 @@ public class FinderTest {
         // the rule at its borders
         check("finger: warm with a heart rate is a finger", FingerNow.of(36.1, 60, 64, 120, 0).state() == FingerNow.ON);
         check("finger: 27 °C exactly counts as warm", FingerNow.of(27.0, 60, 64, 60, 0).state() == FingerNow.ON);
-        check("finger: warm, heart rate 20 minutes old still counts", FingerNow.of(33, 60, 64, FingerNow.FRESH_S, 0).state() == FingerNow.ON);
-        check("finger: warm, heart rate older than 20 minutes is finger or charger", FingerNow.of(33, 60, 64, FingerNow.FRESH_S + 1, 0).state() == FingerNow.WARM);
+        check("finger: warm, heart rate 20 minutes old near a temperature 15 minutes old counts", FingerNow.of(33, 900, 64, FingerNow.FRESH_S, 0).state() == FingerNow.ON);
+        check("finger: warm, heart rate older than 20 minutes is finger or charger", FingerNow.of(33, 1000, 64, FingerNow.FRESH_S + 1, 0).state() == FingerNow.WARM);
+        // review of #245: taken off at 13:58 (last heart rate 13:57), on a warm charger, asked at 14:12
+        check("finger: warm now, heart rate 15 minutes before it, does not count (charger)", FingerNow.of(33, 0, 64, 900, 0).state() == FingerNow.WARM);
+        check("finger: heart rate exactly 5 minutes from the warm reading counts", FingerNow.of(33, 600, 64, 900, 0).state() == FingerNow.ON);
+        check("finger: heart rate 5 minutes and a second from the warm reading does not", FingerNow.of(33, 599, 64, 900, 0).state() == FingerNow.WARM);
+        check("finger: a heart rate just now counts for an older warm reading", FingerNow.of(33, 900, 64, 200, 0).state() == FingerNow.ON);
+        FingerNow charger = FingerNow.of(33.2, 0, 64, 900, 0);
+        charger.charging = 1;
+        check("finger: warm, no heart rate near, battery rising: the charger", charger.state() == FingerNow.CHARGER
+                && charger.brief().equals("Warm (" + String.format(Locale.getDefault(), "%.1f", 33.2) + " °C), battery rising: probably the charger."), charger.brief());
+        check("finger: the charger detail says why", charger.detail(AT).contains("the battery went up since the read before, so it is probably on the charger"));
+        FingerNow worn = FingerNow.of(33.2, 0, 64, 60, 0);
+        worn.charging = 1;
+        check("finger: a heart rate near the warmth wins over a rising battery (charged earlier)", worn.state() == FingerNow.ON);
+        FingerNow falling = FingerNow.of(33.2, 0, Double.NaN, Double.NaN, 0);
+        falling.charging = 0;
+        check("finger: battery going down leaves warm open", falling.state() == FingerNow.WARM);
         check("finger: warm without any heart rate is finger or charger", FingerNow.of(33.2, 60, Double.NaN, Double.NaN, 0).state() == FingerNow.WARM);
         check("finger: cool without a heart rate is not on a finger", FingerNow.of(24, 60, Double.NaN, Double.NaN, 0).state() == FingerNow.OFF);
-        check("finger: 26.9 °C is cool", FingerNow.of(26.9, 60, 64, 600, 0).state() == FingerNow.OFF);
+        check("finger: 26.9 °C is cool", FingerNow.of(26.9, 60, Double.NaN, Double.NaN, 0).state() == FingerNow.OFF);
         check("finger: cool with a heart rate 5 minutes old is a finger (cold hands)", FingerNow.of(25.3, 60, 60, 300, 0).state() == FingerNow.ON);
-        check("finger: cool with a heart rate 6 minutes old is not", FingerNow.of(25.3, 60, 60, 360, 0).state() == FingerNow.OFF);
+        // review of #245: cold hands outdoors are not a confident "not on a finger"
+        FingerNow cool = FingerNow.of(25.0, 60, 60, 9 * 60, 0);
+        check("finger: cool with a heart rate 9 minutes old stays open", cool.state() == FingerNow.COOL
+                && cool.brief().equals("Cool (" + String.format(Locale.getDefault(), "%.1f", 25.0) + " °C), heart rate 9 minutes ago: cold hands or just taken off."), cool.brief());
+        check("finger: the open cool case says Make it blink tells", cool.detail(AT).contains("cold hands, or it was taken off since. Make it blink tells"));
+        check("finger: cool with a heart rate 20 minutes old stays open", FingerNow.of(25.3, 60, 60, FingerNow.FRESH_S, 0).state() == FingerNow.COOL);
+        check("finger: cool with a heart rate older than 20 minutes is not on a finger", FingerNow.of(25.3, 60, 60, FingerNow.FRESH_S + 1, 0).state() == FingerNow.OFF);
+        check("finger: the off detail names the 20 minutes", FingerNow.of(24, 60, Double.NaN, Double.NaN, 0).detail(AT).contains("without any heart rate in the last 20 minutes"));
         check("finger: temperature 21 minutes old does not count", FingerNow.of(36, 21 * 60, Double.NaN, Double.NaN, 0).state() == FingerNow.NO_READING);
         check("finger: old temperature but a heart rate just now is a finger", FingerNow.of(36, 3 * 3600, 70, 30, 0).state() == FingerNow.ON);
         check("finger: nothing at all tells nothing", new FingerNow().state() == FingerNow.NO_READING);
@@ -2140,10 +2163,13 @@ public class FinderTest {
         check("finger: off, line", FingerNow.of(24, 60, Double.NaN, Double.NaN, 0).brief().startsWith("Not on a finger now ("));
         check("finger: warm, line", FingerNow.of(33.2, 60, Double.NaN, Double.NaN, 0).brief().endsWith("no heart rate: finger or charger."));
         check("finger: nothing, line", new FingerNow().brief().equals("No reading from the last 20 minutes to tell."));
-        double[][] cases = {{36.1, 60, 64, 70}, {25.3, 60, 60, 30}, {24, 60, Double.NaN, Double.NaN}, {33.2, 60, Double.NaN, Double.NaN}, {Double.NaN, Double.NaN, 70, 30}};
+        double[][] cases = {{36.1, 60, 64, 70}, {25.3, 60, 60, 30}, {24, 60, Double.NaN, Double.NaN}, {33.2, 60, Double.NaN, Double.NaN}, {Double.NaN, Double.NaN, 70, 30},
+                {25.3, 60, 60, 1199}};
         for (double[] c : cases) {
-            String b = FingerNow.of(c[0], c[1], c[2], c[3], 0).brief();
-            check("finger: line fits two short lines (" + b + ")", b.length() <= 52, b.length());
+            FingerNow fn = FingerNow.of(c[0], c[1], c[2], c[3], 0);
+            String b = fn.brief();
+            // the answers fit two short lines next to the chip; the open cool case may take three
+            check("finger: line is short (" + b + ")", b.length() <= (fn.state() == FingerNow.COOL ? 72 : 54), b.length());
             check("finger: no dash as punctuation (" + b + ")", !b.contains(" - ") && !b.contains("—"));
         }
 
@@ -2209,6 +2235,25 @@ public class FinderTest {
         FingerNow mixed = onlyTemp.result(10000, 20, 9000, 66, 10000 - 200);
         check("reader: what the download lacks comes from the stored readings", mixed.skinC == 34 && mixed.hr == 66 && mixed.hrAge == 200 && mixed.state() == FingerNow.ON);
         check("reader: no stored readings either", new FingerNow.Reader().result(0, Double.NaN, Double.NaN, Double.NaN, Double.NaN).state() == FingerNow.NO_READING);
+        // review of #245: a reader kept for the next ask (its events are stored undated) ages by the phone time since
+        FingerNow.Reader kept = new FingerNow.Reader();
+        kept.add(new RingEvent(EventCodec.TEMP_EVENT, 20000, temp(35)));
+        kept.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, 20000, ibi(1000)));
+        kept.mark(1000);
+        FingerNow first = kept.result(1000, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: first ask, just now", first.skinAge == 0 && first.hrAge == 0 && first.state() == FingerNow.ON);
+        FingerNow second = kept.result(1300, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: second ask without new events, 5 minutes older", second.skinAge == 300 && second.hrAge == 300 && second.skinC == 35, second.skinAge);
+        FingerNow third = kept.result(1000 + 1500, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: 25 minutes later the kept readings no longer count", third.state() == FingerNow.NO_READING);
+        kept.add(new RingEvent(EventCodec.TEMP_EVENT, 20000 + 6000, temp(24)));
+        kept.mark(1600);
+        FingerNow fourth = kept.result(1660, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        check("reader: new events of the next ask age from their own download", fourth.skinC == 24 && fourth.skinAge == 60 && fourth.hrAge == 660, fourth.skinAge + " " + fourth.hrAge);
+        FingerNow synced = kept.result(1660, 33, 1650, 70, 1655);
+        check("reader: newer stored readings (a sync since) win over kept ones", synced.skinC == 33 && synced.skinAge == 10 && synced.hr == 70 && synced.hrAge == 5);
+        FingerNow older = kept.result(1660, 33, 1000, 70, 900);
+        check("reader: older stored readings do not", older.skinC == 24 && older.hr == 60);
     }
 
     static FingerCheck.Now now(long ms) {
@@ -2222,8 +2267,8 @@ public class FinderTest {
         FingerCheck f = new FingerCheck();
         eq("check: idle at first", f.phase(), FingerCheck.Phase.IDLE);
         eq("check: the stored line before any answer", f.brief("Taken off yesterday at 22:14."), "Taken off yesterday at 22:14.");
-        check("check: no chip while not heard", f.chip(0, true, false) == null && f.action(true, false) == FingerCheck.Action.NONE);
-        eq("check: heard, the chip offers the blink", f.chip(0, true, true), "Make it blink");
+        check("check: no chip while not heard", f.chip(0, true, false, false) == null && f.action(true, false, false) == FingerCheck.Action.NONE);
+        eq("check: heard, the chip offers the blink", f.chip(0, true, true, false), "Make it blink");
         check("check: no detail before an answer", f.detail(AT) == null);
         // when it asks by itself
         FingerCheck.Now n = now(1000);
@@ -2232,7 +2277,7 @@ public class FinderTest {
         n = now(1000);
         n.paired = false;
         check("check: not without a paired ring", !f.autoAsk(n));
-        check("check: no chip without a paired ring", f.chip(0, false, true) == null);
+        check("check: no chip without a paired ring", f.chip(0, false, true, false) == null);
         n = now(1000);
         n.bluetoothOn = false;
         check("check: not with Bluetooth off", !f.autoAsk(n));
@@ -2245,8 +2290,8 @@ public class FinderTest {
         n = now(1000);
         n.ringHeld = true;
         check("check: not while another task holds the ring", !f.autoAsk(n) && f.phase() == FingerCheck.Phase.WAITING);
-        eq("check: says it waits for the sync", f.brief("x"), FingerCheck.WAIT_SYNC);
-        check("check: nothing to tap while waiting", f.chip(0, true, true) == null);
+        eq("check: says it waits for the ring to be free", f.brief("x"), FingerCheck.WAIT_RING);
+        check("check: nothing to tap while waiting", f.chip(0, true, true, false) == null);
         n = now(1000);
         n.longRun = true;
         check("check: not during a long re analysis", !f.autoAsk(n));
@@ -2262,7 +2307,7 @@ public class FinderTest {
         eq("check: a small download shows no KB", f.brief("x"), FingerCheck.ASKING);
         f.downloading(123 * 1024);
         eq("check: a long download shows what is left", f.brief("x"), "Asking the ring if it is on a finger now, 123 KB left.");
-        eq("check: stop while asking", f.chip(0, true, true), "Stop");
+        eq("check: stop while asking", f.chip(0, true, true, false), "Stop");
         eq("check: the instruments say hot and cold pauses", f.blind(false), FingerCheck.BLIND_ASKING);
         f.answered(5000, null);
         check("check: no answer keeps asking", f.answer() == null);
@@ -2272,7 +2317,7 @@ public class FinderTest {
         f.done(6000, null);
         eq("check: answered", f.phase(), FingerCheck.Phase.ANSWERED);
         check("check: hot and cold back", !f.holding() && f.blind(false) == null);
-        eq("check: answered, the chip offers the blink", f.chip(0, true, false), "Make it blink");
+        eq("check: answered, the chip offers the blink", f.chip(0, true, false, false), "Make it blink");
         check("check: detail is the evidence then the blink note", f.detail(AT).startsWith("Asked the ring today at 14:02.") && f.detail(AT).endsWith(FingerCheck.BLINK_NOTE));
         check("check: one automatic ask per visit", !f.autoAsk(now(9000)));
         // the blink
@@ -2280,8 +2325,8 @@ public class FinderTest {
         eq("check: while connecting for the blink the answer stays", f.brief("x"), ans.brief());
         f.blinking(11000);
         eq("check: blinking", f.phase(), FingerCheck.Phase.BLINKING);
-        eq("check: countdown at the start", f.chip(11000, true, true), "Stop, 30 s");
-        eq("check: countdown rounds up", f.chip(11000 + 5500, true, true), "Stop, 25 s");
+        eq("check: countdown at the start", f.chip(11000, true, true, false), "Stop, 30 s");
+        eq("check: countdown rounds up", f.chip(11000 + 5500, true, true, false), "Stop, 25 s");
         check("check: not over at 29.9 s", !f.blinkOver(11000 + FingerCheck.BLINK_MS - 1));
         check("check: over at 30 s", f.blinkOver(11000 + FingerCheck.BLINK_MS) && f.blinkLeft(11000 + FingerCheck.BLINK_MS + 5000) == 0);
         eq("check: the instruments say hot and cold is blind", f.blind(false), FingerCheck.BLIND_BLINKING);
@@ -2300,7 +2345,7 @@ public class FinderTest {
         g.start(0, false);
         g.stopped(100);
         check("check: stop before an answer", g.phase() == FingerCheck.Phase.FAILED && g.brief("x").equals(FingerCheck.STOPPED));
-        eq("check: then the chip asks again", g.chip(0, true, true), "Ask again");
+        eq("check: then the chip asks again", g.chip(0, true, true, false), "Ask again");
         eq("check: the detail says it was stopped", g.detail(AT).split("\n")[0], FingerCheck.STOPPED);
         g.stopped(200);
         eq("check: a second stop changes nothing", g.phase(), FingerCheck.Phase.FAILED);
@@ -2317,7 +2362,7 @@ public class FinderTest {
         FingerCheck busy = new FingerCheck();
         busy.start(0, false);
         busy.done(1000, "The ring is busy with another task");
-        check("check: refused by a busy ring, it waits", busy.phase() == FingerCheck.Phase.WAITING && busy.brief("x").equals(FingerCheck.WAIT_SYNC));
+        check("check: refused by a busy ring, it waits", busy.phase() == FingerCheck.Phase.WAITING && busy.brief("x").equals(FingerCheck.WAIT_RING));
         check("check: and asks again, not before 5 s", !busy.autoAsk(now(1000 + FingerCheck.RETRY_MS - 1)) && busy.autoAsk(now(1000 + FingerCheck.RETRY_MS)));
         FingerCheck re = new FingerCheck();
         re.start(0, false);
@@ -2328,7 +2373,7 @@ public class FinderTest {
         bb.start(0, true);
         bb.done(1000, "The ring is busy with another task");
         check("check: a blink refused by a busy ring says so and keeps the answer", bb.phase() == FingerCheck.Phase.FAILED
-                && bb.brief("x").equals(ans.brief()) && bb.detail(AT).contains("The ring is busy") && bb.chip(0, true, true).equals("Make it blink"));
+                && bb.brief("x").equals(ans.brief()) && bb.detail(AT).contains("The ring is busy") && bb.chip(0, true, true, false).equals("Make it blink"));
         FingerCheck dm = new FingerCheck();
         dm.start(0, false);
         dm.done(1000, SyncError.DEMO_RING);
@@ -2365,14 +2410,29 @@ public class FinderTest {
         FingerCheck d = new FingerCheck();
         d.demoAnswer(0, 100);
         check("check: demo answers at once, made up", d.phase() == FingerCheck.Phase.ANSWERED && d.answer().demo && d.answer().state() == FingerNow.OFF);
-        eq("check: demo offers the blink without a paired ring", d.chip(0, false, true), "Make it blink");
+        eq("check: demo offers the blink without a paired ring", d.chip(0, false, true, false), "Make it blink");
         d.resumed(10 * FingerCheck.KEEP_MS);
         check("check: the demo answer stays", d.answer() != null);
         d.start(0, true);
         d.blinking(0);
-        eq("check: demo blink counts down", d.chip(1000, false, true), "Stop, 29 s");
+        eq("check: demo blink counts down", d.chip(1000, false, true, false), "Stop, 29 s");
         check("check: the demo never asks the ring", !d.autoAsk(now(0)));
-        for (String t : new String[] {FingerCheck.ASKING, FingerCheck.BLINK_CONNECTING, FingerCheck.WAIT_SYNC, FingerCheck.WAIT_ANALYSIS, FingerCheck.NOT_ASKED, FingerCheck.STOPPED}) {
+        // review of #245: the ring sends no signal while connected, so no ask or blink during a walk or turn
+        FingerCheck w = new FingerCheck();
+        w.answered(0, ans);
+        w.done(0, null);
+        check("check: no chip while a walk is recorded", w.chip(0, true, true, true) == null && w.action(true, true, true) == FingerCheck.Action.NONE);
+        eq("check: the blink is back after the walk", w.chip(0, true, true, false), "Make it blink");
+        check("check: Start with nothing running stops nothing", !w.walkStarts(10) && w.phase() == FingerCheck.Phase.ANSWERED);
+        w.start(20, false);
+        check("check: Start during an ask stops it first", w.walkStarts(30) && !w.holding() && w.phase() == FingerCheck.Phase.FAILED);
+        w.start(40, true);
+        w.blinking(50);
+        check("check: Start during a blink stops it first, the answer stays", w.walkStarts(60) && !w.holding() && w.phase() == FingerCheck.Phase.ANSWERED);
+        FingerCheck fresh = new FingerCheck();
+        fresh.start(0, false);
+        check("check: Start during the first ask stops it, Ask again after the walk", fresh.walkStarts(5) && fresh.chip(0, true, true, false).equals("Ask again"));
+        for (String t : new String[] {FingerCheck.ASKING, FingerCheck.BLINK_CONNECTING, FingerCheck.WAIT_RING, FingerCheck.WAIT_ANALYSIS, FingerCheck.NOT_ASKED, FingerCheck.STOPPED}) {
             check("check: short line (" + t + ")", t.length() <= 52);
         }
         for (String t : new String[] {FingerCheck.BLIND_ASKING, FingerCheck.BLIND_BLINKING, FingerCheck.BLIND_DEMO, FingerCheck.BLINK_NOTE, FingerCheck.ASKING}) {

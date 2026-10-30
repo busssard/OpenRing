@@ -8,18 +8,29 @@ import app.openring.core.RingEvent;
 
 /**
  * Whether the ring is on a finger right now (issue #192): Find my ring asks the ring once and reads the answer from
- * what it just downloaded. A finger reads 27 °C or more and has a heart rate; warmth alone can also be the charger
- * (issue #94), and a heart rate in the last few minutes means a finger also with cool skin (cold hands, like
- * {@link LastWorn}). Only readings of the last {@link #FRESH_S} count, the window {@code data/RightNow} uses.
+ * what it just downloaded. A finger reads 27 °C or more and has a heart rate near it (within {@link #NEAR_S} of the
+ * newest temperature, or of now); warmth alone can also be the charger (issue #94), and a heart rate stored just before
+ * the ring was taken off and laid on a warm charger must not vouch for it (review of #245). A heart rate in the last
+ * {@link #NEAR_S} means a finger also with cool skin (cold hands, like {@link LastWorn}); an older one with cool skin
+ * leaves it open (cold hands or just taken off). Only readings of the last {@link #FRESH_S} count, the window
+ * {@code data/RightNow} uses.
  */
 public final class FingerNow {
     public static final double WORN_MIN_C = LastWorn.WORN_MIN_C;
     /** A reading this old (seconds) still counts as now. */
     public static final double FRESH_S = 20 * 60;
-    /** With cool skin, a heart rate this recent (seconds) still means a finger (cold hands). */
-    public static final double COOL_HR_S = LastWorn.HR_GRACE_S;
+    /**
+     * A heart rate counts for a warm reading this close to it, or to now (seconds); with cool skin only one this recent
+     * means a finger (cold hands).
+     */
+    public static final double NEAR_S = LastWorn.HR_GRACE_S;
 
-    public static final int NO_READING = 0, ON = 1, OFF = 2, WARM = 3;
+    /**
+     * ON a finger; OFF not; WARM without a heart rate near it (finger or charger); CHARGER warm and the battery went up
+     * (probably the charger); COOL with a heart rate 5 to 20 minutes old (cold hands or just taken off); NO_READING no
+     * temperature of the last 20 minutes.
+     */
+    public static final int NO_READING = 0, ON = 1, OFF = 2, WARM = 3, CHARGER = 4, COOL = 5;
 
     /** The newest skin temperature (°C) and heart rate (bpm), with their ages in seconds when asked; NaN when none. */
     public double skinC = Double.NaN, skinAge = Double.NaN, hr = Double.NaN, hrAge = Double.NaN;
@@ -27,6 +38,11 @@ public final class FingerNow {
     public double at = Double.NaN;
     /** A made up answer of demo mode. */
     public boolean demo;
+    /**
+     * The battery read with this answer against the read before ({@link LastWorn#charging}): 1 it went up (charging),
+     * 0 it went down, -1 unknown. Decides a warm ring without a heart rate near it.
+     */
+    public int charging = -1;
 
     public static FingerNow of(double skinC, double skinAge, double hr, double hrAge, double at) {
         FingerNow f = new FingerNow();
@@ -53,10 +69,15 @@ public final class FingerNow {
     }
 
     public int state() {
-        boolean temp = within(skinAge, FRESH_S);
-        if (temp && skinC >= WORN_MIN_C) return within(hrAge, FRESH_S) ? ON : WARM;
-        if (within(hrAge, COOL_HR_S)) return ON;
-        return temp ? OFF : NO_READING;
+        boolean temp = within(skinAge, FRESH_S), hrNow = within(hrAge, NEAR_S);
+        if (temp && skinC >= WORN_MIN_C) {
+            // the heart rate must belong to this warmth: near the newest temperature or measured just now
+            if (hrNow || within(hrAge, FRESH_S) && Math.abs(hrAge - skinAge) <= NEAR_S) return ON;
+            return charging == 1 ? CHARGER : WARM;
+        }
+        if (hrNow) return ON;
+        if (!temp) return NO_READING;
+        return within(hrAge, FRESH_S) ? COOL : OFF;
     }
 
     /** The line of the last worn strip: one short sentence (it shares the strip with a chip). */
@@ -70,6 +91,10 @@ public final class FingerNow {
                 return "Not on a finger now (" + one(skinC) + " °C).";
             case WARM:
                 return "Warm (" + one(skinC) + " °C), no heart rate: finger or charger.";
+            case CHARGER:
+                return "Warm (" + one(skinC) + " °C), battery rising: probably the charger.";
+            case COOL:
+                return "Cool (" + one(skinC) + " °C), heart rate " + (long) Math.floor(hrAge / 60) + " minutes ago: cold hands or just taken off.";
             default:
                 return "No reading from the last 20 minutes to tell.";
         }
@@ -86,14 +111,22 @@ public final class FingerNow {
         switch (state()) {
             case ON:
                 b.append(skinC < WORN_MIN_C && within(skinAge, FRESH_S) ? "The skin reads cool, but a heart rate in the last 5 minutes means a finger (cold hands)."
-                        : "A finger reads 27 °C or more and has a heart rate.");
+                        : "A finger reads 27 °C or more and has a heart rate within 5 minutes of it.");
                 break;
             case OFF:
-                b.append("Under 27 °C without a heart rate in the last 5 minutes is a ring lying somewhere, at about the room's temperature.");
+                b.append("Under 27 °C without any heart rate in the last 20 minutes is a ring lying somewhere, at about the room's temperature.");
                 break;
             case WARM:
-                b.append("Warm without a heart rate in the last 20 minutes can be a finger (the ring measures heart rate only now and then) or the charger. "
+                b.append("Warm without a heart rate within 5 minutes of it can be a finger (the ring measures heart rate only now and then) or the charger. "
                         + "Make it blink measures one.");
+                break;
+            case CHARGER:
+                b.append("Warm without a heart rate within 5 minutes of it, and the battery went up since the read before, so it is probably on the charger. "
+                        + "Make it blink measures a heart rate if it is on a finger.");
+                break;
+            case COOL:
+                b.append("Under 27 °C with a heart rate 5 to 20 minutes before: cold hands, or it was taken off since. "
+                        + "Make it blink tells: on a finger it measures a heart rate.");
                 break;
             default:
                 b.append("The ring stored no temperature in the last 20 minutes, so it cannot tell whether it is on a finger now.");
@@ -132,6 +165,17 @@ public final class FingerNow {
         private long lastDs = Long.MIN_VALUE, tempDs = Long.MIN_VALUE;
         private double temp = Double.NaN, hr = Double.NaN, hrDs = Double.NaN;
         private int events;
+        /** The phone's time (unix seconds) when the newest event was "now", NaN until a download finished. */
+        private double markedAt = Double.NaN;
+
+        /**
+         * A download finished at {@code unix}: its newest event happened about then. A reader kept for the next ask (the
+         * events of this one are stored undated until the next analysis, review of #245) then ages its readings by the
+         * phone time that passed since.
+         */
+        public void mark(double unix) {
+            markedAt = unix;
+        }
 
         public void add(List<RingEvent> list) {
             for (RingEvent e : list) add(e);
@@ -166,14 +210,17 @@ public final class FingerNow {
         }
 
         /**
-         * The answer at {@code at} (unix seconds): what the download held, and for what it did not hold the stored,
-         * dated readings ({@code storedSkinAt} and {@code storedHrAt} in unix seconds, NaN when none).
+         * The answer at {@code at} (unix seconds): of each reading the newer one of what the downloads held and the stored,
+         * dated readings ({@code storedSkinAt} and {@code storedHrAt} in unix seconds, NaN when none; a sync since the last
+         * ask can have stored newer ones).
          */
         public FingerNow result(double at, double storedSkinC, double storedSkinAt, double storedHr, double storedHrAt) {
-            boolean t = !Double.isNaN(temp), h = !Double.isNaN(hr);
-            double skinC = t ? temp : storedSkinC, skinAge = t ? (lastDs - tempDs) / 10.0 : at - storedSkinAt;
-            double bpm = h ? hr : storedHr, hrAge = h ? (lastDs - hrDs) / 10.0 : at - storedHrAt;
-            return of(skinC, skinAge, bpm, hrAge, at);
+            double since = Double.isNaN(markedAt) ? 0 : Math.max(0, at - markedAt);
+            double tAge = Double.isNaN(temp) ? Double.NaN : (lastDs - tempDs) / 10.0 + since;
+            double hAge = Double.isNaN(hr) ? Double.NaN : (lastDs - hrDs) / 10.0 + since;
+            double sAge = Double.isNaN(storedSkinC) ? Double.NaN : at - storedSkinAt, shAge = Double.isNaN(storedHr) ? Double.NaN : at - storedHrAt;
+            boolean t = !Double.isNaN(tAge) && !(sAge < tAge), h = !Double.isNaN(hAge) && !(shAge < hAge);
+            return of(t ? temp : storedSkinC, t ? tAge : sAge, h ? hr : storedHr, h ? hAge : shAge, at);
         }
     }
 

@@ -257,7 +257,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         Db db = Db.get(this);
         ring.addView(line("Stored events", String.format(Locale.getDefault(), "%,d", db.eventCount())));
         long undated = db.undatedCount();
-        if (undated > 0) ring.addView(line("Waiting for a time anchor", String.format(Locale.getDefault(), "%,d", undated)));
+        // events Find my ring downloaded since the last sync are dated by the next one: nothing is missing (issue #192)
+        if (undated > 0) ring.addView(line(db.undatedAllNew() ? "Dated at the next sync" : "Waiting for a time anchor",
+                String.format(Locale.getDefault(), "%,d", undated)));
         action(ring, "Sync now", Ui.SLEEP, new Runnable() {
             @Override
             public void run() {
