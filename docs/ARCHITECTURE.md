@@ -241,10 +241,12 @@ history had, before anything is written to the file the person picked; otherwise
    `core/analysis/LeftOut`) and drops every reading whose own time lies inside one: events with one time by that time
    (`Analyzer.events`), HRV, activity, always on heart rate and SpO2 value by value (`Analyzer.out`, an HRV event spans 25
    minutes). The ring's bedtime record is dated at its end, so after the phone use step each sleep window goes through
-   `LeftOut.window` too (the longest piece outside, dropped under 15 minutes like after phone use). Nothing about it is
+   `LeftOut.window` too (the longest piece outside, dropped under 15 minutes like after phone use), and a piece whose day
+   (by the usual date rule) is left out as a whole is not stored (review of #263: the evening before a left out day would
+   otherwise give that day a sleep and a score). The bedtime record counts by the window it describes. Nothing about it is
    stored in a night or day: a left out night is simply not stored, so baselines, the period tracker and the CSV (whose
    last column `left_out_min` gives the minutes of each day left out) follow by themselves, and a left out minute of a
-   day counts as Not worn. With nothing left out every step is skipped and the results are byte for byte those of the
+   day counts as not worn (`non_wear_min`; the Activity page names no such row, so it says the minutes are not in its numbers). With nothing left out every step is skipped and the results are byte for byte those of the
    version before (pipeline test against a fixed digest); `analysis_inputs` names the left out times only when there are
    some. Adding or removing one holds the analysis lock (`Analyzer.leaveOut`, `bringBack`): the row and the lowered mark
    in one commit, then the analysis from two days before its start to now in its one transaction, so a stop keeps the
@@ -252,6 +254,9 @@ history had, before anything is written to the file the person picked; otherwise
    equals full, #188). Body's Right now skips left out readings; Find my ring and Live do not (they are about the ring).
    The screens draw the left out part of a day as a grey band on Heart rate today (touch reads it), a Left out card on
    Today, Sleep and Activity, and a row next to the night in the night timeline. The raw events are never changed.
+   Limits: events with one time (a green IBI beat, a sleep period record, a motion or temperature event) are judged by
+   that time, so a reading that stands for the minutes around it can carry a few minutes across an edge. The Settings
+   pickers take clock times, so on the night the clocks go back the second 02:00 to 03:00 cannot be picked as an edge.
 9. The day's activity (`Wellness.day`, Activity tab) counts every real minute from midnight to midnight in the day's
    zone once: 1440 minutes, 1380 or 1500 when the clocks change by an hour (1410 or 1470 for Lord Howe's half hour),
    so neighbouring days never share or lose a minute (issue #114). The 96 quarter hours of "Intensity through the
