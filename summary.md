@@ -1,6 +1,6 @@
 ## Test results
 
-**2665 tests passed, 0 failed** (JVM unit and pipeline tests).
+**2671 tests passed, 0 failed** (JVM unit and pipeline tests).
 
 ## Coverage of the code the JVM tests can run
 
