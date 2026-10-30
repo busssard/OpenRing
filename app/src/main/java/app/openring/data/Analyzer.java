@@ -225,6 +225,8 @@ public final class Analyzer {
         log.log(String.format(java.util.Locale.US, "time: %d of %d events dated, %d boot segments (%d with a time anchor), %d written, %d read, %s",
                 t.datedAfter, t.total, t.segments, t.anchoredSegments, t.changed, t.rowsRead,
                 t.full == null ? "dated the new part only" : "all events dated again (" + t.full + ")"));
+        // a date that changed lowered analyzed_until already, in the dating's own commit (issue #188)
+        if (!Double.isNaN(t.changedFrom)) log.log("dates written from " + date(t.changedFrom) + " on");
         long lastDated = db.kvLong("dated_count", -1), lastTotal = db.kvLong("event_count", -1);
         // the checks below only lower analyzed_until ("analyse again from here"), so they are stored at once: a run that
         // fails after them is done again, never skipped (issue #230)
@@ -262,7 +264,8 @@ public final class Analyzer {
             log.log("no dated events yet, nothing to analyse");
             return;
         }
-        double until = db.kvLong("analyzed_until", 0);
+        final long untilRead = db.kvLong("analyzed_until", 0);
+        double until = untilRead;
         // no age limit (issue #20): a whole run rebuilds every night; the week by week chunks keep memory flat
         // however long the history is
         final double from = all || until <= 0 ? range[0] : Math.max(range[0], until - 2 * 86400);
@@ -285,7 +288,11 @@ public final class Analyzer {
                     db.put("dated_count", t.datedAfter);
                     db.put("event_count", t.total);
                     analyze(from, range[1]);
-                    db.put("analyzed_until", (long) range[1]);
+                    // a dating since the mark was read (Live dates on its own, issue #188, review of #250) may have lowered
+                    // it: those days are not in these results, so the lower mark stays and the next analysis does them
+                    long mark = db.kvLong("analyzed_until", 0);
+                    if (mark < untilRead) log.log("dates moved during the analysis, the days from " + date(mark) + " on are analysed again next time");
+                    db.put("analyzed_until", mark < untilRead ? mark : (long) range[1]);
                     db.put("stage_detail", detail);
                     db.put("stage_filter", StageFilter.VERSION);
                     db.put("night_finder", NightFinder.VERSION);
