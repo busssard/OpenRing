@@ -7597,6 +7597,43 @@ public class PipelineTest {
             o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
             p.setDemo(false);
             check("#242 demo mode: no run", "demo mode".equals(o.skipped) && o.written.isEmpty(), o.skipped);
+            // demo mode switched on while the run waits for a sync (review of #259): the demo history is never zipped
+            setStatic242("waitMs", 20000L);
+            app.openring.core.RingGate.RING.syncs.incrementAndGet();
+            final app.openring.data.AutoBackup.Outcome[] waited = {null};
+            final long at = last + 86400L;
+            final Folder242 ff = f;
+            Thread runner = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    waited[0] = app.openring.data.AutoBackup.run(c, ff, at, false, null);
+                }
+            });
+            List<String> beforeDemo = f.list();
+            try {
+                runner.start();
+                Thread.sleep(500);
+                p.setDemo(true);
+            } finally {
+                app.openring.core.RingGate.RING.syncs.decrementAndGet();
+            }
+            runner.join();
+            p.setDemo(false);
+            setStatic242("waitMs", 5 * 60 * 1000L);
+            check("#242 demo mode switched on while the run waited: no copy of the demo history, no failure", waited[0] != null
+                    && "demo mode".equals(waited[0].skipped) && waited[0].written.isEmpty() && waited[0].error == null && f.list().equals(beforeDemo),
+                    waited[0] == null ? null : waited[0].skipped);
+            // a file the app did not write has the name of the next copy (review of #259): it is not taken for ours
+            String clash = app.openring.core.Backups.folderName(java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochSecond(at), Z58), null);
+            Files.write(new java.io.File(fdir, clash).toPath(), new byte[] {7});
+            o = app.openring.data.AutoBackup.run(c, f, at, false, null);
+            check("#242 a foreign file with the new copy's name: not written, not listed as ours, left as it is", o.written.isEmpty()
+                    && app.openring.core.Backups.WRITE.equals(o.error) && !p.autoFiles().contains(clash)
+                    && new java.io.File(fdir, clash).length() == 1, o.error + " " + p.autoFiles());
+            new java.io.File(fdir, clash).delete();
+            o = app.openring.data.AutoBackup.run(c, f, at, false, null);
+            check("#242 then the copy is made", o.written.size() == 1 && o.error == null, o.error);
+            last = at;
             app.openring.data.AutoBackup.RUN.start();
             o = app.openring.data.AutoBackup.run(c, f, last + 86400L, false, null);
             app.openring.data.AutoBackup.RUN.finish();
