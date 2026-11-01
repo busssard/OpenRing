@@ -126,8 +126,10 @@ reads every row of the four period tables from the phone's file before the swap 
 read refuses the restore before anything moves), and after the restored file opened, upgraded (an older backup gets the
 tables first) and passed its checks, writes them into it in one transaction, each replacing the backup's row with the same
 key, so the phone wins on the same day and a day or end removed on the phone stays removed; only then `.old` goes. Any failure on
-the way puts the old file back with its log. A phone file that cannot be opened at all has no log to read and is replaced
-as before. Ring data is never merged. Going back to a phone copy (`AutoBackup.goBack`) runs the same swap. A backup holds every setting; restored numbers are kept in the ranges Settings
+the way puts the old file back with its log. A phone file that cannot be opened at all (for example a damaged one, kept
+since issue #255) has no log that can be read and is replaced as before: the restored file then holds only the backup's
+period log, so days typed on the phone after that backup are lost with the damaged file. Reading the tables of a damaged
+file anyway was left out on purpose (it can return wrong rows or fail half way; review of #275). Ring data is never merged. Going back to a phone copy (`AutoBackup.goBack`) runs the same swap. A backup holds every setting; restored numbers are kept in the ranges Settings
 allows, and the stage detail level comes along only with the history or onto a phone without nights (#33).
 
 Export database and a full backup never copy the live file (issue #115). `Exporter.snapshot` waits for a
