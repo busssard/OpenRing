@@ -708,17 +708,19 @@ public final class SettingsActivity extends Activity implements RingManager.List
      */
     void keepScroll(final View card) {
         if (card.getHeight() == 0) return;
-        final int y = scroll.getScrollY(), top = card.getTop(), before = card.getHeight();
+        final int before = card.getHeight();
         // the new height is known once the card is laid out; the scroll then follows in post() (CLAUDE.md lesson)
         card.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
                 v.removeOnLayoutChangeListener(this);
-                final int to = app.openring.core.ScrollKeep.after(y, top, before, b - t);
+                final int top = t, after = b - t;
                 scroll.post(new Runnable() {
                     @Override
                     public void run() {
-                        scroll.scrollTo(0, to);
+                        // from where the page is now, not where it was when the read began (review of #280): a jump
+                        // to a card (the settings extra, scrollToSection) or another card's correction in between stays
+                        scroll.scrollTo(0, app.openring.core.ScrollKeep.after(scroll.getScrollY(), top, before, after));
                     }
                 });
             }
