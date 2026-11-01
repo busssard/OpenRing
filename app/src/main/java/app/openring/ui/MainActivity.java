@@ -715,7 +715,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     /** Android no longer shows its dialog: the way to the app's settings, where Bluetooth access is switched on (issue #186). */
     void askSettings() {
         new android.app.AlertDialog.Builder(this)
-                .setMessage(app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
+                .setTitle("Bluetooth access")
+                .setMessage("Sync needs Bluetooth access to reach your ring. " + app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
                 .setPositiveButton(app.openring.core.PermissionAsk.SETTINGS_BUTTON, new android.content.DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(android.content.DialogInterface d, int w) {
