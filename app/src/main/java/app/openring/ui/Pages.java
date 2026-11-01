@@ -905,11 +905,11 @@ public final class Pages {
         double leftS = d.leftOutSeconds();
         // what the percentages are shares of, and the time without the ring (issue #212), from the stored minutes
         double until = Json.d(day, "total_until");
-        double notWorn = Texts.notWornSoFar(Json.d(day, "non_wear_min"), until, d.dayEnd());
-        double worn = high + med + low + inact + rest;
-        if (!Double.isNaN(worn)) {
+        double notWorn = Texts.notWornSoFar(Json.d(day, "non_wear_min"), until, d.dayStart(), d.dayEnd());
+        double onMin = high + med + low + inact + rest;
+        if (!Double.isNaN(onMin)) {
             intensity.addView(Ui.gap(c, 4));
-            intensity.addView(Ui.text(c, Texts.movementShares(worn, notWorn,
+            intensity.addView(Ui.text(c, Texts.movementShares(onMin, notWorn,
                     Double.isNaN(until) ? null : app.openring.core.analysis.WakeUps.clock(until, d.zone), leftS >= 60), 12, Ui.TEXT_3, Ui.REGULAR));
             if (!Double.isNaN(notWorn) && Math.round(notWorn) >= 1) intensity.addView(Ui.text(c, Explain.NOT_WORN, 12, Ui.TEXT_3, Ui.REGULAR));
         }

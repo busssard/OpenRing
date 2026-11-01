@@ -99,9 +99,15 @@ public final class Texts {
         if (best == null || best.isEmpty()) return "";
         StringBuilder sb = new StringBuilder(best).append(" is your strongest contributor");
         if (worst != null && !worst.isEmpty() && app.openring.core.analysis.Scores.needsAttention(worstScore)) {
-            sb.append(", while ").append(worst.toLowerCase(locale)).append(" needs attention");
+            sb.append(", while ").append(lowerFirst(worst, locale)).append(" needs attention");
         }
         return sb.append('.').toString();
+    }
+
+    /** A label inside a sentence: "Resting heart rate" becomes "resting heart rate", "HRV balance" stays (review of #282). */
+    static String lowerFirst(String label, Locale locale) {
+        if (label.isEmpty() || (label.length() > 1 && Character.isUpperCase(label.charAt(1)))) return label;
+        return label.substring(0, 1).toLowerCase(locale) + label.substring(1);
     }
 
     /**
@@ -112,19 +118,22 @@ public final class Texts {
      * minutes have no values, so they are in the not worn minutes too, issue #254).
      */
     public static String movementShares(double wornMin, double notWornMin, String until, boolean leftOut) {
-        String s = "Shares of the time the ring was on" + (until == null ? "" : " up to " + until) + " (" + minutes(wornMin) + ").";
+        String s = "The percentages are of the time the ring was on" + (until == null ? "" : " up to " + until) + " (" + minutes(wornMin) + ").";
         if (Double.isNaN(notWornMin) || Math.round(notWornMin) < 1) return s;
         return s + (leftOut ? " Not worn or left out: " : " Not worn: ") + minutes(notWornMin) + ".";
     }
 
     /**
      * The stored not worn minutes of a day without the ones still to come: a day analysed at {@code until} (unix
-     * seconds, NaN for an ended day) counted every minute after it up to {@code dayEnd} as without values.
+     * seconds, NaN for an ended day) counted the minute it was in and every minute after it up to {@code dayEnd} as
+     * without values (the minutes of {@code Wellness.day}, counted from {@code dayStart}).
      */
-    public static double notWornSoFar(double notWornMin, double until, double dayEnd) {
+    public static double notWornSoFar(double notWornMin, double until, double dayStart, double dayEnd) {
         if (Double.isNaN(notWornMin)) return Double.NaN;
         if (Double.isNaN(until) || until >= dayEnd) return notWornMin;
-        return Math.max(0, notWornMin - Math.floor((dayEnd - until) / 60));
+        long dayMin = Math.max(0, Math.round((dayEnd - dayStart) / 60));
+        long passed = (long) Math.max(0, Math.floor((until - dayStart) / 60));
+        return Math.max(0, notWornMin - Math.max(0, dayMin - passed));
     }
 
     /**

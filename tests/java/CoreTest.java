@@ -1464,28 +1464,44 @@ public class CoreTest {
                 "HRV balance is your strongest contributor, while resting heart rate needs attention.");
         eq("today line: 72 is Good, no attention (issue #200)", Texts.contributorLine("HRV balance", "Resting heart rate", 72, Locale.US),
                 "HRV balance is your strongest contributor.");
+        eq("today line: an abbreviation keeps its capitals", Texts.contributorLine("Sleep", "HRV balance", 60, Locale.US),
+                "Sleep is your strongest contributor, while HRV balance needs attention.");
+        eq("today line: only the first letter is lowered", Texts.contributorLine("HRV balance", "Previous day activity", 50, Locale.US),
+                "HRV balance is your strongest contributor, while previous day activity needs attention.");
+        eq("today line: a one letter label", Texts.contributorLine("Sleep", "X", 50, Locale.US), "Sleep is your strongest contributor, while x needs attention.");
         eq("today line: no contributor", Texts.contributorLine(null, null, Double.NaN, Locale.US), "");
     }
 
     /** The line under Daily movement says what its percentages are shares of (issue #212). */
     static void movementShares() {
-        eq("movement: ring on all day", Texts.movementShares(1440, 0, null, false), "Shares of the time the ring was on (24h 0m).");
-        eq("movement: not worn not stored", Texts.movementShares(1440, Double.NaN, null, false), "Shares of the time the ring was on (24h 0m).");
-        eq("movement: under a minute off", Texts.movementShares(1440, 0.4, null, false), "Shares of the time the ring was on (24h 0m).");
+        eq("movement: ring on all day", Texts.movementShares(1440, 0, null, false), "The percentages are of the time the ring was on (24h 0m).");
+        eq("movement: not worn not stored", Texts.movementShares(1440, Double.NaN, null, false), "The percentages are of the time the ring was on (24h 0m).");
+        eq("movement: under a minute off", Texts.movementShares(1440, 0.4, null, false), "The percentages are of the time the ring was on (24h 0m).");
         eq("movement: ring off for a while", Texts.movementShares(1270, 170, null, false),
-                "Shares of the time the ring was on (21h 10m). Not worn: 2h 50m.");
-        eq("movement: short times", Texts.movementShares(45, 15, null, false), "Shares of the time the ring was on (45 min). Not worn: 15 min.");
+                "The percentages are of the time the ring was on (21h 10m). Not worn: 2h 50m.");
+        eq("movement: short times", Texts.movementShares(45, 15, null, false), "The percentages are of the time the ring was on (45 min). Not worn: 15 min.");
         eq("movement: a day still running", Texts.movementShares(370, 60, "14:05", false),
-                "Shares of the time the ring was on up to 14:05 (6h 10m). Not worn: 1h 0m.");
+                "The percentages are of the time the ring was on up to 14:05 (6h 10m). Not worn: 1h 0m.");
         eq("movement: with a left out time", Texts.movementShares(1270, 170, null, true),
-                "Shares of the time the ring was on (21h 10m). Not worn or left out: 2h 50m.");
+                "The percentages are of the time the ring was on (21h 10m). Not worn or left out: 2h 50m.");
         // a day analysed at 14:05: the 595 minutes after it were stored as without values, they are not "not worn"
         double end = 86400, until = 86400 - 595 * 60;
-        eq("not worn so far: future minutes dropped", Texts.notWornSoFar(655, until, end), 60.0);
-        eq("not worn so far: an ended day keeps its minutes", Texts.notWornSoFar(170, Double.NaN, end), 170.0);
-        eq("not worn so far: analysed after the end", Texts.notWornSoFar(170, end + 5, end), 170.0);
-        eq("not worn so far: never below 0", Texts.notWornSoFar(100, until, end), 0.0);
-        check("not worn so far: not stored stays unknown", Double.isNaN(Texts.notWornSoFar(Double.NaN, until, end)));
+        eq("not worn so far: future minutes dropped", Texts.notWornSoFar(655, until, 0, end), 60.0);
+        eq("not worn so far: an ended day keeps its minutes", Texts.notWornSoFar(170, Double.NaN, 0, end), 170.0);
+        eq("not worn so far: analysed after the end", Texts.notWornSoFar(170, end + 5, 0, end), 170.0);
+        eq("not worn so far: never below 0", Texts.notWornSoFar(100, until, 0, end), 0.0);
+        check("not worn so far: not stored stays unknown", Double.isNaN(Texts.notWornSoFar(Double.NaN, until, 0, end)));
+        // analysed at 14:05:20 with a value at 30 s into every minute before: the minute it was in has no value yet,
+        // still no Not worn (review of #282)
+        double start = 1_793_570_400, at = start + 845 * 60 + 20;
+        TS full = new TS();
+        for (double t = start + 30; t < at; t += 60) full.add(t, 1.2);
+        Wellness.Day run = Wellness.day("2026-11-01", start, start + 86400, java.time.ZoneOffset.UTC, full, new ArrayList<double[]>(), 70, 1600, at);
+        eq("not worn so far: the minute of the analysis is stored without a value", (int) Math.round(run.nonWearMin), 595);
+        eq("not worn so far: unaligned analysis moment, ring on all the time", Texts.notWornSoFar(run.nonWearMin, run.totalUntil, start, start + 86400), 0.0);
+        eq("not worn so far: unaligned, the line has no Not worn",
+                Texts.movementShares(run.inactiveMin, Texts.notWornSoFar(run.nonWearMin, run.totalUntil, start, start + 86400), "14:05", false),
+                "The percentages are of the time the ring was on up to 14:05 (14h 5m).");
         // the rows plus not worn are the day, minute by minute (Wellness, issues #112, #212)
         TS met = new TS();
         for (int m = 0; m < 600; m++) met.add(m * 60 + 10, m < 300 ? 1.2 : 2.0);
