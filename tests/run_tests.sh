@@ -5,7 +5,8 @@ cd "$(dirname "$0")/.."
 if [ -z "${TEST_OUT:-}" ]; then
   OUT=$(mktemp -d)
   trap 'rm -rf "$OUT"' EXIT
-  trap 'exit 130' INT TERM
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 else
   OUT=$TEST_OUT
 fi

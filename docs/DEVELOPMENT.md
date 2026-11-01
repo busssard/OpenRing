@@ -66,7 +66,11 @@ current coverage.
 (`.github/scripts/badge.sh`). The screenshots badge shows *generating* while the emulator runs.
 
 `run_pipeline.sh` downloads sqlite-jdbc and org.json into `tests/.deps/` on its first run (JaCoCo too,
-for the coverage script). It compiles a
+for the coverage script). All three are fixed versions: sqlite-jdbc and JaCoCo are checked by SHA-256,
+org.json is the release tag `JSON_TAG` of stleary/JSON-java with its commit `JSON_COMMIT` (to update,
+change both in `run_pipeline.sh`; an older clone is replaced on the next run). Every folder and file
+the pipeline test creates goes into one run folder under `$TMPDIR` (or `/tmp`) that is removed at the
+end, also after a failure; run with `KEEP_TEST_DIRS=1` to keep it for debugging. It compiles a
 fixed list of `data/` files; when you add a file there that the pipeline needs, add it to the list.
 
 **On Android:** `emulator.yml` runs for pull requests and pushes to `main`. It installs the APK on an
