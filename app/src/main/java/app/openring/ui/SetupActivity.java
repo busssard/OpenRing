@@ -32,6 +32,8 @@ public final class SetupActivity extends Activity {
     private boolean permissionBlocked, quietDenial;
     /** Opened for a saved key this phone cannot read (issue #199): straight to "Connect your ring", Back returns to the app. */
     private boolean rekey;
+    /** {@code core/KeyState}, read in onCreate and again in onResume (one decrypt each, review of #281). */
+    private int keyState;
     private static final int RESTORE = 21;
     private TextView restoreStatus;
 
@@ -356,7 +358,7 @@ public final class SetupActivity extends Activity {
         RingManager.get(this).addListener(ringStatus);
         // a pairing whose key page was not left yet, also after Android ended the app (issue #218)
         Prefs pr = Prefs.of(this);
-        int keyState = pr.keyState();
+        keyState = pr.keyState();
         if (b == null && !pr.demo() && pr.setupDone() && keyState == app.openring.core.KeyState.UNREADABLE) {
             // the profile is there already; the saved key stays until a new one works with the ring (issue #199)
             rekey = true;
@@ -388,7 +390,8 @@ public final class SetupActivity extends Activity {
         }
         Prefs p = Prefs.of(this);
         String unseen = p.pairUnseen();
-        if (step != 5 && p.keyState() == app.openring.core.KeyState.READABLE && (unseen != null || step >= 3 && p.setupDone())) {
+        keyState = p.keyState();
+        if (step != 5 && keyState == app.openring.core.KeyState.READABLE && (unseen != null || step >= 3 && p.setupDone())) {
             step = 5;
             if (unseen != null) pairedMessage = unseen;
             show();
@@ -471,8 +474,7 @@ public final class SetupActivity extends Activity {
             startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
             finish();
         } else if (rekey) {
-            // back to the app with the saved key as it was (issue #199)
-            startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            // back to the screen that opened it (main screen or Settings) with the saved key as it was (issue #199, review of #281)
             finish();
         } else if (step > 0) {
             step--;
@@ -696,7 +698,7 @@ public final class SetupActivity extends Activity {
                 "The ring only talks to apps that know its 16 byte pairing key. Choose how to get one. Put the ring on its charger next to the phone, "
                         + "and close the official Oura app so it does not hold the Bluetooth link.");
 
-        if (!Prefs.of(this).demo() && Prefs.of(this).keyState() == app.openring.core.KeyState.UNREADABLE) {
+        if (!Prefs.of(this).demo() && keyState == app.openring.core.KeyState.UNREADABLE) {
             // the saved key stays as it is: only a key the ring accepts or a restore replaces it (issue #199)
             LinearLayout u = Ui.card(this);
             u.addView(Ui.h2(this, app.openring.core.KeyState.SETUP_TITLE));
