@@ -1021,6 +1021,13 @@ public class CoreTest {
         String full = WatchCheck.text(r, true);
         check("watch: the private copy holds the whole messages", full.contains("bytes 0105a1b2c3d4e5 07 0203f9e8") && full.startsWith("Open Ring watch check (with message bytes, private)"));
         check("watch: the bonded line is there", t.contains("Paired with this phone before: no"));
+        check("watch: the bond after the check is reported", t.contains("Paired now: no") && !WatchCheck.pairedDuring(r));
+        r.bondedAfter = true;
+        check("watch: a bond made during the check is named, with how to remove it", WatchCheck.text(r, false).contains("Paired now: yes")
+                && WatchCheck.pairedDuring(r) && WatchCheck.PAIRED_NOW.contains("Forget"));
+        r.bondedBefore = true;
+        check("watch: a bond from before is not blamed on the check", !WatchCheck.pairedDuring(r) && !WatchCheck.pairedDuring(null));
+        r.bondedBefore = r.bondedAfter = false;
 
         // the 2 byte rule on random messages: every hex group in the default report is at most 4 digits
         Random rnd = new Random(251);

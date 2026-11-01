@@ -512,7 +512,8 @@ pairing or sync is built. Nothing is paired, written to the watch (besides switc
   the ring is busy the screen says so. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s;
   the background job tries again at its next run).
 * **The report** (`core/WatchCheck`, kept in memory only): UUIDs (standard ones named, others as they are), property
-  names, model, firmware, battery, and per listened characteristic the number of messages, their lengths and only the
+  names, model, firmware, battery, whether the phone was paired with the watch before and is now (a pairing dialog
+  accepted during the check leaves a bond; the screen then tells how to remove it), and per listened characteristic the number of messages, their lengths and only the
   first 2 bytes of each (usually the kind of message). The full bytes are only in the second copy, marked private
   (Android 13 and newer hide it in the clipboard preview). At most 300 messages are kept per characteristic, and a
   report is cut at 30,000 characters.

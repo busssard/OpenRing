@@ -502,6 +502,7 @@ public final class WatchActivity extends Activity {
         if (!r.connected) reportStatus.setText(WatchCheck.NO_ANSWER);
         else if (r.problem != null) reportStatus.setText("The check ended early (" + r.problem + "). What it found so far is below.");
         else reportStatus.setText("Done. The watch was let go again.");
+        if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.PAIRED_NOW);
         reportText.setText(WatchCheck.text(r, false));
     }
 
