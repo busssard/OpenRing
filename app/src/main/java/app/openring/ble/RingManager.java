@@ -790,8 +790,8 @@ public final class RingManager {
                             @Override
                             public void ringIs(String serial) {
                                 if (prefs.serial() != null && !prefs.serial().equals(serial)) {
-                                    // a different ring: start a fresh history
-                                    Db.get(ctx).resetAll();
+                                    // a different ring: start a fresh history; the period log the person typed stays (issue #252)
+                                    Db.get(ctx).resetRingData();
                                 }
                             }
 

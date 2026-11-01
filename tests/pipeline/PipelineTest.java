@@ -835,6 +835,11 @@ public class PipelineTest {
         rightNow254();
         demoOnly254();
         damaged255();
+        upgrade252();
+        resets252();
+        restore252();
+        failures252();
+        largeLog252();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -1622,12 +1627,13 @@ public class PipelineTest {
 
         // ---- restores of a backup made by this version and by older schema versions ----
         Object[][] good = {
-            {"this version (v7)", dbBytes},
-            {"v6", alter(dbBytes, 6, "DROP TABLE excluded")},
-            {"v5", alter(dbBytes, 5, "DROP TABLE excluded", "DROP TABLE screen_reads")},
-            {"v4", alter(dbBytes, 4, "DROP TABLE excluded", "DROP TABLE screen_reads", "DROP TABLE zones")},
-            {"v3", alter(dbBytes, 3, "DROP TABLE excluded", "DROP TABLE screen_reads", "DROP TABLE zones", "DROP TABLE apps")},
-            {"v2", alter(dbBytes, 2, "DROP TABLE excluded", "DROP TABLE screen_reads", "DROP TABLE zones", "DROP TABLE apps", "DROP TABLE screen")},
+            {"this version (v8)", dbBytes},
+            {"v7", alter(dbBytes, 7, "DROP TABLE period_days", "DROP TABLE period_ends", "DROP TABLE period_temps", "DROP TABLE period_imports")},
+            {"v6", alter(dbBytes, 6, "DROP TABLE period_days", "DROP TABLE period_ends", "DROP TABLE period_temps", "DROP TABLE period_imports", "DROP TABLE excluded")},
+            {"v5", alter(dbBytes, 5, "DROP TABLE period_days", "DROP TABLE period_ends", "DROP TABLE period_temps", "DROP TABLE period_imports", "DROP TABLE excluded", "DROP TABLE screen_reads")},
+            {"v4", alter(dbBytes, 4, "DROP TABLE period_days", "DROP TABLE period_ends", "DROP TABLE period_temps", "DROP TABLE period_imports", "DROP TABLE excluded", "DROP TABLE screen_reads", "DROP TABLE zones")},
+            {"v3", alter(dbBytes, 3, "DROP TABLE period_days", "DROP TABLE period_ends", "DROP TABLE period_temps", "DROP TABLE period_imports", "DROP TABLE excluded", "DROP TABLE screen_reads", "DROP TABLE zones", "DROP TABLE apps")},
+            {"v2", alter(dbBytes, 2, "DROP TABLE period_days", "DROP TABLE period_ends", "DROP TABLE period_temps", "DROP TABLE period_imports", "DROP TABLE excluded", "DROP TABLE screen_reads", "DROP TABLE zones", "DROP TABLE apps", "DROP TABLE screen")},
         };
         long[] want = counts(fileOf(dbBytes));
         for (Object[] x : good) {
@@ -1636,7 +1642,7 @@ public class PipelineTest {
             Db gd = Db.get(g);
             boolean same = gd.eventCount() == want[0] && gd.count("SELECT COUNT(*) FROM nights") == want[1] && gd.count("SELECT COUNT(*) FROM days") == want[2]
                     && gd.count(EVENTS_SUM) == countIn(fileOf(dbBytes), EVENTS_SUM) && gd.count(NIGHTS_SUM) == countIn(fileOf(dbBytes), NIGHTS_SUM);
-            check("a backup of " + x[0] + " restores with every event, night and day", r.ok && r.history && same && gd.getReadableDatabase().getVersion() == 7,
+            check("a backup of " + x[0] + " restores with every event, night and day", r.ok && r.history && same && gd.getReadableDatabase().getVersion() == 8,
                     r.message + ", " + gd.eventCount() + " events");
             Analyzer.run(g, null);
             check("a restored backup of " + x[0] + " analyses and keeps its events", gd.kv("analysis_error", null) == null && gd.eventCount() == want[0],
@@ -2438,7 +2444,7 @@ public class PipelineTest {
         Files.write(c.getDatabasePath(Db.REAL).toPath(), Files.readAllBytes(f.toPath()));
         Db old = Db.get(c);
         List<double[]> seeded = old.screenReads();
-        check("a schema 5 database gets one read from its oldest to its newest session", old.getReadableDatabase().getVersion() == 7
+        check("a schema 5 database gets one read from its oldest to its newest session", old.getReadableDatabase().getVersion() == 8
                 && seeded.size() == 1 && seeded.get(0)[0] == s.get(0)[0] && seeded.get(0)[1] == s.get(s.size() - 1)[1], seeded.size());
         double[] ow = app.openring.data.ScreenDays.lastDays(old, d1.plusDays(11), 12, z, eve);
         boolean oldKnown = !Double.isNaN(ow[0]) && Math.abs(ow[5]) < 0.01 && Math.abs(ow[11] - 20) < 0.01;
@@ -2475,7 +2481,7 @@ public class PipelineTest {
             db.count("SELECT COUNT(*) FROM screen"), db.count("SELECT COUNT(*) FROM kv")};
         check("a schema 4 database opens with all its rows", Arrays.equals(before, after) && before[0] > 0 && before[1] > 0,
                 Arrays.toString(before) + " -> " + Arrays.toString(after));
-        check("it becomes the current schema with an empty zone table", db.getReadableDatabase().getVersion() == 7 && db.zones().isEmpty()
+        check("it becomes the current schema with an empty zone table", db.getReadableDatabase().getVersion() == 8 && db.zones().isEmpty()
                 && db.count("SELECT COUNT(*) FROM sqlite_master WHERE name = 'zones'") == 1, db.getReadableDatabase().getVersion());
         Analyzer.run(c, null);
         check("the first run after the update notes the zone from 0", db.zones().size() == 1 && (Double) db.zones().get(0)[0] == 0
@@ -2487,7 +2493,7 @@ public class PipelineTest {
         check("a schema 4 backup still restores", r.ok && r.history && rd.count("SELECT COUNT(*) FROM events") == before[0]
                 && rd.count("SELECT COUNT(*) FROM nights") == before[1] && rd.zones().isEmpty(), r.message);
         // and a backup from a newer schema is refused whole, as before
-        app.openring.data.Backup.Result rn = app.openring.data.Backup.read(freshDb("openring-v6"), new java.io.ByteArrayInputStream(withDb(full, withVersion(v5, 8))));
+        app.openring.data.Backup.Result rn = app.openring.data.Backup.read(freshDb("openring-v6"), new java.io.ByteArrayInputStream(withDb(full, withVersion(v5, 9))));
         check("a backup from a newer schema is refused", !rn.ok, rn.message);
     }
 
@@ -7284,7 +7290,7 @@ public class PipelineTest {
             long[] copy = fileInfo242(raw);
             check("#242 update: the history is copied before it is opened, as the version before left it (v5)", copyFiles242(c).equals(Arrays.asList("before-43-1.42.raw"))
                     && copy[0] == 5 && copy[1] == before[1] && before[0] == 5, copyFiles242(c) + " " + Arrays.toString(copy) + " " + Arrays.toString(before));
-            check("#242 update: the live history is opened and upgraded after the copy (v7, the same events)", fileInfo242(real)[0] == 7 && live == before[1],
+            check("#242 update: the live history is opened and upgraded after the copy (v8, the same events)", fileInfo242(real)[0] == 8 && live == before[1],
                     fileInfo242(real)[0] + " " + live);
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
             check("#242 update: the new version is noted, no note of a failure", p.notedVersion() == 43 && p.beforeUpdateNote() == null && !p.beforeUpdateUnseen(),
@@ -7874,7 +7880,7 @@ public class PipelineTest {
                 java.io.File inside = zipFile242(Files.readAllBytes(new java.io.File(fdir, up).toPath()));
                 long[] in = fileInfo242(inside);
                 inside.delete();
-                check("#242 the folder's update copy is the history the version before left (v7, its events)", in[0] == 7 && in[1] == beforeUpdate, Arrays.toString(in));
+                check("#242 the folder's update copy is the history the version before left (v8, its events)", in[0] == 8 && in[1] == beforeUpdate, Arrays.toString(in));
             }
             o = app.openring.data.AutoBackup.run(c, f, last + 86400L, true, null);
             check("#242 the update copy goes to the folder once", o.written.isEmpty(), o.written.toString());
@@ -8325,7 +8331,7 @@ public class PipelineTest {
             st.execute("PRAGMA user_version = 6");
         }
         db = Db.get(c);
-        check("#254 upgrade from schema 6: version 7 with an empty table, every event, night and day the same", db.getReadableDatabase().getVersion() == 7
+        check("#254 upgrade from schema 6: the current version with an empty table, every event, night and day the same", db.getReadableDatabase().getVersion() == 8
                 && db.excluded().isEmpty() && events58(db).equals(ev) && results139(db).equals(before), db.getReadableDatabase().getVersion());
         check("#254 upgrade: nothing to analyse again (the inputs are the same)", Analyzer.upToDate(c), null);
         Analyzer.leaveOut(c, wholeA254, wholeB254, null);
@@ -8334,7 +8340,7 @@ public class PipelineTest {
             st.execute("PRAGMA user_version = 6");
         }
         db = Db.get(c);
-        check("#254 the upgrade run twice keeps the table and its row", db.getReadableDatabase().getVersion() == 7 && db.excluded().size() == 1
+        check("#254 the upgrade run twice keeps the table and its row", db.getReadableDatabase().getVersion() == 8 && db.excluded().size() == 1
                 && results139(db).equals(wholeAfter254), db.excluded().size());
         bo = new java.io.ByteArrayOutputStream();
         app.openring.data.Backup.write(c, bo, true);
@@ -8355,7 +8361,7 @@ public class PipelineTest {
         rr = app.openring.data.Backup.read(r2, new java.io.ByteArrayInputStream(v6));
         rd = Db.get(r2);
         check("#254 a backup of the version before restores without any left out time, every night and day as it was", rr.ok && rr.history
-                && rd.excluded().isEmpty() && results139(rd).equals(before) && rd.getReadableDatabase().getVersion() == 7, rr.message);
+                && rd.excluded().isEmpty() && results139(rd).equals(before) && rd.getReadableDatabase().getVersion() == 8, rr.message);
         Analyzer.leaveOut(r2, wholeA254, wholeB254, null);
         check("#254 and a time left out there gives what it gives on this version", results139(rd).equals(wholeAfter254), firstDiff(results139(rd), wholeAfter254));
         // schema 7 without the table: refused whole, the phone keeps its history
@@ -8563,4 +8569,330 @@ public class PipelineTest {
         check("#255 and the next open starts an empty history", left == 0, left);
     }
 
+    // ---------------------------------------------------------------- issue #252, the period log's storage
+
+    /** Every row of the period tables, in key order: what a restore must keep exactly. */
+    static String periodRows252(Db db) {
+        StringBuilder sb = new StringBuilder();
+        String[] q = {"SELECT day, flow, src, prev, made FROM period_days ORDER BY day", "SELECT day, made FROM period_ends ORDER BY day",
+            "SELECT day, time, c, excluded, src FROM period_temps ORDER BY day", "SELECT id, made, days, temps FROM period_imports ORDER BY id"};
+        for (String sql : q) {
+            android.database.Cursor c = db.getReadableDatabase().rawQuery(sql, null);
+            try {
+                int n = sql.split(",").length;
+                while (c.moveToNext()) {
+                    for (int i = 0; i < n; i++) sb.append(c.isNull(i) ? "null" : c.getString(i)).append(i + 1 < n ? " " : "\n");
+                }
+            } finally {
+                c.close();
+            }
+            sb.append("--\n");
+        }
+        return sb.toString();
+    }
+
+    static long periodCount252(Db db) {
+        return db.count("SELECT (SELECT COUNT(*) FROM period_days) + (SELECT COUNT(*) FROM period_ends) + (SELECT COUNT(*) FROM period_temps)"
+                + " + (SELECT COUNT(*) FROM period_imports)");
+    }
+
+    static Object field252(Class<?> k, String name) throws Exception {
+        java.lang.reflect.Field f = k.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(null);
+    }
+
+    static void failMerge252(String step) throws Exception {
+        java.lang.reflect.Field f = Db.class.getDeclaredField("failMergeAt");
+        f.setAccessible(true);
+        f.set(null, step);
+    }
+
+    /** A few days of every kind, an end, an imported temperature and its import, in 2019 (far from the ring history's dates). */
+    static void someLog252(Db db) {
+        app.openring.data.Periods.setFlow(db, "2019-03-01", app.openring.data.Periods.HEAVY, 1000);
+        app.openring.data.Periods.setFlow(db, "2019-03-02", app.openring.data.Periods.MEDIUM, 1001);
+        app.openring.data.Periods.setFlow(db, "2019-03-03", app.openring.data.Periods.LIGHT, 1002);
+        app.openring.data.Periods.setFlow(db, "2019-03-20", app.openring.data.Periods.SPOTTING, 1003);
+        app.openring.data.Periods.setEnd(db, "2019-03-03", 1004);
+        db.getWritableDatabase().execSQL("INSERT INTO period_imports(id, made, days, temps) VALUES (1552000000000, 1552000000, 0, 1)");
+        db.getWritableDatabase().execSQL("INSERT INTO period_temps(day, time, c, excluded, src) VALUES ('2019-03-10', '07:15', 36.45, 0, 1552000000000)");
+    }
+
+    static final String[] DROP8 = {"DROP TABLE period_days", "DROP TABLE period_ends", "DROP TABLE period_temps", "DROP TABLE period_imports"};
+
+    /**
+     * Issue #252, data safety: a history of schema 7 or 6 (with nights) upgrades to 8 with the same events, nights and days and
+     * empty period tables; the upgrade is safe twice (rows stay), and one stopped after some tables goes on with the rest.
+     */
+    static void upgrade252() throws Exception {
+        for (int from : new int[] {7, 6}) {
+            Context c = phone254("openring252-up" + from);
+            Db db = Db.get(c);
+            List<String> before = results139(db), ev = events58(db);
+            restart242();
+            java.io.File file = c.getDatabasePath(Db.REAL);
+            try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+                for (String x : DROP8) st.execute(x);
+                if (from == 6) st.execute("DROP TABLE excluded");
+                st.execute("PRAGMA user_version = " + from);
+            }
+            db = Db.get(c);
+            check("#252 upgrade from schema " + from + ": version 8 with empty period tables, every event, night and day the same",
+                    db.getReadableDatabase().getVersion() == 8 && periodCount252(db) == 0 && events58(db).equals(ev) && results139(db).equals(before),
+                    db.getReadableDatabase().getVersion());
+            check("#252 upgrade from schema " + from + ": the schema check of this version passes", schemaProblem252(db) == null, schemaProblem252(db));
+            check("#252 upgrade from schema " + from + ": nothing to analyse again", Analyzer.upToDate(c), null);
+            if (from == 7) {
+                someLog252(db);
+                String log = periodRows252(db);
+                // the upgrade run twice: the tables are there, their rows stay
+                restart242();
+                try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+                    st.execute("PRAGMA user_version = 7");
+                }
+                db = Db.get(c);
+                check("#252 the upgrade run twice keeps every period row and the history", db.getReadableDatabase().getVersion() == 8
+                        && periodRows252(db).equals(log) && events58(db).equals(ev) && results139(db).equals(before), periodRows252(db));
+                // stopped after the first table: the next open makes the others and keeps the first one's rows
+                restart242();
+                try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+                    for (int i = 1; i < DROP8.length; i++) st.execute(DROP8[i]);
+                    st.execute("PRAGMA user_version = 7");
+                }
+                db = Db.get(c);
+                check("#252 an upgrade stopped after one table goes on: every table there, the days kept", db.getReadableDatabase().getVersion() == 8
+                        && schemaProblem252(db) == null && app.openring.data.Periods.all(db).size() == 4 && db.count("SELECT COUNT(*) FROM period_ends") == 0
+                        && events58(db).equals(ev), schemaProblem252(db));
+            }
+        }
+        clean254();
+    }
+
+    static String schemaProblem252(Db db) throws Exception {
+        java.lang.reflect.Method m = Db.class.getDeclaredMethod("schemaProblem", android.database.sqlite.SQLiteDatabase.class, int.class);
+        m.setAccessible(true);
+        return (String) m.invoke(null, db.getReadableDatabase(), 8);
+    }
+
+    /**
+     * Issue #252: every table of the schema is wiped by Delete all, and either wiped or kept (the period log) when another ring is
+     * paired, each listed once, so a table added later without a decision fails here. Pairing another ring keeps the log.
+     */
+    static void resets252() throws Exception {
+        Object[][] schema = (Object[][]) field252(Db.class, "SCHEMA");
+        List<String> ring = Arrays.asList((String[]) field252(Db.class, "RING_TABLES"));
+        List<String> log = Arrays.asList((String[]) field252(app.openring.data.Periods.class, "TABLES"));
+        StringBuilder bad = new StringBuilder();
+        for (Object[] t : schema) {
+            String name = (String) t[0];
+            if (ring.contains(name) == log.contains(name)) bad.append(name).append(' ');
+        }
+        check("#252 every table of the schema is either ring data (wiped when another ring is paired) or the period log (kept), never both",
+                bad.length() == 0 && ring.size() + log.size() == schema.length, bad);
+        Context c = phone254("openring252-reset");
+        Db db = Db.get(c);
+        someLog252(db);
+        db.getWritableDatabase().execSQL("INSERT INTO excluded(start, stop, made) VALUES (1, 2, 3)");
+        String rows = periodRows252(db);
+        db.resetRingData();
+        StringBuilder left = new StringBuilder();
+        for (String t : ring) if (db.count("SELECT COUNT(*) FROM " + t) != 0) left.append(t).append(' ');
+        check("#252 pairing another ring: every ring table empty", left.length() == 0, left);
+        check("#252 pairing another ring: the period log stays row for row", periodRows252(db).equals(rows) && periodCount252(db) == 7, periodRows252(db));
+        String src = new String(Files.readAllBytes(new File("app/src/main/java/app/openring/ble/RingManager.java").toPath()), "UTF-8");
+        check("#252 pairing a different ring uses resetRingData, not resetAll", src.contains("Db.get(ctx).resetRingData();") && !src.contains("resetAll()"), null);
+        Analyzer.deleteAll(c);
+        left.setLength(0);
+        for (Object[] t : schema) if (db.count("SELECT COUNT(*) FROM " + t[0]) != 0) left.append(t[0]).append(' ');
+        check("#252 Delete all local data empties every table, the period log too", left.length() == 0, left);
+        // Delete all failing part way keeps the log (one transaction)
+        someLog252(db);
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop_pd BEFORE DELETE ON period_imports BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        Throwable got = null;
+        try {
+            Analyzer.deleteAll(c);
+        } catch (RuntimeException e) {
+            got = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER stop_pd");
+        check("#252 Delete all failing part way: the period log as it was", got != null && periodRows252(db).equals(rows), got);
+        clean254();
+    }
+
+    /** A full backup of {@code c} as bytes. */
+    static byte[] backup252(Context c) throws Exception {
+        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, bo, true);
+        return bo.toByteArray();
+    }
+
+    /**
+     * Issue #252: a restore keeps the period log of the phone. The backup holds days the phone changed, removed or never had; the
+     * phone's row wins on the same day, a day removed on the phone stays removed, the backup's other days come back, and the same
+     * restore twice gives the same result. Backups of schema 7 and 6 (no period tables) restore with the phone's log. The ring
+     * history is the backup's, never merged; the Data check names nothing of the log.
+     */
+    static void restore252() throws Exception {
+        Context c = phone254("openring252-restore");
+        Db db = Db.get(c);
+        someLog252(db);
+        app.openring.data.Periods.setFlow(db, "2019-04-01", app.openring.data.Periods.MEDIUM, 1010);
+        byte[] full = backup252(c);
+        // after the backup: one day changed, one removed, one new, an end taken off and another set; one day only the backup has
+        app.openring.data.Periods.setFlow(db, "2019-03-01", app.openring.data.Periods.LIGHT, 2000);
+        app.openring.data.Periods.remove(db, "2019-03-02");
+        app.openring.data.Periods.setFlow(db, "2019-05-01", app.openring.data.Periods.HEAVY, 2001);
+        app.openring.data.Periods.setEnd(db, "2019-05-04", 2002);
+        db.getWritableDatabase().execSQL("DELETE FROM period_days WHERE day = '2019-04-01'");
+        db.getWritableDatabase().execSQL("UPDATE period_temps SET c = 36.6 WHERE day = '2019-03-10'");
+        long events = db.eventCount();
+        List<String> results = results139(db);
+        String phoneRows = periodRows252(db);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        List<app.openring.data.Periods.Day> days = app.openring.data.Periods.all(db);
+        check("#252 restore of this version: the history is the backup's", r.ok && r.history && db.eventCount() == events
+                && results139(db).equals(results), r.message);
+        check("#252 restore: the day changed on the phone keeps the phone's amount", flow252(days, "2019-03-01") == app.openring.data.Periods.LIGHT, days);
+        check("#252 restore: a day removed on the phone after the backup stays removed", flow252(days, "2019-03-02") == app.openring.data.Periods.REMOVED, days);
+        check("#252 restore: a day logged on the phone after the backup is kept", flow252(days, "2019-05-01") == app.openring.data.Periods.HEAVY, days);
+        check("#252 restore: a day only the backup has comes back", flow252(days, "2019-04-01") == app.openring.data.Periods.MEDIUM, days);
+        check("#252 restore: the ends of both, the phone's temperature", app.openring.data.Periods.allEnds(db).equals(Arrays.asList("2019-03-03", "2019-05-04"))
+                && db.count("SELECT COUNT(*) FROM period_temps WHERE c = 36.6") == 1, app.openring.data.Periods.allEnds(db));
+        String merged = periodRows252(db);
+        check("#252 restore: every row of the phone is there as it was", containsRows252(merged, phoneRows), merged);
+        app.openring.data.Backup.Result again = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#252 the same restore twice gives the same period log and history", again.ok && again.history && periodRows252(db).equals(merged)
+                && db.eventCount() == events, periodRows252(db));
+        check("#252 restore: no file left from the swap", !new java.io.File(c.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
+        noTemp(c, "after the #252 restores");
+        // older backups: no period tables in the file; the upgrade makes them, then the phone's log goes in
+        String now = periodRows252(db);
+        for (int v : new int[] {7, 6}) {
+            List<String> sql = new ArrayList<String>(Arrays.asList(DROP8));
+            if (v == 6) sql.add("DROP TABLE excluded");
+            byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), v, sql.toArray(new String[0])));
+            r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
+            db = Db.get(c);
+            check("#252 a backup of schema " + v + " restores at version 8 with the phone's period log row for row", r.ok && r.history
+                    && db.getReadableDatabase().getVersion() == 8 && periodRows252(db).equals(now) && db.eventCount() == events, r.message);
+        }
+        // the Data check is for public bug reports: nothing about the log, no logged date
+        String text = DataCheck.run(c).text;
+        // "sleep period" and the ring's event names (bedtime_period, sleep_period_information_2) are no part of the log
+        String rest = text.toLowerCase(java.util.Locale.ROOT).replaceAll("\\b\\w+_period\\w*", "").replace("sleep period", "");
+        check("#252 the Data check names nothing of the period log", !rest.contains("period") && !rest.contains("2019-") && !rest.contains("flow")
+                && !rest.contains("drip"), text);
+        clean254();
+    }
+
+    static int flow252(List<app.openring.data.Periods.Day> days, String day) {
+        for (app.openring.data.Periods.Day d : days) if (d.day.equals(day)) return d.flow;
+        return Integer.MIN_VALUE;
+    }
+
+    /** Every line of {@code part} is a line of {@code whole}. */
+    static boolean containsRows252(String whole, String part) {
+        List<String> w = Arrays.asList(whole.split("\n"));
+        for (String l : part.split("\n")) if (!l.equals("--") && !w.contains(l)) return false;
+        return true;
+    }
+
+    /**
+     * Issue #252: a failure at each step of the merge (reading the phone's log, part way through writing it, after it was
+     * written), a backup whose file refuses the rows, and a phone whose log cannot be read: nothing restored, the phone keeps
+     * its history and its log row for row, no file left. The API refuses what is not a day or an amount.
+     */
+    static void failures252() throws Exception {
+        Context c = phone254("openring252-fail");
+        Db db = Db.get(c);
+        byte[] full = backup252(c);
+        someLog252(db);
+        long events = db.eventCount();
+        List<String> results = results139(db);
+        String rows = periodRows252(db);
+        for (String step : new String[] {"read", "write", "done"}) {
+            failMerge252(step);
+            app.openring.data.Backup.Result r;
+            try {
+                r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+            } finally {
+                failMerge252(null);
+            }
+            db = Db.get(c);
+            check("#252 a stop at the merge step " + step + ": nothing restored, the phone's history and period log as they were", !r.ok
+                    && db.eventCount() == events && results139(db).equals(results) && periodRows252(db).equals(rows), r.message);
+            check("#252 a stop at the merge step " + step + ": no file left", !new java.io.File(c.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
+            noTemp(c, "after a stop at the merge step " + step);
+        }
+        byte[] refuses = withDb(full, alter(zipEntry(full, "openring.db"), 8,
+                "CREATE TRIGGER stop_pd BEFORE INSERT ON period_days BEGIN SELECT RAISE(ABORT, 'test stop'); END"));
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(refuses));
+        db = Db.get(c);
+        check("#252 a backup whose file refuses the phone's rows: nothing restored, the phone's log kept", !r.ok && db.eventCount() == events
+                && periodRows252(db).equals(rows), r.message);
+        db.getWritableDatabase().execSQL("ALTER TABLE period_ends RENAME TO period_ends_x");
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        db.getWritableDatabase().execSQL("ALTER TABLE period_ends_x RENAME TO period_ends");
+        check("#252 a phone log that cannot be read: refused before anything moves", !r.ok && db.eventCount() == events
+                && periodRows252(db).equals(rows), r.message);
+        // after the failures a restore works and keeps the log
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#252 after the failures the restore works and keeps the log", r.ok && r.history && periodRows252(db).equals(rows), r.message);
+        String[] badDays = {"2019-02-30", "2019-3-01", "", "20190301", null};
+        int refused = 0;
+        for (String d : badDays) {
+            try {
+                app.openring.data.Periods.setFlow(db, d, 1);
+            } catch (IllegalArgumentException e) {
+                refused++;
+            }
+        }
+        for (int f : new int[] {-2, 4}) {
+            try {
+                app.openring.data.Periods.setFlow(db, "2019-06-01", f);
+            } catch (IllegalArgumentException e) {
+                refused++;
+            }
+        }
+        check("#252 not a day or not an amount: refused, nothing written", refused == badDays.length + 2 && periodRows252(db).equals(rows), refused);
+        app.openring.data.Periods.setEnd(db, "2019-06-01");
+        app.openring.data.Periods.clearEnd(db, "2019-06-01");
+        app.openring.data.Periods.clearEnd(db, "2019-06-02");
+        app.openring.data.Periods.setFlow(db, "2019-06-01", app.openring.data.Periods.LIGHT);
+        app.openring.data.Periods.remove(db, "2019-06-01");
+        List<app.openring.data.Periods.Day> june = app.openring.data.Periods.days(db, "2019-06-01", "2019-06-30");
+        check("#252 an end set and cleared leaves none; a day removed stays as its mark, read in its range", app.openring.data.Periods.ends(db, "2019-06-01", "2019-06-30").isEmpty()
+                && june.size() == 1 && june.get(0).removed() && june.get(0).src == 0 && app.openring.data.Periods.days(db, "2019-03-02", "2019-03-03").size() == 2, june);
+        clean254();
+    }
+
+    /** Issue #252: five years of logged days (about 1800 rows) are carried through a restore, every row, in seconds. */
+    static void largeLog252() throws Exception {
+        Context c = phone254("openring252-large");
+        final Db db = Db.get(c);
+        byte[] full = backup252(c);
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                LocalDate d = LocalDate.parse("2014-01-01");
+                for (int i = 0; i < 5 * 365; i++, d = d.plusDays(1)) app.openring.data.Periods.setFlow(db, d.toString(), i % 29 < 5 ? 1 + i % 3 : i % 7 == 0 ? -1 : 0, 1e9 + i);
+                for (LocalDate e = LocalDate.parse("2014-01-05"); e.getYear() < 2019; e = e.plusDays(29)) app.openring.data.Periods.setEnd(db, e.toString(), 1e9);
+            }
+        });
+        String rows = periodRows252(db);
+        long n = db.count("SELECT COUNT(*) FROM period_days");
+        long t = System.nanoTime();
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        double s = (System.nanoTime() - t) / 1e9;
+        Db after = Db.get(c);
+        System.out.printf("    #252 restore with a 5 year log (%d days): %.2f s%n", n, s);
+        check("#252 a 5 year log (" + n + " days) goes through a restore row for row", r.ok && r.history && n == 5 * 365 && periodRows252(after).equals(rows)
+                && s < 30, s);
+        clean254();
+    }
 }

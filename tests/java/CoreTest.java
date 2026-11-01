@@ -1235,9 +1235,9 @@ public class CoreTest {
         eq("backups: copy before going back", Backups.backLine(when, 212 * mb, z), "Copy from before going back (29 Oct, 212 MB)");
         eq("backups: a small copy is at least 1 MB", Backups.mb(1000), "1 MB");
         eq("backups: an empty file", Backups.mb(0), "0 MB");
-        eq("backups: going back asks, and says the whole history is kept and can be put back", Backups.goBackText(when, z),
+        eq("backups: going back asks, and says the whole history is kept and can be put back, and the phone's period log stays (#252)", Backups.goBackText(when, z),
             "Your history is replaced by this copy from 29 Oct. First your whole history as it is now is kept as \"Copy from before going back\", "
-            + "so you can put it back from this card.");
+            + "so you can put it back from this card. Period days logged or removed on this phone since the copy are kept.");
         check("backups: the going back question names the copy's line", Backups.goBackText(when, z).contains(Backups.backLine(when, 1, z).substring(0, 26)));
         eq("backups: status after a copy", Backups.status(when, 210 * mb, 5, null, z), "Last copy: 29 Oct 03:12, 210 MB, 5 kept");
         eq("backups: status before the first copy", Backups.status(0, 0, 0, null, z), "No copy yet. The first one is made the next time the phone charges.");

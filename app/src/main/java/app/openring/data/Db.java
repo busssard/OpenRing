@@ -24,7 +24,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 7;
+    static final int VERSION = 8;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -93,6 +93,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo5(db);
         upgradeTo6(db);
         upgradeTo7(db);
+        upgradeTo8(db);
     }
 
     @Override
@@ -103,6 +104,32 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 5) upgradeTo5(db);
         if (oldV < 6) upgradeTo6(db);
         if (oldV < 7) upgradeTo7(db);
+        if (oldV < 8) upgradeTo8(db);
+    }
+
+    /**
+     * v8: the period log (issue #252), see {@link Periods}. Calendar dates as text (yyyy-mm-dd), never unix times, so travel
+     * never moves a logged day. Only adds tables, each on its own ({@code IF NOT EXISTS}): safe to run twice, and an upgrade
+     * stopped after some of them goes on with the rest. Older databases (and restored older backups) get them empty.
+     * <ul>
+     * <li>{@code period_days}: one row per day; {@code flow} -1 removed by the person ("Nothing", a mark kept so a restore
+     * cannot bring the day back), 0 spotting, 1 light, 2 medium, 3 heavy; {@code src} 0 typed on this phone, else the
+     * import's id; {@code prev} the flow an import replaced (null: none); {@code made} unix seconds of the entry.</li>
+     * <li>{@code period_ends}: days the person marked as the end of a period.</li>
+     * <li>{@code period_temps}: imported basal temperatures (drip, phase 1b), one per day: {@code time} "HH:MM" or null,
+     * {@code c} degrees Celsius, {@code excluded} 1 when the source did not count it, {@code src} the import's id.</li>
+     * <li>{@code period_imports}: one row per import; {@code id} the import's time in milliseconds (an import made on
+     * another phone never shares it), {@code made} unix seconds, {@code days} and {@code temps} the rows it added.</li>
+     * </ul>
+     */
+    private static void upgradeTo8(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS period_days (day TEXT PRIMARY KEY, flow INTEGER NOT NULL, src INTEGER NOT NULL DEFAULT 0,"
+                + " prev INTEGER, made REAL NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS period_ends (day TEXT PRIMARY KEY, made REAL NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS period_temps (day TEXT PRIMARY KEY, time TEXT, c REAL NOT NULL, excluded INTEGER NOT NULL DEFAULT 0,"
+                + " src INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS period_imports (id INTEGER PRIMARY KEY, made REAL NOT NULL, days INTEGER NOT NULL DEFAULT 0,"
+                + " temps INTEGER NOT NULL DEFAULT 0)");
     }
 
     /**
@@ -1336,6 +1363,10 @@ public final class Db extends SQLiteOpenHelper {
         {"zones", 5, new String[] {"start", "stop", "id"}},
         {"screen_reads", 6, new String[] {"start", "stop"}},
         {"excluded", 7, new String[] {"start", "stop", "made", "note"}},
+        {"period_days", 8, new String[] {"day", "flow", "src", "prev", "made"}},
+        {"period_ends", 8, new String[] {"day", "made"}},
+        {"period_temps", 8, new String[] {"day", "time", "c", "excluded", "src"}},
+        {"period_imports", 8, new String[] {"id", "made", "days", "temps"}},
     };
 
     /**
@@ -1483,6 +1514,12 @@ public final class Db extends SQLiteOpenHelper {
      * Before the rename the real file is checkpointed ({@code wal_checkpoint(TRUNCATE)}), so all
      * of the old history sits in {@code openring.db} itself and its side files hold nothing that
      * {@link #recoverSwap} could lose.
+     *
+     * The one thing carried over (issue #252): the period log typed on this phone cannot be downloaded again, so its rows
+     * (days with their removal marks, ends, imported temperatures and imports) are read before the swap and written into
+     * the restored file, the phone's row winning on the same day, before {@code .old} goes. Ring data is never merged. A
+     * phone file that opens but whose log cannot be read refuses the restore before anything moves; any failure later
+     * puts the old file back with its log, like every other failure here.
      */
     public static synchronized void replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
         java.io.File dst = c.getDatabasePath(REAL);
@@ -1500,7 +1537,10 @@ public final class Db extends SQLiteOpenHelper {
             instance = null;
         }
         if (instance == null && dst.exists()) instance = new Db(c.getApplicationContext(), REAL);
+        // the period log typed on this phone (issue #252), read before anything moves; it goes into the restored file
+        Periods.Rows phoneLog = null;
         if (instance != null) {
+            boolean opened = false;
             try {
                 Cursor cp = instance.getWritableDatabase().rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null);
                 try {
@@ -1508,11 +1548,20 @@ public final class Db extends SQLiteOpenHelper {
                 } finally {
                     cp.close();
                 }
+                opened = true;
             } catch (RuntimeException e) {
-                // a history that cannot be opened has nothing left in its side files to keep
+                // a history that cannot be opened has nothing left in its side files to keep, nor a period log to read
             }
-            instance.close();
-            instance = null;
+            try {
+                if (opened) phoneLog = Periods.read(instance.getReadableDatabase());
+                mergeStep(MERGE_READ);
+            } catch (RuntimeException e) {
+                // nothing moved yet: the phone keeps everything as it is
+                throw new java.io.IOException("the period log on this phone could not be read", e);
+            } finally {
+                instance.close();
+                instance = null;
+            }
         }
         try {
             for (String s : SIDE) move(dst.getPath() + s, old + s);
@@ -1528,6 +1577,9 @@ public final class Db extends SQLiteOpenHelper {
             // opened and upgraded: it must now have every table and column of this version (issue #156)
             String missing = schemaProblem(instance.getReadableDatabase(), VERSION);
             if (missing != null) throw new java.io.IOException("the restored history is incomplete: " + missing);
+            // the phone's period rows win over the backup's on the same day, in one transaction (issue #252)
+            if (phoneLog != null) Periods.merge(instance.getWritableDatabase(), phoneLog);
+            mergeStep(MERGE_DONE);
         } catch (java.io.IOException | RuntimeException e) {
             if (instance != null) {
                 try {
@@ -1543,6 +1595,15 @@ public final class Db extends SQLiteOpenHelper {
         // side files first, the main .old last: while it exists, recoverSwap treats the swap as unfinished
         for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
         new java.io.File(old).delete();
+    }
+
+    /** The steps of the period merge in {@link #replaceWith} (issue #252), where a test can stop it. */
+    static final String MERGE_READ = "read", MERGE_WRITE = "write", MERGE_DONE = "done";
+    /** Tests only: the merge throws at this step, as a failure there would. */
+    static volatile String failMergeAt;
+
+    static void mergeStep(String step) throws java.io.IOException {
+        if (step.equals(failMergeAt)) throw new java.io.IOException("test stop at " + step);
     }
 
     /** Rename when the file exists; nothing to do when it does not. */
@@ -1567,12 +1628,30 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
-    /** Wipe everything (keeps nothing), in one transaction: a failure part way leaves everything as it was. */
+    /**
+     * The tables of one ring's history and what was worked out from it, emptied when a different ring is paired
+     * ({@link #resetRingData}). Every table of {@link #SCHEMA} is here or in {@link Periods#TABLES} (the pipeline test checks it).
+     */
+    static final String[] RING_TABLES = {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones", "screen_reads", "excluded"};
+
+    /** Wipe everything (keeps nothing, the period log too), in one transaction: a failure part way leaves everything as it was. */
     public void resetAll() {
+        delete(RING_TABLES, Periods.TABLES);
+    }
+
+    /**
+     * A different ring was paired: its history starts fresh, but the period log the person typed stays (issue #252). One
+     * transaction, like {@link #resetAll}.
+     */
+    public void resetRingData() {
+        delete(RING_TABLES);
+    }
+
+    private void delete(String[]... lists) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            for (String t : new String[] {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones", "screen_reads", "excluded"}) db.execSQL("DELETE FROM " + t);
+            for (String[] l : lists) for (String t : l) db.execSQL("DELETE FROM " + t);
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
