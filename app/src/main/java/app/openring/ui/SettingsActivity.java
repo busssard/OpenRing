@@ -719,17 +719,19 @@ public final class SettingsActivity extends Activity implements RingManager.List
      */
     void keepScroll(final View card) {
         if (card.getHeight() == 0) return;
-        final int y = scroll.getScrollY(), top = card.getTop(), before = card.getHeight();
+        final int before = card.getHeight();
         // the new height is known once the card is laid out; the scroll then follows in post() (CLAUDE.md lesson)
         card.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
                 v.removeOnLayoutChangeListener(this);
-                final int to = app.openring.core.ScrollKeep.after(y, top, before, b - t);
+                final int top = t, after = b - t;
                 scroll.post(new Runnable() {
                     @Override
                     public void run() {
-                        scroll.scrollTo(0, to);
+                        // from where the page is now, not where it was when the read began (review of #280): a jump
+                        // to a card (the settings extra, scrollToSection) or another card's correction in between stays
+                        scroll.scrollTo(0, app.openring.core.ScrollKeep.after(scroll.getScrollY(), top, before, after));
                     }
                 });
             }
@@ -1453,15 +1455,31 @@ public final class SettingsActivity extends Activity implements RingManager.List
             protected void onPostExecute(Preview r) {
                 previewReading = false;
                 if (isFinishing() || isDestroyed()) return;
-                preview = r;
+                // a read from before Delete or going back to a copy (preview dropped since) is not shown: the redraw reads again
+                if (r.gen == previewGen || preview != null) preview = r;
                 redrawStageCard();
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /** The Ring card's event counts, read in the background (issue #198), then shown in place of "counting...". */
-    void fillCounts(final LinearLayout card, final LinearLayout counts) {
+    void fillCounts(LinearLayout card, LinearLayout counts) {
+        countsCard = card;
         countsBox = counts;
+        if (countsReading) { // one count at a time (review of #280): this page's count follows the running one
+            countsAgain = true;
+            return;
+        }
+        readCounts();
+    }
+
+    private boolean countsReading, countsAgain;
+    private LinearLayout countsCard;
+
+    private void readCounts() {
+        countsReading = true;
+        countsAgain = false;
+        final LinearLayout card = countsCard, counts = countsBox;
         final android.content.Context ctx = getApplicationContext();
         new AsyncTask<Void, Void, Object>() {
             @Override
@@ -1475,7 +1493,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
             @Override
             protected void onPostExecute(Object r) {
-                if (isFinishing() || isDestroyed() || countsBox != counts) return; // the page was built again meanwhile
+                countsReading = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (countsAgain || countsBox != counts) { // the page was built again meanwhile (after a sync or Delete): count again
+                    readCounts();
+                    return;
+                }
                 // one more line (or the warning): what is below stays still; one line keeps the card's height
                 if (!(r instanceof Db.Counts) || ((Db.Counts) r).undated > 0) keepScroll(card);
                 counts.removeAllViews();
