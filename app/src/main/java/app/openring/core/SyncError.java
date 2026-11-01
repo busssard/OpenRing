@@ -13,7 +13,7 @@ public final class SyncError {
     private SyncError() {}
 
     public enum Kind { BLUETOOTH_OFF, NO_BLUETOOTH, NOT_FOUND, NOT_REACHED, BROKE_OFF, CONNECTION_SETUP, PAIRING, NOT_A_RING,
-        KEY_REFUSED, RING_RESET, NO_KEY, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, KEY_NOT_KEPT, KEY_NOT_SAVED, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, REANALYSING, UNKNOWN }
+        KEY_REFUSED, RING_RESET, NO_KEY, KEY_UNREADABLE, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, KEY_NOT_KEPT, KEY_NOT_SAVED, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, REANALYSING, UNKNOWN }
 
     /** What the ring was doing: a sync, pairing in Setup, an action in Settings, live heart rate or game motion. */
     public enum Task { SYNC, PAIR, ACTION, LIVE }
@@ -109,6 +109,7 @@ public final class SyncError {
             case KEY_REFUSED:
             case RING_RESET:
             case NO_KEY:
+            case KEY_UNREADABLE:
             case DEMO:
                 return false;
             default:
@@ -132,6 +133,7 @@ public final class SyncError {
         if (s.startsWith("demo mode")) return Kind.DEMO;
         if (s.startsWith(REANALYSING.toLowerCase(Locale.ROOT))) return Kind.REANALYSING;
         if (s.startsWith("no ring key saved")) return Kind.NO_KEY;
+        if (s.startsWith(KeyState.UNREADABLE_RAW.toLowerCase(Locale.ROOT))) return Kind.KEY_UNREADABLE;
         if (s.contains("ring is busy")) return Kind.BUSY;
         if (s.equals("sync stopped") || s.equals("interrupted") || s.equals("cancelled")) return Kind.STOPPED;
         if (s.contains("has no bluetooth")) return Kind.NO_BLUETOOTH;
@@ -183,6 +185,7 @@ public final class SyncError {
             case RING_RESET: return pair ? "Your ring was factory reset and has no key yet. Use Pair and create a new key, or tick Install this key on a factory reset ring."
                     : "Your ring was factory reset and has no key yet. " + SETUP_AGAIN;
             case NO_KEY: return "No ring key is saved on this phone. Finish the setup first.";
+            case KEY_UNREADABLE: return KeyState.PLAIN;
             case BUSY: return sync ? "The ring is busy with live heart rate or a game. Sync again in a minute."
                     : "The ring is busy with a sync, live heart rate or a game. Try again in a minute.";
             case STOPPED: return sync ? "The sync was stopped. Sync again when you like." : "This was stopped before it finished. Try again when you like.";

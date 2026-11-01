@@ -44,7 +44,7 @@ public final class Backup {
     public static void write(Context c, OutputStream os, boolean withHistory) throws IOException {
         Prefs p = Prefs.of(c);
         byte[] key = p.loadKey();
-        if (key == null) throw new IOException("no ring key saved on this phone");
+        if (key == null) throw new IOException(p.hasKey() ? "this phone cannot read the saved ring key" : "no ring key saved on this phone");
         File snap = withHistory ? Exporter.snapshot(c) : null;
         try {
             write(p, key, os, snap);

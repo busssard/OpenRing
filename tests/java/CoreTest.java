@@ -896,8 +896,40 @@ public class CoreTest {
         }
     }
 
+    /** Issue #199: a saved key this phone cannot read is not "no key", says so plainly and is never retried. */
+    static void keyState199() {
+        eq("key state: nothing stored", KeyState.of(false, false), KeyState.NONE);
+        eq("key state: nothing stored, nothing read", KeyState.of(false, true), KeyState.NONE);
+        eq("key state: stored and read", KeyState.of(true, true), KeyState.READABLE);
+        eq("key state: stored, not read", KeyState.of(true, false), KeyState.UNREADABLE);
+        // the main screen opens Setup by itself as before, never for an unreadable key
+        check("key state: not set up opens Setup", KeyState.opensSetup(false, false, KeyState.READABLE, false));
+        check("key state: no key opens Setup", KeyState.opensSetup(false, true, KeyState.NONE, false));
+        check("key state: a key page not left opens Setup", KeyState.opensSetup(false, true, KeyState.READABLE, true));
+        check("key state: a readable key stays", !KeyState.opensSetup(false, true, KeyState.READABLE, false));
+        check("key state: an unreadable key stays on the main screen", !KeyState.opensSetup(false, true, KeyState.UNREADABLE, false));
+        check("key state: an unreadable key never opens the key page", !KeyState.opensSetup(false, true, KeyState.UNREADABLE, true));
+        check("key state: not set up with an unreadable key opens Setup", KeyState.opensSetup(false, false, KeyState.UNREADABLE, false));
+        check("key state: demo never opens Setup", !KeyState.opensSetup(true, false, KeyState.NONE, true));
+        check("key state: only a readable key syncs", KeyState.syncs(KeyState.READABLE) && !KeyState.syncs(KeyState.NONE) && !KeyState.syncs(KeyState.UNREADABLE));
+        eq("key state: no key text as before", KeyState.missing(false), "No ring key saved. Finish setup first.");
+        eq("key state: unreadable text", KeyState.missing(true), KeyState.UNREADABLE_RAW);
+        eq("key state: no key kind", SyncError.kind(KeyState.missing(false)), SyncError.Kind.NO_KEY);
+        eq("key state: unreadable kind", SyncError.kind(KeyState.missing(true)), SyncError.Kind.KEY_UNREADABLE);
+        eq("key state: unreadable plain for a sync", SyncError.plain(KeyState.missing(true)), KeyState.PLAIN);
+        eq("key state: unreadable plain for an action", SyncError.plain(KeyState.missing(true), SyncError.Task.ACTION), KeyState.PLAIN);
+        check("key state: an unreadable key is not retried", !SyncError.retryable(KeyState.missing(true), true));
+        check("key state: a failed sync with an unreadable key gets a notice", KeyState.PLAIN.equals(SyncError.failureNotice(false, KeyState.missing(true))));
+        for (String x : KeyState.texts()) {
+            check("key state: plain, no dash as punctuation: " + x, !x.isEmpty() && !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014"));
+        }
+        check("key state: the plain sentences say what to do", KeyState.PLAIN.contains("enter the key again") && KeyState.STATUS.contains("Tap here")
+                && KeyState.SETUP_TEXT.contains("saved key stays") && KeyState.SYNC_TEXT.contains("saved key stays"));
+    }
+
     public static void main(String[] args) throws Exception {
         permissionSettings();
+        keyState199();
         protocol();
         history();
         bundles();

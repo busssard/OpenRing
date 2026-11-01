@@ -30,6 +30,8 @@ public final class SetupActivity extends Activity {
     private String pairedMessage = "Paired";
     /** Android no longer asks for Bluetooth access, and whether its last answer was a refusal without explanation (issue #186). */
     private boolean permissionBlocked, quietDenial;
+    /** Opened for a saved key this phone cannot read (issue #199): straight to "Connect your ring", Back returns to the app. */
+    private boolean rekey;
     private static final int RESTORE = 21;
     private TextView restoreStatus;
 
@@ -344,6 +346,7 @@ public final class SetupActivity extends Activity {
             // a turn of the phone keeps the way to the app's settings (review of #279)
             permissionBlocked = b.getBoolean("permissionBlocked", false);
             quietDenial = b.getBoolean("quietDenial", false);
+            rekey = b.getBoolean("rekey", false);
         }
         Object last = getLastNonConfigurationInstance();
         restore = last instanceof Restore ? (Restore) last : new Restore();
@@ -353,7 +356,14 @@ public final class SetupActivity extends Activity {
         RingManager.get(this).addListener(ringStatus);
         // a pairing whose key page was not left yet, also after Android ended the app (issue #218)
         Prefs pr = Prefs.of(this);
-        if (step != 5 && pr.pairUnseen() != null && pr.hasKey()) {
+        int keyState = pr.keyState();
+        if (b == null && !pr.demo() && pr.setupDone() && keyState == app.openring.core.KeyState.UNREADABLE) {
+            // the profile is there already; the saved key stays until a new one works with the ring (issue #199)
+            rekey = true;
+            step = Permissions.granted(this) ? 3 : 1;
+        }
+        // never the key page with a key this phone cannot show (issue #199)
+        if (step != 5 && pr.pairUnseen() != null && keyState == app.openring.core.KeyState.READABLE) {
             step = 5;
             pairedMessage = pr.pairUnseen();
         }
@@ -371,14 +381,14 @@ public final class SetupActivity extends Activity {
         if (Permissions.granted(this)) {
             permissionBlocked = quietDenial = false;
             if (step == 1) {
-                step = 2;
+                step = afterPermissions();
                 show();
                 return;
             }
         }
         Prefs p = Prefs.of(this);
         String unseen = p.pairUnseen();
-        if (step != 5 && p.hasKey() && (unseen != null || step >= 3 && p.setupDone())) {
+        if (step != 5 && p.keyState() == app.openring.core.KeyState.READABLE && (unseen != null || step >= 3 && p.setupDone())) {
             step = 5;
             if (unseen != null) pairedMessage = unseen;
             show();
@@ -446,12 +456,22 @@ public final class SetupActivity extends Activity {
         out.putString("paired", pairedMessage);
         out.putBoolean("permissionBlocked", permissionBlocked);
         out.putBoolean("quietDenial", quietDenial);
+        out.putBoolean("rekey", rekey);
+    }
+
+    /** The page after Bluetooth access: the profile, or "Connect your ring" when only the key is entered again (issue #199). */
+    int afterPermissions() {
+        return rekey ? 3 : 2;
     }
 
     @Override
     public void onBackPressed() {
         if (step == 5) {
             Prefs.of(this).clearPairUnseen();
+            startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            finish();
+        } else if (rekey) {
+            // back to the app with the saved key as it was (issue #199)
             startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
             finish();
         } else if (step > 0) {
@@ -570,7 +590,7 @@ public final class SetupActivity extends Activity {
 
     void permissions() {
         if (Permissions.granted(this)) {
-            step = 2;
+            step = afterPermissions();
             show();
             return;
         }
@@ -610,7 +630,7 @@ public final class SetupActivity extends Activity {
         if (step != 1) return;
         quietDenial = a.quiet;
         if (Permissions.granted(this)) {
-            step = 2;
+            step = afterPermissions();
             show();
         } else if (a.blocked) {
             permissionBlocked = true;
@@ -675,6 +695,15 @@ public final class SetupActivity extends Activity {
         LinearLayout l = page("Connect your ring",
                 "The ring only talks to apps that know its 16 byte pairing key. Choose how to get one. Put the ring on its charger next to the phone, "
                         + "and close the official Oura app so it does not hold the Bluetooth link.");
+
+        if (!Prefs.of(this).demo() && Prefs.of(this).keyState() == app.openring.core.KeyState.UNREADABLE) {
+            // the saved key stays as it is: only a key the ring accepts or a restore replaces it (issue #199)
+            LinearLayout u = Ui.card(this);
+            u.addView(Ui.h2(this, app.openring.core.KeyState.SETUP_TITLE));
+            u.addView(Ui.gap(this, 4));
+            u.addView(Ui.body(this, app.openring.core.KeyState.SETUP_TEXT));
+            l.addView(u);
+        }
 
         keptCard = Ui.card(this);
         l.addView(keptCard);

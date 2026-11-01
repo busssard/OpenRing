@@ -339,6 +339,18 @@ public final class RingManager {
         public int events;
     }
 
+    /**
+     * The saved key for a ring task; without one it fails with the raw text of {@code core/KeyState} (no key, or a key
+     * this phone cannot read, issue #199) instead of passing null to the ring.
+     */
+    private byte[] savedKey() throws IOException {
+        Prefs prefs = Prefs.of(ctx);
+        byte[] key = prefs.loadKey();
+        if (key != null) return key;
+        if (prefs.hasKey()) log("the saved ring key cannot be read on this phone: " + Prefs.keyError());
+        throw new IOException(app.openring.core.KeyState.missing(prefs.hasKey()));
+    }
+
     /** Full sync plus analysis. Blocks; call from a background thread. */
     public SyncResult syncBlocking() {
         return syncBlocking(new SyncTicket());
@@ -354,7 +366,9 @@ public final class RingManager {
         }
         byte[] key = prefs.loadKey();
         if (key == null) {
-            res.message = "No ring key saved. Finish setup first.";
+            // a key this phone cannot read is not "no key" (issue #199); it stays as it is
+            res.message = app.openring.core.KeyState.missing(prefs.hasKey());
+            if (prefs.hasKey()) log("the saved ring key cannot be read on this phone: " + Prefs.keyError());
             return res;
         }
         // counted from here, also while it waits for the ring, so busy() sees it (issue #43). busy()
@@ -819,7 +833,7 @@ public final class RingManager {
             public String run() throws Exception {
                 Session s = open(false, null);
                 try {
-                    s.client.authenticate(Prefs.of(ctx).loadKey());
+                    s.client.authenticate(savedKey());
                     StringBuilder sb = new StringBuilder();
                     for (int f : FEATURES) {
                         int[] st = s.client.featureStatus(f);
@@ -845,7 +859,7 @@ public final class RingManager {
             public String run() throws Exception {
                 Session s = open(false, null);
                 try {
-                    s.client.authenticate(Prefs.of(ctx).loadKey());
+                    s.client.authenticate(savedKey());
                     if (!s.client.setFeatureMode(feature, mode)) throw new IOException("the ring did not accept the change");
                     return "Saved on the ring";
                 } finally {
@@ -876,7 +890,7 @@ public final class RingManager {
                         }
                         throw new IOException("Refusing: the ring that answered is " + serial + ", not " + confirmSerial);
                     }
-                    s.client.authenticate(prefs.loadKey());
+                    s.client.authenticate(savedKey());
                     setStatus("Erasing the ring");
                     s.client.factoryReset();
                     prefs.clearKey();
@@ -972,7 +986,7 @@ public final class RingManager {
                     post(token, "Connecting to your ring");
                     s = open(false, null);
                     leftCheck(token, "while connecting");
-                    s.client.authenticate(Prefs.of(ctx).loadKey());
+                    s.client.authenticate(savedKey());
                     leftCheck(token, "while checking the key");
                     // fresh data first: it tells whether the ring is on a finger right now
                     post(token, "Checking the ring");
@@ -1306,7 +1320,7 @@ public final class RingManager {
                     if (token != fingerToken.get()) throw new IOException("cancelled");
                     Prefs prefs = Prefs.of(ctx);
                     s = open(false, null);
-                    s.client.authenticate(prefs.loadKey());
+                    s.client.authenticate(savedKey());
                     int charging = -1;
                     try {
                         int[] b = s.client.battery();
@@ -1525,7 +1539,7 @@ public final class RingManager {
                 try {
                     motionState("Connecting to your ring", false);
                     s = open(false, null);
-                    s.client.authenticate(Prefs.of(ctx).loadKey());
+                    s.client.authenticate(savedKey());
                     long lastStart = 0;
                     int frames = 0, logged = 0;
                     long started = System.currentTimeMillis();

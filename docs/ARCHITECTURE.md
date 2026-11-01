@@ -33,7 +33,10 @@ Nothing leaves the phone: the app has no internet permission.
 * Framing: `tag | length | payload`, little endian. Extended operations sit under tag `0x2f`.
 * Authentication: the app asks for a nonce (`2f 01 2b`), the ring replies with 15 bytes, and the app
   answers with the nonce padded to 16 bytes and encrypted with the 16 byte key (AES/ECB, `2f 11 2d`). Pairing a reset ring writes a new key (`24 10 <key>`).
-  The key is stored encrypted with an Android Keystore key (`Prefs`).
+  The key is stored encrypted with an Android Keystore key (`Prefs`). The Keystore key does not move with a phone to
+  phone transfer, so a stored key can be unreadable (`core/KeyState`, issue #199): that is not "no key". The main
+  screen says so and leads to Setup, no sync starts, and the stored key is never deleted or overwritten for it; only a
+  key the ring accepted, a restore or "Use a different key or ring" replace it.
   Pairing (`core/Pairing`, issue #218) stores a key on the phone (the kept key, `Prefs.keepPendingKey`, written with
   `commit`, with the serial of the ring it goes to) before it writes it to the ring, and nothing goes to the ring when that
   fails. A kept key is never overwritten: "Pair and create a new key" uses it again (also on another ring, which then shares

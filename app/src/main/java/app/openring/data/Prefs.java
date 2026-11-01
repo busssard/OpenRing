@@ -213,7 +213,20 @@ public final class Prefs {
     public void setSetupDone(boolean b) { sp.edit().putBoolean("setup_done", b).apply(); }
 
     // ---- auth key ----
+    /** Whether a key is stored, also one this phone cannot read ({@link #keyState}, issue #199). */
     public boolean hasKey() { return sp.contains("key_enc"); }
+
+    /**
+     * {@code core/KeyState}: no key, a key this phone can read, or a stored key it cannot read (after a phone to phone
+     * transfer the Keystore lock stays behind, issue #199). Reads the key once; never changes what is stored.
+     */
+    public int keyState() {
+        return app.openring.core.KeyState.of(hasKey(), loadKey() != null);
+    }
+
+    /** Why the last stored key could not be read (exception and message, for the Bluetooth log), null when none failed. */
+    public static String keyError() { return keyError; }
+    private static volatile String keyError;
 
     public void saveKey(byte[] key16) {
         String[] e = encrypt(key16);
@@ -302,6 +315,8 @@ public final class Prefs {
             c.init(Cipher.DECRYPT_MODE, wrapKey(), new GCMParameterSpec(128, iv));
             return c.doFinal(Base64.decode(enc, Base64.NO_WRAP));
         } catch (Exception e) {
+            // the stored value stays as it is: a lock that fails only for a while reads it again later (issue #199)
+            keyError = e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
             return null;
         }
     }

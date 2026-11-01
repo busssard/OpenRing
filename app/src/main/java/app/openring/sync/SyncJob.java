@@ -39,7 +39,8 @@ public final class SyncJob extends JobService {
             known = false;
         }
         Prefs prefs = Prefs.of(c);
-        switch (BackgroundJob.decide(prefs.backgroundSync() && prefs.hasKey(), known, pending, wanted)) {
+        // a key this phone cannot read could only fail every few hours; the job comes back once it is entered again (issue #199)
+        switch (BackgroundJob.decide(prefs.backgroundSync() && app.openring.core.KeyState.syncs(prefs.keyState()), known, pending, wanted)) {
             case CANCEL:
                 js.cancel(JOB_ID);
                 RingManager.get(c).log("background sync off");

@@ -421,22 +421,33 @@ public final class SettingsActivity extends Activity implements RingManager.List
         key.addView(Ui.body(this, "Keep a copy of the key. Without it you would have to factory reset the ring to connect again. "
                 + "A backup file restores the app on a new phone from the setup screen (Restore from a backup)."));
         key.addView(Ui.gap(this, 6));
-        final TextView kt = Ui.text(this, "•••• tap Show key ••••", 15, Ui.TEXT, android.graphics.Typeface.MONOSPACE);
-        kt.setTextIsSelectable(true);
-        key.addView(kt);
-        pair(key, "Show key", Ui.TEXT_2, new Runnable() {
-            @Override
-            public void run() {
-                kt.setText(Hex.encode(p.loadKey()));
-            }
-        }, "Copy key", Ui.TEXT_2, new Runnable() {
-            @Override
-            public void run() {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                cm.setPrimaryClip(ClipData.newPlainText("Ring key", Hex.encode(p.loadKey())));
-                say("Copied");
-            }
-        });
+        if (!p.demo() && p.keyState() == app.openring.core.KeyState.UNREADABLE) {
+            // a saved key this phone cannot read shows no empty key; it stays until a new one works (issue #199)
+            key.addView(Ui.text(this, app.openring.core.KeyState.SETTINGS_TEXT, 14, Ui.WARN, Ui.REGULAR));
+            small(key, app.openring.core.KeyState.BUTTON, Ui.SLEEP, new Runnable() {
+                @Override
+                public void run() {
+                    startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
+                }
+            });
+        } else {
+            final TextView kt = Ui.text(this, "•••• tap Show key ••••", 15, Ui.TEXT, android.graphics.Typeface.MONOSPACE);
+            kt.setTextIsSelectable(true);
+            key.addView(kt);
+            pair(key, "Show key", Ui.TEXT_2, new Runnable() {
+                @Override
+                public void run() {
+                    kt.setText(Hex.encode(p.loadKey()));
+                }
+            }, "Copy key", Ui.TEXT_2, new Runnable() {
+                @Override
+                public void run() {
+                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("Ring key", Hex.encode(p.loadKey())));
+                    say("Copied");
+                }
+            });
+        }
         // a key kept from a pairing that did not finish, for a ring that may hold it (issue #218)
         final byte[] keptKey = p.demo() ? null : p.pendingKey();
         if (keptKey != null && !java.util.Arrays.equals(keptKey, p.loadKey())) {
