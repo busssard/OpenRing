@@ -110,7 +110,8 @@ the keep list `Periods.TABLES`, so a new table is wiped by default and keeping o
 test fills every table that really is in the file (`sqlite_master`, not `SCHEMA`) and checks Delete all empties each.
 After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(TRUNCATE)` (in WAL mode a checkpoint
 before VACUUM leaves the file at full size), so the file gives the history's space back; an error there is ignored
-because the delete is already complete, and a read open at that moment only delays the shrink to the next checkpoint. The Data check never names them, their dates or their counts.
+because the delete is already complete, and a read open at that moment only delays the shrink to the next checkpoint. The Data check never names the period tables,
+their dates or their counts.
 
 Demo mode uses a separate file (`openring-demo.db`), so demo and real data never mix. Demo mode never uses the ring
 (issue #185): `RingManager.open`, the start of every connection, refuses while demo mode is on or the demo file is open
