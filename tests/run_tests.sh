@@ -2,7 +2,13 @@
 # Compile and run the JVM tests for the protocol and analysis core (no Android needed).
 set -e
 cd "$(dirname "$0")/.."
-OUT=${TEST_OUT:-$(mktemp -d)}
+if [ -z "${TEST_OUT:-}" ]; then
+  OUT=$(mktemp -d)
+  trap 'rm -rf "$OUT"' EXIT
+  trap 'exit 130' INT TERM
+else
+  OUT=$TEST_OUT
+fi
 mkdir -p "$OUT"
 # ui/Explain.java has no Android imports; it is compiled here so CoreTest can check its texts
 if grep -q '^import android' app/src/main/java/app/openring/ui/Explain.java; then
