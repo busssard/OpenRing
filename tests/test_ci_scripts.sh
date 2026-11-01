@@ -123,14 +123,15 @@ echo 1 > "$t/s/settings-games.png"
 out=$("$SAME" "$t/s" 2>&1); code=$?
 check "identical shots fail and are named" '[ $code = 1 ] && echo "$out" | grep -q "Screenshots a and settings-games are the same picture"'
 
-# dial_touch.py (issues #109, #229): made up screen pictures of 200 x 200 px with the clock's middle at
+# dial_touch.py (issues #109, #229, #261): made up screen pictures of 200 x 200 px with the clock's middle at
 # 100 100 and a circle of 60 px; a ring from 55 to 65 px drawn from 30 to 300 degrees (clockwise from the
-# top) in a colour blended over the card, the rest the card
+# top, or other angles given) in a colour blended over the card, the rest the card
 DIAL="$here/.github/scripts/dial_touch.py"
-picture() {  # $1 file, $2 colour (hex, empty for none), $3 strength
-  python3 -I - "$1" "$2" "$3" <<'PY'
+picture() {  # $1 file, $2 colour (hex, empty for none), $3 strength, $4 $5 from and to angle (30 300)
+  python3 -I - "$1" "$2" "$3" "${4:-30}" "${5:-300}" <<'PY'
 import math, struct, sys
 path, colour, a = sys.argv[1], sys.argv[2], float(sys.argv[3])
+start, end = float(sys.argv[4]), float(sys.argv[5])
 card = (0x13, 0x1A, 0x27)
 w = h = 200
 px = bytearray(bytes((card[0], card[1], card[2], 255)) * (w * h))
@@ -141,7 +142,7 @@ if colour:
         for x in range(w):
             d = math.hypot(x - 100, y - 100)
             ang = math.degrees(math.atan2(x - 100, 100 - y)) % 360
-            if 55 <= d <= 65 and 30 <= ang <= 300:
+            if 55 <= d <= 65 and (start <= ang <= end if start <= end else (ang >= start or ang <= end)):
                 o = (y * w + x) * 4
                 px[o:o + 3] = bytes(rgb)
 open(path, "wb").write(struct.pack("<IIII", w, h, 1, 1) + bytes(px))
@@ -163,7 +164,31 @@ picture "$t/card.raw" "" 1
 out=$(python3 -I "$DIAL" "$t/card.raw" 100 100 60)
 check "dial: an empty card prints nothing" '[ -z "$out" ]'
 out=$(python3 -I "$DIAL" "$t/card.raw" 2>&1); code=$?
-check "dial: a circle off the picture (default 540 950 300) prints nothing" '[ $code = 0 ] && [ -z "$out" ]'
+check "dial: a circle off the picture (default 540 1047 300) prints nothing" '[ $code = 0 ] && [ -z "$out" ]'
+# a ring across midnight (issue #261): from 300 to 30 degrees, the trailing edge is the one near 30
+picture "$t/midnight.raw" 7CC8FF 1 300 30
+out=$(python3 -I "$DIAL" "$t/midnight.raw" 100 100 60); a=$(angle "$out")
+check "dial: a ring across 0 degrees finds its edge near 30" '[ -n "$a" ] && [ "$a" -ge 27 ] && [ "$a" -le 30 ]'
+# lit all round there is no trailing edge
+picture "$t/full.raw" 7CC8FF 1 0 360
+out=$(python3 -I "$DIAL" "$t/full.raw" 100 100 60)
+check "dial: a ring lit all round prints nothing" '[ -z "$out" ]'
+# what a failed screencap gives: the header only (1080 x 2400, no pixels), or not even that
+python3 -I -c 'import struct, sys; open(sys.argv[1], "wb").write(struct.pack("<II", 1080, 2400))' "$t/head.raw"
+out=$(python3 -I "$DIAL" "$t/head.raw" 2>&1); code=$?
+check "dial: a header only file prints nothing" '[ $code = 0 ] && [ -z "$out" ]'
+: > "$t/empty.raw"
+out=$(python3 -I "$DIAL" "$t/empty.raw" 2>&1); code=$?
+check "dial: an empty file prints nothing" '[ $code = 0 ] && [ -z "$out" ]'
+# --view: the circle from the clock's bounds in the screen dump. A made up clock view of 180 x 160 px at
+# density 85 (so its 300 dp are 160 px): r = 80 - 18 * 85 / 160 = 70.4, the circle 0.87 r = 61 px around
+# 100 100, on the ring from 55 to 65 px
+out=$(python3 -I "$DIAL" "$t/line.raw" --view 10 20 190 180 85 2>&1); a=$(angle "$out")
+check "dial: --view finds the line from the clock's bounds" '[ -n "$a" ] && [ "$a" -ge 297 ] && [ "$a" -le 300 ]'
+out=$(python3 -I "$DIAL" "$t/card.raw" --view 10 20 190 180 85 2>&1); a=$(angle "$out")
+check "dial: --view with no line touches 13:00" '[ "$a" = 195 ]'
+out=$(python3 -I "$DIAL" "$t/line.raw" --view 10 20 190 120 85 2>&1); code=$?
+check "dial: --view with a clock cut off at the screen edge prints nothing" '[ $code = 0 ] && [ -z "$out" ]'
 
 echo "CI scripts: $passes passed, $fails failed"
 [ "$fails" = 0 ]

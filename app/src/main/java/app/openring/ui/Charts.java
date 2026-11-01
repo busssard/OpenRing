@@ -998,6 +998,8 @@ public final class Charts {
             this.total = total;
             this.sub = sub;
             t.setTextAlign(Paint.Align.CENTER);
+            // read out by TalkBack, and how the emulator test finds the clock on the screen (issue #261)
+            setContentDescription("Phone use clock, midnight at the top");
             prepare();
         }
 
