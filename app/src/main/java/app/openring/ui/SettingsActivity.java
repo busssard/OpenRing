@@ -1614,8 +1614,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     void reanalyse() {
-        // a sync or Live storing data finishes first (issue #230); say so instead of waiting without a word
-        toast(RingManager.get(this).busy() ? Texts.REANALYSE_WAITS : "Re analysing all nights, this can take a few minutes.");
+        // a sync or Live storing data finishes first (issue #230); say so instead of waiting without a word, in full (issue #274)
+        say(RingManager.get(this).busy() ? Texts.REANALYSE_WAITS : "Re analysing all nights, this can take a few minutes.");
         new AsyncTask<Void, Void, Boolean>() {
             @Override
             protected Boolean doInBackground(Void... v) {

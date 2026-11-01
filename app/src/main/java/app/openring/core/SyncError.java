@@ -66,6 +66,15 @@ public final class SyncError {
     public static final String BLUETOOTH_OFF_TEXT = "Bluetooth is off";
 
     /**
+     * The text for an unchecked exception from Android's Bluetooth scanner, or null when it is something else (issue #273):
+     * {@code startScan} and {@code stopScan} throw an {@link IllegalStateException} when Bluetooth was switched off after
+     * the check, which is "Bluetooth is off" like the check itself, not an unexpected problem.
+     */
+    public static String scannerError(RuntimeException e) {
+        return e instanceof IllegalStateException ? BLUETOOTH_OFF_TEXT : null;
+    }
+
+    /**
      * The error a failed sync attempt keeps: with the phone's Bluetooth off right after it, "Bluetooth is off" (the
      * attempt's own text, such as "ring disconnected", would send the person to the wrong advice); otherwise its text.
      */

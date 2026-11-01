@@ -1473,7 +1473,8 @@ public class CoreTest {
 
         // every toast in the app: literal texts fit in two lines, no raw error text on any message (issue #89)
         java.util.regex.Pattern literal = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
-        int toasts = 0;
+        int toasts = 0, toastConsts = 0;
+        java.util.regex.Pattern toastConst = java.util.regex.Pattern.compile("\\b(Texts|Backups|SyncError)\\.([A-Z][A-Z0-9_]*)\\b(?!\\s*\\()");
         List<java.io.File> files = new ArrayList<java.io.File>();
         javaFiles(new java.io.File("app/src/main/java/app/openring"), files);
         check("toast scan: app sources found", files.size() > 0);
@@ -1495,10 +1496,23 @@ public class CoreTest {
                         toasts++;
                         check("toast fits in two lines: " + m.group(1), Texts.fitsToast(m.group(1)));
                     }
+                    // a constant of core's text classes is measured by its value, so no long one slips past (issue #274)
+                    java.util.regex.Matcher c = toastConst.matcher(literal.matcher(args).replaceAll("\"\""));
+                    while (c.find()) {
+                        toastConsts++;
+                        Object v = null;
+                        try {
+                            v = Class.forName("app.openring.core." + c.group(1)).getField(c.group(2)).get(null);
+                        } catch (ReflectiveOperationException ignored) {
+                        }
+                        check("toast constant is a text: " + where, v instanceof String);
+                        check("toast constant fits in two lines: " + c.group(1) + "." + c.group(2), v instanceof String && Texts.fitsToast((String) v));
+                    }
                 }
             }
         }
         check("toast scan: toast texts found", toasts > 0);
+        check("toast scan: toast constants found", toastConsts > 0);
 
         // raw exception text built anywhere on a screen, also into a variable shown later (as the export and
         // repair messages did before #89): only log lines and the SyncError mapping may use it
@@ -1961,6 +1975,16 @@ public class CoreTest {
         eq("sync attempt: Bluetooth on keeps the text", SyncError.attemptError("ring disconnected", true), "ring disconnected");
         eq("sync attempt: Bluetooth off text reads as Bluetooth off", SyncError.kind(SyncError.BLUETOOTH_OFF_TEXT), SyncError.Kind.BLUETOOTH_OFF);
         check("sync attempt: Bluetooth off ends the sync", !SyncError.retryable(SyncError.attemptError("write failed (GATT status 133)", false), true));
+        // Bluetooth switched off while the scanner looks for the ring (issue #273): Android throws, which reached the
+        // sync's broad catch as an unexpected problem; the scanner now gives "Bluetooth is off" like its own check
+        RuntimeException off = new IllegalStateException("BT Adapter is not turned ON");
+        eq("scanner off: before, the broad catch's text read as unexpected", SyncError.plain("Unexpected error: " + off), unknown);
+        eq("scanner off: the scanner's exception is Bluetooth off", SyncError.scannerError(off), SyncError.BLUETOOTH_OFF_TEXT);
+        eq("scanner off: the plain Bluetooth off sentence", SyncError.plain(SyncError.scannerError(off)), "Bluetooth is off or not ready. Turn it on and sync again.");
+        check("scanner off: no further attempts", !SyncError.retryable(SyncError.scannerError(off), true));
+        eq("scanner off: the same sentence for Live", SyncError.plain(SyncError.scannerError(off), SyncError.Task.LIVE), "Bluetooth is off or not ready. Turn it on and try again.");
+        check("scanner off: other exceptions stay unexpected", SyncError.scannerError(new IllegalArgumentException("bad filter")) == null
+                && SyncError.scannerError(new SecurityException("no permission")) == null && SyncError.scannerError(null) == null);
         // the notice after a failed sync the person started: the whole plain sentence, none after a stop or success
         check("sync notice: none after a sync that worked", SyncError.failureNotice(true, "Sync complete") == null);
         check("sync notice: none after a stop", SyncError.failureNotice(false, "Sync stopped") == null && SyncError.failureNotice(false, "Interrupted") == null);
