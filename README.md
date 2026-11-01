@@ -99,9 +99,17 @@ makers. Google's own description: [developer verification FAQ](https://developer
 More in [SECURITY.md](SECURITY.md).
 </details>
 
+## Devices
+
+| Device | Status |
+| --- | --- |
+| Oura Ring 4 | Tested (firmware 2.6.7) |
+| Oura Ring 3 and Ring 5 | Should work (same Bluetooth protocol as far as known), not tested yet. Reports welcome |
+| Withings Steel HR and Steel HR Sport | Only the Watch check for now (Settings, Watch), no sync |
+
 ## Getting started
 
-Works with Oura Ring Gen 3, Ring 4 and Ring 5 (tested mostly on Ring 4). Or tap
+Works with Oura Ring Gen 3, Ring 4 and Ring 5 (see Devices above). Or tap
 **Just looking? Explore with demo data** on the first screen to look around without a ring.
 
 1. Allow Bluetooth access.
