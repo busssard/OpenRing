@@ -118,7 +118,7 @@ public final class Texts {
      * minutes have no values, so they are in the not worn minutes too, issue #254).
      */
     public static String movementShares(double wornMin, double notWornMin, String until, boolean leftOut) {
-        String s = "Shares of the time the ring was on" + (until == null ? "" : " up to " + until) + " (" + minutes(wornMin) + ").";
+        String s = "The percentages are of the time the ring was on" + (until == null ? "" : " up to " + until) + " (" + minutes(wornMin) + ").";
         if (Double.isNaN(notWornMin) || Math.round(notWornMin) < 1) return s;
         return s + (leftOut ? " Not worn or left out: " : " Not worn: ") + minutes(notWornMin) + ".";
     }

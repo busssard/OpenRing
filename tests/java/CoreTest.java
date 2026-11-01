@@ -1474,16 +1474,16 @@ public class CoreTest {
 
     /** The line under Daily movement says what its percentages are shares of (issue #212). */
     static void movementShares() {
-        eq("movement: ring on all day", Texts.movementShares(1440, 0, null, false), "Shares of the time the ring was on (24h 0m).");
-        eq("movement: not worn not stored", Texts.movementShares(1440, Double.NaN, null, false), "Shares of the time the ring was on (24h 0m).");
-        eq("movement: under a minute off", Texts.movementShares(1440, 0.4, null, false), "Shares of the time the ring was on (24h 0m).");
+        eq("movement: ring on all day", Texts.movementShares(1440, 0, null, false), "The percentages are of the time the ring was on (24h 0m).");
+        eq("movement: not worn not stored", Texts.movementShares(1440, Double.NaN, null, false), "The percentages are of the time the ring was on (24h 0m).");
+        eq("movement: under a minute off", Texts.movementShares(1440, 0.4, null, false), "The percentages are of the time the ring was on (24h 0m).");
         eq("movement: ring off for a while", Texts.movementShares(1270, 170, null, false),
-                "Shares of the time the ring was on (21h 10m). Not worn: 2h 50m.");
-        eq("movement: short times", Texts.movementShares(45, 15, null, false), "Shares of the time the ring was on (45 min). Not worn: 15 min.");
+                "The percentages are of the time the ring was on (21h 10m). Not worn: 2h 50m.");
+        eq("movement: short times", Texts.movementShares(45, 15, null, false), "The percentages are of the time the ring was on (45 min). Not worn: 15 min.");
         eq("movement: a day still running", Texts.movementShares(370, 60, "14:05", false),
-                "Shares of the time the ring was on up to 14:05 (6h 10m). Not worn: 1h 0m.");
+                "The percentages are of the time the ring was on up to 14:05 (6h 10m). Not worn: 1h 0m.");
         eq("movement: with a left out time", Texts.movementShares(1270, 170, null, true),
-                "Shares of the time the ring was on (21h 10m). Not worn or left out: 2h 50m.");
+                "The percentages are of the time the ring was on (21h 10m). Not worn or left out: 2h 50m.");
         // a day analysed at 14:05: the 595 minutes after it were stored as without values, they are not "not worn"
         double end = 86400, until = 86400 - 595 * 60;
         eq("not worn so far: future minutes dropped", Texts.notWornSoFar(655, until, 0, end), 60.0);
@@ -1501,7 +1501,7 @@ public class CoreTest {
         eq("not worn so far: unaligned analysis moment, ring on all the time", Texts.notWornSoFar(run.nonWearMin, run.totalUntil, start, start + 86400), 0.0);
         eq("not worn so far: unaligned, the line has no Not worn",
                 Texts.movementShares(run.inactiveMin, Texts.notWornSoFar(run.nonWearMin, run.totalUntil, start, start + 86400), "14:05", false),
-                "Shares of the time the ring was on up to 14:05 (14h 5m).");
+                "The percentages are of the time the ring was on up to 14:05 (14h 5m).");
         // the rows plus not worn are the day, minute by minute (Wellness, issues #112, #212)
         TS met = new TS();
         for (int m = 0; m < 600; m++) met.add(m * 60 + 10, m < 300 ? 1.2 : 2.0);
