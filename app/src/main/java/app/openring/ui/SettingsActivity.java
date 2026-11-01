@@ -1887,6 +1887,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         final boolean backup = code == BACKUP_KEY || code == BACKUP_FULL;
         // set when the copy of the history did not pass its check (issue #115): the file got nothing
         final boolean[] notChecked = {false};
+        final boolean[] keyUnreadable = {false};
         // bytes that reached the chosen file; a failure before the first one leaves an empty file
         final long[] written = {0};
         new AsyncTask<Void, Void, String>() {
@@ -1918,6 +1919,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         os.close();
                     }
                     return backup ? "Backup saved" : "Exported";
+                } catch (app.openring.data.Backup.KeyUnreadable e) {
+                    // its own sentence: every backup holds the key (issue #199, review of #281)
+                    RingManager.get(SettingsActivity.this).log("backup not saved: " + e.getMessage() + " (" + app.openring.data.Prefs.keyError() + ")");
+                    keyUnreadable[0] = true;
+                    removeEmpty(opened);
+                    return null;
                 } catch (Exporter.NotSaved e) {
                     RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " not saved: " + e.getMessage());
                     notChecked[0] = true;
@@ -1943,7 +1950,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
             @Override
             protected void onPostExecute(String r) {
-                if (r == null) problem(notChecked[0] ? Texts.notChecked(backup) : Texts.saveFailed(backup));
+                if (r == null) problem(keyUnreadable[0] ? app.openring.core.KeyState.BACKUP_TEXT : notChecked[0] ? Texts.notChecked(backup) : Texts.saveFailed(backup));
                 else say(r);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);

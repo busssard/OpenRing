@@ -923,6 +923,9 @@ public class CoreTest {
         for (String x : KeyState.texts()) {
             check("key state: plain, no dash as punctuation: " + x, !x.isEmpty() && !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014"));
         }
+        eq("key state: the backup reason (review of #281)", Backups.reason(Backups.KEY), "this phone cannot read the saved ring key, enter it again in Setup");
+        check("key state: the backup reason is not the folder's", !Backups.reason(Backups.KEY).equals(Backups.reason(Backups.WRITE)));
+        check("key state: the manual backup sentence says what to do", KeyState.BACKUP_TEXT.contains("Enter the key again"));
         check("key state: the plain sentences say what to do", KeyState.PLAIN.contains("enter the key again") && KeyState.STATUS.contains("Tap here")
                 && KeyState.SETUP_TEXT.contains("saved key stays") && KeyState.SYNC_TEXT.contains("saved key stays"));
     }

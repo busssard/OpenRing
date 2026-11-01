@@ -65,8 +65,12 @@ public final class KeyState {
     /** Settings, Key and backup, in place of the key. */
     public static final String SETTINGS_TEXT = "This phone cannot read the saved key. Enter it again to sync, your history stays.";
 
+    /** A backup file asked for in Settings while the key cannot be read (every backup holds the key, review of #281). */
+    public static final String BACKUP_TEXT = "No backup was saved, because this phone cannot read the saved ring key and every backup holds it. "
+            + "Enter the key again first (Key and backup, Enter the key again).";
+
     /** Every text above, for the tests (plain, no dashes as punctuation). */
     public static String[] texts() {
-        return new String[]{NO_KEY_RAW, UNREADABLE_RAW, PLAIN, STATUS, SYNC_TITLE, SYNC_TEXT, BUTTON, SETUP_TITLE, SETUP_TEXT, SETTINGS_TEXT};
+        return new String[]{NO_KEY_RAW, UNREADABLE_RAW, PLAIN, STATUS, SYNC_TITLE, SYNC_TEXT, BUTTON, SETUP_TITLE, SETUP_TEXT, SETTINGS_TEXT, BACKUP_TEXT};
     }
 }

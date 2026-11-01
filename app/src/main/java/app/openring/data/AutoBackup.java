@@ -148,7 +148,13 @@ public final class AutoBackup {
         boolean created = false;
         try {
             byte[] key = p.loadKey();
-            if (key == null) throw new IOException(p.hasKey() ? "this phone cannot read the saved ring key" : "no ring key saved on this phone");
+            if (key == null && p.hasKey()) {
+                // its own reason, not "the file could not be written": the folder is fine (issue #199, review of #281)
+                err = Backups.KEY;
+                if (log != null) log.log("automatic backup not made: this phone cannot read the saved ring key (" + Prefs.keyError() + ")");
+                return err;
+            }
+            if (key == null) throw new IOException("no ring key saved on this phone");
             List<String> present = folder.list();
             // a file of that name that the app did not write is never taken for one of its own (review of #259)
             if (present.contains(name) || present.contains(partial)) throw new IOException(name + " is there already");
