@@ -130,8 +130,10 @@ reads every row of the four period tables from the phone's file before the swap 
 read refuses the restore before anything moves), and after the restored file opened, upgraded (an older backup gets the
 tables first) and passed its checks, writes them into it in one transaction, each replacing the backup's row with the same
 key, so the phone wins on the same day and a day or end removed on the phone stays removed; only then `.old` goes. Any failure on
-the way puts the old file back with its log. A phone file that cannot be opened at all has no log to read and is replaced
-as before. Ring data is never merged. Going back to a phone copy (`AutoBackup.goBack`) runs the same swap. A backup holds every setting; restored numbers are kept in the ranges Settings
+the way puts the old file back with its log. A phone file that cannot be opened at all (for example a damaged one, kept
+since issue #255) has no log that can be read and is replaced as before: the restored file then holds only the backup's
+period log, so days typed on the phone after that backup are lost with the damaged file. Reading the tables of a damaged
+file anyway was left out on purpose (it can return wrong rows or fail half way; review of #275). Ring data is never merged. Going back to a phone copy (`AutoBackup.goBack`) runs the same swap. A backup holds every setting; restored numbers are kept in the ranges Settings
 allows, and the stage detail level comes along only with the history or onto a phone without nights (#33).
 
 Export database and a full backup never copy the live file (issue #115). `Exporter.snapshot` waits for a
@@ -514,19 +516,24 @@ Phase 1a is only the **Watch check** (Settings, Watch): it learns how the owner'
 pairing or sync is built. Nothing is paired, written to the watch (besides switching its notifications on) or stored.
 
 * **Flow** (`ui/WatchActivity`, `ble/WatchLink`): a 10 s scan without a filter (`RingScanner.scanAll`, counted in the
-  same budget of 4 starts per 30 s as the ring's scans, since Android blocks the sixth), strongest signal first. The
+  same budget of 4 starts per 30 s as the ring's scans, since Android blocks the sixth), strongest signal first once it
+  ends; while it runs a row keeps its place and new devices are added below (`WatchCheck.stableOrder`), so a tap checks
+  the row under the finger. The
   picked device gets one session of at most 30 s: connect (10 s at most, `TRANSPORT_LE`, no bond requested, balanced
   link speed), list every service and characteristic with its properties, read Device Information (model `0x2a24`,
   firmware `0x2a26`, hardware, software, maker; not the serial number) and Battery (`0x2a19`), switch on
   notifications or indications of every characteristic that sends and is not a standard 16 bit one, listen 10 s,
   disconnect and close. Standard ones are not listened to: they are documented, and the standard heart rate would
-  switch the sensor on and send values. Leaving the screen stops the scan and the session at once.
+  switch the sensor on and send values. Leaving the screen or the app stops the scan and the session at once; Android's
+  pairing dialog over the screen only stops the scan (`onPause`), the session goes on until `onStop`, so Cancel there
+  does not end the check.
 * **The ring always wins:** the session runs only when `RingGate.takeIfFree` gets the ring lock at once (no sync
   counted, no ring task holding it), and holds it until the link is closed, so the phone never keeps two links. When
   the ring is busy the screen says so. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s;
   the background job tries again at its next run).
 * **The report** (`core/WatchCheck`, kept in memory only): UUIDs (standard ones named, others as they are), property
-  names, model, firmware, battery, and per listened characteristic the number of messages, their lengths and only the
+  names, model, firmware, battery, whether the phone was paired with the watch before and is now (a pairing dialog
+  accepted during the check leaves a bond; the screen then tells how to remove it), and per listened characteristic the number of messages, their lengths and only the
   first 2 bytes of each (usually the kind of message). The full bytes are only in the second copy, marked private
   (Android 13 and newer hide it in the clipboard preview). At most 300 messages are kept per characteristic, and a
   report is cut at 30,000 characters.

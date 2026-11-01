@@ -155,6 +155,12 @@ public final class WatchLink {
             if (r.problem == null) r.problem = "Bluetooth stopped (" + e.getClass().getSimpleName() + ")";
         } finally {
             l.close();
+            // a pairing dialog accepted meanwhile leaves a bond: the report says so and the screen how to remove it
+            try {
+                r.bondedAfter = device.getBondState() == BluetoothDevice.BOND_BONDED;
+            } catch (RuntimeException e) {
+                r.bondedAfter = r.bondedBefore;
+            }
             log.log("watch check: closed" + (r.problem == null ? "" : ", " + r.problem));
         }
         return r;
