@@ -489,6 +489,42 @@ public class CoreTest {
         return NightAnalyzer.analyze(in);
     }
 
+    // ------------------------------------------------------------------ Setup and Sync once Android no longer asks (issue #186)
+
+    static void permissionSettings() {
+        final int G = PermissionAsk.GRANTED, D = PermissionAsk.DENIED;
+        String[] need = {"SCAN", "CONNECT"};
+        String[] asked = {"SCAN", "CONNECT", "NOTIFY"};
+        boolean[] none = {false, false}, both = {true, true};
+        int[] refused = {D, D, D};
+        // Setup's "Allow", tapped three times on a fresh install, refused each time
+        PermissionAsk.Answer a = PermissionAsk.answer(false, asked, refused, need, both, false, false);
+        check("#186: the first refusal keeps today's toast (Android still asks)", !a.blocked && a.denied && !a.quiet);
+        a = PermissionAsk.answer(false, asked, refused, need, none, a.denied, a.quiet);
+        check("#186: refused again, Android no longer explains it: the way to the app's settings", a.blocked);
+        a = PermissionAsk.answer(false, asked, refused, need, none, a.denied, a.quiet);
+        check("#186: and every tap after that stays there", a.blocked);
+        // Sync on the main screen after the permission was removed in system settings (refused earlier, remembered)
+        check("#186: Sync after a remembered refusal: the window on the first tap",
+                PermissionAsk.answer(false, asked, refused, need, none, true, false).blocked);
+        // refusals from before the app remembered them: two quiet answers in a row
+        a = PermissionAsk.answer(false, asked, refused, need, none, false, false);
+        check("#186: one quiet answer without a remembered refusal is not enough (a dialog closed with Back)", !a.blocked && a.quiet);
+        check("#186: the second quiet answer opens the way to the settings",
+                PermissionAsk.answer(false, asked, refused, need, none, a.denied, a.quiet).blocked);
+        a = PermissionAsk.answer(true, asked, new int[] {G, G, G}, need, none, true, true);
+        check("#186: allowed in the settings: setup goes on, the refusal is forgotten", !a.blocked && !a.denied);
+        check("#186: an interrupted request (empty answer) never blocks",
+                !PermissionAsk.answer(false, new String[0], new int[0], need, none, true, true).blocked);
+        String newer = PermissionAsk.settingsText(31), older = PermissionAsk.settingsText(30);
+        check("#186: texts name the permission as Android shows it", newer.endsWith("allow Nearby devices.") && older.endsWith("allow Location.")
+                && PermissionAsk.settingsText(34).equals(newer));
+        for (String x : new String[] {newer, older, PermissionAsk.SETTINGS_BUTTON}) {
+            check("#186: plain text without dashes: " + x, !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014") && x.length() < 100);
+        }
+        check("#186: the button says what it does", "Open app settings".equals(PermissionAsk.SETTINGS_BUTTON));
+    }
+
     static void pattern() {
         app.openring.core.analysis.SleepPattern p = new app.openring.core.analysis.SleepPattern();
         // night 1: 23:00 to 07:00 all light; night 2: 00:00 to 06:00 all deep
@@ -861,6 +897,7 @@ public class CoreTest {
     }
 
     public static void main(String[] args) throws Exception {
+        permissionSettings();
         protocol();
         history();
         bundles();

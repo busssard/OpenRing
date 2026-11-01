@@ -28,6 +28,8 @@ public final class SetupActivity extends Activity {
     private ScrollView scroll;
     private int step;
     private String pairedMessage = "Paired";
+    /** Android no longer asks for Bluetooth access, and whether its last answer was a refusal without explanation (issue #186). */
+    private boolean permissionBlocked, quietDenial;
     private static final int RESTORE = 21;
     private TextView restoreStatus;
 
@@ -359,6 +361,16 @@ public final class SetupActivity extends Activity {
         super.onResume();
         // a pairing that ended while this screen was being recreated or covered (issue #218)
         if (pairResult()) return;
+        // back from the app's settings: allowed there, setup goes on; a grant also forgets the refusal (#140, #186)
+        Permissions.remember(this);
+        if (Permissions.granted(this)) {
+            permissionBlocked = quietDenial = false;
+            if (step == 1) {
+                step = 2;
+                show();
+                return;
+            }
+        }
         Prefs p = Prefs.of(this);
         String unseen = p.pairUnseen();
         if (step != 5 && p.hasKey() && (unseen != null || step >= 3 && p.setupDone())) {
@@ -557,6 +569,18 @@ public final class SetupActivity extends Activity {
         }
         LinearLayout l = page("Bluetooth access", "The app needs permission to find and connect to your ring. On older Android versions this is called location access; "
                 + "the app never reads your location.");
+        if (permissionBlocked) {
+            // Android no longer shows its dialog: only the app's settings can switch it on (issue #186)
+            l.addView(Ui.body(this, app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT)));
+            l.addView(Ui.gap(this, 12));
+            primary(l, app.openring.core.PermissionAsk.SETTINGS_BUTTON, new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Permissions.openSettings(SetupActivity.this);
+                }
+            });
+            return;
+        }
         primary(l, "Allow", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -567,10 +591,17 @@ public final class SetupActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
-        if (step == 1 && Permissions.granted(this)) {
+        // the same rule as Find my ring: a refusal after an earlier one, without explanation, means Android no longer asks (#140, #186)
+        app.openring.core.PermissionAsk.Answer a = Permissions.answer(this, perms, results, quietDenial);
+        if (step != 1) return;
+        quietDenial = a.quiet;
+        if (Permissions.granted(this)) {
             step = 2;
             show();
-        } else if (step == 1) {
+        } else if (a.blocked) {
+            permissionBlocked = true;
+            show();
+        } else {
             Toast.makeText(this, "Bluetooth permission is required to talk to the ring", Toast.LENGTH_LONG).show();
         }
     }

@@ -41,6 +41,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     private DayData data;
     private int loadToken;
     private boolean askedPermissions;
+    /** Sync asked for Bluetooth access; Android no longer asks; its last answer was a refusal without explanation (issue #186). */
+    private boolean syncAsked, permissionBlocked, quietDenial;
     /** True until the person picks a date: the screen then follows the newest day with data. */
     private boolean autoDate = true;
 
@@ -425,6 +427,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         // a grant clears a remembered refusal, so a permission Android takes back later asks afresh (issue #140)
         if (!prefs.demo()) Permissions.remember(this);
+        if (!prefs.demo() && Permissions.granted(this)) permissionBlocked = quietDenial = false;
         if (!prefs.demo() && !Permissions.granted(this) && !askedPermissions) {
             askedPermissions = true;
             Permissions.request(this);
@@ -698,6 +701,29 @@ public final class MainActivity extends Activity implements RingManager.Listener
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         if (Permissions.granted(this) && !RingManager.get(this).busy() && Prefs.of(this).lastSync() == 0) SyncService.start(this);
+        if (Prefs.of(this).demo()) return;
+        // the same rule as Find my ring: a refusal after an earlier one, without explanation, means Android no longer asks (#140, #186)
+        app.openring.core.PermissionAsk.Answer a = Permissions.answer(this, perms, results, quietDenial);
+        boolean fromSync = syncAsked;
+        syncAsked = false;
+        if (!fromSync) return;
+        quietDenial = a.quiet;
+        permissionBlocked = a.blocked;
+        if (a.blocked) askSettings();
+    }
+
+    /** Android no longer shows its dialog: the way to the app's settings, where Bluetooth access is switched on (issue #186). */
+    void askSettings() {
+        new android.app.AlertDialog.Builder(this)
+                .setMessage(app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
+                .setPositiveButton(app.openring.core.PermissionAsk.SETTINGS_BUTTON, new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        Permissions.openSettings(MainActivity.this);
+                    }
+                })
+                .setNegativeButton("Not now", null)
+                .show();
     }
 
     @Override
@@ -738,6 +764,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
             return;
         }
         if (!Permissions.granted(this)) {
+            if (permissionBlocked) {
+                askSettings();
+                return;
+            }
+            syncAsked = true;
             Permissions.request(this);
             return;
         }

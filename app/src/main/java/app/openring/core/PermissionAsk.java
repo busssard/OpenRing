@@ -14,6 +14,17 @@ public final class PermissionAsk {
     /** Android's {@code PackageManager.PERMISSION_GRANTED} and {@code PERMISSION_DENIED}. */
     public static final int GRANTED = 0, DENIED = -1;
 
+    /** The button that opens the app's page in Android's settings (issue #186). */
+    public static final String SETTINGS_BUTTON = "Open app settings";
+
+    /**
+     * What Setup and Sync say once Android no longer asks (issue #186). Android 12 and newer call the Bluetooth
+     * permission Nearby devices, older ones ask for Location to find Bluetooth devices.
+     */
+    public static String settingsText(int sdk) {
+        return "Android no longer asks for this. Open the app's settings and allow " + (sdk >= 31 ? "Nearby devices." : "Location.");
+    }
+
     /**
      * Whether only the app's settings can switch the permission on now.
      *
