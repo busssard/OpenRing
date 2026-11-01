@@ -957,6 +957,8 @@ public class CoreTest {
         syncError();
         texts();
         unitTexts();
+        scoreLadder();
+        movementShares();
         drafts();
         oneRun();
         backups242();
@@ -1436,6 +1438,57 @@ public class CoreTest {
         eq("scroll keep: same height stays", ScrollKeep.after(900, 100, 500, 500), 900);
         eq("scroll keep: card above shrinks to nothing", ScrollKeep.after(20, 0, 20, 0), 0);
         eq("scroll keep: a negative start is not kept", ScrollKeep.after(-5, 100, 500, 540), 0);
+    }
+
+    /** One score ladder: the Today sentence agrees with the label and colour of every score (issue #200). */
+    static void scoreLadder() {
+        eq("ladder: 85, 70, 60", Scores.OPTIMAL + "," + Scores.GOOD + "," + Scores.FAIR, "85,70,60");
+        boolean allAgree = true, verdictAgrees = true;
+        for (int s = 0; s <= 100; s++) {
+            String label = Scores.rating(s);
+            boolean low = label.equals("Fair") || label.equals("Pay attention");
+            String line = Texts.contributorLine("HRV balance", "Resting heart rate", s, Locale.US);
+            if (Scores.needsAttention(s) != low || line.contains("needs attention") != low) allAgree = false;
+            String v = Scores.verdict(s);
+            if ((label.equals("Optimal") || label.equals("Good")) ? !v.equals(label) : !v.equals("Pay attention")) verdictAgrees = false;
+        }
+        check("ladder: needs attention exactly for Fair and Pay attention, 0 to 100", allAgree);
+        check("ladder: verdict agrees with the label", verdictAgrees);
+        for (int s = 70; s <= 74; s++) check("ladder: " + s + " is Good and needs no attention", Scores.rating(s).equals("Good") && !Scores.needsAttention(s));
+        check("ladder: 69 needs attention", Scores.needsAttention(69) && Scores.rating(69).equals("Fair"));
+        check("ladder: no data never needs attention", !Scores.needsAttention(Double.NaN));
+        eq("today line: with the weakest", Texts.contributorLine("HRV balance", "Resting heart rate", 69, Locale.US),
+                "HRV balance is your strongest contributor, while resting heart rate needs attention.");
+        eq("today line: 72 is Good, no attention (issue #200)", Texts.contributorLine("HRV balance", "Resting heart rate", 72, Locale.US),
+                "HRV balance is your strongest contributor.");
+        eq("today line: no contributor", Texts.contributorLine(null, null, Double.NaN, Locale.US), "");
+    }
+
+    /** The line under Daily movement says what its percentages are shares of (issue #212). */
+    static void movementShares() {
+        eq("movement: ring on all day", Texts.movementShares(1440, 0, null, false), "Shares of the time the ring was on (24h 0m).");
+        eq("movement: not worn not stored", Texts.movementShares(1440, Double.NaN, null, false), "Shares of the time the ring was on (24h 0m).");
+        eq("movement: under a minute off", Texts.movementShares(1440, 0.4, null, false), "Shares of the time the ring was on (24h 0m).");
+        eq("movement: ring off for a while", Texts.movementShares(1270, 170, null, false),
+                "Shares of the time the ring was on (21h 10m). Not worn: 2h 50m.");
+        eq("movement: short times", Texts.movementShares(45, 15, null, false), "Shares of the time the ring was on (45 min). Not worn: 15 min.");
+        eq("movement: a day still running", Texts.movementShares(370, 60, "14:05", false),
+                "Shares of the time the ring was on up to 14:05 (6h 10m). Not worn: 1h 0m.");
+        eq("movement: with a left out time", Texts.movementShares(1270, 170, null, true),
+                "Shares of the time the ring was on (21h 10m). Not worn or left out: 2h 50m.");
+        // a day analysed at 14:05: the 595 minutes after it were stored as without values, they are not "not worn"
+        double end = 86400, until = 86400 - 595 * 60;
+        eq("not worn so far: future minutes dropped", Texts.notWornSoFar(655, until, end), 60.0);
+        eq("not worn so far: an ended day keeps its minutes", Texts.notWornSoFar(170, Double.NaN, end), 170.0);
+        eq("not worn so far: analysed after the end", Texts.notWornSoFar(170, end + 5, end), 170.0);
+        eq("not worn so far: never below 0", Texts.notWornSoFar(100, until, end), 0.0);
+        check("not worn so far: not stored stays unknown", Double.isNaN(Texts.notWornSoFar(Double.NaN, until, end)));
+        // the rows plus not worn are the day, minute by minute (Wellness, issues #112, #212)
+        TS met = new TS();
+        for (int m = 0; m < 600; m++) met.add(m * 60 + 10, m < 300 ? 1.2 : 2.0);
+        Wellness.Day w = Wellness.day("2026-11-01", 0, 86400, java.time.ZoneOffset.UTC, met, new ArrayList<double[]>(), 70, 1600, 1e12);
+        eq("movement: rows plus not worn are the whole day", (int) Math.round(w.highMin + w.mediumMin + w.lowMin + w.inactiveMin + w.restMin + w.nonWearMin), 1440);
+        eq("movement: not worn from the minutes without values", (int) Math.round(w.nonWearMin), 840);
     }
 
     /** One way to write the same quantity everywhere (issues #99, #163, #165). */

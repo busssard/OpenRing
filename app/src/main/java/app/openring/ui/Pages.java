@@ -188,12 +188,12 @@ public final class Pages {
     static String headline(DayData d) {
         double r = d.score("readiness");
         if (!Double.isNaN(r)) {
-            if (r >= 85) return "You're well recovered. A good day to push a little.";
-            if (r >= 70) return "You're in good shape. Keep a steady pace today.";
+            if (r >= Scores.OPTIMAL) return "You're well recovered. A good day to push a little.";
+            if (r >= Scores.GOOD) return "You're in good shape. Keep a steady pace today.";
             return "Your body is asking for rest. Take it easy today.";
         }
         double s = d.score("sleep");
-        if (!Double.isNaN(s)) return s >= 85 ? "You slept really well." : s >= 70 ? "You slept reasonably well." : "Last night's sleep was short or restless.";
+        if (!Double.isNaN(s)) return s >= Scores.OPTIMAL ? "You slept really well." : s >= Scores.GOOD ? "You slept reasonably well." : "Last night's sleep was short or restless.";
         return "Keep wearing your ring to build your picture.";
     }
 
@@ -208,11 +208,10 @@ public final class Pages {
                 if (worst == null || o.optDouble("score") < worst.optDouble("score")) worst = o;
                 if (best == null || o.optDouble("score") > best.optDouble("score")) best = o;
             }
-            if (best != null) sb.append(best.optString("label")).append(" is your strongest contributor");
-            if (worst != null && worst.optDouble("score") < 75) {
-                sb.append(", while ").append(worst.optString("label").toLowerCase(Locale.getDefault())).append(" needs attention");
-            }
-            sb.append(". ");
+            // the same ladder as the labels and colours on the Readiness page (issue #200)
+            String line = best == null ? "" : Texts.contributorLine(best.optString("label"), worst.optString("label"),
+                    worst.optDouble("score"), Locale.getDefault());
+            sb.append(line.isEmpty() ? ". " : line + " ");
             if (rd.optBoolean("provisional")) sb.append("Your baselines are still forming, so scores will become more personal over the next two weeks. ");
         }
         JSONObject debt = d.day == null ? null : d.day.optJSONObject("sleep_debt");
@@ -904,6 +903,16 @@ public final class Pages {
         intensity.addView(stageRow(c, "Inactive", inact, tot, Ui.TEXT_3));
         intensity.addView(stageRow(c, "Rest", rest, tot, Ui.STAGE_LIGHT));
         double leftS = d.leftOutSeconds();
+        // what the percentages are shares of, and the time without the ring (issue #212), from the stored minutes
+        double until = Json.d(day, "total_until");
+        double notWorn = Texts.notWornSoFar(Json.d(day, "non_wear_min"), until, d.dayEnd());
+        double worn = high + med + low + inact + rest;
+        if (!Double.isNaN(worn)) {
+            intensity.addView(Ui.gap(c, 4));
+            intensity.addView(Ui.text(c, Texts.movementShares(worn, notWorn,
+                    Double.isNaN(until) ? null : app.openring.core.analysis.WakeUps.clock(until, d.zone), leftS >= 60), 12, Ui.TEXT_3, Ui.REGULAR));
+            if (!Double.isNaN(notWorn) && Math.round(notWorn) >= 1) intensity.addView(Ui.text(c, Explain.NOT_WORN, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
         if (leftS >= 60) {
             intensity.addView(Ui.gap(c, 4));
             intensity.addView(Ui.text(c, app.openring.core.analysis.LeftOut.activityLine(leftS), 12, Ui.TEXT_3, Ui.REGULAR));

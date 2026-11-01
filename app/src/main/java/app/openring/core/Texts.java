@@ -91,6 +91,43 @@ public final class Texts {
     }
 
     /**
+     * The Today summary's readiness sentence (issue #200): "HRV balance is your strongest contributor, while resting
+     * heart rate needs attention." The "while" part only for a score under Good ({@link app.openring.core.analysis.Scores#needsAttention}),
+     * the same ladder as the labels and colours on the Readiness page. Empty without a strongest contributor.
+     */
+    public static String contributorLine(String best, String worst, double worstScore, Locale locale) {
+        if (best == null || best.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(best).append(" is your strongest contributor");
+        if (worst != null && !worst.isEmpty() && app.openring.core.analysis.Scores.needsAttention(worstScore)) {
+            sb.append(", while ").append(worst.toLowerCase(locale)).append(" needs attention");
+        }
+        return sb.append('.').toString();
+    }
+
+    /**
+     * The line under Daily movement (issue #212): what its percentages are shares of. {@code wornMin} is the sum of
+     * the rows, {@code notWornMin} the stored minutes without values outside sleep (NaN when not stored), {@code until}
+     * the clock time a day still running was analysed up to (null for a day that has ended, the minutes after it are
+     * not yet known and do not count as not worn), {@code leftOut} whether a left out time touches the day (its
+     * minutes have no values, so they are in the not worn minutes too, issue #254).
+     */
+    public static String movementShares(double wornMin, double notWornMin, String until, boolean leftOut) {
+        String s = "Shares of the time the ring was on" + (until == null ? "" : " up to " + until) + " (" + minutes(wornMin) + ").";
+        if (Double.isNaN(notWornMin) || Math.round(notWornMin) < 1) return s;
+        return s + (leftOut ? " Not worn or left out: " : " Not worn: ") + minutes(notWornMin) + ".";
+    }
+
+    /**
+     * The stored not worn minutes of a day without the ones still to come: a day analysed at {@code until} (unix
+     * seconds, NaN for an ended day) counted every minute after it up to {@code dayEnd} as without values.
+     */
+    public static double notWornSoFar(double notWornMin, double until, double dayEnd) {
+        if (Double.isNaN(notWornMin)) return Double.NaN;
+        if (Double.isNaN(until) || until >= dayEnd) return notWornMin;
+        return Math.max(0, notWornMin - Math.floor((dayEnd - until) / 60));
+    }
+
+    /**
      * A symptom radar value with its unit and the precision the Today and Sleep cards use (issue #99):
      * skin temperature as a change ("-0.2 \u00b0C"), resting heart rate in bpm, HRV in ms, breathing per minute.
      */
