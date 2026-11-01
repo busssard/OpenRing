@@ -833,6 +833,7 @@ public class PipelineTest {
         largeHistory254();
         rightNow254();
         demoOnly254();
+        damaged255();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -8253,4 +8254,110 @@ public class PipelineTest {
         for (int i = 0; i < line.size(); i++) if (line.t(i) >= a && line.t(i) < b) return true;
         return false;
     }
+
+    /** A full scan of every event body: it reads every page of the events table. */
+    static final String SCAN255 = "SELECT SUM(LENGTH(body)) FROM events";
+
+    /** Runs a query that should fail on the damaged file; returns the error, or null when it did not fail. */
+    static RuntimeException scanFails255(Db db) {
+        try {
+            db.count(SCAN255);
+            return null;
+        } catch (RuntimeException e) {
+            return e;
+        }
+    }
+
+    static boolean corrupt255(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) if (t instanceof android.database.sqlite.SQLiteDatabaseCorruptException) return true;
+        return false;
+    }
+
+    /**
+     * Issue #255: a damaged page in the history must never make Android delete the file. The shim models Android's
+     * corruption callback (a damaged page calls the handler, a missing handler means the default that deletes the file
+     * and its side files); Android's own SQLite is not modelled.
+     */
+    static void damaged255() throws Exception {
+        Context ctx = freshDb("openring255");
+        Db db = Db.get(ctx);
+        check("#255 the history passes a handler of its own, not Android's default", db.errorHandler != null
+                && !(db.errorHandler instanceof android.database.DefaultDatabaseErrorHandler), db.errorHandler);
+        java.lang.reflect.Constructor<Db> make = Db.class.getDeclaredConstructor(Context.class, String.class);
+        make.setAccessible(true);
+        Db demo = make.newInstance(ctx, Db.DEMO);
+        check("#255 the demo history passes the same handler", demo.errorHandler == db.errorHandler, demo.errorHandler);
+        demo.close();
+
+        long now = T0 + 3 * 86400 + 7 * 3600;
+        List<RingEvent> all = history(3);
+        for (int i = 0; i < all.size(); i += 4096) db.insertBatch(all.subList(i, Math.min(all.size(), i + 4096)), 1, now);
+        long events = db.eventCount();
+        // the handler itself keeps the file when Android calls it on a healthy one
+        File f = ctx.getDatabasePath(Db.REAL);
+        long healthy = f.length();
+        if (db.errorHandler != null) db.errorHandler.onCorruption(db.getWritableDatabase());
+        check("#255 calling the handler keeps the file", db.errorHandler != null && f.isFile() && f.length() == healthy && db.eventCount() == events, f.length() + " of " + healthy);
+        freshDb("openring255-close");
+
+        // overwrite whole pages in the middle of the file (the first page with the schema stays)
+        byte[] bytes = Files.readAllBytes(f.toPath());
+        int page = 4096, from = (bytes.length / 4 / page) * page, to = (bytes.length * 3 / 4 / page) * page;
+        check("#255 the scratch history has pages to damage", from >= page && to > from, bytes.length + " bytes");
+        for (int i = from; i < to; i++) bytes[i] = 0x5A;
+        Files.write(f.toPath(), bytes);
+        long size = f.length();
+
+        db = Db.get(ctx);
+        RuntimeException e = scanFails255(db);
+        check("#255 a damaged history fails with an error, not with 0 rows", e != null && corrupt255(e), e);
+        // the first page is left out: the shim's open writes the version into the header each time, Android only when it changes
+        byte[] now255 = Files.readAllBytes(f.toPath());
+        check("#255 the damaged file is still there, every page after the header unchanged", f.isFile() && f.length() == size
+                && Arrays.equals(Arrays.copyOfRange(now255, page, now255.length), Arrays.copyOfRange(bytes, page, bytes.length)), f.length() + " of " + size);
+        boolean analysisFailed = false;
+        try {
+            Analyzer.run(ctx, null);
+        } catch (RuntimeException ae) {
+            analysisFailed = true;
+        }
+        check("#255 analysis on the damaged history fails", analysisFailed, null);
+        check("#255 the file is still there after the failed analysis", f.isFile() && f.length() >= size, f.length() + " of " + size);
+        // a later open (the next app start) still finds the damaged history, not a new empty one
+        freshDb("openring255-close2");
+        db = Db.get(ctx);
+        e = scanFails255(db);
+        check("#255 the next open still has the damaged history, not an empty one", e != null && corrupt255(e), e);
+        check("#255 and its file is still there", f.isFile() && f.length() >= size, f.length() + " of " + size);
+        freshDb("openring255-close3");
+
+        // the same file through a helper without a handler: the shim deletes it as Android would (the bug of #255)
+        File other = Files.createTempDirectory("openring255-default").toFile();
+        Files.write(new File(other, Db.REAL).toPath(), bytes);
+        android.database.sqlite.SQLiteOpenHelper plain = new android.database.sqlite.SQLiteOpenHelper(new Context(other), Db.REAL, null, 100) { // any newer version: upgrading does nothing here
+            @Override
+            public void onCreate(android.database.sqlite.SQLiteDatabase d) {
+                d.execSQL("CREATE TABLE events (id INTEGER PRIMARY KEY, body BLOB)");
+            }
+
+            @Override
+            public void onUpgrade(android.database.sqlite.SQLiteDatabase d, int o, int n) {}
+        };
+        boolean failed = false;
+        try {
+            plain.getWritableDatabase().rawQuery(SCAN255, null);
+        } catch (RuntimeException de) {
+            failed = corrupt255(de);
+        }
+        File gone = new File(other, Db.REAL);
+        check("#255 without a handler the damaged file is deleted, as Android's default does", failed && !gone.exists(), gone.length());
+        plain.close();
+        long left;
+        android.database.Cursor c = plain.getWritableDatabase().rawQuery("SELECT COUNT(*) FROM events", null);
+        c.moveToFirst();
+        left = c.getLong(0);
+        plain.close();
+        check("#255 and the next open starts an empty history", left == 0, left);
+    }
+
 }
