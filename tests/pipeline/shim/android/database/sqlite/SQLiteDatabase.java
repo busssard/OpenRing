@@ -6,7 +6,7 @@ import java.sql.*;
 public class SQLiteDatabase {
     public static final int CONFLICT_REPLACE = 5;
     public final Connection conn;
-    int depth;
+    volatile int depth;
     public static final int OPEN_READWRITE = 0, OPEN_READONLY = 1, NO_LOCALIZED_COLLATORS = 16;
     public interface CursorFactory {}
     /** The file and the handler Android calls on a damaged page (issue #255); null means Android's default, which deletes the file. */
@@ -49,7 +49,7 @@ public class SQLiteDatabase {
      * Re analyse all), reads see the last commit. This one connection would let that write join the open transaction
      * and roll back with it, so a write from another thread fails here instead (issue #260).
      */
-    Thread owner;
+    volatile Thread owner;
     void mayWrite() {
         Thread t = owner;
         if (t != null && t != Thread.currentThread())

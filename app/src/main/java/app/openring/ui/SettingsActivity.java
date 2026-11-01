@@ -152,7 +152,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
         if (backupsCard != null) fillBackupsCard(p); // a copy made or checked meanwhile
-        if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !ScreenDays.any(Db.get(this))) {
+        if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !screenDaysKnown()) {
             screenRead = true;
             updateNights("Reading screen time");
         }
@@ -271,12 +271,17 @@ public final class SettingsActivity extends Activity implements RingManager.List
         ring.addView(line("Firmware", nz(p.firmware())));
         ring.addView(line("Battery", p.battery() < 0 ? "--" : p.battery() + "%  (" + ago(p.batteryAt()) + ")"));
         ring.addView(line("Last sync", p.lastSync() == 0 ? "never" : ago(p.lastSync())));
-        Db db = Db.get(this);
-        ring.addView(line("Stored events", String.format(Locale.getDefault(), "%,d", db.eventCount())));
-        long undated = db.undatedCount();
-        // events Find my ring downloaded since the last sync are dated by the next one: nothing is missing (issue #192)
-        if (undated > 0) ring.addView(line(db.undatedAllNew() ? "Dated at the next sync" : "Waiting for a time anchor",
-                String.format(Locale.getDefault(), "%,d", undated)));
+        try {
+            Db db = Db.get(this);
+            ring.addView(line("Stored events", String.format(Locale.getDefault(), "%,d", db.eventCount())));
+            long undated = db.undatedCount();
+            // events Find my ring downloaded since the last sync are dated by the next one: nothing is missing (issue #192)
+            if (undated > 0) ring.addView(line(db.undatedAllNew() ? "Dated at the next sync" : "Waiting for a time anchor",
+                    String.format(Locale.getDefault(), "%,d", undated)));
+        } catch (RuntimeException e) {
+            // a damaged history is kept (issue #255): Settings still opens, so a copy can be brought back (review of #266)
+            ring.addView(Ui.text(this, Backups.unreadable(e.toString()), 13, Ui.WARN, Ui.REGULAR));
+        }
         action(ring, "Sync now", Ui.SLEEP, new Runnable() {
             @Override
             public void run() {
@@ -1350,13 +1355,26 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (stagesCard != null) fillStageDetail(stagesCard, p);
     }
 
-    /** The newest main night, or null. */
+    /** The newest main night, or null (also when the history cannot be read, review of #266). */
     JSONObject lastNight() {
-        Db db = Db.get(this);
-        String day = db.latestDay();
-        if (day == null) return null;
-        java.util.List<String> n = db.nightsJson(java.time.LocalDate.parse(day).minusDays(2).toString(), day, true);
-        return n.isEmpty() ? null : Json.parse(n.get(n.size() - 1));
+        try {
+            Db db = Db.get(this);
+            String day = db.latestDay();
+            if (day == null) return null;
+            java.util.List<String> n = db.nightsJson(java.time.LocalDate.parse(day).minusDays(2).toString(), day, true);
+            return n.isEmpty() ? null : Json.parse(n.get(n.size() - 1));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** True when screen time is stored already; also when the history cannot be read, so nothing is read into it (review of #266). */
+    boolean screenDaysKnown() {
+        try {
+            return ScreenDays.any(Db.get(this));
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     /** Version line and a button that opens the releases page in the browser (issue #7). */
