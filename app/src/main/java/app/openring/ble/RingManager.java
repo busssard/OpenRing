@@ -831,9 +831,10 @@ public final class RingManager {
         runOp(SyncError.Task.ACTION, cb, new Op() {
             @Override
             public String run() throws Exception {
+                byte[] ringKey = savedKey(); // before the scan and connection, so it fails fast (review of #281)
                 Session s = open(false, null);
                 try {
-                    s.client.authenticate(savedKey());
+                    s.client.authenticate(ringKey);
                     StringBuilder sb = new StringBuilder();
                     for (int f : FEATURES) {
                         int[] st = s.client.featureStatus(f);
@@ -857,9 +858,10 @@ public final class RingManager {
         runOp(SyncError.Task.ACTION, cb, new Op() {
             @Override
             public String run() throws Exception {
+                byte[] ringKey = savedKey(); // before the scan and connection, so it fails fast (review of #281)
                 Session s = open(false, null);
                 try {
-                    s.client.authenticate(savedKey());
+                    s.client.authenticate(ringKey);
                     if (!s.client.setFeatureMode(feature, mode)) throw new IOException("the ring did not accept the change");
                     return "Saved on the ring";
                 } finally {
@@ -881,6 +883,7 @@ public final class RingManager {
                 if (!db.holdForRing()) throw new IOException(SyncError.REANALYSING);
                 Session s = null;
                 try {
+                    byte[] ringKey = savedKey(); // before the scan and connection, so it fails fast (review of #281)
                     s = open(false, null);
                     String serial = s.client.serial();
                     if (!serial.equalsIgnoreCase(confirmSerial.trim())) {
@@ -890,7 +893,7 @@ public final class RingManager {
                         }
                         throw new IOException("Refusing: the ring that answered is " + serial + ", not " + confirmSerial);
                     }
-                    s.client.authenticate(savedKey());
+                    s.client.authenticate(ringKey);
                     setStatus("Erasing the ring");
                     s.client.factoryReset();
                     prefs.clearKey();
@@ -984,9 +987,10 @@ public final class RingManager {
                 boolean modesTouched = false;
                 try {
                     post(token, "Connecting to your ring");
+                    byte[] ringKey = savedKey(); // before the scan and connection, so it fails fast (review of #281)
                     s = open(false, null);
                     leftCheck(token, "while connecting");
-                    s.client.authenticate(savedKey());
+                    s.client.authenticate(ringKey);
                     leftCheck(token, "while checking the key");
                     // fresh data first: it tells whether the ring is on a finger right now
                     post(token, "Checking the ring");
@@ -1319,8 +1323,9 @@ public final class RingManager {
                 try {
                     if (token != fingerToken.get()) throw new IOException("cancelled");
                     Prefs prefs = Prefs.of(ctx);
+                    byte[] ringKey = savedKey(); // before the scan and connection, so it fails fast (review of #281)
                     s = open(false, null);
-                    s.client.authenticate(savedKey());
+                    s.client.authenticate(ringKey);
                     int charging = -1;
                     try {
                         int[] b = s.client.battery();
@@ -1538,8 +1543,9 @@ public final class RingManager {
                 Session s = null;
                 try {
                     motionState("Connecting to your ring", false);
+                    byte[] ringKey = savedKey(); // before the scan and connection, so it fails fast (review of #281)
                     s = open(false, null);
-                    s.client.authenticate(savedKey());
+                    s.client.authenticate(ringKey);
                     long lastStart = 0;
                     int frames = 0, logged = 0;
                     long started = System.currentTimeMillis();
