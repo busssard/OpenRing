@@ -921,6 +921,8 @@ public final class Analyzer {
             // impossible values (a damaged byte) count as missing minutes (issue #120), left out ones too (issue #254)
             for (int i = 0; i < m.length; i++) if (EventCodec.plausibleMet(m[i]) && !out(r.unix + i * 60)) met.add(r.unix + i * 60, m[i]);
         }
+        // Every field read from past.nights and past.days must be in History.NIGHT_FIELDS or DAY_FIELDS
+        // (the store keeps only those; the pipeline test fails on any other, issue #228)
         List<double[]> sleeps = new ArrayList<double[]>();
         for (JSONObject o : past.nights(day.minusDays(1), day.plusDays(1), false)) sleeps.add(new double[] {o.optDouble("start"), o.optDouble("end")});
         // every real minute of the day once, by its clock time in the day's zone (issue #114)
@@ -944,8 +946,6 @@ public final class Analyzer {
         }
 
         // history: previous 60 days of day summaries and 90 days of main nights
-        // Every field read from past.nights and past.days must be in History.NIGHT_FIELDS or DAY_FIELDS
-        // (the store keeps only those; the pipeline test fails on any other, issue #228)
         List<JSONObject> prevDays = past.days(day.minusDays(60), day.minusDays(1));
         List<JSONObject> prevNights = past.nights(day.minusDays(90), day.minusDays(1), true);
 
@@ -1291,8 +1291,16 @@ public final class Analyzer {
 
         /**
          * Tests only (issue #228): a copy that throws when code reads a name outside its list, so a new read the
-         * store does not keep fails the pipeline test instead of giving NaN. Overrides every read by name that
-         * Android's JSONObject and the org.json of the tests share.
+         * store does not keep fails the pipeline test instead of giving NaN.
+         * <ul>
+         * <li>Checked: every read of one name that Android's JSONObject has, 23 overrides (opt, has, isNull,
+         * get, opt and get of each type, optJSONArray, optJSONObject, getJSONArray, getJSONObject).
+         * PipelineTest.historyStrict holds the exact list, so removing one fails.</li>
+         * <li>Not overridden: reads only the org.json of the tests has (optFloat, optNumber, getFloat,
+         * optBigDecimal and the like). App code cannot call them (it compiles against Android); in the tests
+         * they go through opt or get, so they are still checked there.</li>
+         * <li>Not checked: keys(), names(), length(), toString(). They read no name and see only the kept fields.</li>
+         * </ul>
          */
         static final class Strict extends JSONObject {
             private final String[] fields;
@@ -1430,6 +1438,18 @@ public final class Analyzer {
             public boolean getBoolean(String name) throws JSONException {
                 check(name);
                 return super.getBoolean(name);
+            }
+
+            @Override
+            public JSONArray getJSONArray(String name) throws JSONException {
+                check(name);
+                return super.getJSONArray(name);
+            }
+
+            @Override
+            public JSONObject getJSONObject(String name) throws JSONException {
+                check(name);
+                return super.getJSONObject(name);
             }
         }
     }
