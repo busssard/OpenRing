@@ -1444,7 +1444,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
             protected void onPostExecute(Preview r) {
                 previewReading = false;
                 if (isFinishing() || isDestroyed()) return;
-                preview = r;
+                // a read from before Delete or going back to a copy (preview dropped since) is not shown: the redraw reads again
+                if (r.gen == previewGen || preview != null) preview = r;
                 redrawStageCard();
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
