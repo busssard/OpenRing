@@ -63,6 +63,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
             String d = b.getString("date");
             if (d != null) date = LocalDate.parse(d);
             autoDate = b.getBoolean("auto", true);
+            // a turn of the phone while Android's dialog is open keeps the Sync tap's answer (review of #279)
+            syncAsked = b.getBoolean("syncAsked", false);
+            permissionBlocked = b.getBoolean("permissionBlocked", false);
+            quietDenial = b.getBoolean("quietDenial", false);
         } else {
             // only on a fresh start: a turned screen keeps its tab and date and does not start
             // the demo or open Settings again (issue #29)
@@ -413,6 +417,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         out.putInt("tab", tab);
         out.putString("date", date.toString());
         out.putBoolean("auto", autoDate);
+        out.putBoolean("syncAsked", syncAsked);
+        out.putBoolean("permissionBlocked", permissionBlocked);
+        out.putBoolean("quietDenial", quietDenial);
     }
 
     @Override
@@ -427,6 +434,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         // a grant clears a remembered refusal, so a permission Android takes back later asks afresh (issue #140)
         if (!prefs.demo()) Permissions.remember(this);
+        // allowed in the app's settings after Sync found it blocked: that sync starts now, also right after a recent one (#186)
+        boolean allowedNow = !prefs.demo() && permissionBlocked && Permissions.granted(this);
         if (!prefs.demo() && Permissions.granted(this)) permissionBlocked = quietDenial = false;
         if (!prefs.demo() && !Permissions.granted(this) && !askedPermissions) {
             askedPermissions = true;
@@ -440,7 +449,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         updateStatus();
         load();
         boolean recent = app.openring.core.BackgroundJob.recent(System.currentTimeMillis() / 1000, prefs.lastSync(), prefs.lastAttempt());
-        if (!prefs.demo() && !recent && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
+        if (!prefs.demo() && (!recent || allowedNow) && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
     }
 
     @Override
@@ -715,7 +724,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     /** Android no longer shows its dialog: the way to the app's settings, where Bluetooth access is switched on (issue #186). */
     void askSettings() {
         new android.app.AlertDialog.Builder(this)
-                .setMessage(app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
+                .setTitle("Bluetooth access")
+                .setMessage("Sync needs Bluetooth access to reach your ring. " + app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
                 .setPositiveButton(app.openring.core.PermissionAsk.SETTINGS_BUTTON, new android.content.DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(android.content.DialogInterface d, int w) {

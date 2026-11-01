@@ -339,7 +339,12 @@ public final class SetupActivity extends Activity {
         scroll.setFillViewport(true);
         setContentView(scroll);
         step = b == null ? 0 : b.getInt("step", 0);
-        if (b != null) pairedMessage = b.getString("paired", pairedMessage);
+        if (b != null) {
+            pairedMessage = b.getString("paired", pairedMessage);
+            // a turn of the phone keeps the way to the app's settings (review of #279)
+            permissionBlocked = b.getBoolean("permissionBlocked", false);
+            quietDenial = b.getBoolean("quietDenial", false);
+        }
         Object last = getLastNonConfigurationInstance();
         restore = last instanceof Restore ? (Restore) last : new Restore();
         restore.owner = this;
@@ -439,6 +444,8 @@ public final class SetupActivity extends Activity {
         super.onSaveInstanceState(out);
         out.putInt("step", step);
         out.putString("paired", pairedMessage);
+        out.putBoolean("permissionBlocked", permissionBlocked);
+        out.putBoolean("quietDenial", quietDenial);
     }
 
     @Override
@@ -577,6 +584,13 @@ public final class SetupActivity extends Activity {
                 @Override
                 public void onClick(View v) {
                     Permissions.openSettings(SetupActivity.this);
+                }
+            });
+            // two dialogs closed with Back look the same as a refusal Android no longer asks about: asking stays possible
+            secondary(l, "Try again", new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Permissions.request(SetupActivity.this);
                 }
             });
             return;
