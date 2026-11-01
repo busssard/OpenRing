@@ -63,6 +63,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
             String d = b.getString("date");
             if (d != null) date = LocalDate.parse(d);
             autoDate = b.getBoolean("auto", true);
+            // a turn of the phone while Android's dialog is open keeps the Sync tap's answer (review of #279)
+            syncAsked = b.getBoolean("syncAsked", false);
+            permissionBlocked = b.getBoolean("permissionBlocked", false);
+            quietDenial = b.getBoolean("quietDenial", false);
         } else {
             // only on a fresh start: a turned screen keeps its tab and date and does not start
             // the demo or open Settings again (issue #29)
@@ -413,6 +417,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         out.putInt("tab", tab);
         out.putString("date", date.toString());
         out.putBoolean("auto", autoDate);
+        out.putBoolean("syncAsked", syncAsked);
+        out.putBoolean("permissionBlocked", permissionBlocked);
+        out.putBoolean("quietDenial", quietDenial);
     }
 
     @Override
