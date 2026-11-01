@@ -167,6 +167,23 @@ public final class WatchCheck {
         return out;
     }
 
+    /**
+     * The order while a scan runs (review of #270): rows already shown keep their place, so a row does not move under the
+     * finger as the signal changes; devices heard for the first time come after them, strongest first. Once the scan
+     * ends the screen sorts the whole list again with {@link #strongestFirst}.
+     */
+    public static List<Found> stableOrder(List<String> shown, List<Found> in) {
+        java.util.Map<String, Found> by = new java.util.LinkedHashMap<String, Found>();
+        for (Found f : strongestFirst(in)) by.put(f.address, f);
+        List<Found> out = new ArrayList<Found>();
+        for (String a : shown) {
+            Found f = by.remove(a);
+            if (f != null) out.add(f);
+        }
+        out.addAll(by.values());
+        return out;
+    }
+
     /** The name shown for a device: its advertised name or "(no name)". */
     public static String title(Found f) {
         return f.name == null || f.name.trim().isEmpty() ? "(no name)" : f.name.trim();

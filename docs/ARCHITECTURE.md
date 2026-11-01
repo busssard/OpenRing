@@ -496,7 +496,9 @@ Phase 1a is only the **Watch check** (Settings, Watch): it learns how the owner'
 pairing or sync is built. Nothing is paired, written to the watch (besides switching its notifications on) or stored.
 
 * **Flow** (`ui/WatchActivity`, `ble/WatchLink`): a 10 s scan without a filter (`RingScanner.scanAll`, counted in the
-  same budget of 4 starts per 30 s as the ring's scans, since Android blocks the sixth), strongest signal first. The
+  same budget of 4 starts per 30 s as the ring's scans, since Android blocks the sixth), strongest signal first once it
+  ends; while it runs a row keeps its place and new devices are added below (`WatchCheck.stableOrder`), so a tap checks
+  the row under the finger. The
   picked device gets one session of at most 30 s: connect (10 s at most, `TRANSPORT_LE`, no bond requested, balanced
   link speed), list every service and characteristic with its properties, read Device Information (model `0x2a24`,
   firmware `0x2a26`, hardware, software, maker; not the serial number) and Battery (`0x2a19`), switch on

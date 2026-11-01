@@ -959,6 +959,18 @@ public class CoreTest {
         eq("watch: strongest first, unknown signal last", order.toString(), "ecdab");
         eq("watch: a device without a name", WatchCheck.title(in.get(3)), "(no name)");
         eq("watch: the input list is left as it was", in.get(0).address, "a");
+        // while scanning, shown rows keep their place and new ones come after them, strongest first (review of #270)
+        List<String> shown = new ArrayList<String>();
+        shown.add("a");
+        shown.add("d");
+        StringBuilder stable = new StringBuilder();
+        for (WatchCheck.Found f : WatchCheck.stableOrder(shown, in)) stable.append(f.address);
+        eq("watch: shown rows stay in place during a scan, new ones follow strongest first", stable.toString(), "adecb");
+        StringBuilder fresh = new StringBuilder();
+        for (WatchCheck.Found f : WatchCheck.stableOrder(new ArrayList<String>(), in)) fresh.append(f.address);
+        eq("watch: the first rows of a scan are strongest first", fresh.toString(), "ecdab");
+        shown.add("gone");
+        eq("watch: an address no longer heard is left out", WatchCheck.stableOrder(shown, in).size(), 5);
         WatchCheck.Found w = new WatchCheck.Found("x", null, -55).service(WatchCheck.WITHINGS_SERVICE).service(WatchCheck.WITHINGS_SERVICE.toUpperCase());
         eq("watch: a service is listed once", w.services.size(), 1);
         check("watch: the Withings service makes it likely a watch", WatchCheck.likelyWatch(w));
