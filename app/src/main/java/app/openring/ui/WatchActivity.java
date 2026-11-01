@@ -38,7 +38,7 @@ import app.openring.data.Prefs;
  * The Watch check (issue #251, phase 1a): scan, pick a watch, one short look at its Bluetooth layout, a report to copy.
  * No pairing, nothing stored; the report lives in this screen only. The ring always wins: the check runs only when it
  * can take the ring lock at once ({@link RingGate#takeIfFree}) and holds it for the session (at most 30 s), so the
- * phone never keeps two links. Scan and session stop in {@link #onPause}. Demo mode never touches Bluetooth: it shows
+ * phone never keeps two links. The scan stops in {@link #onPause}, the session in {@link #onStop} (a pairing dialog pauses the screen). Demo mode never touches Bluetooth: it shows
  * {@link WatchCheck#demoFound} and {@link WatchCheck#demoReport} through the same screen code.
  */
 public final class WatchActivity extends Activity {
@@ -184,6 +184,15 @@ public final class WatchActivity extends Activity {
         h.removeCallbacks(refresh);
         h.removeCallbacks(retry);
         stopScan();
+    }
+
+    /**
+     * The session stops here, not in onPause (review of #270): Android's pairing dialog over this screen pauses it, and
+     * the check must go on while the person taps Cancel there. Leaving the screen or the app stops it.
+     */
+    @Override
+    protected void onStop() {
+        super.onStop();
         // the link is closed and the ring lock given back within a moment; the report so far stays
         stopped = true;
         if (session != null) session.interrupt();

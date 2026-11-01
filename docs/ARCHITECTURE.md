@@ -502,7 +502,9 @@ pairing or sync is built. Nothing is paired, written to the watch (besides switc
   firmware `0x2a26`, hardware, software, maker; not the serial number) and Battery (`0x2a19`), switch on
   notifications or indications of every characteristic that sends and is not a standard 16 bit one, listen 10 s,
   disconnect and close. Standard ones are not listened to: they are documented, and the standard heart rate would
-  switch the sensor on and send values. Leaving the screen stops the scan and the session at once.
+  switch the sensor on and send values. Leaving the screen or the app stops the scan and the session at once; Android's
+  pairing dialog over the screen only stops the scan (`onPause`), the session goes on until `onStop`, so Cancel there
+  does not end the check.
 * **The ring always wins:** the session runs only when `RingGate.takeIfFree` gets the ring lock at once (no sync
   counted, no ring task holding it), and holds it until the link is closed, so the phone never keeps two links. When
   the ring is busy the screen says so. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s;
