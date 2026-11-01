@@ -905,7 +905,7 @@ public final class Pages {
         double leftS = d.leftOutSeconds();
         // what the percentages are shares of, and the time without the ring (issue #212), from the stored minutes
         double until = Json.d(day, "total_until");
-        double notWorn = Texts.notWornSoFar(Json.d(day, "non_wear_min"), until, d.dayEnd());
+        double notWorn = Texts.notWornSoFar(Json.d(day, "non_wear_min"), until, d.dayStart(), d.dayEnd());
         double onMin = high + med + low + inact + rest;
         if (!Double.isNaN(onMin)) {
             intensity.addView(Ui.gap(c, 4));
