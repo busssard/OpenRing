@@ -992,6 +992,7 @@ public class CoreTest {
         setupTasks();
         leftOut254();
         watchCheck251();
+        modeRestore221();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -6027,5 +6028,196 @@ public class CoreTest {
             LeftOut.activityLine(5400), LeftOut.bringBackText(a, z), app.openring.ui.Explain.LEFT_OUT, l.problem(1, 0, 0), l.problem(9e9, 1e10, 0), l.problem(1000, 2000, 1e10)}) {
             check("left out texts: no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("–") && !t.contains("—") && !t.isEmpty());
         }
+    }
+
+    /** Issue #221: the phone's pending measurement modes, as Prefs keeps them. */
+    static final class ModeStore implements ModeRestore.Store {
+        final Map<Integer, Integer> m = new HashMap<Integer, Integer>();
+        int writes;
+
+        public int pending(int feature) {
+            Integer v = m.get(feature);
+            return v == null ? ModeRestore.NONE : v;
+        }
+
+        public void setPending(int feature, int mode) {
+            writes++;
+            if (mode < 0) m.remove(feature);
+            else m.put(feature, mode);
+        }
+    }
+
+    /** Issue #221: a ring that keeps its modes, and can drop the link or refuse. */
+    static final class ModeRing implements ModeRestore.Ring {
+        final Map<Integer, Integer> mode = new HashMap<Integer, Integer>();
+        final Set<Integer> refuse = new HashSet<Integer>(), throwOn = new HashSet<Integer>();
+        boolean linkDown;
+        final List<String> sent = new ArrayList<String>();
+
+        public boolean setMode(int feature, int m) throws IOException {
+            sent.add(feature + ":" + m);
+            if (linkDown || throwOn.contains(feature)) throw new IOException("the ring disconnected");
+            if (refuse.contains(feature)) return false;
+            mode.put(feature, m);
+            return true;
+        }
+
+        int[] status(int feature) {
+            Integer m = mode.get(feature);
+            return m == null ? null : new int[] {m, 0, 0, 0};
+        }
+    }
+
+    /** Live's start as RingManager does it: keep the previous modes, then switch for the session. */
+    static void liveStart(ModeRing ring, ModeStore store, boolean spo2) throws Exception {
+        int[] fs = ring.status(Protocol.FEATURE_DAYTIME_HR);
+        ModeRestore.remember(store, Protocol.FEATURE_DAYTIME_HR, fs);
+        if (fs != null && fs[0] == Protocol.MODE_OFF) ring.setMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
+        ring.setMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_CONNECTED_LIVE);
+        if (spo2) {
+            ModeRestore.remember(store, Protocol.FEATURE_SPO2, ring.status(Protocol.FEATURE_SPO2));
+            ring.setMode(Protocol.FEATURE_SPO2, Protocol.MODE_REQUESTED); // live refused on Ring 4, requested works
+        }
+    }
+
+    static void modeRestore221() throws Exception {
+        final List<String> log = new ArrayList<String>();
+        ModeRestore.Log lg = new ModeRestore.Log() {
+            public void log(String line) {
+                log.add(line);
+            }
+        };
+        int HR = Protocol.FEATURE_DAYTIME_HR, SPO2 = Protocol.FEATURE_SPO2;
+        // the person's mode: Settings only sends Off or automatic; requested and live are Live's leftovers
+        eq("221 chosen: off stays off", ModeRestore.chosen(new int[] {0, 0, 0, 0}), Protocol.MODE_OFF);
+        eq("221 chosen: automatic", ModeRestore.chosen(new int[] {1, 0, 0, 0}), Protocol.MODE_AUTOMATIC);
+        eq("221 chosen: a stuck requested counts as automatic", ModeRestore.chosen(new int[] {2, 0, 0, 0}), Protocol.MODE_AUTOMATIC);
+        eq("221 chosen: live counts as automatic", ModeRestore.chosen(new int[] {3, 1, 0, 0}), Protocol.MODE_AUTOMATIC);
+        eq("221 chosen: unreadable counts as automatic", ModeRestore.chosen(null), Protocol.MODE_AUTOMATIC);
+        eq("221 chosen: empty status counts as automatic", ModeRestore.chosen(new int[0]), Protocol.MODE_AUTOMATIC);
+        eq("221 previous: a pending mode wins over a stuck requested", ModeRestore.previous(Protocol.MODE_OFF, new int[] {2, 0, 0, 0}), Protocol.MODE_OFF);
+        eq("221 previous: no pending gives the chosen mode", ModeRestore.previous(ModeRestore.NONE, new int[] {0, 0, 0, 0}), Protocol.MODE_OFF);
+
+        // nothing pending: nothing is sent, nothing written
+        ModeRing ring = new ModeRing();
+        ModeStore store = new ModeStore();
+        eq("221 none pending: none left", ModeRestore.restorePending(ring, store, lg), 0);
+        eq("221 none pending: nothing sent", ring.sent.size(), 0);
+        eq("221 none pending: nothing written", store.writes, 0);
+
+        // a clean session: daytime heart rate Off comes back Off (not automatic), blood oxygen back to automatic
+        ring.mode.put(HR, Protocol.MODE_OFF);
+        ring.mode.put(SPO2, Protocol.MODE_AUTOMATIC);
+        liveStart(ring, store, true);
+        eq("221 clean: kept daytime heart rate off before the change", store.pending(HR), Protocol.MODE_OFF);
+        eq("221 clean: kept blood oxygen automatic", store.pending(SPO2), Protocol.MODE_AUTOMATIC);
+        eq("221 clean: ring in live and requested while measuring", ring.mode.get(HR) + "/" + ring.mode.get(SPO2), "3/2");
+        eq("221 clean: none left", ModeRestore.restorePending(ring, store, lg), 0);
+        eq("221 clean: daytime heart rate off again", ring.mode.get(HR), Protocol.MODE_OFF);
+        eq("221 clean: blood oxygen automatic again", ring.mode.get(SPO2), Protocol.MODE_AUTOMATIC);
+        eq("221 clean: nothing pending", store.m.size(), 0);
+        check("221 clean: the log says what was put back", log.contains("blood oxygen put back to automatic") && log.contains("daytime heart rate put back to off"));
+
+        // without blood oxygen only daytime heart rate is kept
+        ring = new ModeRing();
+        store = new ModeStore();
+        ring.mode.put(HR, Protocol.MODE_AUTOMATIC);
+        ring.mode.put(SPO2, Protocol.MODE_OFF);
+        liveStart(ring, store, false);
+        eq("221 no blood oxygen: SpO2 not kept", store.pending(SPO2), ModeRestore.NONE);
+        ModeRestore.restorePending(ring, store, lg);
+        eq("221 no blood oxygen: SpO2 never sent", ring.sent.contains(SPO2 + ":" + Protocol.MODE_OFF) || ring.sent.contains(SPO2 + ":" + Protocol.MODE_AUTOMATIC), false);
+        eq("221 no blood oxygen: SpO2 left as it was", ring.mode.get(SPO2), Protocol.MODE_OFF);
+
+        // the link drops: everything stays pending, the next connection (sync) puts it back
+        ring = new ModeRing();
+        store = new ModeStore();
+        ring.mode.put(HR, Protocol.MODE_AUTOMATIC);
+        ring.mode.put(SPO2, Protocol.MODE_OFF);
+        liveStart(ring, store, true);
+        ring.linkDown = true;
+        log.clear();
+        eq("221 link drop: both left", ModeRestore.restorePending(ring, store, lg), 2);
+        eq("221 link drop: blood oxygen still pending off", store.pending(SPO2), Protocol.MODE_OFF);
+        check("221 link drop: the log says the next connection tries again", log.size() == 2 && log.get(1).contains("next connection tries again")
+                && log.get(1).contains("the ring disconnected"));
+        // out of reach the ring falls back from live to automatic by itself, SpO2 stays requested
+        ring.mode.put(HR, Protocol.MODE_AUTOMATIC);
+        ring.linkDown = false;
+        ring.sent.clear();
+        eq("221 next sync: none left", ModeRestore.restorePending(ring, store, lg), 0);
+        eq("221 next sync: blood oxygen off again", ring.mode.get(SPO2), Protocol.MODE_OFF);
+        eq("221 next sync: daytime heart rate automatic", ring.mode.get(HR), Protocol.MODE_AUTOMATIC);
+        eq("221 next sync: nothing pending", store.m.size(), 0);
+        eq("221 next sync: one request each", ring.sent.size(), 2);
+        eq("221 a later sync sends nothing", ModeRestore.restorePending(ring, store, lg) + "/" + ring.sent.size(), "0/2");
+
+        // a restore that throws for daytime heart rate does not stop the blood oxygen restore
+        ring = new ModeRing();
+        store = new ModeStore();
+        store.setPending(HR, Protocol.MODE_OFF);
+        store.setPending(SPO2, Protocol.MODE_AUTOMATIC);
+        ring.throwOn.add(HR);
+        ring.mode.put(SPO2, Protocol.MODE_REQUESTED);
+        eq("221 throws: one left", ModeRestore.restorePending(ring, store, lg), 1);
+        eq("221 throws: blood oxygen still put back", ring.mode.get(SPO2), Protocol.MODE_AUTOMATIC);
+        eq("221 throws: blood oxygen cleared", store.pending(SPO2), ModeRestore.NONE);
+        eq("221 throws: daytime heart rate stays pending", store.pending(HR), Protocol.MODE_OFF);
+
+        // a refused restore stays pending too, and a runtime error in the ring code counts as not put back
+        ring = new ModeRing();
+        store = new ModeStore();
+        store.setPending(SPO2, Protocol.MODE_OFF);
+        ring.refuse.add(SPO2);
+        log.clear();
+        eq("221 refused: left", ModeRestore.restorePending(ring, store, lg), 1);
+        check("221 refused: logged", log.get(0).contains("did not accept"));
+        eq("221 refused: still pending", store.pending(SPO2), Protocol.MODE_OFF);
+        eq("221 runtime error: left", ModeRestore.restorePending(new ModeRestore.Ring() {
+            public boolean setMode(int feature, int mode) {
+                throw new IllegalStateException("closed");
+            }
+        }, store, lg), 1);
+        eq("221 runtime error: still pending", store.pending(SPO2), Protocol.MODE_OFF);
+
+        // the next Live session finds a stuck requested mode with a pending restore that failed: the pending one wins
+        ring = new ModeRing();
+        store = new ModeStore();
+        ring.mode.put(HR, Protocol.MODE_AUTOMATIC);
+        ring.mode.put(SPO2, Protocol.MODE_OFF);
+        liveStart(ring, store, true);
+        ring.linkDown = true;
+        ModeRestore.restorePending(ring, store, lg);
+        ring.linkDown = false;
+        ring.refuse.add(SPO2); // the start restore of the next session is refused
+        ModeRestore.restorePending(ring, store, lg);
+        eq("221 stuck: the ring still in requested", ring.mode.get(SPO2), Protocol.MODE_REQUESTED);
+        ring.refuse.clear();
+        liveStart(ring, store, true);
+        eq("221 stuck: requested not taken as the previous mode", store.pending(SPO2), Protocol.MODE_OFF);
+        ModeRestore.restorePending(ring, store, lg);
+        eq("221 stuck: back to off at the end", ring.mode.get(SPO2), Protocol.MODE_OFF);
+        // an older version left requested with nothing pending: back to automatic, never left in requested
+        store = new ModeStore();
+        ring.mode.put(SPO2, Protocol.MODE_REQUESTED);
+        liveStart(ring, store, true);
+        ModeRestore.restorePending(ring, store, lg);
+        eq("221 older version: requested goes back to automatic", ring.mode.get(SPO2), Protocol.MODE_AUTOMATIC);
+
+        // Settings: the person's choice wins over a pending restore, only for that measurement
+        store = new ModeStore();
+        store.setPending(HR, Protocol.MODE_OFF);
+        store.setPending(SPO2, Protocol.MODE_AUTOMATIC);
+        ModeRestore.chosenInSettings(store, HR);
+        eq("221 settings: daytime heart rate no longer pending", store.pending(HR), ModeRestore.NONE);
+        eq("221 settings: blood oxygen still pending", store.pending(SPO2), Protocol.MODE_AUTOMATIC);
+        int w = store.writes;
+        ModeRestore.chosenInSettings(store, HR);
+        eq("221 settings: nothing written when nothing pending", store.writes, w);
+        // a factory reset (or a new pairing) drops them all
+        ModeRestore.forget(store);
+        eq("221 forget: nothing pending", store.m.size(), 0);
+        eq("221 features: daytime heart rate and blood oxygen", Arrays.toString(ModeRestore.FEATURES), "[2, 4]");
+        eq("221 names", ModeRestore.modeName(Protocol.MODE_CONNECTED_LIVE) + "," + ModeRestore.modeName(9) + "," + ModeRestore.name(8), "live,mode 9,measurement 8");
     }
 }

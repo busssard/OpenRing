@@ -23,6 +23,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import app.openring.core.Auth;
 import app.openring.core.Hex;
+import app.openring.core.ModeRestore;
 import app.openring.core.HistoryBatch;
 import app.openring.core.Protocol;
 import app.openring.core.RingClient;
@@ -178,6 +179,40 @@ public final class RingManager {
         }
         android.util.Log.i("OpenRing", msg);
         notifyListeners();
+    }
+
+    /** Prefs as the store of the measurement modes still to be put back on the ring (issue #221). */
+    private ModeRestore.Store modeStore() {
+        final Prefs prefs = Prefs.of(ctx);
+        return new ModeRestore.Store() {
+            @Override
+            public int pending(int feature) {
+                return prefs.pendingMode(feature);
+            }
+
+            @Override
+            public void setPending(int feature, int mode) {
+                prefs.setPendingMode(feature, mode);
+            }
+        };
+    }
+
+    /**
+     * Sends the measurement modes Live or the finder left to be put back (issue #221), each on its own; a refusal or a
+     * dropped link only goes to the log and stays pending for the next connection. Sends nothing when none is pending.
+     */
+    private void restoreModes(final RingClient c, final String who) throws InterruptedException {
+        ModeRestore.restorePending(new ModeRestore.Ring() {
+            @Override
+            public boolean setMode(int feature, int mode) throws IOException, InterruptedException {
+                return c.setFeatureMode(feature, mode);
+            }
+        }, modeStore(), new ModeRestore.Log() {
+            @Override
+            public void log(String line) {
+                RingManager.this.log(who + ": " + line);
+            }
+        });
     }
 
     /**
@@ -597,6 +632,8 @@ public final class RingManager {
         if (hw != null) prefs.setHardware(hw);
         if (info != null) prefs.setFirmware(info.firmware);
         c.setupAppStream(hw);
+        // modes an earlier Live or finder session could not put back (the link dropped, issue #221)
+        restoreModes(c, "sync");
 
         // async notification flags, as the official app, Gadgetbridge and OpenStrap send them
         try {
@@ -835,6 +872,8 @@ public final class RingManager {
                 Session s = open(false, null);
                 try {
                     s.client.authenticate(ringKey);
+                    // first, so Settings shows the modes the person chose, not one Live left behind (issue #221)
+                    restoreModes(s.client, "settings");
                     StringBuilder sb = new StringBuilder();
                     for (int f : FEATURES) {
                         int[] st = s.client.featureStatus(f);
@@ -862,7 +901,10 @@ public final class RingManager {
                 Session s = open(false, null);
                 try {
                     s.client.authenticate(ringKey);
+                    restoreModes(s.client, "settings");
                     if (!s.client.setFeatureMode(feature, mode)) throw new IOException("the ring did not accept the change");
+                    // the person's choice wins over a mode still to be put back (issue #221)
+                    ModeRestore.chosenInSettings(modeStore(), feature);
                     return "Saved on the ring";
                 } finally {
                     close(s);
@@ -896,6 +938,7 @@ public final class RingManager {
                     s.client.authenticate(ringKey);
                     setStatus("Erasing the ring");
                     s.client.factoryReset();
+                    ModeRestore.forget(modeStore()); // the erased ring has no modes of the person's left (issue #221)
                     prefs.clearKey();
                     prefs.setSetupDone(false);
                     db.put("cursor", 0);
@@ -983,7 +1026,6 @@ public final class RingManager {
                 cancelRequested = false;
                 Session s = null;
                 boolean realtimeOn = false;
-                int spo2PrevMode = -1;
                 boolean modesTouched = false;
                 try {
                     post(token, "Connecting to your ring");
@@ -991,6 +1033,9 @@ public final class RingManager {
                     s = open(false, null);
                     leftCheck(token, "while connecting");
                     s.client.authenticate(ringKey);
+                    // modes an earlier session could not put back go back first, so they are not taken for the
+                    // person's (issue #221)
+                    restoreModes(s.client, "live");
                     leftCheck(token, "while checking the key");
                     // fresh data first: it tells whether the ring is on a finger right now
                     post(token, "Checking the ring");
@@ -1013,19 +1058,24 @@ public final class RingManager {
                     }
                     leftCheck(token, "before the live mode");
                     modesTouched = true;
+                    ModeRestore.Store modes = modeStore();
                     int[] fs = s.client.featureStatus(Protocol.FEATURE_DAYTIME_HR);
                     log("live: daytime HR feature " + (fs == null ? "status unknown" : "mode " + fs[0] + " status " + fs[1] + " state " + fs[2]));
+                    // kept on the phone before anything changes: a session that loses the link puts it back at the
+                    // next connection; an Off mode comes back Off (issue #221)
+                    int hrPrevMode = ModeRestore.remember(modes, Protocol.FEATURE_DAYTIME_HR, fs);
                     if (fs != null && fs[0] == Protocol.MODE_OFF) {
                         s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
-                        log("live: daytime HR was off on the ring, switched it on");
+                        log("live: daytime HR was off on the ring, switched it on for this session");
                     }
                     boolean modeOk = s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_CONNECTED_LIVE);
-                    log("live: switch to live mode " + (modeOk ? "accepted" : "NOT accepted"));
+                    log("live: switch to live mode " + (modeOk ? "accepted" : "NOT accepted") + ", goes back to mode " + hrPrevMode);
                     if (spo2) {
                         int[] ss = s.client.featureStatus(Protocol.FEATURE_SPO2);
-                        spo2PrevMode = ss == null ? Protocol.MODE_AUTOMATIC : ss[0];
+                        int spo2PrevMode = ModeRestore.remember(modes, Protocol.FEATURE_SPO2, ss);
                         boolean ok = s.client.setFeatureMode(Protocol.FEATURE_SPO2, Protocol.MODE_CONNECTED_LIVE);
-                        log("live: SpO2 was mode " + spo2PrevMode + ", live mode " + (ok ? "accepted" : "NOT accepted"));
+                        log("live: SpO2 was mode " + (ss == null ? "unknown" : String.valueOf(ss[0])) + ", goes back to mode "
+                                + spo2PrevMode + ", live mode " + (ok ? "accepted" : "NOT accepted"));
                         if (!ok) {
                             ok = s.client.setFeatureMode(Protocol.FEATURE_SPO2, Protocol.MODE_REQUESTED);
                             log("live: SpO2 requested mode " + (ok ? "accepted" : "NOT accepted"));
@@ -1194,15 +1244,28 @@ public final class RingManager {
                     log("live: stopped by " + raw);
                     post(token, "Live heart rate stopped. " + SyncError.plain(raw, SyncError.Task.LIVE));
                 } finally {
-                    try {
-                        // only modes this session changed are put back: a session that left early changed none
-                        if (modesTouched && s != null && s.link.isConnected()) {
-                            if (realtimeOn) s.client.request(Protocol.realtimeOff(), null, 500);
-                            s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
-                            // leave blood oxygen as it was: live SpO2 drains the battery
-                            if (spo2PrevMode >= 0) s.client.setFeatureMode(Protocol.FEATURE_SPO2, spo2PrevMode);
+                    // each step on its own (issue #221): a failed stop of the measurement still puts the modes back.
+                    // Only modes kept before a change are sent (a session that left early changed none, so nothing
+                    // is sent); without a link they stay pending, and the next sync, Live, Find my ring or Settings
+                    // read sends them.
+                    if (s != null && s.link.isConnected()) {
+                        if (realtimeOn) {
+                            try {
+                                s.client.request(Protocol.realtimeOff(), null, 500);
+                            } catch (Exception e) {
+                                log("live: measurement not switched off: " + e.getMessage());
+                            }
                         }
-                    } catch (Exception ignored) {
+                        try {
+                            restoreModes(s.client, "live");
+                        } catch (InterruptedException e) {
+                            // as before, the worker thread is not left interrupted for the next task; the modes stay pending
+                            log("modes not put back, interrupted; the next connection tries again");
+                        } catch (RuntimeException e) {
+                            log("live: modes not put back: " + e);
+                        }
+                    } else if (modesTouched) {
+                        log("live: the link is down, the measurement modes go back at the next connection");
                     }
                     close(s);
                     // only this session's own mark: a newer one may be queued already (issue #153)
@@ -1318,7 +1381,6 @@ public final class RingManager {
                 notifyListeners();
                 Session s = null;
                 boolean measuring = false;
-                int prevMode = -1;
                 String raw = null;
                 try {
                     if (token != fingerToken.get()) throw new IOException("cancelled");
@@ -1326,6 +1388,7 @@ public final class RingManager {
                     byte[] ringKey = savedKey(); // before the scan and connection, so it fails fast (review of #281)
                     s = open(false, null);
                     s.client.authenticate(ringKey);
+                    restoreModes(s.client, "finder"); // what an earlier session could not put back (issue #221)
                     int charging = -1;
                     try {
                         int[] b = s.client.battery();
@@ -1380,13 +1443,14 @@ public final class RingManager {
                     fingerAnswer(token, reader, chargingNow);
                     if (blink && token == fingerToken.get()) {
                         int[] fs = s.client.featureStatus(Protocol.FEATURE_DAYTIME_HR);
-                        prevMode = fs == null ? Protocol.MODE_AUTOMATIC : fs[0];
+                        // kept on the phone before the change, put back at the end or at the next connection (issue #221)
+                        int prevMode = ModeRestore.remember(modeStore(), Protocol.FEATURE_DAYTIME_HR, fs);
                         // like Live: a ring with daytime heart rate off may refuse live mode, so automatic first
-                        if (prevMode == Protocol.MODE_OFF) s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
+                        if (fs != null && fs[0] == Protocol.MODE_OFF) s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
                         boolean modeOk = s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_CONNECTED_LIVE);
                         measuring = true;
                         List<app.openring.core.Packet> r = s.client.request(Protocol.realtime(Protocol.REALTIME_ON_DEMAND, 1), null, 1500, false);
-                        log("finder: blink, heart rate was mode " + prevMode + ", live mode " + (modeOk ? "accepted" : "NOT accepted") + ", on demand reply " + r);
+                        log("finder: blink, heart rate goes back to mode " + prevMode + ", live mode " + (modeOk ? "accepted" : "NOT accepted") + ", on demand reply " + r);
                         fingerPost(token, new Runnable() {
                             @Override
                             public void run() {
@@ -1418,18 +1482,24 @@ public final class RingManager {
                     log("finder: stopped by " + raw);
                 } finally {
                     // each step on its own, so a failed stop of the measurement still gives the person's mode back (review
-                    // of #245). After a lost link the ring falls back to automatic by itself after about 48 s, not to off.
-                    if (measuring && s != null && s.link.isConnected()) {
-                        try {
-                            s.client.request(Protocol.realtimeOff(), null, 500);
-                        } catch (Exception e) {
-                            log("finder: measurement not switched off: " + e.getMessage());
+                    // of #245). After a lost link the ring falls back to automatic by itself after about 48 s, not to off; the kept
+                    // mode goes back at the next connection (issue #221).
+                    if (s != null && s.link.isConnected()) {
+                        if (measuring) {
+                            try {
+                                s.client.request(Protocol.realtimeOff(), null, 500);
+                            } catch (Exception e) {
+                                log("finder: measurement not switched off: " + e.getMessage());
+                            }
                         }
                         try {
-                            // back to the mode the ring had (Live puts automatic; the finder keeps the person's choice)
-                            if (!s.client.setFeatureMode(Protocol.FEATURE_DAYTIME_HR, prevMode)) log("finder: heart rate mode " + prevMode + " not put back");
-                        } catch (Exception e) {
-                            log("finder: heart rate mode " + prevMode + " not put back: " + e.getMessage());
+                            // back to the person's mode, kept before the change; a refusal stays pending (issue #221)
+                            restoreModes(s.client, "finder");
+                        } catch (InterruptedException e) {
+                            // as before, the worker thread is not left interrupted for the next task; the modes stay pending
+                            log("modes not put back, interrupted; the next connection tries again");
+                        } catch (RuntimeException e) {
+                            log("finder: heart rate mode not put back: " + e);
                         }
                     }
                     close(s);
