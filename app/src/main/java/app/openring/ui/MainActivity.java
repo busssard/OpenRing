@@ -434,6 +434,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         // a grant clears a remembered refusal, so a permission Android takes back later asks afresh (issue #140)
         if (!prefs.demo()) Permissions.remember(this);
+        // allowed in the app's settings after Sync found it blocked: that sync starts now, also right after a recent one (#186)
+        boolean allowedNow = !prefs.demo() && permissionBlocked && Permissions.granted(this);
         if (!prefs.demo() && Permissions.granted(this)) permissionBlocked = quietDenial = false;
         if (!prefs.demo() && !Permissions.granted(this) && !askedPermissions) {
             askedPermissions = true;
@@ -447,7 +449,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         updateStatus();
         load();
         boolean recent = app.openring.core.BackgroundJob.recent(System.currentTimeMillis() / 1000, prefs.lastSync(), prefs.lastAttempt());
-        if (!prefs.demo() && !recent && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
+        if (!prefs.demo() && (!recent || allowedNow) && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
     }
 
     @Override
