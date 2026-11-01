@@ -8574,7 +8574,7 @@ public class PipelineTest {
     /** Every row of the period tables, in key order: what a restore must keep exactly. */
     static String periodRows252(Db db) {
         StringBuilder sb = new StringBuilder();
-        String[] q = {"SELECT day, flow, src, prev, made FROM period_days ORDER BY day", "SELECT day, made FROM period_ends ORDER BY day",
+        String[] q = {"SELECT day, flow, src, prev, made FROM period_days ORDER BY day", "SELECT day, made, gone FROM period_ends ORDER BY day",
             "SELECT day, time, c, excluded, src FROM period_temps ORDER BY day", "SELECT id, made, days, temps FROM period_imports ORDER BY id"};
         for (String sql : q) {
             android.database.Cursor c = db.getReadableDatabase().rawQuery(sql, null);
@@ -8744,6 +8744,7 @@ public class PipelineTest {
         app.openring.data.Periods.remove(db, "2019-03-02");
         app.openring.data.Periods.setFlow(db, "2019-05-01", app.openring.data.Periods.HEAVY, 2001);
         app.openring.data.Periods.setEnd(db, "2019-05-04", 2002);
+        app.openring.data.Periods.clearEnd(db, "2019-03-03", 2003);
         db.getWritableDatabase().execSQL("DELETE FROM period_days WHERE day = '2019-04-01'");
         db.getWritableDatabase().execSQL("UPDATE period_temps SET c = 36.6 WHERE day = '2019-03-10'");
         long events = db.eventCount();
@@ -8758,7 +8759,9 @@ public class PipelineTest {
         check("#252 restore: a day removed on the phone after the backup stays removed", flow252(days, "2019-03-02") == app.openring.data.Periods.REMOVED, days);
         check("#252 restore: a day logged on the phone after the backup is kept", flow252(days, "2019-05-01") == app.openring.data.Periods.HEAVY, days);
         check("#252 restore: a day only the backup has comes back", flow252(days, "2019-04-01") == app.openring.data.Periods.MEDIUM, days);
-        check("#252 restore: the ends of both, the phone's temperature", app.openring.data.Periods.allEnds(db).equals(Arrays.asList("2019-03-03", "2019-05-04"))
+        check("#252 restore: an end cleared on the phone after the backup stays cleared", !app.openring.data.Periods.allEnds(db).contains("2019-03-03")
+                && db.count("SELECT COUNT(*) FROM period_ends WHERE day = '2019-03-03' AND gone = 1") == 1, app.openring.data.Periods.allEnds(db));
+        check("#252 restore: the phone's new end, the phone's temperature", app.openring.data.Periods.allEnds(db).equals(Arrays.asList("2019-05-04"))
                 && db.count("SELECT COUNT(*) FROM period_temps WHERE c = 36.6") == 1, app.openring.data.Periods.allEnds(db));
         String merged = periodRows252(db);
         check("#252 restore: every row of the phone is there as it was", containsRows252(merged, phoneRows), merged);
@@ -8866,7 +8869,8 @@ public class PipelineTest {
         app.openring.data.Periods.setFlow(db, "2019-06-01", app.openring.data.Periods.LIGHT);
         app.openring.data.Periods.remove(db, "2019-06-01");
         List<app.openring.data.Periods.Day> june = app.openring.data.Periods.days(db, "2019-06-01", "2019-06-30");
-        check("#252 an end set and cleared leaves none; a day removed stays as its mark, read in its range", app.openring.data.Periods.ends(db, "2019-06-01", "2019-06-30").isEmpty()
+        check("#252 an end set and cleared leaves none to read, its row kept as a mark; a day removed stays as its mark, read in its range",
+                app.openring.data.Periods.ends(db, "2019-06-01", "2019-06-30").isEmpty() && db.count("SELECT COUNT(*) FROM period_ends WHERE gone = 1 AND day >= '2019-06-01'") == 2
                 && june.size() == 1 && june.get(0).removed() && june.get(0).src == 0 && app.openring.data.Periods.days(db, "2019-03-02", "2019-03-03").size() == 2, june);
         clean254();
     }

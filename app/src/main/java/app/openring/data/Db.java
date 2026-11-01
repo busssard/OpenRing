@@ -115,7 +115,8 @@ public final class Db extends SQLiteOpenHelper {
      * <li>{@code period_days}: one row per day; {@code flow} -1 removed by the person ("Nothing", a mark kept so a restore
      * cannot bring the day back), 0 spotting, 1 light, 2 medium, 3 heavy; {@code src} 0 typed on this phone, else the
      * import's id; {@code prev} the flow an import replaced (null: none); {@code made} unix seconds of the entry.</li>
-     * <li>{@code period_ends}: days the person marked as the end of a period.</li>
+     * <li>{@code period_ends}: days the person marked as the end of a period; {@code gone} 1 when the person took the mark off
+     * again (kept like a day's removal mark, so a restore cannot bring it back).</li>
      * <li>{@code period_temps}: imported basal temperatures (drip, phase 1b), one per day: {@code time} "HH:MM" or null,
      * {@code c} degrees Celsius, {@code excluded} 1 when the source did not count it, {@code src} the import's id.</li>
      * <li>{@code period_imports}: one row per import; {@code id} the import's time in milliseconds (an import made on
@@ -125,7 +126,7 @@ public final class Db extends SQLiteOpenHelper {
     private static void upgradeTo8(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS period_days (day TEXT PRIMARY KEY, flow INTEGER NOT NULL, src INTEGER NOT NULL DEFAULT 0,"
                 + " prev INTEGER, made REAL NOT NULL)");
-        db.execSQL("CREATE TABLE IF NOT EXISTS period_ends (day TEXT PRIMARY KEY, made REAL NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS period_ends (day TEXT PRIMARY KEY, made REAL NOT NULL, gone INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE TABLE IF NOT EXISTS period_temps (day TEXT PRIMARY KEY, time TEXT, c REAL NOT NULL, excluded INTEGER NOT NULL DEFAULT 0,"
                 + " src INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE TABLE IF NOT EXISTS period_imports (id INTEGER PRIMARY KEY, made REAL NOT NULL, days INTEGER NOT NULL DEFAULT 0,"
@@ -1364,7 +1365,7 @@ public final class Db extends SQLiteOpenHelper {
         {"screen_reads", 6, new String[] {"start", "stop"}},
         {"excluded", 7, new String[] {"start", "stop", "made", "note"}},
         {"period_days", 8, new String[] {"day", "flow", "src", "prev", "made"}},
-        {"period_ends", 8, new String[] {"day", "made"}},
+        {"period_ends", 8, new String[] {"day", "made", "gone"}},
         {"period_temps", 8, new String[] {"day", "time", "c", "excluded", "src"}},
         {"period_imports", 8, new String[] {"id", "made", "days", "temps"}},
     };

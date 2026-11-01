@@ -28,7 +28,7 @@ public final class Periods {
     /** Each table's columns and their types (T text, I integer, R real), in the order {@link Rows} keeps them. */
     private static final String[][] COLUMNS = {
         {"day, flow, src, prev, made", "TIIIR"},
-        {"day, made", "TR"},
+        {"day, made, gone", "TRI"},
         {"day, time, c, excluded, src", "TTRII"},
         {"id, made, days, temps", "IRII"},
     };
@@ -86,15 +86,20 @@ public final class Periods {
     }
 
     public static void setEnd(Db db, String day, double made) {
-        db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO period_ends(day, made) VALUES (?, ?)", new Object[] {date(day), made});
+        db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO period_ends(day, made, gone) VALUES (?, ?, 0)", new Object[] {date(day), made});
+    }
+
+    /** Takes the end mark off {@code day}, typed now. */
+    public static void clearEnd(Db db, String day) {
+        clearEnd(db, day, System.currentTimeMillis() / 1000.0);
     }
 
     /**
-     * Takes the end mark off {@code day} (nothing to do when it has none). The row goes: an end the restored backup still
-     * has comes back with a restore (ends carry no removal mark; a logged day after an end shows the period went on).
+     * Takes the end mark off {@code day} at {@code made}: one statement that keeps the row as a removal mark ({@code gone} 1),
+     * never a delete, so a restore cannot bring the end back from the backup. Readers leave such rows out.
      */
-    public static void clearEnd(Db db, String day) {
-        db.getWritableDatabase().execSQL("DELETE FROM period_ends WHERE day = ?", new Object[] {date(day)});
+    public static void clearEnd(Db db, String day, double made) {
+        db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO period_ends(day, made, gone) VALUES (?, ?, 1)", new Object[] {date(day), made});
     }
 
     /** The logged days from {@code from} to {@code to} (both included, yyyy-mm-dd), oldest first, removal marks included. */
@@ -115,10 +120,10 @@ public final class Periods {
         return days(db, "0000-01-01", "9999-12-31");
     }
 
-    /** The end marks from {@code from} to {@code to} (both included), oldest first. */
+    /** The end marks from {@code from} to {@code to} (both included), oldest first; cleared ones left out. */
     public static List<String> ends(Db db, String from, String to) {
         List<String> out = new ArrayList<String>();
-        Cursor c = db.getReadableDatabase().rawQuery("SELECT day FROM period_ends WHERE day >= ? AND day <= ? ORDER BY day",
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT day FROM period_ends WHERE day >= ? AND day <= ? AND gone = 0 ORDER BY day",
                 new String[] {date(from), date(to)});
         try {
             while (c.moveToNext()) out.add(c.getString(0));

@@ -99,7 +99,7 @@ Nothing leaves the phone: the app has no internet permission.
 | `zones` | The phone's time zone over time (`start`, `stop`, `id`; version 5, issue #22). Noted at every app start and analysis (not in demo mode): the same zone extends the newest row, another zone opens a new one; the first row starts at 0. `Db.zoneAt` gives a night its zone from its end; between two rows the later one counts. Kept by Re analyse all, deleted by Delete all local data |
 | `excluded` | Times the person left out because someone else wore the ring (`start`, `stop`, `made` as the key, `note` unused; version 7, issue #254). Adding or removing one writes the row and lowers `analyzed_until` to its start in one commit (`Db.addExcluded`, `removeExcluded`). Restored older backups get it empty; Delete all local data and pairing a different ring empty it |
 | `period_days` | The period log (version 8, issue #252): one row per calendar day (`day` as yyyy-mm-dd text, so travel never moves it), `flow` -1 removed by the person ("Nothing": a removal mark, never a delete, so a restore cannot bring the day back), 0 spotting, 1 light, 2 medium, 3 heavy; `src` 0 typed, else the import's id; `prev` the amount an import replaced; `made` unix seconds. Written one statement at a time (`Periods.setFlow`) |
-| `period_ends` | Days marked as the end of a period (`day`, `made`; version 8) |
+| `period_ends` | Days marked as the end of a period (`day`, `made`, `gone`; version 8). Clearing an end keeps the row with `gone` 1 (a removal mark like a day's -1), so a restore cannot bring it back; readers leave those rows out |
 | `period_temps`, `period_imports` | For the drip import (phase 1b of #252, version 8, empty until then): one imported basal temperature per day (`day`, `time` as HH:MM, `c` in °C, `excluded`, `src`), and one row per import (`id` its time in milliseconds, `made`, `days`, `temps`) |
 | `battery`, `kv` | Battery history; small key value state (cursor, analysis progress, errors) |
 
@@ -125,7 +125,7 @@ Histories are never merged, with one exception (issue #252): the period log type
 reads every row of the four period tables from the phone's file before the swap (a file that opens but whose log cannot be
 read refuses the restore before anything moves), and after the restored file opened, upgraded (an older backup gets the
 tables first) and passed its checks, writes them into it in one transaction, each replacing the backup's row with the same
-key, so the phone wins on the same day and a day removed on the phone stays removed; only then `.old` goes. Any failure on
+key, so the phone wins on the same day and a day or end removed on the phone stays removed; only then `.old` goes. Any failure on
 the way puts the old file back with its log. A phone file that cannot be opened at all has no log to read and is replaced
 as before. Ring data is never merged. Going back to a phone copy (`AutoBackup.goBack`) runs the same swap. A backup holds every setting; restored numbers are kept in the ranges Settings
 allows, and the stage detail level comes along only with the history or onto a phone without nights (#33).
