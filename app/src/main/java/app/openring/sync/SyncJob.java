@@ -24,6 +24,11 @@ public final class SyncJob extends JobService {
      * that runs when it is replaced, which cut off background syncs whenever the app was opened (issue #193).
      */
     public static void schedule(Context c) {
+        schedule(c, Prefs.of(c).keyState());
+    }
+
+    /** As {@link #schedule(Context)}, with the {@code core/KeyState} the caller read already (one decrypt per resume, review of #281). */
+    public static void schedule(Context c, int keyState) {
         JobScheduler js = (JobScheduler) c.getSystemService(Context.JOB_SCHEDULER_SERVICE);
         ComponentName service = new ComponentName(c, SyncJob.class);
         BackgroundJob.Spec wanted = BackgroundJob.wanted(service.flattenToString());
@@ -40,10 +45,11 @@ public final class SyncJob extends JobService {
         }
         Prefs prefs = Prefs.of(c);
         // a key this phone cannot read could only fail every few hours; the job comes back once it is entered again (issue #199)
-        switch (BackgroundJob.decide(prefs.backgroundSync() && app.openring.core.KeyState.syncs(prefs.keyState()), known, pending, wanted)) {
+        boolean paused = prefs.backgroundSync() && keyState == app.openring.core.KeyState.UNREADABLE;
+        switch (BackgroundJob.decide(prefs.backgroundSync() && app.openring.core.KeyState.syncs(keyState), known, pending, wanted)) {
             case CANCEL:
                 js.cancel(JOB_ID);
-                RingManager.get(c).log("background sync off");
+                RingManager.get(c).log(paused ? "background sync paused: the saved key cannot be read" : "background sync off");
                 break;
             case SCHEDULE:
                 JobInfo info = new JobInfo.Builder(JOB_ID, service)

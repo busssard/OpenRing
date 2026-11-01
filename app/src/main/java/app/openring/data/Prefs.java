@@ -316,7 +316,7 @@ public final class Prefs {
             return c.doFinal(Base64.decode(enc, Base64.NO_WRAP));
         } catch (Exception e) {
             // the stored value stays as it is: a lock that fails only for a while reads it again later (issue #199)
-            keyError = e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
+            if ("key_enc".equals(encName)) keyError = e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
             return null;
         }
     }

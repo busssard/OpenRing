@@ -6073,6 +6073,26 @@ public class PipelineTest {
         }
         check("#199 a backup fails with the reason", failed != null && failed.contains("cannot read"), failed);
         check("#199 a failed backup leaves the stored key", enc.equals(sp.getString("key_enc", null)) && p.setupDone() && "2X0001".equals(p.serial()), null);
+        boolean ownType = false;
+        try {
+            app.openring.data.Backup.write(c, new java.io.ByteArrayOutputStream(), true);
+        } catch (app.openring.data.Backup.KeyUnreadable e) {
+            ownType = true;
+        }
+        check("#199 a full backup is refused with its own reason, Settings shows its own sentence (review of #281)", ownType, null);
+        // the automatic backup names the key as the reason, not the folder, and writes nothing (review of #281)
+        java.io.File fdir = Files.createTempDirectory("folder199").toFile();
+        Folder242 folder = new Folder242(fdir);
+        app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/B199", "B199");
+        StringBuilder alog = new StringBuilder();
+        app.openring.data.AutoBackup.Outcome ao = app.openring.data.AutoBackup.run(c, folder, 1780000000L, false, collect(alog));
+        check("#199 automatic backup: the reason is the key", app.openring.core.Backups.KEY.equals(ao.error) && app.openring.core.Backups.KEY.equals(p.autoError()), ao.error);
+        check("#199 automatic backup: nothing written to the folder", folder.list().isEmpty() && ao.written.isEmpty(), folder.list().toString());
+        check("#199 automatic backup: the log says why", alog.toString().contains("cannot read the saved ring key"), alog.toString());
+        check("#199 automatic backup: Settings says it in plain words", app.openring.core.Backups.status(0, 0, 0, p.autoError(), java.time.ZoneId.of("UTC"))
+                .equals("The last copy failed: this phone cannot read the saved ring key, enter it again in Setup."), p.autoError());
+        check("#199 automatic backup: the stored key stays", enc.equals(sp.getString("key_enc", null)) && iv.equals(sp.getString("key_iv", null)), null);
+        p.setBackupFolder(null, null);
         // the ring accepted a key entered again: it replaces the stored one, now readable
         check("#199 pairing done", p.pairDone(fresh, null, "2X0001", "Paired with 2X0001", true), null);
         check("#199 after pairing the key reads", p.keyState() == app.openring.core.KeyState.READABLE && Arrays.equals(p.loadKey(), fresh), p.keyState());

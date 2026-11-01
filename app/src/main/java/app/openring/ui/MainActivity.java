@@ -130,13 +130,6 @@ public final class MainActivity extends Activity implements RingManager.Listener
         statusText = Ui.text(this, "", 12, Ui.TEXT_2, Ui.REGULAR);
         statusText.setGravity(Gravity.CENTER);
         statusStrip.addView(statusText);
-        statusStrip.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                // a saved key this phone cannot read: the line says so and leads to Setup (issue #199)
-                if (keyState == app.openring.core.KeyState.UNREADABLE && !Prefs.of(MainActivity.this).demo() && !RingManager.get(MainActivity.this).busy()) enterKeyAgain();
-            }
-        });
         statusBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         statusBar.setProgressTintList(ColorStateList.valueOf(Ui.SLEEP));
         statusBar.setProgressBackgroundTintList(ColorStateList.valueOf(Ui.LINE));
@@ -422,7 +415,15 @@ public final class MainActivity extends Activity implements RingManager.Listener
             autoDate = true;
             date = LocalDate.now();
         }
+        // the demo is on now: its status line (the key_unreadable screen test, review of #281)
+        readKeyState(Prefs.of(this));
+        updateStatus();
         load();
+    }
+
+    /** {@link #keyState}: one decrypt; in demo mode readable, or unreadable for the key_unreadable screen test (issue #199). */
+    void readKeyState(Prefs prefs) {
+        keyState = prefs.demo() ? (previewUnreadable ? app.openring.core.KeyState.UNREADABLE : app.openring.core.KeyState.READABLE) : prefs.keyState();
     }
 
     @Override
@@ -440,8 +441,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
     protected void onResume() {
         super.onResume();
         Prefs prefs = Prefs.of(this);
+        // read once per resume, before a demo that is still prepared returns (review of #281)
+        readKeyState(prefs);
         if (preparingDemo) return;
-        keyState = prefs.demo() ? (previewUnreadable ? app.openring.core.KeyState.UNREADABLE : app.openring.core.KeyState.READABLE) : prefs.keyState();
         // a pairing whose key page the person has not left yet opens there (issue #218); a saved key this phone cannot
         // read keeps this screen, the status line says so (issue #199)
         if (app.openring.core.KeyState.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null)) {
@@ -457,7 +459,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
             askedPermissions = true;
             Permissions.request(this);
         }
-        SyncJob.schedule(this);
+        SyncJob.schedule(this, keyState);
         // the automatic backups' daily job, and the check of a copy made before an update (issue #242)
         app.openring.sync.BackupJob.schedule(this);
         RingManager.get(this).addListener(this);
@@ -700,8 +702,20 @@ public final class MainActivity extends Activity implements RingManager.Listener
         return v;
     }
 
+    /** The status line's tap while it says the saved key cannot be read: Setup (issue #199); never in demo mode. */
+    private final View.OnClickListener enterKey = new View.OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            if (!Prefs.of(MainActivity.this).demo() && !RingManager.get(MainActivity.this).busy()) enterKeyAgain();
+        }
+    };
+
     void updateStatus() {
         RingManager m = RingManager.get(this);
+        // only the line about an unreadable key is a button (TalkBack announces it as one, review of #281)
+        boolean tap = !m.busy() && keyState == app.openring.core.KeyState.UNREADABLE;
+        statusStrip.setOnClickListener(tap ? enterKey : null);
+        statusStrip.setClickable(tap);
         boolean busy = m.busy();
         String err = Prefs.of(this).lastSyncError();
         if (busy) {
