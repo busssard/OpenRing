@@ -147,7 +147,11 @@ public final class SyncError {
         return plain(raw, Task.SYNC);
     }
 
-    /** The sentence for the screen after {@code task} failed. */
+    /**
+     * The sentence for the screen after {@code task} failed. {@link Kind#REANALYSING} for a sync ("Sync again then.") is
+     * not reached today: a sync waits for the re analysis instead of failing ({@code RingManager.waitForLongRun}, with
+     * {@link #SYNC_WAITS}); it stays for a sync that might be refused one day (issue #260).
+     */
     public static String plain(String raw, Task task) {
         boolean sync = task == Task.SYNC, pair = task == Task.PAIR, live = task == Task.LIVE;
         String again = sync ? "sync again" : "try again";

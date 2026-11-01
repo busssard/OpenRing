@@ -793,6 +793,7 @@ public class PipelineTest {
         historyCache();
         safeReanalysis();
         ringGate230();
+        ringWriters260();
         loadDuringRun243();
         recentWindow();
         aohrHistory();
@@ -5573,8 +5574,21 @@ public class PipelineTest {
             }
         });
         check("#230 gate: 29 days and more to analyse is a long run", month[0] && results139(db).equals(before), "");
+        // exactly 28 days to analyse is not a long run yet (review of #243, issue #260)
+        db.put("analyzed_until", (long) Math.ceil(db.datedRange()[1] - 26 * 86400.0));
+        final boolean[] four = {false, false};
+        Analyzer.run(c, new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                if (!m.endsWith(" sleep periods")) return;
+                four[0] |= db.longRun();
+                four[1] = true;
+            }
+        });
+        check("#260 gate: exactly 28 days to analyse is not a long run", !four[0] && four[1] && results139(db).equals(before), "");
 
-        // a long analysis interrupted while it waits for a ring task goes on (a write that waits is slower, never lost)
+        // a long analysis interrupted while it waits for a ring task keeps waiting (issue #260): opening its transaction
+        // now would make the task's next write wait for the whole run with the ring held. It starts after releaseForRing.
         check("#230 gate: a ring task holds the ring again", db.holdForRing(), "");
         final boolean[] interrupted = {false};
         final Throwable[] err2 = new Throwable[1];
@@ -5593,10 +5607,25 @@ public class PipelineTest {
         until = System.currentTimeMillis() + 20000;
         while (waits.getState() != Thread.State.TIMED_WAITING && System.currentTimeMillis() < until) Thread.sleep(1);
         waits.interrupt();
-        waits.join(120000);
+        Thread.sleep(300);
+        // the ring task still stores: with no transaction open this write goes through (the stand in fails a write
+        // that would wait on Android)
+        String stored = tryWrite260(new java.util.concurrent.Callable<String>() {
+            @Override
+            public String call() {
+                db.put("ring260", 1);
+                return "stored";
+            }
+        });
+        Thread.State afterInterrupt = waits.getState();
+        check("#260 gate: interrupted while waiting for a ring task, the analysis keeps waiting and the task still stores", "stored".equals(stored)
+                && waits.isAlive() && afterInterrupt == Thread.State.TIMED_WAITING && db.longRun() && db.kvLong("full_pending", -1) == 1,
+                stored + ", " + afterInterrupt + ", full_pending " + db.kvLong("full_pending", -1));
         db.releaseForRing();
-        check("#230 gate: interrupted while waiting for a ring task, the analysis still runs to its end", err2[0] == null && interrupted[0]
-                && !waits.isAlive() && results139(db).equals(before) && db.kvLong("full_pending", -1) == 0 && !db.longRun(), err2[0]);
+        waits.join(120000);
+        check("#230 gate: interrupted while waiting for a ring task, the analysis runs to its end after the task, the interrupt kept",
+                err2[0] == null && interrupted[0] && !waits.isAlive() && results139(db).equals(before) && db.kvLong("full_pending", -1) == 0
+                && !db.longRun(), err2[0]);
 
         // Re analyse all of a history without any dated event keeps the stored nights; it stays pending until dates are known
         Context u = freshDb("openring230-undated");
@@ -5616,6 +5645,159 @@ public class PipelineTest {
     }
 
     /** Runs Re analyse all of {@code c} on its own thread, paused right after week 2 is stored until {@code go} opens. */
+    /**
+     * The order in which {@code RingManager.sync} stores (issue #230): while a long analysis replaces the results it
+     * waits without the ring, then {@link Db#holdForRing} before the download stores; refused means it gives the ring
+     * back and waits again. "waits" when it still waits after {@code waitMs}, else "stored". RingManager needs Android's
+     * Bluetooth and does not run here, so this follows its steps; keep the two in step (issue #260).
+     */
+    static String sync260(Db db, Runnable store, long waitMs) throws InterruptedException {
+        if (db.longRun() && !db.awaitLongRun(waitMs)) return "waits";
+        if (!db.holdForRing()) return "waits";
+        try {
+            store.run();
+        } finally {
+            db.releaseForRing();
+        }
+        return "stored";
+    }
+
+    /** {@code RingManager.live} (the drain of stored values) and the factory reset: refused while a long analysis runs. */
+    static String live260(Db db, Runnable store) {
+        if (!db.holdForRing()) return "refused";
+        try {
+            store.run();
+        } finally {
+            db.releaseForRing();
+        }
+        return "stored";
+    }
+
+    /** The screen time copy of the main screen's load ({@code MainActivity.load}): skipped while an analysis runs. */
+    static String screen260(Runnable store) {
+        if (Analyzer.running()) return "skipped";
+        store.run();
+        return "stored";
+    }
+
+    /** Runs {@code r}; its result, or the message of what it threw. */
+    static String tryWrite260(java.util.concurrent.Callable<String> r) {
+        try {
+            return r.call();
+        } catch (Throwable t) {
+            return String.valueOf(t.getMessage());
+        }
+    }
+
+    /**
+     * Issue #260: on Android a write from another thread waits while Re analyse all has its transaction open (minutes).
+     * The stand in now fails such a write with "would wait on Android" instead of letting it join the transaction, so
+     * this checks that the sync download, the Live drain and the screen time copy write nothing during a long run (they
+     * wait or are refused) and store normally after it.
+     */
+    static void ringWriters260() throws Exception {
+        final Context c = history230("openring260-writers", T230, 56);
+        Analyzer.run(c, null);
+        final Db db = Db.get(c);
+        List<String> before = results139(db);
+        final long epoch = db.kvLong("epoch", 1);
+        final Runnable download = new Runnable() {
+            @Override
+            public void run() {
+                List<RingEvent> ev = new ArrayList<RingEvent>();
+                for (int i = 0; i < 20; i++) ev.add(new RingEvent(EventCodec.MOTION_EVENT, DS219 + 26000 + i * 10, new byte[] {2, (byte) i, 6, 0}));
+                db.insertBatch(ev, epoch, T230);
+                db.put("cursor", DS219 + 26200);
+            }
+        };
+        final Runnable drain = new Runnable() {
+            @Override
+            public void run() {
+                List<RingEvent> ev = new ArrayList<RingEvent>();
+                ev.add(new RingEvent(EventCodec.MOTION_EVENT, DS219 + 27000, new byte[] {2, 6, 0, 1}));
+                db.insertBatch(ev, epoch, T230);
+            }
+        };
+        final Runnable screen = new Runnable() {
+            @Override
+            public void run() {
+                List<double[]> s = new ArrayList<double[]>();
+                s.add(new double[] {T230 + 60 * 86400.0, T230 + 60 * 86400.0 + 600});
+                db.putScreen(s);
+            }
+        };
+        long events0 = db.eventCount();
+
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1), go = new java.util.concurrent.CountDownLatch(1);
+        Throwable[] err = new Throwable[1];
+        Thread run = paused243(c, inside, go, err);
+        check("#260 set up: Re analyse all is inside its transaction", inside.await(120, java.util.concurrent.TimeUnit.SECONDS), "");
+        // the stand in itself: a write from this thread would wait on Android, a read sees the last commit
+        String plain = tryWrite260(new java.util.concurrent.Callable<String>() {
+            @Override
+            public String call() {
+                db.put("probe260", 1);
+                return "stored";
+            }
+        });
+        String screenRaw = tryWrite260(new java.util.concurrent.Callable<String>() {
+            @Override
+            public String call() {
+                screen.run();
+                return "stored";
+            }
+        });
+        check("#260 stand in: a write from another thread during the transaction fails as it would wait on Android, a read works",
+                plain.startsWith("would wait on Android") && screenRaw.startsWith("would wait on Android") && db.eventCount() == events0, plain + "; " + screenRaw);
+        // the three ring and screen paths write nothing meanwhile
+        String sync = tryWrite260(new java.util.concurrent.Callable<String>() {
+            @Override
+            public String call() throws Exception {
+                return sync260(db, download, 5);
+            }
+        });
+        String live = tryWrite260(new java.util.concurrent.Callable<String>() {
+            @Override
+            public String call() {
+                return live260(db, drain);
+            }
+        });
+        String copy = tryWrite260(new java.util.concurrent.Callable<String>() {
+            @Override
+            public String call() {
+                return screen260(screen);
+            }
+        });
+        check("#260 during a long run the sync download waits, the Live drain is refused, the screen time copy is skipped",
+                "waits".equals(sync) && "refused".equals(live) && "skipped".equals(copy), sync + "; " + live + "; " + copy);
+        // a sync that waits for the run stores once the new results are committed
+        final String[] later = new String[1];
+        Thread waiting = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                later[0] = tryWrite260(new java.util.concurrent.Callable<String>() {
+                    @Override
+                    public String call() throws Exception {
+                        return sync260(db, download, 120000);
+                    }
+                });
+            }
+        });
+        waiting.start();
+        Thread.sleep(200);
+        boolean stillWaits = waiting.isAlive() && later[0] == null;
+        go.countDown();
+        run.join(120000);
+        waiting.join(120000);
+        check("#260 the long run ends normally with the same rows, nothing of the refused writes in them", err[0] == null && !run.isAlive()
+                && results139(db).equals(before) && db.kvLong("probe260", -1) == -1, err[0]);
+        check("#260 the waiting sync stores after the run", stillWaits && "stored".equals(later[0]) && db.kvLong("cursor", 0) == DS219 + 26200
+                && db.eventCount() == events0 + 20, stillWaits + " " + later[0]);
+        check("#260 after the run Live and the screen time copy store again", "stored".equals(live260(db, drain)) && "stored".equals(screen260(screen))
+                && db.eventCount() == events0 + 21, "");
+        freshDb("openring260-done");
+    }
+
     static Thread paused243(final Context c, final java.util.concurrent.CountDownLatch inside, final java.util.concurrent.CountDownLatch go,
             final Throwable[] err) {
         Thread t = new Thread(new Runnable() {

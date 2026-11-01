@@ -44,14 +44,35 @@ public class SQLiteDatabase {
     }
     public void close() { try { conn.close(); } catch (SQLException e) { throw wrap(e); } }
     static RuntimeException wrap(Exception e) { return new RuntimeException(e); }
-    public void execSQL(String sql) { try (Statement s = conn.createStatement()) { s.execute(sql); } catch (SQLException e) { throw fail(e); } }
+    /**
+     * Android gives a transaction its own connection: a write from another thread waits until it ends (minutes during
+     * Re analyse all), reads see the last commit. This one connection would let that write join the open transaction
+     * and roll back with it, so a write from another thread fails here instead (issue #260).
+     */
+    Thread owner;
+    void mayWrite() {
+        Thread t = owner;
+        if (t != null && t != Thread.currentThread())
+            throw new IllegalStateException("would wait on Android: a write from " + Thread.currentThread().getName() + " while " + t.getName() + " has a transaction open");
+    }
+    /** A statement that only reads (a query, a pragma that is not set), allowed from any thread like Android's read connections. */
+    static boolean readOnly(String sql) {
+        String q = sql.trim().toUpperCase(java.util.Locale.ROOT);
+        return q.startsWith("SELECT") || q.startsWith("PRAGMA") && !q.contains("=");
+    }
+    public void execSQL(String sql) {
+        if (!readOnly(sql)) mayWrite();
+        try (Statement s = conn.createStatement()) { s.execute(sql); } catch (SQLException e) { throw fail(e); }
+    }
     public void execSQL(String sql, Object[] args) {
+        if (!readOnly(sql)) mayWrite();
         try (PreparedStatement p = conn.prepareStatement(sql)) { bind(p, args); p.execute(); } catch (SQLException e) { throw fail(e); }
     }
     static void bind(PreparedStatement p, Object[] args) throws SQLException {
         for (int i = 0; args != null && i < args.length; i++) p.setObject(i + 1, args[i]);
     }
     public int delete(String table, String where, String[] args) {
+        mayWrite();
         try (PreparedStatement p = conn.prepareStatement("DELETE FROM " + table + (where == null ? "" : " WHERE " + where))) {
             for (int i = 0; args != null && i < args.length; i++) p.setString(i + 1, args[i]);
             return p.executeUpdate();
@@ -74,13 +95,17 @@ public class SQLiteDatabase {
     final java.util.ArrayDeque<boolean[]> levels = new java.util.ArrayDeque<boolean[]>();
     boolean childFailed;
     public void beginTransaction() {
-        try { if (depth++ == 0) { conn.setAutoCommit(false); childFailed = false; } levels.push(new boolean[1]); } catch (SQLException e) { throw fail(e); }
+        mayWrite();
+        try { if (depth++ == 0) { conn.setAutoCommit(false); childFailed = false; owner = Thread.currentThread(); } levels.push(new boolean[1]); } catch (SQLException e) { throw fail(e); }
     }
-    public void setTransactionSuccessful() { levels.peek()[0] = true; }
+    public void setTransactionSuccessful() { mayWrite(); levels.peek()[0] = true; }
     public void endTransaction() {
+        mayWrite();
         boolean marked = levels.pop()[0];
         try {
-            if (--depth == 0) { if (marked && !childFailed) conn.commit(); else conn.rollback(); conn.setAutoCommit(true); }
+            if (--depth == 0) {
+                try { if (marked && !childFailed) conn.commit(); else conn.rollback(); conn.setAutoCommit(true); } finally { owner = null; }
+            }
             else if (!marked) childFailed = true;
         } catch (SQLException e) { throw fail(e); }
     }

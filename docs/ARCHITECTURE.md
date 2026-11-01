@@ -317,7 +317,10 @@ transaction open for minutes, and on Android every write from another thread wai
 transaction it marks the history (`Db.beginLongRun`) and waits for ring tasks that store what they read (a sync download,
 Live, factory reset; each takes `Db.holdForRing` while it holds the ring). While it runs, a sync waits before it takes
 the ring, with the status line "Re analysing your history, this takes a few minutes. The sync starts after it." (a stop
-still reaches it), and Live and factory reset do not start and say so (`SyncError.REANALYSING`). Inside the transaction
+still reaches it), and Live and factory reset do not start and say so (`SyncError.REANALYSING`). An interrupt does not
+end the wait of `beginLongRun` (issue #260): the ring tasks end on their own, and the interrupt is kept for afterwards.
+The pipeline test's SQLite stand in fails a write from another thread while a transaction is open ("would wait on
+Android"), so a write that would wait for the long run shows up as a failed test (`ringWriters260`). Inside the transaction
 the analysis calls nothing synchronized on `Db` (`rebuildTime` and the zone note run before it), so a thread that waits
 for the transaction can never hold what the analysis needs. Shorter runs (the analysis after a sync) are one
 transaction too and mark nothing: a write waits those seconds. `Analyzer.running()` counts analyses running or waiting

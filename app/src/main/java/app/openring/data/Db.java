@@ -1658,7 +1658,8 @@ public final class Db extends SQLiteOpenHelper {
     /**
      * A long analysis starts: from now on no ring task starts storing, and this waits for those storing right now to
      * end, so none of them can hang on the analysis's transaction with the ring held. Returns how many it waited for.
-     * Called before the transaction opens, never inside it; {@link #endLongRun} follows in a finally.
+     * Called before the transaction opens, never inside it; {@link #endLongRun} follows in a finally. An interrupt does
+     * not end the wait (ring tasks end on their own, issue #260); it is kept for the caller once the wait is over.
      */
     int beginLongRun() {
         synchronized (ringGate) {
@@ -1669,9 +1670,9 @@ public final class Db extends SQLiteOpenHelper {
                 try {
                     ringGate.wait(1000);
                 } catch (InterruptedException e) {
-                    // the analysis goes on: a write that waits is only slower, never lost
+                    // keep waiting: opening the transaction now would make the ring task's next write wait for the
+                    // whole run with the ring held, the case this gate is for (issue #260)
                     interrupted = true;
-                    break;
                 }
             }
             if (interrupted) Thread.currentThread().interrupt();
