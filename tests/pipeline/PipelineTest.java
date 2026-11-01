@@ -803,6 +803,7 @@ public class PipelineTest {
         jsonSeriesMalformed();
         backupJsonLimit(full.toByteArray());
         finderDownload();
+        settingsCounts198();
         pairingPrefs218();
         swapDuringSync219(full.toByteArray());
         syncDating220();
@@ -4631,6 +4632,8 @@ public class PipelineTest {
         check("#58 events waiting for a time record: no stored day is removed or changed", all && db.undatedCount() > 0,
                 keys(waiting) + ", " + db.undatedCount() + " undated");
         check("#58 the log says why they are kept", log.indexOf("kept: events after it wait for a time record") >= 0, log);
+        sameCounts198("with events waiting for a time anchor", db);
+        check("#198 Settings counts with events waiting for a time anchor: not read as new", db.counts().undated > 0 && !db.counts().allNew, db.counts().undated);
         check("#58 while boot 2 waits, an empty day before the newest dated event is still removed", !waiting.containsKey(early),
                 early + " in " + keys(waiting));
         moveAnchor(db, 2, T2_58, 0);
@@ -5975,6 +5978,7 @@ public class PipelineTest {
         String nightsBefore = db.nightsJson(first, last, false).toString();
         long datedBefore = db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
         check("finder: after the sync nothing is undated, so nothing reads as new", !db.undatedAllNew(), db.undatedCount());
+        sameCounts198("after a sync", db);
         // the finder's quick download: the newest 200 events and the phone anchor
         db.insertBatch(all.subList(cut, all.size()), 1, now);
         long lastDs = all.get(all.size() - 1).ds;
@@ -5988,10 +5992,13 @@ public class PipelineTest {
             check("finder (its storage calls): no stored date changed", db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL") == datedBefore, null);
             check("finder (its storage calls): the stored nights stay as they were", db.nightsJson(first, last, false).toString().equals(nightsBefore), null);
             check("finder (its storage calls): Settings says the next sync dates them, not a missing time anchor", db.undatedAllNew(), db.undatedCount());
+            sameCounts198("after Find my ring's download", db);
+            check("#198 Settings counts after Find my ring's download: all undated events are new", db.counts().allNew && db.counts().undated == 201, db.counts().undated); // 200 events and the phone anchor
         }
         // the next sync's analysis
         Analyzer.run(ctx, null);
         check("finder: no undated event left after the next analysis, so Settings shows no line", !db.undatedAllNew() && db.undatedCount() == 0, db.undatedCount());
+        sameCounts198("after the next analysis", db);
         check("finder" + (dateAtOnce ? " (dated at once)" : " (its storage calls)") + ": every event dated after the next analysis",
                 db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL") == 0, db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL"));
         StringBuilder rows = new StringBuilder();
@@ -6001,6 +6008,25 @@ public class PipelineTest {
 
     static java.time.LocalDate day0() {
         return java.time.Instant.ofEpochSecond(T0).atZone(ZONE).toLocalDate();
+    }
+
+    /** Issue #198: the Settings Ring card's one background read gives the same numbers as the separate counts. */
+    static void sameCounts198(String when, Db db) {
+        Db.Counts c = db.counts();
+        check("#198 Settings counts " + when + ": the same numbers as the separate counts",
+                c.events == db.eventCount() && c.undated == db.undatedCount() && c.allNew == db.undatedAllNew(), c.events + " " + c.undated + " " + c.allNew);
+    }
+
+    /** Issue #198: the counts on an empty history, and the rule for "Dated at the next sync". */
+    static void settingsCounts198() throws Exception {
+        Db db = Db.get(freshDb("counts198"));
+        Db.Counts c = db.counts();
+        check("#198 Settings counts on an empty history: nothing stored, nothing undated", c.events == 0 && c.undated == 0 && !c.allNew, c.events + " " + c.undated);
+        sameCounts198("on an empty history", db);
+        check("#198 all new: no dating ran yet, so not new", !Db.allNew(5, 5, -1), null);
+        check("#198 all new: nothing undated is never new", !Db.allNew(0, 10, 10), null);
+        check("#198 all new: exactly the events after the last dating", Db.allNew(3, 13, 10), null);
+        check("#198 all new: more undated than new means some wait for a time anchor", !Db.allNew(4, 13, 10), null);
     }
 
     static void finderDownload() throws Exception {

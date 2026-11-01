@@ -65,6 +65,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
     /** Detail level picked in the Sleep stage detail card, saved only with its button. */
     private int detailChoice = -1;
     private LinearLayout stagesCard;
+    /** Where the Ring card's counts go once read (issue #198); a newer page has a newer one. */
+    private LinearLayout countsBox;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -192,6 +194,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     private void buildPage() {
         final Prefs p = Prefs.of(this);
+        previewGen++; // a sync, Delete or going back may have changed the nights: the stage preview is read again
         LinearLayout top = Ui.hbox(this);
         top.setGravity(android.view.Gravity.CENTER_VERTICAL);
         android.widget.ImageView back = new android.widget.ImageView(this);
@@ -273,17 +276,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         ring.addView(line("Firmware", nz(p.firmware())));
         ring.addView(line("Battery", p.battery() < 0 ? "--" : p.battery() + "%  (" + ago(p.batteryAt()) + ")"));
         ring.addView(line("Last sync", p.lastSync() == 0 ? "never" : ago(p.lastSync())));
-        try {
-            Db db = Db.get(this);
-            ring.addView(line("Stored events", String.format(Locale.getDefault(), "%,d", db.eventCount())));
-            long undated = db.undatedCount();
-            // events Find my ring downloaded since the last sync are dated by the next one: nothing is missing (issue #192)
-            if (undated > 0) ring.addView(line(db.undatedAllNew() ? "Dated at the next sync" : "Waiting for a time anchor",
-                    String.format(Locale.getDefault(), "%,d", undated)));
-        } catch (RuntimeException e) {
-            // a damaged history is kept (issue #255): Settings still opens, so a copy can be brought back (review of #266)
-            ring.addView(Ui.text(this, Backups.unreadable(e.toString()), 13, Ui.WARN, Ui.REGULAR));
-        }
+        // counted in the background (issue #198: with years of history the undated count reads every event), then filled in
+        final LinearLayout counts = Ui.vbox(this);
+        counts.addView(line("Stored events", "counting..."));
+        ring.addView(counts, Ui.matchWrap());
+        fillCounts(ring, counts);
         action(ring, "Sync now", Ui.SLEEP, new Runnable() {
             @Override
             public void run() {
@@ -341,7 +338,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         prof.addView(Ui.text(this, "Sex", 12, Ui.TEXT_3, Ui.REGULAR));
         final LinearLayout sexRow = Ui.hbox(this);
         fillSex(sexRow);
-        prof.addView(sexRow, Ui.matchWrap());
+        LinearLayout.LayoutParams sexLp = Ui.matchWrap();
+        sexLp.setMargins(0, Ui.dp(this, 4), 0, 0); // the space the chips' own top margins gave (issue #264)
+        prof.addView(sexRow, sexLp);
         final EditText target = kcalIn = num(prof, "Daily active calorie goal (0 = automatic)", drafts.text("kcal", p.targetKcal()));
         action(prof, "Save and re analyse", Ui.ACTIVE, new Runnable() {
             @Override
@@ -692,8 +691,23 @@ public final class SettingsActivity extends Activity implements RingManager.List
      * keeps what the person looks at still when the card above changes height (issue #204).
      */
     void redrawStageDetail() {
+        previewGen++; // the nights changed: read the preview again
+        redrawStageCard();
+    }
+
+    private void redrawStageCard() {
         final LinearLayout card = stagesCard;
         if (card == null) return;
+        keepScroll(card);
+        fillStageDetail(card, Prefs.of(this));
+    }
+
+    /**
+     * Call before changing what {@code card} (a card on the page) holds: once it is laid out with its new height, the
+     * scroll follows (issue #204). Nothing to keep while the card was never laid out (the page is just being built).
+     */
+    void keepScroll(final View card) {
+        if (card.getHeight() == 0) return;
         final int y = scroll.getScrollY(), top = card.getTop(), before = card.getHeight();
         // the new height is known once the card is laid out; the scroll then follows in post() (CLAUDE.md lesson)
         card.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
@@ -709,7 +723,6 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 });
             }
         });
-        fillStageDetail(card, Prefs.of(this));
     }
 
     /** Reads which measurements are switched on and shows them. */
@@ -752,7 +765,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
-            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), i == SEXES.length - 1 ? 0 : Ui.dp(this, 4), 0);
+            // no vertical margins: a top margin alone pushed the outline's bottom out of the row (issue #264, as in review of #259)
+            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), 0, i == SEXES.length - 1 ? 0 : Ui.dp(this, 4), 0);
             row.addView(chip, lp);
         }
     }
@@ -1270,6 +1284,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 SettingsActivity s = GO_BACK.finish();
                 if (s != null && !s.isFinishing() && !s.isDestroyed()) {
                     s.say(m);
+                    s.preview = null; // another history: its own last night, read again
                     s.build();
                 } else {
                     Toast.makeText(app, m, Toast.LENGTH_LONG).show();
@@ -1335,13 +1350,18 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.addView(row);
         card.addView(Ui.gap(this, 8));
         card.addView(Ui.body(this, Explain.STAGE_DETAIL[detailChoice]));
-        JSONObject night = lastNight();
+        // read in the background (issue #198); until a newer read is in, the last one stays on the card
+        if (!previewCurrent(p)) readPreview(p);
+        Preview pv = preview;
+        JSONObject night = pv == null ? null : pv.night;
         card.addView(Ui.gap(this, 12));
-        if (night == null) {
+        if (pv == null) {
+            card.addView(Ui.text(this, "Reading your last night...", 12, Ui.TEXT_3, Ui.REGULAR));
+        } else if (night == null) {
             card.addView(Ui.text(this, "A preview of your last night appears here after the first night with the ring.", 12, Ui.TEXT_3, Ui.REGULAR));
         } else {
             // the same stages saving produces: filter, then phone use and the ring's own wake ups marked awake again (issue #30)
-            int[] st = Analyzer.preview(Db.get(this), p.screenAwake(), night, detailChoice);
+            int[] st = pv.stages[detailChoice];
             card.addView(Ui.text(this, "Your last night with this setting", 11, Ui.TEXT_3, Ui.MEDIUM));
             card.addView(Ui.gap(this, 6));
             card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")).zone(Json.zone(night, java.time.ZoneId.systemDefault())), Ui.sized(this, -1, 150));
@@ -1374,6 +1394,92 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     void refreshStageDetail(Prefs p) {
         if (stagesCard != null) fillStageDetail(stagesCard, p);
+    }
+
+    /** The last night and its preview stages for every detail level, so a chip tap needs no database read (issue #198). */
+    static final class Preview {
+        JSONObject night; // null: no night yet
+        int[][] stages;
+        boolean phone; // Count phone use as awake, as read
+        int gen;
+    }
+
+    private Preview preview;
+    /** Raised when the nights may have changed (a page build, new phone minutes): the preview is read again. */
+    private int previewGen;
+    private boolean previewReading;
+
+    boolean previewCurrent(Prefs p) {
+        return preview != null && preview.gen == previewGen && preview.phone == p.screenAwake();
+    }
+
+    /** Reads the preview in the background, then redraws the card (a newer request meanwhile reads again then). */
+    void readPreview(Prefs p) {
+        if (previewReading) return;
+        previewReading = true;
+        final int gen = previewGen;
+        final boolean phone = p.screenAwake();
+        final android.content.Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, Preview>() {
+            @Override
+            protected Preview doInBackground(Void... v) {
+                Preview r = new Preview();
+                r.gen = gen;
+                r.phone = phone;
+                r.night = lastNight();
+                if (r.night != null) {
+                    try {
+                        r.stages = new int[StageFilter.NAMES.length][];
+                        for (int i = 0; i < r.stages.length; i++) r.stages[i] = Analyzer.preview(Db.get(ctx), phone, r.night, i);
+                    } catch (RuntimeException e) {
+                        r.night = null; // the history cannot be read (review of #266): no preview, as without a night
+                    }
+                }
+                return r;
+            }
+
+            @Override
+            protected void onPostExecute(Preview r) {
+                previewReading = false;
+                if (isFinishing() || isDestroyed()) return;
+                preview = r;
+                redrawStageCard();
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** The Ring card's event counts, read in the background (issue #198), then shown in place of "counting...". */
+    void fillCounts(final LinearLayout card, final LinearLayout counts) {
+        countsBox = counts;
+        final android.content.Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, Object>() {
+            @Override
+            protected Object doInBackground(Void... v) {
+                try {
+                    return Db.get(ctx).counts();
+                } catch (RuntimeException e) {
+                    return e; // shown as before, below
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Object r) {
+                if (isFinishing() || isDestroyed() || countsBox != counts) return; // the page was built again meanwhile
+                // one more line (or the warning): what is below stays still; one line keeps the card's height
+                if (!(r instanceof Db.Counts) || ((Db.Counts) r).undated > 0) keepScroll(card);
+                counts.removeAllViews();
+                if (!(r instanceof Db.Counts)) {
+                    // a damaged history is kept (issue #255): Settings still opens, so a copy can be brought back (review of #266)
+                    counts.addView(Ui.text(SettingsActivity.this, Backups.unreadable(r.toString()), 13, Ui.WARN, Ui.REGULAR));
+                    return;
+                }
+                Db.Counts c = (Db.Counts) r;
+                counts.addView(line("Stored events", String.format(Locale.getDefault(), "%,d", c.events)));
+                // events Find my ring downloaded since the last sync are dated by the next one: nothing is missing (issue #192)
+                if (c.undated > 0) counts.addView(line(c.allNew ? "Dated at the next sync" : "Waiting for a time anchor",
+                        String.format(Locale.getDefault(), "%,d", c.undated)));
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /** The newest main night, or null (also when the history cannot be read, review of #266). */
@@ -1626,7 +1732,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
                 RingManager.get(app).log("all local data deleted");
                 Toast.makeText(app, "Deleted", Toast.LENGTH_LONG).show();
-                if (shown) s.build();
+                if (shown) {
+                    s.preview = null; // the deleted night is not shown again while the preview is read
+                    s.build();
+                }
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
