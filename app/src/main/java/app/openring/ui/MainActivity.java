@@ -451,7 +451,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         final int token = ++loadToken;
         final LocalDate d = date;
         new AsyncTask<Void, Void, DayData>() {
-            String latest;
+            String latest, problem;
 
             @Override
             protected DayData doInBackground(Void... v) {
@@ -472,13 +472,26 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 } catch (Throwable ignored) {
                     // as above (issue #230)
                 }
-                latest = app.openring.data.Db.get(MainActivity.this).latestDay();
-                return DayData.load(MainActivity.this, d);
+                try {
+                    latest = app.openring.data.Db.get(MainActivity.this).latestDay();
+                    return DayData.load(MainActivity.this, d);
+                } catch (RuntimeException e) {
+                    // a damaged file is kept since issue #255, so it fails here on every start: one line on the
+                    // screen instead of a crash, and Settings stays reachable to go back to a copy (review of #266)
+                    RingManager.get(MainActivity.this).log("history could not be read: " + e);
+                    problem = app.openring.core.Backups.unreadable(e.toString());
+                    return null;
+                }
             }
 
             @Override
             protected void onPostExecute(DayData result) {
                 if (token != loadToken || isFinishing()) return;
+                if (result == null) {
+                    data = null;
+                    showProblem(problem);
+                    return;
+                }
                 // until the person picks a date, follow the newest day with data: today if it has
                 // any, else the last one. A morning sync then moves the screen to last night.
                 if (autoDate && latest != null && !latest.equals(d.toString())) {
@@ -493,6 +506,19 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 render();
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** The one line shown instead of the day when the history cannot be read (review of #266). */
+    void showProblem(String text) {
+        LinearLayout box = Ui.vbox(this);
+        LinearLayout card = Ui.card(this);
+        card.setBackground(Ui.rounded(Ui.alpha(Ui.WARN, 0.14f), Ui.dp(this, 14)));
+        card.addView(Ui.text(this, text, 15, Ui.TEXT, Ui.MEDIUM));
+        box.addView(card);
+        int p = Ui.dp(this, 16);
+        box.setPadding(p, Ui.dp(this, 4), p, p);
+        scroll.removeAllViews();
+        scroll.addView(box);
     }
 
     static String dateTitle(LocalDate d) {
