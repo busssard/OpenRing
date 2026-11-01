@@ -141,6 +141,8 @@ public final class Backup {
     static final String NEWER = "This backup comes from a newer Open Ring. Update the app first, nothing was changed.";
     static final String BROKEN = "This file is damaged or is not an Open Ring backup, nothing was changed.";
     static final String NOT_OPENED = "The history in this backup could not be opened. Your history on this phone was kept, nothing was changed.";
+    /** The phone's own period log could not be read before the swap (review of #275): the backup is not to blame. */
+    public static final String PERIODS_UNREADABLE = "The period log on this phone could not be read, nothing was changed.";
     /** Re dating after a sync moves times by minutes, a sync adds hours. */
     static final double SLACK_S = 3600;
 
@@ -292,7 +294,7 @@ public final class Backup {
                     return r;
                 }
                 if (failed[0] != null) {
-                    r.message = notKept[0] ? NOT_KEPT : NOT_OPENED;
+                    r.message = notKept[0] ? NOT_KEPT : failed[0] instanceof Db.PeriodLogUnreadable ? PERIODS_UNREADABLE : NOT_OPENED;
                     return r;
                 }
                 r.history = true;

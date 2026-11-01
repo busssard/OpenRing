@@ -230,7 +230,7 @@ public final class RingScanner {
     /**
      * Starts one low latency scan without a filter, for the Watch check (issue #251): a watch's advertisement is not
      * known for sure yet, so every device is reported and the screen sorts them. The start counts in the same budget
-     * as the ring's scans; null when Bluetooth is off or the budget is used up ({@link #startWaitMs} says when to try
+     * as the ring's scans; null when Bluetooth is off, the permission is gone or the budget is used up ({@link #startWaitMs} says when to try
      * again). Only while the screen is on: Android delivers nothing to an unfiltered scan with the screen off.
      */
     public static Watch scanAll(Context c, final Any l) {
@@ -257,6 +257,9 @@ public final class RingScanner {
         };
         try {
             s.startScan(null, new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb);
+        } catch (SecurityException e) {
+            // the Bluetooth permission taken back meanwhile (review of #270): null, the screen says the scan could not start
+            return null;
         } catch (RuntimeException e) {
             // Bluetooth switched off since the check (issue #273): null, as promised above, not a closed screen
             if (SyncError.scannerError(e) == null) throw e;

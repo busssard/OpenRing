@@ -5614,6 +5614,18 @@ public class PipelineTest {
             }
         });
         check("#260 gate: exactly 28 days to analyse is not a long run", !four[0] && four[1] && results139(db).equals(before), "");
+        // one second more is a long run: the bound sits exactly at 28 days (review of #267)
+        db.put("analyzed_until", (long) Math.floor(db.datedRange()[1] - 26 * 86400.0) - 1);
+        final boolean[] fourAndOne = {false, false};
+        Analyzer.run(c, new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                if (!m.endsWith(" sleep periods")) return;
+                fourAndOne[0] |= db.longRun();
+                fourAndOne[1] = true;
+            }
+        });
+        check("#260 gate: 28 days and 1 second to analyse is a long run", fourAndOne[0] && fourAndOne[1] && results139(db).equals(before), "");
 
         // a long analysis interrupted while it waits for a ring task keeps waiting (issue #260): opening its transaction
         // now would make the task's next write wait for the whole run with the ring held. It starts after releaseForRing.
@@ -5672,7 +5684,6 @@ public class PipelineTest {
         freshDb("openring230-gate-done");
     }
 
-    /** Runs Re analyse all of {@code c} on its own thread, paused right after week 2 is stored until {@code go} opens. */
     /**
      * The order in which {@code RingManager.sync} stores (issue #230): while a long analysis replaces the results it
      * waits without the ring, then {@link Db#holdForRing} before the download stores; refused means it gives the ring
@@ -5826,6 +5837,7 @@ public class PipelineTest {
         freshDb("openring260-done");
     }
 
+    /** Runs Re analyse all of {@code c} on its own thread, paused right after week 2 is stored until {@code go} opens. */
     static Thread paused243(final Context c, final java.util.concurrent.CountDownLatch inside, final java.util.concurrent.CountDownLatch go,
             final Throwable[] err) {
         Thread t = new Thread(new Runnable() {
@@ -8996,6 +9008,9 @@ public class PipelineTest {
             db = Db.get(c);
             check("#252 a stop at the merge step " + step + ": nothing restored, the phone's history and period log as they were", !r.ok
                     && db.eventCount() == events && results139(db).equals(results) && periodRows252(db).equals(rows), r.message);
+            // reading the phone's log is the phone's problem, a later step the restored file's (review of #275)
+            check("#252 a stop at the merge step " + step + ": the message names " + ("read".equals(step) ? "the phone's period log" : "the backup"),
+                    ("read".equals(step) ? app.openring.data.Backup.PERIODS_UNREADABLE : "The history in this backup could not be opened. Your history on this phone was kept, nothing was changed.").equals(r.message), r.message);
             check("#252 a stop at the merge step " + step + ": no file left", !new java.io.File(c.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
             noTemp(c, "after a stop at the merge step " + step);
         }
@@ -9011,6 +9026,8 @@ public class PipelineTest {
         db.getWritableDatabase().execSQL("ALTER TABLE period_ends_x RENAME TO period_ends");
         check("#252 a phone log that cannot be read: refused before anything moves", !r.ok && db.eventCount() == events
                 && periodRows252(db).equals(rows), r.message);
+        check("#252 a phone log that cannot be read: the message blames the phone's log, not the backup",
+                app.openring.data.Backup.PERIODS_UNREADABLE.equals(r.message), r.message);
         // after the failures a restore works and keeps the log
         r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
         db = Db.get(c);

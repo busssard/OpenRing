@@ -252,7 +252,26 @@ public final class Backups {
         return t.contains("enospc") || t.contains("no space left") || t.contains("sqlite_full") || t.contains("database or disk is full");
     }
 
+    /**
+     * A failure text that means a damaged history file (SQLite's corrupt or "not a database" errors). Since issue #255
+     * such a file is kept, so every read of it fails the same way until a copy replaces it.
+     */
+    public static boolean damaged(String text) {
+        if (text == null) return false;
+        String t = text.toLowerCase(Locale.US);
+        return t.contains("corrupt") || t.contains("malformed") || t.contains("not a database") || t.contains("sqlite_notadb");
+    }
+
+    /** The one line a screen shows instead of the history it could not read (review of #266). */
+    public static String unreadable(String text) {
+        return damaged(text) ? DAMAGED : UNREADABLE;
+    }
+
     // ------------------------------------------------------------------ texts
+
+    public static final String DAMAGED = "Your history file on this phone is damaged and cannot be read. "
+            + "It is kept as it is. Go back to a copy in Settings (Automatic backups).";
+    public static final String UNREADABLE = "Your history could not be read just now. Details are in Data check.";
 
     public static final String TITLE = "Automatic backups";
     public static final String OFF_TEXT = "Before each update Open Ring keeps a copy of your history on this phone. "
@@ -313,7 +332,7 @@ public final class Backups {
     /** The question before going back to a copy made at {@code unix}. */
     public static String goBackText(long unix, ZoneId z) {
         return "Your history is replaced by this copy from " + day(unix, z) + ". First your whole history as it is now is kept as "
-                + "\"Copy from before going back\", so you can put it back from this card. Period days logged or removed on this phone since the copy are kept.";
+                + "\"Copy from before going back\", so you can put it back from this card. Period days on this phone are kept, also days you removed.";
     }
 
     /** The status line of the folder copies. {@code error}: a reason code, null when the last try worked. */

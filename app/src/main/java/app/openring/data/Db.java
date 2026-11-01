@@ -1557,9 +1557,9 @@ public final class Db extends SQLiteOpenHelper {
             try {
                 if (opened) phoneLog = Periods.read(instance.getReadableDatabase());
                 mergeStep(MERGE_READ);
-            } catch (RuntimeException e) {
-                // nothing moved yet: the phone keeps everything as it is
-                throw new java.io.IOException("the period log on this phone could not be read", e);
+            } catch (java.io.IOException | RuntimeException e) {
+                // nothing moved yet: the phone keeps everything as it is; the person is told it was the phone's log, not the backup
+                throw new PeriodLogUnreadable(e);
             } finally {
                 instance.close();
                 instance = null;
@@ -1597,6 +1597,16 @@ public final class Db extends SQLiteOpenHelper {
         // side files first, the main .old last: while it exists, recoverSwap treats the swap as unfinished
         for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
         new java.io.File(old).delete();
+    }
+
+    /**
+     * The period log on this phone could not be read before a restore (issue #252): nothing moved. Its own kind, so the
+     * restore says it was the phone's log and does not blame the backup (review of #275).
+     */
+    public static final class PeriodLogUnreadable extends java.io.IOException {
+        PeriodLogUnreadable(Throwable cause) {
+            super("the period log on this phone could not be read", cause);
+        }
     }
 
     /** The steps of the period merge in {@link #replaceWith} (issue #252), where a test can stop it. */
