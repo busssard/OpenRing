@@ -8839,6 +8839,9 @@ public class PipelineTest {
             db = Db.get(c);
             check("#252 a stop at the merge step " + step + ": nothing restored, the phone's history and period log as they were", !r.ok
                     && db.eventCount() == events && results139(db).equals(results) && periodRows252(db).equals(rows), r.message);
+            // reading the phone's log is the phone's problem, a later step the restored file's (review of #275)
+            check("#252 a stop at the merge step " + step + ": the message names " + ("read".equals(step) ? "the phone's period log" : "the backup"),
+                    ("read".equals(step) ? app.openring.data.Backup.PERIODS_UNREADABLE : "The history in this backup could not be opened. Your history on this phone was kept, nothing was changed.").equals(r.message), r.message);
             check("#252 a stop at the merge step " + step + ": no file left", !new java.io.File(c.getDatabasePath(Db.REAL).getPath() + ".old").exists(), null);
             noTemp(c, "after a stop at the merge step " + step);
         }
@@ -8854,6 +8857,8 @@ public class PipelineTest {
         db.getWritableDatabase().execSQL("ALTER TABLE period_ends_x RENAME TO period_ends");
         check("#252 a phone log that cannot be read: refused before anything moves", !r.ok && db.eventCount() == events
                 && periodRows252(db).equals(rows), r.message);
+        check("#252 a phone log that cannot be read: the message blames the phone's log, not the backup",
+                app.openring.data.Backup.PERIODS_UNREADABLE.equals(r.message), r.message);
         // after the failures a restore works and keeps the log
         r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
         db = Db.get(c);
