@@ -1034,6 +1034,13 @@ public class CoreTest {
         eq("backups: read only: not kept", Backups.keepFlags(Backups.GRANT_READ | 64), -1);
         eq("backups: no flags: not kept", Backups.keepFlags(0), -1);
         // why a copy failed
+        // review of #266: a kept damaged file fails every read; the screens say so in one line instead of crashing
+        check("backups: a damaged history file is recognised", Backups.damaged("android.database.sqlite.SQLiteDatabaseCorruptException: database disk image is malformed (code 11)")
+                && Backups.damaged("file is not a database (code 26 SQLITE_NOTADB)") && !Backups.damaged("database is locked") && !Backups.damaged(null));
+        check("backups: the damaged line points to the copies, other failures to Data check",
+                Backups.unreadable("SQLiteDatabaseCorruptException").equals(Backups.DAMAGED) && Backups.DAMAGED.contains("Automatic backups")
+                        && Backups.unreadable("disk I/O error").equals(Backups.UNREADABLE) && Backups.unreadable(null).equals(Backups.UNREADABLE)
+                        && Backups.DAMAGED.contains(Backups.TITLE));
         check("backups: a full disk is recognised", Backups.noSpace("write failed: ENOSPC (No space left on device)") && Backups.noSpace("SQLITE_FULL")
                 && Backups.noSpace("database or disk is full (code 13)") && !Backups.noSpace("EACCES") && !Backups.noSpace(null));
         // texts, word for word

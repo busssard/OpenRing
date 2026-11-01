@@ -3,7 +3,12 @@ import android.content.Context;
 import java.sql.*;
 public abstract class SQLiteOpenHelper {
     final Context ctx; final String name; final int version; SQLiteDatabase db;
-    public SQLiteOpenHelper(Context c, String name, Object factory, int version) { ctx = c; this.name = name; this.version = version; }
+    /** The handler given to the constructor, null for Android's default that deletes a damaged file (issue #255). */
+    public final android.database.DatabaseErrorHandler errorHandler;
+    public SQLiteOpenHelper(Context c, String name, Object factory, int version) { this(c, name, factory, version, null); }
+    public SQLiteOpenHelper(Context c, String name, Object factory, int version, android.database.DatabaseErrorHandler h) {
+        ctx = c; this.name = name; this.version = version; errorHandler = h;
+    }
     public void setWriteAheadLoggingEnabled(boolean b) {}
     public abstract void onCreate(SQLiteDatabase db);
     public abstract void onUpgrade(SQLiteDatabase db, int o, int n);
@@ -15,9 +20,11 @@ public abstract class SQLiteOpenHelper {
         if (db != null) return db;
         Connection c = null;
         try {
-            c = DriverManager.getConnection("jdbc:sqlite:" + ctx.getDatabasePath(name).getPath());
-            SQLiteDatabase d = new SQLiteDatabase(c);
-            int v; try (Statement s = c.createStatement(); ResultSet r = s.executeQuery("PRAGMA user_version")) { r.next(); v = r.getInt(1); }
+            String path = ctx.getDatabasePath(name).getPath();
+            c = DriverManager.getConnection("jdbc:sqlite:" + path);
+            SQLiteDatabase d = new SQLiteDatabase(c, path, errorHandler);
+            // like Android: a damaged header calls the handler (the default deletes the file), the open then fails
+            int v = d.getVersion();
             if (v == 0) onCreate(d); else if (v < version) onUpgrade(d, v, version); else if (v > version) onDowngrade(d, v, version);
             d.execSQL("PRAGMA user_version = " + version);
             db = d;

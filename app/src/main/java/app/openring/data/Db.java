@@ -62,8 +62,13 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * {@link #KEEP_FILE} instead of Android's default handler, which deletes the history with its side files when
+     * SQLite reports one damaged page, so the next open starts empty (issue #255). Here the file stays as it is and
+     * the error reaches the caller like any other failure (analysis stores it in {@code analysis_error}).
+     */
     private Db(Context c, String name) {
-        super(c, name, null, VERSION);
+        super(c, name, null, VERSION, KEEP_FILE);
         fileName = name;
         setWriteAheadLoggingEnabled(true);
     }
@@ -1375,7 +1380,10 @@ public final class Db extends SQLiteOpenHelper {
         return null;
     }
 
-    /** Does nothing, so Android's default handler cannot delete a file we only look at. */
+    /**
+     * Does nothing, so Android's default handler cannot delete a file: the live history (real and demo, issue #255)
+     * and the files we only look at. No log line: the error itself reaches the caller.
+     */
     private static final android.database.DatabaseErrorHandler KEEP_FILE = new android.database.DatabaseErrorHandler() {
         @Override
         public void onCorruption(SQLiteDatabase db) {}

@@ -1,0 +1,1 @@
+* If the history file on the phone gets damaged, it is now kept instead of being replaced by an empty one, so a copy can be brought back over it. The main screen then says so in one line instead of closing.
