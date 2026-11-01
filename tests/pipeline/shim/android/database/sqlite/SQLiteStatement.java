@@ -8,10 +8,11 @@ public class SQLiteStatement {
     public void bindDouble(int i, double v) { try { p.setDouble(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
     public void bindNull(int i) { try { p.setNull(i, Types.NULL); } catch (SQLException e) { throw new RuntimeException(e); } }
     public void bindBlob(int i, byte[] v) { try { p.setBytes(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
-    public int executeUpdateDelete() { try { return p.executeUpdate(); } catch (SQLException e) { throw db.fail(e); } }
+    public int executeUpdateDelete() { db.mayWrite(); try { return p.executeUpdate(); } catch (SQLException e) { throw db.fail(e); } }
     public void close() { try { p.close(); } catch (SQLException e) { throw new RuntimeException(e); } }
     /** -1 when the row was ignored by a conflict clause, as on Android. */
     public long executeInsert() {
+        db.mayWrite();
         try { int n = p.executeUpdate(); if (n == 0) return -1;
             try (Statement s = p.getConnection().createStatement(); ResultSet r = s.executeQuery("SELECT last_insert_rowid()")) { r.next(); return r.getLong(1); }
         } catch (SQLException e) { throw db.fail(e); }
