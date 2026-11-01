@@ -579,6 +579,13 @@ public final class SetupActivity extends Activity {
                     Permissions.openSettings(SetupActivity.this);
                 }
             });
+            // two dialogs closed with Back look the same as a refusal Android no longer asks about: asking stays possible
+            secondary(l, "Try again", new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Permissions.request(SetupActivity.this);
+                }
+            });
             return;
         }
         primary(l, "Allow", new View.OnClickListener() {
