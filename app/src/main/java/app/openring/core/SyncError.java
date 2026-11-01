@@ -68,10 +68,11 @@ public final class SyncError {
     /**
      * The text for an unchecked exception from Android's Bluetooth scanner, or null when it is something else (issue #273):
      * {@code startScan} and {@code stopScan} throw an {@link IllegalStateException} when Bluetooth was switched off after
-     * the check, which is "Bluetooth is off" like the check itself, not an unexpected problem.
+     * the check, which is "Bluetooth is off" like the check itself, not an unexpected problem. Only when the adapter
+     * really is off now ({@code bluetoothOn} false, review of #277): any other scanner fault stays unexpected.
      */
-    public static String scannerError(RuntimeException e) {
-        return e instanceof IllegalStateException ? BLUETOOTH_OFF_TEXT : null;
+    public static String scannerError(RuntimeException e, boolean bluetoothOn) {
+        return e instanceof IllegalStateException && !bluetoothOn ? BLUETOOTH_OFF_TEXT : null;
     }
 
     /**

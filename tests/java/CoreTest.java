@@ -2005,12 +2005,14 @@ public class CoreTest {
         // sync's broad catch as an unexpected problem; the scanner now gives "Bluetooth is off" like its own check
         RuntimeException off = new IllegalStateException("BT Adapter is not turned ON");
         eq("scanner off: before, the broad catch's text read as unexpected", SyncError.plain("Unexpected error: " + off), unknown);
-        eq("scanner off: the scanner's exception is Bluetooth off", SyncError.scannerError(off), SyncError.BLUETOOTH_OFF_TEXT);
-        eq("scanner off: the plain Bluetooth off sentence", SyncError.plain(SyncError.scannerError(off)), "Bluetooth is off or not ready. Turn it on and sync again.");
-        check("scanner off: no further attempts", !SyncError.retryable(SyncError.scannerError(off), true));
-        eq("scanner off: the same sentence for Live", SyncError.plain(SyncError.scannerError(off), SyncError.Task.LIVE), "Bluetooth is off or not ready. Turn it on and try again.");
-        check("scanner off: other exceptions stay unexpected", SyncError.scannerError(new IllegalArgumentException("bad filter")) == null
-                && SyncError.scannerError(new SecurityException("no permission")) == null && SyncError.scannerError(null) == null);
+        eq("scanner off: the scanner's exception is Bluetooth off", SyncError.scannerError(off, false), SyncError.BLUETOOTH_OFF_TEXT);
+        eq("scanner off: the plain Bluetooth off sentence", SyncError.plain(SyncError.scannerError(off, false)), "Bluetooth is off or not ready. Turn it on and sync again.");
+        check("scanner off: no further attempts", !SyncError.retryable(SyncError.scannerError(off, false), true));
+        eq("scanner off: the same sentence for Live", SyncError.plain(SyncError.scannerError(off, false), SyncError.Task.LIVE), "Bluetooth is off or not ready. Turn it on and try again.");
+        check("scanner off: other exceptions stay unexpected", SyncError.scannerError(new IllegalArgumentException("bad filter"), false) == null
+                && SyncError.scannerError(new SecurityException("no permission"), false) == null && SyncError.scannerError(null, false) == null);
+        // review of #277: the scanner's IllegalStateException with Bluetooth on is another fault, not "Bluetooth is off"
+        check("scanner off: with Bluetooth on the same exception stays unexpected", SyncError.scannerError(off, true) == null);
         // the notice after a failed sync the person started: the whole plain sentence, none after a stop or success
         check("sync notice: none after a sync that worked", SyncError.failureNotice(true, "Sync complete") == null);
         check("sync notice: none after a stop", SyncError.failureNotice(false, "Sync stopped") == null && SyncError.failureNotice(false, "Interrupted") == null);
