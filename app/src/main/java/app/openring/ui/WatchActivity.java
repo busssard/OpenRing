@@ -356,7 +356,7 @@ public final class WatchActivity extends Activity {
         all = WatchCheck.strongestFirst(all);
         boolean running = scan != null;
         if (all.isEmpty()) scanStatus.setText(running ? "Scanning. Keep the watch next to the phone." : WatchCheck.NOTHING_FOUND);
-        else scanStatus.setText((running ? "Scanning, " : "") + "tap your watch to check it." + (demo ? " (made up)" : ""));
+        else scanStatus.setText(running ? "Scanning, tap your watch to check it." : demo ? "Made up watches nearby. Tap one to see an example report." : "Tap your watch to check it.");
         scanButton.setVisibility(running || demo || session != null ? View.GONE : View.VISIBLE);
         listBox.removeAllViews();
         for (final WatchCheck.Found f : all) {
