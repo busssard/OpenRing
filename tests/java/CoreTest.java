@@ -1464,6 +1464,11 @@ public class CoreTest {
                 "HRV balance is your strongest contributor, while resting heart rate needs attention.");
         eq("today line: 72 is Good, no attention (issue #200)", Texts.contributorLine("HRV balance", "Resting heart rate", 72, Locale.US),
                 "HRV balance is your strongest contributor.");
+        eq("today line: an abbreviation keeps its capitals", Texts.contributorLine("Sleep", "HRV balance", 60, Locale.US),
+                "Sleep is your strongest contributor, while HRV balance needs attention.");
+        eq("today line: only the first letter is lowered", Texts.contributorLine("HRV balance", "Previous day activity", 50, Locale.US),
+                "HRV balance is your strongest contributor, while previous day activity needs attention.");
+        eq("today line: a one letter label", Texts.contributorLine("Sleep", "X", 50, Locale.US), "Sleep is your strongest contributor, while x needs attention.");
         eq("today line: no contributor", Texts.contributorLine(null, null, Double.NaN, Locale.US), "");
     }
 

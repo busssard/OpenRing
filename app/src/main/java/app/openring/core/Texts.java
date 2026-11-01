@@ -99,9 +99,15 @@ public final class Texts {
         if (best == null || best.isEmpty()) return "";
         StringBuilder sb = new StringBuilder(best).append(" is your strongest contributor");
         if (worst != null && !worst.isEmpty() && app.openring.core.analysis.Scores.needsAttention(worstScore)) {
-            sb.append(", while ").append(worst.toLowerCase(locale)).append(" needs attention");
+            sb.append(", while ").append(lowerFirst(worst, locale)).append(" needs attention");
         }
         return sb.append('.').toString();
+    }
+
+    /** A label inside a sentence: "Resting heart rate" becomes "resting heart rate", "HRV balance" stays (review of #282). */
+    static String lowerFirst(String label, Locale locale) {
+        if (label.isEmpty() || (label.length() > 1 && Character.isUpperCase(label.charAt(1)))) return label;
+        return label.substring(0, 1).toLowerCase(locale) + label.substring(1);
     }
 
     /**
