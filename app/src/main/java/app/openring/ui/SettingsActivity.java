@@ -1452,8 +1452,23 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /** The Ring card's event counts, read in the background (issue #198), then shown in place of "counting...". */
-    void fillCounts(final LinearLayout card, final LinearLayout counts) {
+    void fillCounts(LinearLayout card, LinearLayout counts) {
+        countsCard = card;
         countsBox = counts;
+        if (countsReading) { // one count at a time (review of #280): this page's count follows the running one
+            countsAgain = true;
+            return;
+        }
+        readCounts();
+    }
+
+    private boolean countsReading, countsAgain;
+    private LinearLayout countsCard;
+
+    private void readCounts() {
+        countsReading = true;
+        countsAgain = false;
+        final LinearLayout card = countsCard, counts = countsBox;
         final android.content.Context ctx = getApplicationContext();
         new AsyncTask<Void, Void, Object>() {
             @Override
@@ -1467,7 +1482,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
             @Override
             protected void onPostExecute(Object r) {
-                if (isFinishing() || isDestroyed() || countsBox != counts) return; // the page was built again meanwhile
+                countsReading = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (countsAgain || countsBox != counts) { // the page was built again meanwhile (after a sync or Delete): count again
+                    readCounts();
+                    return;
+                }
                 // one more line (or the warning): what is below stays still; one line keeps the card's height
                 if (!(r instanceof Db.Counts) || ((Db.Counts) r).undated > 0) keepScroll(card);
                 counts.removeAllViews();
