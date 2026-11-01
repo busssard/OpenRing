@@ -46,6 +46,14 @@ public final class WatchCheck {
     public static final String INTRO = "Open Ring can look at a Withings watch to learn how it talks. This check only listens: it does not pair, "
             + "changes nothing on the watch and stores nothing.";
     public static final String SIGNAL = "Signal: closer to 0 means nearer. Your watch is usually the strongest.";
+    /** Said under the report when the phone was not paired with the watch before the check and is now (review of #270). */
+    public static final String PAIRED_NOW = "The phone is now paired with this watch. To undo it, open Android's Bluetooth settings, tap the watch and choose Forget.";
+
+    /** True when the check left a bond that was not there before, so the screen tells how to remove it. */
+    public static boolean pairedDuring(Report r) {
+        return r != null && r.bondedAfter && !r.bondedBefore;
+    }
+
     public static final String PAIR_NOTE = "If Android asks to pair, tap Cancel: the check works without pairing.";
     public static final String REPORT_NOTE = "The report holds the watch's model, firmware and Bluetooth layout. Of each message it keeps only "
             + "the length and the first 2 bytes, which usually name the kind of message, not its values.";
@@ -167,6 +175,23 @@ public final class WatchCheck {
         return out;
     }
 
+    /**
+     * The order while a scan runs (review of #270): rows already shown keep their place, so a row does not move under the
+     * finger as the signal changes; devices heard for the first time come after them, strongest first. Once the scan
+     * ends the screen sorts the whole list again with {@link #strongestFirst}.
+     */
+    public static List<Found> stableOrder(List<String> shown, List<Found> in) {
+        java.util.Map<String, Found> by = new java.util.LinkedHashMap<String, Found>();
+        for (Found f : strongestFirst(in)) by.put(f.address, f);
+        List<Found> out = new ArrayList<Found>();
+        for (String a : shown) {
+            Found f = by.remove(a);
+            if (f != null) out.add(f);
+        }
+        out.addAll(by.values());
+        return out;
+    }
+
     /** The name shown for a device: its advertised name or "(no name)". */
     public static String title(Found f) {
         return f.name == null || f.name.trim().isEmpty() ? "(no name)" : f.name.trim();
@@ -243,6 +268,8 @@ public final class WatchCheck {
         public int rssi = NO_RSSI;
         public boolean connected;
         public boolean bondedBefore;
+        /** Read again when the session ends (review of #270): true when the phone holds a bond with the watch now. */
+        public boolean bondedAfter;
         /** Standard Device Information and Battery, null when the watch has none or did not answer. */
         public String model, firmware, hardware, software, manufacturer;
         public int battery = -1;
@@ -271,6 +298,7 @@ public final class WatchCheck {
         if (r.manufacturer != null) sb.append("Maker: ").append(r.manufacturer).append('\n');
         sb.append("Battery: ").append(r.battery < 0 ? "not shown" : r.battery + "%").append('\n');
         sb.append("Paired with this phone before: ").append(r.bondedBefore ? "yes" : "no").append('\n');
+        sb.append("Paired now: ").append(r.bondedAfter ? "yes" : "no").append('\n');
         if (!r.connected) sb.append("Connected: no\n");
         else sb.append("Connected in ").append(seconds(r.connectMs)).append(", listened ").append(seconds(r.listenMs)).append('\n');
         if (r.problem != null) sb.append("Ended early: ").append(r.problem).append('\n');

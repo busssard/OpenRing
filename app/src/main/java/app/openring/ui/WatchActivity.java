@@ -38,7 +38,7 @@ import app.openring.data.Prefs;
  * The Watch check (issue #251, phase 1a): scan, pick a watch, one short look at its Bluetooth layout, a report to copy.
  * No pairing, nothing stored; the report lives in this screen only. The ring always wins: the check runs only when it
  * can take the ring lock at once ({@link RingGate#takeIfFree}) and holds it for the session (at most 30 s), so the
- * phone never keeps two links. Scan and session stop in {@link #onPause}. Demo mode never touches Bluetooth: it shows
+ * phone never keeps two links. The scan stops in {@link #onPause}, the session in {@link #onStop} (a pairing dialog pauses the screen). Demo mode never touches Bluetooth: it shows
  * {@link WatchCheck#demoFound} and {@link WatchCheck#demoReport} through the same screen code.
  */
 public final class WatchActivity extends Activity {
@@ -52,6 +52,10 @@ public final class WatchActivity extends Activity {
     private final Map<String, WatchCheck.Found> found = new HashMap<String, WatchCheck.Found>();
     private volatile boolean stopped;
     private Thread session;
+    /** The addresses in the order their rows are shown now, each row's two texts, and the newest of each device (review of #270). */
+    private final List<String> shownOrder = new ArrayList<String>();
+    private final Map<String, TextView[]> rowTexts = new HashMap<String, TextView[]>();
+    private final Map<String, WatchCheck.Found> latest = new HashMap<String, WatchCheck.Found>();
     /** The last report: in memory only, gone with the screen. */
     private WatchCheck.Report report;
 
@@ -184,6 +188,15 @@ public final class WatchActivity extends Activity {
         h.removeCallbacks(refresh);
         h.removeCallbacks(retry);
         stopScan();
+    }
+
+    /**
+     * The session stops here, not in onPause (review of #270): Android's pairing dialog over this screen pauses it, and
+     * the check must go on while the person taps Cancel there. Leaving the screen or the app stops it.
+     */
+    @Override
+    protected void onStop() {
+        super.onStop();
         // the link is closed and the ring lock given back within a moment; the report so far stays
         stopped = true;
         if (session != null) session.interrupt();
@@ -332,7 +345,13 @@ public final class WatchActivity extends Activity {
         });
         issueBox.setVisibility(View.VISIBLE);
         scanStatus.setText("Not scanning");
+        clearRows();
+    }
+
+    void clearRows() {
         listBox.removeAllViews();
+        shownOrder.clear();
+        rowTexts.clear();
     }
 
     boolean locationOn() {
@@ -342,7 +361,11 @@ public final class WatchActivity extends Activity {
         return lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
     }
 
-    /** The scan list, strongest first; tap a row to check that device. */
+    /**
+     * The scan list; tap a row to check that device. While the scan runs a row keeps its place and its view (only its
+     * texts change, new devices are added below), so a row never moves or is replaced under the finger and a tap checks
+     * the device it shows (review of #270). Once the scan ends the list is sorted strongest first.
+     */
     void showList() {
         List<WatchCheck.Found> all;
         synchronized (found) {
@@ -353,27 +376,48 @@ public final class WatchActivity extends Activity {
                 all.add(c);
             }
         }
-        all = WatchCheck.strongestFirst(all);
         boolean running = scan != null;
+        all = running ? WatchCheck.stableOrder(shownOrder, all) : WatchCheck.strongestFirst(all);
         if (all.isEmpty()) scanStatus.setText(running ? "Scanning. Keep the watch next to the phone." : WatchCheck.NOTHING_FOUND);
-        else scanStatus.setText((running ? "Scanning, " : "") + "tap your watch to check it." + (demo ? " (made up)" : ""));
+        else scanStatus.setText(running ? "Scanning, tap your watch to check it." : demo ? "Made up watches nearby. Tap one to see an example report." : "Tap your watch to check it.");
         scanButton.setVisibility(running || demo || session != null ? View.GONE : View.VISIBLE);
-        listBox.removeAllViews();
-        for (final WatchCheck.Found f : all) {
+        latest.clear();
+        for (WatchCheck.Found f : all) latest.put(f.address, f);
+        // the rows shown stay when the new order starts with them; otherwise (a new scan, the sort at its end) all are built again
+        boolean keep = all.size() >= shownOrder.size();
+        for (int i = 0; keep && i < shownOrder.size(); i++) keep = shownOrder.get(i).equals(all.get(i).address);
+        if (!keep) clearRows();
+        for (int i = 0; i < all.size(); i++) {
+            WatchCheck.Found f = all.get(i);
+            int color = WatchCheck.likelyWatch(f) ? Ui.OXY : Ui.TEXT;
+            if (i < shownOrder.size()) {
+                TextView[] t = rowTexts.get(f.address);
+                t[0].setText(WatchCheck.title(f));
+                t[0].setTextColor(color);
+                t[1].setText(WatchCheck.detail(f));
+                continue;
+            }
+            final String address = f.address;
             LinearLayout row = Ui.vbox(this);
             int pv = Ui.dp(this, 8);
             row.setPadding(0, pv, 0, pv);
-            row.addView(Ui.text(this, WatchCheck.title(f), 16, WatchCheck.likelyWatch(f) ? Ui.OXY : Ui.TEXT, Ui.MEDIUM));
-            row.addView(Ui.text(this, WatchCheck.detail(f), 12, Ui.TEXT_3, Ui.REGULAR));
+            TextView title = Ui.text(this, WatchCheck.title(f), 16, color, Ui.MEDIUM);
+            TextView detail = Ui.text(this, WatchCheck.detail(f), 12, Ui.TEXT_3, Ui.REGULAR);
+            row.addView(title);
+            row.addView(detail);
             row.setClickable(true);
             row.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    pick(f);
+                    // the device this row shows, with its newest signal
+                    WatchCheck.Found now = latest.get(address);
+                    if (now != null) pick(now);
                 }
             });
             listBox.addView(Ui.divider(this));
             listBox.addView(row, Ui.matchWrap());
+            shownOrder.add(address);
+            rowTexts.put(address, new TextView[] {title, detail});
         }
     }
 
@@ -458,6 +502,7 @@ public final class WatchActivity extends Activity {
         if (!r.connected) reportStatus.setText(WatchCheck.NO_ANSWER);
         else if (r.problem != null) reportStatus.setText("The check ended early (" + r.problem + "). What it found so far is below.");
         else reportStatus.setText("Done. The watch was let go again.");
+        if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.PAIRED_NOW);
         reportText.setText(WatchCheck.text(r, false));
     }
 

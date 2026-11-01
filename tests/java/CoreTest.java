@@ -959,6 +959,18 @@ public class CoreTest {
         eq("watch: strongest first, unknown signal last", order.toString(), "ecdab");
         eq("watch: a device without a name", WatchCheck.title(in.get(3)), "(no name)");
         eq("watch: the input list is left as it was", in.get(0).address, "a");
+        // while scanning, shown rows keep their place and new ones come after them, strongest first (review of #270)
+        List<String> shown = new ArrayList<String>();
+        shown.add("a");
+        shown.add("d");
+        StringBuilder stable = new StringBuilder();
+        for (WatchCheck.Found f : WatchCheck.stableOrder(shown, in)) stable.append(f.address);
+        eq("watch: shown rows stay in place during a scan, new ones follow strongest first", stable.toString(), "adecb");
+        StringBuilder fresh = new StringBuilder();
+        for (WatchCheck.Found f : WatchCheck.stableOrder(new ArrayList<String>(), in)) fresh.append(f.address);
+        eq("watch: the first rows of a scan are strongest first", fresh.toString(), "ecdab");
+        shown.add("gone");
+        eq("watch: an address no longer heard is left out", WatchCheck.stableOrder(shown, in).size(), 5);
         WatchCheck.Found w = new WatchCheck.Found("x", null, -55).service(WatchCheck.WITHINGS_SERVICE).service(WatchCheck.WITHINGS_SERVICE.toUpperCase());
         eq("watch: a service is listed once", w.services.size(), 1);
         check("watch: the Withings service makes it likely a watch", WatchCheck.likelyWatch(w));
@@ -1009,6 +1021,13 @@ public class CoreTest {
         String full = WatchCheck.text(r, true);
         check("watch: the private copy holds the whole messages", full.contains("bytes 0105a1b2c3d4e5 07 0203f9e8") && full.startsWith("Open Ring watch check (with message bytes, private)"));
         check("watch: the bonded line is there", t.contains("Paired with this phone before: no"));
+        check("watch: the bond after the check is reported", t.contains("Paired now: no") && !WatchCheck.pairedDuring(r));
+        r.bondedAfter = true;
+        check("watch: a bond made during the check is named, with how to remove it", WatchCheck.text(r, false).contains("Paired now: yes")
+                && WatchCheck.pairedDuring(r) && WatchCheck.PAIRED_NOW.contains("Forget"));
+        r.bondedBefore = true;
+        check("watch: a bond from before is not blamed on the check", !WatchCheck.pairedDuring(r) && !WatchCheck.pairedDuring(null));
+        r.bondedBefore = r.bondedAfter = false;
 
         // the 2 byte rule on random messages: every hex group in the default report is at most 4 digits
         Random rnd = new Random(251);
@@ -1226,6 +1245,13 @@ public class CoreTest {
         eq("backups: read only: not kept", Backups.keepFlags(Backups.GRANT_READ | 64), -1);
         eq("backups: no flags: not kept", Backups.keepFlags(0), -1);
         // why a copy failed
+        // review of #266: a kept damaged file fails every read; the screens say so in one line instead of crashing
+        check("backups: a damaged history file is recognised", Backups.damaged("android.database.sqlite.SQLiteDatabaseCorruptException: database disk image is malformed (code 11)")
+                && Backups.damaged("file is not a database (code 26 SQLITE_NOTADB)") && !Backups.damaged("database is locked") && !Backups.damaged(null));
+        check("backups: the damaged line points to the copies, other failures to Data check",
+                Backups.unreadable("SQLiteDatabaseCorruptException").equals(Backups.DAMAGED) && Backups.DAMAGED.contains("Automatic backups")
+                        && Backups.unreadable("disk I/O error").equals(Backups.UNREADABLE) && Backups.unreadable(null).equals(Backups.UNREADABLE)
+                        && Backups.DAMAGED.contains(Backups.TITLE));
         check("backups: a full disk is recognised", Backups.noSpace("write failed: ENOSPC (No space left on device)") && Backups.noSpace("SQLITE_FULL")
                 && Backups.noSpace("database or disk is full (code 13)") && !Backups.noSpace("EACCES") && !Backups.noSpace(null));
         // texts, word for word
