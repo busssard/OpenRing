@@ -1153,7 +1153,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         map.setVisibility(walked ? View.VISIBLE : View.GONE);
         walkNote.setText(walked ? WALK_NOTE : TURN_NOTE);
         showStepLength();
-        dial.invalidate();
+        if (!walked) dial.invalidate(); // a hidden dial needs no redraw (review of #285, could improve 2)
         if (walk == null) {
             turnText.setText(rotation == null && !demo ? "This phone has no rotation sensor, so the search walk does not work on it." : START_HINT);
             return;
