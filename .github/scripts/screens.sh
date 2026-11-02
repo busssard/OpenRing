@@ -116,16 +116,18 @@ swipe_up; swipe_up;                       shot readiness-contributors 1   # temp
 # so the tap goes 68 dp below it (the chart's middle) and 10 px inside its right end, where the newest
 # dot is (the readout takes the dot nearest the touch). Slow swipes (no fling) until the chart is on screen
 # (the first run found nothing after 3 short swipes: the Contributors list above it is long).
+# the screen's density and height, read once for the touch steps below
 DENSITY=$(adb shell wm density 2>/dev/null | grep -o '[0-9]\+' | tail -1)
-TEMP_H=$(adb shell wm size 2>/dev/null | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f2 | tr -d '\r')
+SCREEN_H=$(adb shell wm size 2>/dev/null | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f2 | tr -d '\r')
+ui_dump() { adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1; adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml 2>/dev/null; }
 temp_xy() {
-  adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1; adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-  b=$(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="Deviation from your usual[^"]*"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  local b
+  b=$(ui_dump | grep -o 'text="Deviation from your usual[^"]*"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b
   [ $# -eq 4 ] || return 1
   local y=$(( $4 + 68 * ${DENSITY:-420} / 160 ))
   # above the tab bar and the system buttons (about 450 px on this emulator)
-  [ "$y" -lt $(( ${TEMP_H:-2400} - 450 )) ] || return 1
+  [ "$y" -lt $(( ${SCREEN_H:-2400} - 450 )) ] || return 1
   echo "$(( $3 - 10 )) $y"
 }
 xy=""
@@ -152,13 +154,20 @@ launch --ei tab 5;                          shot screen
 adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fling
 # read the clock by touch (issue #109): at the trailing edge of the first blue line, so the picture shows a
 # use read from a line. The demo's uses follow the time of the run, so the line is found on the screen:
-# line coloured pixels on a circle of 300 px around the clock's middle (540, 950 after the swipe above), not
-# the night band (dial_touch.py, issue #229), else 13:00.
+# line coloured pixels on a circle through the use lines, not the night band (dial_touch.py, issue #229).
+# The circle comes from the clock's bounds in the screen dump (content-desc "Phone use clock", issue #261),
+# else 13:00 on it. Without the bounds (clock cut off or not listed) the fixed middle 540 1047 measured on an
+# earlier run, else a fixed tap near 13:00.
+DIAL_VIEW=$(ui_dump | grep -o 'content-desc="Phone use clock[^"]*"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
 adb exec-out screencap > "$OUT/.dial.raw"
-xy=$(python3 -I .github/scripts/dial_touch.py "$OUT/.dial.raw" 2>/dev/null)
+xy=""
+if [ "$(echo $DIAL_VIEW | wc -w)" = 4 ]; then
+  xy=$(python3 -I .github/scripts/dial_touch.py "$OUT/.dial.raw" --view $DIAL_VIEW ${DENSITY:-420} 2>/dev/null)
+fi
+[ -n "$xy" ] || { log "clock bounds not usable (${DIAL_VIEW:-not listed}), fixed middle"; xy=$(python3 -I .github/scripts/dial_touch.py "$OUT/.dial.raw" 2>/dev/null); }
 rm -f "$OUT/.dial.raw"
-log "clock touch at ${xy:-462 1282}"
-adb shell input tap ${xy:-462 1282};       shot screen-touch 1
+log "clock touch at ${xy:-464 1331}"
+adb shell input tap ${xy:-464 1331};       shot screen-touch 1
 swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 launch --es settings top;                   shot settings
@@ -167,10 +176,9 @@ launch --es settings stages;                shot settings-stage-detail
 # preview above redraws, its phone line goes away and comes back without leaving the page. The card
 # opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view.
 adb shell input swipe 30 1700 30 900 1500; sleep 1
-ui_dump() { adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1; adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml 2>/dev/null; }
 phone_line() { ui_dump | grep -q "on the phone, shown as awake"; }
-SCREEN_H=$(adb shell wm size 2>/dev/null | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f2 | tr -d '\r')
 tap_phone_switch() {  # fails when the switch is not listed or its middle is off the screen
+  local b
   b=$(ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b
   [ $# -eq 4 ] || return 1
