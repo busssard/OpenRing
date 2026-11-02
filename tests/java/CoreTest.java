@@ -1582,18 +1582,35 @@ public class CoreTest {
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
     static void texts() throws IOException {
-        // an error as one short line for the data check (issue #235)
-        eq("short error: class and message", Texts.shortError(new IllegalStateException("cursor closed")), "IllegalStateException: cursor closed");
-        eq("short error: no message, the class only", Texts.shortError(new NullPointerException()), "NullPointerException");
-        eq("short error: blank message, the class only", Texts.shortError(new RuntimeException("  ")), "RuntimeException");
-        eq("short error: one line", Texts.shortError(new RuntimeException("a\n  b\tc")), "RuntimeException: a b c");
-        eq("short error: none", Texts.shortError(null), "unknown error");
-        StringBuilder longMsg = new StringBuilder();
-        for (int i = 0; i < 50; i++) longMsg.append("abcdef ");
-        String cut = Texts.shortError(new RuntimeException(longMsg.toString()));
-        check("short error: cut to the most", cut.length() == Texts.ERROR_MAX && cut.endsWith("...") && cut.startsWith("RuntimeException: abcdef"));
-        String exact = Texts.shortError(new RuntimeException(longMsg.substring(0, Texts.ERROR_MAX - "RuntimeException: ".length())));
-        check("short error: a text of the most length is kept whole", exact.length() == Texts.ERROR_MAX && !exact.endsWith("..."));
+        // the data check's line about a failed part of a day: class and place, never the message (issue #235)
+        NumberFormatException nfe = new NumberFormatException("For input string: \"61.5\"");
+        nfe.setStackTrace(new StackTraceElement[] {new StackTraceElement("java.lang.Double", "parseDouble", "Double.java", 538),
+            new StackTraceElement("app.openring.data.ScreenDays", "info", "ScreenDays.java", 182),
+            new StackTraceElement("app.openring.ui.DayData", "load", "DayData.java", 90)});
+        eq("load note: class and first own frame", LoadNote.error(nfe), "NumberFormatException at ScreenDays.java:182");
+        String ln = LoadNote.line("2026-11-01", "screen time", nfe, "2026-11-02 08:14");
+        eq("load note: the line", ln, "day 2026-11-01, screen time: NumberFormatException at ScreenDays.java:182 (noted 2026-11-02 08:14)");
+        check("load note: no value of the message", !ln.contains("61") && !ln.contains("input"));
+        RuntimeException outside = new RuntimeException("Value 61.5 at hr");
+        outside.setStackTrace(new StackTraceElement[] {new StackTraceElement("org.json.JSONObject", "get", "JSONObject.java", 10)});
+        eq("load note: no own frame, the class only", LoadNote.error(outside), "RuntimeException");
+        RuntimeException noFile = new RuntimeException("x");
+        noFile.setStackTrace(new StackTraceElement[] {new StackTraceElement("app.openring.data.Db", "kv", null, -1)});
+        eq("load note: an own frame without file", LoadNote.error(noFile), "RuntimeException");
+        RuntimeException noLine = new RuntimeException("x");
+        noLine.setStackTrace(new StackTraceElement[] {new StackTraceElement("app.openring.data.Db", "kv", "Db.java", -1)});
+        eq("load note: an own frame without line", LoadNote.error(noLine), "RuntimeException at Db.java");
+        eq("load note: none", LoadNote.error(null), "unknown error");
+        String later = LoadNote.line("2026-11-01", "screen time", nfe, "2026-11-02 09:30");
+        check("load note: the same failure later is not written again", !LoadNote.differs(ln, later));
+        check("load note: another part, date or error is written",
+                LoadNote.differs(ln, LoadNote.line("2026-11-01", "latest readings", nfe, "2026-11-02 08:14"))
+                && LoadNote.differs(ln, LoadNote.line("2026-10-31", "screen time", nfe, "2026-11-02 08:14"))
+                && LoadNote.differs(ln, LoadNote.line("2026-11-01", "screen time", outside, "2026-11-02 08:14"))
+                && LoadNote.differs(null, ln) && !LoadNote.differs(null, null));
+        check("load note: a good load of that date clears it", LoadNote.clearedBy(ln, "2026-11-01"));
+        check("load note: a good load of another date keeps it", !LoadNote.clearedBy(ln, "2026-11-02") && !LoadNote.clearedBy(ln, "2026-11-0")
+                && !LoadNote.clearedBy(null, "2026-11-01") && !LoadNote.clearedBy(ln, null));
 
         eq("count: one", Texts.count(1, "wake up", "wake ups"), "1 wake up");
         eq("count: zero is plural", Texts.count(0, "wake up", "wake ups"), "0 wake ups");
@@ -2438,7 +2455,8 @@ public class CoreTest {
         // the Screen tab's reason for a day without screen time; a failed read has its own (issue #235)
         String fail = ScreenTime.unknownText(ScreenTime.UNREADABLE, false);
         check("unknown text: a failed read says so and where to look",
-                fail.equals("Screen time could not be read for this day. Settings, Help and diagnostics, Data check and log shows why.")
+                fail.equals("Screen time could not be read for this day. Settings, Help and diagnostics, Data check and log shows why "
+                        + "(its Log tab has the details).")
                 && fail.equals(ScreenTime.unknownText(ScreenTime.UNREADABLE, true)));
         check("unknown text: before the data keeps its text",
                 ScreenTime.unknownText(ScreenTime.BEFORE_READS, false).contains("about a week before you allowed usage access"));

@@ -957,7 +957,7 @@ public class PipelineTest {
         boolean none = true;
         for (DataCheck.Step s : r.steps) if (s.title.equals("Loading a day")) none = false;
         check("#235 data check: no load note without a stored failure", none, r.text);
-        String line = "2026-11-02 08:14, screen time of 2026-11-01: " + app.openring.core.Texts.shortError(new IllegalStateException("cursor closed"));
+        String line = app.openring.core.LoadNote.line("2026-11-01", "screen time", new IllegalStateException("cursor closed"), "2026-11-02 08:14");
         db.put(DataCheck.LOAD_ERROR, line);
         r = DataCheck.run(c);
         DataCheck.Step last = r.steps.get(r.steps.size() - 1);
