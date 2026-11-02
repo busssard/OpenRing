@@ -238,8 +238,11 @@ history had, before anything is written to the file the person picked; otherwise
    while nights keep `ClockChange.find`. A touch on a lit 5 minute line of the Screen clock finds the use drawn
    there with the step maths of `DialMath.fill` (`DialMath.touch`, issue #109).
 6. `Analyzer` writes nights and days; it re analyses the last two days after each sync, from two days before
-   the earliest date the dating moved (issue #188), and everything when the number of dated events does not add up
-   or the user asks (Settings, Help). "Everything" is the whole stored history with no
+   the earliest date the dating moved (issue #188), also when older events gained or lost a date (a sync after the
+   ring restarted, a late time record, dates past the 6 hour limit that fall due: issue #256), and everything when the
+   number of dated events does not add up with no known date (no dated count yet, or a dating since the last analysis
+   that this run did not do: one that stopped before its analysis, Live, a version before #188) or the user asks
+   (Settings, Help). "Everything" is the whole stored history with no
    age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
    An analysis replaces its nights and days in one transaction (`Db.inTransaction`, issue #230): the screens keep
    reading the old ones (write ahead logging) until the new ones are all stored, and any stop or failure (also out of
