@@ -840,6 +840,7 @@ public class PipelineTest {
         restore252();
         failures252();
         damagedLog252();
+        demo252();
         largeLog252();
 
         System.out.println(passed + " passed, " + failed + " failed");
@@ -8751,12 +8752,15 @@ public class PipelineTest {
         Db db = Db.get(c);
         someLog252(db);
         app.openring.data.Periods.setFlow(db, "2019-04-01", app.openring.data.Periods.MEDIUM, 1010);
+        // the backup's entry of this day is later than the phone's below (a clock set wrong): the phone wins all the same
+        app.openring.data.Periods.setFlow(db, "2019-03-25", app.openring.data.Periods.HEAVY, 5000);
         db.getWritableDatabase().execSQL("INSERT INTO period_imports(id, made, days, temps) VALUES (1553000000000, 1553000000, 0, 1)");
         db.getWritableDatabase().execSQL("INSERT INTO period_temps(day, time, c, excluded, src) VALUES ('2019-03-11', '07:20', 36.5, 0, 1553000000000)");
         byte[] full = backup252(c);
         // after the backup: one day changed, one removed, one new, an end taken off and another set; one day only the backup has
         app.openring.data.Periods.setFlow(db, "2019-03-01", app.openring.data.Periods.LIGHT, 2000);
         app.openring.data.Periods.remove(db, "2019-03-02");
+        app.openring.data.Periods.setFlow(db, "2019-03-25", app.openring.data.Periods.LIGHT, 3000);
         app.openring.data.Periods.setFlow(db, "2019-05-01", app.openring.data.Periods.HEAVY, 2001);
         app.openring.data.Periods.setEnd(db, "2019-05-04", 2002);
         app.openring.data.Periods.clearEnd(db, "2019-03-03", 2003);
@@ -8775,6 +8779,8 @@ public class PipelineTest {
                 && results139(db).equals(results), r.message);
         check("#252 restore: the day changed on the phone keeps the phone's amount", flow252(days, "2019-03-01") == app.openring.data.Periods.LIGHT, days);
         check("#252 restore: a day removed on the phone after the backup stays removed", flow252(days, "2019-03-02") == app.openring.data.Periods.REMOVED, days);
+        check("#252 restore: the phone's row wins even when the backup's entry of that day has a later time (as decided on #252)",
+                flow252(days, "2019-03-25") == app.openring.data.Periods.LIGHT && db.count("SELECT COUNT(*) FROM period_days WHERE day = '2019-03-25' AND made = 3000") == 1, days);
         check("#252 restore: a day logged on the phone after the backup is kept", flow252(days, "2019-05-01") == app.openring.data.Periods.HEAVY, days);
         check("#252 restore: a day only the backup has comes back", flow252(days, "2019-04-01") == app.openring.data.Periods.MEDIUM, days);
         check("#252 restore: an end cleared on the phone after the backup stays cleared", !app.openring.data.Periods.allEnds(db).contains("2019-03-03")
@@ -8994,6 +9000,46 @@ public class PipelineTest {
         check("#252 a phone file that fails for another reason: its history and period log kept row for row", db.eventCount() == events
                 && periodRows252(db).equals(rows), periodRows252(db));
         noTemp(c, "after a refused restore over a file that does not open");
+        clean254();
+    }
+
+    /** The period days of a database file, read on their own (not through Db), as "day flow" lines. */
+    static String daysIn252(File f) throws Exception {
+        StringBuilder sb = new StringBuilder();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath()); java.sql.Statement st = cn.createStatement();
+             java.sql.ResultSet r = st.executeQuery("SELECT day, flow FROM period_days ORDER BY day")) {
+            while (r.next()) sb.append(r.getString(1)).append(' ').append(r.getInt(2)).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Review of #275: in demo mode, the period log is written into openring-demo.db only, and a restore merges the real file's
+     * log (never the demo's rows) into the restored history; the demo file keeps its rows.
+     */
+    static void demo252() throws Exception {
+        Context c = phone254("openring252-demo");
+        Db db = Db.get(c);
+        someLog252(db);
+        byte[] full = backup252(c);
+        app.openring.data.Periods.setFlow(db, "2019-05-01", app.openring.data.Periods.HEAVY, 2001);
+        String realRows = periodRows252(db);
+        File real = c.getDatabasePath(Db.REAL), demoFile = c.getDatabasePath(Db.DEMO);
+        app.openring.data.Prefs.of(c).setDemo(true);
+        Db demo = Db.get(c);
+        app.openring.data.Periods.setFlow(demo, "2019-08-01", app.openring.data.Periods.HEAVY, 3000);
+        app.openring.data.Periods.setEnd(demo, "2019-08-05", 3001);
+        String demoDays = daysIn252(demoFile);
+        check("#252 demo mode: a logged day goes into openring-demo.db only, the real file never sees it", Db.DEMO.equals(demo.fileName)
+                && demoDays.equals("2019-08-01 3\n") && !daysIn252(real).contains("2019-08") && app.openring.data.Periods.allEnds(demo).equals(Arrays.asList("2019-08-05")),
+                demoDays + " / " + daysIn252(real));
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Prefs.of(c).setDemo(false);
+        db = Db.get(c);
+        check("#252 a restore in demo mode: the real file's period log is merged, row for row, never the demo's", r.ok && r.history
+                && Db.REAL.equals(db.fileName) && periodRows252(db).equals(realRows) && !daysIn252(real).contains("2019-08"), r.message);
+        check("#252 a restore in demo mode: the demo file keeps its own rows", daysIn252(demoFile).equals(demoDays), daysIn252(demoFile));
+        noTemp(c, "after a restore in demo mode");
         clean254();
     }
 
