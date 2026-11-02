@@ -1,8 +1,12 @@
 name: Build APK
 # Every push and pull request: run the tests and build an APK you can download from the run.
-# Push to main with a version that has no release yet: build with the private signing key and
-# publish the GitHub Release vX.Y automatically. The version is counted from the change notes in
-# changes/ (tools/version.sh), so merging a pull request that adds a note is all it takes.
+# Two channels:
+# * Push to dev (every merged pull request): the pre-release "nightly" is replaced by this build,
+#   signed with the release key, named "<version> nightly <commit>"; its notes list the change notes
+#   on dev that main does not have yet.
+# * Push to main (only from dev, see release-gate.yml) with a version that has no release yet: the
+#   stable GitHub Release vX.Y. The version is counted from the change notes in changes/
+#   (tools/version.sh), so a release from dev that adds a note is all it takes.
 # A tag vX.Y made by hand (or by "Draft a new release" on GitHub) gets the signed APK attached.
 on:
   push:
@@ -63,7 +67,7 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
             echo "KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
             echo "signing with the release key"
-          elif [ "${GITHUB_REF_TYPE}" = "tag" ] || [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ] || [ "${GITHUB_REF}" = "refs/heads/main" ] || [ "${GITHUB_REF}" = "refs/heads/dev" ]; then
             echo "::error::KEYSTORE_B64 secret missing: releases must be signed with the release key"
             exit 1
           else
@@ -72,12 +76,16 @@ jobs:
       - name: Build APK
         env:
           KS_PASS: ${{ secrets.KEYSTORE_PASS }}
-        run: ./build_apk.sh
+        run: |
+          # a nightly says so in its version name (the version code stays the counted one)
+          if [ "$GITHUB_REF" = "refs/heads/dev" ]; then export VERSION_SUFFIX=" nightly ${GITHUB_SHA::7}"; fi
+          ./build_apk.sh
       - name: Privacy check (no internet permission, no tracking code)
         run: ./tests/check_privacy.sh
       - name: Name the APK after its version
         run: |
           v=$(./tools/version.sh | cut -d' ' -f2)
+          [ "$GITHUB_REF" = "refs/heads/dev" ] && v="$v-nightly-${GITHUB_SHA::7}"
           cp build/OpenRing.apk "build/OpenRing-$v.apk"
           echo "APK=build/OpenRing-$v.apk" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
@@ -142,3 +150,24 @@ jobs:
           else
             gh release create "$tag" "$APK" --target "$GITHUB_SHA" --title "Open Ring $v" --notes-file notes.md
           fi
+      - name: Publish the nightly (dev)
+        if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(./tools/version.sh | cut -d' ' -f2)
+          git fetch -q origin main || true
+          {
+            echo "Nightly build of \`dev\` at commit [\`${GITHUB_SHA::7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}), version $v nightly. Not a stable release: it has every merged pull request, tested only by CI so far."
+            echo
+            echo "### On dev, not yet in a stable release"
+            n=0
+            for f in $(git diff --name-only --diff-filter=A origin/main "$GITHUB_SHA" -- 'changes/[0-9]*.md' 2>/dev/null | sort); do
+              cat "$f"; echo; n=$((n + 1))
+            done
+            [ "$n" = 0 ] && echo "Nothing users notice since the last stable release."
+            echo
+            echo "SHA-256 of the APK: \`$(sha256sum "$APK" | cut -d' ' -f1)\`"
+          } > nightly.md
+          gh release delete nightly --cleanup-tag -y >/dev/null 2>&1 || true
+          gh release create nightly "$APK" --prerelease --target "$GITHUB_SHA" --title "Open Ring $v nightly (${GITHUB_SHA::7})" --notes-file nightly.md

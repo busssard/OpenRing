@@ -63,6 +63,8 @@ Android 8.0 or newer.
 
 Updates install over the old version and keep your data.
 
+**Stable or nightly:** the [latest release](https://github.com/busssard/OpenRing/releases/latest) is the tested, stable version (about weekly). The [nightly](https://github.com/busssard/OpenRing/releases/tag/nightly) has every change as soon as it is merged, for people who want to try new things first. Either installs over the other.
+
 <details>
 <summary>Android says "unverified developer"</summary>
 
@@ -182,6 +184,7 @@ More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#analysis).
 
 ## For developers
 
+* [ROADMAP.md](ROADMAP.md): where the app is going
 * [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): build, test, make a change, release
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the app talks to the ring and analyses the data
 * [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md) (rules for AI assisted work)

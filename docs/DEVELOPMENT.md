@@ -106,7 +106,8 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
 
 1. Open or pick an issue. For anything not trivial, write the design on the issue first: the cause
    (with file names), the proposal (numbers, texts), what it cannot do, the tests.
-2. Branch from `main` (`fix/issue-12-short-name`, `feature/...`, `docs/...`). Never commit to `main`.
+2. Branch from `dev` (`fix/issue-12-short-name`, `feature/...`, `docs/...`) and open the pull request
+   into `dev`. Never commit to `dev` or `main`; `main` only takes releases from `dev` (see below).
 3. Follow the existing style: Java 8 language level, 4 spaces, no libraries, UI in code with `Ui`
    helpers and `Charts` views, colors from `Ui`, explanations in `ui/Explain.java`.
 4. User facing text: plain and short, explain every number, no dashes as punctuation (commas or
@@ -137,10 +138,18 @@ Nobody types a version number, so pull requests never conflict over one.
    `VERSION_NAME = 1.(28 + notes)`. `build_apk.sh` and `app/build.gradle` use the same rule
    (`tests/check_version.sh` fails otherwise). The About screen reads the installed version. Notes are
    never deleted or renamed, so the code only grows (Android refuses lower codes).
-3. When a merge adds a note to `main`, `build.yml` builds the APK signed with the release key (repository
-   secrets `KEYSTORE_B64`, `KEYSTORE_PASS`), attests its provenance and publishes the GitHub Release
-   `vX.Y`. Its notes are the change notes added since the last release, plus checksum and certificate.
-   Versions that already have a release are skipped.
+3. **Two channels.** Pull requests are merged into `dev`. Every push to `dev` replaces the pre-release
+   **nightly** with a new APK signed with the release key, named "<version> nightly <commit>"; its notes
+   list the change notes on `dev` that `main` does not have yet. For the owner and testers who want
+   every change at once.
+4. **Stable releases** come only from `dev`: the owner opens (or merges the open) pull request from `dev`
+   into `main`. `release-gate.yml` fails for a pull request into `main` from any other branch (make
+   its check `from-dev` required in the ruleset for `main`). When that merge adds a note to `main`,
+   `build.yml` builds the APK signed with the release key (repository secrets `KEYSTORE_B64`,
+   `KEYSTORE_PASS`), attests its provenance and publishes the GitHub Release `vX.Y`. Its notes are the
+   change notes added since the last stable release, plus checksum and certificate. Versions that
+   already have a release are skipped. A nightly and the stable release after it share the version
+   code, so either can be installed over the other.
 
 Changes without a note (docs, CI, a refactor nobody notices) publish nothing. Because a PR does not know
 its final number, write "next version" in PR texts, not a number.

@@ -1,0 +1,25 @@
+name: Release gate
+# main only takes releases from dev: a pull request into main from any other branch fails this check.
+# Make "from-dev" a required check for main in the repository's ruleset (Settings, Rules), so the
+# merge button stays grey for anything else. Pull requests into dev are not affected.
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  from-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only dev may be merged into main
+        env:
+          HEAD: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD" = "dev" ] && [ "$HEAD_REPO" = "$REPO" ]; then
+            echo "ok: a release from dev"
+          else
+            echo "::error::main only takes releases from dev. Change the base of this pull request to dev (Edit, next to the title)."
+            exit 1
+          fi
