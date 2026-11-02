@@ -4924,11 +4924,32 @@ public class PipelineTest {
                     && "history field spo2 is not in History.NIGHT_FIELDS".equals(got[2]) && "history field steps is not in History.DAY_FIELDS".equals(got[3]),
                     Arrays.toString(got));
             check("#228 a strict day copy gives the listed fields", Json.d(d, "active_kcal") == 350 && d.optString("date").equals("2026-10-01"), d.toString());
+            // exactly these reads are overridden (every read of one name Android's JSONObject has, issue #262):
+            // removing or adding one fails here and names it
+            java.util.TreeSet<String> want = new java.util.TreeSet<String>(Arrays.asList(
+                    "opt(String)", "has(String)", "isNull(String)", "get(String)",
+                    "optDouble(String)", "optDouble(String,double)", "optString(String)", "optString(String,String)",
+                    "optInt(String)", "optInt(String,int)", "optLong(String)", "optLong(String,long)",
+                    "optBoolean(String)", "optBoolean(String,boolean)", "optJSONArray(String)", "optJSONObject(String)",
+                    "getDouble(String)", "getString(String)", "getInt(String)", "getLong(String)", "getBoolean(String)",
+                    "getJSONArray(String)", "getJSONObject(String)"));
+            java.util.TreeSet<String> have = new java.util.TreeSet<String>();
+            for (java.lang.reflect.Method m : n.getClass().getDeclaredMethods()) {
+                if (!java.lang.reflect.Modifier.isPublic(m.getModifiers()) || m.isSynthetic()) continue;
+                StringBuilder sig = new StringBuilder(m.getName()).append('(');
+                for (int i = 0; i < m.getParameterTypes().length; i++) sig.append(i > 0 ? "," : "").append(m.getParameterTypes()[i].getSimpleName());
+                have.add(sig.append(')').toString());
+            }
+            java.util.TreeSet<String> missing = new java.util.TreeSet<String>(want), extra = new java.util.TreeSet<String>(have);
+            missing.removeAll(have);
+            extra.removeAll(want);
+            check("#262 a strict copy overrides exactly the 23 reads by name", want.size() == 23 && have.equals(want),
+                    "missing " + missing + ", not in the list " + extra);
             // every read the copy overrides: a listed name passes, an unlisted one throws
             int reads = 0;
             List<String> wrong = new ArrayList<String>();
             for (java.lang.reflect.Method m : n.getClass().getDeclaredMethods()) {
-                if (!java.lang.reflect.Modifier.isPublic(m.getModifiers())) continue;
+                if (!java.lang.reflect.Modifier.isPublic(m.getModifiers()) || m.isSynthetic()) continue;
                 m.setAccessible(true); // the class is package private
                 reads++;
                 for (String name : new String[] {"asleep_min", "day", "rmssd"}) {
@@ -4948,7 +4969,7 @@ public class PipelineTest {
                     if (listed ? msg != null : !("history field " + name + " is not in History.NIGHT_FIELDS").equals(msg)) wrong.add(m.getName() + "(" + name + ")");
                 }
             }
-            check("#228 every read of a strict copy checks the name (opt, has, isNull, opt and get of each type)", reads >= 20 && wrong.isEmpty(), reads + " reads, wrong " + wrong);
+            check("#228 every read of a strict copy checks the name (opt, has, isNull, opt and get of each type)", reads == want.size() && wrong.isEmpty(), reads + " reads, wrong " + wrong);
         } finally {
             setHistoryStrict(false);
         }
