@@ -193,6 +193,31 @@ public class FinderTest {
         check("flat phone reads as tilted 90", Math.abs(flat[1] - 90) < 0.01, Arrays.toString(flat));
         check("empty matrix", Double.isNaN(SearchWalk.headingOf(new float[9])[0]));
         check("norm and diff", SearchWalk.norm(-30) == 330 && SearchWalk.norm(720) == 0 && SearchWalk.diff(350, 10) == 20 && SearchWalk.diff(10, 190) == 180);
+        dialRedraw();
+    }
+
+    /** Issue #224: the dial is drawn again for a new heading only when it shows one and it moved by a degree. */
+    static void dialRedraw() {
+        check("before Start the dial shows no heading", !SearchWalk.redrawDial(false, 10, 90));
+        check("hidden dial (the map shows) is not redrawn", !SearchWalk.redrawDial(false, Double.NaN, 90));
+        check("first heading after Start draws", SearchWalk.redrawDial(true, Double.NaN, 90));
+        check("no heading yet draws nothing", !SearchWalk.redrawDial(true, 90, Double.NaN));
+        check("sensor noise under a degree is not drawn", !SearchWalk.redrawDial(true, 90, 90.4) && !SearchWalk.redrawDial(true, 90, 89.1));
+        check("a degree is drawn", SearchWalk.redrawDial(true, 90, 91) && SearchWalk.redrawDial(true, 90, 88.5));
+        check("across north counts the short way", !SearchWalk.redrawDial(true, 359.6, 0.2) && SearchWalk.redrawDial(true, 359.5, 0.6));
+        // a turn once around in 20 s at game rate (50 readings a second): about 18 drawings a second instead of 50
+        double drawn = Double.NaN, worst = 0;
+        int draws = 0, readings = 0;
+        for (long t = 0; t <= 20000; t += 20, readings++) {
+            double h = SearchWalk.norm(360.0 * t / 20000);
+            if (SearchWalk.redrawDial(true, drawn, h)) {
+                drawn = h;
+                draws++;
+            }
+            worst = Math.max(worst, SearchWalk.diff(drawn, h));
+        }
+        check("a turn redraws far less often than the sensor reads", draws > 300 && draws < readings / 2, draws + " of " + readings);
+        check("the drawn heading never lags a degree or more", worst < SearchWalk.REDRAW_DEG, worst);
     }
 
     /**

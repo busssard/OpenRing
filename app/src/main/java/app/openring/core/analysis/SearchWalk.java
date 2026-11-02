@@ -878,6 +878,20 @@ public final class SearchWalk {
         return d > 180 ? 360 - d : d;
     }
 
+    /** How far (degrees) the heading moves before the turn dial is drawn again for it (issue #224); less does not show. */
+    public static final double REDRAW_DEG = 1;
+
+    /**
+     * Whether a new heading {@code now} redraws the turn dial (issue #224). Only a dial that shows the heading needs it
+     * ({@code shown}: a turn or walk began and the dial is on screen; before Start it draws no heading at all), and only
+     * once the heading moved by {@link #REDRAW_DEG} or more since the heading it was last drawn with ({@code drawn},
+     * NaN when it was not drawn with one yet). The screen's own tick redraws the dial 4 times a second anyway.
+     */
+    public static boolean redrawDial(boolean shown, double drawn, double now) {
+        if (!shown || Double.isNaN(now)) return false;
+        return Double.isNaN(drawn) || diff(drawn, now) >= REDRAW_DEG;
+    }
+
     /**
      * Heading and tilt of a phone held upright against the chest, screen towards the person, from
      * its rotation matrix (3 x 3, row major, phone to world, as Android's
