@@ -781,7 +781,7 @@ public final class SetupActivity extends Activity {
         rcard.addView(Ui.body(this, "Moving to a new phone or reinstalling? Pick an Open Ring backup file (saved in Settings, Key and backup). "
                 + "It restores the key and your settings, and a full backup also brings back all your history. A text file that "
                 + "only holds the key works too. If this phone already has newer history, the app asks before replacing it. "
-                + "Period days on this phone are kept, also days you removed."));
+                + "Period days you logged or removed on this phone stay as they are."));
         restoreStatus = Ui.text(this, "", 13, Ui.TEXT_2, Ui.REGULAR);
         secondary(rcard, "Choose backup file", new View.OnClickListener() {
             @Override

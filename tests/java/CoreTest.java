@@ -1088,7 +1088,8 @@ public class CoreTest {
                 t.contains("Service 0x180a Device Information\n  0x2a24 Model Number: read\n"));
         check("watch: the standard heart rate is not listened to", t.contains("0x2a37 Heart Rate Measurement: notify (standard, not listened to)"));
         check("watch: a quiet characteristic says 0 messages", t.contains("00000024-5749-5448-0037-000000000000: notify (listened)\n    0 messages\n"));
-        check("watch: counts, lengths and first bytes", t.contains("3 messages, lengths 7 1 4\n    first bytes 0105 07 0203\n"));
+        check("watch: counts, lengths and first bytes, not of a message of 2 bytes or less", t.contains("3 messages, lengths 7 1 4\n    first bytes: message 1 0105, message 3 0203\n"));
+        check("watch: a message of 1 byte is not in the default report", !t.contains(" 07"));
         check("watch: a refused switch is named", t.contains("write, notify (did not switch on)"));
         for (String value : new String[] {"a1", "b2", "c3", "d4", "e5", "f9", "e8"}) {
             check("watch: the default report holds no byte beyond the first 2 (" + value + ")", !t.contains(value));
@@ -1116,15 +1117,43 @@ public class CoreTest {
             rc.message(m);
         }
         String rt = WatchCheck.text(rr, false);
-        String firstLine = rt.substring(rt.indexOf("first bytes ") + 12);
+        String firstLine = rt.substring(rt.indexOf("first bytes: ") + 13);
         firstLine = firstLine.substring(0, firstLine.indexOf('\n'));
         boolean twoBytes = true;
         int groups = 0;
-        for (String g : firstLine.split(" ")) {
+        for (String g : firstLine.split(", ")) {
             groups++;
-            if (g.length() > 4) twoBytes = false;
+            String hex = g.substring(g.lastIndexOf(' ') + 1);
+            if (hex.length() != 2 * WatchCheck.TYPE_BYTES) twoBytes = false;
         }
-        check("watch: random messages keep at most 2 bytes each in the default report", twoBytes && groups == 100);
+        int wanted = 0;
+        for (int i = 0; i < WatchCheck.TYPE_MESSAGES; i++) if (rc.messages.get(i).length > WatchCheck.TYPE_BYTES) wanted++;
+        check("watch: random messages, 2 bytes each of the first 3 longer ones only", twoBytes && groups == wanted && groups <= WatchCheck.TYPE_MESSAGES);
+
+        // continuation pieces (review of #270): from the 4th message on only lengths, also for many long pieces
+        WatchCheck.Report pieces = new WatchCheck.Report();
+        pieces.connected = true;
+        WatchCheck.Characteristic pc = pieces.add(WatchCheck.WITHINGS_SERVICE).add("00000033-5749-5448-0037-000000000000", 0x10);
+        pc.listening = true;
+        pc.message(Hex.decode("0101aaaa"));
+        pc.message(Hex.decode("bbcc")); // a piece of 2 bytes: all value
+        pc.message(Hex.decode("0102dddd"));
+        for (int i = 0; i < 50; i++) pc.message(Hex.decode("eeff1122"));
+        String pt = WatchCheck.text(pieces, false);
+        check("watch: first bytes only of the first 3 messages longer than 2 bytes", pt.contains("\n    first bytes: message 1 0101, message 3 0102\n"));
+        check("watch: no bytes of a 2 byte piece or of later pieces", !pt.contains("bb") && !pt.contains("cc") && !pt.contains("dd") && !pt.contains("ee")
+                && !pt.contains("ff") && !pt.contains("1122"));
+        check("watch: later pieces still give their lengths", pt.contains("53 messages, lengths 4 2 4 4"));
+        check("watch: the private copy has the pieces whole", WatchCheck.text(pieces, true).contains("bytes 0101aaaa bbcc 0102dddd eeff1122"));
+        WatchCheck.Report tiny = new WatchCheck.Report();
+        tiny.connected = true;
+        WatchCheck.Characteristic tc = tiny.add(WatchCheck.WITHINGS_SERVICE).add("00000034-5749-5448-0037-000000000000", 0x10);
+        tc.listening = true;
+        tc.message(Hex.decode("4a"));
+        tc.message(Hex.decode("4b5c"));
+        String tt = WatchCheck.text(tiny, false);
+        check("watch: only short messages give lengths and no first bytes", tt.contains("2 messages, lengths 1 2\n") && !tt.contains("first bytes") && !tt.contains("4a")
+                && !tt.contains("4b"));
 
         // memory and length limits
         WatchCheck.Report big = new WatchCheck.Report();
@@ -1155,10 +1184,32 @@ public class CoreTest {
         // a watch that did not answer
         WatchCheck.Report none = new WatchCheck.Report();
         none.name = "";
-        none.problem = "no answer within 10 s";
+        none.detail = "no answer within 10 s";
         String nt = WatchCheck.text(none, false);
-        check("watch: no answer says so", nt.contains("Name: (no name)\n") && nt.contains("Connected: no\n") && nt.contains("Ended early: no answer within 10 s")
-                && nt.contains("Model: not shown") && nt.contains("Battery: not shown") && !nt.contains("Signal:"));
+        check("watch: no answer says so", nt.contains("Name: (no name)\n") && nt.contains("Connected: no\n") && nt.contains("Detail: no answer within 10 s")
+                && nt.contains("Model: not shown") && nt.contains("Battery: not shown") && !nt.contains("Signal:") && !nt.contains("Ended early"));
+        eq("watch: no answer on the screen", WatchCheck.outcome(none), WatchCheck.NO_ANSWER);
+        none.problem = WatchCheck.ENDED_REFUSED;
+        eq("watch: a refused connection on the screen", WatchCheck.outcome(none), WatchCheck.ENDED_REFUSED);
+
+        // the screen line in plain words (review of #270): status codes and error names only in the report
+        WatchCheck.Report off = new WatchCheck.Report();
+        off.connected = true;
+        off.problem = WatchCheck.ENDED_BLUETOOTH;
+        off.detail = "SecurityException";
+        String screen = WatchCheck.outcome(off);
+        eq("watch: Bluetooth off on the screen", screen, "The check ended early. Bluetooth was switched off or the permission was taken back. What it found so far is below.");
+        check("watch: the error name stays in the report", WatchCheck.text(off, false).contains("Ended early: " + WatchCheck.ENDED_BLUETOOTH + "\nDetail: SecurityException\n"));
+        off.problem = null;
+        off.detail = null;
+        eq("watch: a check that ran through", WatchCheck.outcome(off), "Done. The watch was let go again.");
+        for (String e : new String[] {WatchCheck.ENDED_STOPPED, WatchCheck.ENDED_REFUSED, WatchCheck.ENDED_LAYOUT, WatchCheck.ENDED_BY_WATCH, WatchCheck.ENDED_BLUETOOTH}) {
+            off.connected = true;
+            off.problem = e;
+            String o = WatchCheck.outcome(off);
+            check("watch: screen line without brackets or class names: " + e, !o.contains("(") && !o.contains(")") && !o.contains("Exception")
+                    && Character.isUpperCase(e.charAt(0)) && e.endsWith("."));
+        }
         WatchCheck.Report empty = new WatchCheck.Report();
         empty.connected = true;
         check("watch: a layout without services says so", WatchCheck.text(empty, false).contains("No services found") && WatchCheck.text(empty, false).contains("listened ?"));
@@ -1169,14 +1220,18 @@ public class CoreTest {
         check("watch: demo, the watch is the second of the made up list (the screen picks it)", WatchCheck.likelyWatch(WatchCheck.demoFound().get(1)));
         String dt = WatchCheck.text(WatchCheck.demoReport(), false);
         check("watch: demo report built like a real one", dt.startsWith("Open Ring watch check\nName: Steel HR (example)\n") && dt.contains("(looks like Withings)")
-                && dt.contains("2 messages, lengths 5 6\n    first bytes 0101 0105\n") && dt.contains("Battery: 80%"));
+                && dt.contains("2 messages, lengths 5 6\n    first bytes: message 1 0101, message 2 0105\n") && dt.contains("Battery: 80%"));
         check("watch: demo report has no byte beyond the first 2", !dt.contains("010100") && !dt.contains("0105000200"));
 
         // texts: plain, no dashes as punctuation, toasts short enough
         for (String s : new String[] {WatchCheck.INTRO, WatchCheck.SIGNAL, WatchCheck.PAIR_NOTE, WatchCheck.REPORT_NOTE, WatchCheck.PRIVATE, WatchCheck.SEND_BACK,
-            WatchCheck.NO_ANSWER, WatchCheck.BUSY, WatchCheck.DEMO, WatchCheck.NOTHING_FOUND, WatchCheck.CUT, t, dt}) {
+            WatchCheck.NO_ANSWER, WatchCheck.BUSY, WatchCheck.DEMO, WatchCheck.NOTHING_FOUND, WatchCheck.CUT, WatchCheck.RUNNING, WatchCheck.ENDED_STOPPED,
+            WatchCheck.ENDED_REFUSED, WatchCheck.ENDED_LAYOUT, WatchCheck.ENDED_BY_WATCH, WatchCheck.ENDED_BLUETOOTH, screen, t, dt}) {
             check("watch: no dash as punctuation in " + s.substring(0, Math.min(30, s.length())), !s.contains(" - ") && !s.contains("–") && !s.contains("—"));
         }
+        check("watch: what to send back matches the decisions on #251", WatchCheck.SEND_BACK.contains("comment on issue 251 on GitHub")
+                && WatchCheck.SEND_BACK.contains("model name") && WatchCheck.SEND_BACK.contains("firmware") && WatchCheck.SEND_BACK.contains("battery % on 3 mornings"));
+        check("watch: the report note names the first 3 messages", WatchCheck.REPORT_NOTE.contains("first 3 messages") && WatchCheck.TYPE_MESSAGES == 3);
         check("watch: the check takes at most 30 s, connect 10 s, listen 10 s", WatchCheck.SESSION_MS == 30000 && WatchCheck.CONNECT_MS == 10000
                 && WatchCheck.LISTEN_MS == 10000 && WatchCheck.CONNECT_MS + WatchCheck.LISTEN_MS < WatchCheck.SESSION_MS);
 
@@ -1338,7 +1393,7 @@ public class CoreTest {
         eq("backups: an empty file", Backups.mb(0), "0 MB");
         eq("backups: going back asks, and says the whole history is kept and can be put back, and the phone's period log stays (#252)", Backups.goBackText(when, z),
             "Your history is replaced by this copy from 29 Oct. First your whole history as it is now is kept as \"Copy from before going back\", "
-            + "so you can put it back from this card. Period days on this phone are kept, also days you removed.");
+            + "so you can put it back from this card. Period days you logged or removed on this phone stay as they are.");
         check("backups: the going back question names the copy's line", Backups.goBackText(when, z).contains(Backups.backLine(when, 1, z).substring(0, 26)));
         eq("backups: status after a copy", Backups.status(when, 210 * mb, 5, null, z), "Last copy: 29 Oct 03:12, 210 MB, 5 kept");
         eq("backups: status before the first copy", Backups.status(0, 0, 0, null, z), "No copy yet. The first one is made the next time the phone charges.");
@@ -1672,7 +1727,8 @@ public class CoreTest {
         // every toast in the app: literal texts fit in two lines, no raw error text on any message (issue #89)
         java.util.regex.Pattern literal = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
         int toasts = 0, toastConsts = 0;
-        java.util.regex.Pattern toastConst = java.util.regex.Pattern.compile("\\b(Texts|Backups|SyncError)\\.([A-Z][A-Z0-9_]*)\\b(?!\\s*\\()");
+        // a constant of any class (Texts.X, Pairing.ALREADY) or of the file itself (REPAIRING), not a call
+        java.util.regex.Pattern toastConst = java.util.regex.Pattern.compile("(?<![\\w.])(?:([A-Z]\\w*)\\.)?([A-Z][A-Z0-9_]+)\\b(?!\\s*[.(])");
         List<java.io.File> files = new ArrayList<java.io.File>();
         javaFiles(new java.io.File("app/src/main/java/app/openring"), files);
         check("toast scan: app sources found", files.size() > 0);
@@ -1697,14 +1753,13 @@ public class CoreTest {
                     // a constant of core's text classes is measured by its value, so no long one slips past (issue #274)
                     java.util.regex.Matcher c = toastConst.matcher(literal.matcher(args).replaceAll("\"\""));
                     while (c.find()) {
+                        String cls = c.group(1), name = c.group(2);
+                        if ("Toast".equals(cls)) continue; // Toast.LENGTH_LONG
                         toastConsts++;
-                        Object v = null;
-                        try {
-                            v = Class.forName("app.openring.core." + c.group(1)).getField(c.group(2)).get(null);
-                        } catch (ReflectiveOperationException ignored) {
-                        }
+                        Object v = toastConstant(cls, name, f, files);
+                        String what = (cls == null ? f.getName().replace(".java", "") : cls) + "." + name;
                         check("toast constant is a text: " + where, v instanceof String);
-                        check("toast constant fits in two lines: " + c.group(1) + "." + c.group(2), v instanceof String && Texts.fitsToast((String) v));
+                        check("toast constant fits in two lines: " + what, v instanceof String && Texts.fitsToast((String) v));
                     }
                 }
             }
@@ -1731,6 +1786,31 @@ public class CoreTest {
         }
         check("raw error scan: screen sources found", uiFiles > 0);
         eq("no raw error text built on any screen", rawLines, 0);
+    }
+
+    /**
+     * The value of a constant passed to a toast: a class of core by reflection, otherwise the declaration
+     * {@code static final String NAME = "...";} in that class's source (or in {@code self} when unqualified),
+     * made of string literals only. Null when it cannot be found or is not such a text.
+     */
+    static Object toastConstant(String cls, String name, java.io.File self, List<java.io.File> files) throws IOException {
+        if (cls != null) {
+            try {
+                return Class.forName("app.openring.core." + cls).getField(name).get(null);
+            } catch (ReflectiveOperationException ignored) {
+            }
+        }
+        java.io.File src = null;
+        for (java.io.File f : files) if (f.getName().equals((cls == null ? self.getName().replace(".java", "") : cls) + ".java")) src = f;
+        if (src == null) return null;
+        String text = new String(java.nio.file.Files.readAllBytes(src.toPath()), "UTF-8");
+        java.util.regex.Matcher d = java.util.regex.Pattern.compile("static\\s+final\\s+String\\s+" + name
+                + "\\s*=\\s*((?:\"(?:[^\"\\\\]|\\\\.)*\"\\s*\\+?\\s*)+);").matcher(text);
+        if (!d.find()) return null;
+        StringBuilder v = new StringBuilder();
+        java.util.regex.Matcher l = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(d.group(1));
+        while (l.find()) v.append(l.group(1));
+        return v.toString();
     }
 
     static void javaFiles(java.io.File dir, List<java.io.File> out) {
@@ -4092,6 +4172,12 @@ public class CoreTest {
         check("texts: busy and delete messages fit the rules", !Texts.SYNC_BUSY.contains(" - ") && !Texts.DELETE_BUSY.contains(" - ")
                 && Texts.DELETE_BUSY.startsWith("Nothing was deleted") && Texts.DELETE_FAILED.startsWith("Nothing was deleted")
                 && !Texts.LIVE_BUSY.contains(" - ") && !Texts.LIVE_BUSY.contains("syncing") && !Texts.SYNC_BUSY.contains("ring task"));
+        // review of #277: the full delete texts are too long for a toast, the short ones for a closed Settings fit
+        check("texts: delete texts go into the dialog", !Texts.fitsToast(Texts.DELETE_BUSY) && !Texts.fitsToast(Texts.DELETE_FAILED));
+        for (String t : new String[] {Texts.DELETE_BUSY_TOAST, Texts.DELETE_FAILED_TOAST}) {
+            check("texts: delete toast fits and says nothing was deleted: " + t, Texts.fitsToast(t) && t.startsWith("Nothing was deleted")
+                    && !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
     }
 
     /**
