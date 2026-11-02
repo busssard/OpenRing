@@ -501,7 +501,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 } catch (Throwable e) {
                     // a failed analysis rolled back and stored its error, also out of memory (issue #230); a failed
                     // zone note stored nothing, so both are noted for the data check (issue #235)
-                    ok = DayData.failed(MainActivity.this, "time zone note or its analysis", e);
+                    ok = DayData.failed(MainActivity.this, d, "time zone note or its analysis", e);
                 }
                 try {
                     // screen time is read on this phone (issue #13); the very first read also updates the
@@ -510,12 +510,12 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     if (!app.openring.data.Analyzer.running() && app.openring.data.ScreenUse.collect(MainActivity.this) > 0 && first) app.openring.data.Analyzer.run(MainActivity.this, null);
                 } catch (Throwable e) {
                     // as above (issues #230, #235)
-                    ok = DayData.failed(MainActivity.this, "screen log read or its analysis", e);
+                    ok = DayData.failed(MainActivity.this, d, "screen log read or its analysis", e);
                 }
                 try {
                     latest = app.openring.data.Db.get(MainActivity.this).latestDay();
                     DayData r = DayData.load(MainActivity.this, d);
-                    if (ok && r.ok) DayData.allRead(MainActivity.this);
+                    if (ok && r.ok) DayData.allRead(MainActivity.this, d);
                     return r;
                 } catch (RuntimeException e) {
                     // a damaged file is kept since issue #255, so it fails here on every start: one line on the

@@ -132,7 +132,7 @@ public final class DataCheck {
             r.steps.add(new Step("Analysis", st, detail));
         }
 
-        // 5. a part of loading a day that failed and kept its fallback (issue #235): its time, part and error only
+        // 5. a part of loading a day that failed and kept its fallback (issue #235): date, part, error class and place, time
         String load = db.kv(LOAD_ERROR, null);
         if (load != null) r.steps.add(new Step("Loading a day", 1, "Part of a day could not be read: " + load));
 
@@ -160,7 +160,7 @@ public final class DataCheck {
         return r;
     }
 
-    /** The kv key of the last part of loading a day that failed and kept its fallback (issue #235): time, part and short error. */
+    /** The kv key of the last part of loading a day that failed and kept its fallback (issue #235): a {@link app.openring.core.LoadNote} line, no values. */
     public static final String LOAD_ERROR = "day_load_error";
 
     /** The data check counts the sleep periods of this many days, today included. */

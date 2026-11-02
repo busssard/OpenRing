@@ -539,7 +539,8 @@ public final class ScreenTime {
      */
     public static String unknownText(int coverage, boolean demo) {
         if (coverage == UNREADABLE) {
-            return "Screen time could not be read for this day. Settings, Help and diagnostics, Data check and log shows why.";
+            return "Screen time could not be read for this day. Settings, Help and diagnostics, Data check and log shows why "
+                    + "(its Log tab has the details).";
         }
         if (coverage == READ_GAP) {
             return "No screen time known for this day. Android keeps its usage log for about a week, and Open Ring did not read it "
