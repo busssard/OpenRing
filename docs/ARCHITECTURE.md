@@ -91,7 +91,7 @@ Nothing leaves the phone: the app has no internet permission.
   in them counts as automatic, and a mode still pending wins over what the ring reports). It is cleared only once the ring
   accepted the restore, each measurement on its own. A session that ends without a link leaves it pending; the next sync,
   Live, Find my ring or Settings read or switch of measurements sends it after the key check. A Settings switch wins over
-  a pending mode; a new pairing and a factory reset drop them.
+  a pending mode, so do the automatic modes a new pairing sends once the ring accepted them; a factory reset and "Use a different key or ring" drop them.
 * Accelerometer streaming (games) is unconfirmed; if no motion frame arrives within the first 15 seconds,
   the game ends its ring session and falls back to touch steering.
 

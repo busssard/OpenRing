@@ -107,7 +107,6 @@ public final class Prefs {
     }
     public int batteryBefore() { return sp.getInt("battery_prev", -1); }
     public long batteryBeforeAt() { return sp.getLong("battery_prev_at", 0); }
-    /** The ring finder clicks and vibrates faster when closer; this switches both (issue #74). */
     // ---- measurement modes to put back on the ring (issue #221) ----
 
     /**
@@ -122,6 +121,14 @@ public final class Prefs {
         else sp.edit().putInt("restore_mode_" + feature, mode).commit();
     }
 
+    /** "Use a different key or ring": the modes kept for the ring as it was no longer apply. */
+    public void forgetPendingModes() {
+        SharedPreferences.Editor e = sp.edit();
+        for (int f : app.openring.core.ModeRestore.FEATURES) e.remove("restore_mode_" + f);
+        e.commit();
+    }
+
+    /** The ring finder clicks and vibrates faster when closer; this switches both (issue #74). */
     public boolean finderSound() { return sp.getBoolean("finder_sound", true); }
     public void setFinderSound(boolean b) { sp.edit().putBoolean("finder_sound", b).apply(); }
     /**
@@ -291,8 +298,6 @@ public final class Prefs {
         if (address != null) e.putString("address", address);
         e.putString("serial", serial).putBoolean("setup_done", true).putString("pair_unseen", message);
         if (dropPending) e.remove("pending_key_enc").remove("pending_key_iv").remove("pending_key_serial");
-        // pairing switches the measurements to automatic: modes kept for an earlier session no longer apply (issue #221)
-        for (int f : app.openring.core.ModeRestore.FEATURES) e.remove("restore_mode_" + f);
         return e.commit();
     }
 

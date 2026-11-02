@@ -539,6 +539,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     @Override
                     public void run() {
                         p.clearKey();
+                        p.forgetPendingModes(); // modes kept for this ring no longer apply (issue #221)
                         p.setSetupDone(false);
                         startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
                         finish();

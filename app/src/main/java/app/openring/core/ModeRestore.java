@@ -90,8 +90,11 @@ public final class ModeRestore {
         return left;
     }
 
-    /** The person switched {@code feature} in Settings and the ring accepted it: that choice wins over a pending restore. */
-    public static void chosenInSettings(Store store, int feature) {
+    /**
+     * The ring accepted a new mode for {@code feature} that replaces a pending restore: the person's switch in Settings,
+     * or the automatic modes a new pairing sends.
+     */
+    public static void replaced(Store store, int feature) {
         if (store.pending(feature) >= 0) store.setPending(feature, NONE);
     }
 
