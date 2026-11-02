@@ -36,6 +36,50 @@ public final class DayData {
      * merged, oldest first, each {start, stop}. Empty for nearly everyone.
      */
     public final List<double[]> leftOut = new ArrayList<double[]>();
+    /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
+    public boolean ok = true;
+
+    /**
+     * Notes a part of loading {@code date} that failed and kept its fallback (issue #235): a warning in Android's log
+     * with the stack trace, a line with the full error in the app's Log tab, and for the data check
+     * {@link app.openring.data.DataCheck#LOAD_ERROR}, a {@link app.openring.core.LoadNote} line without the error's
+     * message (it can carry a value), so the data check stays safe to share. Written only when date, part or error
+     * differ from the stored line. Runs in the load's background task; while an analysis runs its transaction would
+     * hold the write for minutes, so then only the logs get it. Never throws; returns false for {@link #ok}.
+     */
+    static boolean failed(Context c, LocalDate date, String part, Throwable e) {
+        try {
+            android.util.Log.w("OpenRing", "day load: " + part + " of " + date + " failed", e);
+            app.openring.ble.RingManager.get(c).log("day load: " + part + " of " + date + " failed: " + e);
+            String when = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(new java.util.Date());
+            String line = app.openring.core.LoadNote.line(String.valueOf(date), part, e, when);
+            if (!app.openring.data.Analyzer.running()) {
+                Db db = Db.get(c);
+                if (app.openring.core.LoadNote.differs(db.kv(app.openring.data.DataCheck.LOAD_ERROR, null), line)) {
+                    db.put(app.openring.data.DataCheck.LOAD_ERROR, line);
+                }
+            }
+        } catch (Throwable ignored) {
+            // the fallback stays; nothing more can be done here
+        }
+        return false;
+    }
+
+    /**
+     * After a load of {@code date} where every part worked: clears {@link app.openring.data.DataCheck#LOAD_ERROR} when
+     * it is about that date, so looking at another day keeps it for the data check. Writes only then. Never throws.
+     */
+    static void allRead(Context c, LocalDate date) {
+        try {
+            Db db = Db.get(c);
+            if (!app.openring.data.Analyzer.running()
+                    && app.openring.core.LoadNote.clearedBy(db.kv(app.openring.data.DataCheck.LOAD_ERROR, null), String.valueOf(date))) {
+                db.put(app.openring.data.DataCheck.LOAD_ERROR, null);
+            }
+        } catch (Throwable ignored) {
+            // kept for the next good load
+        }
+    }
 
     public static DayData load(Context c, LocalDate date) {
         Db db = Db.get(c);
@@ -55,8 +99,9 @@ public final class DayData {
         try {
             double ds = d.dayStart(), de = d.dayEnd();
             for (double[] r : db.leftOut().ranges()) if (r[1] > ds - 2 * 86400 && r[0] < de + 86400) d.leftOut.add(r);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
             // shown without the left out cards, the results never hold left out data anyway
+            d.ok = failed(c, date, "left out times", e);
         }
         // a window around the date, so an old date loads as fast as a recent one (issue #98)
         for (String s : db.recentNights(date, LocalDate.now())) {
@@ -66,13 +111,17 @@ public final class DayData {
         d.anyNight = !d.recent.isEmpty() || db.anyMainNight();
         try {
             d.now = app.openring.data.RightNow.load(c);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
+            // the Body card shows only its caption and the Today ring no verdict, as before (issue #235)
+            d.ok = failed(c, date, "latest readings", e);
         }
         try {
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
             d.screen = app.openring.data.ScreenDays.info(db, date, d.zone, p.screenGoalMin(), p.screenExcluded(),
                     p.screenMinShowMin() * 60.0);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
+            // the Screen tab says it could not be read (issue #235)
+            d.ok = failed(c, date, "screen time", e);
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
             JSONObject o = Json.parse(r[1]);

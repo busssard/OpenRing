@@ -493,24 +493,30 @@ public final class MainActivity extends Activity implements RingManager.Listener
             protected DayData doInBackground(Void... v) {
                 // while an analysis runs (a re analysis of the whole history takes minutes) the screen shows the stored
                 // nights at once; the zone note, the screen log and their analysis wait for the next load (review of #243)
+                boolean ok = true;
                 try {
                     // the phone's time zone at every start (issue #22); a new zone analyses the nights since
                     // the last note again, so they count in the zone you woke up in. Demo mode notes nothing.
                     app.openring.data.Analyzer.beforeLoad(MainActivity.this);
-                } catch (Throwable ignored) {
-                    // a failed analysis rolled back and stored its error, also out of memory (issue #230)
+                } catch (Throwable e) {
+                    // a failed analysis rolled back and stored its error, also out of memory (issue #230); a failed
+                    // zone note stored nothing, so both are noted for the data check (issue #235)
+                    ok = DayData.failed(MainActivity.this, d, "time zone note or its analysis", e);
                 }
                 try {
                     // screen time is read on this phone (issue #13); the very first read also updates the
                     // nights of the week it brings in
                     boolean first = !app.openring.data.ScreenDays.any(app.openring.data.Db.get(MainActivity.this));
                     if (!app.openring.data.Analyzer.running() && app.openring.data.ScreenUse.collect(MainActivity.this) > 0 && first) app.openring.data.Analyzer.run(MainActivity.this, null);
-                } catch (Throwable ignored) {
-                    // as above (issue #230)
+                } catch (Throwable e) {
+                    // as above (issues #230, #235)
+                    ok = DayData.failed(MainActivity.this, d, "screen log read or its analysis", e);
                 }
                 try {
                     latest = app.openring.data.Db.get(MainActivity.this).latestDay();
-                    return DayData.load(MainActivity.this, d);
+                    DayData r = DayData.load(MainActivity.this, d);
+                    if (ok && r.ok) DayData.allRead(MainActivity.this, d);
+                    return r;
                 } catch (RuntimeException e) {
                     // a damaged file is kept since issue #255, so it fails here on every start: one line on the
                     // screen instead of a crash, and Settings stays reachable to go back to a copy (review of #266)

@@ -954,6 +954,19 @@ public class PipelineTest {
         Analyzer.run(c, null);
         r = DataCheck.run(c);
         check("data check: one of one event dated", r.steps.get(2).detail.startsWith("1 of 1 event dated (100%), 1 of 1 boot segment"), r.steps.get(2).detail);
+
+        // issue #235: a part of a day that could not be read is a note in the data check, only while it is stored
+        boolean none = true;
+        for (DataCheck.Step s : r.steps) if (s.title.equals("Loading a day")) none = false;
+        check("#235 data check: no load note without a stored failure", none, r.text);
+        String line = app.openring.core.LoadNote.line("2026-11-01", "screen time", new IllegalStateException("cursor closed"), "2026-11-02 08:14");
+        db.put(DataCheck.LOAD_ERROR, line);
+        r = DataCheck.run(c);
+        DataCheck.Step last = r.steps.get(r.steps.size() - 1);
+        check("#235 data check: the stored failure is a note", last.title.equals("Loading a day") && last.state == 1
+                && last.detail.equals("Part of a day could not be read: " + line) && r.text.contains("[note] Loading a day: Part of a day could not be read: "), r.text);
+        db.put(DataCheck.LOAD_ERROR, null);
+        check("#235 data check: cleared, the note goes", !DataCheck.run(c).text.contains("Loading a day"), null);
     }
 
     static JSONObject activityPart(JSONObject score, String key) {

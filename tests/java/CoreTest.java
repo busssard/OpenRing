@@ -1637,6 +1637,36 @@ public class CoreTest {
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
     static void texts() throws IOException {
+        // the data check's line about a failed part of a day: class and place, never the message (issue #235)
+        NumberFormatException nfe = new NumberFormatException("For input string: \"61.5\"");
+        nfe.setStackTrace(new StackTraceElement[] {new StackTraceElement("java.lang.Double", "parseDouble", "Double.java", 538),
+            new StackTraceElement("app.openring.data.ScreenDays", "info", "ScreenDays.java", 182),
+            new StackTraceElement("app.openring.ui.DayData", "load", "DayData.java", 90)});
+        eq("load note: class and first own frame", LoadNote.error(nfe), "NumberFormatException at ScreenDays.java:182");
+        String ln = LoadNote.line("2026-11-01", "screen time", nfe, "2026-11-02 08:14");
+        eq("load note: the line", ln, "day 2026-11-01, screen time: NumberFormatException at ScreenDays.java:182 (noted 2026-11-02 08:14)");
+        check("load note: no value of the message", !ln.contains("61") && !ln.contains("input"));
+        RuntimeException outside = new RuntimeException("Value 61.5 at hr");
+        outside.setStackTrace(new StackTraceElement[] {new StackTraceElement("org.json.JSONObject", "get", "JSONObject.java", 10)});
+        eq("load note: no own frame, the class only", LoadNote.error(outside), "RuntimeException");
+        RuntimeException noFile = new RuntimeException("x");
+        noFile.setStackTrace(new StackTraceElement[] {new StackTraceElement("app.openring.data.Db", "kv", null, -1)});
+        eq("load note: an own frame without file", LoadNote.error(noFile), "RuntimeException");
+        RuntimeException noLine = new RuntimeException("x");
+        noLine.setStackTrace(new StackTraceElement[] {new StackTraceElement("app.openring.data.Db", "kv", "Db.java", -1)});
+        eq("load note: an own frame without line", LoadNote.error(noLine), "RuntimeException at Db.java");
+        eq("load note: none", LoadNote.error(null), "unknown error");
+        String later = LoadNote.line("2026-11-01", "screen time", nfe, "2026-11-02 09:30");
+        check("load note: the same failure later is not written again", !LoadNote.differs(ln, later));
+        check("load note: another part, date or error is written",
+                LoadNote.differs(ln, LoadNote.line("2026-11-01", "latest readings", nfe, "2026-11-02 08:14"))
+                && LoadNote.differs(ln, LoadNote.line("2026-10-31", "screen time", nfe, "2026-11-02 08:14"))
+                && LoadNote.differs(ln, LoadNote.line("2026-11-01", "screen time", outside, "2026-11-02 08:14"))
+                && LoadNote.differs(null, ln) && !LoadNote.differs(null, null));
+        check("load note: a good load of that date clears it", LoadNote.clearedBy(ln, "2026-11-01"));
+        check("load note: a good load of another date keeps it", !LoadNote.clearedBy(ln, "2026-11-02") && !LoadNote.clearedBy(ln, "2026-11-0")
+                && !LoadNote.clearedBy(null, "2026-11-01") && !LoadNote.clearedBy(ln, null));
+
         eq("count: one", Texts.count(1, "wake up", "wake ups"), "1 wake up");
         eq("count: zero is plural", Texts.count(0, "wake up", "wake ups"), "0 wake ups");
         eq("count: two", Texts.count(2, "second", "seconds"), "2 seconds");
@@ -2501,6 +2531,25 @@ public class CoreTest {
         check("coverage: touching reads leave no gap", ScreenTime.coverage(Arrays.asList(new double[] {0, 5}, new double[] {5, 20}), 1, 10, today) == ScreenTime.COVERED);
         check("coverage: a read open to the end (no reads stored yet)",
                 ScreenTime.coverage(Arrays.asList(new double[] {5, Double.POSITIVE_INFINITY}), 1e6, 2e6, today) == ScreenTime.COVERED);
+
+        // the Screen tab's reason for a day without screen time; a failed read has its own (issue #235)
+        String fail = ScreenTime.unknownText(ScreenTime.UNREADABLE, false);
+        check("unknown text: a failed read says so and where to look",
+                fail.equals("Screen time could not be read for this day. Settings, Help and diagnostics, Data check and log shows why "
+                        + "(its Log tab has the details).")
+                && fail.equals(ScreenTime.unknownText(ScreenTime.UNREADABLE, true)));
+        check("unknown text: before the data keeps its text",
+                ScreenTime.unknownText(ScreenTime.BEFORE_READS, false).contains("about a week before you allowed usage access"));
+        check("unknown text: a gap and not yet read keep theirs",
+                ScreenTime.unknownText(ScreenTime.READ_GAP, false).contains("did not read it in time")
+                && ScreenTime.unknownText(ScreenTime.AFTER_READS, false).contains("not read in full yet")
+                && ScreenTime.unknownText(ScreenTime.AFTER_READS, true).startsWith("The demo has no screen time"));
+        java.util.Set<String> reasons = new java.util.HashSet<String>();
+        for (int k : new int[] {ScreenTime.BEFORE_READS, ScreenTime.READ_GAP, ScreenTime.AFTER_READS, ScreenTime.UNREADABLE}) {
+            reasons.add(ScreenTime.unknownText(k, false));
+            check("unknown text " + k + ": plain, no dashes", !ScreenTime.unknownText(k, false).contains(" - ") && !ScreenTime.unknownText(k, true).contains(" - "));
+        }
+        check("unknown text: each state has its own reason", reasons.size() == 4);
 
         // merging and storing
         List<double[]> m = ScreenTime.mergeRanges(Arrays.asList(new double[] {30, 40}, new double[] {0, 10}, new double[] {10, 20}, new double[] {35, 50}, new double[] {5, 5}));
