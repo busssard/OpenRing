@@ -33,6 +33,8 @@ public final class Backup {
     public static final class Result {
         public boolean ok;
         public boolean history;
+        /** The phone's file was damaged, so its period log could not be carried into the restored history (review of #275). */
+        public boolean logDamaged;
         public String message;
     }
 
@@ -141,6 +143,10 @@ public final class Backup {
     static final String NEWER = "This backup comes from a newer Open Ring. Update the app first, nothing was changed.";
     static final String BROKEN = "This file is damaged or is not an Open Ring backup, nothing was changed.";
     static final String NOT_OPENED = "The history in this backup could not be opened. Your history on this phone was kept, nothing was changed.";
+    /** The phone's own period log could not be read before the swap (review of #275): the backup is not to blame. */
+    public static final String PERIODS_UNREADABLE = "The period log on this phone could not be read, nothing was changed.";
+    /** Added to the restore's result when the phone's file was damaged and its period log was left behind (review of #275). */
+    public static final String PERIODS_DAMAGED = "The period log on this phone was damaged and could not be kept, the period days of the backup are in place.";
     /** Re dating after a sync moves times by minutes, a sync adds hours. */
     static final double SLACK_S = 3600;
 
@@ -260,6 +266,7 @@ public final class Backup {
                 final IOException[] failed = {null};
                 final boolean[] notKept = {false};
                 final boolean[] waited = {false};
+                final boolean[] logDamaged = {false};
                 // demo mode is switched off only once the swap worked (applySettings). The order is the ring lock, then
                 // the analysis lock (as pairing): an analysis that may still run after a sync no longer holds the ring
                 // (issue #21), and closing its database under it would break it
@@ -278,7 +285,7 @@ public final class Backup {
                                         throw new IOException(e);
                                     }
                                 }
-                                Db.replaceWith(c, p.db, p.backupEvents);
+                                logDamaged[0] = Db.replaceWith(c, p.db, p.backupEvents);
                             } catch (IOException e) {
                                 failed[0] = e;
                             }
@@ -292,10 +299,11 @@ public final class Backup {
                     return r;
                 }
                 if (failed[0] != null) {
-                    r.message = notKept[0] ? NOT_KEPT : NOT_OPENED;
+                    r.message = notKept[0] ? NOT_KEPT : failed[0] instanceof Db.PeriodLogUnreadable ? PERIODS_UNREADABLE : NOT_OPENED;
                     return r;
                 }
                 r.history = true;
+                r.logDamaged = logDamaged[0];
             }
         } finally {
             cancel(c, p);
@@ -309,7 +317,7 @@ public final class Backup {
         // the key is saved: a Setup screen closed before showing the result must not start over
         Prefs.of(c).setSetupDone(true);
         r.ok = true;
-        if (r.history) r.message = "Restored your key, settings and history";
+        if (r.history) r.message = "Restored your key, settings and history" + (r.logDamaged ? ". " + PERIODS_DAMAGED : "");
         else if (p.history) r.message = "Restored your key and settings, the history on this phone stays";
         else r.message = "Restored your key and settings";
         return r;

@@ -332,7 +332,7 @@ public final class Backups {
     /** The question before going back to a copy made at {@code unix}. */
     public static String goBackText(long unix, ZoneId z) {
         return "Your history is replaced by this copy from " + day(unix, z) + ". First your whole history as it is now is kept as "
-                + "\"Copy from before going back\", so you can put it back from this card.";
+                + "\"Copy from before going back\", so you can put it back from this card. Period days you logged or removed on this phone stay as they are.";
     }
 
     /** The status line of the folder copies. {@code error}: a reason code, null when the last try worked. */

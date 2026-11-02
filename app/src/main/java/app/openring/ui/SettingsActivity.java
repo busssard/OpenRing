@@ -470,7 +470,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             }
         });
         key.addView(Ui.gap(this, 6));
-        key.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself.", 12, Ui.TEXT_3, Ui.REGULAR));
+        key.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself. The full backup also holds your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(key);
 
         // ---- automatic backups (issue #242) ----
@@ -481,7 +481,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // ---- data ----
         LinearLayout data = Ui.card(this);
         data.addView(Ui.caption(this, "Export"));
-        data.addView(Ui.body(this, "For spreadsheets or your own analysis. These files hold no key."));
+        data.addView(Ui.body(this, "For spreadsheets or your own analysis. These files hold no key. The full database also holds your period log."));
         pair(data, "Daily summaries (CSV)", Ui.TEXT_2, new Runnable() {
             @Override
             public void run() {
@@ -545,7 +545,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         small(danger, "Delete all local data", Ui.WARN, new Runnable() {
             @Override
             public void run() {
-                confirm("Delete everything?", "All synced events and results on this phone are erased. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
+                confirm("Delete everything?", "All synced events and results on this phone are erased, including your period log. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
                     @Override
                     public void run() {
                         deleteAll();
