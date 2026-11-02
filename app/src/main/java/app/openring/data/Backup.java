@@ -17,6 +17,7 @@ import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 import app.openring.core.Hex;
+import app.openring.core.InputLimit;
 import app.openring.core.analysis.StageFilter;
 
 /**
@@ -426,13 +427,13 @@ public final class Backup {
         JSONObject prof = o.optJSONObject("profile");
         if (prof != null) {
             int sex = prof.optInt("sex", p.sex());
-            p.setProfile(clamp(prof.optInt("age", p.age()), 10, 100), sex >= 0 && sex <= 2 ? sex : p.sex(),
-                    clamp(prof.optInt("weight", p.weightKg()), 30, 250), clamp(prof.optInt("height", p.heightCm()), 100, 230),
-                    clamp(prof.optInt("target_kcal", p.targetKcal()), 0, 3000));
+            p.setProfile(InputLimit.AGE.clamp(prof.optInt("age", p.age())), sex >= 0 && sex <= 2 ? sex : p.sex(),
+                    InputLimit.WEIGHT_KG.clamp(prof.optInt("weight", p.weightKg())), InputLimit.HEIGHT_CM.clamp(prof.optInt("height", p.heightCm())),
+                    InputLimit.TARGET_KCAL.clamp(prof.optInt("target_kcal", p.targetKcal())));
             p.setProfileSet();
         }
         if (o.has("background_sync")) p.setBackgroundSync(o.optBoolean("background_sync", true));
-        if (o.has("screen_goal")) p.setScreenGoalMin(clamp(o.optInt("screen_goal", p.screenGoalMin()), 0, 1440));
+        if (o.has("screen_goal")) p.setScreenGoalMin(InputLimit.SCREEN_GOAL_MIN.clamp(o.optInt("screen_goal", p.screenGoalMin())));
         if (o.has("screen_awake")) p.setScreenAwake(o.optBoolean("screen_awake", true));
         org.json.JSONArray ex = o.optJSONArray("screen_exclude");
         if (ex != null) {
@@ -453,10 +454,6 @@ public final class Backup {
         // a value that is not one of the choices, or an older backup without them, keeps the current ones
         if (app.openring.core.Backups.validDays(o.optInt("backup_days", -1))) p.setBackupDays(o.optInt("backup_days"));
         if (app.openring.core.Backups.validKeep(o.optInt("backup_keep", -1))) p.setBackupKeep(o.optInt("backup_keep"));
-    }
-
-    static int clamp(int v, int lo, int hi) {
-        return Math.max(lo, Math.min(hi, v));
     }
 
     static boolean looksLikeSqlite(File f) throws IOException {
