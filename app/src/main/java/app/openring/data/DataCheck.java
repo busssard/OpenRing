@@ -132,6 +132,10 @@ public final class DataCheck {
             r.steps.add(new Step("Analysis", st, detail));
         }
 
+        // 5. a part of loading a day that failed and kept its fallback (issue #235): its time, part and error only
+        String load = db.kv(LOAD_ERROR, null);
+        if (load != null) r.steps.add(new Step("Loading a day", 1, "Part of a day could not be read: " + load));
+
         t.append('\n');
         for (Step s : r.steps) {
             t.append(s.state == 0 ? "[ok]   " : s.state == 1 ? "[note] " : "[FAIL] ").append(s.title).append(": ").append(s.detail).append('\n');
@@ -155,6 +159,9 @@ public final class DataCheck {
         r.text = t.toString();
         return r;
     }
+
+    /** The kv key of the last part of loading a day that failed and kept its fallback (issue #235): time, part and short error. */
+    public static final String LOAD_ERROR = "day_load_error";
 
     /** The data check counts the sleep periods of this many days, today included. */
     public static final int NIGHT_DAYS = 14;

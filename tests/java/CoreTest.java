@@ -1582,6 +1582,19 @@ public class CoreTest {
 
     /** Issues #89 and #92: counted words agree with the number, toasts stay short, raw errors never reach the screen. */
     static void texts() throws IOException {
+        // an error as one short line for the data check (issue #235)
+        eq("short error: class and message", Texts.shortError(new IllegalStateException("cursor closed")), "IllegalStateException: cursor closed");
+        eq("short error: no message, the class only", Texts.shortError(new NullPointerException()), "NullPointerException");
+        eq("short error: blank message, the class only", Texts.shortError(new RuntimeException("  ")), "RuntimeException");
+        eq("short error: one line", Texts.shortError(new RuntimeException("a\n  b\tc")), "RuntimeException: a b c");
+        eq("short error: none", Texts.shortError(null), "unknown error");
+        StringBuilder longMsg = new StringBuilder();
+        for (int i = 0; i < 50; i++) longMsg.append("abcdef ");
+        String cut = Texts.shortError(new RuntimeException(longMsg.toString()));
+        check("short error: cut to the most", cut.length() == Texts.ERROR_MAX && cut.endsWith("...") && cut.startsWith("RuntimeException: abcdef"));
+        String exact = Texts.shortError(new RuntimeException(longMsg.substring(0, Texts.ERROR_MAX - "RuntimeException: ".length())));
+        check("short error: a text of the most length is kept whole", exact.length() == Texts.ERROR_MAX && !exact.endsWith("..."));
+
         eq("count: one", Texts.count(1, "wake up", "wake ups"), "1 wake up");
         eq("count: zero is plural", Texts.count(0, "wake up", "wake ups"), "0 wake ups");
         eq("count: two", Texts.count(2, "second", "seconds"), "2 seconds");
@@ -2421,6 +2434,24 @@ public class CoreTest {
         check("coverage: touching reads leave no gap", ScreenTime.coverage(Arrays.asList(new double[] {0, 5}, new double[] {5, 20}), 1, 10, today) == ScreenTime.COVERED);
         check("coverage: a read open to the end (no reads stored yet)",
                 ScreenTime.coverage(Arrays.asList(new double[] {5, Double.POSITIVE_INFINITY}), 1e6, 2e6, today) == ScreenTime.COVERED);
+
+        // the Screen tab's reason for a day without screen time; a failed read has its own (issue #235)
+        String fail = ScreenTime.unknownText(ScreenTime.UNREADABLE, false);
+        check("unknown text: a failed read says so and where to look",
+                fail.equals("Screen time could not be read for this day. Settings, Help and diagnostics, Data check and log shows why.")
+                && fail.equals(ScreenTime.unknownText(ScreenTime.UNREADABLE, true)));
+        check("unknown text: before the data keeps its text",
+                ScreenTime.unknownText(ScreenTime.BEFORE_READS, false).contains("about a week before you allowed usage access"));
+        check("unknown text: a gap and not yet read keep theirs",
+                ScreenTime.unknownText(ScreenTime.READ_GAP, false).contains("did not read it in time")
+                && ScreenTime.unknownText(ScreenTime.AFTER_READS, false).contains("not read in full yet")
+                && ScreenTime.unknownText(ScreenTime.AFTER_READS, true).startsWith("The demo has no screen time"));
+        java.util.Set<String> reasons = new java.util.HashSet<String>();
+        for (int k : new int[] {ScreenTime.BEFORE_READS, ScreenTime.READ_GAP, ScreenTime.AFTER_READS, ScreenTime.UNREADABLE}) {
+            reasons.add(ScreenTime.unknownText(k, false));
+            check("unknown text " + k + ": plain, no dashes", !ScreenTime.unknownText(k, false).contains(" - ") && !ScreenTime.unknownText(k, true).contains(" - "));
+        }
+        check("unknown text: each state has its own reason", reasons.size() == 4);
 
         // merging and storing
         List<double[]> m = ScreenTime.mergeRanges(Arrays.asList(new double[] {30, 40}, new double[] {0, 10}, new double[] {10, 20}, new double[] {35, 50}, new double[] {5, 5}));

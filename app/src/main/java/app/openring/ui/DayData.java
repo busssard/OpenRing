@@ -36,6 +36,38 @@ public final class DayData {
      * merged, oldest first, each {start, stop}. Empty for nearly everyone.
      */
     public final List<double[]> leftOut = new ArrayList<double[]>();
+    /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
+    public boolean ok = true;
+
+    /**
+     * Notes a part of loading a day that failed and kept its fallback (issue #235): a warning in Android's log with
+     * the stack trace, a line in the app's log and {@link app.openring.data.DataCheck#LOAD_ERROR} for the data check (its time, the part and
+     * {@link app.openring.core.Texts#shortError}, nothing else, so it stays safe to share). Runs in the load's
+     * background task. While an analysis runs its transaction would hold the write for minutes, so then only the
+     * logs get it. Never throws; returns false for {@link #ok}.
+     */
+    static boolean failed(Context c, String part, Throwable e) {
+        try {
+            android.util.Log.w("OpenRing", "day load: " + part + " failed", e);
+            String line = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(new java.util.Date())
+                    + ", " + part + ": " + app.openring.core.Texts.shortError(e);
+            app.openring.ble.RingManager.get(c).log("day load: " + line);
+            if (!app.openring.data.Analyzer.running()) Db.get(c).put(app.openring.data.DataCheck.LOAD_ERROR, line);
+        } catch (Throwable ignored) {
+            // the fallback stays; nothing more can be done here
+        }
+        return false;
+    }
+
+    /** After a load where every part worked: clears {@link app.openring.data.DataCheck#LOAD_ERROR}, writing only when one is stored. Never throws. */
+    static void allRead(Context c) {
+        try {
+            Db db = Db.get(c);
+            if (!app.openring.data.Analyzer.running() && db.kv(app.openring.data.DataCheck.LOAD_ERROR, null) != null) db.put(app.openring.data.DataCheck.LOAD_ERROR, null);
+        } catch (Throwable ignored) {
+            // kept for the next good load
+        }
+    }
 
     public static DayData load(Context c, LocalDate date) {
         Db db = Db.get(c);
@@ -55,8 +87,9 @@ public final class DayData {
         try {
             double ds = d.dayStart(), de = d.dayEnd();
             for (double[] r : db.leftOut().ranges()) if (r[1] > ds - 2 * 86400 && r[0] < de + 86400) d.leftOut.add(r);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
             // shown without the left out cards, the results never hold left out data anyway
+            d.ok = failed(c, "left out times", e);
         }
         // a window around the date, so an old date loads as fast as a recent one (issue #98)
         for (String s : db.recentNights(date, LocalDate.now())) {
@@ -66,13 +99,17 @@ public final class DayData {
         d.anyNight = !d.recent.isEmpty() || db.anyMainNight();
         try {
             d.now = app.openring.data.RightNow.load(c);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
+            // the Body card shows only its caption and the Today ring no verdict, as before (issue #235)
+            d.ok = failed(c, "latest readings", e);
         }
         try {
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
             d.screen = app.openring.data.ScreenDays.info(db, date, d.zone, p.screenGoalMin(), p.screenExcluded(),
                     p.screenMinShowMin() * 60.0);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
+            // the Screen tab says it could not be read (issue #235)
+            d.ok = failed(c, "screen time of " + key, e);
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
             JSONObject o = Json.parse(r[1]);

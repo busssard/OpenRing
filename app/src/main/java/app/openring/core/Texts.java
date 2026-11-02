@@ -188,4 +188,19 @@ public final class Texts {
         if (!(widest > 0) || !(room > 0) || widest <= room) return wanted;
         return Math.max(min, wanted * room / widest);
     }
+
+    /** The longest error text {@link #shortError} gives (issue #235). */
+    public static final int ERROR_MAX = 120;
+
+    /**
+     * An error as one short line for the data check (issue #235): the class name and the message only, no
+     * stack trace, whitespace folded, cut to {@link #ERROR_MAX} characters, so the copy stays short and safe to share.
+     */
+    public static String shortError(Throwable e) {
+        if (e == null) return "unknown error";
+        String m = e.getMessage();
+        String s = e.getClass().getSimpleName() + (m == null || m.trim().isEmpty() ? "" : ": " + m.trim());
+        s = s.replaceAll("\\s+", " ");
+        return s.length() <= ERROR_MAX ? s : s.substring(0, ERROR_MAX - 3) + "...";
+    }
 }

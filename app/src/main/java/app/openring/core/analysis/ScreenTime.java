@@ -530,6 +530,29 @@ public final class ScreenTime {
     /** How much of a day the reads of the usage log cover, see {@link #coverage}. */
     public static final int COVERED = 0, BEFORE_READS = 1, READ_GAP = 2, AFTER_READS = 3;
 
+    /** Not a coverage: the day's screen time could not be read from the database (issue #235). */
+    public static final int UNREADABLE = 4;
+
+    /**
+     * Why a day has no screen time, for the Screen tab (issues #131, #235): before the data, a gap in reading
+     * Android's log, not read yet, or reading it failed ({@link #UNREADABLE}).
+     */
+    public static String unknownText(int coverage, boolean demo) {
+        if (coverage == UNREADABLE) {
+            return "Screen time could not be read for this day. Settings, Help and diagnostics, Data check and log shows why.";
+        }
+        if (coverage == READ_GAP) {
+            return "No screen time known for this day. Android keeps its usage log for about a week, and Open Ring did not read it "
+                    + "in time (the app was not opened, or usage access was off).";
+        }
+        if (coverage == AFTER_READS) {
+            if (demo) return "The demo has no screen time after the moment it was made. It is made again each day you open the app.";
+            return "Screen time for this day is not read in full yet. Open Ring reads it each time you open the app "
+                    + "(with usage access on).";
+        }
+        return "No screen time known for this day. Open Ring has screen time from about a week before you allowed usage access.";
+    }
+
     /**
      * Whether the time from {@code a} to {@code b} was read from the usage log (issue #131), given the
      * {@code reads} merged and oldest first ({@link #mergeRanges}). {@link #COVERED} when every moment
