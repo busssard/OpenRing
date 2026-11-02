@@ -36,6 +36,10 @@ public final class DayData {
      * merged, oldest first, each {start, stop}. Empty for nearly everyone.
      */
     public final List<double[]> leftOut = new ArrayList<double[]>();
+    /** The period tracker shows (issue #252): the profile says female, the Settings switch, or demo mode. */
+    public boolean periodShown;
+    /** The period tracker's estimate from the whole log, today; null when hidden or when the log could not be read. */
+    public app.openring.core.analysis.Cycles periods;
     /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
     public boolean ok = true;
 
@@ -122,6 +126,15 @@ public final class DayData {
         } catch (RuntimeException e) {
             // the Screen tab says it could not be read (issue #235)
             d.ok = failed(c, date, "screen time", e);
+        }
+        try {
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            d.periodShown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
+            if (d.periodShown) d.periods = app.openring.data.Periods.cycles(db, LocalDate.now());
+        } catch (RuntimeException e) {
+            // the card says it could not be read. Not through failed(): the Data check names nothing of the period log, and
+            // the log gets the error's kind only, never a date or an amount (issue #252)
+            app.openring.ble.RingManager.get(c).log("day load: the period log could not be read: " + e.getClass().getSimpleName());
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
             JSONObject o = Json.parse(r[1]);

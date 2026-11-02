@@ -81,6 +81,13 @@ public final class Prefs {
     public boolean gamesOn() { return sp.getBoolean("games_on", false); }
     public void setGamesOn(boolean b) { sp.edit().putBoolean("games_on", b).apply(); }
 
+    /**
+     * The Settings switch "Show the period tracker" (issue #252): -1 not touched (shown when the profile says female), 0 hidden,
+     * 1 shown. Hiding deletes nothing. {@code core/analysis/Cycles.shown} decides with the profile and demo mode.
+     */
+    public int periodChoice() { return sp.getInt("period_shown", -1); }
+    public void setPeriodChoice(int v) { sp.edit().putInt("period_shown", v < 0 ? -1 : v > 0 ? 1 : 0).apply(); }
+
     public boolean profileSet() { return sp.getBoolean("profile_set", false); }
     public void setProfileSet() { sp.edit().putBoolean("profile_set", true).apply(); }
 

@@ -155,6 +155,8 @@ public final class Pages {
         lr.addView(lb);
         live.addView(lr);
         root.addView(live);
+        // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
+        if (d.periodShown) root.addView(PeriodCard.today(c, d, nav));
 
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
@@ -1262,6 +1264,8 @@ public final class Pages {
     public static View body(final Context c, DayData d, final Nav nav) {
         LinearLayout root = Ui.vbox(c);
         JSONObject day = d.day;
+        // the period tracker first (issue #252), when the profile says female, the Settings switch says so, or in demo mode
+        if (d.periodShown) root.addView(PeriodCard.body(c, d, nav));
         root.addView(rightNow(c, d.now));
         LinearLayout hr = Ui.card(c);
         hr.addView(Ui.caption(c, "Heart rate today"));

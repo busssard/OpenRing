@@ -352,9 +352,20 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 weight.setText(String.valueOf(p.weightKg()));
                 height.setText(String.valueOf(p.heightCm()));
                 target.setText(String.valueOf(p.targetKcal()));
+                // the tracker follows the saved profile until its switch is touched (issue #252)
+                periodSwitch(p);
                 reanalyse();
             }
         });
+        // the period tracker (issue #252): shown by itself when the profile says female; hiding deletes nothing
+        periodSwitch = new Switch(this);
+        periodSwitch.setText("Show the period tracker");
+        periodSwitch.setTextColor(Ui.TEXT);
+        periodSwitch(p);
+        LinearLayout.LayoutParams psl = Ui.matchWrap();
+        psl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        prof.addView(periodSwitch, psl);
+        prof.addView(Ui.text(this, "Shown when your profile says female. Your logged days stay stored when it is hidden.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(prof);
 
         // ---- sleep stage detail ----
@@ -763,6 +774,21 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /** Sex picked in the profile card (0 male, 1 female, 2 not set), saved with its button. */
     private int sexChoice = -1;
+
+    /** "Show the period tracker" in the Profile card (issue #252). */
+    private Switch periodSwitch;
+
+    /** Shows the tracker's state on its switch without counting that as a choice; a tap stores the choice. */
+    void periodSwitch(final Prefs p) {
+        periodSwitch.setOnCheckedChangeListener(null);
+        periodSwitch.setChecked(app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), false));
+        periodSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                p.setPeriodChoice(on ? 1 : 0);
+            }
+        });
+    }
     static final String[] SEXES = {"Male", "Female", "Not set"};
 
     void fillSex(final LinearLayout row) {

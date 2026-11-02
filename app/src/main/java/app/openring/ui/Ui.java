@@ -37,6 +37,8 @@ public final class Ui {
     public static final int OXY = 0xFF7CC8FF;
     public static final int WARN = 0xFFFF8A65;
     public static final int GOOD = 0xFF6BD3B4;
+    /** The period tracker (issue #252): the heart colour, so the card's red comes from the palette. */
+    public static final int PERIOD = HEART;
 
     public static final int STAGE_AWAKE = 0xFFE9ECF2;
     public static final int STAGE_REM = 0xFF9CC6FF;
