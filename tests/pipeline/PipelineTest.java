@@ -568,6 +568,7 @@ public class PipelineTest {
         check("plain text key file accepted", bt.ok, bt.message);
         app.openring.data.Backup.Result bad = app.openring.data.Backup.read(phone2, new java.io.ByteArrayInputStream("hello".getBytes("UTF-8")));
         check("random file rejected", !bad.ok, bad.message);
+        profileLimits(phone2);
 
         // ---- demo mode: made up history in its own file, real data untouched ----
         long realEvents = Db.get(phone2).count("SELECT COUNT(*) FROM events");
@@ -3610,6 +3611,46 @@ public class PipelineTest {
      * Known order dependence (issue #216, not changed): freshDb swaps the shared database, so a test that calls it
      * must not run in the middle of main's own section, which keeps using the database it opened at the start.
      */
+    /**
+     * The profile and screen goal defaults and the limits a restore keeps them in, pinned so the named limits
+     * (core/InputLimit, shared with Setup and Settings) give exactly the numbers that were typed in each place.
+     * Leaves the phone's settings as they were.
+     */
+    static void profileLimits(Context phone) throws Exception {
+        app.openring.data.Prefs fresh = app.openring.data.Prefs.of(new Context(Files.createTempDirectory("prefs").toFile()));
+        check("profile defaults: age 35, weight 72 kg, height 175 cm, calorie goal automatic, screen goal 180 min",
+                fresh.age() == 35 && fresh.weightKg() == 72 && fresh.heightCm() == 175 && fresh.targetKcal() == 0 && fresh.screenGoalMin() == 180,
+                fresh.age() + " " + fresh.weightKg() + " " + fresh.heightCm() + " " + fresh.targetKcal() + " " + fresh.screenGoalMin());
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(phone);
+        int age = p.age(), sex = p.sex(), weight = p.weightKg(), height = p.heightCm(), kcal = p.targetKcal(), goal = p.screenGoalMin();
+        try {
+            // {age, weight, height, calorie goal, screen goal} in a backup, and what the restore keeps
+            int[][] cases = {
+                    {5, 20, 90, -1, -5}, {10, 30, 100, 0, 0},
+                    {101, 251, 231, 3001, 1441}, {100, 250, 230, 3000, 1440},
+                    {-40, -1, 0, -100000, Integer.MIN_VALUE}, {10, 30, 100, 0, 0},
+                    {Integer.MAX_VALUE, 99999, 5000, Integer.MAX_VALUE, 99999}, {100, 250, 230, 3000, 1440},
+                    {44, 81, 190, 2500, 90}, {44, 81, 190, 2500, 90},
+            };
+            for (int i = 0; i < cases.length; i += 2) {
+                int[] in = cases[i], want = cases[i + 1];
+                p.setProfile(in[0], 0, in[1], in[2], in[3]);
+                p.setScreenGoalMin(in[4]);
+                java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+                app.openring.data.Backup.write(phone, b, false);
+                p.setProfile(50, 1, 60, 160, 1000);
+                p.setScreenGoalMin(60);
+                app.openring.data.Backup.Result r = app.openring.data.Backup.read(phone, new java.io.ByteArrayInputStream(b.toByteArray()));
+                int[] got = {p.age(), p.weightKg(), p.heightCm(), p.targetKcal(), p.screenGoalMin()};
+                check("restore keeps the profile in its limits: " + Arrays.toString(in), r.ok && Arrays.equals(got, want),
+                        Arrays.toString(got) + " " + r.message);
+            }
+        } finally {
+            p.setProfile(age, sex, weight, height, kcal);
+            p.setScreenGoalMin(goal);
+        }
+    }
+
     static Context freshDb(String name) throws Exception {
         java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
         f.setAccessible(true);

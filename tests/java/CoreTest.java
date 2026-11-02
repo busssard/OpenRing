@@ -933,6 +933,7 @@ public class CoreTest {
     public static void main(String[] args) throws Exception {
         permissionSettings();
         keyState199();
+        inputLimit();
         protocol();
         history();
         bundles();
@@ -7020,5 +7021,43 @@ public class CoreTest {
         eq("221 forget: nothing pending", store.m.size(), 0);
         eq("221 features: daytime heart rate and blood oxygen", Arrays.toString(ModeRestore.FEATURES), "[2, 4]");
         eq("221 names", ModeRestore.modeName(Protocol.MODE_CONNECTED_LIVE) + "," + ModeRestore.modeName(9) + "," + ModeRestore.name(8), "live,mode 9,measurement 8");
+    }
+
+    /** What Setup and Settings did with typed text before the limits got names: trim, whole number, clamp, else the default. */
+    static int typedBefore(String text, int def, int lo, int hi) {
+        try {
+            int v = Integer.parseInt(text.trim());
+            return Math.max(lo, Math.min(hi, v));
+        } catch (NumberFormatException x) {
+            return def;
+        }
+    }
+
+    /** The named profile and screen goal limits give exactly the numbers that were typed in Setup, Settings and the restore. */
+    static void inputLimit() {
+        InputLimit[] limits = {InputLimit.AGE, InputLimit.WEIGHT_KG, InputLimit.HEIGHT_CM, InputLimit.TARGET_KCAL, InputLimit.SCREEN_GOAL_MIN};
+        int[][] typed = {{35, 10, 100}, {72, 30, 250}, {175, 100, 230}, {0, 0, 3000}, {180, 0, 1440}};
+        String[] names = {"age", "weight", "height", "calorie goal", "screen goal"};
+        String[] texts = {"", " ", "abc", "41", " 41 ", "\t63\n", "0", "-1", "-0", "+12", "9", "10", "100", "101", "29", "30", "250", "251",
+                "99", "231", "3000", "3001", "1440", "1441", "1e3", "12.5", "12,5", "2147483647", "2147483648", "-2147483648",
+                "99999999999", "\u0661\u0662", "4 2", "0x10"};
+        int[] values = {Integer.MIN_VALUE, -100000, -1, 0, 1, 9, 10, 29, 30, 99, 100, 101, 230, 231, 250, 251, 1440, 1441, 3000, 3001, Integer.MAX_VALUE};
+        for (int i = 0; i < limits.length; i++) {
+            InputLimit l = limits[i];
+            int[] t = typed[i];
+            eq("input limit " + names[i] + ": default, low, high", l.def + " " + l.lo + " " + l.hi, t[0] + " " + t[1] + " " + t[2]);
+            int same = 0;
+            for (String x : texts) if (l.parse(x) == typedBefore(x, t[0], t[1], t[2])) same++;
+            eq("input limit " + names[i] + ": typed text gives the same number as before", same, texts.length);
+            same = 0;
+            for (int v : values) if (l.clamp(v) == Math.max(t[1], Math.min(t[2], v))) same++;
+            eq("input limit " + names[i] + ": a restored value is kept in the same range", same, values.length);
+        }
+        eq("input limit: empty text is the default age", InputLimit.AGE.parse(""), 35);
+        eq("input limit: an age typed with spaces", InputLimit.AGE.parse(" 41 "), 41);
+        eq("input limit: too young is the lowest age", InputLimit.AGE.parse("3"), 10);
+        eq("input limit: a number too long for an int is the default", InputLimit.WEIGHT_KG.parse("99999999999"), 72);
+        eq("input limit: a decimal height is the default", InputLimit.HEIGHT_CM.parse("180.5"), 175);
+        eq("input limit: a screen goal over a day is a whole day", InputLimit.SCREEN_GOAL_MIN.parse("2000"), 1440);
     }
 }

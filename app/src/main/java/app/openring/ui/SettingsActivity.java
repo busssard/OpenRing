@@ -26,6 +26,7 @@ import java.util.Locale;
 import app.openring.ble.RingManager;
 import app.openring.core.Drafts;
 import app.openring.core.Hex;
+import app.openring.core.InputLimit;
 import app.openring.core.Protocol;
 import app.openring.core.Backups;
 import app.openring.core.Texts;
@@ -345,8 +346,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         action(prof, "Save and re analyse", Ui.ACTIVE, new Runnable() {
             @Override
             public void run() {
-                p.setProfile(SetupActivity.num(age, 35, 10, 100), sexChoice, SetupActivity.num(weight, 72, 30, 250),
-                        SetupActivity.num(height, 175, 100, 230), SetupActivity.num(target, 0, 0, 3000));
+                p.setProfile(SetupActivity.num(age, InputLimit.AGE), sexChoice, SetupActivity.num(weight, InputLimit.WEIGHT_KG),
+                        SetupActivity.num(height, InputLimit.HEIGHT_CM), SetupActivity.num(target, InputLimit.TARGET_KCAL));
                 // show what was really saved (a number out of range is saved at its limit)
                 age.setText(String.valueOf(p.age()));
                 weight.setText(String.valueOf(p.weightKg()));
@@ -661,7 +662,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         small(card, "Save goal", Ui.OXY, new Runnable() {
             @Override
             public void run() {
-                p.setScreenGoalMin(SetupActivity.num(goal, 180, 0, 1440));
+                p.setScreenGoalMin(SetupActivity.num(goal, InputLimit.SCREEN_GOAL_MIN));
                 goal.setText(String.valueOf(p.screenGoalMin())); // what was really saved
                 say("Goal saved");
             }

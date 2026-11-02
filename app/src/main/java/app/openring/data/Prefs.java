@@ -14,6 +14,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 import app.openring.core.Hex;
+import app.openring.core.InputLimit;
 
 /**
  * Settings and the ring auth key. The key is encrypted with an AES key that lives in the Android
@@ -32,14 +33,14 @@ public final class Prefs {
     }
 
     // ---- profile ----
-    public int age() { return sp.getInt("age", 35); }
+    public int age() { return sp.getInt("age", InputLimit.AGE.def); }
     public int sex() { return sp.getInt("sex", 2); } // 0 male, 1 female, 2 unspecified
-    public int weightKg() { return sp.getInt("weight", 72); }
-    public int heightCm() { return sp.getInt("height", 175); }
+    public int weightKg() { return sp.getInt("weight", InputLimit.WEIGHT_KG.def); }
+    public int heightCm() { return sp.getInt("height", InputLimit.HEIGHT_CM.def); }
     /** Whether a height was ever entered (the finder's step length says so when it uses 175 cm). */
     public boolean hasHeight() { return sp.contains("height"); }
     /** Active calorie target; 0 means automatic. */
-    public int targetKcal() { return sp.getInt("target_kcal", 0); }
+    public int targetKcal() { return sp.getInt("target_kcal", InputLimit.TARGET_KCAL.def); }
 
     public void setProfile(int age, int sex, int weight, int height, int target) {
         sp.edit().putInt("age", age).putInt("sex", sex).putInt("weight", weight).putInt("height", height).putInt("target_kcal", target).apply();
@@ -50,7 +51,7 @@ public final class Prefs {
     public void setStageDetail(int level) { sp.edit().putInt("stage_detail", level).apply(); }
 
     /** Daily screen time goal in minutes, 0 for none (issue #13). */
-    public int screenGoalMin() { return sp.getInt("screen_goal", 180); }
+    public int screenGoalMin() { return sp.getInt("screen_goal", InputLimit.SCREEN_GOAL_MIN.def); }
     public void setScreenGoalMin(int m) { sp.edit().putInt("screen_goal", m).apply(); }
     /** Whether time with the phone screen on counts as awake in the sleep analysis (issue #13). */
     public boolean screenAwake() { return sp.getBoolean("screen_awake", true); }
