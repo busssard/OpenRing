@@ -26,7 +26,7 @@ Not affiliated with Oura, not a medical device.
 ## What it does
 
 * Sleep: stages, a night timeline with every wake up, your last 30 nights and your average night.
-  You choose how detailed the sleep chart is; the numbers stay the same
+  You choose how detailed the sleep chart is; the numbers stay the same.
 * Sleep, readiness and activity scores, each with the parts it is made of
 * Heart rate through the day, HRV, skin temperature, blood oxygen and their trends
 * Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be
@@ -62,6 +62,8 @@ Android 8.0 or newer.
 4. If Android says the app is from an unverified developer, see the next fold.
 
 Updates install over the old version and keep your data.
+
+**Stable or nightly:** the [latest release](https://github.com/busssard/OpenRing/releases/latest) is the tested, stable version (about weekly). The [nightly](https://github.com/busssard/OpenRing/releases/tag/nightly) has every change as soon as it is merged, for people who want to try new things first. Either installs over the other.
 
 <details>
 <summary>Android says "unverified developer"</summary>
@@ -182,6 +184,7 @@ More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#analysis).
 
 ## For developers
 
+* [ROADMAP.md](ROADMAP.md): where the app is going
 * [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): build, test, make a change, release
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the app talks to the ring and analyses the data
 * [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md) (rules for AI assisted work)

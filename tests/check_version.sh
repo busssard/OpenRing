@@ -26,6 +26,8 @@ done
 [ $fail = 0 ] && echo "ok    change notes well formed"
 # in a pull request: app changes without a new note only warn
 base=${GITHUB_BASE_REF:+origin/$GITHUB_BASE_REF}
+# pull requests go to dev; main only takes releases from dev
+[ -z "$base" ] && git rev-parse -q --verify origin/dev >/dev/null && base=origin/dev
 [ -z "$base" ] && git rev-parse -q --verify origin/main >/dev/null && base=origin/main
 if [ -n "$base" ] && git rev-parse -q --verify "$base" >/dev/null; then
   mb=$(git merge-base HEAD "$base" 2>/dev/null || true)

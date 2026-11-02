@@ -15,6 +15,7 @@ SRC="$ROOT/app/src/main"
 read -r VERSION_CODE VERSION_NAME <<EOF_VERSION
 $(./tools/version.sh)
 EOF_VERSION
+VERSION_NAME="$VERSION_NAME${VERSION_SUFFIX:-}"   # " nightly <commit>" for builds of dev (build.yml)
 MIN_SDK=26
 TARGET_SDK=34
 
@@ -60,7 +61,7 @@ echo "== resources"
 "$AAPT2" compile --dir "$SRC/res" -o "$OUT/res.zip"
 "$AAPT2" link -I "$ANDROID_JAR" --manifest "$OUT/AndroidManifest.xml" -o "$OUT/base.apk" \
   --java "$OUT/gen" --min-sdk-version $MIN_SDK --target-sdk-version $TARGET_SDK \
-  --version-code $VERSION_CODE --version-name $VERSION_NAME "$OUT/res.zip"
+  --version-code $VERSION_CODE --version-name "$VERSION_NAME" "$OUT/res.zip"
 
 echo "== java"
 find "$SRC/java" "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
