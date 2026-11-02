@@ -1500,7 +1500,8 @@ public class CoreTest {
         // every toast in the app: literal texts fit in two lines, no raw error text on any message (issue #89)
         java.util.regex.Pattern literal = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
         int toasts = 0, toastConsts = 0;
-        java.util.regex.Pattern toastConst = java.util.regex.Pattern.compile("\\b(Texts|Backups|SyncError)\\.([A-Z][A-Z0-9_]*)\\b(?!\\s*\\()");
+        // a constant of any class (Texts.X, Pairing.ALREADY) or of the file itself (REPAIRING), not a call
+        java.util.regex.Pattern toastConst = java.util.regex.Pattern.compile("(?<![\\w.])(?:([A-Z]\\w*)\\.)?([A-Z][A-Z0-9_]+)\\b(?!\\s*[.(])");
         List<java.io.File> files = new ArrayList<java.io.File>();
         javaFiles(new java.io.File("app/src/main/java/app/openring"), files);
         check("toast scan: app sources found", files.size() > 0);
@@ -1525,14 +1526,13 @@ public class CoreTest {
                     // a constant of core's text classes is measured by its value, so no long one slips past (issue #274)
                     java.util.regex.Matcher c = toastConst.matcher(literal.matcher(args).replaceAll("\"\""));
                     while (c.find()) {
+                        String cls = c.group(1), name = c.group(2);
+                        if ("Toast".equals(cls)) continue; // Toast.LENGTH_LONG
                         toastConsts++;
-                        Object v = null;
-                        try {
-                            v = Class.forName("app.openring.core." + c.group(1)).getField(c.group(2)).get(null);
-                        } catch (ReflectiveOperationException ignored) {
-                        }
+                        Object v = toastConstant(cls, name, f, files);
+                        String what = (cls == null ? f.getName().replace(".java", "") : cls) + "." + name;
                         check("toast constant is a text: " + where, v instanceof String);
-                        check("toast constant fits in two lines: " + c.group(1) + "." + c.group(2), v instanceof String && Texts.fitsToast((String) v));
+                        check("toast constant fits in two lines: " + what, v instanceof String && Texts.fitsToast((String) v));
                     }
                 }
             }
@@ -1559,6 +1559,31 @@ public class CoreTest {
         }
         check("raw error scan: screen sources found", uiFiles > 0);
         eq("no raw error text built on any screen", rawLines, 0);
+    }
+
+    /**
+     * The value of a constant passed to a toast: a class of core by reflection, otherwise the declaration
+     * {@code static final String NAME = "...";} in that class's source (or in {@code self} when unqualified),
+     * made of string literals only. Null when it cannot be found or is not such a text.
+     */
+    static Object toastConstant(String cls, String name, java.io.File self, List<java.io.File> files) throws IOException {
+        if (cls != null) {
+            try {
+                return Class.forName("app.openring.core." + cls).getField(name).get(null);
+            } catch (ReflectiveOperationException ignored) {
+            }
+        }
+        java.io.File src = null;
+        for (java.io.File f : files) if (f.getName().equals((cls == null ? self.getName().replace(".java", "") : cls) + ".java")) src = f;
+        if (src == null) return null;
+        String text = new String(java.nio.file.Files.readAllBytes(src.toPath()), "UTF-8");
+        java.util.regex.Matcher d = java.util.regex.Pattern.compile("static\\s+final\\s+String\\s+" + name
+                + "\\s*=\\s*((?:\"(?:[^\"\\\\]|\\\\.)*\"\\s*\\+?\\s*)+);").matcher(text);
+        if (!d.find()) return null;
+        StringBuilder v = new StringBuilder();
+        java.util.regex.Matcher l = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(d.group(1));
+        while (l.find()) v.append(l.group(1));
+        return v.toString();
     }
 
     static void javaFiles(java.io.File dir, List<java.io.File> out) {
@@ -3901,6 +3926,12 @@ public class CoreTest {
         check("texts: busy and delete messages fit the rules", !Texts.SYNC_BUSY.contains(" - ") && !Texts.DELETE_BUSY.contains(" - ")
                 && Texts.DELETE_BUSY.startsWith("Nothing was deleted") && Texts.DELETE_FAILED.startsWith("Nothing was deleted")
                 && !Texts.LIVE_BUSY.contains(" - ") && !Texts.LIVE_BUSY.contains("syncing") && !Texts.SYNC_BUSY.contains("ring task"));
+        // review of #277: the full delete texts are too long for a toast, the short ones for a closed Settings fit
+        check("texts: delete texts go into the dialog", !Texts.fitsToast(Texts.DELETE_BUSY) && !Texts.fitsToast(Texts.DELETE_FAILED));
+        for (String t : new String[] {Texts.DELETE_BUSY_TOAST, Texts.DELETE_FAILED_TOAST}) {
+            check("texts: delete toast fits and says nothing was deleted: " + t, Texts.fitsToast(t) && t.startsWith("Nothing was deleted")
+                    && !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
     }
 
     /**
