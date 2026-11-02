@@ -37,7 +37,7 @@ import app.openring.data.Prefs;
 /**
  * The Watch check (issue #251, phase 1a): scan, pick a watch, one short look at its Bluetooth layout, a report to copy.
  * No pairing, nothing stored; the report lives in this screen only. The ring always wins: the check runs only when it
- * can take the ring lock at once ({@link RingGate#takeIfFree}) and holds it for the session (at most 30 s), so the
+ * can take the ring lock at once ({@link RingGate#takeIfFree} through {@link RingManager#whileRingFree(Runnable, String)}) and holds it for the session (at most 30 s), so the
  * phone never keeps two links. The scan stops in {@link #onPause}, the session in {@link #onStop} (a pairing dialog pauses the screen). Demo mode never touches Bluetooth: it shows
  * {@link WatchCheck#demoFound} and {@link WatchCheck#demoReport} through the same screen code.
  */
@@ -457,11 +457,13 @@ public final class WatchActivity extends Activity {
         session = new Thread(new Runnable() {
             @Override
             public void run() {
-                WatchCheck.Report r = null;
-                // the ring always wins: no wait for it, and while the check holds the lock a ring task waits as for Live
-                if (RingGate.RING.takeIfFree()) {
-                    try {
-                        r = WatchLink.check(app, device, WatchCheck.title(f), f.rssi, new app.openring.ble.GattLink.Log() {
+                final WatchCheck.Report[] r = new WatchCheck.Report[1];
+                // the ring always wins: no wait for it, and while the check holds the lock a ring task waits as for Live;
+                // the ring's status line says "Watch check running" meanwhile and busy() is true (review of #270)
+                ring.whileRingFree(new Runnable() {
+                    @Override
+                    public void run() {
+                        r[0] = WatchLink.check(app, device, WatchCheck.title(f), f.rssi, new app.openring.ble.GattLink.Log() {
                             @Override
                             public void log(String msg) {
                                 ring.log(msg);
@@ -472,11 +474,9 @@ public final class WatchActivity extends Activity {
                                 return stopped;
                             }
                         });
-                    } finally {
-                        RingGate.RING.op.unlock();
                     }
-                }
-                final WatchCheck.Report done = r;
+                }, WatchCheck.RUNNING);
+                final WatchCheck.Report done = r[0];
                 h.post(new Runnable() {
                     @Override
                     public void run() {
@@ -499,9 +499,7 @@ public final class WatchActivity extends Activity {
 
     void showReport(WatchCheck.Report r) {
         reportCard.setVisibility(View.VISIBLE);
-        if (!r.connected) reportStatus.setText(WatchCheck.NO_ANSWER);
-        else if (r.problem != null) reportStatus.setText("The check ended early (" + r.problem + "). What it found so far is below.");
-        else reportStatus.setText("Done. The watch was let go again.");
+        reportStatus.setText(WatchCheck.outcome(r));
         if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.PAIRED_NOW);
         reportText.setText(WatchCheck.text(r, false));
     }
