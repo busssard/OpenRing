@@ -119,9 +119,11 @@ public final class Db extends SQLiteOpenHelper {
      * <li>{@code period_ends}: days the person marked as the end of a period; {@code gone} 1 when the person took the mark off
      * again (kept like a day's removal mark, so a restore cannot bring it back).</li>
      * <li>{@code period_temps}: imported basal temperatures (drip, phase 1b), one per day: {@code time} "HH:MM" or null,
-     * {@code c} degrees Celsius, {@code excluded} 1 when the source did not count it, {@code src} the import's id.</li>
+     * {@code c} degrees Celsius, {@code excluded} 1 when the source did not count it, {@code src} the import's id,
+     * {@code gone} 1 when the import was undone (a removal mark like a day's -1, so a restore cannot bring it back).</li>
      * <li>{@code period_imports}: one row per import; {@code id} the import's time in milliseconds (an import made on
-     * another phone never shares it), {@code made} unix seconds, {@code days} and {@code temps} the rows it added.</li>
+     * another phone never shares it), {@code made} unix seconds, {@code days} and {@code temps} the rows it added,
+     * {@code gone} 1 once it was undone (kept as a mark, never deleted).</li>
      * </ul>
      */
     private static void upgradeTo8(SQLiteDatabase db) {
@@ -129,9 +131,9 @@ public final class Db extends SQLiteOpenHelper {
                 + " prev INTEGER, made REAL NOT NULL)");
         db.execSQL("CREATE TABLE IF NOT EXISTS period_ends (day TEXT PRIMARY KEY, made REAL NOT NULL, gone INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE TABLE IF NOT EXISTS period_temps (day TEXT PRIMARY KEY, time TEXT, c REAL NOT NULL, excluded INTEGER NOT NULL DEFAULT 0,"
-                + " src INTEGER NOT NULL DEFAULT 0)");
+                + " src INTEGER NOT NULL DEFAULT 0, gone INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE TABLE IF NOT EXISTS period_imports (id INTEGER PRIMARY KEY, made REAL NOT NULL, days INTEGER NOT NULL DEFAULT 0,"
-                + " temps INTEGER NOT NULL DEFAULT 0)");
+                + " temps INTEGER NOT NULL DEFAULT 0, gone INTEGER NOT NULL DEFAULT 0)");
     }
 
     /**
@@ -1394,8 +1396,8 @@ public final class Db extends SQLiteOpenHelper {
         {"excluded", 7, new String[] {"start", "stop", "made", "note"}},
         {"period_days", 8, new String[] {"day", "flow", "src", "prev", "made"}},
         {"period_ends", 8, new String[] {"day", "made", "gone"}},
-        {"period_temps", 8, new String[] {"day", "time", "c", "excluded", "src"}},
-        {"period_imports", 8, new String[] {"id", "made", "days", "temps"}},
+        {"period_temps", 8, new String[] {"day", "time", "c", "excluded", "src", "gone"}},
+        {"period_imports", 8, new String[] {"id", "made", "days", "temps", "gone"}},
     };
 
     /**
@@ -1547,10 +1549,14 @@ public final class Db extends SQLiteOpenHelper {
      * The one thing carried over (issue #252): the period log typed on this phone cannot be downloaded again, so its rows
      * (days with their removal marks, ends, imported temperatures and imports) are read before the swap and written into
      * the restored file, the phone's row winning on the same day, before {@code .old} goes. Ring data is never merged. A
-     * phone file that opens but whose log cannot be read refuses the restore before anything moves; any failure later
-     * puts the old file back with its log, like every other failure here.
+     * damaged phone file (Android's {@code SQLiteDatabaseCorruptException}, at the open or in a period table) is what a
+     * restore is for (#255, #266): it is replaced without its period log, which cannot be read reliably, and the result
+     * says so. Any other error on the way to the phone's log refuses the restore before anything moves
+     * ({@link PeriodLogUnreadable}); any failure later puts the old file back with its log, like every other failure here.
+     *
+     * @return true when the phone's file was damaged, so its period log was left behind (review of #275)
      */
-    public static synchronized void replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
+    public static synchronized boolean replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
         java.io.File dst = c.getDatabasePath(REAL);
         dst.getParentFile().mkdirs();
         String old = dst.getPath() + ".old";
@@ -1568,8 +1574,8 @@ public final class Db extends SQLiteOpenHelper {
         if (instance == null && dst.exists()) instance = new Db(c.getApplicationContext(), REAL);
         // the period log typed on this phone (issue #252), read before anything moves; it goes into the restored file
         Periods.Rows phoneLog = null;
+        boolean logDamaged = false;
         if (instance != null) {
-            boolean opened = false;
             try {
                 Cursor cp = instance.getWritableDatabase().rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null);
                 try {
@@ -1577,20 +1583,19 @@ public final class Db extends SQLiteOpenHelper {
                 } finally {
                     cp.close();
                 }
-                opened = true;
-            } catch (RuntimeException e) {
-                // a history that cannot be opened has nothing left in its side files to keep, nor a period log to read
-            }
-            try {
-                if (opened) phoneLog = Periods.read(instance.getReadableDatabase());
+                phoneLog = Periods.read(instance.getReadableDatabase());
                 mergeStep(MERGE_READ);
-            } catch (java.io.IOException | RuntimeException e) {
+            } catch (RuntimeException e) {
+                // a damaged file (at the open or in a period table) has no log that can be read: it is replaced without it,
+                // the way out of a damaged file (#255); any other error refuses, nothing moved yet
+                if (!damaged(e)) throw closed(new PeriodLogUnreadable(e));
+                phoneLog = null;
+                logDamaged = true;
+            } catch (java.io.IOException e) {
                 // nothing moved yet: the phone keeps everything as it is; the person is told it was the phone's log, not the backup
-                throw new PeriodLogUnreadable(e);
-            } finally {
-                instance.close();
-                instance = null;
+                throw closed(new PeriodLogUnreadable(e));
             }
+            closeInstance();
         }
         try {
             for (String s : SIDE) move(dst.getPath() + s, old + s);
@@ -1624,6 +1629,30 @@ public final class Db extends SQLiteOpenHelper {
         // side files first, the main .old last: while it exists, recoverSwap treats the swap as unfinished
         for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
         new java.io.File(old).delete();
+        return logDamaged;
+    }
+
+    /** Android's sign of a damaged file ({@code SQLiteDatabaseCorruptException}, also as the cause of another error). */
+    static boolean damaged(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) if (t instanceof android.database.sqlite.SQLiteDatabaseCorruptException) return true;
+        return false;
+    }
+
+    /** Closes the open history (a failure to close does not hide the reason we stop). */
+    private static void closeInstance() {
+        if (instance == null) return;
+        try {
+            instance.close();
+        } catch (RuntimeException ignored) {
+            // the file is not used any more either way
+        }
+        instance = null;
+    }
+
+    /** {@code e} once the open history is closed, to be thrown. */
+    private static java.io.IOException closed(java.io.IOException e) {
+        closeInstance();
+        return e;
     }
 
     /**
