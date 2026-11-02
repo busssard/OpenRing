@@ -88,6 +88,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private Sensor rotation;
     private final float[] rot = new float[9];
     private double facing = Double.NaN;
+    /** The heading the dial was last drawn with (issue #224): a new reading redraws it only once it moved a degree. */
+    private double drawnFacing = Double.NaN;
     private boolean upright = true;
     private ToneGenerator tone;
     private Vibrator vib;
@@ -861,15 +863,31 @@ public final class FinderActivity extends Activity implements SensorEventListene
         double v = prox.value();
         int band = prox.band();
         meter.set(Proximity.fill(v), band, v);
-        issueBox.setVisibility(View.GONE);
-        signalText.setText("");
+        // worked out first and set only where it changed, so the 4 ticks a second ask for no layout pass (issue #224)
+        issueShown = false;
+        signalLine = "";
+        signalState(now, btOn, band);
+        if (!issueShown && issueBox.getVisibility() != View.GONE) issueBox.setVisibility(View.GONE);
+        setText(signalText, signalLine);
+    }
+
+    /** What {@link #signalState} chose this tick: the issue box, or else the line under the band text. */
+    private boolean issueShown;
+    private String signalLine;
+
+    /** Sets {@code s} only when it differs, so an unchanged text asks for no new layout. */
+    static void setText(TextView t, String s) {
+        if (!s.contentEquals(t.getText())) t.setText(s);
+    }
+
+    void signalState(long now, boolean btOn, int band) {
         if (!demo && address == null) {
-            bandText.setText("No ring paired");
+            setText(bandText, "No ring paired");
             issue("No ring is paired with this app yet, so there is no signal to listen for.", null, null);
             return;
         }
         if (!demo && !Permissions.granted(this)) {
-            bandText.setText("Not listening");
+            setText(bandText, "Not listening");
             String what = android.os.Build.VERSION.SDK_INT >= 31 ? "the Nearby devices permission"
                     : "the Location permission (Android 11 and older ask for it to find Bluetooth devices; Open Ring has no internet and keeps no place)";
             if (permissionBlocked) {
@@ -892,7 +910,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             return;
         }
         if (!demo && android.os.Build.VERSION.SDK_INT < 31 && !locationOn()) {
-            bandText.setText("Not listening");
+            setText(bandText, "Not listening");
             issue("Location is off. Android 11 and older only find Bluetooth devices while Location is on.", "Open Location settings", new Runnable() {
                 @Override
                 public void run() {
@@ -902,7 +920,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             return;
         }
         if (!demo && !btOn) {
-            bandText.setText("Not listening");
+            setText(bandText, "Not listening");
             issue("Bluetooth is off. Switch it on to listen for the ring.", "Switch on", new Runnable() {
                 @Override
                 public void run() {
@@ -918,23 +936,23 @@ public final class FinderActivity extends Activity implements SensorEventListene
         // the finder itself holds the ring (issue #192): it sends no signal meanwhile, say why and for how long
         String blind = finger.blind(demo);
         if (blind != null) {
-            bandText.setText("Connected");
+            setText(bandText, "Connected");
             issue(blind, null, null);
             return;
         }
         if (band != Proximity.NOT_HEARD) {
-            bandText.setText(Proximity.label(band));
-            signalText.setText(SIGNAL_LINE);
+            setText(bandText, Proximity.label(band));
+            signalLine = SIGNAL_LINE;
             return;
         }
         if (linked()) {
-            bandText.setText("Connected");
+            setText(bandText, "Connected");
             issue("The ring is connected to this phone right now (a sync, Live or another app), so it is within Bluetooth range, "
                     + "about 10 m. While connected it stops sending the signal this meter listens to; the meter carries on when the connection ends.", null, null);
             return;
         }
         if (retry.waiting(now)) {
-            bandText.setText("Not listening");
+            setText(bandText, "Not listening");
             int scanError = retry.error();
             issue(scanError == 6 ? "Android paused the Bluetooth scan for a moment. It starts again by itself within 30 s."
                     : "The Bluetooth scan stopped (error " + scanError + "). It starts again by itself within 30 s.", null, null);
@@ -942,24 +960,24 @@ public final class FinderActivity extends Activity implements SensorEventListene
         }
         if (!demo && watch == null) {
             // the start waits for Android's scan budget (shared with a sync): not listening yet, so "not heard" would mislead
-            bandText.setText("Not listening yet");
+            setText(bandText, "Not listening yet");
             // RingScanner allows 4 starts in 30 s, so the wait is at most 30.2 s (longer only if a sync starts more meanwhile)
-            signalText.setText("It starts listening by itself within about half a minute.");
+            signalLine = "It starts listening by itself within about half a minute.";
             return;
         }
         long heardAgo = prox.sinceLast(now);
         if (heardAgo < 0 && now - listenSince < Proximity.LOST_MS) {
-            bandText.setText("Listening");
-            signalText.setText("Waiting for the ring's signal");
+            setText(bandText, "Listening");
+            signalLine = "Waiting for the ring's signal";
             return;
         }
         // label and line from the same check, so they never disagree (issue #125)
         boolean unusable = unusableAt != Long.MIN_VALUE && now - unusableAt < Proximity.LOST_MS;
-        bandText.setText(Proximity.label(Proximity.NOT_HEARD, unusable));
+        setText(bandText, Proximity.label(Proximity.NOT_HEARD, unusable));
         String why = "The ring is out of range, its battery is empty, or a thick wall or metal is in the way.";
         if (otherAt != Long.MIN_VALUE && now - otherAt < Proximity.LOST_MS) why = "This phone hears an Oura ring, but not the one paired with this app.";
         if (unusable) why = UNUSABLE;
-        signalText.setText(why);
+        signalLine = why;
     }
 
     void showSoundHint() {
@@ -970,11 +988,13 @@ public final class FinderActivity extends Activity implements SensorEventListene
     }
 
     void issue(String text, String button, final Runnable r) {
-        issueBox.setVisibility(View.VISIBLE);
-        issueText.setText(text);
-        issueButton.setVisibility(button == null ? View.GONE : View.VISIBLE);
+        issueShown = true;
+        if (issueBox.getVisibility() != View.VISIBLE) issueBox.setVisibility(View.VISIBLE);
+        setText(issueText, text);
+        int shown = button == null ? View.GONE : View.VISIBLE;
+        if (issueButton.getVisibility() != shown) issueButton.setVisibility(shown);
         if (button != null) {
-            issueButton.setText(button);
+            setText(issueButton, button);
             issueButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -1033,7 +1053,8 @@ public final class FinderActivity extends Activity implements SensorEventListene
         facing = o[0];
         upright = o[1] <= SearchWalk.MAX_TILT_DEG;
         if (recording && walk != null) walk.heading(walkTime(e.timestamp / 1000000L), facing, upright);
-        dial.invalidate();
+        // about 50 readings a second: only a dial that shows the heading is drawn again, and only once it moved (issue #224)
+        if (SearchWalk.redrawDial(walk != null && dial.isShown(), drawnFacing, facing)) dial.invalidate();
     }
 
     /** Sensor time (ms) minus the walk's clock (elapsed realtime), the largest seen since Start (the event Android delivered fastest), so delivery delays are left out. */
@@ -1468,6 +1489,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         protected void onDraw(Canvas cv) {
             float w = getWidth(), hh = getHeight(), cx = w / 2, cy = hh / 2;
             float rad = Math.min(w, hh) / 2 - Ui.dp(getContext(), 18);
+            drawnFacing = facing;
             cv.drawCircle(cx, cy, rad, ring);
             cv.drawCircle(cx, cy, rad * 0.5f, ring);
             cv.drawText("You face this way", cx, Ui.dp(getContext(), 11), txt);

@@ -1543,6 +1543,9 @@ public final class RingManager {
             @Override
             public void run() {
                 FingerListener fl = fingerListener;
+                // the task is over: keep no reference to the screen, which may be left meanwhile (issue #258). Cleared
+                // before the call, so an ask the screen starts from it keeps its own listener.
+                fingerListener = null;
                 if (fl != null) fl.onFingerDone(raw);
             }
         });
