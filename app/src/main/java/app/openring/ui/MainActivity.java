@@ -229,6 +229,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("live", false) && Prefs.of(this).demo()) live(i.getBooleanExtra("live_spo2", false));
         // screen test: a left out time in the demo (issue #254); Analyzer.leaveOutDemo writes only into the demo file
         if (i.getBooleanExtra("left_out", false) && Prefs.of(this).demo()) leftOutDemo();
+        // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
+        // demo mode, which never touches Bluetooth
+        if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
+            startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false)));
+        }
         // screen test: open Find my ring (issue #74)
         if (i.getBooleanExtra("finder", false)) {
             startActivity(new Intent(this, FinderActivity.class).putExtra("demo_turn", i.getBooleanExtra("finder_turn", false))

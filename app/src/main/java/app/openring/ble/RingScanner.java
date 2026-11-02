@@ -198,6 +198,51 @@ public final class RingScanner {
         }
     }
 
+    /** What a scan for any device hears (the Watch check, issue #251); called on a Bluetooth thread. */
+    public interface Any {
+        void onFound(ScanResult r);
+
+        /** Android refused or stopped the scan (error code from {@code ScanCallback}). */
+        void onScanFailed(int code);
+    }
+
+    /**
+     * Starts one low latency scan without a filter, for the Watch check (issue #251): a watch's advertisement is not
+     * known for sure yet, so every device is reported and the screen sorts them. The start counts in the same budget
+     * as the ring's scans; null when Bluetooth is off, the permission is gone or the budget is used up ({@link #startWaitMs} says when to try
+     * again). Only while the screen is on: Android delivers nothing to an unfiltered scan with the screen off.
+     */
+    public static Watch scanAll(Context c, final Any l) {
+        BluetoothAdapter a = adapter(c);
+        if (a == null || !a.isEnabled()) return null;
+        BluetoothLeScanner s = a.getBluetoothLeScanner();
+        if (s == null) return null;
+        if (reserveStart() > 0) return null;
+        ScanCallback cb = new ScanCallback() {
+            @Override
+            public void onScanFailed(int errorCode) {
+                l.onScanFailed(errorCode);
+            }
+
+            @Override
+            public void onScanResult(int type, ScanResult r) {
+                l.onFound(r);
+            }
+
+            @Override
+            public void onBatchScanResults(List<ScanResult> results) {
+                for (ScanResult r : results) l.onFound(r);
+            }
+        };
+        try {
+            s.startScan(null, new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb);
+        } catch (SecurityException e) {
+            // the Bluetooth permission taken back meanwhile (review of #270): null, the screen says the scan could not start
+            return null;
+        }
+        return new Watch(s, cb);
+    }
+
     /**
      * Starts one continuous low latency scan for the ring with {@code address} (issue #74). It also
      * reports other Oura rings, so the finder can say when it hears a ring that is not the saved

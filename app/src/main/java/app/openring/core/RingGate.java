@@ -88,6 +88,19 @@ public final class RingGate {
     }
 
     /**
+     * Takes {@link #op} without waiting, only when no sync is under way, for a task that must never keep the ring from
+     * its own work (the Watch check, issue #251: the ring always wins). True when the caller now holds it and must
+     * {@code op.unlock()} in a finally; false when the ring is busy, and then nothing is held.
+     */
+    public boolean takeIfFree() {
+        if (syncs.get() > 0 || !op.tryLock()) return false;
+        // a sync counted while the lock was taken waits for it: leave the ring to it
+        if (syncs.get() == 0) return true;
+        op.unlock();
+        return false;
+    }
+
+    /**
      * Runs {@code r} with {@link #op} held once no sync is under way, no ring task holds the ring and {@code other} is
      * not busy. While it waits it holds nothing, so ring tasks and the analysis go on and end. Returns {@link #RAN} when
      * {@code r} ran (also when it threw: the exception reaches the caller and the ring is free again). Otherwise

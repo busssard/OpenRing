@@ -18,12 +18,12 @@ Nothing leaves the phone: the app has no internet permission.
 
 | Package | Responsibility |
 | --- | --- |
-| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Dating` (every event's boot segment and date: all at once, or after a sync only the new part, with the state that needs, issue #220), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `FingerCheck` (Find my ring: when it asks the ring whether it is on a finger, its strip line and chip, the 30 s blink; issue #192), `PermissionAsk` (whether Android still shows the permission dialog), `BackgroundJob` (whether the background sync job is scheduled, kept or cancelled, issue #193; a sync or attempt under 30 minutes ago makes the job and the main screen skip theirs, issue #194), `Pairing` (the order of the pairing steps so a key written to a ring is never lost, and the hand over of the result to the Setup screen shown now, issue #218), `RingGate` (the ring lock and the count of syncs under way, shared with the code that swaps the database file, issue #219), `SetupTasks` (Setup never restores and pairs at once, review of #248), `Backups` (the automatic backups' rules and texts: when a new version copies the history first, the names of the copies, which copies may go, when a folder copy is due; issue #242), `Hex` |
+| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Dating` (every event's boot segment and date: all at once, or after a sync only the new part, with the state that needs, issue #220), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `FingerCheck` (Find my ring: when it asks the ring whether it is on a finger, its strip line and chip, the 30 s blink; issue #192), `PermissionAsk` (whether Android still shows the permission dialog), `BackgroundJob` (whether the background sync job is scheduled, kept or cancelled, issue #193; a sync or attempt under 30 minutes ago makes the job and the main screen skip theirs, issue #194), `Pairing` (the order of the pairing steps so a key written to a ring is never lost, and the hand over of the result to the Setup screen shown now, issue #218), `RingGate` (the ring lock and the count of syncs under way, shared with the code that swaps the database file, issue #219; `takeIfFree` for the Watch check, which never waits for the ring), `WatchCheck` (the Watch check's report: UUID and property names, the 2 byte rule, the copy limit, the demo example; issue #251), `SetupTasks` (Setup never restores and pairs at once, review of #248), `Backups` (the automatic backups' rules and texts: when a new version copies the history first, the names of the copies, which copies may go, when a folder copy is due; issue #242), `Hex` |
 | `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `FingerNow` (on a finger now, from what the finder just downloaded, issue #192), `LiveHrv`, `LeftOut` (the times left out because someone else wore the ring, merged; the sleep window without them; their texts; issue #254), `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `BeforeUpdate` (the copy of the history before an update, its check, going back; issue #242), `AutoBackup` (the automatic backup job's run and going back to a copy), `Demo`, `Exporter`, `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
-| `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner`, `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
+| `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner` (also the unfiltered scan of the Watch check, in the same start budget), `WatchLink` (one short look at a watch without bonding, issue #251), `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
 | `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours; scheduled only when no equal job is pending, since replacing a job stops it while it runs, `core/BackgroundJob`, issue #193; skips a run within 30 minutes of the last sync or attempt, issue #194), `BackupJob` (the automatic backups: one daily job while charging, and a one off check after an update; issue #242), `SafFolder` (the folder the person picked, through Android's storage access framework) |
-| `ui/` | `MainActivity` (tabs, date, follows the newest day), `Pages` (content of every tab), `Charts` (hand drawn views; `Scrub` adds touch readout), `Ui` (colors, cards, buttons, inputs), `Explain` (texts), `DayData`, `SetupActivity`, `SettingsActivity`, `LiveActivity`, `LogActivity`, `Permissions`, `games/` |
+| `ui/` | `MainActivity` (tabs, date, follows the newest day), `Pages` (content of every tab), `Charts` (hand drawn views; `Scrub` adds touch readout), `Ui` (colors, cards, buttons, inputs), `Explain` (texts), `DayData`, `SetupActivity`, `SettingsActivity`, `LiveActivity`, `LogActivity`, `WatchActivity` (the Watch check, issue #251), `Permissions`, `games/` |
 
 ## Talking to the ring
 
@@ -490,6 +490,51 @@ can run meanwhile; only the "on a finger now" check and Make it blink connect, f
   text says the ring may also be farther that way. `ui/MiniMap` draws it; under 1 m
   from the start the turn dial stays. The fit runs on its own thread on `SearchWalk.snapshot()` (at most 240 points). `DemoWalk` is the made up walk for demo mode.
 
+## Withings watch (issue #251)
+
+Phase 1a is only the **Watch check** (Settings, Watch): it learns how the owner's Withings watch talks before any
+pairing or sync is built. Nothing is paired, written to the watch (besides switching its notifications on) or stored.
+
+* **Flow** (`ui/WatchActivity`, `ble/WatchLink`): a 10 s scan without a filter (`RingScanner.scanAll`, counted in the
+  same budget of 4 starts per 30 s as the ring's scans, since Android blocks the sixth), strongest signal first once it
+  ends; while it runs a row keeps its place and new devices are added below (`WatchCheck.stableOrder`), so a tap checks
+  the row under the finger. The
+  picked device gets one session of at most 30 s: connect (10 s at most, `TRANSPORT_LE`, no bond requested, balanced
+  link speed), list every service and characteristic with its properties, read Device Information (model `0x2a24`,
+  firmware `0x2a26`, hardware, software, maker; not the serial number) and Battery (`0x2a19`), switch on
+  notifications or indications of every characteristic that sends and is not a standard 16 bit one, listen 10 s,
+  disconnect and close. Standard ones are not listened to: they are documented, and the standard heart rate would
+  switch the sensor on and send values. Leaving the screen or the app stops the scan and the session at once; Android's
+  pairing dialog over the screen only stops the scan (`onPause`), the session goes on until `onStop`, so Cancel there
+  does not end the check.
+* **The ring always wins:** the session runs through `RingManager.whileRingFree(r, line)`, which uses
+  `RingGate.takeIfFree` to get the ring lock at once (no sync counted, no ring task holding it), and holds it until the
+  link is closed, so the phone never keeps two links. When the ring is busy the screen says so. Meanwhile `busy()` is
+  true and the ring's status line says "Watch check running" (review of #270), so the main screen shows why a sync by
+  hand does not start. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s; the background
+  job tries again at its next run).
+* **The report** (`core/WatchCheck`, kept in memory only): UUIDs (standard ones named, others as they are), property
+  names, model, firmware, battery, whether the phone was paired with the watch before and is now (a pairing dialog
+  accepted during the check leaves a bond; the screen then tells how to remove it), and per listened characteristic the number of messages and their lengths, plus the
+  first 2 bytes (usually the kind of message) of those of the first 3 messages that are longer than 2 bytes. A message
+  of 2 bytes or less would be all value, and the later pieces of a long answer start with values (review of #270), so
+  the default report holds at most 6 message bytes per characteristic. Why a check ended early is a plain sentence on
+  the screen; a status code or error name goes into the report only, on its "Detail" line. The full bytes are only in the second copy, marked private
+  (Android 13 and newer hide it in the clipboard preview). At most 300 messages are kept per characteristic, and a
+  report is cut at 30,000 characters.
+* **Demo mode** never touches Bluetooth: `WatchCheck.demoFound` and `demoReport` go through the same screen code.
+
+Protocol facts from public discussions, in our own words and not confirmed with a real watch yet (the check is there
+to confirm them):
+
+* The Steel HR's own service UUID looks like `00000020-5749-5448-0037-000000000000`; `5749 5448` is "WITH" in ASCII.
+  The older Activité seems to use `0034` in place of `0037`.
+* Messages arrive in pieces over several notifications and have to be put together.
+* The watch drops a write that comes while it is still busy, so each request must wait for its answer.
+* It pairs without the Withings app through a challenge and answer; going back to the Withings app may need a reset
+  of the watch, which erases what it stores. Phase 1b (pairing, sync) is built only after the owner's report.
+* Heart rate outside workouts seems to be one reading every 30 minutes by default, continuous during workouts.
+
 ## Known limits
 
 * Scores are close to Oura's but not identical (Oura's tables and models are not public).
@@ -502,4 +547,5 @@ Protocol, decoders and algorithms are ported from [open_oura](https://github.com
 [open_health](https://github.com/Th0rgal/open_health) (MIT, Thomas Marchand), cross checked with the
 [ringverse Ring 4 notes](https://github.com/ringverse/protocol/blob/main/oura/BLE.md),
 [OpenStrap](https://github.com/OpenStrap/protocol), [BrightOura](https://github.com/gi-os/BrightOura)
-and the Gadgetbridge Ring 4 work.
+and the Gadgetbridge Ring 4 work. The Withings notes above are protocol facts from public discussions, written in our
+own words; no code was copied.

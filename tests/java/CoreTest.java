@@ -917,8 +917,274 @@ public class CoreTest {
         ringGate();
         setupTasks();
         leftOut254();
+        watchCheck251();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    /** Issue #251, phase 1a: the Watch check's report, names, the 2 byte rule, the length limit, the demo and the ring lock. */
+    static void watchCheck251() throws Exception {
+        String base = "-0000-1000-8000-00805f9b34fb";
+        // property names
+        eq("watch: no properties", WatchCheck.properties(0), "none");
+        eq("watch: read and notify", WatchCheck.properties(0x12), "read, notify");
+        eq("watch: every property named once", WatchCheck.properties(0xff),
+                "broadcast, read, write without answer, write, notify, indicate, signed write, extended");
+        eq("watch: unknown higher bits are ignored", WatchCheck.properties(0x108), "write");
+        check("watch: notify and indicate send, write does not", WatchCheck.sends(0x10) && WatchCheck.sends(0x20) && !WatchCheck.sends(0x0e));
+
+        // UUID names: known standard ones named, other standard ones short, unknown kept as they are
+        eq("watch: device information named", WatchCheck.name("0000180A" + base.toUpperCase()), "0x180a Device Information");
+        eq("watch: model number named", WatchCheck.name("00002a24" + base), "0x2a24 Model Number");
+        eq("watch: battery level named", WatchCheck.name("00002a19" + base), "0x2a19 Battery Level");
+        eq("watch: an unnamed standard UUID stays short", WatchCheck.name("0000fff1" + base), "0xfff1");
+        String odd = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+        eq("watch: an unknown UUID is kept as it is", WatchCheck.name(odd), odd);
+        eq("watch: the Withings looking UUID is marked", WatchCheck.name(WatchCheck.WITHINGS_SERVICE), WatchCheck.WITHINGS_SERVICE + " (looks like Withings)");
+        check("watch: WITH in ASCII is 5749 5448", "WITH".equals(new String(Hex.decode("57495448"), java.nio.charset.StandardCharsets.US_ASCII)));
+        check("watch: standard only with the base UUID", WatchCheck.standard("00002a37" + base) && !WatchCheck.standard(odd)
+                && !WatchCheck.standard(WatchCheck.WITHINGS_SERVICE) && !WatchCheck.standard(null) && WatchCheck.shortId("12342a37" + base) == null);
+        eq("watch: no UUID", WatchCheck.name(null), "?");
+
+        // scan list: strongest first, unknown signal (127) last, then by name
+        List<WatchCheck.Found> in = new ArrayList<WatchCheck.Found>();
+        in.add(new WatchCheck.Found("a", "Far", -90));
+        in.add(new WatchCheck.Found("b", "Unknown", WatchCheck.NO_RSSI));
+        in.add(new WatchCheck.Found("c", "Near", -40));
+        in.add(new WatchCheck.Found("d", null, -60));
+        in.add(new WatchCheck.Found("e", "Also near", -40));
+        List<WatchCheck.Found> sorted = WatchCheck.strongestFirst(in);
+        StringBuilder order = new StringBuilder();
+        for (WatchCheck.Found f : sorted) order.append(f.address);
+        eq("watch: strongest first, unknown signal last", order.toString(), "ecdab");
+        eq("watch: a device without a name", WatchCheck.title(in.get(3)), "(no name)");
+        eq("watch: the input list is left as it was", in.get(0).address, "a");
+        // while scanning, shown rows keep their place and new ones come after them, strongest first (review of #270)
+        List<String> shown = new ArrayList<String>();
+        shown.add("a");
+        shown.add("d");
+        StringBuilder stable = new StringBuilder();
+        for (WatchCheck.Found f : WatchCheck.stableOrder(shown, in)) stable.append(f.address);
+        eq("watch: shown rows stay in place during a scan, new ones follow strongest first", stable.toString(), "adecb");
+        StringBuilder fresh = new StringBuilder();
+        for (WatchCheck.Found f : WatchCheck.stableOrder(new ArrayList<String>(), in)) fresh.append(f.address);
+        eq("watch: the first rows of a scan are strongest first", fresh.toString(), "ecdab");
+        shown.add("gone");
+        eq("watch: an address no longer heard is left out", WatchCheck.stableOrder(shown, in).size(), 5);
+        WatchCheck.Found w = new WatchCheck.Found("x", null, -55).service(WatchCheck.WITHINGS_SERVICE).service(WatchCheck.WITHINGS_SERVICE.toUpperCase());
+        eq("watch: a service is listed once", w.services.size(), 1);
+        check("watch: the Withings service makes it likely a watch", WatchCheck.likelyWatch(w));
+        check("watch: a Steel HR name makes it likely a watch", WatchCheck.likelyWatch(new WatchCheck.Found("y", "Steel HR", -60)));
+        check("watch: headphones are not", !WatchCheck.likelyWatch(new WatchCheck.Found("z", "Headphones", -60)));
+        eq("watch: scan row detail", WatchCheck.detail(new WatchCheck.Found("z", "Headphones", -61)), "Signal -61 dBm, no services advertised");
+        check("watch: scan row with the watch's service", WatchCheck.detail(w).startsWith("Signal -55 dBm, services: " + WatchCheck.WITHINGS_SERVICE)
+                && WatchCheck.detail(w).endsWith("Looks like a Withings watch"));
+        eq("watch: unknown signal", WatchCheck.detail(new WatchCheck.Found("u", "U", WatchCheck.NO_RSSI)), "Signal unknown, no services advertised");
+
+        // a report from a constructed layout
+        WatchCheck.Report r = new WatchCheck.Report();
+        r.name = "Watch";
+        r.rssi = -50;
+        r.connected = true;
+        r.model = "M1";
+        r.firmware = "F2";
+        r.battery = 77;
+        r.connectMs = 1234;
+        r.listenMs = 10000;
+        WatchCheck.Service info = r.add("0000180a" + base);
+        info.add("00002a24" + base, 0x02);
+        WatchCheck.Service hr = r.add("0000180d" + base);
+        hr.add("00002a37" + base, 0x10); // standard heart rate: never listened to
+        WatchCheck.Service ws = r.add(WatchCheck.WITHINGS_SERVICE);
+        WatchCheck.Characteristic quiet = ws.add("00000024-5749-5448-0037-000000000000", 0x10);
+        quiet.listening = true;
+        WatchCheck.Characteristic busy = ws.add("00000025-5749-5448-0037-000000000000", 0x20);
+        busy.listening = true;
+        // the bytes after the first 2 are values that must never reach the default report
+        busy.message(Hex.decode("0105a1b2c3d4e5"));
+        busy.message(Hex.decode("07"));
+        busy.message(Hex.decode("0203f9e8"));
+        WatchCheck.Characteristic refused = ws.add("00000026-5749-5448-0037-000000000000", 0x18);
+        refused.listening = false;
+        String t = WatchCheck.text(r, false);
+        check("watch: report names model, firmware, battery", t.contains("Model: M1\n") && t.contains("Firmware: F2\n") && t.contains("Battery: 77%\n"));
+        check("watch: report has the connection times", t.contains("Connected in 1.2 s, listened 10.0 s"));
+        check("watch: report names services and characteristics with properties",
+                t.contains("Service 0x180a Device Information\n  0x2a24 Model Number: read\n"));
+        check("watch: the standard heart rate is not listened to", t.contains("0x2a37 Heart Rate Measurement: notify (standard, not listened to)"));
+        check("watch: a quiet characteristic says 0 messages", t.contains("00000024-5749-5448-0037-000000000000: notify (listened)\n    0 messages\n"));
+        check("watch: counts, lengths and first bytes, not of a message of 2 bytes or less", t.contains("3 messages, lengths 7 1 4\n    first bytes: message 1 0105, message 3 0203\n"));
+        check("watch: a message of 1 byte is not in the default report", !t.contains(" 07"));
+        check("watch: a refused switch is named", t.contains("write, notify (did not switch on)"));
+        for (String value : new String[] {"a1", "b2", "c3", "d4", "e5", "f9", "e8"}) {
+            check("watch: the default report holds no byte beyond the first 2 (" + value + ")", !t.contains(value));
+        }
+        String full = WatchCheck.text(r, true);
+        check("watch: the private copy holds the whole messages", full.contains("bytes 0105a1b2c3d4e5 07 0203f9e8") && full.startsWith("Open Ring watch check (with message bytes, private)"));
+        check("watch: the bonded line is there", t.contains("Paired with this phone before: no"));
+        check("watch: the bond after the check is reported", t.contains("Paired now: no") && !WatchCheck.pairedDuring(r));
+        r.bondedAfter = true;
+        check("watch: a bond made during the check is named, with how to remove it", WatchCheck.text(r, false).contains("Paired now: yes")
+                && WatchCheck.pairedDuring(r) && WatchCheck.PAIRED_NOW.contains("Forget"));
+        r.bondedBefore = true;
+        check("watch: a bond from before is not blamed on the check", !WatchCheck.pairedDuring(r) && !WatchCheck.pairedDuring(null));
+        r.bondedBefore = r.bondedAfter = false;
+
+        // the 2 byte rule on random messages: every hex group in the default report is at most 4 digits
+        Random rnd = new Random(251);
+        WatchCheck.Report rr = new WatchCheck.Report();
+        rr.connected = true;
+        WatchCheck.Characteristic rc = rr.add(WatchCheck.WITHINGS_SERVICE).add("00000030-5749-5448-0037-000000000000", 0x10);
+        rc.listening = true;
+        for (int i = 0; i < 100; i++) {
+            byte[] m = new byte[rnd.nextInt(30)];
+            rnd.nextBytes(m);
+            rc.message(m);
+        }
+        String rt = WatchCheck.text(rr, false);
+        String firstLine = rt.substring(rt.indexOf("first bytes: ") + 13);
+        firstLine = firstLine.substring(0, firstLine.indexOf('\n'));
+        boolean twoBytes = true;
+        int groups = 0;
+        for (String g : firstLine.split(", ")) {
+            groups++;
+            String hex = g.substring(g.lastIndexOf(' ') + 1);
+            if (hex.length() != 2 * WatchCheck.TYPE_BYTES) twoBytes = false;
+        }
+        int wanted = 0;
+        for (int i = 0; i < WatchCheck.TYPE_MESSAGES; i++) if (rc.messages.get(i).length > WatchCheck.TYPE_BYTES) wanted++;
+        check("watch: random messages, 2 bytes each of the first 3 longer ones only", twoBytes && groups == wanted && groups <= WatchCheck.TYPE_MESSAGES);
+
+        // continuation pieces (review of #270): from the 4th message on only lengths, also for many long pieces
+        WatchCheck.Report pieces = new WatchCheck.Report();
+        pieces.connected = true;
+        WatchCheck.Characteristic pc = pieces.add(WatchCheck.WITHINGS_SERVICE).add("00000033-5749-5448-0037-000000000000", 0x10);
+        pc.listening = true;
+        pc.message(Hex.decode("0101aaaa"));
+        pc.message(Hex.decode("bbcc")); // a piece of 2 bytes: all value
+        pc.message(Hex.decode("0102dddd"));
+        for (int i = 0; i < 50; i++) pc.message(Hex.decode("eeff1122"));
+        String pt = WatchCheck.text(pieces, false);
+        check("watch: first bytes only of the first 3 messages longer than 2 bytes", pt.contains("\n    first bytes: message 1 0101, message 3 0102\n"));
+        check("watch: no bytes of a 2 byte piece or of later pieces", !pt.contains("bb") && !pt.contains("cc") && !pt.contains("dd") && !pt.contains("ee")
+                && !pt.contains("ff") && !pt.contains("1122"));
+        check("watch: later pieces still give their lengths", pt.contains("53 messages, lengths 4 2 4 4"));
+        check("watch: the private copy has the pieces whole", WatchCheck.text(pieces, true).contains("bytes 0101aaaa bbcc 0102dddd eeff1122"));
+        WatchCheck.Report tiny = new WatchCheck.Report();
+        tiny.connected = true;
+        WatchCheck.Characteristic tc = tiny.add(WatchCheck.WITHINGS_SERVICE).add("00000034-5749-5448-0037-000000000000", 0x10);
+        tc.listening = true;
+        tc.message(Hex.decode("4a"));
+        tc.message(Hex.decode("4b5c"));
+        String tt = WatchCheck.text(tiny, false);
+        check("watch: only short messages give lengths and no first bytes", tt.contains("2 messages, lengths 1 2\n") && !tt.contains("first bytes") && !tt.contains("4a")
+                && !tt.contains("4b"));
+
+        // memory and length limits
+        WatchCheck.Report big = new WatchCheck.Report();
+        big.connected = true;
+        WatchCheck.Characteristic bc = big.add(WatchCheck.WITHINGS_SERVICE).add("00000031-5749-5448-0037-000000000000", 0x10);
+        bc.listening = true;
+        byte[] long1 = new byte[240];
+        for (int i = 0; i < WatchCheck.KEPT_MESSAGES + 50; i++) bc.message(long1);
+        eq("watch: messages kept per characteristic", bc.messages.size(), WatchCheck.KEPT_MESSAGES);
+        eq("watch: the rest are counted", bc.dropped, 50);
+        check("watch: the count names all messages", WatchCheck.text(big, false).contains((WatchCheck.KEPT_MESSAGES + 50) + " messages (the first " + WatchCheck.KEPT_MESSAGES + " kept)"));
+        String bt = WatchCheck.text(big, true);
+        check("watch: the private copy is cut at the limit", bt.length() <= WatchCheck.REPORT_MAX && bt.endsWith(WatchCheck.CUT));
+        for (int i = 0; i < 40; i++) {
+            WatchCheck.Service s = big.add(String.format(Locale.ROOT, "%08x-5749-5448-0037-000000000000", 0x100 + i));
+            for (int k = 0; k < 20; k++) s.add(String.format(Locale.ROOT, "%08x-1111-2222-3333-444444444444", k), 0xff);
+        }
+        String lt = WatchCheck.text(big, false);
+        check("watch: the default report is never longer than the copy limit", lt.length() <= WatchCheck.REPORT_MAX && lt.endsWith("\n" + WatchCheck.CUT));
+        String shortOne = WatchCheck.text(r, false);
+        check("watch: a short report is not cut", !shortOne.contains(WatchCheck.CUT) && WatchCheck.cut(shortOne).equals(shortOne));
+        StringBuilder oneLine = new StringBuilder();
+        for (int i = 0; i < WatchCheck.REPORT_MAX + 10; i++) oneLine.append('x');
+        String cutLine = WatchCheck.cut(oneLine.toString());
+        check("watch: a report of one long line is cut too", cutLine.length() <= WatchCheck.REPORT_MAX && cutLine.endsWith(WatchCheck.CUT));
+        check("watch: no message is kept from null", bcNull());
+
+        // a watch that did not answer
+        WatchCheck.Report none = new WatchCheck.Report();
+        none.name = "";
+        none.detail = "no answer within 10 s";
+        String nt = WatchCheck.text(none, false);
+        check("watch: no answer says so", nt.contains("Name: (no name)\n") && nt.contains("Connected: no\n") && nt.contains("Detail: no answer within 10 s")
+                && nt.contains("Model: not shown") && nt.contains("Battery: not shown") && !nt.contains("Signal:") && !nt.contains("Ended early"));
+        eq("watch: no answer on the screen", WatchCheck.outcome(none), WatchCheck.NO_ANSWER);
+        none.problem = WatchCheck.ENDED_REFUSED;
+        eq("watch: a refused connection on the screen", WatchCheck.outcome(none), WatchCheck.ENDED_REFUSED);
+
+        // the screen line in plain words (review of #270): status codes and error names only in the report
+        WatchCheck.Report off = new WatchCheck.Report();
+        off.connected = true;
+        off.problem = WatchCheck.ENDED_BLUETOOTH;
+        off.detail = "SecurityException";
+        String screen = WatchCheck.outcome(off);
+        eq("watch: Bluetooth off on the screen", screen, "The check ended early. Bluetooth was switched off or the permission was taken back. What it found so far is below.");
+        check("watch: the error name stays in the report", WatchCheck.text(off, false).contains("Ended early: " + WatchCheck.ENDED_BLUETOOTH + "\nDetail: SecurityException\n"));
+        off.problem = null;
+        off.detail = null;
+        eq("watch: a check that ran through", WatchCheck.outcome(off), "Done. The watch was let go again.");
+        for (String e : new String[] {WatchCheck.ENDED_STOPPED, WatchCheck.ENDED_REFUSED, WatchCheck.ENDED_LAYOUT, WatchCheck.ENDED_BY_WATCH, WatchCheck.ENDED_BLUETOOTH}) {
+            off.connected = true;
+            off.problem = e;
+            String o = WatchCheck.outcome(off);
+            check("watch: screen line without brackets or class names: " + e, !o.contains("(") && !o.contains(")") && !o.contains("Exception")
+                    && Character.isUpperCase(e.charAt(0)) && e.endsWith("."));
+        }
+        WatchCheck.Report empty = new WatchCheck.Report();
+        empty.connected = true;
+        check("watch: a layout without services says so", WatchCheck.text(empty, false).contains("No services found") && WatchCheck.text(empty, false).contains("listened ?"));
+
+        // demo mode: the made up scan and report go through the same builders
+        List<WatchCheck.Found> demo = WatchCheck.strongestFirst(WatchCheck.demoFound());
+        check("watch: demo, the made up watch is the strongest and likely a watch", demo.get(0).name.contains("example") && WatchCheck.likelyWatch(demo.get(0)));
+        check("watch: demo, the watch is the second of the made up list (the screen picks it)", WatchCheck.likelyWatch(WatchCheck.demoFound().get(1)));
+        String dt = WatchCheck.text(WatchCheck.demoReport(), false);
+        check("watch: demo report built like a real one", dt.startsWith("Open Ring watch check\nName: Steel HR (example)\n") && dt.contains("(looks like Withings)")
+                && dt.contains("2 messages, lengths 5 6\n    first bytes: message 1 0101, message 2 0105\n") && dt.contains("Battery: 80%"));
+        check("watch: demo report has no byte beyond the first 2", !dt.contains("010100") && !dt.contains("0105000200"));
+
+        // texts: plain, no dashes as punctuation, toasts short enough
+        for (String s : new String[] {WatchCheck.INTRO, WatchCheck.SIGNAL, WatchCheck.PAIR_NOTE, WatchCheck.REPORT_NOTE, WatchCheck.PRIVATE, WatchCheck.SEND_BACK,
+            WatchCheck.NO_ANSWER, WatchCheck.BUSY, WatchCheck.DEMO, WatchCheck.NOTHING_FOUND, WatchCheck.CUT, WatchCheck.RUNNING, WatchCheck.ENDED_STOPPED,
+            WatchCheck.ENDED_REFUSED, WatchCheck.ENDED_LAYOUT, WatchCheck.ENDED_BY_WATCH, WatchCheck.ENDED_BLUETOOTH, screen, t, dt}) {
+            check("watch: no dash as punctuation in " + s.substring(0, Math.min(30, s.length())), !s.contains(" - ") && !s.contains("–") && !s.contains("—"));
+        }
+        check("watch: what to send back matches the decisions on #251", WatchCheck.SEND_BACK.contains("comment on issue 251 on GitHub")
+                && WatchCheck.SEND_BACK.contains("model name") && WatchCheck.SEND_BACK.contains("firmware") && WatchCheck.SEND_BACK.contains("battery % on 3 mornings"));
+        check("watch: the report note names the first 3 messages", WatchCheck.REPORT_NOTE.contains("first 3 messages") && WatchCheck.TYPE_MESSAGES == 3);
+        check("watch: the check takes at most 30 s, connect 10 s, listen 10 s", WatchCheck.SESSION_MS == 30000 && WatchCheck.CONNECT_MS == 10000
+                && WatchCheck.LISTEN_MS == 10000 && WatchCheck.CONNECT_MS + WatchCheck.LISTEN_MS < WatchCheck.SESSION_MS);
+
+        // the ring always wins: the check takes the ring lock only when it is free, never while a sync is counted
+        RingGate g = new RingGate();
+        check("watch: a free ring lock is taken", g.takeIfFree() && g.op.isHeldByCurrentThread());
+        g.op.unlock();
+        g.syncs.incrementAndGet();
+        check("watch: a sync under way keeps the check out", !g.takeIfFree() && !g.op.isLocked());
+        g.syncs.decrementAndGet();
+        final java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1), go = new java.util.concurrent.CountDownLatch(1);
+        Thread ring = holdRing(g, held, go);
+        held.await();
+        long t0 = System.currentTimeMillis();
+        check("watch: a ring task holding the lock keeps the check out, without a wait", !g.takeIfFree() && System.currentTimeMillis() - t0 < 1000);
+        go.countDown();
+        ring.join();
+        check("watch: once the ring task ended the check may run", g.takeIfFree());
+        g.op.unlock();
+    }
+
+    static boolean bcNull() {
+        WatchCheck.Characteristic c = new WatchCheck.Characteristic("00000032-5749-5448-0037-000000000000", 0x10);
+        c.message(null);
+        byte[] v = {1, 2, 3};
+        c.message(v);
+        v[0] = 9;
+        return c.messages.size() == 1 && c.messages.get(0)[0] == 1;
     }
 
     /** Issue #133: typed but unsaved numbers in Settings survive a rebuild and a turn of the phone. */

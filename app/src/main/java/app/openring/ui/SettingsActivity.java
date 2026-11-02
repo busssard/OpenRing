@@ -238,6 +238,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
             });
             root.addView(demo);
             root.addView(updatesCard());
+            watchCard = watchCard();
+            root.addView(watchCard);
             stagesCard = stageDetailCard(p);
             root.addView(stagesCard);
             screenCard = Ui.card(this);
@@ -318,6 +320,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
         swl.setMargins(0, Ui.dp(this, 10), 0, 0);
         ring.addView(sw, swl);
         root.addView(ring);
+
+        // ---- watch (issue #251, phase 1a: the Watch check only) ----
+        watchCard = watchCard();
+        root.addView(watchCard);
 
         // ---- profile ----
         LinearLayout prof = Ui.card(this);
@@ -555,9 +561,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. The Screen tab follows the idea of ScreenTime by Markus Fisch. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Updates", "Ring", "Profile", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
+        String[] sections = {"Updates", "Ring", "Watch", "Profile", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
             "Advanced", "Careful", "About"};
-        View[] targets = {updates, ring, prof, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, advancedCard, danger, about};
+        View[] targets = {updates, ring, watchCard, prof, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, advancedCard, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -577,7 +583,22 @@ public final class SettingsActivity extends Activity implements RingManager.List
         scrollToSection();
     }
 
-    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard;
+    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard;
+
+    /** The Watch card (issue #251): for now only the Watch check, which learns how a Withings watch talks. */
+    LinearLayout watchCard() {
+        LinearLayout card = Ui.card(this);
+        card.addView(Ui.caption(this, "Watch"));
+        card.addView(Ui.gap(this, 6));
+        card.addView(Ui.body(this, "Withings Steel HR: no sync yet. The check looks at how the watch talks, so syncing can be built next."));
+        action(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
+            }
+        });
+        return card;
+    }
     /** Usage access as shown in the Screen time card, to refresh it only when it changed. */
     private boolean screenAllowedShown;
     /** The first read of the screen log was started (once per app run, even if the log was empty). */
@@ -1258,12 +1279,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Opens at a card when started with the extra {@code section} ("stages", "screen", "games", "backups" or "advanced"), used by the screen test.
+     * Opens at a card when started with the extra {@code section} ("stages", "watch", "screen", "games", "backups" or "advanced"), used by the screen test.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "stages".equals(section) ? stagesCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
+        final View card = "stages".equals(section) ? stagesCard : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
         // the demo page is short: room below the last card, so every card can reach the top (issue #160)
