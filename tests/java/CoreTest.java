@@ -1554,7 +1554,9 @@ public class CoreTest {
 
         // every toast in the app: literal texts fit in two lines, no raw error text on any message (issue #89)
         java.util.regex.Pattern literal = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
-        int toasts = 0;
+        int toasts = 0, toastConsts = 0;
+        // a constant of any class (Texts.X, Pairing.ALREADY) or of the file itself (REPAIRING), not a call
+        java.util.regex.Pattern toastConst = java.util.regex.Pattern.compile("(?<![\\w.])(?:([A-Z]\\w*)\\.)?([A-Z][A-Z0-9_]+)\\b(?!\\s*[.(])");
         List<java.io.File> files = new ArrayList<java.io.File>();
         javaFiles(new java.io.File("app/src/main/java/app/openring"), files);
         check("toast scan: app sources found", files.size() > 0);
@@ -1576,10 +1578,22 @@ public class CoreTest {
                         toasts++;
                         check("toast fits in two lines: " + m.group(1), Texts.fitsToast(m.group(1)));
                     }
+                    // a constant of core's text classes is measured by its value, so no long one slips past (issue #274)
+                    java.util.regex.Matcher c = toastConst.matcher(literal.matcher(args).replaceAll("\"\""));
+                    while (c.find()) {
+                        String cls = c.group(1), name = c.group(2);
+                        if ("Toast".equals(cls)) continue; // Toast.LENGTH_LONG
+                        toastConsts++;
+                        Object v = toastConstant(cls, name, f, files);
+                        String what = (cls == null ? f.getName().replace(".java", "") : cls) + "." + name;
+                        check("toast constant is a text: " + where, v instanceof String);
+                        check("toast constant fits in two lines: " + what, v instanceof String && Texts.fitsToast((String) v));
+                    }
                 }
             }
         }
         check("toast scan: toast texts found", toasts > 0);
+        check("toast scan: toast constants found", toastConsts > 0);
 
         // raw exception text built anywhere on a screen, also into a variable shown later (as the export and
         // repair messages did before #89): only log lines and the SyncError mapping may use it
@@ -1600,6 +1614,31 @@ public class CoreTest {
         }
         check("raw error scan: screen sources found", uiFiles > 0);
         eq("no raw error text built on any screen", rawLines, 0);
+    }
+
+    /**
+     * The value of a constant passed to a toast: a class of core by reflection, otherwise the declaration
+     * {@code static final String NAME = "...";} in that class's source (or in {@code self} when unqualified),
+     * made of string literals only. Null when it cannot be found or is not such a text.
+     */
+    static Object toastConstant(String cls, String name, java.io.File self, List<java.io.File> files) throws IOException {
+        if (cls != null) {
+            try {
+                return Class.forName("app.openring.core." + cls).getField(name).get(null);
+            } catch (ReflectiveOperationException ignored) {
+            }
+        }
+        java.io.File src = null;
+        for (java.io.File f : files) if (f.getName().equals((cls == null ? self.getName().replace(".java", "") : cls) + ".java")) src = f;
+        if (src == null) return null;
+        String text = new String(java.nio.file.Files.readAllBytes(src.toPath()), "UTF-8");
+        java.util.regex.Matcher d = java.util.regex.Pattern.compile("static\\s+final\\s+String\\s+" + name
+                + "\\s*=\\s*((?:\"(?:[^\"\\\\]|\\\\.)*\"\\s*\\+?\\s*)+);").matcher(text);
+        if (!d.find()) return null;
+        StringBuilder v = new StringBuilder();
+        java.util.regex.Matcher l = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(d.group(1));
+        while (l.find()) v.append(l.group(1));
+        return v.toString();
     }
 
     static void javaFiles(java.io.File dir, List<java.io.File> out) {
@@ -2042,6 +2081,18 @@ public class CoreTest {
         eq("sync attempt: Bluetooth on keeps the text", SyncError.attemptError("ring disconnected", true), "ring disconnected");
         eq("sync attempt: Bluetooth off text reads as Bluetooth off", SyncError.kind(SyncError.BLUETOOTH_OFF_TEXT), SyncError.Kind.BLUETOOTH_OFF);
         check("sync attempt: Bluetooth off ends the sync", !SyncError.retryable(SyncError.attemptError("write failed (GATT status 133)", false), true));
+        // Bluetooth switched off while the scanner looks for the ring (issue #273): Android throws, which reached the
+        // sync's broad catch as an unexpected problem; the scanner now gives "Bluetooth is off" like its own check
+        RuntimeException off = new IllegalStateException("BT Adapter is not turned ON");
+        eq("scanner off: before, the broad catch's text read as unexpected", SyncError.plain("Unexpected error: " + off), unknown);
+        eq("scanner off: the scanner's exception is Bluetooth off", SyncError.scannerError(off, false), SyncError.BLUETOOTH_OFF_TEXT);
+        eq("scanner off: the plain Bluetooth off sentence", SyncError.plain(SyncError.scannerError(off, false)), "Bluetooth is off or not ready. Turn it on and sync again.");
+        check("scanner off: no further attempts", !SyncError.retryable(SyncError.scannerError(off, false), true));
+        eq("scanner off: the same sentence for Live", SyncError.plain(SyncError.scannerError(off, false), SyncError.Task.LIVE), "Bluetooth is off or not ready. Turn it on and try again.");
+        check("scanner off: other exceptions stay unexpected", SyncError.scannerError(new IllegalArgumentException("bad filter"), false) == null
+                && SyncError.scannerError(new SecurityException("no permission"), false) == null && SyncError.scannerError(null, false) == null);
+        // review of #277: the scanner's IllegalStateException with Bluetooth on is another fault, not "Bluetooth is off"
+        check("scanner off: with Bluetooth on the same exception stays unexpected", SyncError.scannerError(off, true) == null);
         // the notice after a failed sync the person started: the whole plain sentence, none after a stop or success
         check("sync notice: none after a sync that worked", SyncError.failureNotice(true, "Sync complete") == null);
         check("sync notice: none after a stop", SyncError.failureNotice(false, "Sync stopped") == null && SyncError.failureNotice(false, "Interrupted") == null);
@@ -3930,6 +3981,12 @@ public class CoreTest {
         check("texts: busy and delete messages fit the rules", !Texts.SYNC_BUSY.contains(" - ") && !Texts.DELETE_BUSY.contains(" - ")
                 && Texts.DELETE_BUSY.startsWith("Nothing was deleted") && Texts.DELETE_FAILED.startsWith("Nothing was deleted")
                 && !Texts.LIVE_BUSY.contains(" - ") && !Texts.LIVE_BUSY.contains("syncing") && !Texts.SYNC_BUSY.contains("ring task"));
+        // review of #277: the full delete texts are too long for a toast, the short ones for a closed Settings fit
+        check("texts: delete texts go into the dialog", !Texts.fitsToast(Texts.DELETE_BUSY) && !Texts.fitsToast(Texts.DELETE_FAILED));
+        for (String t : new String[] {Texts.DELETE_BUSY_TOAST, Texts.DELETE_FAILED_TOAST}) {
+            check("texts: delete toast fits and says nothing was deleted: " + t, Texts.fitsToast(t) && t.startsWith("Nothing was deleted")
+                    && !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
     }
 
     /**

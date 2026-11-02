@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 
 import app.openring.core.Protocol;
+import app.openring.core.SyncError;
 import app.openring.core.analysis.Proximity;
 
 /**
@@ -91,7 +92,7 @@ public final class RingScanner {
         filters.add(new ScanFilter.Builder().setServiceUuid(new ParcelUuid(Protocol.SERVICE)).build());
         log.log("scanning for a ring");
         waitForStart();
-        s.startScan(filters, settings, cb);
+        start(a, s, filters, settings, cb);
         boolean unfiltered = false;
         long started = SystemClock.elapsedRealtime();
         try {
@@ -105,9 +106,13 @@ public final class RingScanner {
                 }
                 if (!unfiltered && empty && SystemClock.elapsedRealtime() - started > timeoutMs / 2) {
                     // some rings only advertise a name; widen the scan for the second half
-                    s.stopScan(cb);
+                    try {
+                        s.stopScan(cb);
+                    } catch (RuntimeException e) {
+                        throw scannerFailed(e, a);
+                    }
                     waitForStart();
-                    s.startScan(null, settings, cb);
+                    start(a, s, null, settings, cb);
                     unfiltered = true;
                 }
                 synchronized (seen) {
@@ -128,6 +133,37 @@ public final class RingScanner {
             }
         }
         return null;
+    }
+
+    /** Starts a scan; Bluetooth switched off since the check gives the same error as the check (issue #273). */
+    private static void start(BluetoothAdapter a, BluetoothLeScanner s, List<ScanFilter> filters, ScanSettings settings, ScanCallback cb) throws IOException {
+        try {
+            s.startScan(filters, settings, cb);
+        } catch (RuntimeException e) {
+            throw scannerFailed(e, a);
+        }
+    }
+
+    /**
+     * "Bluetooth is off" as an IOException for the sync's own handling when the adapter really is off now (review of
+     * #277), any other exception unchanged.
+     */
+    private static IOException scannerFailed(RuntimeException e, BluetoothAdapter a) {
+        String t = SyncError.scannerError(e, on(a));
+        if (t == null) throw e;
+        return new IOException(t, e);
+    }
+
+    /**
+     * Whether the adapter is on. An adapter that cannot say counts as on, as in RingManager.bluetoothOn(): "Bluetooth is
+     * off" is only said when the phone really reports it, otherwise the scanner's exception stays as it is (review of #277).
+     */
+    private static boolean on(BluetoothAdapter a) {
+        try {
+            return a != null && a.isEnabled();
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     private static long heardSaved;
@@ -238,6 +274,10 @@ public final class RingScanner {
             s.startScan(null, new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb);
         } catch (SecurityException e) {
             // the Bluetooth permission taken back meanwhile (review of #270): null, the screen says the scan could not start
+            return null;
+        } catch (IllegalStateException e) {
+            // Bluetooth switched off since the check (issue #273), or another scanner fault: null, as promised above, not a
+            // closed screen. The screen says the scan could not start, and its next try names Bluetooth off itself.
             return null;
         }
         return new Watch(s, cb);

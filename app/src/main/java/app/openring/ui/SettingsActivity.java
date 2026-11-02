@@ -1619,9 +1619,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 SettingsActivity s = DELETE.finish();
                 boolean shown = s != null && !s.isFinishing() && !s.isDestroyed();
                 if (ok == null || !ok) {
-                    String m = ok == null ? Texts.DELETE_FAILED : Texts.DELETE_BUSY;
-                    if (shown) s.problem(m);
-                    else Toast.makeText(app, m, Toast.LENGTH_LONG).show();
+                    // the full text in the dialog; the short one when Settings is gone, a toast is cut after two lines
+                    if (shown) s.problem(ok == null ? Texts.DELETE_FAILED : Texts.DELETE_BUSY);
+                    else Toast.makeText(app, ok == null ? Texts.DELETE_FAILED_TOAST : Texts.DELETE_BUSY_TOAST, Toast.LENGTH_LONG).show();
                     return;
                 }
                 RingManager.get(app).log("all local data deleted");
@@ -1632,8 +1632,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     void reanalyse() {
-        // a sync or Live storing data finishes first (issue #230); say so instead of waiting without a word
-        toast(RingManager.get(this).busy() ? Texts.REANALYSE_WAITS : "Re analysing all nights, this can take a few minutes.");
+        // a sync or Live storing data finishes first (issue #230); say so instead of waiting without a word, in full (issue #274)
+        say(RingManager.get(this).busy() ? Texts.REANALYSE_WAITS : "Re analysing all nights, this can take a few minutes.");
         new AsyncTask<Void, Void, Boolean>() {
             @Override
             protected Boolean doInBackground(Void... v) {
