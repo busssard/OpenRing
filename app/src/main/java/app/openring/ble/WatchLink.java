@@ -116,43 +116,50 @@ public final class WatchLink {
             log.log("watch check: connecting");
             l.gatt = device.connectGatt(ctx.getApplicationContext(), false, l.cb, BluetoothDevice.TRANSPORT_LE);
             if (l.gatt == null) {
-                r.problem = "Bluetooth refused to open a connection";
+                r.problem = WatchCheck.ENDED_REFUSED;
                 return r;
             }
             Integer st = l.connState.poll(WatchCheck.CONNECT_MS, TimeUnit.MILLISECONDS);
             if (st == null || st < 0) {
-                r.problem = st == null ? "no answer within " + WatchCheck.CONNECT_MS / 1000 + " s" : "connection failed (status " + (-st) + ")";
+                // not connected: the screen says the watch did not answer, the report keeps what happened
+                r.detail = st == null ? "no answer within " + WatchCheck.CONNECT_MS / 1000 + " s" : "connection failed, status " + (-st);
                 return r;
             }
             r.connected = true;
             r.connectMs = SystemClock.elapsedRealtime() - start;
             l.gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED);
             SystemClock.sleep(300);
-            if (stop.stopped()) return ended(r, "stopped");
-            if (!l.gatt.discoverServices()) return ended(r, "the layout could not be read");
+            if (stop.stopped()) return ended(r, WatchCheck.ENDED_STOPPED);
+            if (!l.gatt.discoverServices()) return ended(r, WatchCheck.ENDED_LAYOUT);
             Integer d = l.discovered.poll(left(end), TimeUnit.MILLISECONDS);
-            if (d == null || d != BluetoothGatt.GATT_SUCCESS) return ended(r, "the layout could not be read");
+            if (d == null || d != BluetoothGatt.GATT_SUCCESS) {
+                r.detail = d == null ? "no layout in time" : "layout status " + d;
+                return ended(r, WatchCheck.ENDED_LAYOUT);
+            }
             log.log("watch check: " + l.gatt.getServices().size() + " services");
             for (BluetoothGattService s : l.gatt.getServices()) {
                 WatchCheck.Service ws = r.add(s.getUuid().toString());
                 for (BluetoothGattCharacteristic c : s.getCharacteristics()) ws.add(c.getUuid().toString(), c.getProperties());
             }
             l.readInfo(r, end, stop);
-            if (stop.stopped()) return ended(r, "stopped");
+            if (stop.stopped()) return ended(r, WatchCheck.ENDED_STOPPED);
             int on = l.listenAll(r, end, stop);
             log.log("watch check: listening on " + on + " characteristics");
             long t0 = SystemClock.elapsedRealtime();
             long until = Math.min(end, t0 + WatchCheck.LISTEN_MS);
             while (SystemClock.elapsedRealtime() < until && l.connected && !stop.stopped()) Thread.sleep(100);
             r.listenMs = SystemClock.elapsedRealtime() - t0;
-            if (!l.connected) r.problem = "the watch ended the connection";
-            else if (stop.stopped()) r.problem = "stopped";
+            if (!l.connected) r.problem = WatchCheck.ENDED_BY_WATCH;
+            else if (stop.stopped()) r.problem = WatchCheck.ENDED_STOPPED;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            if (r.problem == null) r.problem = "stopped";
+            if (r.problem == null) r.problem = WatchCheck.ENDED_STOPPED;
         } catch (RuntimeException e) {
             // Bluetooth switched off meanwhile, or a permission taken back
-            if (r.problem == null) r.problem = "Bluetooth stopped (" + e.getClass().getSimpleName() + ")";
+            if (r.problem == null) {
+                r.problem = WatchCheck.ENDED_BLUETOOTH;
+                r.detail = e.getClass().getSimpleName(); // in the report only, never on the screen
+            }
         } finally {
             l.close();
             // a pairing dialog accepted meanwhile leaves a bond: the report says so and the screen how to remove it
@@ -161,7 +168,7 @@ public final class WatchLink {
             } catch (RuntimeException e) {
                 r.bondedAfter = r.bondedBefore;
             }
-            log.log("watch check: closed" + (r.problem == null ? "" : ", " + r.problem));
+            log.log("watch check: closed" + (r.problem == null ? "" : ", " + r.problem) + (r.detail == null ? "" : " " + r.detail));
         }
         return r;
     }
