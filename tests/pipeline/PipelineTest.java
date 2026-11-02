@@ -4645,6 +4645,9 @@ public class PipelineTest {
         String early = LocalDate.parse(refDays.firstKey()).minusDays(1).toString(); // the first day the analysis visits
         staleCopy(db, refDays.firstKey(), early);
         moveAnchor(db, 2, T2_58, 1300000000L - T2_58); // dated in 2011: not usable, so boot 2 is undated
+        // the whole history is visited, so the analysis reaches the early day: since #256 boot 2 losing its dates sends the
+        // analysis back only to two days before boot 2 (before, the dated count sent it to the start)
+        db.put("analyzed_until", 1);
         StringBuilder log = new StringBuilder();
         Analyzer.run(c, collect(log));
         java.util.TreeMap<String, String> waiting = days58(db);

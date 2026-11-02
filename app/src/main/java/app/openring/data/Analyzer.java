@@ -311,8 +311,19 @@ public final class Analyzer {
         long lastDated = db.kvLong("dated_count", -1), lastTotal = db.kvLong("event_count", -1);
         // the checks below only lower analyzed_until ("analyse again from here"), so they are stored at once: a run that
         // fails after them is done again, never skipped (issue #230)
-        // older events gained (or lost) a date: their days must be analysed again
-        if (lastDated < 0 || t.datedAfter > lastDated + (t.total - lastTotal) || t.datedAfter < lastDated) db.put("analyzed_until", 0);
+        // older events gained (or lost) a date since the last analysis: their days must be analysed again
+        if (lastDated < 0 || t.datedAfter > lastDated + (t.total - lastTotal) || t.datedAfter < lastDated) {
+            if (exactChange(t, lastDated)) {
+                // this dating alone made the difference, and every row it gave or took a date is in changedFrom: from there
+                // on, as the dating's own commit already stored (issue #256; reanalyseFrom only ever lowers the mark)
+                db.reanalyseFrom(t.changedFrom);
+            } else {
+                // no dated count yet (a version before it), or the difference is older than this dating (a dating that
+                // was never analysed: the version before #188 did not lower the mark, an analysis that stopped, Live)
+                log.log("the dated events do not add up with the last analysis, the whole history is analysed again");
+                db.put("analyzed_until", 0);
+            }
+        }
         // the nights were staged with another detail level (changed in Settings, maybe while in demo
         // mode, or analysed by a version before 1.11): analyse everything again
         final int detail = prefs.stageDetail();
@@ -388,6 +399,15 @@ public final class Analyzer {
         } finally {
             if (longRun) db.endLongRun();
         }
+    }
+
+    /**
+     * True when the dated events changed only through the dating {@code t} (issue #256): it started from as many dated rows
+     * as the last analysis stored ({@code lastDated}) and reported the earliest old or new date of the rows it wrote. Then
+     * the days from that date on hold every change since the results; any other difference has no known date.
+     */
+    static boolean exactChange(Db.TimeReport t, long lastDated) {
+        return lastDated >= 0 && t.datedBefore == lastDated && !Double.isNaN(t.changedFrom);
     }
 
     /**
