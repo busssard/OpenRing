@@ -10,6 +10,7 @@ import android.database.sqlite.SQLiteStatement;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -1668,33 +1669,79 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /** Every table of {@link #SCHEMA}: what Delete all local data empties (issue #272). */
+    static final String[] ALL_TABLES = tables(null);
+
     /**
      * The tables of one ring's history and what was worked out from it, emptied when a different ring is paired
-     * ({@link #resetRingData}). Every table of {@link #SCHEMA} is here or in {@link Periods#TABLES} (the pipeline test checks it).
+     * ({@link #resetRingData}): every table of {@link #SCHEMA} except the period log ({@link Periods#TABLES}). A new table
+     * is wiped by default; keeping one takes an entry in that keep list (issue #272).
      */
-    static final String[] RING_TABLES = {"events", "anchors", "nights", "days", "battery", "kv", "screen", "apps", "zones", "screen_reads", "excluded"};
+    static final String[] RING_TABLES = tables(Periods.TABLES);
 
-    /** Wipe everything (keeps nothing, the period log too), in one transaction: a failure part way leaves everything as it was. */
+    /** The tables of {@link #SCHEMA} in its order, without those in {@code keep} (null: none). */
+    private static String[] tables(String[] keep) {
+        List<String> kept = keep == null ? new ArrayList<String>() : Arrays.asList(keep);
+        List<String> out = new ArrayList<String>();
+        for (Object[] t : SCHEMA) if (!kept.contains(t[0])) out.add((String) t[0]);
+        return out.toArray(new String[0]);
+    }
+
+    /**
+     * Wipe everything (keeps nothing, the period log too), in one transaction: a failure part way leaves everything as it
+     * was. Then the file shrinks ({@link #shrink}).
+     */
     public void resetAll() {
-        delete(RING_TABLES, Periods.TABLES);
+        delete(ALL_TABLES);
     }
 
     /**
      * A different ring was paired: its history starts fresh, but the period log the person typed stays (issue #252). One
-     * transaction, like {@link #resetAll}.
+     * transaction, like {@link #resetAll}, and the file shrinks too: the old ring's history is gone, what is left is small.
      */
     public void resetRingData() {
         delete(RING_TABLES);
     }
 
-    private void delete(String[]... lists) {
+    private void delete(String[] tables) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            for (String[] l : lists) for (String t : l) db.execSQL("DELETE FROM " + t);
+            for (String t : tables) db.execSQL("DELETE FROM " + t);
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
+        }
+        shrink();
+    }
+
+    /** Tests only: {@link #shrink} fails, as an error there would (issue #272). */
+    static volatile boolean failShrink;
+
+    /**
+     * After a delete, outside its transaction: give the freed space back to the phone (issue #272). SQLite keeps freed
+     * pages inside the file, so without this the file stays as large as the deleted history was. In WAL mode the order
+     * matters: {@code VACUUM} writes the new small file into the WAL, and only the checkpoint after it shrinks the main
+     * file and empties the WAL (a checkpoint before VACUUM leaves the file at full size). When another connection is in
+     * the middle of a read, the checkpoint reports busy without an error and the file shrinks at the next checkpoint.
+     * Any error here is ignored: the delete is already committed and complete, the file only stays larger for now.
+     * Returns whether it ran without an error.
+     */
+    boolean shrink() {
+        try {
+            if (failShrink) throw new IllegalStateException("test stop at shrink");
+            SQLiteDatabase db = getWritableDatabase();
+            db.execSQL("VACUUM");
+            Cursor c = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null);
+            try {
+                c.moveToFirst();
+            } finally {
+                c.close();
+            }
+            return true;
+        } catch (RuntimeException e) {
+            // the delete is done; a larger file is no failure for the person
+            return false;
         }
     }
 

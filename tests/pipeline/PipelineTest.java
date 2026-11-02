@@ -837,6 +837,7 @@ public class PipelineTest {
         damaged255();
         upgrade252();
         resets252();
+        deleteAll272();
         restore252();
         failures252();
         damagedLog252();
@@ -8731,6 +8732,174 @@ public class PipelineTest {
         }
         db.getWritableDatabase().execSQL("DROP TRIGGER stop_pd");
         check("#252 Delete all failing part way: the period log as it was", got != null && periodRows252(db).equals(rows), got);
+        clean254();
+    }
+
+    // ------------------------------------------------------------------------------------------- issue #272
+
+    /** The tables of the file that hold rows, with their count (every table of {@link #fileTables272}). */
+    static List<String> notEmpty272(Db db) {
+        List<String> left = new ArrayList<String>();
+        for (String t : fileTables272(db)) {
+            long n = db.count("SELECT COUNT(*) FROM " + t);
+            if (n != 0) left.add(t + " " + n);
+        }
+        return left;
+    }
+
+    /** The tables in {@code sqlite_master} (not {@code android_metadata}, not SQLite's own), read from the file, never from {@code Db.SCHEMA}. */
+    static List<String> fileTables272(Db db) {
+        List<String> out = new ArrayList<String>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT name FROM sqlite_master WHERE type = 'table'"
+                + " AND name <> 'android_metadata' AND name NOT LIKE 'sqlite_%' ORDER BY name", null);
+        try {
+            while (c.moveToNext()) out.add(c.getString(0));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    static long made272;
+
+    /** One made up row in every table of the file, a value of the column's type in each column (negative numbers, no real row has them). */
+    static void fillEvery272(Db db) {
+        for (String t : fileTables272(db)) {
+            List<String> cols = new ArrayList<String>();
+            List<Object> vals = new ArrayList<Object>();
+            android.database.Cursor c = db.getReadableDatabase().rawQuery("PRAGMA table_info(" + t + ")", null);
+            try {
+                while (c.moveToNext()) {
+                    String type = String.valueOf(c.getString(2)).toUpperCase(java.util.Locale.ROOT);
+                    cols.add(c.getString(1));
+                    made272++;
+                    vals.add(type.contains("BLOB") ? (Object) new byte[] {1} : type.contains("TEXT") ? (Object) ("x" + made272) : (Object) (double) -made272);
+                }
+            } finally {
+                c.close();
+            }
+            StringBuilder q = new StringBuilder();
+            for (int i = 0; i < cols.size(); i++) q.append(i == 0 ? "?" : ", ?");
+            db.getWritableDatabase().execSQL("INSERT INTO " + t + "(" + String.join(", ", cols) + ") VALUES (" + q + ")", vals.toArray());
+        }
+    }
+
+    /** The database file and its {@code -wal}, in bytes. */
+    static long[] size272(Context c) {
+        String p = c.getDatabasePath(Db.REAL).getPath();
+        return new long[] {new File(p).length(), new File(p + "-wal").length()};
+    }
+
+    /** A made up history of 120 days (about 20 MB) added to {@code db}, then checkpointed, so the file holds it. */
+    static void large272(Db db, List<RingEvent> ev, long end) {
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 9, end);
+        db.getReadableDatabase().rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).close();
+    }
+
+    /**
+     * Issue #272: Delete all local data empties every table that is in the file (read from {@code sqlite_master}, so a table
+     * missing from {@code Db.SCHEMA} fails too), the lists come from {@code SCHEMA} (a new table is wiped by default), and the
+     * file shrinks after a large history (WAL as on Android). Shrinking failing, or a read open at that moment, never undoes
+     * the delete nor reports a failure. Pairing another ring shrinks the file and keeps the period log. A backup of this and an
+     * older version restores everything after a delete.
+     */
+    static void deleteAll272() throws Exception {
+        Object[][] schema = (Object[][]) field252(Db.class, "SCHEMA");
+        List<String> all = Arrays.asList((String[]) field252(Db.class, "ALL_TABLES"));
+        List<String> ring = Arrays.asList((String[]) field252(Db.class, "RING_TABLES"));
+        List<String> keep = Arrays.asList((String[]) field252(app.openring.data.Periods.class, "TABLES"));
+        List<String> names = new ArrayList<String>();
+        for (Object[] t : schema) names.add((String) t[0]);
+        List<String> expectRing = new ArrayList<String>(names);
+        expectRing.removeAll(keep);
+        check("#272 Delete all's list is every table of the schema", all.equals(names), all);
+        check("#272 pairing another ring wipes every table of the schema except the period log (a new table is wiped by default)",
+                ring.equals(expectRing) && names.containsAll(keep), ring);
+
+        Context c = phone254("openring272-delete");
+        Db db = Db.get(c);
+        // WAL like Android (the shim leaves the journal as it is)
+        db.getWritableDatabase().execSQL("PRAGMA journal_mode=WAL");
+        long events = db.eventCount(), nights = db.count("SELECT COUNT(*) FROM nights");
+        byte[] full = backup252(c);
+        List<String> files = fileTables272(db);
+        check("#272 the file has every table of the schema", files.containsAll(names) && files.size() == names.size(), files);
+        fillEvery272(db);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2025-01-01").atStartOfDay(z).toEpochSecond(), end = t0 + 121 * 86400L;
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, 120, end, z, new Random(272));
+        large272(db, ev, end);
+        long[] before = size272(c);
+        Analyzer.deleteAll(c);
+        long[] after = size272(c);
+        check("#272 Delete all: every table in the file is empty", notEmpty272(db).isEmpty(), notEmpty272(db));
+        System.out.println("  #272 file " + before[0] / 1024 + " KB before Delete all, " + after[0] / 1024 + " KB after, -wal " + after[1] + " bytes");
+        check("#272 Delete all frees the space: the file is less than a tenth of a large history, the -wal empty",
+                before[0] > 5_000_000 && after[0] * 10 < before[0] && after[1] == 0, before[0] + " to " + after[0] + ", wal " + after[1]);
+
+        // the check reads the file, not the schema: a table only in the file is found
+        db.getWritableDatabase().execSQL("CREATE TABLE extra272 (x INTEGER)");
+        db.getWritableDatabase().execSQL("INSERT INTO extra272 VALUES (1)");
+        Analyzer.deleteAll(c);
+        check("#272 the check finds a table that is in the file but not in the schema", notEmpty272(db).equals(Arrays.asList("extra272 1")), notEmpty272(db));
+        db.getWritableDatabase().execSQL("DROP TABLE extra272");
+
+        // shrinking fails: the delete stays done, nothing reaches the person as a failure
+        fillEvery272(db);
+        Throwable got = null;
+        java.lang.reflect.Field fail = Db.class.getDeclaredField("failShrink");
+        fail.setAccessible(true);
+        fail.set(null, true);
+        try {
+            Analyzer.deleteAll(c);
+        } catch (RuntimeException e) {
+            got = e;
+        } finally {
+            fail.set(null, false);
+        }
+        check("#272 shrinking fails: Delete all reports no error and every table is empty", got == null && notEmpty272(db).isEmpty(), got + " " + notEmpty272(db));
+
+        // a read open on another connection while deleting: no error, the file shrinks at the next checkpoint once it ends
+        large272(db, ev, end);
+        long big = size272(c)[0];
+        got = null;
+        try (java.sql.Connection reader = java.sql.DriverManager.getConnection("jdbc:sqlite:" + c.getDatabasePath(Db.REAL).getPath())) {
+            reader.setAutoCommit(false);
+            try (java.sql.ResultSet rs = reader.createStatement().executeQuery("SELECT COUNT(*) FROM events")) {
+                rs.next();
+            }
+            try {
+                Analyzer.deleteAll(c);
+            } catch (RuntimeException e) {
+                got = e;
+            }
+            reader.commit();
+        }
+        check("#272 a read open while deleting: no error, every table empty", got == null && notEmpty272(db).isEmpty(), got + " " + notEmpty272(db));
+        db.getReadableDatabase().rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).close();
+        check("#272 a read open while deleting: the file is small at the next checkpoint", size272(c)[0] * 10 < big, big + " to " + size272(c)[0]);
+
+        // pairing another ring: the file shrinks, the period log stays row for row
+        someLog252(db);
+        String rows = periodRows252(db);
+        large272(db, ev, end);
+        big = size272(c)[0];
+        db.resetRingData();
+        check("#272 pairing another ring frees the space and keeps the period log", size272(c)[0] * 10 < big && periodRows252(db).equals(rows)
+                && db.eventCount() == 0, big + " to " + size272(c)[0]);
+
+        // a backup of this version and of schema 7, restored after Delete all: everything back
+        Analyzer.deleteAll(c);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#272 a backup restored after Delete all brings every event and night back", r.ok && r.history && db.eventCount() == events
+                && db.count("SELECT COUNT(*) FROM nights") == nights && events > 0 && nights > 0, r.message);
+        Analyzer.deleteAll(c);
+        byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), 7, DROP8));
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
+        db = Db.get(c);
+        check("#272 a backup of schema 7 restored after Delete all brings every event and night back", r.ok && r.history && db.eventCount() == events
+                && db.count("SELECT COUNT(*) FROM nights") == nights, r.message);
         clean254();
     }
 
