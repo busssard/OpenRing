@@ -118,9 +118,11 @@ public final class Db extends SQLiteOpenHelper {
      * <li>{@code period_ends}: days the person marked as the end of a period; {@code gone} 1 when the person took the mark off
      * again (kept like a day's removal mark, so a restore cannot bring it back).</li>
      * <li>{@code period_temps}: imported basal temperatures (drip, phase 1b), one per day: {@code time} "HH:MM" or null,
-     * {@code c} degrees Celsius, {@code excluded} 1 when the source did not count it, {@code src} the import's id.</li>
+     * {@code c} degrees Celsius, {@code excluded} 1 when the source did not count it, {@code src} the import's id,
+     * {@code gone} 1 when the import was undone (a removal mark like a day's -1, so a restore cannot bring it back).</li>
      * <li>{@code period_imports}: one row per import; {@code id} the import's time in milliseconds (an import made on
-     * another phone never shares it), {@code made} unix seconds, {@code days} and {@code temps} the rows it added.</li>
+     * another phone never shares it), {@code made} unix seconds, {@code days} and {@code temps} the rows it added,
+     * {@code gone} 1 once it was undone (kept as a mark, never deleted).</li>
      * </ul>
      */
     private static void upgradeTo8(SQLiteDatabase db) {
@@ -128,9 +130,9 @@ public final class Db extends SQLiteOpenHelper {
                 + " prev INTEGER, made REAL NOT NULL)");
         db.execSQL("CREATE TABLE IF NOT EXISTS period_ends (day TEXT PRIMARY KEY, made REAL NOT NULL, gone INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE TABLE IF NOT EXISTS period_temps (day TEXT PRIMARY KEY, time TEXT, c REAL NOT NULL, excluded INTEGER NOT NULL DEFAULT 0,"
-                + " src INTEGER NOT NULL DEFAULT 0)");
+                + " src INTEGER NOT NULL DEFAULT 0, gone INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE TABLE IF NOT EXISTS period_imports (id INTEGER PRIMARY KEY, made REAL NOT NULL, days INTEGER NOT NULL DEFAULT 0,"
-                + " temps INTEGER NOT NULL DEFAULT 0)");
+                + " temps INTEGER NOT NULL DEFAULT 0, gone INTEGER NOT NULL DEFAULT 0)");
     }
 
     /**
@@ -1366,8 +1368,8 @@ public final class Db extends SQLiteOpenHelper {
         {"excluded", 7, new String[] {"start", "stop", "made", "note"}},
         {"period_days", 8, new String[] {"day", "flow", "src", "prev", "made"}},
         {"period_ends", 8, new String[] {"day", "made", "gone"}},
-        {"period_temps", 8, new String[] {"day", "time", "c", "excluded", "src"}},
-        {"period_imports", 8, new String[] {"id", "made", "days", "temps"}},
+        {"period_temps", 8, new String[] {"day", "time", "c", "excluded", "src", "gone"}},
+        {"period_imports", 8, new String[] {"id", "made", "days", "temps", "gone"}},
     };
 
     /**

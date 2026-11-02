@@ -8588,7 +8588,7 @@ public class PipelineTest {
     static String periodRows252(Db db) {
         StringBuilder sb = new StringBuilder();
         String[] q = {"SELECT day, flow, src, prev, made FROM period_days ORDER BY day", "SELECT day, made, gone FROM period_ends ORDER BY day",
-            "SELECT day, time, c, excluded, src FROM period_temps ORDER BY day", "SELECT id, made, days, temps FROM period_imports ORDER BY id"};
+            "SELECT day, time, c, excluded, src, gone FROM period_temps ORDER BY day", "SELECT id, made, days, temps, gone FROM period_imports ORDER BY id"};
         for (String sql : q) {
             android.database.Cursor c = db.getReadableDatabase().rawQuery(sql, null);
             try {
@@ -8751,6 +8751,8 @@ public class PipelineTest {
         Db db = Db.get(c);
         someLog252(db);
         app.openring.data.Periods.setFlow(db, "2019-04-01", app.openring.data.Periods.MEDIUM, 1010);
+        db.getWritableDatabase().execSQL("INSERT INTO period_imports(id, made, days, temps) VALUES (1553000000000, 1553000000, 0, 1)");
+        db.getWritableDatabase().execSQL("INSERT INTO period_temps(day, time, c, excluded, src) VALUES ('2019-03-11', '07:20', 36.5, 0, 1553000000000)");
         byte[] full = backup252(c);
         // after the backup: one day changed, one removed, one new, an end taken off and another set; one day only the backup has
         app.openring.data.Periods.setFlow(db, "2019-03-01", app.openring.data.Periods.LIGHT, 2000);
@@ -8760,6 +8762,9 @@ public class PipelineTest {
         app.openring.data.Periods.clearEnd(db, "2019-03-03", 2003);
         db.getWritableDatabase().execSQL("DELETE FROM period_days WHERE day = '2019-04-01'");
         db.getWritableDatabase().execSQL("UPDATE period_temps SET c = 36.6 WHERE day = '2019-03-10'");
+        // an import undone after the backup (phase 1b): its temperature and the import itself kept as removal marks (review of #275)
+        db.getWritableDatabase().execSQL("UPDATE period_imports SET gone = 1 WHERE id = 1553000000000");
+        db.getWritableDatabase().execSQL("UPDATE period_temps SET gone = 1 WHERE src = 1553000000000");
         long events = db.eventCount();
         List<String> results = results139(db);
         String phoneRows = periodRows252(db);
@@ -8776,6 +8781,9 @@ public class PipelineTest {
                 && db.count("SELECT COUNT(*) FROM period_ends WHERE day = '2019-03-03' AND gone = 1") == 1, app.openring.data.Periods.allEnds(db));
         check("#252 restore: the phone's new end, the phone's temperature", app.openring.data.Periods.allEnds(db).equals(Arrays.asList("2019-05-04"))
                 && db.count("SELECT COUNT(*) FROM period_temps WHERE c = 36.6") == 1, app.openring.data.Periods.allEnds(db));
+        check("#252 restore: an import undone on the phone after the backup stays undone, its temperature too", db.count("SELECT COUNT(*) FROM period_imports"
+                + " WHERE id = 1553000000000 AND gone = 1") == 1 && db.count("SELECT COUNT(*) FROM period_temps WHERE day = '2019-03-11' AND gone = 1") == 1
+                && db.count("SELECT COUNT(*) FROM period_temps WHERE gone = 0") == 1, periodRows252(db));
         String merged = periodRows252(db);
         check("#252 restore: every row of the phone is there as it was", containsRows252(merged, phoneRows), merged);
         app.openring.data.Backup.Result again = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));

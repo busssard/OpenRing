@@ -29,8 +29,8 @@ public final class Periods {
     private static final String[][] COLUMNS = {
         {"day, flow, src, prev, made", "TIIIR"},
         {"day, made, gone", "TRI"},
-        {"day, time, c, excluded, src", "TTRII"},
-        {"id, made, days, temps", "IRII"},
+        {"day, time, c, excluded, src, gone", "TTRIII"},
+        {"id, made, days, temps, gone", "IRIII"},
     };
 
     /** One row of {@code period_days}. */
