@@ -6208,11 +6208,11 @@ public class CoreTest {
         store = new ModeStore();
         store.setPending(HR, Protocol.MODE_OFF);
         store.setPending(SPO2, Protocol.MODE_AUTOMATIC);
-        ModeRestore.chosenInSettings(store, HR);
+        ModeRestore.replaced(store, HR);
         eq("221 settings: daytime heart rate no longer pending", store.pending(HR), ModeRestore.NONE);
         eq("221 settings: blood oxygen still pending", store.pending(SPO2), Protocol.MODE_AUTOMATIC);
         int w = store.writes;
-        ModeRestore.chosenInSettings(store, HR);
+        ModeRestore.replaced(store, HR);
         eq("221 settings: nothing written when nothing pending", store.writes, w);
         // a factory reset (or a new pairing) drops them all
         ModeRestore.forget(store);
