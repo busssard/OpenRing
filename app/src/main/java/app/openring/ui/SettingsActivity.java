@@ -1759,9 +1759,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 SettingsActivity s = DELETE.finish();
                 boolean shown = s != null && !s.isFinishing() && !s.isDestroyed();
                 if (ok == null || !ok) {
-                    String m = ok == null ? Texts.DELETE_FAILED : Texts.DELETE_BUSY;
-                    if (shown) s.problem(m);
-                    else Toast.makeText(app, m, Toast.LENGTH_LONG).show();
+                    // the full text in the dialog; the short one when Settings is gone, a toast is cut after two lines
+                    if (shown) s.problem(ok == null ? Texts.DELETE_FAILED : Texts.DELETE_BUSY);
+                    else Toast.makeText(app, ok == null ? Texts.DELETE_FAILED_TOAST : Texts.DELETE_BUSY_TOAST, Toast.LENGTH_LONG).show();
                     return;
                 }
                 RingManager.get(app).log("all local data deleted");

@@ -103,7 +103,7 @@ Nothing leaves the phone: the app has no internet permission.
 | `excluded` | Times the person left out because someone else wore the ring (`start`, `stop`, `made` as the key, `note` unused; version 7, issue #254). Adding or removing one writes the row and lowers `analyzed_until` to its start in one commit (`Db.addExcluded`, `removeExcluded`). Restored older backups get it empty; Delete all local data and pairing a different ring empty it |
 | `period_days` | The period log (version 8, issue #252): one row per calendar day (`day` as yyyy-mm-dd text, so travel never moves it), `flow` -1 removed by the person ("Nothing": a removal mark, never a delete, so a restore cannot bring the day back), 0 spotting, 1 light, 2 medium, 3 heavy; `src` 0 typed, else the import's id; `prev` the amount an import replaced; `made` unix seconds. Written one statement at a time (`Periods.setFlow`) |
 | `period_ends` | Days marked as the end of a period (`day`, `made`, `gone`; version 8). Clearing an end keeps the row with `gone` 1 (a removal mark like a day's -1), so a restore cannot bring it back; readers leave those rows out |
-| `period_temps`, `period_imports` | For the drip import (phase 1b of #252, version 8, empty until then): one imported basal temperature per day (`day`, `time` as HH:MM, `c` in °C, `excluded`, `src`), and one row per import (`id` its time in milliseconds, `made`, `days`, `temps`) |
+| `period_temps`, `period_imports` | For the drip import (phase 1b of #252, version 8, empty until then): one imported basal temperature per day (`day`, `time` as HH:MM, `c` in °C, `excluded`, `src`, `gone`), and one row per import (`id` its time in milliseconds, `made`, `days`, `temps`, `gone`). Undoing an import writes `gone` 1 on the import and its temperatures (a removal mark like a day's -1, never a delete), so a restore of an older backup cannot bring them back |
 | `battery`, `kv` | Battery history; small key value state (cursor, analysis progress, errors) |
 
 The period tables are the one part of the file the person types and no ring can send again. Pairing a different ring
@@ -130,14 +130,16 @@ opens with the event count the check saw, and puts it back if not (#27). A left 
 swap was cut off, so `Db.get` puts it back before opening the real file; the opened, upgraded file must
 also pass the schema check of the current version. Each restore has its own temp file in the cache.
 Histories are never merged, with one exception (issue #252): the period log typed on this phone. `Db.replaceWith`
-reads every row of the four period tables from the phone's file before the swap (a file that opens but whose log cannot be
-read refuses the restore before anything moves), and after the restored file opened, upgraded (an older backup gets the
+reads every row of the four period tables from the phone's file before the swap (an error on the way refuses the restore
+before anything moves, unless it is Android's sign of a damaged file, see below), and after the restored file opened, upgraded (an older backup gets the
 tables first) and passed its checks, writes them into it in one transaction, each replacing the backup's row with the same
 key, so the phone wins on the same day and a day or end removed on the phone stays removed; only then `.old` goes. Any failure on
-the way puts the old file back with its log. A phone file that cannot be opened at all (for example a damaged one, kept
-since issue #255) has no log that can be read and is replaced as before: the restored file then holds only the backup's
-period log, so days typed on the phone after that backup are lost with the damaged file. Reading the tables of a damaged
-file anyway was left out on purpose (it can return wrong rows or fail half way; review of #275). Ring data is never merged. Going back to a phone copy (`AutoBackup.goBack`) runs the same swap. A backup holds every setting; restored numbers are kept in the ranges Settings
+the way puts the old file back with its log. A damaged phone file (`SQLiteDatabaseCorruptException` at the open, or from
+a damaged page in a period table; such files are kept since issue #255, and a restore is the way out of them) has no log that
+can be read reliably and is replaced as before: the restored file then holds only the backup's period log, so days typed on
+the phone after that backup are lost with the damaged file, and the restore's result says so ("The period log on this phone
+was damaged and could not be kept, ..."). Reading what is left of a damaged log was left out on purpose (it can return wrong
+rows or fail half way; review of #275). Ring data is never merged. Going back to a phone copy (`AutoBackup.goBack`) runs the same swap. A backup holds every setting; restored numbers are kept in the ranges Settings
 allows, and the stage detail level comes along only with the history or onto a phone without nights (#33).
 
 Export database and a full backup never copy the live file (issue #115). `Exporter.snapshot` waits for a
@@ -531,14 +533,19 @@ pairing or sync is built. Nothing is paired, written to the watch (besides switc
   switch the sensor on and send values. Leaving the screen or the app stops the scan and the session at once; Android's
   pairing dialog over the screen only stops the scan (`onPause`), the session goes on until `onStop`, so Cancel there
   does not end the check.
-* **The ring always wins:** the session runs only when `RingGate.takeIfFree` gets the ring lock at once (no sync
-  counted, no ring task holding it), and holds it until the link is closed, so the phone never keeps two links. When
-  the ring is busy the screen says so. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s;
-  the background job tries again at its next run).
+* **The ring always wins:** the session runs through `RingManager.whileRingFree(r, line)`, which uses
+  `RingGate.takeIfFree` to get the ring lock at once (no sync counted, no ring task holding it), and holds it until the
+  link is closed, so the phone never keeps two links. When the ring is busy the screen says so. Meanwhile `busy()` is
+  true and the ring's status line says "Watch check running" (review of #270), so the main screen shows why a sync by
+  hand does not start. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s; the background
+  job tries again at its next run).
 * **The report** (`core/WatchCheck`, kept in memory only): UUIDs (standard ones named, others as they are), property
   names, model, firmware, battery, whether the phone was paired with the watch before and is now (a pairing dialog
-  accepted during the check leaves a bond; the screen then tells how to remove it), and per listened characteristic the number of messages, their lengths and only the
-  first 2 bytes of each (usually the kind of message). The full bytes are only in the second copy, marked private
+  accepted during the check leaves a bond; the screen then tells how to remove it), and per listened characteristic the number of messages and their lengths, plus the
+  first 2 bytes (usually the kind of message) of those of the first 3 messages that are longer than 2 bytes. A message
+  of 2 bytes or less would be all value, and the later pieces of a long answer start with values (review of #270), so
+  the default report holds at most 6 message bytes per characteristic. Why a check ended early is a plain sentence on
+  the screen; a status code or error name goes into the report only, on its "Detail" line. The full bytes are only in the second copy, marked private
   (Android 13 and newer hide it in the clipboard preview). At most 300 messages are kept per characteristic, and a
   report is cut at 30,000 characters.
 * **Demo mode** never touches Bluetooth: `WatchCheck.demoFound` and `demoReport` go through the same screen code.
