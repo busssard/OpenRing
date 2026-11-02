@@ -10,25 +10,38 @@ log() { echo "== $*"; }
 
 # Every adb call has a time limit (issue #278): a stuck emulator fails the run within minutes with a
 # clear line, instead of waiting for the job timeout. ADB_WAIT=<seconds> sets the limit of the next call.
+# The error lines go to descriptor 3 (the log), since most calls have their output captured or redirected.
+exec 3>&2
 BOOT_WAIT=${BOOT_WAIT:-360}
 ADB_TIMEOUT=${ADB_TIMEOUT:-60}
 adb() {
   local limit=${ADB_WAIT:-$ADB_TIMEOUT} rc
-  timeout "$limit" adb "$@"
+  timeout -k 10 "$limit" adb "$@"
   rc=$?
-  if [ $rc -eq 124 ]; then
-    echo "::error::adb $* did not answer within $limit s. The emulator is stuck (not caused by the app); push again to retry."
+  if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
+    echo "::error::adb $* did not answer within $limit s. The emulator is stuck (not caused by the app); push again to retry." >&3
     kill -TERM $$ 2>/dev/null
     exit 1
   fi
   return $rc
 }
-boot_failed() {
-  echo "::error::The emulator did not finish starting within $BOOT_WAIT s (not caused by the app); push again to retry."
+# Both boot waits share one limit of BOOT_WAIT seconds.
+boot_wait() {
+  local left=$((BOOT_DEADLINE - SECONDS)) rc
+  [ $left -lt 1 ] && left=1
+  timeout -k 10 "$left" adb "$@" >/dev/null 2>&1
+  rc=$?
+  [ $rc -eq 0 ] && return 0
+  if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
+    echo "::error::The emulator did not finish starting within $BOOT_WAIT s (not caused by the app); push again to retry." >&3
+  else
+    echo "::error::adb could not reach the emulator while it was starting (adb $1 ended with code $rc, not caused by the app); push again to retry." >&3
+  fi
   exit 1
 }
-timeout "$BOOT_WAIT" adb wait-for-device >/dev/null 2>&1 || boot_failed
-timeout "$BOOT_WAIT" adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done' >/dev/null 2>&1 || boot_failed
+BOOT_DEADLINE=$((SECONDS + BOOT_WAIT))
+boot_wait wait-for-device
+boot_wait shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
 ADB_WAIT=180 adb install -r build/OpenRing.apk || exit 1
 for perm in BLUETOOTH_SCAN BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant $PKG android.permission.$perm 2>/dev/null; done
 # a calm status bar: 09:41, full battery, no notifications

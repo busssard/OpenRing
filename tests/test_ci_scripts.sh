@@ -200,6 +200,8 @@ case "$FAKE_ADB:$1:$2" in
   noboot:shell:while*) sleep 30 ;;
   nodevice:wait-for-device:*) sleep 30 ;;
   stuck:shell:pm) sleep 30 ;;
+  quiet:shell:am) sleep 30 ;;
+  offline:shell:while*) echo "error: device offline" >&2; exit 1 ;;
 esac
 exit 0
 EOF2
@@ -217,6 +219,10 @@ check "screens: no device at all fails with the same line" '[ $code != 0 ] && [ 
 stuck_run stuck
 check "screens: a stuck adb call after booting fails within its limit" '[ $code != 0 ] && [ $took -lt 15 ]'
 check "screens: ... and names the call" 'echo "$out" | grep -q "adb shell pm grant app.openring android.permission.BLUETOOTH_SCAN did not answer within 2 s"'
+stuck_run quiet
+check "screens: a stuck call with its output sent away still prints its line" '[ $code != 0 ] && [ $took -lt 15 ] && echo "$out" | grep -q "adb shell am broadcast -a com.android.systemui.demo -e command enter did not answer within 2 s"'
+stuck_run offline
+check "screens: adb failing at once while starting says so, not a time limit" '[ $code != 0 ] && [ $took -lt 5 ] && echo "$out" | grep -q "could not reach the emulator while it was starting (adb shell ended with code 1"'
 
 echo "CI scripts: $passes passed, $fails failed"
 [ "$fails" = 0 ]
