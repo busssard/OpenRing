@@ -87,6 +87,7 @@ public final class Backup {
         Json.put(o, "screen_awake", p.screenAwake());
         Json.put(o, "screen_exclude", new org.json.JSONArray(p.screenExcluded()));
         Json.put(o, "games_on", p.gamesOn());
+        Json.put(o, "period_shown", p.periodChoice());
         Json.put(o, "screen_min_show", p.screenMinShowMin());
         Json.put(o, "stage_detail", p.stageDetail());
         Json.put(o, "finder_sound", p.finderSound());
@@ -442,6 +443,8 @@ public final class Backup {
             p.setScreenExcluded(l);
         }
         if (o.has("games_on")) p.setGamesOn(o.optBoolean("games_on", false));
+        // the period tracker switch (issue #252); an older backup has none and leaves it as it is
+        if (o.has("period_shown")) p.setPeriodChoice(o.optInt("period_shown", -1));
         if (o.has("screen_min_show")) {
             int m = o.optInt("screen_min_show", 5);
             p.setScreenMinShowMin(m == 0 || m == 5 || m == 10 || m == 15 ? m : 5);

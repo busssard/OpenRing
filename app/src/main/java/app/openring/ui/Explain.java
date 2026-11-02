@@ -120,6 +120,41 @@ public final class Explain {
             + "sleep pattern). Its minutes are not in your daily movement. The ring's data itself stays stored on this phone, and it counts again "
             + "as soon as you remove the left out time in Settings, Advanced. The app cannot tell who wore the ring; you pick the time.";
 
+    // ---------------------------------------------------------------- period tracker (issue #252)
+
+    /** "your last 8 cycles", "your 2 cycles". */
+    static String yourCycles(int n) {
+        return n == 1 ? "your 1 cycle" : n < app.openring.core.analysis.Cycles.TRIM_FROM ? "your " + n + " cycles" : "your last " + n + " cycles";
+    }
+
+    /**
+     * Under "Expected ...": how the typical length and the range ("about 4 in 5") are worked out, and from how many cycles.
+     * {@code cycles} is the number the estimate rests on, {@code sd} their spread in days.
+     */
+    public static String periodRange(int cycles, int length, int range, double sd) {
+        String from = cycles == 0 ? "Typical cycle " + length + " days, the average in a large study of real cycles, until you have your own. "
+                : cycles < app.openring.core.analysis.Cycles.TRIM_FROM ? "Typical cycle " + length + " days, the middle value of " + yourCycles(cycles) + ". "
+                : "Typical cycle " + length + " days, the average of " + yourCycles(cycles) + " without the shortest and the longest. ";
+        if (cycles < app.openring.core.analysis.Cycles.FEW) return from + "The next start is your last start plus that, give or take " + range + " days while there are fewer than "
+                + app.openring.core.analysis.Cycles.FEW + " cycles.";
+        return from + "About 4 in 5: the range is give or take 1.28 times how much your cycles vary (" + String.format(java.util.Locale.getDefault(), "%.1f", sd)
+                + " days), which holds about 4 in 5 starts when your cycles vary as before. At least 1 day.";
+    }
+
+    /** Under the ovulation line: how "give or take N days" is worked out. */
+    public static String periodOvulation(int cycles, int range) {
+        String spread = cycles < app.openring.core.analysis.Cycles.FEW ? "a typical spread of 2.6 days (in place of your own until you have "
+                + app.openring.core.analysis.Cycles.FEW + " cycles)" : "how much " + yourCycles(cycles) + " vary";
+        return "Give or take " + range + " days: " + spread + ", together with how much the time from ovulation to the next period varies "
+                + "(about 2.4 days in a large study), times 1.28 for about 4 in 5. At least 3 days.";
+    }
+
+    /** Under "Your cycles vary by about N days". */
+    public static String periodVary(int cycles) {
+        return "Vary by: the standard deviation of " + yourCycles(cycles) + ", how far a cycle usually lies from their average. "
+                + "Cycles far from the rest (more than 10 days from the middle value) are left out, maybe a period was not logged.";
+    }
+
     public static String of(String key) {
         if (key == null) return null;
         switch (key) {

@@ -994,8 +994,292 @@ public class CoreTest {
         leftOut254();
         watchCheck251();
         modeRestore221();
+        cycles252();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    // ------------------------------------------------------------------ issue #252: the period tracker's estimates
+
+    static final java.time.LocalDate C0 = java.time.LocalDate.of(2025, 1, 6);
+    static final Locale EN = Locale.ENGLISH;
+
+    /** A log with one period of {@code days} medium days at each start (C0 plus the running sum of {@code lengths}). */
+    static Map<java.time.LocalDate, Integer> log252(int days, int... lengths) {
+        Map<java.time.LocalDate, Integer> m = new HashMap<java.time.LocalDate, Integer>();
+        java.time.LocalDate s = C0;
+        for (int i = 0; i <= lengths.length; i++) {
+            for (int k = 0; k < days; k++) m.put(s.plusDays(k), Cycles.MEDIUM);
+            if (i < lengths.length) s = s.plusDays(lengths[i]);
+        }
+        return m;
+    }
+
+    /** The start of the newest period of {@link #log252}. */
+    static java.time.LocalDate lastStart252(int... lengths) {
+        java.time.LocalDate s = C0;
+        for (int l : lengths) s = s.plusDays(l);
+        return s;
+    }
+
+    static Cycles cyc252(Map<java.time.LocalDate, Integer> log, java.time.LocalDate today, java.time.LocalDate... ends) {
+        return Cycles.of(log, Arrays.asList(ends), today);
+    }
+
+    static java.time.LocalDate d252(int day) {
+        return C0.plusDays(day - 1);
+    }
+
+    static boolean plain252(String s) {
+        return s == null || (!s.contains(" - ") && !s.contains("–") && !s.contains("—") && !s.contains("±"));
+    }
+
+    static void cycles252() {
+        // ---- 12 cycles of 28 days: 28, give or take 1 ----
+        int[] l12 = new int[12];
+        Arrays.fill(l12, 28);
+        java.time.LocalDate s12 = lastStart252(l12);
+        Cycles c = cyc252(log252(5, l12), s12.plusDays(10));
+        check("#252 12 x 28: 13 periods, 12 cycles, all used", c.periods.size() == 13 && c.cycles.size() == 12 && c.used.size() == 12);
+        check("#252 12 x 28: typical 28, spread 0, give or take 1", c.length == 28 && c.typical == 28 && c.sd == 0 && c.range == 1);
+        eq("#252 12 x 28: next start is the last start plus 28", c.next, s12.plusDays(28));
+        eq("#252 12 x 28: cycle day 11", c.cycleDay(s12.plusDays(10)), 11);
+        eq("#252 12 x 28: status", c.status(EN), "Cycle day 11");
+        eq("#252 12 x 28: next line", c.nextLine(), "Next period in about 18 days");
+        check("#252 12 x 28: about 4 in 5", c.expectedLine(EN).endsWith("About 4 in 5 periods start within such a range.")
+                && c.expectedLine(EN).startsWith("Expected "));
+        eq("#252 12 x 28: very regular", c.regularityLine(), "Your cycles vary by less than a day.");
+        // ovulation: 14 days before, give or take max(3, round(1.28 x 2.4)) = 3; fertile the 5 days before and the day
+        eq("#252 12 x 28: ovulation 14 days before the next start", c.ovulation, s12.plusDays(14));
+        eq("#252 12 x 28: ovulation range 3", c.ovulationRange, 3);
+        check("#252 fertile window: 5 days before the estimate and the day", c.inFertile(s12.plusDays(9)) && c.inFertile(s12.plusDays(14))
+                && !c.inFertile(s12.plusDays(8)) && !c.inFertile(s12.plusDays(15)));
+        check("#252 ovulation band: 3 days each way", c.inOvulation(s12.plusDays(11)) && c.inOvulation(s12.plusDays(17))
+                && !c.inOvulation(s12.plusDays(10)) && !c.inOvulation(s12.plusDays(18)));
+        check("#252 expected band: one day each way", c.inExpected(s12.plusDays(27)) && c.inExpected(s12.plusDays(29))
+                && !c.inExpected(s12.plusDays(26)) && !c.inExpected(s12.plusDays(30)));
+        check("#252 a regular history: nothing unusual", c.unusualLine(EN) == null && c.unusualLately() == 0);
+        check("#252 13 cycles: only the newest 12 are used", cyc252(log252(5, 30, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28),
+                d252(400)).used.size() == 12);
+
+        // ---- a mixed list, worked out by hand ----
+        int[] mix = {26, 30, 28, 31, 27, 29, 33, 25};
+        java.time.LocalDate sm = lastStart252(mix);
+        c = cyc252(log252(4, mix), sm.plusDays(3));
+        // median 28.5, nothing left out; trimmed mean of 26..31 = 171 / 6 = 28.5, rounds to 29; sample SD sqrt(49.875 / 7) = 2.669
+        check("#252 mixed: trimmed mean 28.5, typical 29", Math.abs(c.typical - 28.5) < 1e-9 && c.length == 29);
+        check("#252 mixed: SD 2.669, give or take round(3.42) = 3", Math.abs(c.sd - Math.sqrt(49.875 / 7)) < 1e-9 && c.range == 3);
+        eq("#252 mixed: ovulation give or take round(1.28 x sqrt(7.125 + 5.76)) = 5", c.ovulationRange, 5);
+        eq("#252 mixed: next start", c.next, sm.plusDays(29));
+        eq("#252 mixed: regularity", c.regularityLine(), "Your cycles vary by about 3 days.");
+        eq("#252 mixed: day 4 of the period while it runs", c.status(EN), "Day 4 of your period");
+
+        // ---- one period: 29 give or take 5, said so ----
+        Map<java.time.LocalDate, Integer> one = log252(5);
+        c = cyc252(one, d252(10));
+        check("#252 one period: no cycle, 29 days, give or take 5", c.cycles.isEmpty() && c.length == 29 && c.range == 5 && c.next.equals(d252(30)));
+        check("#252 one period: the text says it uses 29 days and a wider range", c.expectedLine(EN).contains("Until you have logged 3 cycles, this uses a typical cycle of 29 days and a wider range."));
+        eq("#252 one period: ovulation give or take 5 (the typical 2.6 days spread)", c.ovulationRange, 5);
+        check("#252 one period: no regularity line", c.regularityLine() == null && c.unusualLine(EN) == null);
+
+        // ---- 2 and 4 cycles: own median ----
+        c = cyc252(log252(5, 27, 31), d252(70));
+        check("#252 2 cycles: median 29, give or take 5", c.length == 29 && c.range == 5 && c.expectedLine(EN).contains("uses your own 2 cycles and a wider range"));
+        c = cyc252(log252(5, 27), d252(30));
+        check("#252 1 cycle: own 27 days, give or take 5", c.length == 27 && c.range == 5 && c.expectedLine(EN).contains("your own 1 cycle and"));
+        c = cyc252(log252(5, 27, 31, 28, 26), d252(115));
+        // median 27.5 rounds to 28; SD sqrt(14 / 3) = 2.16, 1.28 x 2.16 = 2.77, give or take 3
+        check("#252 4 cycles: median 27.5, typical 28, give or take 3", c.typical == 27.5 && c.length == 28 && c.range == 3);
+        check("#252 4 cycles: about 4 in 5 from 3 cycles on", c.expectedLine(EN).endsWith("About 4 in 5 periods start within such a range."));
+
+        // ---- the switch at 5 cycles: median, then the mean without shortest and longest ----
+        c = cyc252(log252(5, 27, 27, 27, 33), d252(130));
+        check("#252 4 cycles 27 27 27 33: median 27", c.typical == 27);
+        c = cyc252(log252(5, 27, 27, 27, 33, 33), d252(160));
+        check("#252 5 cycles 27 27 27 33 33: mean of 27 27 33 = 29", c.typical == 29 && c.length == 29);
+
+        // ---- a 58 day cycle (a period not logged) is left out ----
+        c = cyc252(log252(5, 28, 28, 58, 28, 28, 28), d252(200 + 5));
+        check("#252 58 days: left out, the rest gives 28 give or take 1", c.cycles.get(2).leftOut && c.used.size() == 5 && c.length == 28 && c.range == 1);
+        c = cyc252(log252(5, 28, 28, 28, 28, 58), d252(171 + 3));
+        check("#252 58 days as the newest cycle: said gently", c.unusualLine(EN).equals("The cycle from " + c.date(c.cycles.get(4).start, EN)
+                + " was 58 days. It is left out of the estimate, maybe a period was not logged."));
+
+        // ---- SD 6 gives 8 days each way ----
+        c = cyc252(log252(5, 22, 34, 28), d252(90));
+        check("#252 SD 6: give or take round(7.68) = 8", Math.abs(c.sd - 6) < 1e-9 && c.range == 8 && c.length == 28);
+        eq("#252 SD 6: ovulation give or take round(1.28 x sqrt(36 + 5.76)) = 8", c.ovulationRange, 8);
+        eq("#252 SD 6: vary by about 6 days", c.regularityLine(), "Your cycles vary by about 6 days.");
+
+        // ---- late, any day now, today, tomorrow, waiting ----
+        Map<java.time.LocalDate, Integer> l = log252(5, l12);
+        java.time.LocalDate next = s12.plusDays(28);
+        eq("#252 tomorrow", cyc252(l, next.minusDays(1)).nextLine(), "Next period expected tomorrow");
+        eq("#252 today", cyc252(l, next).nextLine(), "Next period expected today");
+        Cycles inRange = cyc252(l, next.plusDays(1));
+        check("#252 inside the range: any day now, not late", inRange.lateBy() == 0 && inRange.nextLine().equals("Next period expected any day now"));
+        c = cyc252(l, next.plusDays(4));
+        check("#252 4 days after the expected day: late by 4", c.lateBy() == 4
+                && c.nextLine().equals("Your period is 4 days later than expected. Cycles vary, this happens."));
+        check("#252 late: the range stays", c.inExpected(next) && c.estimates());
+        eq("#252 with a range of 1 day, late counts from 2 days after the expected day", cyc252(log252(5, 27, 27, 27, 27, 27), lastStart252(27, 27, 27, 27, 27).plusDays(27 + 1 + 1)).lateBy(), 2);
+        c = cyc252(l, s12.plusDays(56));
+        check("#252 twice the typical length: still late, not yet waiting", !c.waiting && c.lateBy() == 28);
+        c = cyc252(l, s12.plusDays(57));
+        check("#252 after twice the typical length: waits for the next start", c.waiting && !c.estimates() && c.nextLine() == null
+                && c.expectedLine(EN) == null && c.ovulationLine(EN) == null && c.fertileLine(EN) == null && !c.inExpected(next) && c.lateBy() == 0);
+        eq("#252 waiting: the status names the last start", c.status(EN), "No period logged since " + c.date(s12, EN));
+        eq("#252 waiting: the note", c.statusNote(EN), "The estimate starts again with the next period you log.");
+
+        // ---- spotting never starts or extends a period ----
+        Map<java.time.LocalDate, Integer> sp = new HashMap<java.time.LocalDate, Integer>();
+        sp.put(d252(1), Cycles.HEAVY);
+        for (int i = 2; i <= 4; i++) sp.put(d252(i), Cycles.SPOTTING);
+        sp.put(d252(5), Cycles.LIGHT);
+        c = cyc252(sp, d252(40));
+        check("#252 spotting between: two periods, the spotting days are not bleeding", c.periods.size() == 2 && c.periods.get(0).last.equals(d252(1)));
+        sp.clear();
+        sp.put(d252(3), Cycles.SPOTTING);
+        c = cyc252(sp, d252(4));
+        check("#252 spotting alone starts no period", c.periods.isEmpty() && c.next == null && !c.estimates() && c.status(EN).equals("No period logged yet")
+                && c.statusNote(EN).startsWith("Tap Heavy, Medium or Light on the first day"));
+        sp.put(d252(1), Cycles.HEAVY);
+        sp.put(d252(2), Cycles.HEAVY);
+        c = cyc252(sp, d252(20));
+        check("#252 spotting after a period does not extend it", c.periods.size() == 1 && c.periods.get(0).days() == 2);
+        check("#252 spotting is kept for the calendar", c.flows.get(d252(3)) == Cycles.SPOTTING && Cycles.amount(c.flows.get(d252(3))).equals("Spotting"));
+
+        // ---- gaps: 2 unlogged days join, 3 do not ----
+        Map<java.time.LocalDate, Integer> g = new HashMap<java.time.LocalDate, Integer>();
+        g.put(d252(1), Cycles.HEAVY);
+        g.put(d252(4), Cycles.LIGHT);
+        check("#252 a gap of 2 days: one period", cyc252(g, d252(30)).periods.size() == 1 && cyc252(g, d252(30)).periods.get(0).days() == 4);
+        g.put(d252(8), Cycles.LIGHT);
+        check("#252 a gap of 3 days: a new period", cyc252(g, d252(30)).periods.size() == 2);
+
+        // ---- Ended today versus yesterday, and the 3 days without a log ----
+        Map<java.time.LocalDate, Integer> e = new HashMap<java.time.LocalDate, Integer>();
+        for (int i = 1; i <= 3; i++) e.put(d252(i), Cycles.MEDIUM);
+        c = cyc252(e, d252(4));
+        check("#252 without Ended: day 4 of the period, Ended can be logged", c.running != null && c.status(EN).equals("Day 4 of your period")
+                && c.canEnd(d252(4)) && c.canEnd(d252(1)) && !c.canEnd(C0.minusDays(1)) && c.statusNote(EN).contains("Ended"));
+        check("#252 running: a day of the open period reads as in it", c.periodOn(d252(4)) == c.running && c.periodOn(d252(5)) == null);
+        check("#252 3 days without a log: still running on the third", cyc252(e, d252(6)).running != null);
+        c = cyc252(e, d252(7));
+        check("#252 after 3 days without a log the period is over on its last logged day", c.running == null && c.periods.get(0).last.equals(d252(3))
+                && !c.periods.get(0).marked && !c.canEnd(d252(7)) && c.periodOn(d252(5)) == null && c.periodOn(d252(2)) != null);
+        c = cyc252(e, d252(4), d252(4));
+        check("#252 Ended today (not logged): the period ends on its last logged day", c.running == null && c.periods.get(0).last.equals(d252(3))
+                && c.periods.get(0).marked);
+        c = cyc252(e, d252(4), d252(3));
+        check("#252 Ended yesterday (logged): it ends that day", c.running == null && c.periods.get(0).last.equals(d252(3)) && c.periods.get(0).marked);
+        e.put(d252(5), Cycles.LIGHT);
+        c = cyc252(e, d252(5), d252(4));
+        check("#252 a day logged after Ended starts a new period", c.periods.size() == 2 && c.periods.get(1).start.equals(d252(5)) && c.running == c.periods.get(1));
+        c = cyc252(e, d252(5), d252(2));
+        check("#252 Ended on a past day of the period splits it there", c.periods.size() == 2 && c.periods.get(0).last.equals(d252(2))
+                && c.periods.get(1).start.equals(d252(3)));
+        Map<java.time.LocalDate, Integer> far = log252(4, 28);
+        c = cyc252(far, d252(40), d252(2));
+        check("#252 a mark inside an older period closes it, the next period is unmarked", c.periods.get(0).marked && !c.periods.get(1).marked
+                && c.periods.get(0).last.equals(d252(2)) && c.periods.size() == 3);
+
+        // ---- removal marks count as no entry ----
+        Map<java.time.LocalDate, Integer> r = new HashMap<java.time.LocalDate, Integer>();
+        r.put(d252(1), Cycles.HEAVY);
+        r.put(d252(2), Cycles.REMOVED);
+        r.put(d252(3), Cycles.MEDIUM);
+        c = cyc252(r, d252(20));
+        check("#252 a removed day inside: still one period", c.periods.size() == 1 && c.periods.get(0).days() == 3 && !c.flows.containsKey(d252(2))
+                && Cycles.amount(c.flows.get(d252(2))).equals("No entry"));
+        r.put(d252(1), Cycles.REMOVED);
+        r.put(d252(3), Cycles.REMOVED);
+        check("#252 every day removed: no period", cyc252(r, d252(20)).periods.isEmpty());
+        r.put(d252(4), 7);
+        r.put(null, Cycles.HEAVY);
+        r.put(d252(5), null);
+        check("#252 amounts out of range, no date or no amount: no entry", cyc252(r, d252(20)).flows.isEmpty());
+        check("#252 nothing at all", Cycles.of(null, null, d252(1)).periods.isEmpty() && Cycles.of(null, Arrays.asList((java.time.LocalDate) null), d252(1)).ends.isEmpty());
+
+        // ---- unusual cycles: once, twice lately, beyond 2 SD ----
+        c = cyc252(log252(5, 28, 28, 28, 28, 20), d252(160));
+        eq("#252 a 20 day cycle once", c.unusualLine(EN), "Your last cycle was 20 days, shorter than your usual 28. One unusual cycle is common.");
+        c = cyc252(log252(5, 28, 28, 28, 28, 20, 28, 20), d252(220));
+        check("#252 twice in the last 3: the doctor line", c.unusualLately() == 2 && c.unusualLine(EN).endsWith(
+                "One unusual cycle is common. This has happened twice lately. You could mention it to a doctor."));
+        c = cyc252(log252(5, 28, 29, 28, 29, 28, 29, 28, 33), d252(260));
+        check("#252 33 days with cycles that vary by 1.7: beyond 2 SD, unusual", c.unusual(c.cycles.get(7)) && !c.unusual(c.cycles.get(6))
+                && c.unusualLine(EN).startsWith("Your last cycle was 33 days, longer than your usual 29."));
+        c = cyc252(log252(5, 36, 36), d252(100));
+        check("#252 over 35 days is unusual also with few cycles", c.unusual(c.cycles.get(1)));
+
+        // ---- texts: dates, the readout of a day, the always line ----
+        c = cyc252(log252(5, l12), s12.plusDays(10));
+        eq("#252 a date this year", c.date(java.time.LocalDate.of(2026, 3, 8), EN), "8 Mar 2026");
+        eq("#252 a span in one month", c.span(java.time.LocalDate.of(2026, 11, 6), java.time.LocalDate.of(2026, 11, 12), EN), "6 to 12 Nov 2026");
+        Cycles thisYear = cyc252(log252(5), java.time.LocalDate.of(2025, 1, 20));
+        eq("#252 a span across months, this year without the year", thisYear.span(java.time.LocalDate.of(2025, 1, 29), java.time.LocalDate.of(2025, 2, 4), EN), "29 Jan to 4 Feb");
+        String ov = c.ovulationLine(EN);
+        check("#252 ovulation line", ov.startsWith("Ovulation likely around ") && ov.contains("(give or take 3 days)") && ov.endsWith("not a measurement."));
+        check("#252 fertile line", c.fertileLine(EN).startsWith("Likely fertile days: ") && c.fertileLine(EN).endsWith(", from the calendar only."));
+        String rd = c.describe(s12.plusDays(1), EN);
+        check("#252 readout of a period day: date, amount, day of the period", rd.contains(": Medium") && rd.contains("\nDay 2 of the period from "));
+        rd = c.describe(next, EN);
+        check("#252 readout of the expected day: why it is in the band", rd.contains(": No entry") && rd.contains("\nCycle day 29")
+                && rd.contains("In the expected next period") && rd.contains("your typical cycle of 28 days, give or take 1 day."));
+        rd = c.describe(s12.plusDays(13), EN);
+        check("#252 readout in the ovulation range and the fertile days", rd.contains("In the likely ovulation range") && rd.contains("about 14 days before")
+                && rd.contains("In the likely fertile days") && rd.contains("the 5 days before the ovulation estimate and that day."));
+        rd = cyc252(one, d252(10)).describe(d252(30), EN);
+        check("#252 readout with no cycle yet: a typical cycle of 29 days", rd.contains("your last start plus a typical cycle of 29 days, give or take 5 days."));
+        rd = cyc252(e, d252(5), d252(4)).describe(d252(4), EN);
+        check("#252 readout of an end mark", rd.contains("No entry, marked as the end of a period"));
+        check("#252 readout before the first period: the date only", !cyc252(one, d252(10)).describe(C0.minusDays(3), EN).contains("\n"));
+        check("#252 the always line", Cycles.NOT_ADVICE.contains("not birth control and not a medical diagnosis"));
+        Map<java.time.LocalDate, Integer> fut = log252(5);
+        c = cyc252(fut, C0.minusDays(4));
+        check("#252 a period logged for a later day: said so, nothing running", c.running == null && c.status(EN).equals("Next period logged for " + c.date(C0, EN))
+                && c.statusNote(EN).isEmpty() && c.cycleDay(C0.minusDays(4)) == 0);
+        check("#252 amounts named", Cycles.amount(3).equals("Heavy") && Cycles.amount(2).equals("Medium") && Cycles.amount(1).equals("Light")
+                && Cycles.amount(-1).equals("No entry") && Cycles.amount(null).equals("No entry"));
+        check("#252 before the first period no day lies in a period", c.periodOn(C0.minusDays(1)) == null);
+
+        // ---- shown: the profile, the switch, demo mode ----
+        check("#252 shown when the profile says female and the switch was never touched", Cycles.shown(-1, 1, false) && !Cycles.shown(-1, 0, false) && !Cycles.shown(-1, 2, false));
+        check("#252 the switch wins over the profile", Cycles.shown(1, 0, false) && !Cycles.shown(0, 1, false));
+        check("#252 demo mode always shows it", Cycles.shown(0, 0, true));
+
+        // ---- the demo's made up log ----
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 2);
+        TreeMap<java.time.LocalDate, Integer> demo = Cycles.demo(today);
+        c = Cycles.of(demo, null, today);
+        int spot = 0;
+        for (int f : demo.values()) if (f == Cycles.SPOTTING) spot++;
+        boolean lengths = true, days = true;
+        for (Cycles.Cycle x : c.cycles) lengths &= x.length >= 27 && x.length <= 31 && !x.leftOut;
+        for (Cycles.Period x : c.periods) days &= x.days() >= 4 && x.days() <= 6;
+        check("#252 demo: 8 cycles of 27 to 31 days, periods of 4 to 6, one spotting day", c.cycles.size() == 8 && lengths && days && spot == 1);
+        check("#252 demo: today on cycle day 18, nothing logged after today", c.cycleDay(today) == 18 && demo.lastKey().isBefore(today) && c.estimates()
+                && c.running == null && c.lateBy() == 0);
+
+        // ---- plain texts, no dashes as punctuation ----
+        List<String> texts = new ArrayList<String>(Arrays.asList(Cycles.NOT_ADVICE, c.status(EN), c.statusNote(EN), c.nextLine(), c.expectedLine(EN),
+                c.ovulationLine(EN), c.fertileLine(EN), c.regularityLine(), c.describe(today.plusDays(10), EN),
+                app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN), app.openring.ui.Explain.periodRange(2, 28, 5, Double.NaN),
+                app.openring.ui.Explain.periodRange(4, 28, 3, 2.2), app.openring.ui.Explain.periodRange(8, 29, 3, 2.7),
+                app.openring.ui.Explain.periodOvulation(1, 5), app.openring.ui.Explain.periodOvulation(8, 4), app.openring.ui.Explain.periodVary(8)));
+        boolean plain = true;
+        for (String t : texts) plain &= plain252(t);
+        check("#252 texts use no dashes as punctuation", plain);
+        check("#252 explain: how the range is worked out and from how many cycles",
+                app.openring.ui.Explain.periodRange(8, 29, 3, 2.7).contains("the average of your last 8 cycles without the shortest and the longest")
+                        && app.openring.ui.Explain.periodRange(8, 29, 3, 2.7).contains("About 4 in 5: the range is give or take 1.28 times how much your cycles vary")
+                        && app.openring.ui.Explain.periodRange(4, 28, 3, 2.2).contains("the middle value of your 4 cycles")
+                        && app.openring.ui.Explain.periodRange(1, 28, 5, Double.NaN).contains("the middle value of your 1 cycle")
+                        && app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN).contains("give or take 5 days while there are fewer than 3 cycles"));
+        check("#252 explain: give or take and vary by", app.openring.ui.Explain.periodOvulation(8, 4).startsWith("Give or take 4 days: how much your last 8 cycles vary")
+                && app.openring.ui.Explain.periodOvulation(2, 5).contains("a typical spread of 2.6 days")
+                && app.openring.ui.Explain.periodVary(4).startsWith("Vary by: the standard deviation of your 4 cycles"));
     }
 
     /** Issue #251, phase 1a: the Watch check's report, names, the 2 byte rule, the length limit, the demo and the ring lock. */
