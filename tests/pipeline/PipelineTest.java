@@ -4636,6 +4636,19 @@ public class PipelineTest {
         Analyzer.run(c, null);
         check("#58 a second run changes nothing", days58(db).equals(refDays) && nights58(db).equals(refNights), diff(days58(db), refDays));
 
+        // review of #287: without that, boot 2 losing its dates analyses only its own days (#256), so a stale day far
+        // back stays until Re analyse all, which removes it
+        c = twoBoots58("openring58-far", 0);
+        Analyzer.run(c, null);
+        db = Db.get(c);
+        String far = LocalDate.parse(refDays.firstKey()).minusDays(1).toString();
+        staleCopy(db, refDays.firstKey(), far);
+        moveAnchor(db, 2, T2_58, 1300000000L - T2_58);
+        Analyzer.run(c, null);
+        check("#256 boot 2 loses its dates: a stale day far back is not visited, it stays", days58(db).containsKey(far), keys(days58(db)));
+        Analyzer.runAll(c, null);
+        check("#256 then Re analyse all: the stale day far back is removed", !days58(db).containsKey(far), keys(days58(db)));
+
         // 3. dating not complete yet: the newest boot's time record cannot be used for now (a sync cut
         // off before its phone anchor), so its events wait undated. Their days are not removed.
         c = twoBoots58("openring58-wait", 0);
