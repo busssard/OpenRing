@@ -26,7 +26,7 @@ Not affiliated with Oura, not a medical device.
 ## What it does
 
 * Sleep: stages, a night timeline with every wake up, your last 30 nights and your average night.
-  You choose how detailed the sleep chart is; the numbers stay the same
+  You choose how detailed the sleep chart is; the numbers stay the same.
 * Sleep, readiness and activity scores, each with the parts it is made of
 * Heart rate through the day, HRV, skin temperature, blood oxygen and their trends
 * Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be
