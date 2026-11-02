@@ -41,6 +41,12 @@ public final class MainActivity extends Activity implements RingManager.Listener
     private DayData data;
     private int loadToken;
     private boolean askedPermissions;
+    /** Sync asked for Bluetooth access; Android no longer asks; its last answer was a refusal without explanation (issue #186). */
+    private boolean syncAsked, permissionBlocked, quietDenial;
+    /** {@code core/KeyState} of the saved ring key, read in onResume (issue #199); readable in demo mode. */
+    private int keyState = app.openring.core.KeyState.READABLE;
+    /** Screen test, demo mode only: the status line of a saved key this phone cannot read (issue #199); never the ring. */
+    private boolean previewUnreadable;
     /** True until the person picks a date: the screen then follows the newest day with data. */
     private boolean autoDate = true;
 
@@ -61,6 +67,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
             String d = b.getString("date");
             if (d != null) date = LocalDate.parse(d);
             autoDate = b.getBoolean("auto", true);
+            // a turn of the phone while Android's dialog is open keeps the Sync tap's answer (review of #279)
+            syncAsked = b.getBoolean("syncAsked", false);
+            permissionBlocked = b.getBoolean("permissionBlocked", false);
+            quietDenial = b.getBoolean("quietDenial", false);
         } else {
             // only on a fresh start: a turned screen keeps its tab and date and does not start
             // the demo or open Settings again (issue #29)
@@ -205,7 +215,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * (boolean) opens the full last worn text and How it works (issue #191), finder_blink (boolean) the demo's
      * Make it blink (issue #192; the demo never connects), live (boolean, demo mode
      * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185), left_out
-     * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254).
+     * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254),
+     * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -229,6 +240,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("live", false) && Prefs.of(this).demo()) live(i.getBooleanExtra("live_spo2", false));
         // screen test: a left out time in the demo (issue #254); Analyzer.leaveOutDemo writes only into the demo file
         if (i.getBooleanExtra("left_out", false) && Prefs.of(this).demo()) leftOutDemo();
+        // screen test: the status line of a saved key this phone cannot read (issue #199), demo mode only
+        previewUnreadable = i.getBooleanExtra("key_unreadable", false) && Prefs.of(this).demo();
         // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
         // demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
@@ -402,7 +415,15 @@ public final class MainActivity extends Activity implements RingManager.Listener
             autoDate = true;
             date = LocalDate.now();
         }
+        // the demo is on now: its status line (the key_unreadable screen test, review of #281)
+        readKeyState(Prefs.of(this));
+        updateStatus();
         load();
+    }
+
+    /** {@link #keyState}: one decrypt; in demo mode readable, or unreadable for the key_unreadable screen test (issue #199). */
+    void readKeyState(Prefs prefs) {
+        keyState = prefs.demo() ? (previewUnreadable ? app.openring.core.KeyState.UNREADABLE : app.openring.core.KeyState.READABLE) : prefs.keyState();
     }
 
     @Override
@@ -411,25 +432,34 @@ public final class MainActivity extends Activity implements RingManager.Listener
         out.putInt("tab", tab);
         out.putString("date", date.toString());
         out.putBoolean("auto", autoDate);
+        out.putBoolean("syncAsked", syncAsked);
+        out.putBoolean("permissionBlocked", permissionBlocked);
+        out.putBoolean("quietDenial", quietDenial);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         Prefs prefs = Prefs.of(this);
+        // read once per resume, before a demo that is still prepared returns (review of #281)
+        readKeyState(prefs);
         if (preparingDemo) return;
-        // a pairing whose key page the person has not left yet opens there (issue #218)
-        if (!prefs.demo() && (!prefs.setupDone() || !prefs.hasKey() || prefs.pairUnseen() != null)) {
+        // a pairing whose key page the person has not left yet opens there (issue #218); a saved key this phone cannot
+        // read keeps this screen, the status line says so (issue #199)
+        if (app.openring.core.KeyState.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null)) {
             startActivity(new Intent(this, SetupActivity.class));
             return;
         }
         // a grant clears a remembered refusal, so a permission Android takes back later asks afresh (issue #140)
         if (!prefs.demo()) Permissions.remember(this);
+        // allowed in the app's settings after Sync found it blocked: that sync starts now, also right after a recent one (#186)
+        boolean allowedNow = !prefs.demo() && permissionBlocked && Permissions.granted(this);
+        if (!prefs.demo() && Permissions.granted(this)) permissionBlocked = quietDenial = false;
         if (!prefs.demo() && !Permissions.granted(this) && !askedPermissions) {
             askedPermissions = true;
             Permissions.request(this);
         }
-        SyncJob.schedule(this);
+        SyncJob.schedule(this, keyState);
         // the automatic backups' daily job, and the check of a copy made before an update (issue #242)
         app.openring.sync.BackupJob.schedule(this);
         RingManager.get(this).addListener(this);
@@ -437,7 +467,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         updateStatus();
         load();
         boolean recent = app.openring.core.BackgroundJob.recent(System.currentTimeMillis() / 1000, prefs.lastSync(), prefs.lastAttempt());
-        if (!prefs.demo() && !recent && !RingManager.get(this).busy() && Permissions.granted(this)) SyncService.start(this);
+        if (!prefs.demo() && app.openring.core.KeyState.syncs(keyState) && (!recent || allowedNow) && !RingManager.get(this).busy() && Permissions.granted(this))
+            SyncService.start(this);
     }
 
     @Override
@@ -671,8 +702,20 @@ public final class MainActivity extends Activity implements RingManager.Listener
         return v;
     }
 
+    /** The status line's tap while it says the saved key cannot be read: Setup (issue #199); never in demo mode. */
+    private final View.OnClickListener enterKey = new View.OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            if (!Prefs.of(MainActivity.this).demo() && !RingManager.get(MainActivity.this).busy()) enterKeyAgain();
+        }
+    };
+
     void updateStatus() {
         RingManager m = RingManager.get(this);
+        // only the line about an unreadable key is a button (TalkBack announces it as one, review of #281)
+        boolean tap = !m.busy() && keyState == app.openring.core.KeyState.UNREADABLE;
+        statusStrip.setOnClickListener(tap ? enterKey : null);
+        statusStrip.setClickable(tap);
         boolean busy = m.busy();
         String err = Prefs.of(this).lastSyncError();
         if (busy) {
@@ -683,6 +726,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
             statusBar.setVisibility(View.VISIBLE);
             statusBar.setIndeterminate(pr < 0);
             if (pr >= 0) statusBar.setProgress((int) (pr * 1000));
+        } else if (keyState == app.openring.core.KeyState.UNREADABLE) {
+            statusStrip.setVisibility(View.VISIBLE);
+            statusText.setText(app.openring.core.KeyState.STATUS);
+            statusText.setTextColor(Ui.WARN);
+            statusBar.setVisibility(View.GONE);
         } else if (err != null) {
             statusStrip.setVisibility(View.VISIBLE);
             statusText.setText(app.openring.core.SyncError.plain(err)); // raw text stays in the data check (issue #47)
@@ -697,7 +745,37 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
-        if (Permissions.granted(this) && !RingManager.get(this).busy() && Prefs.of(this).lastSync() == 0) SyncService.start(this);
+        if (Permissions.granted(this) && app.openring.core.KeyState.syncs(keyState) && !RingManager.get(this).busy() && Prefs.of(this).lastSync() == 0)
+            SyncService.start(this);
+        if (Prefs.of(this).demo()) return;
+        // the same rule as Find my ring: a refusal after an earlier one, without explanation, means Android no longer asks (#140, #186)
+        app.openring.core.PermissionAsk.Answer a = Permissions.answer(this, perms, results, quietDenial);
+        boolean fromSync = syncAsked;
+        syncAsked = false;
+        if (!fromSync) return;
+        quietDenial = a.quiet;
+        permissionBlocked = a.blocked;
+        if (a.blocked) askSettings();
+    }
+
+    /** Setup at "Connect your ring", for a saved key this phone cannot read (issue #199); the saved key stays until a new one works. */
+    void enterKeyAgain() {
+        startActivity(new Intent(this, SetupActivity.class));
+    }
+
+    /** Android no longer shows its dialog: the way to the app's settings, where Bluetooth access is switched on (issue #186). */
+    void askSettings() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Bluetooth access")
+                .setMessage("Sync needs Bluetooth access to reach your ring. " + app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
+                .setPositiveButton(app.openring.core.PermissionAsk.SETTINGS_BUTTON, new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        Permissions.openSettings(MainActivity.this);
+                    }
+                })
+                .setNegativeButton("Not now", null)
+                .show();
     }
 
     @Override
@@ -737,7 +815,26 @@ public final class MainActivity extends Activity implements RingManager.Listener
             android.widget.Toast.makeText(this, "This is demo data. Leave the demo in Settings to sync.", android.widget.Toast.LENGTH_LONG).show();
             return;
         }
+        if (keyState == app.openring.core.KeyState.UNREADABLE) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle(app.openring.core.KeyState.SYNC_TITLE)
+                    .setMessage(app.openring.core.KeyState.SYNC_TEXT)
+                    .setPositiveButton(app.openring.core.KeyState.BUTTON, new android.content.DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(android.content.DialogInterface d, int w) {
+                            enterKeyAgain();
+                        }
+                    })
+                    .setNegativeButton("Not now", null)
+                    .show();
+            return;
+        }
         if (!Permissions.granted(this)) {
+            if (permissionBlocked) {
+                askSettings();
+                return;
+            }
+            syncAsked = true;
             Permissions.request(this);
             return;
         }

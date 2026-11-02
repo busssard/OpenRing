@@ -725,7 +725,34 @@ public final class Db extends SQLiteOpenHelper {
         long seen = kvLong("event_count", -1);
         if (seen < 0) return false;
         long undated = undatedCount();
-        return undated > 0 && undated == eventCount() - seen;
+        return allNew(undated, eventCount(), seen);
+    }
+
+    /** The rule of {@link #undatedAllNew}: {@code seen} is the event count of the last dating, -1 when none ran. */
+    public static boolean allNew(long undated, long events, long seen) {
+        return seen >= 0 && undated > 0 && undated == events - seen;
+    }
+
+    /** What the Ring card in Settings shows: stored events, undated events and whether all of those are new. */
+    public static final class Counts {
+        public final long events, undated;
+        public final boolean allNew;
+
+        Counts(long events, long undated, boolean allNew) {
+            this.events = events;
+            this.undated = undated;
+            this.allNew = allNew;
+        }
+    }
+
+    /**
+     * The Ring card's numbers with each count read once (issue #198: Settings read the events table up to four times on
+     * the screen thread). The same numbers as {@link #eventCount}, {@link #undatedCount} and {@link #undatedAllNew}; slow
+     * with years of history (the undated count reads every event), so callers run it in the background.
+     */
+    public Counts counts() {
+        long events = eventCount(), undated = undatedCount();
+        return new Counts(events, undated, allNew(undated, events, kvLong("event_count", -1)));
     }
 
     public long undatedCount() {

@@ -489,6 +489,42 @@ public class CoreTest {
         return NightAnalyzer.analyze(in);
     }
 
+    // ------------------------------------------------------------------ Setup and Sync once Android no longer asks (issue #186)
+
+    static void permissionSettings() {
+        final int G = PermissionAsk.GRANTED, D = PermissionAsk.DENIED;
+        String[] need = {"SCAN", "CONNECT"};
+        String[] asked = {"SCAN", "CONNECT", "NOTIFY"};
+        boolean[] none = {false, false}, both = {true, true};
+        int[] refused = {D, D, D};
+        // Setup's "Allow", tapped three times on a fresh install, refused each time
+        PermissionAsk.Answer a = PermissionAsk.answer(false, asked, refused, need, both, false, false);
+        check("#186: the first refusal keeps today's toast (Android still asks)", !a.blocked && a.denied && !a.quiet);
+        a = PermissionAsk.answer(false, asked, refused, need, none, a.denied, a.quiet);
+        check("#186: refused again, Android no longer explains it: the way to the app's settings", a.blocked);
+        a = PermissionAsk.answer(false, asked, refused, need, none, a.denied, a.quiet);
+        check("#186: and every tap after that stays there", a.blocked);
+        // Sync on the main screen after the permission was removed in system settings (refused earlier, remembered)
+        check("#186: Sync after a remembered refusal: the window on the first tap",
+                PermissionAsk.answer(false, asked, refused, need, none, true, false).blocked);
+        // refusals from before the app remembered them: two quiet answers in a row
+        a = PermissionAsk.answer(false, asked, refused, need, none, false, false);
+        check("#186: one quiet answer without a remembered refusal is not enough (a dialog closed with Back)", !a.blocked && a.quiet);
+        check("#186: the second quiet answer opens the way to the settings",
+                PermissionAsk.answer(false, asked, refused, need, none, a.denied, a.quiet).blocked);
+        a = PermissionAsk.answer(true, asked, new int[] {G, G, G}, need, none, true, true);
+        check("#186: allowed in the settings: setup goes on, the refusal is forgotten", !a.blocked && !a.denied);
+        check("#186: an interrupted request (empty answer) never blocks",
+                !PermissionAsk.answer(false, new String[0], new int[0], need, none, true, true).blocked);
+        String newer = PermissionAsk.settingsText(31), older = PermissionAsk.settingsText(30);
+        check("#186: texts name the permission as Android shows it", newer.endsWith("allow Nearby devices.") && older.endsWith("allow Location.")
+                && PermissionAsk.settingsText(34).equals(newer));
+        for (String x : new String[] {newer, older, PermissionAsk.SETTINGS_BUTTON}) {
+            check("#186: plain text without dashes: " + x, !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014") && x.length() < 100);
+        }
+        check("#186: the button says what it does", "Open app settings".equals(PermissionAsk.SETTINGS_BUTTON));
+    }
+
     static void pattern() {
         app.openring.core.analysis.SleepPattern p = new app.openring.core.analysis.SleepPattern();
         // night 1: 23:00 to 07:00 all light; night 2: 00:00 to 06:00 all deep
@@ -860,7 +896,43 @@ public class CoreTest {
         }
     }
 
+    /** Issue #199: a saved key this phone cannot read is not "no key", says so plainly and is never retried. */
+    static void keyState199() {
+        eq("key state: nothing stored", KeyState.of(false, false), KeyState.NONE);
+        eq("key state: nothing stored, nothing read", KeyState.of(false, true), KeyState.NONE);
+        eq("key state: stored and read", KeyState.of(true, true), KeyState.READABLE);
+        eq("key state: stored, not read", KeyState.of(true, false), KeyState.UNREADABLE);
+        // the main screen opens Setup by itself as before, never for an unreadable key
+        check("key state: not set up opens Setup", KeyState.opensSetup(false, false, KeyState.READABLE, false));
+        check("key state: no key opens Setup", KeyState.opensSetup(false, true, KeyState.NONE, false));
+        check("key state: a key page not left opens Setup", KeyState.opensSetup(false, true, KeyState.READABLE, true));
+        check("key state: a readable key stays", !KeyState.opensSetup(false, true, KeyState.READABLE, false));
+        check("key state: an unreadable key stays on the main screen", !KeyState.opensSetup(false, true, KeyState.UNREADABLE, false));
+        check("key state: an unreadable key never opens the key page", !KeyState.opensSetup(false, true, KeyState.UNREADABLE, true));
+        check("key state: not set up with an unreadable key opens Setup", KeyState.opensSetup(false, false, KeyState.UNREADABLE, false));
+        check("key state: demo never opens Setup", !KeyState.opensSetup(true, false, KeyState.NONE, true));
+        check("key state: only a readable key syncs", KeyState.syncs(KeyState.READABLE) && !KeyState.syncs(KeyState.NONE) && !KeyState.syncs(KeyState.UNREADABLE));
+        eq("key state: no key text as before", KeyState.missing(false), "No ring key saved. Finish setup first.");
+        eq("key state: unreadable text", KeyState.missing(true), KeyState.UNREADABLE_RAW);
+        eq("key state: no key kind", SyncError.kind(KeyState.missing(false)), SyncError.Kind.NO_KEY);
+        eq("key state: unreadable kind", SyncError.kind(KeyState.missing(true)), SyncError.Kind.KEY_UNREADABLE);
+        eq("key state: unreadable plain for a sync", SyncError.plain(KeyState.missing(true)), KeyState.PLAIN);
+        eq("key state: unreadable plain for an action", SyncError.plain(KeyState.missing(true), SyncError.Task.ACTION), KeyState.PLAIN);
+        check("key state: an unreadable key is not retried", !SyncError.retryable(KeyState.missing(true), true));
+        check("key state: a failed sync with an unreadable key gets a notice", KeyState.PLAIN.equals(SyncError.failureNotice(false, KeyState.missing(true))));
+        for (String x : KeyState.texts()) {
+            check("key state: plain, no dash as punctuation: " + x, !x.isEmpty() && !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014"));
+        }
+        eq("key state: the backup reason (review of #281)", Backups.reason(Backups.KEY), "this phone cannot read the saved ring key, enter it again in Setup");
+        check("key state: the backup reason is not the folder's", !Backups.reason(Backups.KEY).equals(Backups.reason(Backups.WRITE)));
+        check("key state: the manual backup sentence says what to do", KeyState.BACKUP_TEXT.contains("Enter the key again"));
+        check("key state: the plain sentences say what to do", KeyState.PLAIN.contains("enter the key again") && KeyState.STATUS.contains("Tap here")
+                && KeyState.SETUP_TEXT.contains("saved key stays") && KeyState.SYNC_TEXT.contains("saved key stays"));
+    }
+
     public static void main(String[] args) throws Exception {
+        permissionSettings();
+        keyState199();
         protocol();
         history();
         bundles();
@@ -888,6 +960,8 @@ public class CoreTest {
         syncError();
         texts();
         unitTexts();
+        scoreLadder();
+        movementShares();
         drafts();
         oneRun();
         backups242();
@@ -918,6 +992,7 @@ public class CoreTest {
         setupTasks();
         leftOut254();
         watchCheck251();
+        modeRestore221();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1422,6 +1497,73 @@ public class CoreTest {
         eq("scroll keep: same height stays", ScrollKeep.after(900, 100, 500, 500), 900);
         eq("scroll keep: card above shrinks to nothing", ScrollKeep.after(20, 0, 20, 0), 0);
         eq("scroll keep: a negative start is not kept", ScrollKeep.after(-5, 100, 500, 540), 0);
+    }
+
+    /** One score ladder: the Today sentence agrees with the label and colour of every score (issue #200). */
+    static void scoreLadder() {
+        eq("ladder: 85, 70, 60", Scores.OPTIMAL + "," + Scores.GOOD + "," + Scores.FAIR, "85,70,60");
+        boolean allAgree = true, verdictAgrees = true;
+        for (int s = 0; s <= 100; s++) {
+            String label = Scores.rating(s);
+            boolean low = label.equals("Fair") || label.equals("Pay attention");
+            String line = Texts.contributorLine("HRV balance", "Resting heart rate", s, Locale.US);
+            if (Scores.needsAttention(s) != low || line.contains("needs attention") != low) allAgree = false;
+            String v = Scores.verdict(s);
+            if ((label.equals("Optimal") || label.equals("Good")) ? !v.equals(label) : !v.equals("Pay attention")) verdictAgrees = false;
+        }
+        check("ladder: needs attention exactly for Fair and Pay attention, 0 to 100", allAgree);
+        check("ladder: verdict agrees with the label", verdictAgrees);
+        for (int s = 70; s <= 74; s++) check("ladder: " + s + " is Good and needs no attention", Scores.rating(s).equals("Good") && !Scores.needsAttention(s));
+        check("ladder: 69 needs attention", Scores.needsAttention(69) && Scores.rating(69).equals("Fair"));
+        check("ladder: no data never needs attention", !Scores.needsAttention(Double.NaN));
+        eq("today line: with the weakest", Texts.contributorLine("HRV balance", "Resting heart rate", 69, Locale.US),
+                "HRV balance is your strongest contributor, while resting heart rate needs attention.");
+        eq("today line: 72 is Good, no attention (issue #200)", Texts.contributorLine("HRV balance", "Resting heart rate", 72, Locale.US),
+                "HRV balance is your strongest contributor.");
+        eq("today line: an abbreviation keeps its capitals", Texts.contributorLine("Sleep", "HRV balance", 60, Locale.US),
+                "Sleep is your strongest contributor, while HRV balance needs attention.");
+        eq("today line: only the first letter is lowered", Texts.contributorLine("HRV balance", "Previous day activity", 50, Locale.US),
+                "HRV balance is your strongest contributor, while previous day activity needs attention.");
+        eq("today line: a one letter label", Texts.contributorLine("Sleep", "X", 50, Locale.US), "Sleep is your strongest contributor, while x needs attention.");
+        eq("today line: no contributor", Texts.contributorLine(null, null, Double.NaN, Locale.US), "");
+    }
+
+    /** The line under Daily movement says what its percentages are shares of (issue #212). */
+    static void movementShares() {
+        eq("movement: ring on all day", Texts.movementShares(1440, 0, null, false), "The percentages are of the time the ring was on (24h 0m).");
+        eq("movement: not worn not stored", Texts.movementShares(1440, Double.NaN, null, false), "The percentages are of the time the ring was on (24h 0m).");
+        eq("movement: under a minute off", Texts.movementShares(1440, 0.4, null, false), "The percentages are of the time the ring was on (24h 0m).");
+        eq("movement: ring off for a while", Texts.movementShares(1270, 170, null, false),
+                "The percentages are of the time the ring was on (21h 10m). Not worn: 2h 50m.");
+        eq("movement: short times", Texts.movementShares(45, 15, null, false), "The percentages are of the time the ring was on (45 min). Not worn: 15 min.");
+        eq("movement: a day still running", Texts.movementShares(370, 60, "14:05", false),
+                "The percentages are of the time the ring was on up to 14:05 (6h 10m). Not worn: 1h 0m.");
+        eq("movement: with a left out time", Texts.movementShares(1270, 170, null, true),
+                "The percentages are of the time the ring was on (21h 10m). Not worn or left out: 2h 50m.");
+        // a day analysed at 14:05: the 595 minutes after it were stored as without values, they are not "not worn"
+        double end = 86400, until = 86400 - 595 * 60;
+        eq("not worn so far: future minutes dropped", Texts.notWornSoFar(655, until, 0, end), 60.0);
+        eq("not worn so far: an ended day keeps its minutes", Texts.notWornSoFar(170, Double.NaN, 0, end), 170.0);
+        eq("not worn so far: analysed after the end", Texts.notWornSoFar(170, end + 5, 0, end), 170.0);
+        eq("not worn so far: never below 0", Texts.notWornSoFar(100, until, 0, end), 0.0);
+        check("not worn so far: not stored stays unknown", Double.isNaN(Texts.notWornSoFar(Double.NaN, until, 0, end)));
+        // analysed at 14:05:20 with a value at 30 s into every minute before: the minute it was in has no value yet,
+        // still no Not worn (review of #282)
+        double start = 1_793_570_400, at = start + 845 * 60 + 20;
+        TS full = new TS();
+        for (double t = start + 30; t < at; t += 60) full.add(t, 1.2);
+        Wellness.Day run = Wellness.day("2026-11-01", start, start + 86400, java.time.ZoneOffset.UTC, full, new ArrayList<double[]>(), 70, 1600, at);
+        eq("not worn so far: the minute of the analysis is stored without a value", (int) Math.round(run.nonWearMin), 595);
+        eq("not worn so far: unaligned analysis moment, ring on all the time", Texts.notWornSoFar(run.nonWearMin, run.totalUntil, start, start + 86400), 0.0);
+        eq("not worn so far: unaligned, the line has no Not worn",
+                Texts.movementShares(run.inactiveMin, Texts.notWornSoFar(run.nonWearMin, run.totalUntil, start, start + 86400), "14:05", false),
+                "The percentages are of the time the ring was on up to 14:05 (14h 5m).");
+        // the rows plus not worn are the day, minute by minute (Wellness, issues #112, #212)
+        TS met = new TS();
+        for (int m = 0; m < 600; m++) met.add(m * 60 + 10, m < 300 ? 1.2 : 2.0);
+        Wellness.Day w = Wellness.day("2026-11-01", 0, 86400, java.time.ZoneOffset.UTC, met, new ArrayList<double[]>(), 70, 1600, 1e12);
+        eq("movement: rows plus not worn are the whole day", (int) Math.round(w.highMin + w.mediumMin + w.lowMin + w.inactiveMin + w.restMin + w.nonWearMin), 1440);
+        eq("movement: not worn from the minutes without values", (int) Math.round(w.nonWearMin), 840);
     }
 
     /** One way to write the same quantity everywhere (issues #99, #163, #165). */
@@ -5972,5 +6114,196 @@ public class CoreTest {
             LeftOut.activityLine(5400), LeftOut.bringBackText(a, z), app.openring.ui.Explain.LEFT_OUT, l.problem(1, 0, 0), l.problem(9e9, 1e10, 0), l.problem(1000, 2000, 1e10)}) {
             check("left out texts: no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("–") && !t.contains("—") && !t.isEmpty());
         }
+    }
+
+    /** Issue #221: the phone's pending measurement modes, as Prefs keeps them. */
+    static final class ModeStore implements ModeRestore.Store {
+        final Map<Integer, Integer> m = new HashMap<Integer, Integer>();
+        int writes;
+
+        public int pending(int feature) {
+            Integer v = m.get(feature);
+            return v == null ? ModeRestore.NONE : v;
+        }
+
+        public void setPending(int feature, int mode) {
+            writes++;
+            if (mode < 0) m.remove(feature);
+            else m.put(feature, mode);
+        }
+    }
+
+    /** Issue #221: a ring that keeps its modes, and can drop the link or refuse. */
+    static final class ModeRing implements ModeRestore.Ring {
+        final Map<Integer, Integer> mode = new HashMap<Integer, Integer>();
+        final Set<Integer> refuse = new HashSet<Integer>(), throwOn = new HashSet<Integer>();
+        boolean linkDown;
+        final List<String> sent = new ArrayList<String>();
+
+        public boolean setMode(int feature, int m) throws IOException {
+            sent.add(feature + ":" + m);
+            if (linkDown || throwOn.contains(feature)) throw new IOException("the ring disconnected");
+            if (refuse.contains(feature)) return false;
+            mode.put(feature, m);
+            return true;
+        }
+
+        int[] status(int feature) {
+            Integer m = mode.get(feature);
+            return m == null ? null : new int[] {m, 0, 0, 0};
+        }
+    }
+
+    /** Live's start as RingManager does it: keep the previous modes, then switch for the session. */
+    static void liveStart(ModeRing ring, ModeStore store, boolean spo2) throws Exception {
+        int[] fs = ring.status(Protocol.FEATURE_DAYTIME_HR);
+        ModeRestore.remember(store, Protocol.FEATURE_DAYTIME_HR, fs);
+        if (fs != null && fs[0] == Protocol.MODE_OFF) ring.setMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_AUTOMATIC);
+        ring.setMode(Protocol.FEATURE_DAYTIME_HR, Protocol.MODE_CONNECTED_LIVE);
+        if (spo2) {
+            ModeRestore.remember(store, Protocol.FEATURE_SPO2, ring.status(Protocol.FEATURE_SPO2));
+            ring.setMode(Protocol.FEATURE_SPO2, Protocol.MODE_REQUESTED); // live refused on Ring 4, requested works
+        }
+    }
+
+    static void modeRestore221() throws Exception {
+        final List<String> log = new ArrayList<String>();
+        ModeRestore.Log lg = new ModeRestore.Log() {
+            public void log(String line) {
+                log.add(line);
+            }
+        };
+        int HR = Protocol.FEATURE_DAYTIME_HR, SPO2 = Protocol.FEATURE_SPO2;
+        // the person's mode: Settings only sends Off or automatic; requested and live are Live's leftovers
+        eq("221 chosen: off stays off", ModeRestore.chosen(new int[] {0, 0, 0, 0}), Protocol.MODE_OFF);
+        eq("221 chosen: automatic", ModeRestore.chosen(new int[] {1, 0, 0, 0}), Protocol.MODE_AUTOMATIC);
+        eq("221 chosen: a stuck requested counts as automatic", ModeRestore.chosen(new int[] {2, 0, 0, 0}), Protocol.MODE_AUTOMATIC);
+        eq("221 chosen: live counts as automatic", ModeRestore.chosen(new int[] {3, 1, 0, 0}), Protocol.MODE_AUTOMATIC);
+        eq("221 chosen: unreadable counts as automatic", ModeRestore.chosen(null), Protocol.MODE_AUTOMATIC);
+        eq("221 chosen: empty status counts as automatic", ModeRestore.chosen(new int[0]), Protocol.MODE_AUTOMATIC);
+        eq("221 previous: a pending mode wins over a stuck requested", ModeRestore.previous(Protocol.MODE_OFF, new int[] {2, 0, 0, 0}), Protocol.MODE_OFF);
+        eq("221 previous: no pending gives the chosen mode", ModeRestore.previous(ModeRestore.NONE, new int[] {0, 0, 0, 0}), Protocol.MODE_OFF);
+
+        // nothing pending: nothing is sent, nothing written
+        ModeRing ring = new ModeRing();
+        ModeStore store = new ModeStore();
+        eq("221 none pending: none left", ModeRestore.restorePending(ring, store, lg), 0);
+        eq("221 none pending: nothing sent", ring.sent.size(), 0);
+        eq("221 none pending: nothing written", store.writes, 0);
+
+        // a clean session: daytime heart rate Off comes back Off (not automatic), blood oxygen back to automatic
+        ring.mode.put(HR, Protocol.MODE_OFF);
+        ring.mode.put(SPO2, Protocol.MODE_AUTOMATIC);
+        liveStart(ring, store, true);
+        eq("221 clean: kept daytime heart rate off before the change", store.pending(HR), Protocol.MODE_OFF);
+        eq("221 clean: kept blood oxygen automatic", store.pending(SPO2), Protocol.MODE_AUTOMATIC);
+        eq("221 clean: ring in live and requested while measuring", ring.mode.get(HR) + "/" + ring.mode.get(SPO2), "3/2");
+        eq("221 clean: none left", ModeRestore.restorePending(ring, store, lg), 0);
+        eq("221 clean: daytime heart rate off again", ring.mode.get(HR), Protocol.MODE_OFF);
+        eq("221 clean: blood oxygen automatic again", ring.mode.get(SPO2), Protocol.MODE_AUTOMATIC);
+        eq("221 clean: nothing pending", store.m.size(), 0);
+        check("221 clean: the log says what was put back", log.contains("blood oxygen put back to automatic") && log.contains("daytime heart rate put back to off"));
+
+        // without blood oxygen only daytime heart rate is kept
+        ring = new ModeRing();
+        store = new ModeStore();
+        ring.mode.put(HR, Protocol.MODE_AUTOMATIC);
+        ring.mode.put(SPO2, Protocol.MODE_OFF);
+        liveStart(ring, store, false);
+        eq("221 no blood oxygen: SpO2 not kept", store.pending(SPO2), ModeRestore.NONE);
+        ModeRestore.restorePending(ring, store, lg);
+        eq("221 no blood oxygen: SpO2 never sent", ring.sent.contains(SPO2 + ":" + Protocol.MODE_OFF) || ring.sent.contains(SPO2 + ":" + Protocol.MODE_AUTOMATIC), false);
+        eq("221 no blood oxygen: SpO2 left as it was", ring.mode.get(SPO2), Protocol.MODE_OFF);
+
+        // the link drops: everything stays pending, the next connection (sync) puts it back
+        ring = new ModeRing();
+        store = new ModeStore();
+        ring.mode.put(HR, Protocol.MODE_AUTOMATIC);
+        ring.mode.put(SPO2, Protocol.MODE_OFF);
+        liveStart(ring, store, true);
+        ring.linkDown = true;
+        log.clear();
+        eq("221 link drop: both left", ModeRestore.restorePending(ring, store, lg), 2);
+        eq("221 link drop: blood oxygen still pending off", store.pending(SPO2), Protocol.MODE_OFF);
+        check("221 link drop: the log says the next connection tries again", log.size() == 2 && log.get(1).contains("next connection tries again")
+                && log.get(1).contains("the ring disconnected"));
+        // out of reach the ring falls back from live to automatic by itself, SpO2 stays requested
+        ring.mode.put(HR, Protocol.MODE_AUTOMATIC);
+        ring.linkDown = false;
+        ring.sent.clear();
+        eq("221 next sync: none left", ModeRestore.restorePending(ring, store, lg), 0);
+        eq("221 next sync: blood oxygen off again", ring.mode.get(SPO2), Protocol.MODE_OFF);
+        eq("221 next sync: daytime heart rate automatic", ring.mode.get(HR), Protocol.MODE_AUTOMATIC);
+        eq("221 next sync: nothing pending", store.m.size(), 0);
+        eq("221 next sync: one request each", ring.sent.size(), 2);
+        eq("221 a later sync sends nothing", ModeRestore.restorePending(ring, store, lg) + "/" + ring.sent.size(), "0/2");
+
+        // a restore that throws for daytime heart rate does not stop the blood oxygen restore
+        ring = new ModeRing();
+        store = new ModeStore();
+        store.setPending(HR, Protocol.MODE_OFF);
+        store.setPending(SPO2, Protocol.MODE_AUTOMATIC);
+        ring.throwOn.add(HR);
+        ring.mode.put(SPO2, Protocol.MODE_REQUESTED);
+        eq("221 throws: one left", ModeRestore.restorePending(ring, store, lg), 1);
+        eq("221 throws: blood oxygen still put back", ring.mode.get(SPO2), Protocol.MODE_AUTOMATIC);
+        eq("221 throws: blood oxygen cleared", store.pending(SPO2), ModeRestore.NONE);
+        eq("221 throws: daytime heart rate stays pending", store.pending(HR), Protocol.MODE_OFF);
+
+        // a refused restore stays pending too, and a runtime error in the ring code counts as not put back
+        ring = new ModeRing();
+        store = new ModeStore();
+        store.setPending(SPO2, Protocol.MODE_OFF);
+        ring.refuse.add(SPO2);
+        log.clear();
+        eq("221 refused: left", ModeRestore.restorePending(ring, store, lg), 1);
+        check("221 refused: logged", log.get(0).contains("did not accept"));
+        eq("221 refused: still pending", store.pending(SPO2), Protocol.MODE_OFF);
+        eq("221 runtime error: left", ModeRestore.restorePending(new ModeRestore.Ring() {
+            public boolean setMode(int feature, int mode) {
+                throw new IllegalStateException("closed");
+            }
+        }, store, lg), 1);
+        eq("221 runtime error: still pending", store.pending(SPO2), Protocol.MODE_OFF);
+
+        // the next Live session finds a stuck requested mode with a pending restore that failed: the pending one wins
+        ring = new ModeRing();
+        store = new ModeStore();
+        ring.mode.put(HR, Protocol.MODE_AUTOMATIC);
+        ring.mode.put(SPO2, Protocol.MODE_OFF);
+        liveStart(ring, store, true);
+        ring.linkDown = true;
+        ModeRestore.restorePending(ring, store, lg);
+        ring.linkDown = false;
+        ring.refuse.add(SPO2); // the start restore of the next session is refused
+        ModeRestore.restorePending(ring, store, lg);
+        eq("221 stuck: the ring still in requested", ring.mode.get(SPO2), Protocol.MODE_REQUESTED);
+        ring.refuse.clear();
+        liveStart(ring, store, true);
+        eq("221 stuck: requested not taken as the previous mode", store.pending(SPO2), Protocol.MODE_OFF);
+        ModeRestore.restorePending(ring, store, lg);
+        eq("221 stuck: back to off at the end", ring.mode.get(SPO2), Protocol.MODE_OFF);
+        // an older version left requested with nothing pending: back to automatic, never left in requested
+        store = new ModeStore();
+        ring.mode.put(SPO2, Protocol.MODE_REQUESTED);
+        liveStart(ring, store, true);
+        ModeRestore.restorePending(ring, store, lg);
+        eq("221 older version: requested goes back to automatic", ring.mode.get(SPO2), Protocol.MODE_AUTOMATIC);
+
+        // Settings: the person's choice wins over a pending restore, only for that measurement
+        store = new ModeStore();
+        store.setPending(HR, Protocol.MODE_OFF);
+        store.setPending(SPO2, Protocol.MODE_AUTOMATIC);
+        ModeRestore.replaced(store, HR);
+        eq("221 settings: daytime heart rate no longer pending", store.pending(HR), ModeRestore.NONE);
+        eq("221 settings: blood oxygen still pending", store.pending(SPO2), Protocol.MODE_AUTOMATIC);
+        int w = store.writes;
+        ModeRestore.replaced(store, HR);
+        eq("221 settings: nothing written when nothing pending", store.writes, w);
+        // a factory reset (or a new pairing) drops them all
+        ModeRestore.forget(store);
+        eq("221 forget: nothing pending", store.m.size(), 0);
+        eq("221 features: daytime heart rate and blood oxygen", Arrays.toString(ModeRestore.FEATURES), "[2, 4]");
+        eq("221 names", ModeRestore.modeName(Protocol.MODE_CONNECTED_LIVE) + "," + ModeRestore.modeName(9) + "," + ModeRestore.name(8), "live,mode 9,measurement 8");
     }
 }

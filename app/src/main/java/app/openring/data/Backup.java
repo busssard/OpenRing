@@ -46,12 +46,20 @@ public final class Backup {
     public static void write(Context c, OutputStream os, boolean withHistory) throws IOException {
         Prefs p = Prefs.of(c);
         byte[] key = p.loadKey();
+        if (key == null && p.hasKey()) throw new KeyUnreadable();
         if (key == null) throw new IOException("no ring key saved on this phone");
         File snap = withHistory ? Exporter.snapshot(c) : null;
         try {
             write(p, key, os, snap);
         } finally {
             Exporter.release(snap);
+        }
+    }
+
+    /** A backup refused because a ring key is saved that this phone cannot read (issue #199); nothing was written. */
+    public static final class KeyUnreadable extends IOException {
+        KeyUnreadable() {
+            super("this phone cannot read the saved ring key");
         }
     }
 

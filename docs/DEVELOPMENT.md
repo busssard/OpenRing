@@ -66,7 +66,11 @@ current coverage.
 (`.github/scripts/badge.sh`). The screenshots badge shows *generating* while the emulator runs.
 
 `run_pipeline.sh` downloads sqlite-jdbc and org.json into `tests/.deps/` on its first run (JaCoCo too,
-for the coverage script). It compiles a
+for the coverage script). All three are fixed versions: sqlite-jdbc and JaCoCo are checked by SHA-256,
+org.json is the release tag `JSON_TAG` of stleary/JSON-java with its commit `JSON_COMMIT` (to update,
+change both in `run_pipeline.sh`; an older clone is replaced on the next run). Every folder and file
+the pipeline test creates goes into one run folder under `$TMPDIR` (or `/tmp`) that is removed at the
+end, also after a failure; run with `KEEP_TEST_DIRS=1` to keep it for debugging. It compiles a
 fixed list of `data/` files; when you add a file there that the pipeline needs, add it to the list.
 
 **On Android:** `emulator.yml` runs for pull requests and pushes to `main`. It installs the APK on an
@@ -93,7 +97,7 @@ these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
 (boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd),
 `settings` (opens Settings at a card: `top`, `stages`, `watch`, `screen`, `games`, `backups` or `advanced`; with a card the page gets
-an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened), `finder_blink` (boolean, with `finder`: the demo's Make it blink counting down), `live` (boolean, demo mode only: opens Live with its made up readings), `live_spo2` (boolean, with `live`: blood oxygen on), `left_out` (boolean, demo mode only: leaves out the day before yesterday 13:00 to 17:00 in the demo file, issue #254), `watch` (boolean, demo mode only: opens the Watch check with its made up scan, issue #251), `watch_report` (boolean, with `watch`: picks the made up watch and shows its made up report).
+an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened), `finder_blink` (boolean, with `finder`: the demo's Make it blink counting down), `live` (boolean, demo mode only: opens Live with its made up readings), `live_spo2` (boolean, with `live`: blood oxygen on), `left_out` (boolean, demo mode only: leaves out the day before yesterday 13:00 to 17:00 in the demo file, issue #254), `watch` (boolean, demo mode only: opens the Watch check with its made up scan, issue #251), `watch_report` (boolean, with `watch`: picks the made up watch and shows its made up report), `key_unreadable` (boolean, demo mode only: the main screen's status line for a saved ring key this phone cannot read, issue #199).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.

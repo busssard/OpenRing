@@ -51,6 +51,27 @@ public final class Permissions {
         if (p.permissionDenied() != denied) p.setPermissionDenied(denied);
     }
 
+    /**
+     * The decision after a request came back (the rule of issue #140), with the remembered refusal stored.
+     * {@code quietBefore}: the screen's last answer was a refusal without explanation.
+     */
+    static app.openring.core.PermissionAsk.Answer answer(Activity a, String[] perms, int[] results, boolean quietBefore) {
+        app.openring.core.PermissionAsk.Answer r = app.openring.core.PermissionAsk.answer(granted(a), perms, results, needed(),
+                rationale(a), app.openring.data.Prefs.of(a).permissionDenied(), quietBefore);
+        store(a, r.denied);
+        return r;
+    }
+
+    /** Opens this app's page in Android's settings, where a permission Android no longer asks for is switched on (issue #186). */
+    static void openSettings(Activity a) {
+        try {
+            a.startActivity(new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", a.getPackageName(), null)));
+        } catch (RuntimeException e) {
+            android.widget.Toast.makeText(a, "The app settings did not open. Find them in Settings, Apps.", android.widget.Toast.LENGTH_LONG).show();
+        }
+    }
+
     public static void request(Activity a) {
         // a second request only comes after an answer to the first: a refusal then shows here
         remember(a);

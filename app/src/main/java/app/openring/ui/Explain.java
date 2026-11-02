@@ -108,6 +108,10 @@ public final class Explain {
     /** Find my ring, How it works: the clicks chip in the top bar (issue #191). */
     public static final String FINDER_CLICKS = "Clicks (top right): a click and a short buzz, faster as the signal gets stronger. Tap to switch them off or on.";
 
+    /** Under Daily movement when the ring was off for a while (issue #212). */
+    public static final String NOT_WORN = "Not worn is time outside your sleep without movement values from the ring, for example while "
+            + "it was charging. It is not part of the percentages.";
+
     /**
      * What a left out time does (issue #254): Settings, Advanced, and the Left out cards on Today, Sleep and Activity.
      */

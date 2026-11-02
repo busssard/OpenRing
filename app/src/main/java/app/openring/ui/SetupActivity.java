@@ -28,6 +28,12 @@ public final class SetupActivity extends Activity {
     private ScrollView scroll;
     private int step;
     private String pairedMessage = "Paired";
+    /** Android no longer asks for Bluetooth access, and whether its last answer was a refusal without explanation (issue #186). */
+    private boolean permissionBlocked, quietDenial;
+    /** Opened for a saved key this phone cannot read (issue #199): straight to "Connect your ring", Back returns to the app. */
+    private boolean rekey;
+    /** {@code core/KeyState}, read in onCreate and again in onResume (one decrypt each, review of #281). */
+    private int keyState;
     private static final int RESTORE = 21;
     private TextView restoreStatus;
 
@@ -337,7 +343,13 @@ public final class SetupActivity extends Activity {
         scroll.setFillViewport(true);
         setContentView(scroll);
         step = b == null ? 0 : b.getInt("step", 0);
-        if (b != null) pairedMessage = b.getString("paired", pairedMessage);
+        if (b != null) {
+            pairedMessage = b.getString("paired", pairedMessage);
+            // a turn of the phone keeps the way to the app's settings (review of #279)
+            permissionBlocked = b.getBoolean("permissionBlocked", false);
+            quietDenial = b.getBoolean("quietDenial", false);
+            rekey = b.getBoolean("rekey", false);
+        }
         Object last = getLastNonConfigurationInstance();
         restore = last instanceof Restore ? (Restore) last : new Restore();
         restore.owner = this;
@@ -346,7 +358,14 @@ public final class SetupActivity extends Activity {
         RingManager.get(this).addListener(ringStatus);
         // a pairing whose key page was not left yet, also after Android ended the app (issue #218)
         Prefs pr = Prefs.of(this);
-        if (step != 5 && pr.pairUnseen() != null && pr.hasKey()) {
+        keyState = pr.keyState();
+        if (b == null && !pr.demo() && pr.setupDone() && keyState == app.openring.core.KeyState.UNREADABLE) {
+            // the profile is there already; the saved key stays until a new one works with the ring (issue #199)
+            rekey = true;
+            step = Permissions.granted(this) ? 3 : 1;
+        }
+        // never the key page with a key this phone cannot show (issue #199)
+        if (step != 5 && pr.pairUnseen() != null && keyState == app.openring.core.KeyState.READABLE) {
             step = 5;
             pairedMessage = pr.pairUnseen();
         }
@@ -359,9 +378,20 @@ public final class SetupActivity extends Activity {
         super.onResume();
         // a pairing that ended while this screen was being recreated or covered (issue #218)
         if (pairResult()) return;
+        // back from the app's settings: allowed there, setup goes on; a grant also forgets the refusal (#140, #186)
+        Permissions.remember(this);
+        if (Permissions.granted(this)) {
+            permissionBlocked = quietDenial = false;
+            if (step == 1) {
+                step = afterPermissions();
+                show();
+                return;
+            }
+        }
         Prefs p = Prefs.of(this);
         String unseen = p.pairUnseen();
-        if (step != 5 && p.hasKey() && (unseen != null || step >= 3 && p.setupDone())) {
+        keyState = p.keyState();
+        if (step != 5 && keyState == app.openring.core.KeyState.READABLE && (unseen != null || step >= 3 && p.setupDone())) {
             step = 5;
             if (unseen != null) pairedMessage = unseen;
             show();
@@ -427,6 +457,14 @@ public final class SetupActivity extends Activity {
         super.onSaveInstanceState(out);
         out.putInt("step", step);
         out.putString("paired", pairedMessage);
+        out.putBoolean("permissionBlocked", permissionBlocked);
+        out.putBoolean("quietDenial", quietDenial);
+        out.putBoolean("rekey", rekey);
+    }
+
+    /** The page after Bluetooth access: the profile, or "Connect your ring" when only the key is entered again (issue #199). */
+    int afterPermissions() {
+        return rekey ? 3 : 2;
     }
 
     @Override
@@ -434,6 +472,9 @@ public final class SetupActivity extends Activity {
         if (step == 5) {
             Prefs.of(this).clearPairUnseen();
             startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            finish();
+        } else if (rekey) {
+            // back to the screen that opened it (main screen or Settings) with the saved key as it was (issue #199, review of #281)
             finish();
         } else if (step > 0) {
             step--;
@@ -551,12 +592,31 @@ public final class SetupActivity extends Activity {
 
     void permissions() {
         if (Permissions.granted(this)) {
-            step = 2;
+            step = afterPermissions();
             show();
             return;
         }
         LinearLayout l = page("Bluetooth access", "The app needs permission to find and connect to your ring. On older Android versions this is called location access; "
                 + "the app never reads your location.");
+        if (permissionBlocked) {
+            // Android no longer shows its dialog: only the app's settings can switch it on (issue #186)
+            l.addView(Ui.body(this, app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT)));
+            l.addView(Ui.gap(this, 12));
+            primary(l, app.openring.core.PermissionAsk.SETTINGS_BUTTON, new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Permissions.openSettings(SetupActivity.this);
+                }
+            });
+            // two dialogs closed with Back look the same as a refusal Android no longer asks about: asking stays possible
+            secondary(l, "Try again", new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Permissions.request(SetupActivity.this);
+                }
+            });
+            return;
+        }
         primary(l, "Allow", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -567,10 +627,17 @@ public final class SetupActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
-        if (step == 1 && Permissions.granted(this)) {
-            step = 2;
+        // the same rule as Find my ring: a refusal after an earlier one, without explanation, means Android no longer asks (#140, #186)
+        app.openring.core.PermissionAsk.Answer a = Permissions.answer(this, perms, results, quietDenial);
+        if (step != 1) return;
+        quietDenial = a.quiet;
+        if (Permissions.granted(this)) {
+            step = afterPermissions();
             show();
-        } else if (step == 1) {
+        } else if (a.blocked) {
+            permissionBlocked = true;
+            show();
+        } else {
             Toast.makeText(this, "Bluetooth permission is required to talk to the ring", Toast.LENGTH_LONG).show();
         }
     }
@@ -630,6 +697,15 @@ public final class SetupActivity extends Activity {
         LinearLayout l = page("Connect your ring",
                 "The ring only talks to apps that know its 16 byte pairing key. Choose how to get one. Put the ring on its charger next to the phone, "
                         + "and close the official Oura app so it does not hold the Bluetooth link.");
+
+        if (!Prefs.of(this).demo() && keyState == app.openring.core.KeyState.UNREADABLE) {
+            // the saved key stays as it is: only a key the ring accepts or a restore replaces it (issue #199)
+            LinearLayout u = Ui.card(this);
+            u.addView(Ui.h2(this, app.openring.core.KeyState.SETUP_TITLE));
+            u.addView(Ui.gap(this, 4));
+            u.addView(Ui.body(this, app.openring.core.KeyState.SETUP_TEXT));
+            l.addView(u);
+        }
 
         keptCard = Ui.card(this);
         l.addView(keptCard);

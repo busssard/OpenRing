@@ -1041,8 +1041,8 @@ public final class Analyzer {
         int target = prefs.targetKcal();
         if (target <= 0) {
             double base = Math.round(bmr * 0.22 / 10) * 10;
-            if (readiness != null && readiness.value >= 85) base *= 1.15;
-            else if (readiness != null && readiness.value < 70) base *= 0.8;
+            if (readiness != null && readiness.value >= Scores.OPTIMAL) base *= 1.15;
+            else if (readiness != null && readiness.value < Scores.GOOD) base *= 0.8;
             target = (int) (Math.round(base / 10) * 10);
         }
         d.targetKcal = target;

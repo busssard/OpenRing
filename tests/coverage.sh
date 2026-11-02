@@ -12,10 +12,18 @@ cd "$(dirname "$0")/.."
 DEPS=tests/.deps
 JACOCO=0.8.12
 mkdir -p "$DEPS"
-if [ ! -f "$DEPS/jacoco/lib/jacococli.jar" ]; then
-  curl -sSL -o "$DEPS/jacoco.zip" "https://github.com/jacoco/jacoco/releases/download/v$JACOCO/jacoco-$JACOCO.zip"
-  unzip -q -o "$DEPS/jacoco.zip" lib/jacocoagent.jar lib/jacococli.jar -d "$DEPS/jacoco"
-  rm -f "$DEPS/jacoco.zip"
+JACOCO_SHA=35cf2a2b8937659ecbc8d0d3902dfa7f55b7ed2250e82424036a3e1d12462cd7  # jacoco-0.8.12.zip
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+if [ ! -f "$DEPS/jacoco/lib/jacococli.jar" ] || [ ! -f "$DEPS/jacoco/lib/jacocoagent.jar" ]; then
+  curl -fsSL -o "$DEPS/jacoco.zip.part" "https://github.com/jacoco/jacoco/releases/download/v$JACOCO/jacoco-$JACOCO.zip"
+  if [ "$(sha256 "$DEPS/jacoco.zip.part")" != "$JACOCO_SHA" ]; then
+    rm -f "$DEPS/jacoco.zip.part"
+    echo "FAIL  jacoco $JACOCO download does not have the expected SHA-256"; exit 1
+  fi
+  rm -rf "$DEPS/jacoco"
+  unzip -q -o "$DEPS/jacoco.zip.part" lib/jacocoagent.jar lib/jacococli.jar -d "$DEPS/jacoco.part"
+  rm -f "$DEPS/jacoco.zip.part"
+  mv "$DEPS/jacoco.part" "$DEPS/jacoco"
 fi
 AGENT="$DEPS/jacoco/lib/jacocoagent.jar"
 CLI="$DEPS/jacoco/lib/jacococli.jar"

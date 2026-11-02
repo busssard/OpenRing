@@ -803,7 +803,9 @@ public class PipelineTest {
         jsonSeriesMalformed();
         backupJsonLimit(full.toByteArray());
         finderDownload();
+        settingsCounts198();
         pairingPrefs218();
+        keyUnreadable199();
         swapDuringSync219(full.toByteArray());
         syncDating220();
         datingRandom220();
@@ -4633,6 +4635,8 @@ public class PipelineTest {
         check("#58 events waiting for a time record: no stored day is removed or changed", all && db.undatedCount() > 0,
                 keys(waiting) + ", " + db.undatedCount() + " undated");
         check("#58 the log says why they are kept", log.indexOf("kept: events after it wait for a time record") >= 0, log);
+        sameCounts198("with events waiting for a time anchor", db);
+        check("#198 Settings counts with events waiting for a time anchor: not read as new", db.counts().undated > 0 && !db.counts().allNew, db.counts().undated);
         check("#58 while boot 2 waits, an empty day before the newest dated event is still removed", !waiting.containsKey(early),
                 early + " in " + keys(waiting));
         moveAnchor(db, 2, T2_58, 0);
@@ -5977,6 +5981,7 @@ public class PipelineTest {
         String nightsBefore = db.nightsJson(first, last, false).toString();
         long datedBefore = db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
         check("finder: after the sync nothing is undated, so nothing reads as new", !db.undatedAllNew(), db.undatedCount());
+        sameCounts198("after a sync", db);
         // the finder's quick download: the newest 200 events and the phone anchor
         db.insertBatch(all.subList(cut, all.size()), 1, now);
         long lastDs = all.get(all.size() - 1).ds;
@@ -5990,10 +5995,13 @@ public class PipelineTest {
             check("finder (its storage calls): no stored date changed", db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL") == datedBefore, null);
             check("finder (its storage calls): the stored nights stay as they were", db.nightsJson(first, last, false).toString().equals(nightsBefore), null);
             check("finder (its storage calls): Settings says the next sync dates them, not a missing time anchor", db.undatedAllNew(), db.undatedCount());
+            sameCounts198("after Find my ring's download", db);
+            check("#198 Settings counts after Find my ring's download: all undated events are new", db.counts().allNew && db.counts().undated == 201, db.counts().undated); // 200 events and the phone anchor
         }
         // the next sync's analysis
         Analyzer.run(ctx, null);
         check("finder: no undated event left after the next analysis, so Settings shows no line", !db.undatedAllNew() && db.undatedCount() == 0, db.undatedCount());
+        sameCounts198("after the next analysis", db);
         check("finder" + (dateAtOnce ? " (dated at once)" : " (its storage calls)") + ": every event dated after the next analysis",
                 db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL") == 0, db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL"));
         StringBuilder rows = new StringBuilder();
@@ -6005,10 +6013,108 @@ public class PipelineTest {
         return java.time.Instant.ofEpochSecond(T0).atZone(ZONE).toLocalDate();
     }
 
+    /** Issue #198: the Settings Ring card's one background read gives the same numbers as the separate counts. */
+    static void sameCounts198(String when, Db db) {
+        Db.Counts c = db.counts();
+        check("#198 Settings counts " + when + ": the same numbers as the separate counts",
+                c.events == db.eventCount() && c.undated == db.undatedCount() && c.allNew == db.undatedAllNew(), c.events + " " + c.undated + " " + c.allNew);
+    }
+
+    /** Issue #198: the counts on an empty history, and the rule for "Dated at the next sync". */
+    static void settingsCounts198() throws Exception {
+        Db db = Db.get(freshDb("counts198"));
+        Db.Counts c = db.counts();
+        check("#198 Settings counts on an empty history: nothing stored, nothing undated", c.events == 0 && c.undated == 0 && !c.allNew, c.events + " " + c.undated);
+        sameCounts198("on an empty history", db);
+        check("#198 all new: no dating ran yet, so not new", !Db.allNew(5, 5, -1), null);
+        check("#198 all new: nothing undated is never new", !Db.allNew(0, 10, 10), null);
+        check("#198 all new: exactly the events after the last dating", Db.allNew(3, 13, 10), null);
+        check("#198 all new: more undated than new means some wait for a time anchor", !Db.allNew(4, 13, 10), null);
+    }
+
     static void finderDownload() throws Exception {
         String[] finder = finderRun(false), live = finderRun(true);
         check("finder (its storage calls): every event gets the same date as when Live dates at once", finder[0].equals(live[0]), null);
         check("finder (its storage calls): the same nights as when Live dates at once", finder[1].equals(live[1]) && finder[1].length() > 100, null);
+    }
+
+    /**
+     * Issue #199: a ring key stored on this phone that it cannot decrypt (the Keystore lock did not come along with a
+     * phone to phone transfer) is not "no key". Reading it never changes it; only a pairing the ring accepted, a restore
+     * or the confirmed "Use a different key or ring" replace it.
+     */
+    static void keyUnreadable199() throws Exception {
+        Context c = freshDb("key199");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        check("#199 no key at first", p.keyState() == app.openring.core.KeyState.NONE && !p.hasKey(), p.keyState());
+        // a key encrypted by another phone's Keystore (made up bytes; the JVM has no AndroidKeyStore, like a lost lock)
+        String enc = "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQ", iv = "AAECAwQFBgcICQoL";
+        c.getSharedPreferences("openring", 0).edit().putString("key_enc", enc).putString("key_iv", iv).commit();
+        p.setSetupDone(true);
+        p.setSerial("2X0001");
+        check("#199 a stored key counts as stored", p.hasKey(), null);
+        check("#199 it cannot be read", p.loadKey() == null, null);
+        check("#199 the state says unreadable, not no key", p.keyState() == app.openring.core.KeyState.UNREADABLE, p.keyState());
+        check("#199 the reason is kept for the log", app.openring.data.Prefs.keyError() != null, app.openring.data.Prefs.keyError());
+        check("#199 the main screen does not treat it as no key", !app.openring.core.KeyState.opensSetup(false, p.setupDone(), p.keyState(), false), null);
+        check("#199 no sync starts with it", !app.openring.core.KeyState.syncs(p.keyState()), null);
+        android.content.SharedPreferences sp = c.getSharedPreferences("openring", 0);
+        for (int i = 0; i < 3; i++) { p.loadKey(); p.keyState(); p.hasKey(); }
+        check("#199 reading leaves the stored key as it was", enc.equals(sp.getString("key_enc", null)) && iv.equals(sp.getString("key_iv", null)), sp.getString("key_enc", null));
+        // a pairing that has not finished keeps its key beside it, the stored key stays
+        byte[] fresh = app.openring.core.Hex.parseKey("00112233445566778899aabbccddeeff");
+        check("#199 keeping a pending key", p.keepPendingKey(fresh, "2X0001"), null);
+        check("#199 a pending key leaves the stored key", enc.equals(sp.getString("key_enc", null)) && iv.equals(sp.getString("key_iv", null)), null);
+        p.forgetPendingKey();
+        // a backup needs the key: it fails and changes nothing
+        String failed = null;
+        try {
+            app.openring.data.Backup.write(c, new java.io.ByteArrayOutputStream(), false);
+        } catch (java.io.IOException e) {
+            failed = e.getMessage();
+        }
+        check("#199 a backup fails with the reason", failed != null && failed.contains("cannot read"), failed);
+        check("#199 a failed backup leaves the stored key", enc.equals(sp.getString("key_enc", null)) && p.setupDone() && "2X0001".equals(p.serial()), null);
+        boolean ownType = false;
+        try {
+            app.openring.data.Backup.write(c, new java.io.ByteArrayOutputStream(), true);
+        } catch (app.openring.data.Backup.KeyUnreadable e) {
+            ownType = true;
+        }
+        check("#199 a full backup is refused with its own reason, Settings shows its own sentence (review of #281)", ownType, null);
+        // the automatic backup names the key as the reason, not the folder, and writes nothing (review of #281)
+        java.io.File fdir = Files.createTempDirectory("folder199").toFile();
+        Folder242 folder = new Folder242(fdir);
+        app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/B199", "B199");
+        StringBuilder alog = new StringBuilder();
+        app.openring.data.AutoBackup.Outcome ao = app.openring.data.AutoBackup.run(c, folder, 1780000000L, false, collect(alog));
+        check("#199 automatic backup: the reason is the key", app.openring.core.Backups.KEY.equals(ao.error) && app.openring.core.Backups.KEY.equals(p.autoError()), ao.error);
+        check("#199 automatic backup: nothing written to the folder", folder.list().isEmpty() && ao.written.isEmpty(), folder.list().toString());
+        check("#199 automatic backup: the log says why", alog.toString().contains("cannot read the saved ring key"), alog.toString());
+        check("#199 automatic backup: Settings says it in plain words", app.openring.core.Backups.status(0, 0, 0, p.autoError(), java.time.ZoneId.of("UTC"))
+                .equals("The last copy failed: this phone cannot read the saved ring key, enter it again in Setup."), p.autoError());
+        check("#199 automatic backup: the stored key stays", enc.equals(sp.getString("key_enc", null)) && iv.equals(sp.getString("key_iv", null)), null);
+        p.setBackupFolder(null, null);
+        // the ring accepted a key entered again: it replaces the stored one, now readable
+        check("#199 pairing done", p.pairDone(fresh, null, "2X0001", "Paired with 2X0001", true), null);
+        check("#199 after pairing the key reads", p.keyState() == app.openring.core.KeyState.READABLE && Arrays.equals(p.loadKey(), fresh), p.keyState());
+        p.clearPairUnseen();
+        // a key only restore over an unreadable key (the person picked the file)
+        java.io.ByteArrayOutputStream ko = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, ko, false);
+        sp.edit().putString("key_enc", enc).putString("key_iv", iv).commit();
+        check("#199 unreadable again", p.keyState() == app.openring.core.KeyState.UNREADABLE, p.keyState());
+        long events = Db.get(c).eventCount();
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(ko.toByteArray()));
+        check("#199 a key only restore makes the key readable", r.ok && p.keyState() == app.openring.core.KeyState.READABLE && Arrays.equals(p.loadKey(), fresh), r.message);
+        check("#199 the restore keeps the history", Db.get(c).eventCount() == events, Db.get(c).eventCount());
+        // Use a different key or ring (asks first in Settings): no key
+        sp.edit().putString("key_enc", enc).putString("key_iv", iv).commit();
+        p.clearKey();
+        check("#199 clearing gives no key", p.keyState() == app.openring.core.KeyState.NONE && !p.hasKey(), p.keyState());
+        // a key kept in plain text (the Keystore failed when it was saved) reads
+        p.saveKey(fresh);
+        check("#199 a plain stored key reads", p.keyState() == app.openring.core.KeyState.READABLE, p.keyState());
     }
 
     /**

@@ -16,17 +16,28 @@ import app.openring.core.Texts;
 public final class Scores {
     private Scores() {}
 
+    /**
+     * The one score ladder (issue #200): from 85 Optimal, from 70 Good, from 60 Fair, below that Pay attention.
+     * Labels, colours, the Today texts and the activity target all use these.
+     */
+    public static final int OPTIMAL = 85, GOOD = 70, FAIR = 60;
+
+    /** A score the Today summary names as needing attention: under Good, so Fair or Pay attention (issue #200). */
+    public static boolean needsAttention(double score) {
+        return score < GOOD;
+    }
+
     public static String rating(double s) {
         if (Double.isNaN(s)) return "No data";
-        if (s >= 85) return "Optimal";
-        if (s >= 70) return "Good";
-        if (s >= 60) return "Fair";
+        if (s >= OPTIMAL) return "Optimal";
+        if (s >= GOOD) return "Good";
+        if (s >= FAIR) return "Fair";
         return "Pay attention";
     }
 
     public static String verdict(int score) {
-        if (score >= 85) return "Optimal";
-        if (score >= 70) return "Good";
+        if (score >= OPTIMAL) return "Optimal";
+        if (score >= GOOD) return "Good";
         return "Pay attention";
     }
 

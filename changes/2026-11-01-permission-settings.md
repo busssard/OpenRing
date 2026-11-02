@@ -1,0 +1,1 @@
+* When Android no longer asks for Bluetooth access (after it was refused twice), Setup and Sync now say so and offer a button "Open app settings". Back from the settings, setup goes on and sync starts.

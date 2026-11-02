@@ -57,8 +57,8 @@ public final class Ui {
 
     public static int scoreColor(double s, int accent) {
         if (Double.isNaN(s)) return TEXT_3;
-        if (s >= 85) return accent;
-        if (s >= 70) return blend(accent, 0xFFB7C0D0, 0.35f);
+        if (s >= app.openring.core.analysis.Scores.OPTIMAL) return accent;
+        if (s >= app.openring.core.analysis.Scores.GOOD) return blend(accent, 0xFFB7C0D0, 0.35f);
         return WARN;
     }
 

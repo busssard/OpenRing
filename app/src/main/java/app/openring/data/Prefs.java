@@ -107,6 +107,27 @@ public final class Prefs {
     }
     public int batteryBefore() { return sp.getInt("battery_prev", -1); }
     public long batteryBeforeAt() { return sp.getLong("battery_prev_at", 0); }
+    // ---- measurement modes to put back on the ring (issue #221) ----
+
+    /**
+     * The mode to put {@code feature} back to after Live or the finder's blink changed it, or
+     * {@code core/ModeRestore.NONE}. Only these Prefs; no ring data is touched.
+     */
+    public int pendingMode(int feature) { return sp.getInt("restore_mode_" + feature, app.openring.core.ModeRestore.NONE); }
+
+    /** Written to disk before it returns ({@code commit}), so it outlives the app being ended right after. */
+    public void setPendingMode(int feature, int mode) {
+        if (mode < 0) sp.edit().remove("restore_mode_" + feature).commit();
+        else sp.edit().putInt("restore_mode_" + feature, mode).commit();
+    }
+
+    /** "Use a different key or ring": the modes kept for the ring as it was no longer apply. */
+    public void forgetPendingModes() {
+        SharedPreferences.Editor e = sp.edit();
+        for (int f : app.openring.core.ModeRestore.FEATURES) e.remove("restore_mode_" + f);
+        e.commit();
+    }
+
     /** The ring finder clicks and vibrates faster when closer; this switches both (issue #74). */
     public boolean finderSound() { return sp.getBoolean("finder_sound", true); }
     public void setFinderSound(boolean b) { sp.edit().putBoolean("finder_sound", b).apply(); }
@@ -213,7 +234,20 @@ public final class Prefs {
     public void setSetupDone(boolean b) { sp.edit().putBoolean("setup_done", b).apply(); }
 
     // ---- auth key ----
+    /** Whether a key is stored, also one this phone cannot read ({@link #keyState}, issue #199). */
     public boolean hasKey() { return sp.contains("key_enc"); }
+
+    /**
+     * {@code core/KeyState}: no key, a key this phone can read, or a stored key it cannot read (after a phone to phone
+     * transfer the Keystore lock stays behind, issue #199). Reads the key once; never changes what is stored.
+     */
+    public int keyState() {
+        return app.openring.core.KeyState.of(hasKey(), loadKey() != null);
+    }
+
+    /** Why the last stored key could not be read (exception and message, for the Bluetooth log), null when none failed. */
+    public static String keyError() { return keyError; }
+    private static volatile String keyError;
 
     public void saveKey(byte[] key16) {
         String[] e = encrypt(key16);
@@ -302,6 +336,8 @@ public final class Prefs {
             c.init(Cipher.DECRYPT_MODE, wrapKey(), new GCMParameterSpec(128, iv));
             return c.doFinal(Base64.decode(enc, Base64.NO_WRAP));
         } catch (Exception e) {
+            // the stored value stays as it is: a lock that fails only for a while reads it again later (issue #199)
+            if ("key_enc".equals(encName)) keyError = e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
             return null;
         }
     }

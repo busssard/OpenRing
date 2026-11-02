@@ -224,8 +224,11 @@ public final class Backups {
 
     /** Why the last folder copy failed (stored in the settings, shown in plain words by {@link #reason}). */
     public static final String GONE = "gone", FULL = "full", CHECK = "check", SPACE = "space", WRITE = "write";
+    /** A ring key is saved but this phone cannot read it (issue #199): every copy holds the key, so none can be made. */
+    public static final String KEY = "key";
 
     public static String reason(String code) {
+        if (KEY.equals(code)) return "this phone cannot read the saved ring key, enter it again in Setup";
         if (GONE.equals(code)) return "the folder is gone or Open Ring may no longer use it";
         if (FULL.equals(code)) return "the folder is full";
         if (CHECK.equals(code)) return "the copy did not pass its check";
