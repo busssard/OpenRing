@@ -525,14 +525,19 @@ pairing or sync is built. Nothing is paired, written to the watch (besides switc
   switch the sensor on and send values. Leaving the screen or the app stops the scan and the session at once; Android's
   pairing dialog over the screen only stops the scan (`onPause`), the session goes on until `onStop`, so Cancel there
   does not end the check.
-* **The ring always wins:** the session runs only when `RingGate.takeIfFree` gets the ring lock at once (no sync
-  counted, no ring task holding it), and holds it until the link is closed, so the phone never keeps two links. When
-  the ring is busy the screen says so. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s;
-  the background job tries again at its next run).
+* **The ring always wins:** the session runs through `RingManager.whileRingFree(r, line)`, which uses
+  `RingGate.takeIfFree` to get the ring lock at once (no sync counted, no ring task holding it), and holds it until the
+  link is closed, so the phone never keeps two links. When the ring is busy the screen says so. Meanwhile `busy()` is
+  true and the ring's status line says "Watch check running" (review of #270), so the main screen shows why a sync by
+  hand does not start. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s; the background
+  job tries again at its next run).
 * **The report** (`core/WatchCheck`, kept in memory only): UUIDs (standard ones named, others as they are), property
   names, model, firmware, battery, whether the phone was paired with the watch before and is now (a pairing dialog
-  accepted during the check leaves a bond; the screen then tells how to remove it), and per listened characteristic the number of messages, their lengths and only the
-  first 2 bytes of each (usually the kind of message). The full bytes are only in the second copy, marked private
+  accepted during the check leaves a bond; the screen then tells how to remove it), and per listened characteristic the number of messages and their lengths, plus the
+  first 2 bytes (usually the kind of message) of those of the first 3 messages that are longer than 2 bytes. A message
+  of 2 bytes or less would be all value, and the later pieces of a long answer start with values (review of #270), so
+  the default report holds at most 6 message bytes per characteristic. Why a check ended early is a plain sentence on
+  the screen; a status code or error name goes into the report only, on its "Detail" line. The full bytes are only in the second copy, marked private
   (Android 13 and newer hide it in the clipboard preview). At most 300 messages are kept per characteristic, and a
   report is cut at 30,000 characters.
 * **Demo mode** never touches Bluetooth: `WatchCheck.demoFound` and `demoReport` go through the same screen code.
