@@ -645,6 +645,7 @@ public class PipelineTest {
         check("demo has apps in front", demo.count("SELECT COUNT(DISTINCT pkg) FROM apps") >= 5, demo.count("SELECT COUNT(DISTINCT pkg) FROM apps"));
         app.openring.data.Prefs dp = app.openring.data.Prefs.of(phone2);
         check("demo leaves maps out, the real list stays", dp.screenExcluded().contains(app.openring.data.Demo.MAPS), dp.screenExcluded());
+        demoBadges(demo, dp, demoToday, demoNow);
         java.time.ZoneId z = java.time.ZoneId.systemDefault();
         int mapsDays = 0;
         app.openring.data.ScreenDays.Info di = null;
@@ -743,12 +744,13 @@ public class PipelineTest {
         check("at 00:30 the newest demo night is last night", "2025-11-08".equals(fallNewest.optString("day")), fallNewest.optString("day"));
         check("at 00:30 the demo has no day for today yet, so nothing counts a resting burn so far (#155)", Db.get(phone3).dayJson("2025-11-09") == null
                 && "2025-11-08".equals(Db.get(phone3).latestDay()), Db.get(phone3).latestDay());
-        // issue #123: at 01:19 on 22 October 2026 the newest demo night is cut short (about 3 hours, ending 00:59); the
-        // checks of whole nights skip exactly that day, all others still count
-        long cutNow = java.time.LocalDateTime.parse("2026-10-22T01:19:00").atZone(zz).toEpochSecond();
+        // issue #123: at 02:19 on 22 October 2026 the newest demo night is cut short (about 3 hours and 20 minutes, ending
+        // 01:59; 01:19 before the demo story of issue #265 changed its made up bedtime); the checks of whole nights skip exactly that
+        // day, all others still count
+        long cutNow = java.time.LocalDateTime.parse("2026-10-22T02:19:00").atZone(zz).toEpochSecond();
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2026-10-22"), cutNow);
-        dayHeartChecks(Db.get(phone3), cutNow, "demo at 01:19", 1);
-        restChecks(Db.get(phone3), cutNow, "demo at 01:19", 1);
+        dayHeartChecks(Db.get(phone3), cutNow, "demo at 02:19", 1);
+        restChecks(Db.get(phone3), cutNow, "demo at 02:19", 1);
         // clocks forward on 29 March 2026, at noon
         long springNow = java.time.LocalDateTime.parse("2026-04-12T12:00:00").atZone(zz).toEpochSecond();
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2026-04-12"), springNow);
@@ -2561,6 +2563,68 @@ public class PipelineTest {
      * moves by under 30 minutes, the old bug moved it by 60), and the switch night carries the marker.
      */
     /** Issue #137: the average night of the demo's clock change nights 2026-10-25 and 2027-03-28 keeps their clock times. */
+    /**
+     * Issue #265, phase 1a: the demo's stored days and nights, its screen days as the Screen tab counts them and its
+     * evenings, passed through {@code Badges} the way phase 1b will read them (one row per date, nothing stored).
+     */
+    static List<app.openring.core.analysis.Badges.Day> badgeDays(Db db, app.openring.data.Prefs prefs, LocalDate today, long now) {
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        app.openring.core.analysis.LeftOut left = db.leftOut();
+        java.util.Map<String, app.openring.core.analysis.Badges.Day> by = new java.util.TreeMap<String, app.openring.core.analysis.Badges.Day>();
+        for (String[] r : db.daysJson("2000-01-01", today.toString())) {
+            JSONObject o = Json.parse(r[1]);
+            if (o == null) continue;
+            app.openring.core.analysis.Badges.Day d = new app.openring.core.analysis.Badges.Day(LocalDate.parse(r[0]));
+            JSONObject rd = o.optJSONObject("readiness");
+            if (rd != null && rd.has("value")) d.readiness = rd.optDouble("value");
+            if (o.has("sleep_score")) d.sleepScore = o.optDouble("sleep_score");
+            d.steps = Json.d(o, "steps");
+            d.coveredMin = Json.d(o, "covered_min");
+            d.restMin = Json.d(o, "rest_min");
+            d.activeKcal = Json.d(o, "active_kcal");
+            d.targetKcal = Json.d(o, "target_kcal");
+            d.goalLowered = app.openring.core.analysis.Badges.goalLowered(prefs.targetKcal() > 0, d.readiness);
+            d.running = o.has("total_until");
+            d.leftOut = left.seconds(d.date.atStartOfDay(z).toEpochSecond(), d.date.plusDays(1).atStartOfDay(z).toEpochSecond()) > 0;
+            app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(db, d.date, z, 180, prefs.screenExcluded(), 0, now);
+            if (in.day != null) d.screenMin = in.day.totalMin;
+            d.eveningMin = in.bedMin;
+            by.put(r[0], d);
+        }
+        return new ArrayList<app.openring.core.analysis.Badges.Day>(by.values());
+    }
+
+    static void demoBadges(Db demo, app.openring.data.Prefs prefs, LocalDate today, long now) {
+        List<app.openring.core.analysis.Badges.Day> days = badgeDays(demo, prefs, today, now);
+        List<app.openring.core.analysis.Badges.Badge> got = app.openring.core.analysis.Badges.of(days, java.util.Locale.ENGLISH);
+        int[] per = new int[app.openring.core.analysis.Badges.KINDS];
+        StringBuilder sb = new StringBuilder();
+        for (app.openring.core.analysis.Badges.Badge b : got) {
+            per[b.kind]++;
+            System.out.println("    " + b);
+        }
+        // the badge's minutes are the Screen tab's for the same day, and its evening the Screen tab's hour before bed
+        boolean sameMin = true;
+        int screenBadges = 0;
+        for (app.openring.core.analysis.Badges.Badge b : got) {
+            if (b.kind != app.openring.core.analysis.Badges.CALM_SCREEN && b.kind != app.openring.core.analysis.Badges.PHONE_FREE) continue;
+            app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(demo, b.date, java.time.ZoneId.systemDefault(), 180,
+                    prefs.screenExcluded(), 0, now);
+            screenBadges++;
+            if (b.kind == app.openring.core.analysis.Badges.CALM_SCREEN) {
+                sameMin &= in.day != null && in.day.totalMin == b.value && b.text.startsWith(app.openring.core.Texts.minutes(in.day.totalMin) + " on the phone");
+            } else {
+                sameMin &= in.bedMin == b.value;
+            }
+        }
+        check("#265 demo: screen badges count the minutes the Screen tab shows (left out apps not counted)", sameMin && screenBadges >= 2, screenBadges);
+        for (int k = 0; k < per.length; k++) {
+            check("#265 demo: five weeks earn " + app.openring.core.analysis.Badges.NAMES[k], per[k] >= 1, per[k]);
+            sb.append(app.openring.core.analysis.Badges.NAMES[k]).append(' ').append(per[k]).append(", ");
+        }
+        System.out.println("    #265 demo badges: " + sb);
+    }
+
     static void demoSwitchPattern() throws Exception {
         Context phone = freshDb("openring137");
         ZoneId z = ZoneId.systemDefault();
