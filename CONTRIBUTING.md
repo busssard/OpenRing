@@ -20,7 +20,7 @@ for the owner's review; removing `[EXP]` from the title marks one as ready to be
 Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) (build, test, release, common tasks) and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works). In short:
 
-1. Branch from `main`, keep the change focused.
+1. Branch from `dev`, keep the change focused, and open the pull request into `dev` (`main` only takes releases from `dev`).
 2. Run `./tests/run_tests.sh`, `./tests/run_pipeline.sh`, `./tests/check_privacy.sh` and
    `./tests/check_version.sh`.
 3. For a change users will notice, add one note in `changes/` (see `changes/README.md`); the version is counted from them.
