@@ -28,6 +28,13 @@ public final class Texts {
     /** Settings, Delete all local data failed part way; it is one transaction, so nothing was deleted. */
     public static final String DELETE_FAILED = "Nothing was deleted, something went wrong. Diagnostics, Log tab, shows why.";
 
+    /**
+     * The same two answers as a toast, when Settings was closed before Delete all local data finished: Android 12 and
+     * newer cut a toast after two lines, so the full texts above only go into the dialog (review of #277).
+     */
+    public static final String DELETE_BUSY_TOAST = "Nothing was deleted, the ring was busy. Try again later.";
+    public static final String DELETE_FAILED_TOAST = "Nothing was deleted. Diagnostics, Log tab, shows why.";
+
     /** Settings, Re analyse all failed: it is one transaction, so the stored results are the old ones (issue #230). */
     public static final String ANALYSIS_FAILED = "The analysis failed, your nights and days are as before. " + SyncError.DETAILS;
 

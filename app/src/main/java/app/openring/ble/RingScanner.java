@@ -154,12 +154,15 @@ public final class RingScanner {
         return new IOException(t, e);
     }
 
-    /** Whether the adapter is on; an adapter that cannot even say counts as off. */
+    /**
+     * Whether the adapter is on. An adapter that cannot say counts as on, as in RingManager.bluetoothOn(): "Bluetooth is
+     * off" is only said when the phone really reports it, otherwise the scanner's exception stays as it is (review of #277).
+     */
     private static boolean on(BluetoothAdapter a) {
         try {
             return a != null && a.isEnabled();
         } catch (RuntimeException e) {
-            return false;
+            return true;
         }
     }
 

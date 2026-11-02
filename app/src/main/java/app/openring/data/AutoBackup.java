@@ -398,7 +398,7 @@ public final class AutoBackup {
                 }
             });
             if (r.history) {
-                r.message = Backups.WENT_BACK;
+                r.message = Backups.WENT_BACK + (r.logDamaged ? ". " + Backup.PERIODS_DAMAGED : "");
                 synchronized (BeforeUpdate.LOCK) {
                     String[] fs = BeforeUpdate.dir(c).list();
                     if (fs != null) for (String f : Backups.phoneToDelete(java.util.Arrays.asList(fs))) BeforeUpdate.deleteWithSides(new File(BeforeUpdate.dir(c), f));
