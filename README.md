@@ -30,14 +30,14 @@ Not affiliated with Oura, not a medical device.
 * Sleep, readiness and activity scores, each with the parts it is made of
 * Heart rate through the day, HRV, skin temperature, blood oxygen and their trends
 * Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be
-  left out. Phone use at night counts as awake (can be switched off)
+  left out. Phone use at night counts as awake (can be switched off).
 * Live heart rate, HRV and blood oxygen on demand
 * A period tracker: log with one tap, a calendar with the expected next period and a calendar
   estimate of ovulation. Shown when your profile says female, or switched on in Settings
 * Find my ring, when the ring is lost at home (see below)
 * Nights keep the time zone you slept in, so a trip does not move your other nights
 * Touch the night timeline, the heart rate and trend lines or the screen time clock to see the exact
-  time and value
+  time and value.
 * Backups of the key and all history, checked before they are saved, and a CSV export, all as files on your phone
 * A demo mode, so you can look around without a ring
 
