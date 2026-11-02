@@ -52,6 +52,8 @@ public final class Analyzer {
     static volatile Runnable afterDay;
     /** Tests only: when above 0, the time (unix seconds) a day still running is analysed at (issue #155). */
     static volatile long testNow;
+    /** Tests only: when above 0, the clock the dating of an analysis uses (issue #256: dates past the 6 hour limit fall due later). */
+    static volatile long testDatingNow;
     /**
      * The times left out because someone else wore the ring (issue #254), read once per analysis. Every reading whose own
      * time lies inside is dropped; with none (nearly everyone) every check below answers at once and nothing changes.
@@ -297,7 +299,7 @@ public final class Analyzer {
     }
 
     void runInner() {
-        final long now = System.currentTimeMillis() / 1000;
+        final long now = testDatingNow > 0 ? testDatingNow : System.currentTimeMillis() / 1000;
         final boolean all = db.kvLong(FULL_PENDING, 0) == 1;
         // Re analyse all (also Repair) dates every event again; otherwise only the new part (issue #220)
         final Db.TimeReport t = db.rebuildTime(now, all);

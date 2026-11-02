@@ -820,6 +820,13 @@ public class PipelineTest {
         lateRecord188();
         upgradeRestore188();
         largeHistory188();
+        rebootCut256();
+        lateAnchor256();
+        dueLater256();
+        interrupted256();
+        upgrade256();
+        restore256();
+        largeHistory256();
         beforeUpdate242();
         check242();
         goBack242();
@@ -6846,6 +6853,316 @@ public class PipelineTest {
                 && nightRows(full) >= 330, nightRows(full) + " nights; " + log.toString().replace('\n', ';'));
         check("#188 a year: every night and day is what Re analyse all gives, byte for byte", after.equals(full), firstDiff(after, full));
         db.close();
+    }
+    // ------------------------------------------------------------------------------------------- issue #256
+
+    /** Start of boot 1 of the #256 phones (boot 2 starts a day after boot 1 ends). */
+    static final long T256 = LocalDate.parse("2026-05-04").atStartOfDay(Z58).toEpochSecond();
+
+    /** A phone of #256 after sync 2: what sync 3 brings and when boot 2 started. */
+    static final class Cut256 {
+        Context c;
+        long t2;
+        List<RingEvent> rest;
+    }
+
+    static void insert256(Db db, List<RingEvent> ev, int epoch, long captured) {
+        for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), epoch, captured);
+    }
+
+    /**
+     * Issue #256, the ring restarted: boot 1 ({@code days1} days with its phone anchor) synced and analysed, then sync 2 cut
+     * before any time record of boot 2 (its first {@code cut} days of {@code days2}, stored undated) and analysed.
+     */
+    static Cut256 cut256(String name, long t1, int days1, int days2, int cut) throws Exception {
+        Cut256 k = new Cut256();
+        k.c = freshDb(name);
+        Db db = Db.get(k.c);
+        app.openring.data.Prefs.of(k.c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        add58(db, 1, t1, days1, 0);
+        Analyzer.run(k.c, null);
+        k.t2 = t1 + (days1 + 1) * 86400L;
+        List<RingEvent> ev = app.openring.data.Demo.history(k.t2, days2, k.t2 + days2 * 86400L + 12 * 3600, Z58, new Random(256));
+        long cutDs = app.openring.data.Demo.DS0 + cut * 864000L;
+        List<RingEvent> first = new ArrayList<RingEvent>();
+        k.rest = new ArrayList<RingEvent>();
+        for (RingEvent e : ev) (e.ds < cutDs ? first : k.rest).add(e);
+        insert256(db, first, 2, k.t2 + cut * 86400L);
+        Analyzer.run(k.c, null);
+        return k;
+    }
+
+    /** Sync 3 of {@link #cut256}: the rest of boot 2 with the phone anchor at its newest event. */
+    static void sync3_256(Cut256 k) {
+        Db db = Db.get(k.c);
+        insert256(db, k.rest, 2, k.t2 + 7 * 86400L);
+        long lastDs = k.rest.get(k.rest.size() - 1).ds;
+        db.insertPhoneAnchor(2, lastDs, k.t2 + (lastDs - app.openring.data.Demo.DS0) / 10);
+    }
+
+    /** The earliest old or new date of a row whose date differs between the two {@link #timeRows} (new rows count with their date). */
+    static double changed256(List<long[]> before, List<long[]> after) {
+        java.util.HashMap<Long, Long> old = new java.util.HashMap<Long, Long>();
+        for (long[] r : before) old.put(r[0], r[2]);
+        double m = Double.NaN;
+        for (long[] r : after) {
+            Long o = old.get(r[0]);
+            long was = o == null ? Long.MIN_VALUE : o;
+            if (was == r[2]) continue;
+            for (long b : new long[] {was, r[2]}) {
+                if (b == Long.MIN_VALUE) continue;
+                double u = Double.longBitsToDouble(b);
+                if (!(u >= m)) m = u;
+            }
+        }
+        return m;
+    }
+
+    /** The log line of an analysis that starts two days before the earlier of the changed date and the mark it found. */
+    static String start256(double changed, long until) {
+        return from188(Math.min(changed, until));
+    }
+
+    /** The log line of an analysis of the whole history. */
+    static String whole256(Db db) {
+        return "analysing " + date58(db.datedRange()[0]) + " to ";
+    }
+
+    /** Runs the analysis of the sync just stored; checks it starts at {@link #start256} and equals Re analyse all. Returns the log. */
+    static String exact256(String what, Context c) {
+        Db db = Db.get(c);
+        long until = db.kvLong("analyzed_until", 0);
+        List<long[]> rows = timeRows(db);
+        List<String> ev = events58(db);
+        StringBuilder log = new StringBuilder();
+        long t = System.nanoTime();
+        Analyzer.run(c, collect(log));
+        long partMs = (System.nanoTime() - t) / 1000000;
+        double changed = changed256(rows, timeRows(db));
+        List<String> after = results139(db);
+        t = System.nanoTime();
+        List<String> full = full188(c);
+        long fullMs = (System.nanoTime() - t) / 1000000;
+        String start = start256(changed, until);
+        System.out.println("  #256 " + what + ": " + start + " in " + partMs + " ms, Re analyse all " + fullMs + " ms (" + db.eventCount() + " events)");
+        check("#256 " + what + ": older events got a date, analysed from two days before the earliest changed date, not from the start of history",
+                !Double.isNaN(changed) && log.indexOf(start) >= 0 && log.indexOf(whole256(db)) < 0
+                        && log.indexOf("dates written from " + date58(changed) + " on") >= 0, log.toString().replace('\n', ';'));
+        check("#256 " + what + ": every night and day is what Re analyse all gives, byte for byte", after.equals(full) && nightRows(full) >= 10,
+                nightRows(full) + " nights; " + firstDiff(after, full));
+        check("#256 " + what + ": no raw event changed, only dates", sameExceptDates188(events58(db), ev), null);
+        return log.toString();
+    }
+
+    /**
+     * Issue #256: the ring restarted and the sync after it was cut before boot 2 had a time record. The next complete
+     * sync dates those rows; only their days are analysed again, and the results equal Re analyse all.
+     */
+    static void rebootCut256() throws Exception {
+        Cut256 k = cut256("openring256", T256, 20, 6, 2);
+        Db db = Db.get(k.c);
+        check("#256 sync cut before a time record of the new boot: its events stay undated", Double.isNaN(minUnix188(db, 2))
+                && db.count("SELECT COUNT(*) FROM events WHERE epoch = 2") > 1000, db.count("SELECT COUNT(*) FROM events WHERE epoch = 2"));
+        sync3_256(k);
+        exact256("reboot, then a cut sync", k.c);
+        // nothing new: the last two days, as before
+        StringBuilder again = new StringBuilder();
+        Analyzer.run(k.c, collect(again));
+        check("#256 the analysis after that: nothing moved, the last two days", again.indexOf("dates written") < 0
+                && again.indexOf(from188(db.datedRange()[1])) >= 0, again.toString().replace('\n', ';'));
+    }
+
+    /**
+     * Issue #256: a boot in the middle of the history that never had a time record gets a phone anchor later (#68): its
+     * events gain dates before the analysed mark. The mark goes back to them, not to the start of history.
+     */
+    static void lateAnchor256() throws Exception {
+        Context c = freshDb("openring256-late");
+        Db db = Db.get(c);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        long t2 = T256 + 15 * 86400L, t3 = T256 + 26 * 86400L;
+        add58(db, 1, T256, 14, 0);
+        List<RingEvent> b2 = app.openring.data.Demo.history(t2, 10, t2 + 10 * 86400L + 12 * 3600, Z58, new Random(2562));
+        insert256(db, b2, 2, t2 + 10 * 86400L);
+        add58(db, 3, t3, 10, 0);
+        Analyzer.run(c, null);
+        check("#256 a boot without a time record in the middle: undated", Double.isNaN(minUnix188(db, 2)), null);
+        long lastDs = b2.get(b2.size() - 1).ds;
+        db.insertPhoneAnchor(2, lastDs, t2 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        exact256("a phone anchor for a boot in the middle", c);
+        check("#256 a boot in the middle dated late: it lies before the mark, so the mark went back to it", minUnix188(db, 2) < t3, null);
+    }
+
+    /**
+     * Issue #256: events dated more than 6 hours after the phone's clock stay undated (Dating.limit); they get their date
+     * when the clock has moved on. Only those days are analysed again.
+     */
+    static void dueLater256() throws Exception {
+        Context c = freshDb("openring256-due");
+        Db db = Db.get(c);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        long t2 = T256 + 21 * 86400L;
+        add58(db, 1, T256, 20, 0);
+        List<RingEvent> b2 = app.openring.data.Demo.history(t2, 6, t2 + 6 * 86400L + 12 * 3600, Z58, new Random(2563));
+        List<RingEvent> withRecord = new ArrayList<RingEvent>();
+        long firstDs = b2.get(0).ds;
+        withRecord.add(new RingEvent(EventCodec.TIME_SYNC, firstDs, timeSync(t2 + (firstDs - app.openring.data.Demo.DS0) / 10)));
+        withRecord.addAll(b2);
+        insert256(db, withRecord, 2, t2 + 6 * 86400L);
+        setStatic("testDatingNow", t2 + 3 * 86400L);
+        try {
+            Analyzer.run(c, null);
+        } finally {
+            setStatic("testDatingNow", 0L);
+        }
+        long undated = db.count("SELECT COUNT(*) FROM events WHERE epoch = 2 AND unix IS NULL");
+        check("#256 events more than 6 hours after the phone's clock: undated for now", undated > 1000 && !Double.isNaN(minUnix188(db, 2)), undated);
+        exact256("dates that fall due later (the 6 hour limit)", c);
+        check("#256 the 6 hour limit: every event dated once the clock moved on", db.count("SELECT COUNT(*) FROM events WHERE unix IS NULL") == 0, null);
+    }
+
+    /**
+     * Issue #256, data safety: stopped between the dating and the analysis (the app ended, or Live dated on its own) and the
+     * analysis stopped while finding sleeps. No old night or day is lost, and the next analysis equals Re analyse all.
+     */
+    static void interrupted256() throws Exception {
+        // 1. the analysis stopped part way: the old results stay, byte for byte; the next one is right
+        Cut256 k = cut256("openring256-stop", T256, 20, 6, 2);
+        Db db = Db.get(k.c);
+        List<String> before = results139(db);
+        long until = db.kvLong("analyzed_until", 0);
+        sync3_256(k);
+        boolean stopped = false;
+        try {
+            Analyzer.run(k.c, stopAt("sleep periods"));
+        } catch (Stop e) {
+            stopped = true;
+        }
+        check("#256 analysis stopped after the new dates: every old night and day still there, byte for byte", stopped
+                && results139(db).equals(before) && !Double.isNaN(minUnix188(db, 2)), firstDiff(results139(db), before));
+        check("#256 analysis stopped: the mark was not raised", db.kvLong("analyzed_until", 0) <= until, db.kvLong("analyzed_until", 0) + " / " + until);
+        StringBuilder log = new StringBuilder();
+        Analyzer.run(k.c, collect(log));
+        List<String> after = results139(db);
+        System.out.println("  #256 the analysis after the stop: " + log.substring(log.indexOf("analysing "), log.indexOf("\n", log.indexOf("analysing "))));
+        List<String> full = full188(k.c);
+        check("#256 the next analysis after the stop: the same as Re analyse all, byte for byte", after.equals(full), firstDiff(after, full));
+
+        // 2. dated on its own (Live, or the app ended right after the dating), then analysed
+        k = cut256("openring256-live", T256, 20, 6, 2);
+        db = Db.get(k.c);
+        before = results139(db);
+        sync3_256(k);
+        Db.TimeReport t = db.rebuildTime(System.currentTimeMillis() / 1000);
+        check("#256 dated on its own: the earliest new date is reported, the results not touched yet", t.changedFrom == minUnix188(db, 2)
+                && results139(db).equals(before), t.changedFrom);
+        Analyzer.run(k.c, null);
+        after = results139(db);
+        full = full188(k.c);
+        check("#256 dated on its own, the next analysis: the same as Re analyse all, byte for byte", after.equals(full), firstDiff(after, full));
+    }
+
+    /**
+     * Issue #256, data safety: a history of the version before (no saved dating state, no analysis inputs; and older, no dated
+     * count) keeps every event and night after the update; a dating the version before wrote but never analysed is still
+     * analysed again (the safety net stays), also when the first sync after the update dates new events too.
+     */
+    static void upgrade256() throws Exception {
+        // 1. the version before: no dating state, no analysis inputs
+        Cut256 k = cut256("openring256-old", T256, 20, 6, 2);
+        Db db = Db.get(k.c);
+        db.put("time_state", null);
+        db.put("analysis_inputs", null);
+        List<String> before = results139(db), ev = events58(db);
+        StringBuilder log = new StringBuilder();
+        Analyzer.run(k.c, collect(log));
+        check("#256 upgrade: the first analysis dates everything (no saved state), moves no date, every event and night the same, byte for byte",
+                log.indexOf("no saved state") >= 0 && log.indexOf("dates written") < 0 && results139(db).equals(before) && events58(db).equals(ev),
+                log.toString().replace('\n', ';'));
+        sync3_256(k);
+        exact256("upgrade, then the sync after the reboot", k.c);
+
+        // 2. older still, no dated count: the whole history once, the same nights and days
+        k = cut256("openring256-older", T256, 20, 6, 2);
+        db = Db.get(k.c);
+        db.put("dated_count", null);
+        db.put("time_state", null);
+        db.put("analysis_inputs", null);
+        before = results139(db);
+        log = new StringBuilder();
+        Analyzer.run(k.c, collect(log));
+        check("#256 upgrade from a version without the dated count: the whole history analysed once, every night and day the same",
+                log.indexOf(whole256(db)) >= 0 && results139(db).equals(before), log.toString().replace('\n', ';'));
+
+        // 3. the version before dated a boot in the middle and ended before its analysis (no mark); then this version syncs more
+        Context c = freshDb("openring256-net");
+        db = Db.get(c);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        long t2 = T256 + 15 * 86400L, t3 = T256 + 26 * 86400L;
+        add58(db, 1, T256, 14, 0);
+        List<RingEvent> b2 = app.openring.data.Demo.history(t2, 10, t2 + 10 * 86400L + 12 * 3600, Z58, new Random(2562));
+        insert256(db, b2, 2, t2 + 10 * 86400L);
+        List<RingEvent> b3 = app.openring.data.Demo.history(t3, 10, t3 + 10 * 86400L + 12 * 3600, Z58, new Random(2564));
+        long lastDs3 = b3.get(b3.size() - 1).ds;
+        List<RingEvent> b3a = new ArrayList<RingEvent>(), b3b = new ArrayList<RingEvent>();
+        for (RingEvent e : b3) (e.ds < lastDs3 - 864000L ? b3a : b3b).add(e);
+        insert256(db, b3a, 3, t3 + 9 * 86400L);
+        db.insertPhoneAnchor(3, b3a.get(b3a.size() - 1).ds, t3 + (b3a.get(b3a.size() - 1).ds - app.openring.data.Demo.DS0) / 10);
+        Analyzer.run(c, null);
+        long mark = db.kvLong("analyzed_until", 0);
+        long lastDs = b2.get(b2.size() - 1).ds;
+        db.insertPhoneAnchor(2, lastDs, t2 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        db.rebuildTime(System.currentTimeMillis() / 1000);
+        db.put("analyzed_until", mark);
+        check("#256 the version before dated boot 2 without lowering the mark (the case is real)", !Double.isNaN(minUnix188(db, 2))
+                && minUnix188(db, 2) < mark - 2 * 86400, null);
+        insert256(db, b3b, 3, t3 + 10 * 86400L);
+        db.insertPhoneAnchor(3, lastDs3, t3 + (lastDs3 - app.openring.data.Demo.DS0) / 10);
+        log = new StringBuilder();
+        Analyzer.run(c, collect(log));
+        List<String> after = results139(db);
+        List<String> full = full188(c);
+        check("#256 a dating the version before never analysed, then a sync of new events: the whole history (safety net), as Re analyse all",
+                log.indexOf(whole256(db)) >= 0 && after.equals(full), firstDiff(after, full) + "; " + log.toString().replace('\n', ';'));
+    }
+
+    /** Issue #256, data safety: a backup of this version and of the version before, taken after the cut sync, restores and does the same. */
+    static void restore256() throws Exception {
+        Cut256 k = cut256("openring256-backup", T256, 20, 6, 2);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(k.c, out, true);
+        byte[] now = out.toByteArray();
+        List<String> before = results139(Db.get(k.c));
+        java.io.File f = java.nio.file.Files.createTempFile("older256", ".db").toFile();
+        java.nio.file.Files.write(f.toPath(), zipEntry(now, "openring.db"));
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + f.getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            st.execute("DELETE FROM kv WHERE k IN ('time_state', 'analysis_inputs')");
+        }
+        byte[] older = withDb(now, java.nio.file.Files.readAllBytes(f.toPath()));
+        f.delete();
+        for (int v = 0; v < 2; v++) {
+            String which = v == 0 ? "this version" : "the version before";
+            Cut256 r = new Cut256();
+            r.c = freshDb("openring256-restored");
+            r.t2 = k.t2;
+            r.rest = k.rest;
+            app.openring.data.Backup.Result res = app.openring.data.Backup.read(r.c, new java.io.ByteArrayInputStream(v == 0 ? now : older));
+            Db rdb = Db.get(r.c);
+            check("#256 a backup of " + which + " taken after the cut sync restores with every night and day", res.ok && res.history
+                    && results139(rdb).equals(before) && Double.isNaN(minUnix188(rdb, 2)), res.message);
+            sync3_256(r);
+            exact256("restored backup of " + which + ", then the sync after the reboot", r.c);
+        }
+    }
+
+    /** Issue #256: a year of history, then the reboot and the cut sync: the next sync analyses days, not the year. */
+    static void largeHistory256() throws Exception {
+        long t0 = LocalDate.parse("2025-09-01").atStartOfDay(Z58).toEpochSecond();
+        Cut256 k = cut256("openring256-year", t0, 360, 6, 2);
+        sync3_256(k);
+        exact256("a year, then a reboot and a cut sync", k.c);
+        Db.get(k.c).close();
     }
     // ------------------------------------------------------------------------- issues #220 and #194
 
