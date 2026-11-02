@@ -14,9 +14,12 @@ import java.util.Map;
  * shows it, and this class turns it into the text the person copies. Demo mode shows {@link #demoFound} and
  * {@link #demoReport} through the same code.
  *
- * <p>The copied report must not carry health values: of each message it keeps only the count, the lengths and the
- * first {@link #TYPE_BYTES} bytes (usually the kind of message). The full bytes only go into the second, clearly marked
- * copy. Standard characteristics (16 bit UUIDs, such as the standard heart rate) are not listened to: they are
+ * <p>The copied report must not carry health values: of each message it keeps the count and the lengths, and only of the
+ * first {@link #TYPE_MESSAGES} messages per characteristic that are longer than {@link #TYPE_BYTES} bytes also their first
+ * {@link #TYPE_BYTES} bytes (usually the kind of message). A message of {@link #TYPE_BYTES} bytes or less would be
+ * all value, and from the second piece of a long answer on the first bytes are values too (review of #270), so the
+ * report keeps no more than {@link #TYPE_MESSAGES} times {@link #TYPE_BYTES} bytes per characteristic. The full bytes
+ * only go into the second, clearly marked copy. Standard characteristics (16 bit UUIDs, such as the standard heart rate) are not listened to: they are
  * documented, and the heart rate one would switch on the sensor and send values.
  */
 public final class WatchCheck {
@@ -33,6 +36,8 @@ public final class WatchCheck {
 
     /** Bytes of each message the default report keeps. */
     public static final int TYPE_BYTES = 2;
+    /** Messages per characteristic whose first bytes the default report keeps (only those longer than {@link #TYPE_BYTES}). */
+    public static final int TYPE_MESSAGES = 3;
     /** Messages kept per characteristic, so a chatty watch cannot fill the memory in 10 s. */
     public static final int KEPT_MESSAGES = 300;
     /** The longest report copied: far below what Android's clipboard takes in one go. */
@@ -56,13 +61,31 @@ public final class WatchCheck {
 
     public static final String PAIR_NOTE = "If Android asks to pair, tap Cancel: the check works without pairing.";
     public static final String REPORT_NOTE = "The report holds the watch's model, firmware and Bluetooth layout. Of each message it keeps only "
-            + "the length and the first 2 bytes, which usually name the kind of message, not its values.";
+            + "the length. Of the first 3 messages it also keeps the first 2 bytes (only for messages longer than that), which usually "
+            + "name the kind of message, not its values.";
     public static final String PRIVATE = "Private: may hold health values. Send it only to someone you trust, never in a public issue.";
-    public static final String SEND_BACK = "What to send back: tap Copy the report and send it to the developer, with the model name on the "
-            + "back of the watch and the firmware shown in the Withings app.";
+    public static final String SEND_BACK = "What to send back: tap Copy the report and paste it as a comment on issue 251 on GitHub, with the "
+            + "model name on the back of the watch, the firmware shown in the Withings app and the battery % on 3 mornings.";
     public static final String NO_ANSWER = "The watch did not answer. It may be busy with the Withings app; close that app and try again.";
     public static final String BUSY = "The ring is busy right now. Try again in a minute.";
     public static final String DEMO = "Demo mode: this is a made up example. Turn demo mode off to check a real watch.";
+    /** The status line of the ring while the check holds it (review of #270), so a sync by hand meanwhile shows why it waits. */
+    public static final String RUNNING = "Watch check running, the ring is free again within 30 seconds";
+
+    /** Why a check ended early, in plain words for the screen; the status code or error goes to {@link Report#detail}. */
+    public static final String ENDED_STOPPED = "The check was stopped because the screen was left.";
+    public static final String ENDED_REFUSED = "Bluetooth did not open a connection. Switch Bluetooth off and on and try again.";
+    public static final String ENDED_LAYOUT = "The watch did not show its layout.";
+    public static final String ENDED_BY_WATCH = "The watch ended the connection.";
+    public static final String ENDED_BLUETOOTH = "Bluetooth was switched off or the permission was taken back.";
+
+    /** The line above the report on the screen: plain words only, the details stay in the report. */
+    public static String outcome(Report r) {
+        if (!r.connected) return r.problem != null ? r.problem : NO_ANSWER;
+        if (r.problem != null) return "The check ended early. " + r.problem + " What it found so far is below.";
+        return "Done. The watch was let go again.";
+    }
+
     public static final String NOTHING_FOUND = "Nothing found nearby. Wake the watch (press its button), keep it next to the phone and scan again.";
 
     // ---------------------------------------------------------------- names
@@ -242,8 +265,20 @@ public final class WatchCheck {
             else dropped++;
         }
 
-        synchronized List<byte[]> copy() {
-            return new ArrayList<byte[]>(messages);
+        /** The messages and the count of dropped ones, read together (written on a Bluetooth thread). */
+        synchronized Heard copy() {
+            return new Heard(new ArrayList<byte[]>(messages), dropped);
+        }
+    }
+
+    /** What one characteristic sent, as one consistent copy. */
+    static final class Heard {
+        final List<byte[]> messages;
+        final int dropped;
+
+        Heard(List<byte[]> messages, int dropped) {
+            this.messages = messages;
+            this.dropped = dropped;
         }
     }
 
@@ -274,8 +309,10 @@ public final class WatchCheck {
         public String model, firmware, hardware, software, manufacturer;
         public int battery = -1;
         public long connectMs = -1, listenMs = -1;
-        /** Why the session ended early, in plain words, or null. */
+        /** Why the session ended early, one of the plain ENDED_ sentences, or null. */
         public String problem;
+        /** A status code or error name for the report only (never on the screen), or null. */
+        public String detail;
         public final List<Service> services = new ArrayList<Service>();
 
         public Service add(String uuid) {
@@ -302,6 +339,7 @@ public final class WatchCheck {
         if (!r.connected) sb.append("Connected: no\n");
         else sb.append("Connected in ").append(seconds(r.connectMs)).append(", listened ").append(seconds(r.listenMs)).append('\n');
         if (r.problem != null) sb.append("Ended early: ").append(r.problem).append('\n');
+        if (r.detail != null) sb.append("Detail: ").append(r.detail).append('\n');
         for (Service s : r.services) {
             sb.append('\n').append("Service ").append(name(s.uuid)).append('\n');
             for (Characteristic c : s.characteristics) {
@@ -311,17 +349,19 @@ public final class WatchCheck {
                 else if (sends(c.props) && standard(c.uuid)) sb.append(" (standard, not listened to)");
                 sb.append('\n');
                 if (c.listening == null || !c.listening) continue;
-                List<byte[]> m = c.copy();
-                int n = m.size() + c.dropped;
+                Heard h = c.copy();
+                List<byte[]> m = h.messages;
+                int n = m.size() + h.dropped;
                 sb.append("    ").append(Texts.count(n, "message", "messages"));
-                if (c.dropped > 0) sb.append(" (the first ").append(m.size()).append(" kept)");
+                if (h.dropped > 0) sb.append(" (the first ").append(m.size()).append(" kept)");
                 if (!m.isEmpty()) {
                     sb.append(", lengths ");
                     for (int i = 0; i < m.size(); i++) sb.append(i == 0 ? "" : " ").append(m.get(i).length);
-                    sb.append(bytes ? "\n    bytes " : "\n    first bytes ");
-                    for (int i = 0; i < m.size(); i++) {
-                        byte[] v = m.get(i);
-                        sb.append(i == 0 ? "" : " ").append(Hex.encode(v, 0, bytes ? v.length : Math.min(TYPE_BYTES, v.length)));
+                    if (bytes) {
+                        sb.append("\n    bytes ");
+                        for (int i = 0; i < m.size(); i++) sb.append(i == 0 ? "" : " ").append(Hex.encode(m.get(i), 0, m.get(i).length));
+                    } else {
+                        sb.append(firstBytes(m));
                     }
                 }
                 sb.append('\n');
@@ -329,6 +369,20 @@ public final class WatchCheck {
         }
         if (r.services.isEmpty() && r.connected) sb.append("\nNo services found\n");
         return cut(sb.toString());
+    }
+
+    /**
+     * "\n    first bytes: message 1 0105, message 3 0203": the first {@link #TYPE_BYTES} bytes of those of the first
+     * {@link #TYPE_MESSAGES} messages that are longer than that, numbered as they arrived; empty when there are none.
+     */
+    static String firstBytes(List<byte[]> m) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < Math.min(TYPE_MESSAGES, m.size()); i++) {
+            byte[] v = m.get(i);
+            if (v.length <= TYPE_BYTES) continue;
+            sb.append(sb.length() == 0 ? "\n    first bytes: " : ", ").append("message ").append(i + 1).append(' ').append(Hex.encode(v, 0, TYPE_BYTES));
+        }
+        return sb.toString();
     }
 
     /** {@code s} itself, or its whole lines up to {@link #REPORT_MAX} characters with {@link #CUT} as the last line. */
