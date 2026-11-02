@@ -1150,7 +1150,7 @@ public class CoreTest {
 
         // texts: plain, no dashes as punctuation, toasts short enough
         for (String s : new String[] {WatchCheck.INTRO, WatchCheck.SIGNAL, WatchCheck.PAIR_NOTE, WatchCheck.REPORT_NOTE, WatchCheck.PRIVATE, WatchCheck.SEND_BACK,
-            WatchCheck.NO_ANSWER, WatchCheck.BUSY, WatchCheck.DEMO, WatchCheck.NOTHING_FOUND, WatchCheck.CUT, WatchCheck.ENDED_STOPPED,
+            WatchCheck.NO_ANSWER, WatchCheck.BUSY, WatchCheck.DEMO, WatchCheck.NOTHING_FOUND, WatchCheck.CUT, WatchCheck.RUNNING, WatchCheck.ENDED_STOPPED,
             WatchCheck.ENDED_REFUSED, WatchCheck.ENDED_LAYOUT, WatchCheck.ENDED_BY_WATCH, WatchCheck.ENDED_BLUETOOTH, screen, t, dt}) {
             check("watch: no dash as punctuation in " + s.substring(0, Math.min(30, s.length())), !s.contains(" - ") && !s.contains("–") && !s.contains("—"));
         }

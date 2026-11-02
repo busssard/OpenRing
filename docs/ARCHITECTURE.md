@@ -507,10 +507,12 @@ pairing or sync is built. Nothing is paired, written to the watch (besides switc
   switch the sensor on and send values. Leaving the screen or the app stops the scan and the session at once; Android's
   pairing dialog over the screen only stops the scan (`onPause`), the session goes on until `onStop`, so Cancel there
   does not end the check.
-* **The ring always wins:** the session runs only when `RingGate.takeIfFree` gets the ring lock at once (no sync
-  counted, no ring task holding it), and holds it until the link is closed, so the phone never keeps two links. When
-  the ring is busy the screen says so. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s;
-  the background job tries again at its next run).
+* **The ring always wins:** the session runs through `RingManager.whileRingFree(r, line)`, which uses
+  `RingGate.takeIfFree` to get the ring lock at once (no sync counted, no ring task holding it), and holds it until the
+  link is closed, so the phone never keeps two links. When the ring is busy the screen says so. Meanwhile `busy()` is
+  true and the ring's status line says "Watch check running" (review of #270), so the main screen shows why a sync by
+  hand does not start. A ring sync that starts meanwhile waits for the lock as it does for Live (15 s; the background
+  job tries again at its next run).
 * **The report** (`core/WatchCheck`, kept in memory only): UUIDs (standard ones named, others as they are), property
   names, model, firmware, battery, whether the phone was paired with the watch before and is now (a pairing dialog
   accepted during the check leaves a bond; the screen then tells how to remove it), and per listened characteristic the number of messages and their lengths, plus the

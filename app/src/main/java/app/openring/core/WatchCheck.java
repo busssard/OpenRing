@@ -69,6 +69,9 @@ public final class WatchCheck {
     public static final String NO_ANSWER = "The watch did not answer. It may be busy with the Withings app; close that app and try again.";
     public static final String BUSY = "The ring is busy right now. Try again in a minute.";
     public static final String DEMO = "Demo mode: this is a made up example. Turn demo mode off to check a real watch.";
+    /** The status line of the ring while the check holds it (review of #270), so a sync by hand meanwhile shows why it waits. */
+    public static final String RUNNING = "Watch check running, the ring is free again within 30 seconds";
+
     /** Why a check ended early, in plain words for the screen; the status code or error goes to {@link Report#detail}. */
     public static final String ENDED_STOPPED = "The check was stopped because the screen was left.";
     public static final String ENDED_REFUSED = "Bluetooth did not open a connection. Switch Bluetooth off and on and try again.";
