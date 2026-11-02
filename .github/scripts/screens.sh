@@ -8,9 +8,28 @@ MAIN=$PKG/app.openring.ui.MainActivity
 mkdir -p "$OUT"
 log() { echo "== $*"; }
 
-adb wait-for-device
-adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
-adb install -r build/OpenRing.apk || exit 1
+# Every adb call has a time limit (issue #278): a stuck emulator fails the run within minutes with a
+# clear line, instead of waiting for the job timeout. ADB_WAIT=<seconds> sets the limit of the next call.
+BOOT_WAIT=${BOOT_WAIT:-360}
+ADB_TIMEOUT=${ADB_TIMEOUT:-60}
+adb() {
+  local limit=${ADB_WAIT:-$ADB_TIMEOUT} rc
+  timeout "$limit" adb "$@"
+  rc=$?
+  if [ $rc -eq 124 ]; then
+    echo "::error::adb $* did not answer within $limit s. The emulator is stuck (not caused by the app); push again to retry."
+    kill -TERM $$ 2>/dev/null
+    exit 1
+  fi
+  return $rc
+}
+boot_failed() {
+  echo "::error::The emulator did not finish starting within $BOOT_WAIT s (not caused by the app); push again to retry."
+  exit 1
+}
+timeout "$BOOT_WAIT" adb wait-for-device >/dev/null 2>&1 || boot_failed
+timeout "$BOOT_WAIT" adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done' >/dev/null 2>&1 || boot_failed
+ADB_WAIT=180 adb install -r build/OpenRing.apk || exit 1
 for perm in BLUETOOTH_SCAN BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant $PKG android.permission.$perm 2>/dev/null; done
 # a calm status bar: 09:41, full battery, no notifications
 adb shell settings put global sysui_demo_allowed 1
