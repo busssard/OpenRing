@@ -1519,10 +1519,14 @@ public final class Db extends SQLiteOpenHelper {
      * The one thing carried over (issue #252): the period log typed on this phone cannot be downloaded again, so its rows
      * (days with their removal marks, ends, imported temperatures and imports) are read before the swap and written into
      * the restored file, the phone's row winning on the same day, before {@code .old} goes. Ring data is never merged. A
-     * phone file that opens but whose log cannot be read refuses the restore before anything moves; any failure later
-     * puts the old file back with its log, like every other failure here.
+     * damaged phone file (Android's {@code SQLiteDatabaseCorruptException}, at the open or in a period table) is what a
+     * restore is for (#255, #266): it is replaced without its period log, which cannot be read reliably, and the result
+     * says so. Any other error on the way to the phone's log refuses the restore before anything moves
+     * ({@link PeriodLogUnreadable}); any failure later puts the old file back with its log, like every other failure here.
+     *
+     * @return true when the phone's file was damaged, so its period log was left behind (review of #275)
      */
-    public static synchronized void replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
+    public static synchronized boolean replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
         java.io.File dst = c.getDatabasePath(REAL);
         dst.getParentFile().mkdirs();
         String old = dst.getPath() + ".old";
@@ -1540,8 +1544,8 @@ public final class Db extends SQLiteOpenHelper {
         if (instance == null && dst.exists()) instance = new Db(c.getApplicationContext(), REAL);
         // the period log typed on this phone (issue #252), read before anything moves; it goes into the restored file
         Periods.Rows phoneLog = null;
+        boolean logDamaged = false;
         if (instance != null) {
-            boolean opened = false;
             try {
                 Cursor cp = instance.getWritableDatabase().rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null);
                 try {
@@ -1549,20 +1553,19 @@ public final class Db extends SQLiteOpenHelper {
                 } finally {
                     cp.close();
                 }
-                opened = true;
-            } catch (RuntimeException e) {
-                // a history that cannot be opened has nothing left in its side files to keep, nor a period log to read
-            }
-            try {
-                if (opened) phoneLog = Periods.read(instance.getReadableDatabase());
+                phoneLog = Periods.read(instance.getReadableDatabase());
                 mergeStep(MERGE_READ);
-            } catch (java.io.IOException | RuntimeException e) {
+            } catch (RuntimeException e) {
+                // a damaged file (at the open or in a period table) has no log that can be read: it is replaced without it,
+                // the way out of a damaged file (#255); any other error refuses, nothing moved yet
+                if (!damaged(e)) throw closed(new PeriodLogUnreadable(e));
+                phoneLog = null;
+                logDamaged = true;
+            } catch (java.io.IOException e) {
                 // nothing moved yet: the phone keeps everything as it is; the person is told it was the phone's log, not the backup
-                throw new PeriodLogUnreadable(e);
-            } finally {
-                instance.close();
-                instance = null;
+                throw closed(new PeriodLogUnreadable(e));
             }
+            closeInstance();
         }
         try {
             for (String s : SIDE) move(dst.getPath() + s, old + s);
@@ -1596,6 +1599,30 @@ public final class Db extends SQLiteOpenHelper {
         // side files first, the main .old last: while it exists, recoverSwap treats the swap as unfinished
         for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
         new java.io.File(old).delete();
+        return logDamaged;
+    }
+
+    /** Android's sign of a damaged file ({@code SQLiteDatabaseCorruptException}, also as the cause of another error). */
+    static boolean damaged(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) if (t instanceof android.database.sqlite.SQLiteDatabaseCorruptException) return true;
+        return false;
+    }
+
+    /** Closes the open history (a failure to close does not hide the reason we stop). */
+    private static void closeInstance() {
+        if (instance == null) return;
+        try {
+            instance.close();
+        } catch (RuntimeException ignored) {
+            // the file is not used any more either way
+        }
+        instance = null;
+    }
+
+    /** {@code e} once the open history is closed, to be thrown. */
+    private static java.io.IOException closed(java.io.IOException e) {
+        closeInstance();
+        return e;
     }
 
     /**
