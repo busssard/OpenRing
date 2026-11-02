@@ -316,16 +316,26 @@ public final class RingManager {
      * count through {@code core/RingGate.whenFree}, which waits instead of refusing (issue #219).
      */
     public boolean whileRingFree(Runnable r) {
-        if (syncs.get() > 0 || !op.tryLock()) return false;
+        return whileRingFree(r, null);
+    }
+
+    /**
+     * As {@link #whileRingFree(Runnable)}, with {@code line} as the status line meanwhile (null keeps it), so a sync by
+     * hand meanwhile shows why it waits (the Watch check, review of #270). The lock rule is
+     * {@code core/RingGate.takeIfFree}: no wait, never while a sync is counted.
+     */
+    public boolean whileRingFree(Runnable r, String line) {
+        if (!app.openring.core.RingGate.RING.takeIfFree()) return false;
+        String before = status;
         try {
-            // a sync counted while the lock was taken still waits for it; leave the ring to it
-            if (syncs.get() > 0) return false;
             busy = true;
+            if (line != null) status = line;
             notifyListeners();
             r.run();
             return true;
         } finally {
             busy = false;
+            if (line != null && line.equals(status)) status = before;
             op.unlock();
             notifyListeners();
         }
