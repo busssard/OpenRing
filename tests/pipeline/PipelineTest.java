@@ -8878,7 +8878,7 @@ public class PipelineTest {
         r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
         db = Db.get(c);
         check("#252 after the failures the restore works and keeps the log", r.ok && r.history && periodRows252(db).equals(rows), r.message);
-        String[] badDays = {"2019-02-30", "2019-3-01", "", "20190301", null};
+        String[] badDays = {"2019-02-30", "2019-3-01", "", "20190301", null, "0000-01-01", "9999-12-31", "1899-12-31", "3000-01-01"};
         int refused = 0;
         for (String d : badDays) {
             try {
@@ -8894,7 +8894,19 @@ public class PipelineTest {
                 refused++;
             }
         }
-        check("#252 not a day or not an amount: refused, nothing written", refused == badDays.length + 2 && periodRows252(db).equals(rows), refused);
+        check("#252 not a day or not an amount: refused, nothing written (also the placeholders 0000-01-01 and 9999-12-31)",
+                refused == badDays.length + 2 && periodRows252(db).equals(rows), refused);
+        for (String d : new String[] {"1900-01-01", "2999-12-31"}) {
+            app.openring.data.Periods.setFlow(db, d, app.openring.data.Periods.LIGHT, 1);
+            app.openring.data.Periods.setEnd(db, d, 1);
+        }
+        check("#252 the first and the last year a day can lie in are taken, and read by all, days and ends",
+                app.openring.data.Periods.all(db).get(0).day.equals("1900-01-01") && flow252(app.openring.data.Periods.all(db), "2999-12-31") == 1
+                && app.openring.data.Periods.days(db, "1900-01-01", "1900-01-01").size() == 1 && app.openring.data.Periods.allEnds(db).get(0).equals("1900-01-01")
+                && app.openring.data.Periods.allEnds(db).contains("2999-12-31") && app.openring.data.Periods.ends(db, "2999-12-31", "2999-12-31").size() == 1,
+                app.openring.data.Periods.all(db));
+        db.getWritableDatabase().execSQL("DELETE FROM period_days WHERE day IN ('1900-01-01', '2999-12-31')");
+        db.getWritableDatabase().execSQL("DELETE FROM period_ends WHERE day IN ('1900-01-01', '2999-12-31')");
         app.openring.data.Periods.setEnd(db, "2019-06-01");
         app.openring.data.Periods.clearEnd(db, "2019-06-01");
         app.openring.data.Periods.clearEnd(db, "2019-06-02");

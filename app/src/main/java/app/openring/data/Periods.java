@@ -15,6 +15,10 @@ import java.util.List;
  * A restore carries these rows over from the phone into the restored history ({@link Db#replaceWith}): the only rows
  * ever merged, since a typed day cannot be downloaded again. "Nothing" on a day therefore never deletes its row but keeps
  * a removal mark ({@link #REMOVED}), so a restore cannot bring the day back from the backup.
+ *
+ * Writers get the database with {@code Db.get(c)} for each write and never keep a {@code Db} across calls: a restore
+ * ({@link Db#replaceWith}) closes the instance and swaps the file under it, and a kept {@code Db} would open the file by
+ * name again and could write into it while it is being replaced (review of #275).
  */
 public final class Periods {
     private Periods() {}
@@ -104,9 +108,17 @@ public final class Periods {
 
     /** The logged days from {@code from} to {@code to} (both included, yyyy-mm-dd), oldest first, removal marks included. */
     public static List<Day> days(Db db, String from, String to) {
+        return readDays(db, "WHERE day >= ? AND day <= ? ", new String[] {date(from), date(to)});
+    }
+
+    /** Every logged day, oldest first, removal marks included. */
+    public static List<Day> all(Db db) {
+        return readDays(db, "", null);
+    }
+
+    private static List<Day> readDays(Db db, String where, String[] args) {
         List<Day> out = new ArrayList<Day>();
-        Cursor c = db.getReadableDatabase().rawQuery("SELECT day, flow, src, made FROM period_days WHERE day >= ? AND day <= ? ORDER BY day",
-                new String[] {date(from), date(to)});
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT day, flow, src, made FROM period_days " + where + "ORDER BY day", args);
         try {
             while (c.moveToNext()) out.add(new Day(c.getString(0), c.getInt(1), c.getLong(2), c.getDouble(3)));
         } finally {
@@ -115,16 +127,19 @@ public final class Periods {
         return out;
     }
 
-    /** Every logged day, oldest first, removal marks included. */
-    public static List<Day> all(Db db) {
-        return days(db, "0000-01-01", "9999-12-31");
-    }
-
     /** The end marks from {@code from} to {@code to} (both included), oldest first; cleared ones left out. */
     public static List<String> ends(Db db, String from, String to) {
+        return readEnds(db, "AND day >= ? AND day <= ? ", new String[] {date(from), date(to)});
+    }
+
+    /** Every end mark, oldest first; cleared ones left out. */
+    public static List<String> allEnds(Db db) {
+        return readEnds(db, "", null);
+    }
+
+    private static List<String> readEnds(Db db, String range, String[] args) {
         List<String> out = new ArrayList<String>();
-        Cursor c = db.getReadableDatabase().rawQuery("SELECT day FROM period_ends WHERE day >= ? AND day <= ? AND gone = 0 ORDER BY day",
-                new String[] {date(from), date(to)});
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT day FROM period_ends WHERE gone = 0 " + range + "ORDER BY day", args);
         try {
             while (c.moveToNext()) out.add(c.getString(0));
         } finally {
@@ -133,20 +148,19 @@ public final class Periods {
         return out;
     }
 
-    /** Every end mark, oldest first. */
-    public static List<String> allEnds(Db db) {
-        return ends(db, "0000-01-01", "9999-12-31");
-    }
+    /** The years a logged day can lie in: no person logs a period in another one, and 0000 or 9999 are placeholders. */
+    static final int FIRST_YEAR = 1900, LAST_YEAR = 2999;
 
-    /** {@code day} when it is a real calendar date written yyyy-mm-dd, else an IllegalArgumentException. */
+    /** {@code day} when it is a real calendar date written yyyy-mm-dd in a year a person can log, else an IllegalArgumentException. */
     static String date(String day) {
         if (day == null || day.length() != 10) throw new IllegalArgumentException("not a date: " + day);
-        if ("0000-01-01".equals(day) || "9999-12-31".equals(day)) return day; // the open ends of a range
+        java.time.LocalDate d;
         try {
-            if (!java.time.LocalDate.parse(day).toString().equals(day)) throw new IllegalArgumentException("not a date: " + day);
+            d = java.time.LocalDate.parse(day);
         } catch (java.time.format.DateTimeParseException e) {
             throw new IllegalArgumentException("not a date: " + day, e);
         }
+        if (!d.toString().equals(day) || d.getYear() < FIRST_YEAR || d.getYear() > LAST_YEAR) throw new IllegalArgumentException("not a date: " + day);
         return day;
     }
 
