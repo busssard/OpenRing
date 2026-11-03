@@ -434,7 +434,8 @@ public final class Badges {
     private static void aboveUsual(Day d, int i, double mean, int days, Badge[][] got) {
         if (!stepsDay(d) || !(mean > 0) || d.steps < mean * (1 + STEPS_ABOVE)) return;
         long more = Math.round((d.steps / mean - 1) * 100);
-        String text = Math.round(d.steps) + " steps, " + more + "% more than your usual " + Math.round(mean) + " (your last " + days
+        // the usual is shown to the nearest 100, like the step counts themselves (estimates); the share uses the exact mean
+        String text = Math.round(d.steps) + " steps, " + more + "% more than your usual " + Math.round(mean / 100) * 100 + " (your last " + days
                 + " days with the ring)";
         got[i][ABOVE_USUAL] = new Badge(d.date, ABOVE_USUAL, d.steps, mean, days, null, text);
     }

@@ -1278,6 +1278,12 @@ public class CoreTest {
         worn265(d.get(14), 30000);
         eq("#265 above your usual: 14 are, and the text says so", kind265(d, A),
                 Arrays.asList("14: 30000 steps, 200% more than your usual 10000 (your last 14 days with the ring)"));
+        // the usual is shown to the nearest 100 like the step counts (12005 reads 12000), the share uses the exact mean
+        d = days265(40);
+        for (int i = 0; i < 28; i++) worn265(d.get(i), i % 2 == 0 ? 12000 : 12010);
+        worn265(d.get(28), 20700);
+        eq("#265 above your usual: the usual reads to the nearest 100", kind265(d, A),
+                Arrays.asList("28: 20700 steps, 72% more than your usual 12000 (your last 28 days with the ring)"));
 
         // ---- goal: 4 of 7 days (once in 7 days) or the first goal day after 7 without one ----
         d = days265(30);
