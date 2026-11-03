@@ -375,6 +375,31 @@ public final class SettingsActivity extends Activity implements RingManager.List
         psl.setMargins(0, Ui.dp(this, 14), 0, 0);
         prof.addView(periodSwitch, psl);
         prof.addView(Ui.text(this, "Shown when your profile says female. Your logged days stay stored when it is hidden.", 12, Ui.TEXT_3, Ui.REGULAR));
+        // badges (issue #265): on by default; nothing about them is stored, so switching off deletes nothing
+        final Switch badgesSwitch = new Switch(this);
+        badgesSwitch.setText(Explain.SHOW_BADGES);
+        badgesSwitch.setTextColor(Ui.TEXT);
+        badgesSwitch.setChecked(p.badgesOn());
+        badgesSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                Prefs.of(SettingsActivity.this).setBadgesOn(on);
+            }
+        });
+        LinearLayout.LayoutParams bsl = Ui.matchWrap();
+        bsl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        prof.addView(badgesSwitch, bsl);
+        prof.addView(Ui.text(this, Explain.SHOW_BADGES_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+        TextView openBadges = Ui.smallButton(this, "Open badges", Ui.GOOD);
+        openBadges.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new android.content.Intent(SettingsActivity.this, BadgesActivity.class));
+            }
+        });
+        LinearLayout.LayoutParams obl = Ui.matchWrap();
+        obl.setMargins(0, Ui.dp(this, 8), 0, 0);
+        prof.addView(openBadges, obl);
         root.addView(prof);
 
         // ---- period tracker: the reminder and "My periods have stopped" (issue #252, phase 1a2) ----

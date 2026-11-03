@@ -88,6 +88,7 @@ public final class Backup {
         Json.put(o, "screen_exclude", new org.json.JSONArray(p.screenExcluded()));
         Json.put(o, "games_on", p.gamesOn());
         Json.put(o, "period_shown", p.periodChoice());
+        Json.put(o, "badges_on", p.badgesOn());
         // the reminder and "My periods have stopped" (issue #252, phase 1a2): the person's own, never the demo's
         Json.put(o, "period_remind_days", p.periodRemindDays());
         Json.put(o, "period_remind_min", p.periodRemindMinute());
@@ -450,6 +451,8 @@ public final class Backup {
         if (o.has("games_on")) p.setGamesOn(o.optBoolean("games_on", false));
         // the period tracker switch (issue #252); an older backup has none and leaves it as it is
         if (o.has("period_shown")) p.setPeriodChoice(o.optInt("period_shown", -1));
+        // the badges switch (issue #265); an older backup has none and leaves it as it is
+        if (o.has("badges_on")) p.setBadgesOn(o.optBoolean("badges_on", true));
         // phase 1a2: a value that is not one of the choices keeps the current one; an older backup has none of these
         if (app.openring.core.PeriodRemind.validDays(o.optInt("period_remind_days", -1))) p.setPeriodRemindDays(o.optInt("period_remind_days"));
         int remindMin = o.optInt("period_remind_min", -1);

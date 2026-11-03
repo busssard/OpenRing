@@ -89,6 +89,9 @@ public final class Prefs {
     public int periodChoice() { return sp.getInt("period_shown", -1); }
     public void setPeriodChoice(int v) { sp.edit().putInt("period_shown", v < 0 ? -1 : v > 0 ? 1 : 0).apply(); }
 
+    /** The Settings switch "Show badges" (issue #265), on by default: the Recent badges row on Today. Nothing is stored either way. */
+    public boolean badgesOn() { return sp.getBoolean("badges_on", true); }
+    public void setBadgesOn(boolean b) { sp.edit().putBoolean("badges_on", b).apply(); }
     /**
      * "Remind me before my period" (issue #252, phase 1a2): days before the expected range ({@code core/PeriodRemind.DAYS},
      * 0 off, the default) and the time of day in minutes after midnight (9:00 by default). Anything else is stored as off

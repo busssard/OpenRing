@@ -869,6 +869,7 @@ public class PipelineTest {
         demo252();
         largeLog252();
         tracker252();
+        badges265();
         phase1a2_252();
         rise252();
         drip252();
@@ -2559,39 +2560,63 @@ public class PipelineTest {
     }
 
     /**
-     * Issue #265, phase 1a: the demo's stored days and nights, its screen days as the Screen tab counts them and its
-     * evenings, as one {@code Badges.Day} per date (nothing stored). A test shortcut: it calls {@code ScreenDays.info}
-     * once per day, which phase 1b's reader must not do (it reads the whole range once).
+     * Issue #265: the zone a day is shown in, as {@code DayData} picks it (its main night's, else the zone noted at its noon,
+     * else the phone's), for comparing BadgeDays with the Screen tab of the same day.
      */
-    static List<app.openring.core.analysis.Badges.Day> badgeDays(Db db, app.openring.data.Prefs prefs, LocalDate today, long now) {
-        java.time.ZoneId z = java.time.ZoneId.systemDefault();
-        app.openring.core.analysis.LeftOut left = db.leftOut();
-        java.util.Map<String, app.openring.core.analysis.Badges.Day> by = new java.util.TreeMap<String, app.openring.core.analysis.Badges.Day>();
-        for (String[] r : db.daysJson("2000-01-01", today.toString())) {
-            JSONObject o = Json.parse(r[1]);
-            if (o == null) continue;
-            app.openring.core.analysis.Badges.Day d = new app.openring.core.analysis.Badges.Day(LocalDate.parse(r[0]));
-            JSONObject rd = o.optJSONObject("readiness");
-            if (rd != null && rd.has("value")) d.readiness = rd.optDouble("value");
-            if (o.has("sleep_score")) d.sleepScore = o.optDouble("sleep_score");
-            d.steps = Json.d(o, "steps");
-            d.coveredMin = Json.d(o, "covered_min");
-            d.restMin = Json.d(o, "rest_min");
-            d.activeKcal = Json.d(o, "active_kcal");
-            d.targetKcal = Json.d(o, "target_kcal");
-            d.goalLowered = app.openring.core.analysis.Badges.goalLowered(prefs.targetKcal() > 0, d.readiness);
-            d.running = o.has("total_until");
-            d.leftOut = left.seconds(d.date.atStartOfDay(z).toEpochSecond(), d.date.plusDays(1).atStartOfDay(z).toEpochSecond()) > 0;
-            app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(db, d.date, z, 180, prefs.screenExcluded(), 0, now);
-            if (in.day != null) d.screenMin = in.day.totalMin;
-            d.eveningMin = in.bedMin;
-            by.put(r[0], d);
+    static java.time.ZoneId dayZone265(Db db, LocalDate d) {
+        java.time.ZoneId phone = java.time.ZoneId.systemDefault();
+        JSONObject night = null;
+        for (String js : db.nightsJson(d.toString(), d.toString(), false)) {
+            JSONObject o = Json.parse(js);
+            if (o != null && o.optBoolean("main")) night = o;
         }
-        return new ArrayList<app.openring.core.analysis.Badges.Day>(by.values());
+        java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(d.atTime(12, 0).atZone(phone).toEpochSecond()));
+        return Json.zone(night, noted == null ? phone : noted);
+    }
+
+    static boolean same265(double a, double b) {
+        return Double.isNaN(a) ? Double.isNaN(b) : a == b;
+    }
+
+    /**
+     * Issue #265: for every day of {@code days}, BadgeDays' screen minutes and evening are exactly the Screen tab's
+     * ({@code ScreenDays.info} of that day in its zone). Returns the days that differ, empty when all agree; {@code known}
+     * gets how many days had screen minutes.
+     */
+    static List<String> screenAgrees265(Db db, List<app.openring.core.analysis.Badges.Day> days, java.util.Set<String> excluded, long now, int[] known) {
+        List<String> bad = new ArrayList<String>();
+        for (app.openring.core.analysis.Badges.Day d : days) {
+            app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(db, d.date, dayZone265(db, d.date), 180, excluded, 0, now);
+            double tab = in.day == null ? Double.NaN : in.day.totalMin;
+            if (!Double.isNaN(tab)) known[0]++;
+            if (!same265(d.screenMin, tab) || !same265(d.eveningMin, in.bedMin)) bad.add(d.date + " " + d.screenMin + "/" + tab + " " + d.eveningMin + "/" + in.bedMin);
+        }
+        return bad;
     }
 
     static void demoBadges(Db demo, app.openring.data.Prefs prefs, LocalDate today, long now) {
-        List<app.openring.core.analysis.Badges.Day> days = badgeDays(demo, prefs, today, now);
+        LocalDate first = LocalDate.parse(demo.firstDay());
+        List<app.openring.core.analysis.Badges.Day> days = app.openring.data.BadgeDays.read(demo, first, today, prefs.targetKcal(), prefs.screenExcluded(),
+                today, now, java.time.ZoneId.systemDefault());
+        // the minutes of every demo day are the Screen tab's, with the demo's maps app left out and with every app counted
+        int[] known = {0};
+        List<String> differ = screenAgrees265(demo, days, prefs.screenExcluded(), now, known);
+        check("#265 demo: BadgeDays counts each day's screen time and evening like the Screen tab", differ.isEmpty() && known[0] >= 30 && !prefs.screenExcluded().isEmpty(),
+                known[0] + " days, differ: " + differ);
+        int[] known2 = {0};
+        List<String> differ2 = screenAgrees265(demo, app.openring.data.BadgeDays.read(demo, first, today, 0, new java.util.HashSet<String>(), today, now,
+                java.time.ZoneId.systemDefault()), new java.util.HashSet<String>(), now, known2);
+        check("#265 demo: ... and with every app counted", differ2.isEmpty() && known2[0] == known[0], differ2);
+        // the day fields are the stored ones; the demo has no own target, so a target is lowered on a day under Good readiness
+        boolean fields = true;
+        for (app.openring.core.analysis.Badges.Day d : days) {
+            JSONObject o = Json.parse(demo.dayJson(d.date.toString()));
+            if (o == null) continue;
+            fields &= same265(d.steps, Json.d(o, "steps")) && same265(d.targetKcal, Json.d(o, "target_kcal")) && same265(d.coveredMin, Json.d(o, "covered_min"))
+                    && d.running == (o.has("total_until") || !d.date.isBefore(today))
+                    && d.goalLowered == (o.optJSONObject("readiness") != null && o.optJSONObject("readiness").optDouble("value") < app.openring.core.analysis.Scores.GOOD);
+        }
+        check("#265 demo: BadgeDays takes the stored day fields", fields && days.size() == (int) java.time.temporal.ChronoUnit.DAYS.between(first, today) + 1, days.size());
         List<app.openring.core.analysis.Badges.Badge> got = app.openring.core.analysis.Badges.of(days, today);
         int[] per = new int[app.openring.core.analysis.Badges.KINDS];
         StringBuilder sb = new StringBuilder();
@@ -10425,6 +10450,217 @@ public class PipelineTest {
             z.closeEntry();
         }
         return out.toByteArray();
+    }
+
+    /**
+     * Issue #265, phase 1b: the badges switch travels with a backup; BadgeDays over 3 years of made up days (screen time with
+     * a left out app, two time zones) is one quick pass whose screen minutes are the Screen tab's.
+     */
+    static void badges265() throws Exception {
+        Context c = freshDb("openring265");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        check("#265 badges are shown by default", p.badgesOn(), null);
+        p.saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        p.setBadgesOn(false);
+        java.io.ByteArrayOutputStream ko = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, ko, false);
+        Context b = freshDb("openring265-switch");
+        app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(ko.toByteArray()));
+        check("#265 a backup keeps the badges switch (off)", !app.openring.data.Prefs.of(b).badgesOn(), null);
+        String json = new String(zipEntry(ko.toByteArray(), "openring-backup.json"), "UTF-8").replaceAll(",?\"badges_on\":(true|false)", "");
+        java.io.ByteArrayOutputStream old = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(old)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(json.getBytes("UTF-8"));
+            z.closeEntry();
+        }
+        app.openring.data.Prefs.of(b).setBadgesOn(true);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(old.toByteArray()));
+        check("#265 an older backup without the switch leaves it as it is", r.ok && !json.contains("badges_on") && app.openring.data.Prefs.of(b).badgesOn(), r.message);
+        rmTree(b.dir);
+
+        // ---- 3 years of made up days, nights, screen time and apps ----
+        Context y = freshDb("openring265-years");
+        Db db = Db.get(y);
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate today = LocalDate.now().minusDays(1);
+        long now = today.atTime(14, 0).atZone(z).toEpochSecond();
+        LocalDate first = today.minusDays(3 * 365);
+        Random rnd = new Random(265);
+        List<double[]> screen = new ArrayList<double[]>();
+        java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
+        apps.put("x.maps", new ArrayList<double[]>());
+        apps.put("x.chat", new ArrayList<double[]>());
+        android.database.sqlite.SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            for (LocalDate d = first; d.isBefore(today); d = d.plusDays(1)) {
+                double mid = d.atStartOfDay(z).toEpochSecond();
+                double start = mid - 3600 * (1 + rnd.nextDouble()), end = mid + 3600 * (6 + rnd.nextDouble());
+                int score = (int) Math.round(78 + rnd.nextGaussian() * 8);
+                JSONObject night = new JSONObject();
+                night.put("day", d.toString());
+                night.put("main", true);
+                night.put("start", start);
+                night.put("end", end);
+                night.put("sleep_start", start + 600);
+                night.put("sleep_end", end);
+                w.execSQL("INSERT INTO nights (start, stop, day, main, score, json) VALUES (?, ?, ?, 1, ?, ?)", new Object[] {start, end, d.toString(), score, night.toString()});
+                JSONObject day = new JSONObject();
+                day.put("date", d.toString());
+                day.put("sleep_score", score);
+                JSONObject rd = new JSONObject();
+                rd.put("value", (int) Math.round(80 + rnd.nextGaussian() * 7));
+                day.put("readiness", rd);
+                day.put("steps", Math.round(8000 + rnd.nextGaussian() * 2500));
+                day.put("covered_min", 900);
+                day.put("rest_min", 450);
+                day.put("active_kcal", Math.round(350 + rnd.nextGaussian() * 120));
+                day.put("target_kcal", 380);
+                android.content.ContentValues cv = new android.content.ContentValues();
+                cv.put("day", d.toString());
+                cv.put("json", day.toString());
+                w.insertWithOnConflict("days", null, cv, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+                // about 20 uses a day, one in the hour before sleep on most evenings, one crossing midnight now and then
+                int n = 15 + rnd.nextInt(10);
+                for (int k = 0; k < n; k++) {
+                    double a = mid + 7 * 3600 + rnd.nextDouble() * 14 * 3600, len = 60 + rnd.nextDouble() * 900;
+                    screen.add(new double[] {a, a + len});
+                    if (rnd.nextDouble() < 0.1) apps.get("x.maps").add(new double[] {a + len * 0.2, a + len * 0.7});
+                    else apps.get("x.chat").add(new double[] {a, a + len});
+                }
+                if (rnd.nextDouble() < 0.7) screen.add(new double[] {start - 1800, start - 1800 + rnd.nextDouble() * 1500});
+                if (rnd.nextDouble() < 0.1) {
+                    double e = mid + 86400 - 300;
+                    screen.add(new double[] {e, e + 900});
+                    apps.get("x.maps").add(new double[] {e + 100, e + 700});
+                }
+            }
+            w.setTransactionSuccessful();
+        } finally {
+            w.endTransaction();
+        }
+        // one session of 20 days and a left out app range of 5 days (review of #309: the reader must not scan weeks for each day)
+        double longA = today.minusDays(100).atStartOfDay(z).toEpochSecond() + 3600;
+        screen.add(new double[] {longA, longA + 20 * 86400});
+        apps.get("x.maps").add(new double[] {longA + 2 * 86400, longA + 7 * 86400});
+        java.util.Collections.sort(screen, new java.util.Comparator<double[]>() {
+            @Override
+            public int compare(double[] a1, double[] a2) {
+                return Double.compare(a1[0], a2[0]);
+            }
+        });
+        db.putScreen(screen);
+        db.putApps(apps);
+        // the log was read for all of it except a gap of a week a year ago
+        double gapA = today.minusDays(365).atStartOfDay(z).toEpochSecond(), gapB = today.minusDays(358).atStartOfDay(z).toEpochSecond();
+        db.putScreenRead(first.atStartOfDay(z).toEpochSecond() - 86400, gapA);
+        db.putScreenRead(gapB, now);
+        // a trip: another zone for two weeks half a year ago
+        db.noteZone(first.atStartOfDay(z).toEpochSecond(), z.getId());
+        db.noteZone(today.minusDays(180).atStartOfDay(z).toEpochSecond(), "America/New_York");
+        db.noteZone(today.minusDays(167).atStartOfDay(z).toEpochSecond(), "America/New_York");
+        db.noteZone(today.minusDays(166).atStartOfDay(z).toEpochSecond(), z.getId());
+        java.util.Set<String> excluded = new java.util.HashSet<String>(Arrays.asList("x.maps"));
+
+        long t0 = System.currentTimeMillis();
+        app.openring.data.BadgeDays.History h = app.openring.data.BadgeDays.all(db, 0, excluded, today, now);
+        long ms = System.currentTimeMillis() - t0;
+        int[] per = new int[app.openring.core.analysis.Badges.KINDS];
+        for (app.openring.core.analysis.Badges.Badge x : h.badges) per[x.kind]++;
+        check("#265 3 years of days read in one pass, quickly", ms < 10000 && h.nights >= 3 * 365 - 1, ms + " ms, " + h.nights + " nights");
+        boolean every = true;
+        for (int k : per) every &= k > 0;
+        check("#265 3 made up years earn every kind", every, Arrays.toString(per));
+        // spot checks against the Screen tab: every 9th day, the gap and the trip
+        List<app.openring.core.analysis.Badges.Day> all = app.openring.data.BadgeDays.read(db, first, today, 0, excluded, today, now, z);
+        List<app.openring.core.analysis.Badges.Day> some = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < all.size(); i++) {
+            LocalDate d = all.get(i).date;
+            if (i % 9 == 0 || (!d.isBefore(today.minusDays(367)) && !d.isAfter(today.minusDays(356)))
+                    || (!d.isBefore(today.minusDays(182)) && !d.isAfter(today.minusDays(164)))
+                    || (!d.isBefore(today.minusDays(101)) && !d.isAfter(today.minusDays(78)))) some.add(all.get(i));
+        }
+        int[] known = {0};
+        List<String> differ = screenAgrees265(db, some, excluded, now, known);
+        int gapDays = 0;
+        for (app.openring.core.analysis.Badges.Day d : some) if (d.date.isAfter(today.minusDays(365)) && d.date.isBefore(today.minusDays(359)) && Double.isNaN(d.screenMin)) gapDays++;
+        int longDays = 0;
+        for (app.openring.core.analysis.Badges.Day d : some) if (d.date.isAfter(today.minusDays(100)) && d.date.isBefore(today.minusDays(81)) && d.screenMin > 1400) longDays++;
+        check("#265 3 years: days inside a 20 day session count it whole (but the 5 days of the left out app), as the Screen tab does", longDays >= 12, longDays);
+        check("#265 3 years: screen minutes and evenings are the Screen tab's, a week not read has none", differ.isEmpty() && known[0] > 100 && gapDays >= 5,
+                known[0] + " days, " + gapDays + " gap days, differ: " + differ);
+        boolean zonesAgree = true;
+        for (int i = 0; i < 400; i++) {
+            double t = first.atStartOfDay(z).toEpochSecond() + i * 3 * 86400.0 + 43200;
+            String a = db.zoneAt(t), bz = Db.zoneIn(db.zones(), t);
+            zonesAgree &= a == null ? bz == null : a.equals(bz);
+        }
+        check("#265 the zones read once give each day the zone the Screen tab uses", zonesAgree && "America/New_York".equals(Db.zoneIn(db.zones(),
+                today.minusDays(175).atStartOfDay(z).toEpochSecond())), null);
+        // the Today row's read: the 7 days before the date shown, with their history
+        List<app.openring.core.analysis.Badges.Badge> week = app.openring.data.BadgeDays.badges(db, today.minusDays(6), today, 0, excluded, today, now);
+        boolean inWeek = true;
+        int fromAll = 0;
+        for (app.openring.core.analysis.Badges.Badge x : week) inWeek &= !x.date.isBefore(today.minusDays(6)) && !x.date.isAfter(today);
+        for (app.openring.core.analysis.Badges.Badge x : h.badges) if (!x.date.isBefore(today.minusDays(6))) fromAll++;
+        // and for several weeks back, date for date (review of #309)
+        boolean weeksSame = inWeek && week.size() == fromAll;
+        for (int back = 30; back < 3 * 365; back += 97) {
+            LocalDate to = today.minusDays(back), from = to.minusDays(6);
+            List<String> want = new ArrayList<String>(), got = new ArrayList<String>();
+            for (app.openring.core.analysis.Badges.Badge x : h.badges) if (!x.date.isBefore(from) && !x.date.isAfter(to)) want.add(x.date + " " + x.kind);
+            for (app.openring.core.analysis.Badges.Badge x : app.openring.data.BadgeDays.badges(db, from, to, 0, excluded, today, now)) got.add(x.date + " " + x.kind);
+            weeksSame &= want.equals(got);
+        }
+        check("#265 the week's badges are those of the whole history for those days, for several weeks", weeksSame, week.size() + " / " + fromAll);
+        // a left out time takes a day out of every badge, and of the nights counted
+        double lo = today.minusDays(10).atTime(9, 0).atZone(z).toEpochSecond();
+        db.addExcluded(lo, lo + 3600, now);
+        List<app.openring.core.analysis.Badges.Day> afterLeft = app.openring.data.BadgeDays.read(db, today.minusDays(20), today, 0, excluded, today, now, z);
+        boolean leftOk = true;
+        for (app.openring.core.analysis.Badges.Day d : afterLeft) leftOk &= d.leftOut == d.date.equals(today.minusDays(10));
+        boolean noBadge = true;
+        for (app.openring.core.analysis.Badges.Badge x : app.openring.data.BadgeDays.all(db, 0, excluded, today, now).badges) noBadge &= !x.date.equals(today.minusDays(10));
+        check("#265 a day with a left out time is marked and earns no badge", leftOk && noBadge
+                && app.openring.data.BadgeDays.nights(afterLeft) == app.openring.data.BadgeDays.nights(all.subList(all.size() - 21, all.size())) - 1, null);
+        rmTree(y.dir);
+
+        // ---- the edges: an empty history, a range the wrong way round, unreadable rows, a night without sleep times, a stray old day ----
+        Context e = freshDb("openring265-edges");
+        Db edb = Db.get(e);
+        app.openring.data.BadgeDays.History none = app.openring.data.BadgeDays.all(edb, 0, new java.util.HashSet<String>(), today, now);
+        List<app.openring.core.analysis.Badges.Day> emptyDays = app.openring.data.BadgeDays.read(edb, today.minusDays(3), today, 0, new java.util.HashSet<String>(), today, now, z);
+        check("#265 nothing stored: no badge, no night, every date without numbers or screen time", none.badges.isEmpty() && none.nights == 0
+                && emptyDays.size() == 4 && Double.isNaN(emptyDays.get(0).screenMin) && Double.isNaN(emptyDays.get(0).steps) && emptyDays.get(3).running
+                && !emptyDays.get(2).running, emptyDays.size());
+        check("#265 a range the wrong way round reads nothing", app.openring.data.BadgeDays.read(edb, today, today.minusDays(1), 0,
+                new java.util.HashSet<String>(), today, now, z).isEmpty(), null);
+        LocalDate e1 = today.minusDays(2);
+        edb.putDay(e1.toString(), "{\"date\":\"" + e1 + "\",\"steps\":5000,\"readiness\":{\"score\":1}}");
+        edb.putDay(today.minusDays(3).toString(), "not json");
+        double ns = e1.atStartOfDay(z).toEpochSecond() - 3600;
+        edb.getWritableDatabase().execSQL("INSERT INTO nights (start, stop, day, main, score, json) VALUES (?, ?, ?, 1, 80, ?)",
+                new Object[] {ns, ns + 7 * 3600, e1.toString(), "{\"day\":\"" + e1 + "\",\"main\":true,\"start\":" + ns + ",\"end\":" + (ns + 7 * 3600) + "}"});
+        edb.getWritableDatabase().execSQL("INSERT INTO nights (start, stop, day, main, score, json) VALUES (?, ?, ?, 1, 80, ?)",
+                new Object[] {ns - 86400, ns - 86400 + 3600, today.minusDays(3).toString(), "broken"});
+        edb.putScreen(Arrays.asList(new double[] {ns - 1200, ns - 600}));
+        edb.putScreenRead(ns - 2 * 86400, now);
+        List<app.openring.core.analysis.Badges.Day> edges = app.openring.data.BadgeDays.read(edb, today.minusDays(3), today, 0, new java.util.HashSet<String>(), today, now, z);
+        int[] eKnown = {0};
+        List<String> eDiffer = screenAgrees265(edb, edges, new java.util.HashSet<String>(), now, eKnown);
+        check("#265 unreadable rows count as empty; a night without sleep times uses its start for the evening, as the Screen tab does",
+                Double.isNaN(edges.get(0).steps) && edges.get(1).steps == 5000 && Double.isNaN(edges.get(1).readiness) && edges.get(1).eveningMin == 10
+                && eDiffer.isEmpty() && eKnown[0] >= 2, edges.get(1).eveningMin + " " + eDiffer);
+        edb.putDay("1900-01-01", "{}");
+        LocalDate oldest = LocalDate.parse("2000-01-01");
+        long st = System.currentTimeMillis();
+        app.openring.data.BadgeDays.History stray = app.openring.data.BadgeDays.all(edb, 0, new java.util.HashSet<String>(), today, now);
+        long stMs = System.currentTimeMillis() - st;
+        check("#265 a stray day 1900 does not make the page read 120 years (at most 20, quickly)", stray.badges.isEmpty() && stMs < 5000
+                && LocalDate.parse(edb.firstDay()).isBefore(oldest), stMs + " ms");
+        rmTree(e.dir);
+        rmTree(c.dir);
     }
 
     /** Every stored night and day and the analysis state, as one text. */
