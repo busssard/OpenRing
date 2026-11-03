@@ -997,6 +997,7 @@ public class CoreTest {
         cycles252();
         badges265();
         badgeScreens265();
+        recent265();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1476,7 +1477,16 @@ public class CoreTest {
                 app.openring.ui.Explain.BADGES_NEW, app.openring.ui.Explain.BADGES_ALL, app.openring.ui.Explain.BADGES_CALENDAR,
                 app.openring.ui.Explain.BADGES_COUNT_NOTE, app.openring.ui.Explain.BADGES_SCREEN_ACCESS, app.openring.ui.Explain.BADGES_SCREEN_OLD,
                 app.openring.ui.Explain.SHOW_BADGES, app.openring.ui.Explain.SHOW_BADGES_NOTE, app.openring.ui.Explain.BADGES_FAILED,
-                app.openring.ui.Explain.badgesWait(0), app.openring.ui.Explain.badgesWait(1), app.openring.ui.Explain.badgesWait(13)));
+                app.openring.ui.Explain.badgesWait(0), app.openring.ui.Explain.badgesWait(1), app.openring.ui.Explain.badgesWait(13),
+                app.openring.ui.Explain.BADGES_OPEN));
+        boolean rules = app.openring.ui.Explain.badgeRule(Badges.KINDS) == null;
+        for (int k = 0; k < Badges.KINDS; k++) {
+            String r = app.openring.ui.Explain.badgeRule(k);
+            texts.add(r);
+            rules &= !r.startsWith(Badges.NAMES[k]) && Character.isUpperCase(r.charAt(0)) && app.openring.ui.Explain.badge(k).toLowerCase(Locale.ROOT).endsWith(r.toLowerCase(Locale.ROOT));
+        }
+        check("#265 under a badge's title its rule without the name again", rules && app.openring.ui.Explain.badgeRule(Badges.BEST_NIGHT).startsWith("Your highest sleep score"));
+        check("#265 the switch's note does not say nothing is stored (the newest date seen is)", !app.openring.ui.Explain.SHOW_BADGES_NOTE.contains("stored"));
         boolean plain = true;
         for (String t : texts) plain &= plain265(t);
         check("#265 the badge screens' texts are plain, no dash as punctuation", plain);
@@ -1508,6 +1518,80 @@ public class CoreTest {
                 && D265.plusDays(35).equals(Badges.newest(backwards)));
         check("#265 night and day badges", Badges.fromNight(Badges.BEST_NIGHT) && Badges.fromNight(Badges.RESTFUL_WEEK) && Badges.fromNight(Badges.RECOVERED)
                 && Badges.fromNight(Badges.PHONE_FREE) && !Badges.fromNight(Badges.ABOVE_USUAL) && !Badges.fromNight(Badges.GOAL) && !Badges.fromNight(Badges.CALM_SCREEN));
+    }
+
+    /**
+     * Review of #309: the Today row reads only the weeks it needs, yet its badges must be the whole history's for those
+     * dates, also inside a goal streak and a phone free streak of 300 days, where "at most once in 7 days" chains back to
+     * the streak's first day, and after a long gap for "Above your usual".
+     */
+    static void recent265() {
+        final List<Badges.Day> all = new ArrayList<Badges.Day>();
+        java.time.LocalDate start = java.time.LocalDate.of(2025, 1, 1);
+        Random rnd = new Random(309);
+        for (int i = 0; i < 520; i++) {
+            if (i >= 400 && i < 460) continue; // two months without the ring
+            Badges.Day x = new Badges.Day(start.plusDays(i));
+            x.sleepScore = Math.round(78 + rnd.nextGaussian() * 6);
+            x.readiness = Math.round(80 + rnd.nextGaussian() * 6);
+            worn265(x, Math.round(8000 + rnd.nextGaussian() * 2000));
+            x.targetKcal = 300;
+            // a goal streak from day 20 to day 322 (303 days), then now and then
+            x.activeKcal = i >= 20 && i <= 322 || rnd.nextDouble() < 0.4 ? 350 : 200;
+            // phone free evenings every day from day 40 to day 341, then about one in three
+            x.eveningMin = i >= 40 && i <= 341 || rnd.nextDouble() < 0.3 ? 0 : 20;
+            x.screenMin = 150 + rnd.nextGaussian() * 40;
+            all.add(x);
+        }
+        final java.time.LocalDate today = start.plusDays(520);
+        List<Badges.Badge> full = Badges.of(all, today);
+        final int[] reads = {0};
+        Badges.Reader reader = new Badges.Reader() {
+            @Override
+            public List<Badges.Day> from(java.time.LocalDate s) {
+                reads[0]++;
+                List<Badges.Day> out = new ArrayList<Badges.Day>();
+                for (Badges.Day x : all) if (!x.date.isBefore(s)) out.add(x);
+                return out;
+            }
+        };
+        boolean same = true;
+        String first = null;
+        int shown = 0, chained = 0;
+        for (int end = 60; end < 520; end += 7) {
+            java.time.LocalDate to = start.plusDays(end), from = to.minusDays(6);
+            List<String> want = new ArrayList<String>(), got = new ArrayList<String>();
+            for (Badges.Badge x : full) if (!x.date.isBefore(from) && !x.date.isAfter(to)) want.add(x.date + " " + x.kind + " " + x.text);
+            for (Badges.Badge x : Badges.recent(reader, from, to, start, today)) got.add(x.date + " " + x.kind + " " + x.text);
+            for (String w : want) if (w.contains(" " + Badges.GOAL + " ") || w.contains(" " + Badges.PHONE_FREE + " ")) chained++;
+            if (!want.equals(got)) {
+                same = false;
+                if (first == null) first = to + ": " + want + " / " + got;
+            }
+            shown++;
+        }
+        check("#265 the Today row's badges (dates and texts) are the whole history's for " + shown + " shown weeks, inside 300 day streaks and after a gap"
+                + (first == null ? "" : " " + first), same && chained > 30);
+        java.time.LocalDate to = start.plusDays(200);
+        List<String> withStart = new ArrayList<String>(), withoutStart = new ArrayList<String>();
+        for (Badges.Badge x : Badges.recent(reader, to.minusDays(6), to, start, today)) withStart.add(x.date + " " + x.text);
+        for (Badges.Badge x : Badges.recent(reader, to.minusDays(6), to, null, today)) withoutStart.add(x.date + " " + x.text);
+        check("#265 without the first stored date the reads go back until the whole history is in", withStart.equals(withoutStart) && !withStart.isEmpty());
+        // a read that starts inside the streak cannot tell; a read with a quiet week of each chained kind and 28 worn days can
+        List<Badges.Day> inStreak = reader.from(start.plusDays(100));
+        java.time.LocalDate settled = Badges.exactFrom(inStreak, today);
+        check("#265 a read starting inside a streak is exact only after the streak ended " + settled, settled != null && settled.isAfter(start.plusDays(341)));
+        check("#265 a read inside the streak that ends in it cannot tell", Badges.exactFrom(inStreak.subList(0, 150), today) == null);
+        check("#265 nothing read, nothing to tell", Badges.exactFrom(new ArrayList<Badges.Day>(), today) == null);
+        List<Badges.Day> quiet = days265(120);
+        for (Badges.Day x : quiet) {
+            worn265(x, 8000);
+            x.targetKcal = 300;
+            x.activeKcal = 200;
+            x.eveningMin = 20;
+        }
+        eq("#265 a quiet read is exact after the rules' reach", Badges.exactFrom(quiet, D265.plusDays(200)), D265.plusDays(Badges.REACH));
+        check("#265 fewer than 28 worn days cannot tell the usual steps", Badges.exactFrom(quiet.subList(0, 27), D265.plusDays(200)) == null);
     }
 
     static Badges.Day dayWorn265(double covered, double rest) {

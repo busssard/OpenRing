@@ -99,8 +99,7 @@ else
   echo "::warning::issue #69 step: no cut off demo was finished after opening again (the preparation may have ended before the app was)"
 fi
 shot today 2
-# the Recent badges row under the score rings (issue #265): the demo's story earns badges in its last 7 days on any day
-swipe_up;                                 shot today-badges 1
+# the compact Recent badges row under the score rings (issue #265) is in the today shot above
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1

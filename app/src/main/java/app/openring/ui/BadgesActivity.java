@@ -100,6 +100,8 @@ public final class BadgesActivity extends Activity {
                     Db db = Db.get(ctx);
                     l.history = BadgeDays.all(db, p.targetKcal(), p.screenExcluded(), l.today, System.currentTimeMillis() / 1000.0);
                     l.seen = BadgeViews.seen(db);
+                    // opening the page marks every badge as seen; written here, before Today can load again
+                    BadgeViews.writeSeen(db, Badges.newest(l.history.badges));
                 } catch (Throwable e) {
                     l.failed = true;
                     try {
@@ -129,7 +131,6 @@ public final class BadgesActivity extends Activity {
         }
         final LocalDate today = l.today;
         final List<Badges.Badge> all = l.history.badges;
-        BadgeViews.markSeen(this, Badges.newest(all));
 
         LinearLayout intro = Ui.card(this);
         intro.addView(Ui.body(this, Explain.BADGES));
@@ -240,7 +241,7 @@ public final class BadgesActivity extends Activity {
             line.addView(Ui.text(this, Explain.badgeCount(n, last, today), 13, n > 0 ? Ui.GOOD : Ui.TEXT_3, Ui.REGULAR));
             item.addView(line);
             item.addView(Ui.gap(this, 4));
-            item.addView(Ui.text(this, Explain.badge(k), 12, Ui.TEXT_2, Ui.REGULAR));
+            item.addView(Ui.text(this, Explain.badgeRule(k), 12, Ui.TEXT_2, Ui.REGULAR));
             if (last != null) {
                 final LocalDate at = last;
                 final int tab = BadgeViews.tab(k);

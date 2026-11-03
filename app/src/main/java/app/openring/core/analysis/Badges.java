@@ -176,15 +176,29 @@ public final class Badges {
      */
     public static List<Badge> of(Collection<Day> days, LocalDate today) {
         List<Badge> out = new ArrayList<Badge>();
+        Day[] at = grid(days, today);
+        Badge[][] got = run(at, true);
+        for (int i = 0; i < at.length; i++) for (int k = 0; k < KINDS; k++) if (got[i][k] != null) out.add(got[i][k]);
+        return out;
+    }
+
+    /** The dates of {@code days} as one slot per calendar day from the first to the last kept (empty slots null). */
+    private static Day[] grid(Collection<Day> days, LocalDate today) {
         TreeMap<LocalDate, Day> byDate = new TreeMap<LocalDate, Day>();
         LocalDate latest = today.plusDays(1);
         for (Day d : days) if (d != null && d.date != null && !d.date.isAfter(latest)) byDate.put(d.date, d);
-        if (byDate.isEmpty()) return out;
+        if (byDate.isEmpty()) return new Day[0];
         byDate.headMap(byDate.lastKey().minusDays(MAX_SPAN)).clear();
         LocalDate first = byDate.firstKey();
         int n = (int) ChronoUnit.DAYS.between(first, byDate.lastKey()) + 1;
         Day[] at = new Day[n];
         for (Day d : byDate.values()) at[(int) ChronoUnit.DAYS.between(first, d.date)] = d;
+        return at;
+    }
+
+    /** Every rule over the grid; {@code pause}: with "at most once in 7 days" (without it: where a rule would fire at all). */
+    private static Badge[][] run(Day[] at, boolean pause) {
+        int n = at.length;
         Badge[][] got = new Badge[n][KINDS];
         // above your usual: the steps of the newest worn days before i (at most 28), kept as the dates move on
         double[] usual = new double[USUAL_DAYS];
@@ -193,12 +207,12 @@ public final class Badges {
             Day d = at[i];
             if (d != null && !d.leftOut) {
                 bestNight(at, i, got);
-                restfulWeek(at, i, got);
+                restfulWeek(at, i, got, pause);
                 recovered(at, i, got);
-                phoneFree(at, i, got);
+                phoneFree(at, i, got, pause);
                 if (!d.running) {
                     if (usualN >= MIN_DAYS) aboveUsual(d, i, Stats.mean(java.util.Arrays.copyOf(usual, usualN)), usualN, got);
-                    goal(at, i, got);
+                    goal(at, i, got, pause);
                     calmScreen(at, i, got);
                 }
             }
@@ -212,8 +226,75 @@ public final class Badges {
                 }
             }
         }
-        for (int i = 0; i < n; i++) for (int k = 0; k < KINDS; k++) if (got[i][k] != null) out.add(got[i][k]);
-        return out;
+        return got;
+    }
+
+    /** Days every rule looks back at most (Recovered: a dip of up to 28 days and the 28 days before it, and one more). */
+    public static final int REACH = 70;
+    /** The kinds with "at most once in 7 days": a badge depends on the ones before it, a chain back through the history. */
+    static final int[] CHAINED = {RESTFUL_WEEK, PHONE_FREE, GOAL};
+
+    /**
+     * For a history read from its first date on (not from the person's first day): the first date from which every badge
+     * is exactly what the whole history gives, or null when this read cannot tell. That needs the rules' reach
+     * ({@link #REACH} days), for each chained kind 7 days in a row where it could not come even without the pause (so the
+     * chain before them cannot reach past them), and the 28 worn days "Above your usual" compares with.
+     */
+    public static LocalDate exactFrom(Collection<Day> days, LocalDate today) {
+        Day[] at = grid(days, today);
+        if (at.length == 0) return null;
+        LocalDate first = null;
+        for (Day d : at) if (d != null) {
+            first = d.date;
+            break;
+        }
+        int settled = REACH;
+        Badge[][] free = run(at, false);
+        for (int k : CHAINED) {
+            int quiet = 0, s = -1;
+            for (int i = RESTFUL_FROM; i < at.length && s < 0; i++) {
+                quiet = free[i][k] == null ? quiet + 1 : 0;
+                if (quiet == WEEK) s = i + 1;
+            }
+            if (s < 0) return null;
+            settled = Math.max(settled, s);
+        }
+        int worn = 0, s = -1;
+        for (int i = 0; i < at.length && s < 0; i++) if (stepsDay(at[i]) && ++worn == USUAL_DAYS) s = i + 1;
+        if (s < 0) return null;
+        settled = Math.max(settled, s);
+        return first.plusDays(settled);
+    }
+
+    /** First index where a restful week can be judged from the read alone (its 7 days and the 4 weeks before). */
+    private static final int RESTFUL_FROM = WEEK + MONTH;
+
+    /** Reads the history from a date on (the Today row reads only what it needs, issue #265). */
+    public interface Reader {
+        List<Day> from(LocalDate start);
+    }
+
+    /**
+     * The badges of the dates from {@code from} to {@code to}, exactly as the whole history gives them, reading as little
+     * of it as that needs: {@link #REACH} days before {@code from} first, then twice as far each time
+     * {@link #exactFrom} says the read was too short, at most back to {@code historyStart} (the first stored date; null
+     * when unknown, then the reads go back until they reach it by being empty before it).
+     */
+    public static List<Badge> recent(Reader reader, LocalDate from, LocalDate to, LocalDate historyStart, LocalDate today) {
+        int back = REACH;
+        while (true) {
+            LocalDate start = from.minusDays(back);
+            boolean whole = historyStart != null && !start.isAfter(historyStart) || back > MAX_SPAN;
+            if (whole && historyStart != null && historyStart.isBefore(start)) start = historyStart;
+            List<Day> days = reader.from(start);
+            LocalDate exact = whole ? null : exactFrom(days, today);
+            if (whole || exact != null && !exact.isAfter(from)) {
+                List<Badge> out = new ArrayList<Badge>();
+                for (Badge b : of(days, today)) if (!b.date.isBefore(from) && !b.date.isAfter(to)) out.add(b);
+                return out;
+            }
+            back *= 2;
+        }
     }
 
     // ---------------------------------------------------------------- the rules
@@ -255,9 +336,9 @@ public final class Badges {
         got[i][BEST_NIGHT] = new Badge(d.date, BEST_NIGHT, d.sleepScore, best, nights, bestOn, text);
     }
 
-    private static void restfulWeek(Day[] at, int i, Badge[][] got) {
+    private static void restfulWeek(Day[] at, int i, Badge[][] got, boolean pause) {
         Day d = at[i];
-        if (!night(d) || recentBadge(got, i, RESTFUL_WEEK)) return;
+        if (!night(d) || pause && recentBadge(got, i, RESTFUL_WEEK)) return;
         double week = 0, month = 0;
         int wn = 0, mn = 0;
         for (int j = Math.max(0, i - WEEK + 1); j <= i; j++) {
@@ -333,13 +414,13 @@ public final class Badges {
         return evening(d) && Math.round(d.eveningMin) <= PHONE_FREE_MAX;
     }
 
-    private static void phoneFree(Day[] at, int i, Badge[][] got) {
+    private static void phoneFree(Day[] at, int i, Badge[][] got, boolean pause) {
         Day d = at[i];
         if (!phoneFreeEvening(d)) return;
         String mins = Texts.minutes(d.eveningMin) + " on the phone in the hour before sleep";
         int free = 0;
         for (int j = Math.max(0, i - WEEK + 1); j <= i; j++) if (phoneFreeEvening(at[j])) free++;
-        if (free >= PHONE_FREE_OF && !recentBadge(got, i, PHONE_FREE)) {
+        if (free >= PHONE_FREE_OF && !(pause && recentBadge(got, i, PHONE_FREE))) {
             got[i][PHONE_FREE] = new Badge(d.date, PHONE_FREE, d.eveningMin, Double.NaN, free, null,
                     free + " phone free evenings in " + WEEK + " days: this one " + mins);
             return;
@@ -367,7 +448,7 @@ public final class Badges {
         return goalKnown(d) && d.activeKcal >= d.targetKcal;
     }
 
-    private static void goal(Day[] at, int i, Badge[][] got) {
+    private static void goal(Day[] at, int i, Badge[][] got, boolean pause) {
         Day d = at[i];
         if (!goalDay(d)) return;
         String kcal = Math.round(d.activeKcal) + " of " + Math.round(d.targetKcal) + " kcal";
@@ -378,7 +459,7 @@ public final class Badges {
                 if (at[j].goalLowered) lowered++;
             }
         }
-        if (days >= GOAL_OF && !recentBadge(got, i, GOAL)) {
+        if (days >= GOAL_OF && !(pause && recentBadge(got, i, GOAL))) {
             String note = lowered == 0 ? "" : lowered == days ? "; each goal lowered after a low readiness day"
                     : "; on " + lowered + " of them the goal was lowered after a low readiness day";
             String text = "Activity goal reached on " + days + " of the last " + WEEK + " days (this day " + kcal + note + ")";

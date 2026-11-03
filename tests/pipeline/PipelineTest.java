@@ -10004,6 +10004,10 @@ public class PipelineTest {
         } finally {
             w.endTransaction();
         }
+        // one session of 20 days and a left out app range of 5 days (review of #309: the reader must not scan weeks for each day)
+        double longA = today.minusDays(100).atStartOfDay(z).toEpochSecond() + 3600;
+        screen.add(new double[] {longA, longA + 20 * 86400});
+        apps.get("x.maps").add(new double[] {longA + 2 * 86400, longA + 7 * 86400});
         java.util.Collections.sort(screen, new java.util.Comparator<double[]>() {
             @Override
             public int compare(double[] a1, double[] a2) {
@@ -10038,12 +10042,16 @@ public class PipelineTest {
         for (int i = 0; i < all.size(); i++) {
             LocalDate d = all.get(i).date;
             if (i % 9 == 0 || (!d.isBefore(today.minusDays(367)) && !d.isAfter(today.minusDays(356)))
-                    || (!d.isBefore(today.minusDays(182)) && !d.isAfter(today.minusDays(164)))) some.add(all.get(i));
+                    || (!d.isBefore(today.minusDays(182)) && !d.isAfter(today.minusDays(164)))
+                    || (!d.isBefore(today.minusDays(101)) && !d.isAfter(today.minusDays(78)))) some.add(all.get(i));
         }
         int[] known = {0};
         List<String> differ = screenAgrees265(db, some, excluded, now, known);
         int gapDays = 0;
         for (app.openring.core.analysis.Badges.Day d : some) if (d.date.isAfter(today.minusDays(365)) && d.date.isBefore(today.minusDays(359)) && Double.isNaN(d.screenMin)) gapDays++;
+        int longDays = 0;
+        for (app.openring.core.analysis.Badges.Day d : some) if (d.date.isAfter(today.minusDays(100)) && d.date.isBefore(today.minusDays(81)) && d.screenMin > 1400) longDays++;
+        check("#265 3 years: days inside a 20 day session count it whole (but the 5 days of the left out app), as the Screen tab does", longDays >= 12, longDays);
         check("#265 3 years: screen minutes and evenings are the Screen tab's, a week not read has none", differ.isEmpty() && known[0] > 100 && gapDays >= 5,
                 known[0] + " days, " + gapDays + " gap days, differ: " + differ);
         boolean zonesAgree = true;
@@ -10060,7 +10068,16 @@ public class PipelineTest {
         int fromAll = 0;
         for (app.openring.core.analysis.Badges.Badge x : week) inWeek &= !x.date.isBefore(today.minusDays(6)) && !x.date.isAfter(today);
         for (app.openring.core.analysis.Badges.Badge x : h.badges) if (!x.date.isBefore(today.minusDays(6))) fromAll++;
-        check("#265 the week's badges are those of the whole history for those days", inWeek && week.size() == fromAll, week.size() + " / " + fromAll);
+        // and for several weeks back, date for date (review of #309)
+        boolean weeksSame = inWeek && week.size() == fromAll;
+        for (int back = 30; back < 3 * 365; back += 97) {
+            LocalDate to = today.minusDays(back), from = to.minusDays(6);
+            List<String> want = new ArrayList<String>(), got = new ArrayList<String>();
+            for (app.openring.core.analysis.Badges.Badge x : h.badges) if (!x.date.isBefore(from) && !x.date.isAfter(to)) want.add(x.date + " " + x.kind);
+            for (app.openring.core.analysis.Badges.Badge x : app.openring.data.BadgeDays.badges(db, from, to, 0, excluded, today, now)) got.add(x.date + " " + x.kind);
+            weeksSame &= want.equals(got);
+        }
+        check("#265 the week's badges are those of the whole history for those days, for several weeks", weeksSame, week.size() + " / " + fromAll);
         // a left out time takes a day out of every badge, and of the nights counted
         double lo = today.minusDays(10).atTime(9, 0).atZone(z).toEpochSecond();
         db.addExcluded(lo, lo + 3600, now);

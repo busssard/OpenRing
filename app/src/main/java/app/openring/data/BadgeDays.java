@@ -35,20 +35,22 @@ import app.openring.core.analysis.ScreenTime;
 public final class BadgeDays {
     private BadgeDays() {}
 
-    /** Days read before the first date asked for, so the rules have their history (30 nights, 4 weeks before a week or a dip). */
-    public static final int LOOK_BACK = 70;
-
     /**
-     * The badges of the dates from {@code from} to {@code to}, worked out from {@link #LOOK_BACK} days before {@code from}.
-     * {@code ownTarget}: the profile's activity target (0 without), {@code excluded}: the apps not counted in screen time.
+     * The badges of the dates from {@code from} to {@code to}, exactly the ones the whole history gives those dates (the
+     * Badges page): it reads {@link Badges#REACH} days before {@code from}, and further back as long as
+     * {@link Badges#exactFrom} says an "at most once in 7 days" chain or the 28 worn days of "Above your usual" reach
+     * further ({@link Badges#recent}). {@code ownTarget}: the profile's activity target (0 without), {@code excluded}:
+     * the apps not counted in screen time.
      */
-    public static List<Badges.Badge> badges(Db db, LocalDate from, LocalDate to, int ownTarget, Set<String> excluded, LocalDate today,
-            double now) {
-        List<Badges.Badge> out = new ArrayList<Badges.Badge>();
-        for (Badges.Badge b : Badges.of(read(db, from.minusDays(LOOK_BACK), to, ownTarget, excluded, today, now, ZoneId.systemDefault()), today)) {
-            if (!b.date.isBefore(from)) out.add(b);
-        }
-        return out;
+    public static List<Badges.Badge> badges(final Db db, LocalDate from, final LocalDate to, final int ownTarget, final Set<String> excluded,
+            final LocalDate today, final double now) {
+        final ZoneId phone = ZoneId.systemDefault();
+        return Badges.recent(new Badges.Reader() {
+            @Override
+            public List<Badges.Day> from(LocalDate start) {
+                return read(db, start, to, ownTarget, excluded, today, now, phone);
+            }
+        }, from, to, first(db, today), today);
     }
 
     /** The Badges page's history: every badge, and how many nights with a sleep score there are. */
@@ -153,10 +155,16 @@ public final class BadgeDays {
         return out;
     }
 
-    /** Ranges sorted by start, with the longest one's length, so the ranges reaching a window are found without a full scan. */
+    /**
+     * Ranges sorted by start, so the ranges reaching a window are found without a full scan: the usual ones (up to 2 days)
+     * by a binary search back by the longest of them, the few longer ones (a session or a left out app time running for
+     * days) from their own list, so one range of weeks does not make every day scan weeks of ranges.
+     */
     static final class Window {
+        static final double LONG_S = 2 * 86400;
         final double[][] r;
         final double longest;
+        final int[] longOnes;
 
         Window(List<double[]> ranges) {
             r = ranges.toArray(new double[0][]);
@@ -168,8 +176,15 @@ public final class BadgeDays {
                 }
             });
             double l = 0;
-            for (double[] x : r) l = Math.max(l, x[1] - x[0]);
+            List<Integer> lo = new ArrayList<Integer>();
+            for (int i = 0; i < r.length; i++) {
+                double len = r[i][1] - r[i][0];
+                if (len > LONG_S) lo.add(i);
+                else l = Math.max(l, len);
+            }
             longest = l;
+            longOnes = new int[lo.size()];
+            for (int i = 0; i < longOnes.length; i++) longOnes[i] = lo.get(i);
         }
 
         /** The ranges that overlap [a, b), in start order. */
@@ -183,6 +198,8 @@ public final class BadgeDays {
                 else hi = mid;
             }
             List<double[]> out = new ArrayList<double[]>();
+            // long ranges that start before the search point come first: their place in start order is before it
+            for (int i : longOnes) if (i < lo && r[i][1] > a) out.add(r[i]);
             for (int i = lo; i < r.length && r[i][0] < b; i++) if (r[i][1] > a) out.add(r[i]);
             return out;
         }

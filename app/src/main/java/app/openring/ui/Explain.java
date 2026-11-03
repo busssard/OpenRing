@@ -167,19 +167,20 @@ public final class Explain {
     // the badge screens (issue #265, phase 1b)
     public static final String BADGES_ROW = "Recent badges";
     public static final String BADGES_ROW_NOTE = "Good days and nights of the last " + Badges.WEEK + " days, compared with your own usual. "
-            + "Tap one to open that day.";
+            + "Touch one to read it.";
+    public static final String BADGES_OPEN = "Open that day";
     public static final String BADGES_NEW = "New";
     public static final String BADGES_ALL = "All badges";
     public static final String BADGES_CALENDAR = "A dot marks a day with at least one badge, a bigger dot two or more. "
             + "Touch and slide across the days to read them, tap a day to open it.";
-    public static final String BADGES_COUNT_NOTE = "How often counts the days with this badge in all your history. It is not a score to beat: "
+    public static final String BADGES_COUNT_NOTE = "The number counts the days with this badge in all your history. It is not a score to beat: "
             + "a day without a badge says nothing.";
     public static final String BADGES_SCREEN_ACCESS = "Phone free evening and Calm screen day come from your screen time. For that, switch on "
             + "Open Ring in Android's usage access list (the button takes you there). It stays on this phone.";
     public static final String BADGES_SCREEN_OLD = "Phone free evening and Calm screen day come from your screen time, which needs Android 9 or newer.";
     public static final String SHOW_BADGES = "Show badges";
-    public static final String SHOW_BADGES_NOTE = "Shows Recent badges on Today. Badges are worked out from your data each time and nothing "
-            + "about them is stored, so switching this off deletes nothing.";
+    public static final String SHOW_BADGES_NOTE = "Shows Recent badges on Today. Badges are worked out from your data each time, "
+            + "so switching this off deletes nothing.";
     public static final String BADGES_FAILED = "The badges could not be read this time. Your data is as before. Diagnostics, Log tab, shows why.";
 
     /** Under 14 nights: most comparisons still wait. Null from then on. */
@@ -208,6 +209,14 @@ public final class Explain {
         if (on.isEmpty()) return sb.append(": no badge").toString();
         for (Badges.Badge b : on) sb.append('\n').append(Badges.NAMES[b.kind]).append(": ").append(b.text);
         return sb.toString();
+    }
+
+    /** {@link #badge} without the name in front, for under the badge's own title: "Your highest sleep score ...". */
+    public static String badgeRule(int kind) {
+        String line = badge(kind);
+        if (line == null) return null;
+        String rule = line.substring(Badges.NAMES[kind].length() + 2);
+        return Character.toUpperCase(rule.charAt(0)) + rule.substring(1);
     }
 
     /** One line per badge rule ({@code Badges.BEST_NIGHT} and so on), with the numbers the rule uses. */

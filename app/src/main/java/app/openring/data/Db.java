@@ -1315,11 +1315,6 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     /**
-     * The zone id valid at {@code unix}: the row that holds it; between two rows the later one (the
-     * first note after it, "the last time zone counts for the whole night"); after the newest row the
-     * newest. Null when no zone was ever noted (demo mode, or before the first run of 1.26).
-     */
-    /**
      * {@link #zoneAt} from rows of {@link #zones} already read (ordered by start), for a reader that needs the zone of
      * many days without a query each (issue #265): the first row that has not stopped before {@code unix}, else the newest.
      */
@@ -1328,6 +1323,11 @@ public final class Db extends SQLiteOpenHelper {
         return zones.isEmpty() ? null : (String) zones.get(zones.size() - 1)[2];
     }
 
+    /**
+     * The zone id valid at {@code unix}: the row that holds it; between two rows the later one (the
+     * first note after it, "the last time zone counts for the whole night"); after the newest row the
+     * newest. Null when no zone was ever noted (demo mode, or before the first run of 1.26).
+     */
     public String zoneAt(double unix) {
         Cursor c = getReadableDatabase().rawQuery("SELECT id FROM zones WHERE stop >= ? ORDER BY start LIMIT 1", new String[] {String.valueOf(unix)});
         try {
