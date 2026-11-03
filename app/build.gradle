@@ -2,10 +2,15 @@ plugins {
     id 'com.android.application'
 }
 
-// The version is counted from the change notes in changes/ (same rule as tools/version.sh)
+// The version comes from tools/version.sh (change notes in changes/ and the release tags), the same as
+// build_apk.sh. Without a shell it falls back to the code from the notes and the name "2.local".
 def changeNotes = (new File(rootDir, 'changes').listFiles() ?: []).findAll { it.name ==~ /[0-9].*\.md/ }.size()
 def appVersionCode = 29 + changeNotes
-def appVersionName = '1.' + (28 + changeNotes)
+def appVersionName = '2.local'
+try {
+    def out = ['sh', new File(rootDir, 'tools/version.sh').path].execute().text.trim().split(' ')
+    if (out.length == 2 && out[0].isInteger()) { appVersionCode = out[0].toInteger(); appVersionName = out[1] }
+} catch (Exception ignored) { }
 
 android {
     namespace 'app.openring'
