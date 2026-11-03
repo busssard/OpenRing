@@ -260,7 +260,9 @@ adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fl
 # line coloured pixels on a circle through the use lines, not the night band (dial_touch.py, issue #229).
 # The circle comes from the clock's bounds in the screen dump (content-desc "Phone use clock", issue #261),
 # else 13:00 on it. Without the bounds (clock cut off or not listed) the fixed middle 540 1047 measured on an
-# earlier run, else a fixed tap near 13:00.
+# earlier run, else a fixed tap at 13:00 on that fixed circle (dial_touch.py's point(540, 1047, 300, 195),
+# checked by tests/test_ci_scripts.sh).
+DIAL_FALLBACK="462 1336"
 DIAL_VIEW=$(ui_dump | grep -o 'content-desc="Phone use clock[^"]*"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
 adb exec-out screencap > "$OUT/.dial.raw"
 xy=""
@@ -269,8 +271,8 @@ if [ "$(echo $DIAL_VIEW | wc -w)" = 4 ]; then
 fi
 [ -n "$xy" ] || { log "clock bounds not usable (${DIAL_VIEW:-not listed}), fixed middle"; xy=$(python3 -I .github/scripts/dial_touch.py "$OUT/.dial.raw" 2>/dev/null); }
 rm -f "$OUT/.dial.raw"
-log "clock touch at ${xy:-464 1331}"
-adb shell input tap ${xy:-464 1331};       shot screen-touch 1
+log "clock touch at ${xy:-$DIAL_FALLBACK}"
+adb shell input tap ${xy:-$DIAL_FALLBACK}; shot screen-touch 1
 swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 # the Badges page (issue #265): calendar with a dot on each day with a badge, then each kind with how often and its rule
