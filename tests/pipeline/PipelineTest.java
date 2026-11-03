@@ -859,6 +859,7 @@ public class PipelineTest {
         demo252();
         largeLog252();
         tracker252();
+        phase1a2_252();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -9824,6 +9825,186 @@ public class PipelineTest {
                 r.message + ", " + app.openring.data.Prefs.of(b).periodChoice());
         rmTree(b.dir);
         clean254();
+    }
+
+    /** The SHA-256 of a file's bytes, to show it was only read. */
+    static String sha252(File f) throws Exception {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        md.update(Files.readAllBytes(f.toPath()));
+        StringBuilder sb = new StringBuilder();
+        for (byte b : md.digest()) sb.append(String.format("%02x", b));
+        return sb.toString();
+    }
+
+    /**
+     * Issue #252, phase 1a2: the reminder's read only helper ({@code Periods.readReal}: the person's own log, also in demo
+     * mode, without opening, swapping or writing a database), the new settings (defaults, ranges, demo kept apart) and their
+     * way through a backup, and the demo's warmer nights after ovulation. No table and no stored row changes in this phase.
+     */
+    static void phase1a2_252() throws Exception {
+        Context c = phone254("openring252-1a2");
+        Db db = Db.get(c);
+        LocalDate today = LocalDate.parse("2019-06-30");
+        java.util.TreeMap<LocalDate, Integer> made = app.openring.core.analysis.Cycles.demo(today);
+        for (java.util.Map.Entry<LocalDate, Integer> e : made.entrySet()) app.openring.data.Periods.setFlow(db, e.getKey().toString(), e.getValue(), 6000);
+        app.openring.data.Periods.setEnd(db, made.lastKey().toString(), 6001);
+        String rows = periodRows252(db), results = results252(db);
+        app.openring.core.analysis.Cycles viaDb = app.openring.data.Periods.cycles(db, today, null);
+        app.openring.core.analysis.Cycles ro = app.openring.data.Periods.readReal(c, today, null);
+        check("#252b the read only helper gives the same estimate as the app's database", ro != null && ro.periods.toString().equals(viaDb.periods.toString())
+                && ro.next.equals(viaDb.next) && ro.range == viaDb.range && ro.ends.equals(viaDb.ends) && !ro.stopped, ro == null ? null : ro.periods);
+        check("#252b the helper passes on \"My periods have stopped\"", app.openring.data.Periods.readReal(c, today, today).stopped
+                && app.openring.data.Periods.cycles(db, today, today).stopped, null);
+
+        // demo mode: the helper reads the real file only, and leaves the open demo database and the real file as they are
+        app.openring.data.Prefs.of(c).setDemo(true);
+        Db demo = Db.get(c);
+        app.openring.data.Periods.setFlow(demo, "2019-06-29", app.openring.data.Periods.HEAVY, 7000);
+        File real = c.getDatabasePath(Db.REAL);
+        String before = sha252(real);
+        long t = System.nanoTime();
+        app.openring.core.analysis.Cycles inDemo = app.openring.data.Periods.readReal(c, today, null);
+        double ms = (System.nanoTime() - t) / 1e6;
+        check("#252b demo mode: the reminder reads the person's own log, never the demo's", inDemo.periods.toString().equals(viaDb.periods.toString())
+                && inDemo.running == null && app.openring.data.Periods.cycles(demo, today).running != null, inDemo.periods);
+        check("#252b demo mode: the helper opens, swaps and writes nothing (the demo database stays open, the real file byte for byte)",
+                Db.get(c) == demo && Db.DEMO.equals(demo.fileName) && sha252(real).equals(before) && !new File(real.getPath() + ".old").exists(), ms);
+        app.openring.data.Prefs.of(c).setDemo(false);
+        db = Db.get(c);
+        check("#252b back from demo mode: the period log and the results as before", periodRows252(db).equals(rows) && results252(db).equals(results), null);
+
+        // no real file: no log; a file from before the period tables: an error, and the file stays
+        Context none = freshDb("openring252-nofile");
+        MADE_254.add(none);
+        check("#252b no real file: no log, and none is created", app.openring.data.Periods.readReal(none, today, null) == null
+                && !none.getDatabasePath(Db.REAL).exists(), null);
+        Context old = freshDb("openring252-oldfile");
+        MADE_254.add(old);
+        File of = old.getDatabasePath(Db.REAL);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + of.getPath()); java.sql.Statement st = cn.createStatement()) {
+            st.execute("CREATE TABLE events(id INTEGER PRIMARY KEY, tag INTEGER)");
+            st.execute("PRAGMA user_version = 7");
+        }
+        String oldSha = sha252(of);
+        boolean threw = false;
+        try {
+            app.openring.data.Periods.readReal(old, today, null);
+        } catch (RuntimeException e) {
+            threw = true;
+        }
+        check("#252b a file from before the period tables: an error (the alarm set before stays), the file untouched", threw && sha252(of).equals(oldSha), null);
+
+        // five years of log: read in well under a second
+        final Db big = db;
+        big.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                LocalDate d = LocalDate.parse("2014-01-01");
+                for (int i = 0; i < 5 * 365; i++, d = d.plusDays(1)) if (i % 29 < 5) app.openring.data.Periods.setFlow(big, d.toString(), 1 + i % 3, 1e9 + i);
+            }
+        });
+        t = System.nanoTime();
+        app.openring.core.analysis.Cycles five = app.openring.data.Periods.readReal(c, today, null);
+        double s5 = (System.nanoTime() - t) / 1e9;
+        System.out.printf("    #252b the reminder's read of a 5 year log: %.3f s%n", s5);
+        check("#252b a 5 year log is read for the reminder in under a second", five.periods.size() > 60 && s5 < 1, s5);
+
+        // the settings: defaults, ranges, demo kept apart
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        check("#252b settings: reminder off at 9:00, nothing sent, not stopped, never answered", p.periodRemindDays() == 0 && p.periodRemindMinute() == 540
+                && p.periodRemindSent() == null && p.periodStopped() == null && p.periodAskLater() == null, null);
+        p.setPeriodRemindDays(4);
+        boolean off = p.periodRemindDays() == 0;
+        p.setPeriodRemindDays(3);
+        p.setPeriodRemindMinute(24 * 60);
+        boolean nine = p.periodRemindMinute() == 540;
+        p.setPeriodRemindMinute(7 * 60 + 15);
+        check("#252b settings: only the choices are stored", off && nine && p.periodRemindDays() == 3 && p.periodRemindMinute() == 435, p.periodRemindDays());
+        p.setPeriodStopped("2019-06-01");
+        p.setPeriodAskLater("2019-05-01");
+        p.setPeriodRemindSent("2019-06-12");
+        p.setDemo(true);
+        boolean apart = p.periodStopped() == null && p.periodAskLater() == null && "2019-06-01".equals(p.periodStoppedReal());
+        p.setPeriodStopped("2019-01-01");
+        p.setDemo(false);
+        check("#252b settings: demo mode keeps its own \"stopped\" and \"Not yet\", the person's stay", apart && "2019-06-01".equals(p.periodStopped())
+                && "2019-05-01".equals(p.periodAskLater()), p.periodStopped());
+        p.setPeriodAskLater("3 Mar");
+        check("#252b settings: something that is not a date is stored as none", p.periodAskLater() == null, p.periodAskLater());
+        p.setPeriodAskLater("2019-05-01");
+
+        // through a backup: the choices, "stopped" and "Not yet" travel, what was sent does not; an older backup leaves them
+        java.io.ByteArrayOutputStream ko = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, ko, false);
+        Context b = freshDb("openring252-1a2-backup");
+        MADE_254.add(b);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(ko.toByteArray()));
+        app.openring.data.Prefs q = app.openring.data.Prefs.of(b);
+        check("#252b a backup carries the reminder, \"stopped\" and \"Not yet\", not the reminder already sent", r.ok && q.periodRemindDays() == 3
+                && q.periodRemindMinute() == 435 && "2019-06-01".equals(q.periodStopped()) && "2019-05-01".equals(q.periodAskLater()) && q.periodRemindSent() == null,
+                r.message + " " + q.periodRemindDays() + " " + q.periodStopped());
+        String json = new String(zipEntry(ko.toByteArray(), "openring-backup.json"), "UTF-8");
+        String older = json.replaceAll(",?\"period_(remind_days|remind_min|stopped|ask_later)\":(-?\\d+|\"[^\"]*\")", "");
+        q.setPeriodRemindDays(5);
+        q.setPeriodRemindMinute(600);
+        r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(zip252(older)));
+        check("#252b an older backup without them leaves them as they are", r.ok && !older.contains("period_remind") && !older.contains("period_stopped")
+                && q.periodRemindDays() == 5 && q.periodRemindMinute() == 600 && "2019-06-01".equals(q.periodStopped()), r.message + " " + older.length());
+        String notSaid = json.replaceAll(",?\"period_(stopped|ask_later)\":\"[^\"]*\"", "").replace("\"period_remind_days\":3", "\"period_remind_days\":4")
+                .replace("\"period_remind_min\":435", "\"period_remind_min\":99999");
+        r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(zip252(notSaid)));
+        check("#252b a backup made while \"stopped\" was not said clears it; values outside the choices keep the current ones", r.ok && q.periodStopped() == null
+                && q.periodAskLater() == null && q.periodRemindDays() == 5 && q.periodRemindMinute() == 600, q.periodStopped() + " " + q.periodRemindDays());
+
+        // the demo's warmer nights after ovulation: only the night skin temperature of those nights changes
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate dToday = LocalDate.parse("2026-10-20");
+        long t0 = dToday.minusDays(35).atStartOfDay(z).toEpochSecond(), dNow = dToday.atTime(9, 41).atZone(z).toEpochSecond();
+        java.util.TreeSet<LocalDate> warm = app.openring.core.analysis.Cycles.demoWarmNights(dToday);
+        List<app.openring.core.RingEvent> plainEv = app.openring.data.Demo.history(t0, 35, dNow, z, new java.util.Random(7));
+        List<app.openring.core.RingEvent> warmEv = app.openring.data.Demo.warmNights(plainEv, t0, z, warm);
+        int same = 0, warmer = 0, other = 0;
+        for (int i = 0; i < plainEv.size(); i++) {
+            app.openring.core.RingEvent x = plainEv.get(i), y = warmEv.get(i);
+            if (Arrays.equals(x.body, y.body) && x.tag == y.tag && x.ds == y.ds) same++;
+            else if (x.tag == EventCodec.SLEEP_TEMP_EVENT && (y.body[0] & 0xff | (y.body[1] & 0xff) << 8) - (x.body[0] & 0xff | (x.body[1] & 0xff) << 8) == 30) warmer++;
+            else other++;
+        }
+        check("#252b demo: only night temperatures change, by 0.3 degrees, and only in some nights", warmEv.size() == plainEv.size() && other == 0 && warmer > 1000 && same > warmer,
+                same + " " + warmer + " " + other);
+        Context dc = freshDb("openring252-1a2-demo");
+        MADE_254.add(dc);
+        app.openring.data.Demo.enter(dc, null, dToday, dNow);
+        Db dd = Db.get(dc);
+        double wSum = 0, oSum = 0;
+        int wn = 0, on = 0;
+        for (String[] row : dd.daysJson(dToday.minusDays(35).toString(), dToday.toString())) {
+            double v = Json.d(Json.parse(row[1]), "temp_dev");
+            if (Double.isNaN(v)) continue;
+            if (warm.contains(LocalDate.parse(row[0]))) {
+                wSum += v;
+                wn++;
+            } else {
+                oSum += v;
+                on++;
+            }
+        }
+        double rise = wn > 0 && on > 0 ? wSum / wn - oSum / on : Double.NaN;
+        System.out.printf("    #252b demo: nights after ovulation %.2f degrees warmer than the others (%d and %d nights)%n", rise, wn, on);
+        check("#252b demo: the period tracker's temperature line shows nights after ovulation about 0.3 degrees warmer", wn >= 5 && on >= 5 && rise > 0.2 && rise < 0.4, rise);
+        app.openring.data.Demo.leave(dc);
+        clean254();
+    }
+
+    /** A backup zip holding only the settings file {@code json}. */
+    static byte[] zip252(String json) throws Exception {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(json.getBytes("UTF-8"));
+            z.closeEntry();
+        }
+        return out.toByteArray();
     }
 
     /** Every stored night and day and the analysis state, as one text. */

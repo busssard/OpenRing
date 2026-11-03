@@ -146,7 +146,7 @@ public final class Demo {
         long t0 = today.minusDays(days).atStartOfDay(zone).toEpochSecond();
         List<double[]> screen = new ArrayList<double[]>();
         java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
-        List<RingEvent> ev = history(t0, days, now, zone, new Random(7), screen, apps);
+        List<RingEvent> ev = warmNights(history(t0, days, now, zone, new Random(7), screen, apps), t0, zone, app.openring.core.analysis.Cycles.demoWarmNights(today));
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
@@ -173,6 +173,32 @@ public final class Demo {
                 for (java.util.Map.Entry<LocalDate, Integer> e : log.entrySet()) Periods.setFlow(db, e.getKey().toString(), e.getValue(), now);
             }
         });
+    }
+
+    /**
+     * The demo's nights after ovulation (issue #252, phase 1a2): every night skin temperature reading of a night in
+     * {@code warm} (by the day its morning falls on, the reading's time plus 12 hours) gets {@code Cycles.DEMO_RISE} more,
+     * so the period tracker's temperature line shows the rise many people have. Only for {@link #enter}; the other events
+     * and {@link #history} itself stay as they are.
+     */
+    public static List<RingEvent> warmNights(List<RingEvent> ev, long t0, ZoneId zone, java.util.Set<LocalDate> warm) {
+        List<RingEvent> out = new ArrayList<RingEvent>(ev.size());
+        int add = (int) Math.round(app.openring.core.analysis.Cycles.DEMO_RISE * 100);
+        for (RingEvent e : ev) {
+            if (e.tag == EventCodec.SLEEP_TEMP_EVENT && e.body.length >= 2) {
+                long unix = t0 + (e.ds - DS0) / 10;
+                LocalDate night = java.time.Instant.ofEpochSecond(unix + 12 * 3600).atZone(zone).toLocalDate();
+                if (warm.contains(night)) {
+                    int c = (e.body[0] & 0xff) | (e.body[1] & 0xff) << 8;
+                    byte[] b = e.body.clone();
+                    b[0] = (byte) (c + add);
+                    b[1] = (byte) ((c + add) >> 8);
+                    e = new RingEvent(e.tag, e.ds, b);
+                }
+            }
+            out.add(e);
+        }
+        return out;
     }
 
     /**

@@ -88,6 +88,11 @@ public final class Backup {
         Json.put(o, "screen_exclude", new org.json.JSONArray(p.screenExcluded()));
         Json.put(o, "games_on", p.gamesOn());
         Json.put(o, "period_shown", p.periodChoice());
+        // the reminder and "My periods have stopped" (issue #252, phase 1a2): the person's own, never the demo's
+        Json.put(o, "period_remind_days", p.periodRemindDays());
+        Json.put(o, "period_remind_min", p.periodRemindMinute());
+        if (p.periodStoppedReal() != null) Json.put(o, "period_stopped", p.periodStoppedReal());
+        if (p.periodAskLaterReal() != null) Json.put(o, "period_ask_later", p.periodAskLaterReal());
         Json.put(o, "screen_min_show", p.screenMinShowMin());
         Json.put(o, "stage_detail", p.stageDetail());
         Json.put(o, "finder_sound", p.finderSound());
@@ -445,6 +450,15 @@ public final class Backup {
         if (o.has("games_on")) p.setGamesOn(o.optBoolean("games_on", false));
         // the period tracker switch (issue #252); an older backup has none and leaves it as it is
         if (o.has("period_shown")) p.setPeriodChoice(o.optInt("period_shown", -1));
+        // phase 1a2: a value that is not one of the choices keeps the current one; an older backup has none of these
+        if (app.openring.core.PeriodRemind.validDays(o.optInt("period_remind_days", -1))) p.setPeriodRemindDays(o.optInt("period_remind_days"));
+        int remindMin = o.optInt("period_remind_min", -1);
+        if (remindMin >= 0 && remindMin < 24 * 60) p.setPeriodRemindMinute(remindMin);
+        // a backup that has the reminder but no "stopped" day was made while it was not said: it is not said after the restore either
+        if (o.has("period_remind_days")) {
+            p.setPeriodStoppedReal(o.isNull("period_stopped") ? null : o.optString("period_stopped", null));
+            p.setPeriodAskLaterReal(o.isNull("period_ask_later") ? null : o.optString("period_ask_later", null));
+        }
         if (o.has("screen_min_show")) {
             int m = o.optInt("screen_min_show", 5);
             p.setScreenMinShowMin(m == 0 || m == 5 || m == 10 || m == 15 ? m : 5);

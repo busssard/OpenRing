@@ -155,6 +155,61 @@ public final class Explain {
                 + "Cycles far from the rest (more than 10 days from the middle value) are left out, maybe a period was not logged.";
     }
 
+    // ------------------------------------------------- period tracker, "Your cycles" (issue #252, phase 1a2)
+
+    /** Under Cycle day. */
+    public static final String PERIOD_CYCLE_DAY = "Cycle day: the days since your last period started, that day counted as 1.";
+
+    /** Under Next period: what the days count to, or why there is no number. */
+    public static String periodNext(Integer days, boolean stopped, int late) {
+        if (stopped) return "No estimate: you said your periods have stopped.";
+        if (days == null) return "Appears once you log a period. After twice your typical cycle without one, it waits for the next.";
+        if (late > 0) return "Days to the expected day of the estimate above. It has passed, cycles vary.";
+        return "Days to the expected day of the estimate above, the middle of its range.";
+    }
+
+    /** Under the cycle length numbers: what they count, from how many cycles, and what is left out. */
+    public static String periodCycles(int cycles, int leftOut) {
+        String s = "From one period start to the next, over " + (cycles == 1 ? "your 1 cycle" : "all your " + cycles + " cycles") + ". "
+                + "Average and spread (the standard deviation, how far a cycle usually lies from the average), shortest and longest. ";
+        if (leftOut > 0) s += (leftOut == 1 ? "1 cycle" : leftOut + " cycles") + " more than 10 days from the middle value "
+                + (leftOut == 1 ? "is" : "are") + " left out, maybe a period was not logged. ";
+        return s + "The estimate above uses only your newest " + app.openring.core.analysis.Cycles.WINDOW + " cycles.";
+    }
+
+    /** Under the period length numbers. */
+    public static String periodLengths(int periods) {
+        return "From the first to the last bleeding day of each period, both counted, over " + (periods == 1 ? "your 1 period" : "your " + periods + " periods")
+                + " that are over. Days without a log inside a period count, spotting does not.";
+    }
+
+    /** Under the amount numbers: a relative score, not millilitres (the issue's wording). */
+    public static final String PERIOD_AMOUNT = "Light 1, medium 2, heavy 3 for each logged day, added up for each period. "
+            + "A relative number from what you logged, not a measured amount, so it only compares your own periods.";
+
+    /** Under the cycle length dots ({@code cycles}) or the period length and amount dots. */
+    public static String periodDots(boolean cycles) {
+        if (cycles) return "Each dot is one cycle at the day it started, touch it to read. The line is your typical length, the band the "
+                + "range the estimate gives. A faded dot is left out of the estimate.";
+        return "Each dot is one period at the day it started, touch it to read. The line is the average.";
+    }
+
+    /** Under the night temperature line (the plan's text). */
+    public static final String PERIOD_TEMP = "Your ring's nightly skin temperature compared with your usual. In many people it rises a little "
+            + "after ovulation and stays higher until the next period. Shown as evidence only, the app does not find ovulation from it yet. "
+            + "Red bands are period days, green the ovulation range of the estimate. Nights you left out are not shown, and illness, "
+            + "alcohol or a warm room move it too. Touch the line to read a night.";
+
+    /** Settings, under "Remind me before my period". */
+    public static final String PERIOD_REMIND = "A notification on this phone before the earliest day of the expected range, at the time you pick. "
+            + "It moves when the estimate changes and comes once per period, not while a period is logged. Android may deliver it a few "
+            + "minutes late. It always follows your own log, never the demo.";
+
+    /** Settings, under "My periods have stopped". */
+    public static final String PERIOD_STOPPED = "For example after menopause, during pregnancy or breastfeeding, or with some medicines. "
+            + "The tracker then shows no next period and no late line, and sends no reminders. Your logged days and past cycles stay. "
+            + "Logging a period day turns this off by itself.";
+
     public static String of(String key) {
         if (key == null) return null;
         switch (key) {

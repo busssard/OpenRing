@@ -40,6 +40,13 @@ public final class DayData {
     public boolean periodShown;
     /** The period tracker's estimate from the whole log, today; null when hidden or when the log could not be read. */
     public app.openring.core.analysis.Cycles periods;
+    /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
+    public boolean periodAsk;
+    /**
+     * The nights' skin temperature compared with the usual ({@code temp_dev} of each day summary) from
+     * {@code Cycles.tempFrom()} to today, for the line next to the cycles (phase 1a2). Left out nights have no summary value.
+     */
+    public final java.util.TreeMap<LocalDate, Double> periodTemps = new java.util.TreeMap<LocalDate, Double>();
     /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
     public boolean ok = true;
 
@@ -130,7 +137,22 @@ public final class DayData {
         try {
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
             d.periodShown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
-            if (d.periodShown) d.periods = app.openring.data.Periods.cycles(db, LocalDate.now());
+            if (d.periodShown) {
+                LocalDate today = LocalDate.now();
+                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped()));
+                d.periodAsk = d.periods.askStopped(p.age(), app.openring.core.analysis.Cycles.day(p.periodAskLater()));
+                // the day summaries hold no period data; read here so the line can sit next to the cycles
+                try {
+                    for (String[] r : db.daysJson(d.periods.tempFrom().toString(), today.toString())) {
+                        double v = Json.d(Json.parse(r[1]), "temp_dev");
+                        if (!Double.isNaN(v)) d.periodTemps.put(LocalDate.parse(r[0]), v);
+                    }
+                } catch (RuntimeException e) {
+                    // the line says it has no nights; the cycles still show
+                    d.periodTemps.clear();
+                    app.openring.ble.RingManager.get(c).log("day load: night temperatures for the period tracker: " + e.getClass().getSimpleName());
+                }
+            }
         } catch (RuntimeException e) {
             // the card says it could not be read. Not through failed(): the Data check names nothing of the period log, and
             // the log gets the error's kind only, never a date or an amount (issue #252)
