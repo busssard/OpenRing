@@ -42,6 +42,7 @@ public class FinderTest {
         noiseCircles();
         lastWorn();
         lastWornBrief();
+        walkTexts();
         finderLayout();
         impossibleValues();
         strongestRing();
@@ -1698,6 +1699,145 @@ public class FinderTest {
         String tt = LastWorn.text(rt, cc[0][cc[0].length - 1], clock);
         check("card text: a later stray event is named", !rt.strayInWarm && rt.strayHrAt == BASE + 17 * H
                 && tt.endsWith(" A lone heart rate T1020 with no warm reading near it does not count."), tt);
+    }
+
+    // ------------------------------------------------------------------ the turn's and the walk's texts
+
+    static void eq(String name, String got, String want) {
+        check(name, want.equals(got), "\n    " + got + "\n  want\n    " + want);
+    }
+
+    /** A turn on the spot once around, 6 readings per 15 degrees; {@code dbBack} weaker with the back to 0 degrees. */
+    static SearchWalk spun(double dbBack) {
+        SearchWalk w = new SearchWalk();
+        long t = 0;
+        for (int i = 0; i < 24; i++) {
+            double h = i * 15;
+            for (int k = 0; k < 6; k++) {
+                w.heading(t, h, true);
+                w.rssi(t + 10, -60 - (Math.abs(SearchWalk.signed(h)) > 90 ? dbBack : 0));
+                t += 100;
+            }
+        }
+        return w;
+    }
+
+    static SearchWalk.Spot spot(double x, double y, double radius, boolean clear, boolean beyond, boolean edge, double explained, double needed) {
+        SearchWalk.Spot s = new SearchWalk.Spot();
+        s.x = x;
+        s.y = y;
+        s.radius = radius;
+        s.clear = clear;
+        s.beyond = beyond;
+        s.edge = edge;
+        s.explained = explained;
+        s.needed = needed;
+        return s;
+    }
+
+    /**
+     * Every branch of the finder's turn and walk texts, moved word for word out of FinderActivity (code health,
+     * no change people notice): the strings are the ones the screen showed before the move.
+     */
+    static void walkTexts() {
+        Locale before = Locale.getDefault();
+        Locale.setDefault(Locale.US);
+        try {
+            final int[] asked = {0};
+            final boolean[] link = {false};
+            WalkText.Linked linked = new WalkText.Linked() {
+                @Override
+                public boolean now() {
+                    asked[0]++;
+                    return link[0];
+                }
+            };
+            String hold = WalkText.HOLD;
+            // the turn on the spot
+            SearchWalk none = new SearchWalk();
+            eq("turn: nothing faced yet, stopped", WalkText.turn(none, false, false, true, false),
+                    "Covered 0 of 360 degrees (the directions you faced with the phone upright). Too little for a direction: tap Start again and turn once all the way around.");
+            eq("turn: no accelerometer, recording, tilted, not heard", WalkText.turn(none, true, true, false, true),
+                    "This phone has no accelerometer, so steps are not counted; turning on the spot still works.\n"
+                            + "Covered 0 of 360 degrees (the directions you faced with the phone upright).\n"
+                            + hold + " Readings while it is tilted are not counted.\n"
+                            + "No signal right now; the turn needs the ring to be heard.");
+            SearchWalk.Direction strong = spun(9).direction(), weak = spun(2).direction();
+            check("the made up turns: one clear, one not", strong != null && strong.clear && weak != null && !weak.clear);
+            eq("turn: a clear direction", WalkText.turn(spun(9), false, false, true, false),
+                    "Strongest towards the arrow, " + Math.round(strong.spread) + " dB more than the weakest side (more dB is a clearer direction).");
+            eq("turn: no clear direction", WalkText.turn(spun(2), false, true, true, false),
+                    "No clear direction (" + Math.round(weak.spread) + " dB between strongest and weakest side, under 4). The ring may be very close, above or below you, or the signal bounced off walls.");
+            StringBuilder b = new StringBuilder();
+            WalkText.appendWaiting(b, 0);
+            eq("no waiting steps: nothing", b.toString(), "");
+            WalkText.appendWaiting(b, 1);
+            WalkText.appendWaiting(b, 3);
+            eq("waiting steps: one waits, three wait", b.toString(),
+                    "\n1 step counted while you turned waits: they move once you walk on, or stay if it was a turn on the spot."
+                            + "\n3 steps counted while you turned wait: they move once you walk on, or stay if it was a turn on the spot.");
+            // the walk: a 3 m square, heard at every step
+            SearchWalk sq = new SearchWalk().stepLength(0.5);
+            long t = walkLeg(sq, 0, 0, 6);
+            t = walkLeg(sq, t, 90, 6);
+            t = walkLeg(sq, t, 180, 6);
+            walkLeg(sq, t, 270, 6);
+            String walked = "Walked 12.0 m (24 steps of 0.50 m).";
+            eq("walk: covered and heard, the circle not worked out yet", WalkText.walk(sq, null, false, true, false, linked),
+                    walked + "\nWorking out where the ring probably is.");
+            eq("walk: a clear circle", WalkText.walk(sq, spot(1.2, 2.5, 1.04, true, false, false, 0.8, 0.5), false, true, false, linked),
+                    walked + "\nProbably within the circle: about 2.5 m ahead and 1.2 m to the right of where you started (radius 1.0 m). Start looking there.");
+            eq("walk: a clear circle beyond the walk", WalkText.walk(sq, spot(0, -0.1, 2, true, true, false, 0.8, 0.5), false, true, false, linked),
+                    walked + "\nProbably within the circle: right around where you started (radius 2.0 m). Start looking there."
+                            + " The circle lies outside where you walked, so the ring may also be farther that way (the signal cannot tell how far).");
+            eq("walk: stronger towards the edge", WalkText.walk(sq, spot(-4, 0, 2, false, true, true, 0.8, 0.5), false, true, false, linked),
+                    walked + "\nThe signal gets stronger towards the edge of where you walked (the dashed circle, about 4.0 m to the left of where you started), so the ring is probably farther that way. "
+                            + "Walk on in that direction and look again.");
+            long[] pc = SearchWalk.percents(0.3, 0.55);
+            eq("walk: could be plain noise", WalkText.walk(sq, spot(1, 1, 5, false, false, false, 0.3, 0.55), false, true, false, linked),
+                    walked + "\nThe signal gave no clear spot yet (its ups and downs could be plain noise: the model explains " + pc[0] + " % of them, a walk this short needs "
+                            + pc[1] + " %). Walk more of the room; if that does not help, the ring may be in another room, upstairs or downstairs, or under something thick.");
+            eq("walk: the circle too wide", WalkText.walk(sq, spot(1, 1, 5, false, false, false, 0.7, 0.55), true, false, true, linked),
+                    walked + "\nThe signal gave no clear spot yet (the circle would be wider than " + Math.round(SearchWalk.CLEAR_RADIUS_M)
+                            + " m). Walk more of the room; if that does not help, the ring may be in another room, upstairs or downstairs, or under something thick.\n"
+                            + hold + " Readings while it is tilted are not counted, steps keep your last direction.\n"
+                            + "No signal right now; the walk needs the ring to be heard.");
+            check("walk: the link is not asked outside its branch", asked[0] == 0, asked[0]);
+            // the same square, the ring never heard
+            SearchWalk quiet = new SearchWalk().stepLength(0.5);
+            t = 0;
+            for (double h : new double[] {0, 90, 180, 270}) {
+                for (int i = 0; i < 6; i++) {
+                    quiet.heading(t, h, true);
+                    t += 1000;
+                    quiet.steps(t, 1);
+                }
+            }
+            String hardly = walked + "\nThe ring was heard for only 0 seconds of the walk; the circle needs " + SearchWalk.MIN_BINS / 2
+                    + ". While a sync, Live or another app is connected to the ring, it sends no signal.";
+            eq("walk: covered, hardly heard, heard now", WalkText.walk(quiet, null, false, true, false, linked), hardly);
+            eq("walk: covered, hardly heard, not heard now", WalkText.walk(quiet, null, false, true, true, linked), hardly + " This phone does not hear it right now.");
+            link[0] = true;
+            eq("walk: covered, hardly heard, connected to this phone", WalkText.walk(quiet, null, false, true, true, linked), hardly + " It is connected to this phone right now.");
+            check("walk: the link asked once per text in its branch", asked[0] == 3, asked[0]);
+            // a straight line: too little of the room
+            SearchWalk line = new SearchWalk().stepLength(0.5);
+            walkLeg(line, 0, 0, 3);
+            eq("walk: one step, too little of the room", WalkText.walk(line, null, false, true, false, linked),
+                    "Walked 1.5 m (3 steps of 0.50 m). Across 0.0 of 2 m in two directions (the circle needs 2 m both ways).\nWalk a bit more, across the room.");
+            SearchWalk one = new SearchWalk().stepLength(1.25);
+            walkLeg(one, 0, 0, 1);
+            check("walk: one step is written singular", WalkText.walk(one, null, false, true, false, linked).startsWith("Walked 1.3 m (1 step of 1.25 m). Across "));
+            // the step length line
+            eq("step line: demo", WalkText.stepLine(0.7175, true, true, 160), "Steps of 0.72 m: 0.41 × 175 cm, a usual height (demo).");
+            eq("step line: height from the profile", WalkText.stepLine(0.6560, false, true, 160), "Steps of 0.66 m: 0.41 × your height of 160 cm from the profile.");
+            eq("step line: no height entered", WalkText.stepLine(0.7175, false, false, 0),
+                    "Steps of 0.72 m: 0.41 × 175 cm, a usual height. Enter yours in Settings, Profile and goals for a truer map.");
+            Locale.setDefault(Locale.GERMANY);
+            eq("numbers in the phone's language", WalkText.stepLine(0.7175, false, false, 0).substring(0, 13), "Steps of 0,72");
+        } finally {
+            Locale.setDefault(before);
+        }
     }
 
     /** Each sentence of the card (issues #74, #94), with a fixed time format: minutes after BASE. */

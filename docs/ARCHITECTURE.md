@@ -607,6 +607,7 @@ can run meanwhile; only the "on a finger now" check and Make it blink connect, f
 * Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from
   `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the
   strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard.
+  The texts under the dial and the map come from `core/analysis/WalkText` (each branch tested in `FinderTest`).
 * Search walk (phase 2): `core/analysis/StepDetector` counts steps from the accelerometer (registered
   only while recording; no activity recognition permission; a second bump within 250 ms is the same
   footfall), each step moves the person 0.41 × height along the upright heading of its own time (relative to the
