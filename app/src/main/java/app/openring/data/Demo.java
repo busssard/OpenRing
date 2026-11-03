@@ -40,8 +40,7 @@ public final class Demo {
      * least one wake up a night), the last week is easy (no long wake up, and none of the late nights that
      * otherwise come about one night in eight, so its bedtimes are a little earlier). Otherwise bed and wake times follow
      * the same rule as before, so the clock change checks keep their meaning. A short cold {@code COLD_BACK} days before the end (two nights {@code COLD_C} °C warmer with
-     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower; with the period tracker's cycle only the heart rate and HRV, so
-     * the made up temperature rise stays clear) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
+     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
      * the best (heart rate {@code GREAT_BPM} lower, HRV {@code GREAT_HRV} ms higher, 16 minutes to fall asleep). The phone
      * free evenings and quiet days: {@link #phoneFree} and {@link #quiet}.
      */
@@ -361,7 +360,7 @@ public final class Demo {
             double g = r.nextGaussian();
             if (cycle) g = cycleNoise.nextGaussian(); // its own draws, so the story's extra draws (issue #265) do not move the rise
             double tempOffset = (cycle ? g * 0.07 + (d == days - 9 ? 0.6 : 0) : g * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0)) // a warm spell lately
-                    + (cold && !cycle ? COLD_C : 0); // with the cycle the cold shows in heart rate only, so the rise stays clear
+                    + (cold ? COLD_C : 0); // the cold's fever also with the cycle: the badge Recovered needs readiness to dip (#265)
             int sick = cold ? COLD_BPM : great ? -GREAT_BPM : 0;
             double fitness = d * 0.06; // resting HR slowly improves
             // a few wake ups per night, longer on restless nights
