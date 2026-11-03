@@ -210,6 +210,12 @@ public final class Prefs {
     public void setWatchPerDay(int n) {
         if (app.openring.core.withings.WatchDue.valid(n)) sp.edit().putInt("watch_per_day", n).apply();
     }
+    /**
+     * The main device ({@code core/withings/MainDevice}): {@code RING} (the default) or {@code WATCH}. Only what is shown
+     * follows it; nothing stored changes. In the backup.
+     */
+    public int mainDevice() { return app.openring.core.withings.MainDevice.valid(sp.getInt("main_device", app.openring.core.withings.MainDevice.RING)); }
+    public void setMainDevice(int d) { sp.edit().putInt("main_device", app.openring.core.withings.MainDevice.valid(d)).apply(); }
     public long watchLastOk() { return sp.getLong("watch_last_ok", 0); }
     public long watchLastAttempt() { return sp.getLong("watch_last_try", 0); }
     /** The plain sentence of the last watch sync that did not finish, null after one that did. */

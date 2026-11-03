@@ -76,9 +76,9 @@ public final class Pages {
         // the badges of the last 7 days (issue #265), only when there is one (no empty card), after a left out notice
         if (!d.badges.isEmpty()) root.addView(BadgeViews.row(c, d, nav));
 
-        if (d.empty() && d.allLeftOut()) {
+        if (d.emptyAll() && d.allLeftOut()) {
             // nothing to show: the Left out card above says why
-        } else if (d.empty()) {
+        } else if (d.emptyAll()) {
             LinearLayout e = Ui.card(c);
             e.addView(Ui.h2(c, "No data for this day yet"));
             e.addView(Ui.gap(c, 6));
@@ -116,16 +116,22 @@ public final class Pages {
             LinearLayout stats = Ui.card(c);
             stats.addView(Ui.caption(c, "Key metrics"));
             JSONObject n = d.night;
+            // the main device's night, else the other one's (issue #251); a watch night is Withings' own
+            app.openring.core.withings.WatchDays.Night wn = d.merged == null ? null : d.merged.watchNight;
             stats.addView(Ui.statRow(c,
-                    Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, "Time asleep last night, naps not counted"),
+                    wn != null ? Ui.stat(c, "Total sleep", Ui.hm(wn.asleepMin()), "", Ui.SLEEP, d.merged.main == app.openring.core.withings.MainDevice.WATCH
+                            ? "Time asleep last night, as your watch counted it" : "Last night from your watch, your ring has none")
+                    : Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, "Time asleep last night, naps not counted"),
                     Ui.stat(c, "Resting HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", Ui.HEART, "Lowest heart rate while asleep")));
             stats.addView(Ui.statRow(c,
                     Ui.stat(c, "HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", Ui.READY, "Average while asleep, higher is calmer"),
                     // temp_dev is a difference from the usual skin temperature, not a body temperature (issue #32)
                     Ui.stat(c, "Temp vs usual", signed(Json.d(d.day, "temp_dev")), "°C", Ui.TEMP, "Skin temperature compared with your usual")));
             stats.addView(Ui.statRow(c,
-                    Ui.stat(c, "Steps", Ui.fmt(Json.d(d.day, "steps"), 0), "est.", Ui.ACTIVE, "Estimated from your movement"),
+                    stepsStat(c, d, Ui.ACTIVE, "Estimated from your movement"),
                     Ui.stat(c, "Active burn", Ui.fmt(Json.d(d.day, "active_kcal"), 0), "kcal", Ui.ACTIVE, "Calories burned by moving")));
+            String fill = stepsLine(d);
+            if (fill != null) stats.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
             root.addView(stats);
 
             JSONObject radar = d.day == null ? null : d.day.optJSONObject("radar");
@@ -159,9 +165,6 @@ public final class Pages {
         root.addView(live);
         // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
         if (d.periodShown) root.addView(PeriodCard.today(c, d, nav));
-        // the Withings watch (issue #251): its page, when a watch is added (always in demo mode)
-        View watch = watchCard(c);
-        if (watch != null) root.addView(watch);
 
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
@@ -170,32 +173,20 @@ public final class Pages {
         return root;
     }
 
-    /** The Watch card on Today (issue #251): when the watch last synced, a tap opens the Watch page; null without a watch. */
-    static View watchCard(final Context c) {
-        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
-        if (!p.demo() && p.watchAddress() == null) return null;
-        LinearLayout card = Ui.card(c);
-        LinearLayout row = Ui.hbox(c);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout t = Ui.vbox(c);
-        t.addView(Ui.h2(c, "Watch"));
-        String line = p.demo() ? "Made up steps, heart rate, sleep and battery" : p.watchLastOk() == 0 ? "Not synced yet"
-                : "Synced " + SettingsActivity.ago(p.watchLastOk());
-        t.addView(Ui.body(c, line));
-        if (!p.demo() && p.watchError() != null) t.addView(Ui.text(c, p.watchError(), 12, Ui.WARN, Ui.REGULAR));
-        row.addView(t, Ui.weight(1));
-        TextView open = Ui.button(c, "Open", Ui.OXY, false);
-        View.OnClickListener go = new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                c.startActivity(new android.content.Intent(c, WatchPageActivity.class));
-            }
-        };
-        open.setOnClickListener(go);
-        card.setOnClickListener(go);
-        row.addView(open);
-        card.addView(row);
-        return card;
+    /**
+     * The Steps tile (issue #251): the main device's steps with the other one's in the time the main one was not worn. With
+     * only the ring, its own estimate and {@code ringNote}, as before.
+     */
+    static View stepsStat(Context c, DayData d, int color, String ringNote) {
+        app.openring.core.withings.MainDevice.Day m = d.merged;
+        String note = m == null ? null : app.openring.core.withings.MainDevice.stepsNote(m);
+        if (note == null) return Ui.stat(c, "Steps", Ui.fmt(m == null ? Json.d(d.day, "steps") : m.steps, 0), "est.", color, ringNote);
+        return Ui.stat(c, "Steps", Ui.fmt(m.steps, 0), note.startsWith("Counted") ? "" : "est.", color, note);
+    }
+
+    /** The line under the steps when part of them came from the other device, else null (issue #251). */
+    static String stepsLine(DayData d) {
+        return d.merged == null ? null : app.openring.core.withings.MainDevice.stepsLine(d.merged, d.zone, Locale.getDefault());
     }
 
     static View ringButton(Context c, double v, String label, int color, final Nav nav, final int tab) {
@@ -373,6 +364,8 @@ public final class Pages {
     // ======================================================================== SLEEP
 
     public static View sleep(Context c, DayData d, Nav nav) {
+        // the watch's night: the main device's, or the ring has none for this day (issue #251)
+        if (d.merged != null && d.merged.watchNight != null) return watchSleep(c, d, nav, d.merged.watchNight);
         LinearLayout root = Ui.vbox(c);
         JSONObject n = d.night;
         // each night in the zone it was slept in (issue #22)
@@ -517,6 +510,44 @@ public final class Pages {
         root.addView(week);
         addNaps(c, root, d);
         root.addView(furtherAnalysis(c, d));
+        return root;
+    }
+
+    /**
+     * The Sleep tab with Withings' own night from the watch (issue #251): its times, its stages by touch and their minutes.
+     * No sleep score (the score is the ring's analysis); the line says why and, when the ring also has a night, where it is.
+     */
+    static View watchSleep(Context c, DayData d, Nav nav, app.openring.core.withings.WatchDays.Night wn) {
+        LinearLayout root = Ui.vbox(c);
+        java.time.ZoneId nz = d.zone;
+        root.addView(hero(c, Double.NaN, "Sleep", Ui.SLEEP, "Total sleep " + Ui.hm(wn.asleepMin()) + "  \u00b7  " + minute(wn.start, nz) + " to " + minute(wn.end, nz)));
+        if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
+        View left = leftOutCard(c, d);
+        if (left != null) root.addView(left);
+        LinearLayout hyp = Ui.card(c);
+        hyp.addView(Ui.caption(c, "Sleep depth through the night"));
+        hyp.addView(Ui.gap(c, 10));
+        hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz), Ui.sized(c, -1, 170));
+        hyp.addView(Ui.gap(c, 4));
+        hyp.addView(Ui.text(c, "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        hyp.addView(Ui.gap(c, 8));
+        double asleep = wn.asleepMin();
+        hyp.addView(stageRow(c, "REM", wn.remMin, asleep, Ui.STAGE_REM));
+        hyp.addView(stageRow(c, "Light", wn.lightMin, asleep, Ui.STAGE_LIGHT));
+        hyp.addView(stageRow(c, "Deep", wn.deepMin, asleep, Ui.STAGE_DEEP));
+        if (wn.otherMin > 0) hyp.addView(stageRow(c, "No data", wn.otherMin, asleep + wn.otherMin, Ui.TEXT_3));
+        hyp.addView(Ui.gap(c, 6));
+        String from = app.openring.core.withings.MainDevice.nightLine(d.merged);
+        if (from != null) hyp.addView(Ui.text(c, from, 12, Ui.OXY, Ui.REGULAR));
+        hyp.addView(Ui.text(c, Explain.MAIN_WATCH_NIGHT, 11, Ui.TEXT_3, Ui.REGULAR));
+        String too = app.openring.core.withings.MainDevice.ringTooLine(d.merged, d.score("sleep"));
+        if (too != null) {
+            hyp.addView(Ui.gap(c, 4));
+            hyp.addView(Ui.text(c, too, 12, Ui.TEXT_2, Ui.REGULAR));
+        }
+        root.addView(hyp);
+        addNaps(c, root, d);
+        if (d.anyNight) root.addView(furtherAnalysis(c, d));
         return root;
     }
 
@@ -915,7 +946,21 @@ public final class Pages {
                 day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal"));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
-        if (day == null) return root;
+        if (day == null) {
+            // no ring summary: the watch's steps and workouts, when it has any (issue #251)
+            app.openring.core.withings.MainDevice.Day m = d.merged;
+            if (m != null && !Double.isNaN(m.steps)) {
+                LinearLayout sc = Ui.card(c);
+                sc.addView(Ui.caption(c, "Steps"));
+                sc.addView(Ui.statRow(c, stepsStat(c, d, 0, "Estimated from how much you moved, so \"est.\""), distanceStat(c, d)));
+                String fill = stepsLine(d);
+                if (fill != null) sc.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
+                root.addView(sc);
+            }
+            View w = workoutsCard(c, d);
+            if (w != null) root.addView(w);
+            return root;
+        }
 
         LinearLayout goal = Ui.card(c);
         goal.addView(Ui.caption(c, "Goal progress"));
@@ -923,9 +968,16 @@ public final class Pages {
         goal.addView(new Ui.Bar(c, target > 0 ? active / target : 0, Ui.ACTIVE), Ui.sized(c, -1, 8));
         goal.addView(Ui.statRow(c, Ui.stat(c, "Active burn", Ui.fmt(active, 0), "kcal", 0, "Calories burned by moving"),
                 Ui.stat(c, "Total burn", Ui.fmt(Json.d(day, "total_kcal"), 0), "kcal", 0, Explain.totalBurn(Json.d(day, "total_until"), d.zone))));
-        goal.addView(Ui.statRow(c, Ui.stat(c, "Steps", Ui.fmt(Json.d(day, "steps"), 0), "est.", 0, "Estimated from how much you moved, so \"est.\""),
-                Ui.stat(c, "Distance", Ui.fmt(Json.d(day, "distance_m") / 1000.0, 1), "km", 0, "Estimated from the steps")));
+        goal.addView(Ui.statRow(c, stepsStat(c, d, 0, "Estimated from how much you moved, so \"est.\""), distanceStat(c, d)));
+        String fill = stepsLine(d);
+        if (fill != null) {
+            goal.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
+            goal.addView(Ui.text(c, Explain.MAIN_FILLED, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
         root.addView(goal);
+        // the watch's workouts of the day: only the watch records them (issue #251)
+        View workouts = workoutsCard(c, d);
+        if (workouts != null) root.addView(workouts);
 
         LinearLayout intensity = Ui.card(c);
         intensity.addView(Ui.caption(c, "Daily movement"));
@@ -1013,6 +1065,36 @@ public final class Pages {
         week.addView(new Charts.BarChart(c, d.series("active_kcal", 7), d.weekdayLabels(7), Ui.ACTIVE).target(target), Ui.sized(c, -1, 130));
         root.addView(week);
         return root;
+    }
+
+    /** The Distance tile: the main device's with the other one's filled time (issue #251); the ring's own as before. */
+    static View distanceStat(Context c, DayData d) {
+        app.openring.core.withings.MainDevice.Day m = d.merged;
+        String note = m == null ? null : app.openring.core.withings.MainDevice.stepsNote(m);
+        double metres = m == null ? Json.d(d.day, "distance_m") : m.metres;
+        return Ui.stat(c, "Distance", Ui.fmt(metres / 1000.0, 1), "km", 0, note == null ? "Estimated from the steps"
+                : note.startsWith("Counted") ? "The watch's own estimate from your steps" : "Estimated from the steps of both");
+    }
+
+    /** The watch's workouts of the day as one card, null without any (issue #251). */
+    static View workoutsCard(Context c, DayData d) {
+        if (d.merged == null || d.merged.workouts.isEmpty()) return null;
+        final java.time.ZoneId z = d.zone;
+        app.openring.core.withings.WatchDays.Zones zones = new app.openring.core.withings.WatchDays.Zones() {
+            @Override
+            public java.time.ZoneId at(double unix) {
+                return z;
+            }
+        };
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Workouts from your watch"));
+        card.addView(Ui.gap(c, 4));
+        for (app.openring.core.withings.Records.Workout w : d.merged.workouts) {
+            card.addView(Ui.text(c, app.openring.core.withings.WatchDays.workoutLine(w, zones), 14, Ui.TEXT, Ui.REGULAR));
+        }
+        card.addView(Ui.gap(c, 4));
+        card.addView(Ui.text(c, Explain.WATCH_WORKOUTS, 12, Ui.TEXT_3, Ui.REGULAR));
+        return card;
     }
 
     // ======================================================================== SCREEN
@@ -1304,7 +1386,8 @@ public final class Pages {
         hr.addView(Ui.caption(c, "Heart rate today"));
         // the day's own hours, midnight to midnight as the analysis counted them (23 or 25 on a clock change, issue #22)
         double ds = d.date.atStartOfDay(d.zone).toEpochSecond(), de = d.date.plusDays(1).atStartOfDay(d.zone).toEpochSecond();
-        TS line = Json.series(day == null ? null : day.optJSONArray("hr_day"));
+        // the main device's line, with the other one's where it was not worn (issue #251); with only the ring its own
+        TS line = d.merged != null ? d.merged.hr : Json.series(day == null ? null : day.optJSONArray("hr_day"));
         // the tiles come from the points the chart draws, also for days analysed before (issue #72)
         app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line, ds, de);
         boolean has = dh.points > 0;
@@ -1327,6 +1410,12 @@ public final class Pages {
         double noon = d.date.atTime(12, 0).atZone(d.zone).toEpochSecond();
         // a time left out because someone else wore the ring: a grey band, readable by touch (issue #254)
         hr.addView(new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon).leftOut(d.leftOutPieces()), Ui.sized(c, -1, 140));
+        String fromOther = d.merged == null ? null : app.openring.core.withings.MainDevice.heartLine(d.merged, d.zone);
+        if (fromOther != null) {
+            hr.addView(Ui.gap(c, 4));
+            hr.addView(Ui.text(c, fromOther, 12, Ui.OXY, Ui.REGULAR));
+            hr.addView(Ui.text(c, Explain.MAIN_FILLED, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
         hr.addView(Ui.gap(c, 10));
         TextView live = Ui.button(c, "Measure live heart rate and HRV", Ui.HEART, false);
         live.setOnClickListener(new View.OnClickListener() {
