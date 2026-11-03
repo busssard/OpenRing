@@ -18,12 +18,13 @@ Nothing leaves the phone: the app has no internet permission.
 
 | Package | Responsibility |
 | --- | --- |
-| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Dating` (every event's boot segment and date: all at once, or after a sync only the new part, with the state that needs, issue #220), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `FingerCheck` (Find my ring: when it asks the ring whether it is on a finger, its strip line and chip, the 30 s blink; issue #192), `PermissionAsk` (whether Android still shows the permission dialog), `BackgroundJob` (whether the background sync job is scheduled, kept or cancelled, issue #193; a sync or attempt under 30 minutes ago makes the job and the main screen skip theirs, issue #194), `Pairing` (the order of the pairing steps so a key written to a ring is never lost, and the hand over of the result to the Setup screen shown now, issue #218), `RingGate` (the ring lock and the count of syncs under way, shared with the code that swaps the database file, issue #219; `takeIfFree` for the Watch check, which never waits for the ring), `WatchCheck` (the Watch check's report: UUID and property names, the 2 byte rule, the copy limit, the demo example; issue #251), `SetupTasks` (Setup never restores and pairs at once, review of #248), `ModeRestore` (the measurement modes Live and the finder put back, also at the next connection after a lost link; issue #221), `Backups` (the automatic backups' rules and texts: when a new version copies the history first, the names of the copies, which copies may go, when a folder copy is due; issue #242), `Hex` |
-| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `FingerNow` (on a finger now, from what the finder just downloaded, issue #192), `LiveHrv`, `LeftOut` (the times left out because someone else wore the ring, merged; the sleep window without them; their texts; issue #254), `Cycles` (the period tracker's estimates from the logged days: periods, cycles, the next start and its range, late, the calendar ovulation estimate and fertile window, unusual cycles, their texts, the demo's made up log; issue #252), `Stats`, `TS` (time series) |
-| `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `BeforeUpdate` (the copy of the history before an update, its check, going back; issue #242), `AutoBackup` (the automatic backup job's run and going back to a copy), `Demo`, `Exporter`, `Periods` (the period log: days, ends, the restore merge; issue #252), `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out) |
-| `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner` (also the unfiltered scan of the Watch check, in the same start budget), `WatchLink` (one short look at a watch without bonding, issue #251), `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
-| `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours; scheduled only when no equal job is pending, since replacing a job stops it while it runs, `core/BackgroundJob`, issue #193; skips a run within 30 minutes of the last sync or attempt, issue #194), `BackupJob` (the automatic backups: one daily job while charging, and a one off check after an update; issue #242), `SafFolder` (the folder the person picked, through Android's storage access framework) |
-| `ui/` | `MainActivity` (tabs, date, follows the newest day), `Pages` (content of every tab), `Charts` (hand drawn views; `Scrub` adds touch readout), `Ui` (colors, cards, buttons, inputs), `Explain` (texts), `DayData`, `SetupActivity`, `SettingsActivity`, `LiveActivity`, `LogActivity`, `WatchActivity` (the Watch check, issue #251), `PeriodCard` and `PeriodCalendar` (the period tracker on Body and Today, issue #252), `Permissions`, `games/` |
+| `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Dating` (every event's boot segment and date: all at once, or after a sync only the new part, with the state that needs, issue #220), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `FingerCheck` (Find my ring: when it asks the ring whether it is on a finger, its strip line and chip, the 30 s blink; issue #192), `PermissionAsk` (whether Android still shows the permission dialog), `BackgroundJob` (whether the background sync job is scheduled, kept or cancelled, issue #193; a sync or attempt under 30 minutes ago makes the job and the main screen skip theirs, issue #194), `Pairing` (the order of the pairing steps so a key written to a ring is never lost, and the hand over of the result to the Setup screen shown now, issue #218), `RingGate` (the ring lock and the count of syncs under way, shared with the code that swaps the database file, issue #219; `takeIfFree` for the Watch check, which never waits for the ring), `WatchCheck` (the Watch check's report: UUID and property names, the 2 byte rule, the copy limit, the demo example; issue #251), `SetupTasks` (Setup never restores and pairs at once, review of #248), `ModeRestore` (the measurement modes Live and the finder put back, also at the next connection after a lost link; issue #221), `Backups` (the automatic backups' rules and texts: when a new version copies the history first, the names of the copies, which copies may go, when a folder copy is due; issue #242), `PeriodRemind` (the reminder before the expected period: when, for which cycle, why none, its texts; issue #252), `DripCsv` (reads drip's export by column name, its made up demo file and mouth temperatures; issue #252) and `DripImport` (the drip import's preview and the one decision per day and temperature the import applies), `Hex` |
+| `core/withings/` | The Withings watch sync (issue #251, phase 1b): `Frame` (message frame, parts, pieces and joining them), `Proto` (message and part types, the requests, the hello's and battery's answers, workout names), `Records` (the decoder, versioned), `Session` (the message order over a link, the ring always wins), `WatchDays` (per day sums, the night, battery drop, zones), `WatchDue` (when a background sync is due), `WatchDemo` (made up messages for demo mode and tests) |
+| `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `FingerNow` (on a finger now, from what the finder just downloaded, issue #192), `LiveHrv`, `LeftOut` (the times left out because someone else wore the ring, merged; the sleep window without them; their texts; issue #254), `Cycles` (the period tracker's estimates from the logged days: periods, cycles, the next start and its range, late, the calendar ovulation estimate and fertile window, unusual cycles, the cycles over time, "My periods have stopped" and its question, their texts, the demo's made up log and warmer nights; issue #252; with `measured` the estimate from the temperature rise), `TempRise` (phase 2 of #252: the three over six rule on one cycle of one signal, each cycle with the ring and the mouth, the own time from ovulation to the period, their texts), `Badges` (issue #265: badges for days and nights that were good compared with the person's own history, their rules, evidence numbers and texts; one pass over the dates, nothing stored; shown from phase 1b), `Stats`, `TS` (time series) |
+| `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `BeforeUpdate` (the copy of the history before an update, its check, going back; issue #242), `AutoBackup` (the automatic backup job's run and going back to a copy), `Demo`, `Exporter`, `Periods` (the period log: days, ends, the restore merge; issue #252), `WatchStore` (the watch's raw messages, the rows worked out from them, the restore merge, the Data check lines; issue #251), `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out), `BadgeDays` (issue #265: what the badges need for a range of dates with one read per table; the Today row reads back until its badges are exactly the whole history's, `Badges.recent` and `exactFrom`, since "at most once in 7 days" chains back through a streak; screen minutes and the evening counted with the Screen tab's own code, `ScreenDays.counted`, `span`, `nightRead`, `bedMin`) |
+| `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner` (also the unfiltered scan of the Watch check, in the same start budget), `WatchLink` (one short look at a watch without bonding, issue #251), `WatchSync` (one sync with the watch: its own link and lock, the ring lock taken without waiting, issue #251 phase 1b), `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
+| `sync/` | `SyncService` (foreground sync), `SyncJob` (every 3 hours; scheduled only when no equal job is pending, since replacing a job stops it while it runs, `core/BackgroundJob`, issue #193; skips a run within 30 minutes of the last sync or attempt, issue #194), `BackupJob` (the automatic backups: one daily job while charging, and a one off check after an update; issue #242), `PeriodReminder` (the reminder before the expected period: its alarm, the notification, planned again after a reboot, a zone or clock change and an update; issue #252), `SafFolder` (the folder the person picked, through Android's storage access framework) |
+| `ui/` | `MainActivity` (tabs, date, follows the newest day), `Pages` (content of every tab), `Charts` (hand drawn views; `Scrub` adds touch readout), `Ui` (colors, cards, buttons, inputs), `Explain` (texts), `DayData`, `SetupActivity`, `SettingsActivity`, `LiveActivity`, `LogActivity`, `WatchActivity` (the Watch check, issue #251), `WatchPageActivity` (the Watch page, phase 1b), `PeriodCard`, `PeriodCalendar` and `PeriodAnalysis` (the period tracker on Body and Today, its cycles over time and the night temperature line, issue #252), `BadgeViews`, `BadgesActivity` and `BadgeCalendar` (Recent badges on Today, the Badges page; kv `badges_seen` holds the newest badge date seen, in the open file, so demo and real stay apart; issue #265), `DripImportActivity` (Import from drip: the picker, the preview with Correct and Ignore, Import), `Permissions`, `games/` |
 
 ## Talking to the ring
 
@@ -110,13 +111,14 @@ Nothing leaves the phone: the app has no internet permission.
 | `excluded` | Times the person left out because someone else wore the ring (`start`, `stop`, `made` as the key, `note` unused; version 7, issue #254). Adding or removing one writes the row and lowers `analyzed_until` to its start in one commit (`Db.addExcluded`, `removeExcluded`). Restored older backups get it empty; Delete all local data and pairing a different ring empty it |
 | `period_days` | The period log (version 8, issue #252): one row per calendar day (`day` as yyyy-mm-dd text, so travel never moves it), `flow` -1 removed by the person ("Nothing": a removal mark, never a delete, so a restore cannot bring the day back), 0 spotting, 1 light, 2 medium, 3 heavy; `src` 0 typed, else the import's id; `prev` the amount an import replaced; `made` unix seconds. Written one statement at a time (`Periods.setFlow`) |
 | `period_ends` | Days marked as the end of a period (`day`, `made`, `gone`; version 8). Clearing an end keeps the row with `gone` 1 (a removal mark like a day's -1), so a restore cannot bring it back; readers leave those rows out |
-| `period_temps`, `period_imports` | For the drip import (phase 1b of #252, version 8, empty until then): one imported basal temperature per day (`day`, `time` as HH:MM, `c` in °C, `excluded`, `src`, `gone`), and one row per import (`id` its time in milliseconds, `made`, `days`, `temps`, `gone`). Undoing an import writes `gone` 1 on the import and its temperatures (a removal mark like a day's -1, never a delete), so a restore of an older backup cannot bring them back |
+| `period_temps`, `period_imports` | The drip import (phase 1b of #252, version 8): one imported basal temperature per day (`day`, `time` as HH:MM, `c` in °C, `excluded`, `src`, `gone`), and one row per import (`id` its time in milliseconds, `made`, `days`, `temps`, `gone`). Undoing an import writes `gone` 1 on the import and its temperatures (a removal mark like a day's -1, never a delete), so a restore of an older backup cannot bring them back |
 | `battery`, `kv` | Battery history; small key value state (cursor, analysis progress, errors) |
+| `watch_raw`, `watch_devices`, `watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery` | The Withings watch (version 9, issue #251): every message as it came, the watch, and the rows worked out from the messages; see Withings watch below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
 
 The period tables are the one part of the file the person types and no ring can send again. Pairing a different ring
 (`Db.resetRingData`, every table in `Db.RING_TABLES`) keeps them; Delete all local data (`Db.resetAll`) wipes them with the
 rest. Both lists come from `Db.SCHEMA` (issue #272): `Db.ALL_TABLES` is every table, `Db.RING_TABLES` every table except
-the keep list `Periods.TABLES`, so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
+the keep list `Db.KEPT_TABLES` (`Periods.TABLES` and the watch's `WatchStore.TABLES`, issue #251), so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
 test fills every table that really is in the file (`sqlite_master`, not `SCHEMA`) and checks Delete all empties each.
 After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(TRUNCATE)` (in WAL mode a checkpoint
 before VACUUM leaves the file at full size), so the file gives the history's space back; an error there is ignored
@@ -139,6 +141,101 @@ background for the day shown and loads the page again; it starts no analysis, an
 (never across demo mode). The month calendar (`ui/PeriodCalendar`) reads a day while the finger slides and opens the
 day editor on a tap without movement; the estimates show as bands, never as one marked day. Errors on the way go to the
 log as the error's kind only, never with a date or an amount, and never to the Data check.
+
+**Phase 1b: import from drip.** No schema change: the tables of version 8 were made for it. Settings, card Period tracker,
+"Import from drip" opens `ui/DripImportActivity`: Android's file picker (`ACTION_OPEN_DOCUMENT`, `text/csv` and `text/*`, no
+permission, no network), the file read in the background (at most 32 MB, UTF-8) and parsed by `core/DripCsv` by column name:
+`date` and `bleeding.value` must be there (else a plain sentence refuses the file), `bleeding.exclude` true is kept as
+spotting, `temperature.value` (above 45 is °F, converted; outside 34 to 43 °C left out), `temperature.time` (HH:MM) and
+`temperature.exclude`; every other column is counted per kind for the summary and not stored (drip notes are counted, not
+stored, as decided). A BOM, CRLF or CR line ends, quoted fields with commas, quotes and line breaks, missing and extra
+columns, any row order, empty lines and duplicate dates (the last row of a date wins as a whole, counted) are read; rows
+without a readable date or after today are left out and counted. The preview (`core/DripImport.preview`) compares the file
+with the log read once (in demo mode the demo's): periods by `Cycles`' own rules, short ones (under 3 days) each on a line
+with Correct (the calendar of the Body card without the estimate's bands, its day editor changing only the preview's days;
+`PeriodCard.editor` takes a callback) and Ignore, plus Ignore all; days already logged win (`DripImport.day`: a day with an
+amount that differs is kept unless "Take the file's values" is on; a removal mark is no entry), temperatures already there
+are never replaced (an undone one is no reading). Nothing is stored before Import. `Periods.importDrip` writes it all in
+one transaction and makes each decision again inside it from the rows there now, so a day logged since the preview still
+wins; rows it adds carry `src` = the import's id (its time in milliseconds, one higher while taken), a replaced amount goes
+into `prev`, and with nothing to write (the same file again) nothing is written, not even an import row. Undo
+(`Periods.undoImport`, Settings "Undo the drip import of 30 Oct", one transaction) gives each day the import still holds its
+`prev` back as typed, or a removal mark that keeps the import's id where it added the day, and writes `gone` 1 on its
+temperatures and the import: exactly its rows, nothing deleted, a day the person changed since is typed and stays; twice
+changes nothing. Limit: a day an earlier import added and a later one replaced comes back as typed when the later one is
+undone, so undoing the earlier one leaves it. The import never runs in demo mode (the screen shows only the preview and
+checks the file it writes is `openring.db`); the demo has its own made up mouth temperatures as one import in its file
+(`DripCsv.demoMouth`, `Demo.periods`). The night temperature card shows the imported temperatures by mouth of its days as
+a second line in their own colour on their own °C scale (right), a reading drip left out as a hollow dot, the touch text on
+two lines. Backups, restores (the phone's rows win, so an undone import stays undone) and Delete all treat the two tables
+like the rest of the log; the Data check, the log and the daily CSV hold nothing of it (the period log has no CSV of its
+own; the full database export holds it). Errors go to the log as their kind only.
+
+**Phase 1a2: the cycles over time, the night temperature, the reminder, "My periods have stopped".** Nothing new is stored in
+the database (no schema change); four settings are added (below). At the end of Body, "Your cycles" (`ui/PeriodAnalysis`)
+shows today's cycle day, the days to the expected day, the regularity line, and cycle length, period length and amount over
+time: each cycle or period a dot at its start, touch readable, next to the typical length (cycles, with the estimate's range
+as a band) or the average, with average, spread (sample SD), shortest and longest. Cycle numbers count every kept cycle (one
+more than 10 days from the median left out and counted apart), period numbers and the amount every period that is over (not
+the running one); the amount is light 1, medium 2, heavy 3 per logged day, a relative score. Below it the night temperature
+line: `temp_dev` of each day summary (left out nights have none) from the start of the period before the last (at most 100
+days back, the axis starting at the first night with a value), period days and the estimate's ovulation range and expected
+period as bands behind it, every day touch readable, and since phase 2 the rise each cycle shows marked on it (below). `DayData`
+reads those day summaries only while the tracker shows. The demo's nights after each made up ovulation (its next start minus
+14, up to the night before that start) are 0.3 °C warmer (`Demo.warmNights`, only in `Demo.enter`; `Demo.history` is
+unchanged). "My periods have stopped" (`Prefs.periodStopped`, the day it was said; demo mode keeps its own) turns off the
+estimate, the late line, the bands and the reminder while no period runs and every bleeding day lies before that day, so a
+period logged on it or later ends it by itself (logging also clears the setting); the past cycles stay. From the profile
+age of 40, after more than twice the typical cycle and at least 60 days without a bleeding day, the cards ask "Have your
+periods stopped?" once; "Not yet" (`Prefs.periodAskLater`) asks again after 60 days. After 12 months while it is said, the
+card says so plainly (the badge for it belongs to #265).
+
+**Phase 2: ovulation from the temperature rise.** Nothing is stored (no schema change, no setting): `Periods.measured` reads
+the nights and temperatures on each load (`DayData`, only while the tracker shows; 5 years of day summaries take about 0.15 s
+in the JVM test) and `Cycles.measured` returns the estimate with them. The ring's signal is `temp` of each day summary (the
+nightly temperature itself, not `temp_dev`, whose 30 night median takes in part of the rise: Experiment view), without a night
+of under 3 hours asleep and without every night whose 18:00 to 12:00 touches a left out time (#254), even when the analysis
+kept part of it (`Periods.ringNights`). The mouth signal is the drip temperatures in force that drip did not leave out.
+`core/analysis/TempRise.find` applies the three over six rule to one cycle of one signal: the baseline is the highest of 6
+nights within the 8 days before the first high night (inside the cycle); the first high night and the next ones (at most one
+missing day between two) lie more than 0.05 °C above it, the third at least `thirdNeed` above it (the signal's own night to
+night noise, the middle step between following nights / 0.954, from 0.1 to 0.2 °C); one exception (a third that falls short,
+or one night that dips) needs a fourth; the average from the first high night to the end of the cycle (or today) lies at least
+max(0.1, noise) above the six; in a cycle that is over the ovulation lies 7 to 19 days before the next start. A night more than
+max(0.5, 4 × noise) from the middle of its neighbours (3 days each way) is left out and named. The first night where all holds
+wins; the likely ovulation is the day before. Clear: no exception and a rise of at least 2 × noise; else possible. Each signal
+on its own; both within 2 days is clear (the surer one's day, else the earlier), further apart possible and "disagree". A cycle
+left out of the estimate (maybe a period was not logged) gets no result. The own luteal length is the middle value of the
+newest 12 cycles that are over with a rise (not those that disagree), from 3 of them. With it, the calendar ovulation is the
+next start minus that length (give or take max(3, round(1.28 × √(SD² + own SD²))), `OWN_LUTEAL`). Once the running cycle's
+rise is found (`MEASURED`), the ovulation is that day (give or take 1 day when clear, 2 when possible: 4 in 5 of the made up
+cycles in `CoreTest`) and the next start that day plus the own length (or 14), give or take max(1, round(1.28 × √(luteal SD² +
+error²))), luteal SD the own one or 2.4, error 1.0 (clear) or 1.8 days; the calendar's numbers stay in `calendarNext` and
+`calendarRange` and the card says both. The reminder follows it too (`Periods.readReal` adds the rise; an error there keeps the
+calendar estimate). On the made up cycles of `CoreTest` (rise 0.3 °C, 15 % of nights missing, 3 % warm nights, the first high
+night half warm) at noise 0.1 the rule finds 70 % of rises, a clear one within 1 day 87 % of the time, a possible one within
+2 days 85 %, mean error 1.0 day; at noise 0.2 it finds 34 % (error 1.5); on flat noise it finds a rise in 2 to 3 % of cycles,
+never a clear one at 0.1. The demo (`Demo.enter` only; `Demo.history` and the tests built on it are unchanged): today on cycle day 20, its nights'
+night to night spread 0.07 °C instead of 0.12, one fever like night (0.6 °C warmer, 9 days ago, in place of the warm spell of
+2 nights lately) that the rule leaves out, so its ring finds this cycle's rise on the made up day and its mouth
+temperatures the past cycles' (own length 14 from 3 cycles).
+
+The reminder (`core/PeriodRemind`, `sync/PeriodReminder`): Off (the default), 1, 2, 3 or 5 days before the first day of the
+expected range, at a time of day (9:00 at first) on the phone's clock in its zone now, one inexact alarm
+(`setAndAllowWhileIdle`, no exact alarm permission). A moment that passed while the range is still to come is sent now. None
+without an estimate, while a period runs, after "stopped", once the range has begun, and never twice for one cycle (the
+start of its period is noted with `commit` before the notification is posted, `period_remind_sent`, not in a backup). It is
+planned again at every app start, after every log change or Undo, after each change in Settings, and by the receiver after
+`BOOT_COMPLETED`, `TIMEZONE_CHANGED`, `TIME_SET` and `MY_PACKAGE_REPLACED`; when the alarm comes it plans again first and
+sends only when still due. The log is always the person's own: `Periods.readReal` opens the real file read only for one
+read (a handler that never deletes a damaged file), also while demo mode is on, without `Db.get`, so no database is opened,
+closed, swapped, upgraded or written and the demo's log never schedules anything; outside demo mode, should that open fail,
+the app's database is read instead. An error keeps the alarm already set and goes to the log as the error's kind only. The
+notification's lock screen version says only "Open Ring reminder". Settings, card Period tracker (also from the button
+"Reminders and settings" on the Body card) holds the choices, the next reminder or why there is none, a line when
+Android's notifications are off for the app, and "My periods have stopped"; POST_NOTIFICATIONS is asked when a reminder is
+first switched on. A backup carries the choices, "stopped" and "Not yet" of the person (never the demo's); an older backup
+leaves them as they are.
 
 Demo mode uses a separate file (`openring-demo.db`), so demo and real data never mix. Demo mode never uses the ring
 (issue #185): `RingManager.open`, the start of every connection, refuses while demo mode is on or the demo file is open
@@ -512,6 +609,7 @@ can run meanwhile; only the "on a finger now" check and Make it blink connect, f
 * Turn on the spot: `core/analysis/SearchWalk` records every reading with the heading from
   `GAME_ROTATION_VECTOR` (phone upright against the chest) and fits one wave over 12 directions for the
   strongest one; a direction faced without hearing the ring counts as 6 dB below the weakest one heard.
+  The texts under the dial and the map come from `core/analysis/WalkText` (each branch tested in `FinderTest`).
 * Search walk (phase 2): `core/analysis/StepDetector` counts steps from the accelerometer (registered
   only while recording; no activity recognition permission; a second bump within 250 ms is the same
   footfall), each step moves the person 0.41 × height along the upright heading of its own time (relative to the
@@ -545,8 +643,8 @@ can run meanwhile; only the "on a finger now" check and Make it blink connect, f
 
 ## Withings watch (issue #251)
 
-Phase 1a is only the **Watch check** (Settings, Watch): it learns how the owner's Withings watch talks before any
-pairing or sync is built. Nothing is paired, written to the watch (besides switching its notifications on) or stored.
+Phase 1a is the **Watch check** (Settings, Watch): it learns how a Withings watch talks. Nothing is paired, written to the
+watch (besides switching its notifications on) or stored. Phase 1b (below) syncs it.
 
 * **Flow** (`ui/WatchActivity`, `ble/WatchLink`): a 10 s scan without a filter (`RingScanner.scanAll`, counted in the
   same budget of 4 starts per 30 s as the ring's scans, since Android blocks the sixth), strongest signal first once it
@@ -577,16 +675,86 @@ pairing or sync is built. Nothing is paired, written to the watch (besides switc
   report is cut at 30,000 characters.
 * **Demo mode** never touches Bluetooth: `WatchCheck.demoFound` and `demoReport` go through the same screen code.
 
-Protocol facts from public discussions, in our own words and not confirmed with a real watch yet (the check is there
-to confirm them):
+**Phase 1b, the sync** (`ble/WatchSync`, `core/withings/`, `data/WatchStore`, `ui/WatchPageActivity`). The Watch check's
+report has "Use this watch for syncing" when the device shows the Withings service; that saves its address (`Prefs.setWatch`).
 
-* The Steel HR's own service UUID looks like `00000020-5749-5448-0037-000000000000`; `5749 5448` is "WITH" in ASCII.
-  The older Activité seems to use `0034` in place of `0037`.
-* Messages arrive in pieces over several notifications and have to be put together.
-* The watch drops a write that comes while it is still busy, so each request must wait for its answer.
-* It pairs without the Withings app through a challenge and answer; going back to the Withings app may need a reset
-  of the watch, which erases what it stores. Phase 1b (pairing, sync) is built only after the owner's report.
+* **Lock, the ring always wins:** one watch sync at a time (`RingGate.watch`, `tryLock`), and the ring lock taken without
+  waiting through `RingManager.whileRingFree(r, WatchSync.RUNNING, false)` (no sync counted, no ring task holding it;
+  otherwise "The ring is busy right now", and the job tries at its next run). It does not mark the ring busy, so a sync by
+  hand, Live or a game is not refused but waits for the lock as usual. Between two messages, and every 250 ms while it
+  waits for one, the session asks `RingGate.ringWanted()` (a ring task queued on `op`, or a ring sync counted): then it
+  sends "sync done", closes and gives the ring back within about 2 s, far inside the 15 s a ring sync waits. The download takes `Db.holdForRing` like a ring
+  task, so a long analysis is waited for ("Re analysing your history, the watch syncs after it"). Never in demo mode.
+* **Link:** its own (`WatchSync.Link`, not `GattLink`): `TRANSPORT_LE` to the saved address (15 s), the phone's existing bond
+  (the Withings app made it; no bond is asked for), `CONNECTION_PRIORITY_HIGH` only for this session, MTU 119 asked
+  (pieces follow what the watch gives), notifications on `0x24`, every request written to `0x24` in pieces of MTU minus 3,
+  each piece waiting for its write confirmation; `Frame.Assembler` joins the answer's pieces.
+* **Session** (`core/withings/Session`, JVM tested against a made up watch): hello, connect, battery, set time, activity
+  records since T, heart rate records since T, and always "sync done" last while the link is up. Each request waits for its
+  answer (5 s; a data answer 20 s between messages, until a message with the end part), at most 2 minutes in all. A
+  challenge from the watch ends the session with a plain sentence (see the flag below). The watch's own messages on the way
+  are stored and skipped. Every message is stored as it arrives (`WatchStore.addRaw`), so an early end keeps what came.
+* **Storage (schema 9, only adds):** `watch_raw` (session start in ms, place in the session, device, type, the whole
+  message, captured) keeps every message as it came, also two equal ones; `watch_devices`; and the rows worked out from
+  the messages by `core/withings/Records` (`watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery`,
+  keyed by device and time, UTC seconds), so the same message twice adds nothing. kv `watch_decoder` holds
+  `Records.VERSION`; a new decoder works every row out again in one transaction before the next sync, the old rows stay until
+  then. T is the newest stored record of its kind minus 2 hours (0 the first time), worked out from the rows, so a restore
+  or a new decoder needs no cursor. Pairing another ring keeps the watch tables (`Db.KEPT_TABLES`), Delete all empties
+  them, a restore carries the phone's raw messages and devices into the restored file like the period log (same step of
+  `Db.replaceWith`, the phone's row wins, any failure puts the old file back) and works the rows out again. A damaged phone
+  file loses its watch rows with its period log (the restore says so). Days come from the `zones` table
+  (`WatchDays.zoneIn`, the rule of `Db.zoneAt`).
+* **How often** (`core/withings/WatchDue`): by hand, once (about 07:00), twice (about 07:00 and 19:00) or 4 times a day
+  (about 01:00, 07:00, 13:00, 19:00), default once, clock times in the phone's zone. The 3 hour `SyncJob` runs the ring sync
+  first, then the watch when the newest of those times passed after its last good sync and no attempt was made since that
+  time or in the last 2.5 hours. The job is scheduled when the ring's background sync is on or a watch syncs on its own.
+* **Screens:** Settings, Watch (the watch, paired with this phone or not, last sync, battery, last problem, "Sync the watch
+  now", the chips, "Open the watch page", "Forget the watch": syncing stops, nothing is deleted); Today's Watch card; the
+  Watch page with steps per day (30 days as dots), the day's workouts, the heart rate curve, Withings' own sleep as a
+  timeline (per minute, codes not known yet as no data) and the battery per day with its drop per day (falls added up,
+  charges left out, over 7 days). Nothing on the page is stored: `core/withings/WatchDays` works it out on each load.
+* **Log and Data check:** every step, message type and length, never a value (the JVM test checks the session's lines);
+  the Data check names counts, dates and message types only (no step, heart rate or battery value).
+* **Demo mode:** `core/withings/WatchDemo` makes up five weeks of messages, stored and decoded like a real watch's, in the
+  demo file only.
+
+Protocol facts, in our own words, not confirmed with a real watch yet. Sources: the public pairing recording and notes in
+Gadgetbridge issue 854 and pull request 2831 on Codeberg, the Gadgetbridge Withings device page, and the message and part
+numbers, field layouts and order read in Gadgetbridge's Withings sources (AGPL; facts only, no code copied or translated).
+The owner's Watch check confirmed the service and its characteristics (`0x21`, `0x23`, `0x24` write and notify, `0x22`
+read, no Device Information or Battery service, silent until asked).
+
+* Service `00000020-5749-5448-0037-000000000000` ("WITH" in ASCII; the older Activité uses `0034`). Requests and answers
+  go through `00000024-…`.
+* A message: `01`, type (2 bytes), length of the rest (2 bytes), then parts: type (2), length (2), value. Big endian.
+  Messages the watch starts itself have `0x40` or `0x80` in the top byte of the type (masked off when reading it).
+* Hello `0x0101` with part `0x012a` (platform 1, app 1, app version `0x003d7e96`, the value of the public recording) and
+  part `0x0928` (Android version). The answer's part `0x0101`: a number, then texts with a length byte first (name, address,
+  another text), a number, a model text, a number, the firmware number, a number. Our hello is byte for byte the public
+  recording's (a JVM test).
+* Connect `0x0111` (empty). Battery `0x0504`, answer part `0x0504`: percent, state (0 charging, 1 low, other normal),
+  voltage (4 bytes). Set time `0x0501`, part `0x0501`: now, the zone's offset from UTC, the next clock change and the offset
+  after it (4 bytes each). Sync done `0x0115` (empty); the notes say the watch stops answering when a session ends without it.
+* Activity records `0x0978` and heart rate records `0x0928`, each with part `0x0506` (from, 4 bytes; count, 2 bytes, 0 for
+  all), heart rate also with part `0x0961` (version 1). The answers come as several messages until one holds the end part
+  `0x0100`. Records follow each other, each starting with a time part `0x0601` (unix seconds): duration `0x0602` (seconds),
+  steps and distance `0x0603` (steps 2 bytes, distance 4, then two numbers not used), calories `0x0608` and `0x060a` (2
+  bytes, then an intensity), sleep stage `0x0607` (0 light, 2 deep, 3 REM; 1 not documented), workout type `0x0969` (codes:
+  1 walking, 2 running, 3 hiking, 6 cycling, 7 swimming and 30 more), running `0x0605` and swimming `0x060d` marks, heart
+  rate `0x0929` (the first byte). Sleep heart rate comes as records with only a heart rate.
+* The notes also name `0x0506` "movement samples", nearly the same as `0x0978` without sleep; it is not asked for (it could
+  count steps twice).
+* The watch drops a write that comes while it is busy, so each request waits for its answer.
+* **Flagged for the owner:** the watch can send a challenge (`0x0128`, part `0x0122`: address and 16 random bytes). The
+  answer is SHA-1 over the challenge, the address and a fixed secret. The secret is public only as a string constant in
+  Gadgetbridge's `AuthenticationHandler.java` (AGPL). A single constant is most likely a protocol fact rather than code, but
+  it is not in this build until the owner decides. Gadgetbridge's normal sync never answers a challenge (its handler is
+  never reached), so a sync most likely works without it; if the watch asks, the session ends with "The watch asked for a
+  sign in that this version cannot answer yet".
 * Heart rate outside workouts seems to be one reading every 30 minutes by default, continuous during workouts.
+* Unknown: whether the watch drops records once one app synced them (requests ask "since a time", which suggests it keeps
+  them for both apps), whether a workout's steps are also in the normal records, and the distance unit (shown as metres).
 
 ## Known limits
 

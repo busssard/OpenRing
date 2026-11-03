@@ -73,6 +73,8 @@ public final class Pages {
         // a time left out because someone else wore the ring (issue #254); a day left out as a whole shows only this
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
+        // the badges of the last 7 days (issue #265), only when there is one (no empty card), after a left out notice
+        if (!d.badges.isEmpty()) root.addView(BadgeViews.row(c, d, nav));
 
         if (d.empty() && d.allLeftOut()) {
             // nothing to show: the Left out card above says why
@@ -157,12 +159,43 @@ public final class Pages {
         root.addView(live);
         // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
         if (d.periodShown) root.addView(PeriodCard.today(c, d, nav));
+        // the Withings watch (issue #251): its page, when a watch is added (always in demo mode)
+        View watch = watchCard(c);
+        if (watch != null) root.addView(watch);
 
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
         root.addView(foot);
         return root;
+    }
+
+    /** The Watch card on Today (issue #251): when the watch last synced, a tap opens the Watch page; null without a watch. */
+    static View watchCard(final Context c) {
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        if (!p.demo() && p.watchAddress() == null) return null;
+        LinearLayout card = Ui.card(c);
+        LinearLayout row = Ui.hbox(c);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout t = Ui.vbox(c);
+        t.addView(Ui.h2(c, "Watch"));
+        String line = p.demo() ? "Made up steps, heart rate, sleep and battery" : p.watchLastOk() == 0 ? "Not synced yet"
+                : "Synced " + SettingsActivity.ago(p.watchLastOk());
+        t.addView(Ui.body(c, line));
+        if (!p.demo() && p.watchError() != null) t.addView(Ui.text(c, p.watchError(), 12, Ui.WARN, Ui.REGULAR));
+        row.addView(t, Ui.weight(1));
+        TextView open = Ui.button(c, "Open", Ui.OXY, false);
+        View.OnClickListener go = new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                c.startActivity(new android.content.Intent(c, WatchPageActivity.class));
+            }
+        };
+        open.setOnClickListener(go);
+        card.setOnClickListener(go);
+        row.addView(open);
+        card.addView(row);
+        return card;
     }
 
     static View ringButton(Context c, double v, String label, int color, final Nav nav, final int tab) {
@@ -1359,6 +1392,11 @@ public final class Pages {
         root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).unit("/min"), null));
         root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).range(88, 100).unit("%"), null));
         root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
+        // the period tracker's analysis at the end (issue #252, phase 1a2): the cycles over time, then the night temperature next to them
+        if (d.periodShown && d.periods != null) {
+            root.addView(PeriodAnalysis.cycles(c, d));
+            if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
+        }
         return root;
     }
 

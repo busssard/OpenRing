@@ -35,6 +35,20 @@ public final class Demo {
     public static final long DS0 = 3L * 86400 * 10; // the made up ring booted 3 days before the history starts
 
     /**
+     * The story of demo mode's five weeks (issue #265), so the made up person earns each kind of badge on any day the demo
+     * is built: the 4 weeks before the last one are busy ({@code BUSY_ONSET_MIN} more minutes to fall asleep, at
+     * least one wake up a night), the last week is easy (no long wake up, and none of the late nights that
+     * otherwise come about one night in eight, so its bedtimes are a little earlier). Otherwise bed and wake times follow
+     * the same rule as before, so the clock change checks keep their meaning. A short cold {@code COLD_BACK} days before the end (two nights {@code COLD_C} °C warmer with
+     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower; with the period tracker's cycle only the heart rate and HRV, so
+     * the made up temperature rise stays clear) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
+     * the best (heart rate {@code GREAT_BPM} lower, HRV {@code GREAT_HRV} ms higher, 16 minutes to fall asleep). The phone
+     * free evenings and quiet days: {@link #phoneFree} and {@link #quiet}.
+     */
+    static final double COLD_C = 0.8;
+    static final int BUSY_ONSET_MIN = 20, COLD_BACK = 15, COLD_BPM = 3, COLD_HRV = 10, GREAT_BACK = 4, GREAT_BPM = 4, GREAT_HRV = 12;
+
+    /**
      * Switch to the demo database and build it unless that was done today. Returns whether it was
      * built now. Blocks; call from a background thread.
      */
@@ -138,7 +152,7 @@ public final class Demo {
         Db db = Db.get(c);
         // built completely today: nothing to do. Not "the newest day is today", which is still
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
-        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null))) return false;
+        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db)) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll();
         ZoneId zone = ZoneId.systemDefault();
@@ -146,7 +160,7 @@ public final class Demo {
         long t0 = today.minusDays(days).atStartOfDay(zone).toEpochSecond();
         List<double[]> screen = new ArrayList<double[]>();
         java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
-        List<RingEvent> ev = history(t0, days, now, zone, new Random(7), screen, apps);
+        List<RingEvent> ev = warmNights(history(t0, days, now, zone, new Random(7), screen, apps, true), t0, zone, app.openring.core.analysis.Cycles.demoWarmNights(today));
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
@@ -155,6 +169,7 @@ public final class Demo {
         db.putScreenRead(t0, now);
         db.putApps(apps);
         periods(db, today, now);
+        watch(db, today, now, zone);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
         db.put(BUILT, today.toString());
@@ -162,7 +177,7 @@ public final class Demo {
     }
 
     /**
-     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on about cycle day 18
+     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on cycle day 20
      * ({@code Cycles.demo}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
      */
     static void periods(final Db db, LocalDate today, final long now) {
@@ -171,6 +186,54 @@ public final class Demo {
             @Override
             public void run() {
                 for (java.util.Map.Entry<LocalDate, Integer> e : log.entrySet()) Periods.setFlow(db, e.getKey().toString(), e.getValue(), now);
+            }
+        });
+        // made up morning temperatures by mouth, as a drip import would bring them (phase 1b): the night temperature card
+        // shows its second line and Settings an import to undo, all in the demo file
+        Periods.importDrip(db, new java.util.TreeMap<LocalDate, Integer>(),
+                app.openring.core.DripCsv.demoMouth(today, app.openring.core.analysis.Cycles.demoWarmNights(today)), false, now * 1000L, now);
+    }
+
+    /**
+     * The demo's nights after ovulation (issue #252, phase 1a2): every night skin temperature reading of a night in
+     * {@code warm} (by the day its morning falls on, the reading's time plus 12 hours) gets {@code Cycles.DEMO_RISE} more,
+     * so the period tracker's temperature line shows the rise many people have. Only for {@link #enter}; the other events
+     * and {@link #history} itself stay as they are.
+     */
+    public static List<RingEvent> warmNights(List<RingEvent> ev, long t0, ZoneId zone, java.util.Set<LocalDate> warm) {
+        List<RingEvent> out = new ArrayList<RingEvent>(ev.size());
+        int add = (int) Math.round(app.openring.core.analysis.Cycles.DEMO_RISE * 100);
+        for (RingEvent e : ev) {
+            if (e.tag == EventCodec.SLEEP_TEMP_EVENT && e.body.length >= 2) {
+                long unix = t0 + (e.ds - DS0) / 10;
+                LocalDate night = java.time.Instant.ofEpochSecond(unix + 12 * 3600).atZone(zone).toLocalDate();
+                if (warm.contains(night)) {
+                    int c = (e.body[0] & 0xff) | (e.body[1] & 0xff) << 8;
+                    byte[] b = e.body.clone();
+                    b[0] = (byte) (c + add);
+                    b[1] = (byte) ((c + add) >> 8);
+                    e = new RingEvent(e.tag, e.ds, b);
+                }
+            }
+            out.add(e);
+        }
+        return out;
+    }
+
+    /**
+     * The demo's made up watch (issue #251): sessions of made up messages ({@code core/withings/WatchDemo}) stored as raw
+     * messages and decoded by the same code as a real watch's. Written into {@code db}, the demo file, never the real one.
+     */
+    static void watch(final Db db, LocalDate today, final long now, ZoneId zone) {
+        final List<app.openring.core.withings.WatchDemo.Msg> msgs = app.openring.core.withings.WatchDemo.history(today, 35, now, zone, new Random(251));
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                WatchStore.noteDevice(db, app.openring.core.withings.WatchDemo.ADDRESS, app.openring.core.withings.WatchDemo.NAME, "1971", now - 35 * 86400.0);
+                for (app.openring.core.withings.WatchDemo.Msg m : msgs) {
+                    WatchStore.addRaw(db, m.session, m.seq, app.openring.core.withings.WatchDemo.ADDRESS, m.body, m.captured);
+                }
+                WatchStore.decodeAll(db.getWritableDatabase());
             }
         });
     }
@@ -228,26 +291,60 @@ public final class Demo {
         return history(t0, days, now, zone, r, screen, null);
     }
 
-    /** As above; when {@code screen} is not null it also gets made up phone screen sessions (issue #13). */
     static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
             java.util.Map<String, List<double[]>> apps) {
+        return history(t0, days, now, zone, r, screen, apps, false);
+    }
+
+    /**
+     * As above; when {@code screen} is not null it also gets made up phone screen sessions (issue #13). {@code story}: the
+     * five weeks of demo mode, with the busy month, the easy week, the cold, the best night, the quiet days and the phone
+     * free evenings that earn each kind of badge (issue #265), and the period tracker's cycle below. Without it the history
+     * is exactly the one before #265, so the tests built on it keep their results.
+     */
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
+            java.util.Map<String, List<double[]>> apps, boolean story) {
+        return history(t0, days, now, zone, r, screen, apps, story, story);
+    }
+
+    /**
+     * As above. With {@code cycle} (only for {@link #enter}, issue #252 phase 2) the nights' skin temperature varies less from
+     * night to night (0.07 °C instead of 0.12) and its one warm night (0.6 °C, a fever or a warm room) lies 9 days back instead
+     * of the warm spell of 2 nights lately, so the period tracker's rise rule finds the made up rise and shows such a night
+     * left out. The random draws are the same either way, so everything else is as before.
+     */
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
+            java.util.Map<String, List<double[]>> apps, boolean story, boolean cycle) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         List<Object[]> kept = new ArrayList<Object[]>();
+        Random cycleNoise = new Random(252);
         LocalDate first = java.time.Instant.ofEpochSecond(t0).atZone(zone).toLocalDate();
         for (int d = 1; d <= days; d++) {
             // every time is a clock time on this day, so a daylight saving switch does not move it (issue #22)
             LocalDate day = first.plusDays(d);
             int dow = day.getDayOfWeek().getValue(); // 6, 7 weekend mornings
             boolean weekend = dow >= 6;
-            boolean late = r.nextDouble() < 0.12;
+            // the story (issue #265): a busy month (longer to fall asleep, woken at night), then an easier last
+            // week with calm nights; after a short cold one calm night to get well; the best night in the easy week
+            boolean great = story && d == days - GREAT_BACK;
+            boolean easy = story && easy(d, days);
+            boolean busy = story && !easy;
+            boolean late = r.nextDouble() < 0.12 && !easy;
             double bed = at(day, -(1.4 - (late ? 1.6 : 0) - (weekend ? 0.4 : 0)), zone) + r.nextGaussian() * 1500;
             double wake = at(day, weekend ? 8.0 : 6.7, zone) + r.nextGaussian() * 1200;
             if (wake > now - 1200) wake = now - 1200;
             if (wake - bed < 3 * 3600) continue;
-            double tempOffset = r.nextGaussian() * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0); // a warm spell lately
+            // the story's short cold two weeks back: two warm nights with a higher heart rate, readiness drops and comes back
+            boolean cold = story && (d == days - COLD_BACK || d == days - COLD_BACK + 1);
+            double g = r.nextGaussian();
+            if (cycle) g = cycleNoise.nextGaussian(); // its own draws, so the story's extra draws (issue #265) do not move the rise
+            double tempOffset = (cycle ? g * 0.07 + (d == days - 9 ? 0.6 : 0) : g * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0)) // a warm spell lately
+                    + (cold && !cycle ? COLD_C : 0); // with the cycle the cold shows in heart rate only, so the rise stays clear
+            int sick = cold ? COLD_BPM : great ? -GREAT_BPM : 0;
             double fitness = d * 0.06; // resting HR slowly improves
             // a few wake ups per night, longer on restless nights
             int bouts = r.nextInt(3) + (r.nextDouble() < 0.25 ? 2 : 0);
+            if (story) bouts = easy ? 0 : Math.max(bouts, 1); // the busy month wakes you, the easy week does not
             double[][] wakeBouts = new double[bouts][2];
             for (int k = 0; k < bouts; k++) {
                 double at = bed + (0.15 + 0.75 * r.nextDouble()) * (wake - bed);
@@ -255,13 +352,15 @@ public final class Demo {
                 wakeBouts[k][1] = at + (3 + r.nextInt(14)) * 60;
             }
             double onset = 8 * 60 + r.nextInt(20 * 60);
+            if (busy) onset += BUSY_ONSET_MIN * 60;
+            if (great) onset = 16 * 60;
             // ---- night streams ----
             for (double t = bed; t < wake; t += 30) {
                 double f = (t - bed) / (wake - bed);
                 boolean awake = t < bed + onset || t > wake - 300 || inside(wakeBouts, t);
                 double cyc = Math.sin(2 * Math.PI * (t - bed - onset) / (92 * 60));
                 if (((long) (t - bed) / 30) % 10 == 0) {
-                    int hr = (int) Math.round(58 - fitness - 8 * Math.sin(Math.PI * Math.min(1, f * 1.5)) + (awake ? 9 : 0)
+                    int hr = (int) Math.round(58 + sick - fitness - 8 * Math.sin(Math.PI * Math.min(1, f * 1.5)) + (awake ? 9 : 0)
                             + 2 * cyc + r.nextGaussian());
                     byte[] spi = new byte[10];
                     spi[0] = (byte) (hr * 2);
@@ -288,8 +387,9 @@ public final class Demo {
                 for (int k = 0; k < 6; k++) {
                     double tt = t + k * 300, f = (tt - bed) / (wake - bed);
                     boolean awake = tt < bed + onset || inside(wakeBouts, tt);
-                    hrv[2 * k] = (byte) Math.round(58 - fitness - 8 * Math.sin(Math.PI * Math.min(1, f * 1.5)) + (awake ? 9 : 0));
-                    hrv[2 * k + 1] = (byte) Math.max(15, Math.round(42 + 22 * f + fitness * 3 - (awake ? 12 : 0) + r.nextGaussian() * 6));
+                    hrv[2 * k] = (byte) Math.round(58 + sick - fitness - 8 * Math.sin(Math.PI * Math.min(1, f * 1.5)) + (awake ? 9 : 0));
+                    hrv[2 * k + 1] = (byte) Math.max(15, Math.round(42 + 22 * f + fitness * 3 - (awake ? 12 : 0) + (great ? GREAT_HRV : cold ? -COLD_HRV : 0)
+                            + r.nextGaussian() * 6));
                 }
                 ev.add(new RingEvent(EventCodec.HRV_EVENT, ds(t0, t), hrv));
             }
@@ -334,7 +434,11 @@ public final class Demo {
                 int d = (Integer) k[0];
                 double bed = (Double) k[2], wake = (Double) k[3];
                 int before = screen.size();
-                screenDay(screen, new Random(1000 + d), (LocalDate) k[1], zone, bed, wake, (double[][]) k[4], now, i == kept.size() - 1);
+                // before a phone free evening the day's uses end over an hour before bed
+                Object[] next = i + 1 < kept.size() ? kept.get(i + 1) : null;
+                double until = story && next != null && phoneFree((Integer) next[0], days) ? (Double) next[2] - 75 * 60 : Double.POSITIVE_INFINITY;
+                screenDay(screen, new Random(1000 + d), (LocalDate) k[1], zone, bed, wake, (double[][]) k[4], now, i == kept.size() - 1,
+                        story && phoneFree(d, days), story && quiet(d, days), story && !easy(d, days), until);
                 if (apps != null) appsFor(screen.subList(before, screen.size()), new Random(2000 + d), bed, wake, apps);
             }
         }
@@ -352,12 +456,20 @@ public final class Demo {
      * before bed, now and then a phone check during a longer wake up (always in the newest night), a look in the morning and
      * about 35 short to long uses during the day (about 3 hours in all). Its own random numbers, so
      * the nights stay the same as without screen time.
+     *
+     * <p>Issue #265, for demo mode's story: {@code phoneFree}: the phone was put away in the evening before this night (no scrolling before bed),
+     * {@code quiet}: a quiet day after it, with about a third of the uses, {@code busy}: a night of the busy month, whose
+     * scrolling goes on until 2 to 6 minutes before bed (it takes longer to fall asleep then, so the hour before sleep
+     * still holds some of it), {@code until}: the day's uses end by then (before a phone free evening). Each day has its own
+     * random numbers, so the other days stay as they were; without the story all four leave the day as before.
      */
     static void screenDay(List<double[]> out, Random r, LocalDate date, ZoneId zone, double bed, double wake, double[][] wakeBouts, long now,
-            boolean newest) {
+            boolean newest, boolean phoneFree, boolean quiet, boolean busy, double until) {
         List<double[]> day = new ArrayList<double[]>();
-        double eveEnd = bed - (5 + r.nextInt(16)) * 60;
-        day.add(new double[] {eveEnd - (10 + r.nextInt(26)) * 60, eveEnd});
+        int gap = r.nextInt(16);
+        double eveEnd = bed - (busy ? 2 + gap / 4.0 : 5 + gap) * 60;
+        double eveStart = eveEnd - (10 + r.nextInt(26)) * 60;
+        if (!phoneFree) day.add(new double[] {eveStart, eveEnd});
         boolean check = false;
         for (double[] b : wakeBouts) {
             if (b[1] - b[0] >= 6 * 60 && r.nextDouble() < 0.5) {
@@ -372,8 +484,9 @@ public final class Demo {
         }
         double morning = wake + (3 + r.nextInt(6)) * 60;
         day.add(new double[] {morning, morning + (4 + r.nextInt(7)) * 60});
-        double from = wake + 20 * 60, to = at(date, 21, zone);
+        double from = wake + 20 * 60, to = Math.min(at(date, 21, zone), until);
         int n = 30 + r.nextInt(12);
+        if (quiet) n /= 3;
         double[] starts = new double[n];
         for (int i = 0; i < n; i++) starts[i] = from + r.nextDouble() * (to - from);
         java.util.Arrays.sort(starts);
@@ -422,6 +535,25 @@ public final class Demo {
         List<double[]> l = m.get(a);
         if (l == null) m.put(a, l = new ArrayList<double[]>());
         l.add(new double[] {from, to});
+    }
+
+    /** Nights (day numbers of {@link #history}) with the phone put away in the evening before, and the last but one (issue #265). */
+    static final int[] PHONE_FREE_NIGHTS = {10, 15, 17, 18};
+
+    /** The easy last week of the story, and the calm night after the cold. */
+    static boolean easy(int d, int days) {
+        return d > days - 7 || d == days - COLD_BACK + 2;
+    }
+
+    static boolean phoneFree(int d, int days) {
+        if (d == days - 2) return true;
+        for (int x : PHONE_FREE_NIGHTS) if (x == d) return true;
+        return false;
+    }
+
+    /** A quiet day with few phone uses: the days before the last of {@link #PHONE_FREE_NIGHTS} and before the last but one night. */
+    static boolean quiet(int d, int days) {
+        return d == PHONE_FREE_NIGHTS[PHONE_FREE_NIGHTS.length - 1] - 1 || d == days - 3;
     }
 
     static boolean inside(double[][] bouts, double t) {

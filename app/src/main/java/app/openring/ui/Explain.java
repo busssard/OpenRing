@@ -1,5 +1,7 @@
 package app.openring.ui;
 
+import app.openring.core.analysis.Badges;
+
 /** Plain language explanations of the scores and their contributors. */
 public final class Explain {
     private Explain() {}
@@ -155,6 +157,272 @@ public final class Explain {
                 + "Cycles far from the rest (more than 10 days from the middle value) are left out, maybe a period was not logged.";
     }
 
+    // ------------------------------------------------- period tracker, "Your cycles" (issue #252, phase 1a2)
+
+    /** Under Cycle day. */
+    public static final String PERIOD_CYCLE_DAY = "Cycle day: the days since your last period started, that day counted as 1.";
+
+    /** Under Next period: what the days count to, or why there is no number. */
+    public static String periodNext(Integer days, boolean stopped, int late) {
+        if (stopped) return "No estimate: you said your periods have stopped.";
+        if (days == null) return "Appears once you log a period. After twice your typical cycle without one, it waits for the next.";
+        if (late > 0) return "Days to the expected day of the estimate above. It has passed, cycles vary.";
+        return "Days to the expected day of the estimate above, the middle of its range.";
+    }
+
+    /** Under the cycle length numbers: what they count, from how many cycles, and what is left out. */
+    public static String periodCycles(int cycles, int leftOut) {
+        String s = "From one period start to the next, over " + (cycles == 1 ? "your 1 cycle" : "all your " + cycles + " cycles") + ". "
+                + "Average and spread (the standard deviation, how far a cycle usually lies from the average), shortest and longest. ";
+        if (leftOut > 0) s += (leftOut == 1 ? "1 cycle" : leftOut + " cycles") + " more than 10 days from the middle value "
+                + (leftOut == 1 ? "is" : "are") + " left out, maybe a period was not logged. ";
+        return s + "The estimate above uses only your newest " + app.openring.core.analysis.Cycles.WINDOW + " cycles.";
+    }
+
+    /** Under the period length numbers. */
+    public static String periodLengths(int periods) {
+        return "From the first to the last bleeding day of each period, both counted, over " + (periods == 1 ? "your 1 period" : "your " + periods + " periods")
+                + " that are over. Days without a log inside a period count, spotting does not.";
+    }
+
+    /** Under the amount numbers: a relative score, not millilitres (the issue's wording). */
+    public static final String PERIOD_AMOUNT = "Light 1, medium 2, heavy 3 for each logged day, added up for each period. "
+            + "A relative number from what you logged, not a measured amount, so it only compares your own periods.";
+
+    /** Under the cycle length dots ({@code cycles}) or the period length and amount dots. */
+    public static String periodDots(boolean cycles) {
+        if (cycles) return "Each dot is one cycle at the day it started, touch it to read. The line is your typical length, the band the "
+                + "range the estimate gives. A faded dot is left out of the estimate.";
+        return "Each dot is one period at the day it started, touch it to read. The line is the average.";
+    }
+
+    /** Under the night temperature line (the plan's text, with the marked rise of phase 2). */
+    public static final String PERIOD_TEMP = "Your ring's nightly skin temperature compared with your usual. In many people it rises a little "
+            + "after ovulation and stays higher until the next period. Where the app found that rise, the dashed line is the baseline "
+            + "(the highest of the 6 nights before), the ringed dots are the high nights and the thin line the likely ovulation, the day "
+            + "before the first high night. Red bands are period days, green the ovulation range of the estimate. Nights you left out are "
+            + "not shown, and illness, alcohol, travel or a warm room move it too. Touch the line to read a night.";
+
+    // ------------------------------------------ period tracker, ovulation from the temperature (issue #252, phase 2)
+
+    /**
+     * How the rise is found, with the third night's height for the ring's own noise ({@code ringNoise}, °C) and, when there
+     * are temperatures by mouth, for theirs ({@code mouthNoise}, NaN without).
+     */
+    public static String periodRise(double ringNoise, double mouthNoise) {
+        java.util.Locale l = java.util.Locale.getDefault();
+        String third = String.format(l, "%.2f °C for your ring", app.openring.core.analysis.TempRise.thirdNeed(ringNoise));
+        if (!Double.isNaN(mouthNoise)) third += String.format(l, ", %.2f °C by mouth", app.openring.core.analysis.TempRise.thirdNeed(mouthNoise));
+        return "Three over six, the classic rule: the baseline is the highest of 6 nights, then 3 nights in a row must lie above it, "
+                + "the third at least " + third + " (0.2 °C for a steady signal, less for one that varies more from night to night: yours "
+                + "varies by about " + String.format(l, "%.2f", ringNoise) + " °C). A night may be missing, and one night that dips or a third "
+                + "that falls short needs a fourth high night. The rise must last until the next period, and nights far from the ones around "
+                + "them (a fever, a warm room) are left out. The likely ovulation is the day before the first high night. The ring and the "
+                + "temperatures by mouth are checked apart; when both find it within 2 days, it is clear. In made up cycles with a rise of "
+                + "0.3 °C and night to night noise of 0.1 °C, the rule found 7 in 10 rises and a clear one was within 1 day of the real "
+                + "ovulation 4 times in 5. With noise of 0.2 °C it finds about a third. Illness, alcohol, travel and a warm room move the "
+                + "temperature too. An estimate, not birth control and not a medical diagnosis.";
+    }
+
+    /** Under "Found in 4 of 6 cycles". */
+    public static String periodFound(int over, int found) {
+        return "Cycles that are over and had a lasting rise, out of " + (over == 1 ? "your 1 cycle" : "your " + over + " cycles")
+                + " that are over. Not every cycle shows one: too few nights with the ring, a small rise, or a cycle without ovulation.";
+    }
+
+    /** Under the own luteal phase: from how many cycles, how much it varies, and what it changes. */
+    public static String periodLuteal(int n, int days, double sd) {
+        if (n < app.openring.core.analysis.TempRise.LUTEAL_FROM) {
+            return "The days from ovulation to the next period, from cycles with a rise. Until " + app.openring.core.analysis.TempRise.LUTEAL_FROM
+                    + " cycles have one (" + n + " so far), the estimate uses the usual " + app.openring.core.analysis.Cycles.LUTEAL + " days.";
+        }
+        return "The days from ovulation to the next period: the middle value of your " + n + " newest cycles with a rise, which vary by about "
+                + String.format(java.util.Locale.getDefault(), "%.1f", Double.isNaN(sd) ? 0 : sd) + " days. It replaces the usual "
+                + app.openring.core.analysis.Cycles.LUTEAL + " days for your ovulation estimate, and once this cycle's rise shows, for your next period.";
+    }
+
+    /** Under the ovulation line, for whichever way the estimate was made. */
+    public static String periodOvulation(app.openring.core.analysis.Cycles cy) {
+        if (cy.method == app.openring.core.analysis.Cycles.MEASURED) {
+            boolean clear = cy.rise.current.confidence == app.openring.core.analysis.TempRise.CLEAR;
+            return "Give or take " + cy.ovulationRange + (cy.ovulationRange == 1 ? " day" : " days") + ": " + (clear ? "a clear rise" : "a weaker rise")
+                    + ", found within that many days of the real day about 4 times in 5 in made up cycles. Measured means the day before the "
+                    + "temperature rose, not a test. How it is found is under Your cycles.";
+        }
+        if (cy.method == app.openring.core.analysis.Cycles.OWN_LUTEAL) {
+            return "Give or take " + cy.ovulationRange + " days: how much " + yourCycles(cy.used.size()) + " vary, together with how much your own "
+                    + "time from ovulation to the period varies, times 1.28 for about 4 in 5. At least 3 days.";
+        }
+        return periodOvulation(cy.used.size(), cy.ovulationRange);
+    }
+
+    /** Under "Expected ...", for whichever way the estimate was made. */
+    public static String periodRange(app.openring.core.analysis.Cycles cy) {
+        if (cy.method != app.openring.core.analysis.Cycles.MEASURED) return periodRange(cy.used.size(), cy.length, cy.range, cy.sd);
+        boolean own = cy.rise.ownLuteal();
+        return "Measured: the ovulation day plus " + cy.luteal + " days, " + (own ? "your own time from ovulation to the period" : "the usual time from ovulation to the period")
+                + ". Give or take " + cy.range + (cy.range == 1 ? " day" : " days") + ": how much " + (own ? "your own time varies" : "that time varies (about 2.4 days in a large study)")
+                + " together with the error of the measured day, times 1.28 for about 4 in 5. The calendar estimate from your typical cycle is shown for comparison.";
+    }
+
+    /** Settings, under "Remind me before my period". */
+    public static final String PERIOD_REMIND = "A notification on this phone before the earliest day of the expected range, at the time you pick. "
+            + "It moves when the estimate changes and comes once per period, not while a period is logged. Android may deliver it a few "
+            + "minutes late. It always follows your own log, never the demo.";
+
+    /** Settings, under "My periods have stopped". */
+    public static final String PERIOD_STOPPED = "For example after menopause, during pregnancy or breastfeeding, or with some medicines. "
+            + "The tracker then shows no next period and no late line, and sends no reminders. Your logged days and past cycles stay. "
+            + "Logging a period day turns this off by itself.";
+
+    // -------------------------------------------- period tracker, import from drip (issue #252, phase 1b)
+
+    /** Settings, under "Import from drip". */
+    public static final String DRIP_SETTINGS = "Reads the file drip exports (in drip: Settings, Export data). You see what it holds "
+            + "before anything is saved, and you can undo an import as a whole. Nothing leaves the phone.";
+
+    /** The import screen's first lines. */
+    public static final String DRIP_INTRO = "Bleeding days, spotting and morning temperatures from drip. Days you already logged in "
+            + "Open Ring are kept. Nothing is saved until you tap Import.";
+
+    /** Demo mode: the made up file, and that nothing is imported. */
+    public static final String DRIP_DEMO = "Demo mode: this is a made up drip file, compared with the demo's made up log. "
+            + "Nothing is imported in demo mode.";
+
+    /** Under the file's numbers. */
+    public static final String DRIP_COUNTS = "Periods are counted the way Open Ring counts them: light, medium or heavy days with at most "
+            + "2 days without an entry between them. Spotting is counted apart and never starts a period. Temperatures are drip's "
+            + "morning temperatures by mouth, at most one a day, in °C.";
+
+    /** Under "Not imported: 40 mood entries". */
+    public static final String DRIP_OTHER = "Rows of each kind with an entry. They are counted so you know what the file holds, but the "
+            + "period log does not keep them.";
+
+    /** Under the flagged short periods. */
+    public static final String DRIP_SHORT = "A period of 1 or 2 days is often a day that was not logged, or spotting logged as bleeding. "
+            + "Correct opens those days so you can add the missing ones or join the period with a close one. Ignore keeps it as it is.";
+
+    /** Under the days that differ. */
+    public static final String DRIP_DIFFER = "Days with another amount in Open Ring keep Open Ring's entry. Switch this on to take the "
+            + "file's values instead; undoing the import puts Open Ring's back. Temperatures already there are never replaced.";
+
+    /** The Correct screen. */
+    public static final String DRIP_CORRECT = "Tap a day to add it or change it. These changes are for this import only, nothing is saved "
+            + "until you tap Import.";
+
+    /** Settings, under each "Undo the drip import of 30 Oct". */
+    public static final String DRIP_UNDO = "Undo removes exactly what this import added and puts back the days it replaced. Days you "
+            + "logged or changed in Open Ring since then stay.";
+
+    /** "Added 186 days and 312 temperatures." for Settings. */
+    public static String dripAdded(int days, int temps) {
+        return "Added " + days + (days == 1 ? " day" : " days") + " and " + temps + (temps == 1 ? " temperature." : " temperatures.");
+    }
+
+    /** Under the night temperature line when drip temperatures are on it. */
+    public static final String PERIOD_MOUTH = "Mouth: the morning temperatures imported from drip, in °C on the right scale. They are a "
+            + "different measurement from the ring's skin temperature at night, so each line has its own scale. A hollow dot is a "
+            + "reading drip left out.";
+
+    // ---------------------------------------------------------------- badges (issue #265)
+
+    /** What every badge has in common: own history only, left out days, when a day or night gets its badges. */
+    public static final String BADGES = "Badges compare a day or night only with your own history, never with a made up target. "
+            + "A day without a badge says nothing. Days with a left out time count for no badge and in no average. "
+            + "A day gets its badges once it has ended, a night once it is analysed. A tie never earns a badge.";
+
+    // the badge screens (issue #265, phase 1b)
+    public static final String BADGES_ROW = "Recent badges";
+    public static final String BADGES_ROW_NOTE = "Good days and nights of the last " + Badges.WEEK + " days, compared with your own usual. "
+            + "Touch one to read it.";
+    public static final String BADGES_OPEN = "Open that day";
+    public static final String BADGES_NEW = "New";
+    public static final String BADGES_ALL = "All badges";
+    public static final String BADGES_CALENDAR = "A dot marks a day with at least one badge, a bigger dot two or more. "
+            + "Touch and slide across the days to read them, tap a day to open it.";
+    public static final String BADGES_COUNT_NOTE = "The number counts the days with this badge in all your history. It is not a score to beat: "
+            + "a day without a badge says nothing.";
+    public static final String BADGES_SCREEN_ACCESS = "Phone free evening and Calm screen day come from your screen time. For that, switch on "
+            + "Open Ring in Android's usage access list (the button takes you there). It stays on this phone.";
+    public static final String BADGES_SCREEN_OLD = "Phone free evening and Calm screen day come from your screen time, which needs Android 9 or newer.";
+    public static final String SHOW_BADGES = "Show badges";
+    public static final String SHOW_BADGES_NOTE = "Shows Recent badges on Today. Badges are worked out from your data each time, "
+            + "so switching this off deletes nothing.";
+    public static final String BADGES_FAILED = "The badges could not be read this time. Your data is as before. Diagnostics, Log tab, shows why.";
+
+    /** Under 14 nights: most comparisons still wait. Null from then on. */
+    public static String badgesWait(int nights) {
+        if (nights >= Badges.MIN_NIGHTS) return null;
+        return "Most badges compare with your own last " + Badges.MIN_DAYS / 7 + " to " + Badges.WEEKS + " weeks, so they come after about " + Badges.MIN_NIGHTS
+                + " nights with the ring. You have " + (nights == 1 ? "1 night" : nights + " nights") + " so far.";
+    }
+
+    /** "Today", "Yesterday", "Sat 31 Oct" (with the year when it is not this year). */
+    public static String badgeWhen(java.time.LocalDate d, java.time.LocalDate today) {
+        if (d.equals(today)) return "Today";
+        if (d.equals(today.minusDays(1))) return "Yesterday";
+        return d.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH) + " " + Badges.date(d, today);
+    }
+
+    /** A kind's line on the Badges page: "Not yet", "1 time, last on 31 Oct", "3 times, last on 31 Oct". */
+    public static String badgeCount(int n, java.time.LocalDate last, java.time.LocalDate today) {
+        if (n == 0 || last == null) return "Not yet";
+        return (n == 1 ? "1 time" : n + " times") + ", last on " + Badges.date(last, today);
+    }
+
+    /** What touching a day of the badge calendar shows: the date, then each badge with its numbers, or that it has none. */
+    public static String badgeDay(java.time.LocalDate d, java.util.List<Badges.Badge> on, java.time.LocalDate today) {
+        StringBuilder sb = new StringBuilder(badgeWhen(d, today));
+        if (on.isEmpty()) return sb.append(": no badge").toString();
+        for (Badges.Badge b : on) sb.append('\n').append(Badges.NAMES[b.kind]).append(": ").append(b.text);
+        return sb.toString();
+    }
+
+    /** {@link #badge} without the name in front, for under the badge's own title: "Your highest sleep score ...". */
+    public static String badgeRule(int kind) {
+        String line = badge(kind);
+        if (line == null) return null;
+        String rule = line.substring(Badges.NAMES[kind].length() + 2);
+        return Character.toUpperCase(rule.charAt(0)) + rule.substring(1);
+    }
+
+    /** One line per badge rule ({@code Badges.BEST_NIGHT} and so on), with the numbers the rule uses. */
+    public static String badge(int kind) {
+        String week = Badges.WEEK + " days", weeks = Badges.WEEKS + " weeks";
+        switch (kind) {
+            case Badges.BEST_NIGHT:
+                return "Best night: your highest sleep score of the last " + Badges.BEST_DAYS + " days, with at least "
+                        + Badges.MIN_NIGHTS + " nights in them. Equal to an earlier night does not count.";
+            case Badges.RESTFUL_WEEK:
+                return "Restful week: your sleep score over the last " + week + " is on average at least " + Badges.RESTFUL_GAP
+                        + " points above your usual (the " + weeks + " before). Needs " + Badges.RESTFUL_WEEK_NIGHTS + " nights in the week and "
+                        + Badges.MIN_NIGHTS + " in the " + weeks + ", and comes at most once in " + week + ".";
+            case Badges.RECOVERED:
+                return "Recovered: readiness back to your usual (its average over the " + weeks + " before the low days) after at least "
+                        + Badges.LOW_DAYS + " days in a row clearly below it (lower than the average minus its usual day to day spread, "
+                        + "one standard deviation). Needs readiness on each of these days and on " + Badges.MIN_DAYS + " days of the " + weeks + ".";
+            case Badges.PHONE_FREE:
+                return "Phone free evening: at most " + Badges.PHONE_FREE_MAX + " min on the phone in the hour before your night started "
+                        + "(a look at the clock is fine). Comes for " + Badges.PHONE_FREE_OF + " such evenings in " + week + ", at most once in "
+                        + week + ", or for the first one after " + Badges.WEEK + " evenings with more. "
+                        + "Reading in bed moves the start of your night to after it, so it does not count as phone free.";
+            case Badges.ABOVE_USUAL:
+                return "Above your usual: at least " + Math.round(Badges.STEPS_ABOVE * 100) + "% more steps than your average on your last "
+                        + Badges.USUAL_DAYS + " days with the ring (at least " + Badges.MIN_DAYS + " of them). Only days with the ring on for "
+                        + Badges.WORN_MIN / 60 + " hours or more count, sleep included.";
+            case Badges.GOAL:
+                return "Goal reached: your daily activity goal reached on " + Badges.GOAL_OF + " of the last " + week + " (at most once in "
+                        + week + "), or the first goal day after " + week + " without one. There is no badge for every single day, "
+                        + "rest days matter too. Without your own goal in the profile the app lowers it after a low readiness day.";
+            case Badges.CALM_SCREEN:
+                return "Calm screen day: at least " + Math.round(Badges.CALM_UNDER * 100) + "% less screen time than your usual (your average "
+                        + "over the last " + weeks + ", at least " + Badges.MIN_DAYS + " fully read days). Counted as on the Screen tab: apps "
+                        + "you left out do not count, and only days whose phone log was read completely.";
+            default:
+                return null;
+        }
+    }
+
     public static String of(String key) {
         if (key == null) return null;
         switch (key) {
@@ -184,4 +452,34 @@ public final class Explain {
             default: return null;
         }
     }
+
+    // ---- the Withings watch (issue #251, phase 1b) ----
+
+    public static final String WATCH_ADD = "Withings Steel HR: check the watch, then tap Use this watch for syncing under its report. "
+            + "Open Ring then reads steps, heart rate, sleep, workouts and battery from it, without the Withings account.";
+
+    public static final String WATCH_WITHINGS_APP = "The watch stays paired with this phone, so the Withings app keeps working. "
+            + "Do not remove the watch in Android's Bluetooth settings: pairing it again may need a reset that erases the watch. "
+            + "If a sync fails, force stop the Withings app and try again.";
+
+    public static final String WATCH_FORGET = "Open Ring stops syncing it. What it synced stays on this phone. Nothing changes on the watch or in the Withings app.";
+
+    public static final String WATCH_PAGE = "What your watch measured, as it sent it. Our own analysis of the watch's data comes in a later version.";
+
+    public static final String WATCH_STEPS = "Steps the watch counted on each day, from midnight to midnight. Steps of a workout are listed with the workout "
+            + "and are not in this number, so compare it with the Withings app.";
+
+    public static final String WATCH_WORKOUTS = "Workouts the watch recorded on this day: the type, when it started, how long it lasted, and the distance, steps "
+            + "and calories the watch counted for it.";
+
+    public static final String WATCH_HEART = "Heart rate as the watch stored it on this day. Outside workouts the watch measures about every 30 minutes, "
+            + "in a workout more often. Touch the chart to read a time and its value.";
+
+    public static final String WATCH_SLEEP = "Withings' own sleep stages for the night that ended on this day, as the watch worked them out. "
+            + "Time asleep adds light, deep and REM. Parts with a code we do not know yet show as no data.";
+
+    public static final String WATCH_BATTERY = "The watch's battery at the last sync of each day. A jump up is a charge.";
+
+    public static final String WATCH_DROP = "How much the battery fell per day over the last 7 days, charges left out. "
+            + "It shows what the syncs and your use cost; more syncs a day cost more.";
 }

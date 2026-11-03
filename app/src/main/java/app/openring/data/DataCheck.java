@@ -153,11 +153,22 @@ public final class DataCheck {
                 .append(db.kvLong("epoch", 1)).append(", cursor ").append(db.kvLong("cursor", 0)).append('\n');
         // how many times are left out because someone else wore the ring (issue #254): the count only, never when
         t.append("Left out times: ").append(db.excluded().size()).append('\n');
+        // the watch (issue #251): counts, dates and message types only, never a value
+        t.append(watchLine(p)).append(WatchStore.checkLines(db));
         // the nights themselves, counts and dates only (issue #40): which day each sleep period was given
         // to is what the screens go by; times, minutes and scores are health values and stay out
         t.append(nightSummary(db.nightsJson(today.minusDays(NIGHT_DAYS - 1).toString(), "9999-12-31", false), today, NIGHT_DAYS));
         r.text = t.toString();
         return r;
+    }
+
+    /** The watch's settings line (issue #251): whether one is added, how often it syncs, when it last did and the last problem. */
+    static String watchLine(Prefs p) {
+        if (p.watchAddress() == null) return "Watch sync: no watch added\n";
+        int per = p.watchPerDay();
+        String often = per == 0 ? "by hand" : per == 1 ? "once a day" : per + " times a day";
+        return "Watch sync: " + often + ", last good sync " + date(p.watchLastOk() == 0 ? Double.NaN : p.watchLastOk()) + ", last try "
+                + date(p.watchLastAttempt() == 0 ? Double.NaN : p.watchLastAttempt()) + ", last problem: " + (p.watchError() == null ? "none" : p.watchError()) + "\n";
     }
 
     /** The kv key of the last part of loading a day that failed and kept its fallback (issue #235): a {@link app.openring.core.LoadNote} line, no values. */

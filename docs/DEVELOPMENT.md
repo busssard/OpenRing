@@ -10,7 +10,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `app/src/main/java/app/openring/` | The app (plain Java, no third party libraries). Packages explained in ARCHITECTURE.md |
 | `app/src/main/res/` | Icons (vector drawables), app name, theme. All screens are built in code, there are no layouts |
 | `app/src/main/AndroidManifest.xml` | Permissions, activities, services. Must never request `INTERNET` |
-| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh` |
+| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring) and `WatchTest.java` (the Withings watch) run after it |
 | `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh` |
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
@@ -91,13 +91,15 @@ shots are the same picture (`.github/scripts/same_shots.sh`); `tests/test_ci_scr
 
 The emulator uses the plain Android image (no Google apps) with 4 GB of memory; if a system "isn't
 responding" dialog appears, the script taps *Wait*, and it fails if the dialog stays, so the README
-pictures are never replaced by spoiled ones. Look at the pictures before asking for a review. When you
+pictures are never replaced by spoiled ones. Every adb call in `screens.sh` has a time limit (6 minutes for the boot, 3 for the install, 1 for
+every other call, issue #278) and the job stops after 20 minutes, so a stuck emulator fails with a line that
+says so instead of hanging. Look at the pictures before asking for a review. When you
 add a screen or a state worth seeing, add it to `.github/scripts/screens.sh`. The main screen accepts
 these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
 (boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd),
-`settings` (opens Settings at a card: `top`, `stages`, `watch`, `screen`, `games`, `backups` or `advanced`; with a card the page gets
-an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened), `finder_blink` (boolean, with `finder`: the demo's Make it blink counting down), `live` (boolean, demo mode only: opens Live with its made up readings), `live_spo2` (boolean, with `live`: blood oxygen on), `left_out` (boolean, demo mode only: leaves out the day before yesterday 13:00 to 17:00 in the demo file, issue #254), `watch` (boolean, demo mode only: opens the Watch check with its made up scan, issue #251), `watch_report` (boolean, with `watch`: picks the made up watch and shows its made up report), `key_unreadable` (boolean, demo mode only: the main screen's status line for a saved ring key this phone cannot read, issue #199), `period_edit` (boolean, demo mode only, with `tab` 4: opens the period tracker's day editor on Body for a day of the newest made up period; nothing is saved without a tap, issue #252).
+`settings` (opens Settings at a card: `top`, `period`, `stages`, `watch`, `screen`, `games`, `backups` or `advanced`; with a card the page gets
+an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened), `finder_blink` (boolean, with `finder`: the demo's Make it blink counting down), `live` (boolean, demo mode only: opens Live with its made up readings), `live_spo2` (boolean, with `live`: blood oxygen on), `left_out` (boolean, demo mode only: leaves out the day before yesterday 13:00 to 17:00 in the demo file, issue #254), `watch` (boolean, demo mode only: opens the Watch check with its made up scan, issue #251), `watch_report` (boolean, with `watch`: picks the made up watch and shows its made up report), `key_unreadable` (boolean, demo mode only: the main screen's status line for a saved ring key this phone cannot read, issue #199), `period_edit` (boolean, demo mode only, with `tab` 4: opens the period tracker's day editor on Body for a day of the newest made up period; nothing is saved without a tap, issue #252), `badges` (boolean: opens the Badges page, issue #265), `period_ask` (boolean, demo mode only: the period cards show the question "Have your periods stopped?" with the demo's own numbers until it is answered; nothing is saved without a tap, issue #252), `period_rise` (boolean, demo mode only: Body's night temperature line opens touched on the first high night of the rise it marks, phase 2 of #252), `drip` (boolean, demo mode only: opens Import from drip with a made up drip file, `core/DripCsv.demo`, compared with the demo's log; the preview only, demo mode never imports, issue #252), `drip_correct` (boolean, with `drip`: opens Correct on the file's first short period), `watch_data` (boolean, demo mode only: opens the Watch page with the made up watch's data, issue #251 phase 1b).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.
@@ -125,7 +127,9 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
 * **New chart:** add a view to `ui/Charts.java`; extend `Charts.Scrub` for touch readout.
 * **New game:** subclass `ui/games/Game.java`, add it to `GamesActivity.create` before the motion check (which stays last) and raise `COUNT`. Games live in Settings, card *Ring games* (issue #15).
 * **Demo data:** `data/Demo.java` generates five weeks in the ring's own format; keep it realistic,
-  it is what screenshots and visitors see.
+  it is what screenshots and visitors see. Keep its story too (a busy month, an easy last week, a short cold, a best
+  night, quiet days and phone free evenings; issue #265), so it earns every kind of badge on any day (the pipeline test
+  checks that). The tests' own histories (`Demo.history` without the story) stay exactly as before #265.
 
 ## Versions and releases
 

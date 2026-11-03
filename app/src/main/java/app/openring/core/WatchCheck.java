@@ -220,6 +220,16 @@ public final class WatchCheck {
         return f.name == null || f.name.trim().isEmpty() ? "(no name)" : f.name.trim();
     }
 
+    /**
+     * The devices worth listing: those with a name, and any that looks like a Withings watch even
+     * without one. Unnamed devices (headphones, tags, other phones) only fill the list (owner, 3 Nov).
+     */
+    public static List<Found> shown(List<Found> all) {
+        List<Found> out = new ArrayList<Found>();
+        for (Found f : all) if (likelyWatch(f) || f.name != null && !f.name.trim().isEmpty()) out.add(f);
+        return out;
+    }
+
     /** True when the name or the advertised services suggest a Withings watch. */
     public static boolean likelyWatch(Found f) {
         String n = f.name == null ? "" : f.name.toLowerCase(Locale.ROOT);

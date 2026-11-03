@@ -88,12 +88,22 @@ public final class Backup {
         Json.put(o, "screen_exclude", new org.json.JSONArray(p.screenExcluded()));
         Json.put(o, "games_on", p.gamesOn());
         Json.put(o, "period_shown", p.periodChoice());
+        Json.put(o, "badges_on", p.badgesOn());
+        // the reminder and "My periods have stopped" (issue #252, phase 1a2): the person's own, never the demo's
+        Json.put(o, "period_remind_days", p.periodRemindDays());
+        Json.put(o, "period_remind_min", p.periodRemindMinute());
+        if (p.periodStoppedReal() != null) Json.put(o, "period_stopped", p.periodStoppedReal());
+        if (p.periodAskLaterReal() != null) Json.put(o, "period_ask_later", p.periodAskLaterReal());
         Json.put(o, "screen_min_show", p.screenMinShowMin());
         Json.put(o, "stage_detail", p.stageDetail());
         Json.put(o, "finder_sound", p.finderSound());
         // the automatic backups' choices (issue #242); the folder is not in the file, its permission belongs to this installation
         Json.put(o, "backup_days", p.backupDays());
         Json.put(o, "backup_keep", p.backupKeep());
+        // the watch (issue #251): which one and how often it syncs; its messages are in the history
+        Json.put(o, "watch_address", p.watchAddress());
+        Json.put(o, "watch_name", p.watchName());
+        Json.put(o, "watch_per_day", p.watchPerDay());
         ZipOutputStream z = new ZipOutputStream(os);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
@@ -154,9 +164,9 @@ public final class Backup {
     static final String BROKEN = "This file is damaged or is not an Open Ring backup, nothing was changed.";
     static final String NOT_OPENED = "The history in this backup could not be opened. Your history on this phone was kept, nothing was changed.";
     /** The phone's own period log could not be read before the swap (review of #275): the backup is not to blame. */
-    public static final String PERIODS_UNREADABLE = "The period log on this phone could not be read, nothing was changed.";
+    public static final String PERIODS_UNREADABLE = "The period log or the watch data on this phone could not be read, nothing was changed.";
     /** Added to the restore's result when the phone's file was damaged and its period log was left behind (review of #275). */
-    public static final String PERIODS_DAMAGED = "The period log on this phone was damaged and could not be kept, the period days of the backup are in place.";
+    public static final String PERIODS_DAMAGED = "The period log and the watch data on this phone were damaged and could not be kept, those of the backup are in place.";
     /** Re dating after a sync moves times by minutes, a sync adds hours. */
     static final double SLACK_S = 3600;
 
@@ -445,6 +455,17 @@ public final class Backup {
         if (o.has("games_on")) p.setGamesOn(o.optBoolean("games_on", false));
         // the period tracker switch (issue #252); an older backup has none and leaves it as it is
         if (o.has("period_shown")) p.setPeriodChoice(o.optInt("period_shown", -1));
+        // the badges switch (issue #265); an older backup has none and leaves it as it is
+        if (o.has("badges_on")) p.setBadgesOn(o.optBoolean("badges_on", true));
+        // phase 1a2: a value that is not one of the choices keeps the current one; an older backup has none of these
+        if (app.openring.core.PeriodRemind.validDays(o.optInt("period_remind_days", -1))) p.setPeriodRemindDays(o.optInt("period_remind_days"));
+        int remindMin = o.optInt("period_remind_min", -1);
+        if (remindMin >= 0 && remindMin < 24 * 60) p.setPeriodRemindMinute(remindMin);
+        // a backup that has the reminder but no "stopped" day was made while it was not said: it is not said after the restore either
+        if (o.has("period_remind_days")) {
+            p.setPeriodStoppedReal(o.isNull("period_stopped") ? null : o.optString("period_stopped", null));
+            p.setPeriodAskLaterReal(o.isNull("period_ask_later") ? null : o.optString("period_ask_later", null));
+        }
         if (o.has("screen_min_show")) {
             int m = o.optInt("screen_min_show", 5);
             p.setScreenMinShowMin(m == 0 || m == 5 || m == 10 || m == 15 ? m : 5);
@@ -457,6 +478,9 @@ public final class Backup {
         // a value that is not one of the choices, or an older backup without them, keeps the current ones
         if (app.openring.core.Backups.validDays(o.optInt("backup_days", -1))) p.setBackupDays(o.optInt("backup_days"));
         if (app.openring.core.Backups.validKeep(o.optInt("backup_keep", -1))) p.setBackupKeep(o.optInt("backup_keep"));
+        // the watch (issue #251); an older backup has none and leaves the phone's as it is
+        if (!o.isNull("watch_address") && o.optString("watch_address").length() > 0) p.setWatch(o.optString("watch_address"), o.isNull("watch_name") ? null : o.optString("watch_name", null));
+        if (app.openring.core.withings.WatchDue.valid(o.optInt("watch_per_day", -1))) p.setWatchPerDay(o.optInt("watch_per_day"));
     }
 
     static boolean looksLikeSqlite(File f) throws IOException {

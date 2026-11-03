@@ -89,6 +89,45 @@ public final class Prefs {
     public int periodChoice() { return sp.getInt("period_shown", -1); }
     public void setPeriodChoice(int v) { sp.edit().putInt("period_shown", v < 0 ? -1 : v > 0 ? 1 : 0).apply(); }
 
+    /** The Settings switch "Show badges" (issue #265), on by default: the Recent badges row on Today. Nothing is stored either way. */
+    public boolean badgesOn() { return sp.getBoolean("badges_on", true); }
+    public void setBadgesOn(boolean b) { sp.edit().putBoolean("badges_on", b).apply(); }
+    /**
+     * "Remind me before my period" (issue #252, phase 1a2): days before the expected range ({@code core/PeriodRemind.DAYS},
+     * 0 off, the default) and the time of day in minutes after midnight (9:00 by default). Anything else is stored as off
+     * or 9:00. The reminder always comes from the person's own log, never from the demo's.
+     */
+    public int periodRemindDays() {
+        int d = sp.getInt("period_remind_days", 0);
+        return app.openring.core.PeriodRemind.validDays(d) ? d : 0;
+    }
+    public void setPeriodRemindDays(int d) { sp.edit().putInt("period_remind_days", app.openring.core.PeriodRemind.validDays(d) ? d : 0).apply(); }
+    public int periodRemindMinute() { return app.openring.core.PeriodRemind.minute(sp.getInt("period_remind_min", app.openring.core.PeriodRemind.DEFAULT_MINUTE)); }
+    public void setPeriodRemindMinute(int m) { sp.edit().putInt("period_remind_min", app.openring.core.PeriodRemind.minute(m)).apply(); }
+    /** The cycle already reminded of (the start of its period), so one cycle never gets two; not in a backup. */
+    public String periodRemindSent() { return sp.getString("period_remind_sent", null); }
+    /** Written to disk before it returns, before the notification is posted, so a stop in between never sends twice. */
+    public void setPeriodRemindSent(String key) { sp.edit().putString("period_remind_sent", key).commit(); }
+
+    /**
+     * "My periods have stopped": the day it was said (yyyy-mm-dd), null when not. Demo mode keeps its own, so the demo
+     * never changes the person's. {@code core/analysis/Cycles} ends it by itself once a period is logged on that day or later.
+     */
+    public String periodStopped() { return sp.getString(demo() ? "period_stopped_demo" : "period_stopped", null); }
+    /** The person's own, also while demo mode is on (the reminder and the backup use it). */
+    public String periodStoppedReal() { return sp.getString("period_stopped", null); }
+    public void setPeriodStopped(String day) { setDayKey(demo() ? "period_stopped_demo" : "period_stopped", day); }
+    void setPeriodStoppedReal(String day) { setDayKey("period_stopped", day); }
+    private void setDayKey(String key, String day) { // a date, or (null or not a date) none
+        if (app.openring.core.analysis.Cycles.day(day) == null) sp.edit().remove(key).apply();
+        else sp.edit().putString(key, day).apply();
+    }
+    /** When the person answered "Not yet" to "Have your periods stopped?" (yyyy-mm-dd), null when never; demo keeps its own. */
+    public String periodAskLater() { return sp.getString(demo() ? "period_ask_later_demo" : "period_ask_later", null); }
+    public String periodAskLaterReal() { return sp.getString("period_ask_later", null); }
+    public void setPeriodAskLater(String day) { setDayKey(demo() ? "period_ask_later_demo" : "period_ask_later", day); }
+    void setPeriodAskLaterReal(String day) { setDayKey("period_ask_later", day); }
+
     public boolean profileSet() { return sp.getBoolean("profile_set", false); }
     public void setProfileSet() { sp.edit().putBoolean("profile_set", true).apply(); }
 
@@ -157,6 +196,32 @@ public final class Prefs {
     public boolean backgroundSync() { return sp.getBoolean("bg_sync", true); }
     public void setBackgroundSync(boolean b) { sp.edit().putBoolean("bg_sync", b).apply(); }
     /** Demo mode: the app shows a made up history from its own database file. */
+    // ---- the watch (issue #251, phase 1b) ----
+    /** The watch this app syncs (its Bluetooth address), null for none. */
+    public String watchAddress() { return sp.getString("watch_address", null); }
+    public String watchName() { return sp.getString("watch_name", null); }
+    public void setWatch(String address, String name) {
+        sp.edit().putString("watch_address", address).putString("watch_name", name).remove("watch_error").apply();
+    }
+    /** Forget the watch: syncing stops, its stored data stays. */
+    public void forgetWatch() { sp.edit().remove("watch_address").remove("watch_name").remove("watch_error").apply(); }
+    /** Syncs a day in the background: 0 by hand, 1, 2 or 4 ({@code core/withings/WatchDue}). */
+    public int watchPerDay() { return sp.getInt("watch_per_day", app.openring.core.withings.WatchDue.DEFAULT); }
+    public void setWatchPerDay(int n) {
+        if (app.openring.core.withings.WatchDue.valid(n)) sp.edit().putInt("watch_per_day", n).apply();
+    }
+    public long watchLastOk() { return sp.getLong("watch_last_ok", 0); }
+    public long watchLastAttempt() { return sp.getLong("watch_last_try", 0); }
+    /** The plain sentence of the last watch sync that did not finish, null after one that did. */
+    public String watchError() { return sp.getString("watch_error", null); }
+    public void setWatchResult(long attempt, boolean ok, String error) {
+        SharedPreferences.Editor e = sp.edit().putLong("watch_last_try", attempt);
+        if (ok) e.putLong("watch_last_ok", attempt);
+        if (error == null) e.remove("watch_error");
+        else e.putString("watch_error", error);
+        e.apply();
+    }
+
     public boolean demo() { return sp.getBoolean("demo", false); }
     public void setDemo(boolean b) { sp.edit().putBoolean("demo", b).commit(); }
 

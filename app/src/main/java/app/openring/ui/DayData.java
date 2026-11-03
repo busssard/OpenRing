@@ -38,8 +38,24 @@ public final class DayData {
     public final List<double[]> leftOut = new ArrayList<double[]>();
     /** The period tracker shows (issue #252): the profile says female, the Settings switch, or demo mode. */
     public boolean periodShown;
-    /** The period tracker's estimate from the whole log, today; null when hidden or when the log could not be read. */
+    /** The period tracker's estimate from the whole log and the temperature rise (phase 2), today; null when hidden or when the log could not be read. */
     public app.openring.core.analysis.Cycles periods;
+    /**
+     * The badges of the 7 days ending at {@link #date} (issue #265), oldest first; empty when the switch "Show badges" is
+     * off, when there are none, or when they could not be read.
+     */
+    public final List<app.openring.core.analysis.Badges.Badge> badges = new ArrayList<app.openring.core.analysis.Badges.Badge>();
+    /** The newest badge date already seen (kv {@code badges_seen}); later ones are marked New. Null when none was seen. */
+    public LocalDate badgesSeen;
+    /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
+    public boolean periodAsk;
+    /**
+     * The nights' skin temperature compared with the usual ({@code temp_dev} of each day summary) from
+     * {@code Cycles.tempFrom()} to today, for the line next to the cycles (phase 1a2). Left out nights have no summary value.
+     */
+    public final java.util.TreeMap<LocalDate, Double> periodTemps = new java.util.TreeMap<LocalDate, Double>();
+    /** The morning temperatures by mouth imported from drip (phase 1b) over the same days, read only while the tracker shows. */
+    public final java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp> periodMouth = new java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp>();
     /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
     public boolean ok = true;
 
@@ -130,11 +146,53 @@ public final class DayData {
         try {
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
             d.periodShown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
-            if (d.periodShown) d.periods = app.openring.data.Periods.cycles(db, LocalDate.now());
+            if (d.periodShown) {
+                LocalDate today = LocalDate.now();
+                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped()));
+                d.periodAsk = d.periods.askStopped(p.age(), app.openring.core.analysis.Cycles.day(p.periodAskLater()));
+                try {
+                    // phase 2: the temperature rise of each cycle, from the ring's nights and the mouth temperatures
+                    d.periods = app.openring.data.Periods.measured(db, d.periods, java.time.ZoneId.systemDefault());
+                } catch (RuntimeException e) {
+                    // the calendar estimate stays; the error's kind only, never a date or a value
+                    app.openring.ble.RingManager.get(c).log("day load: the temperature rise for the period tracker: " + e.getClass().getSimpleName());
+                }
+                // the day summaries hold no period data; read here so the line can sit next to the cycles
+                try {
+                    for (String[] r : db.daysJson(d.periods.tempFrom().toString(), today.toString())) {
+                        double v = Json.d(Json.parse(r[1]), "temp_dev");
+                        if (!Double.isNaN(v)) d.periodTemps.put(LocalDate.parse(r[0]), v);
+                    }
+                } catch (RuntimeException e) {
+                    // the line says it has no nights; the cycles still show
+                    d.periodTemps.clear();
+                    app.openring.ble.RingManager.get(c).log("day load: night temperatures for the period tracker: " + e.getClass().getSimpleName());
+                }
+                try {
+                    d.periodMouth.putAll(app.openring.data.Periods.temps(db, d.periods.tempFrom().toString(), today.toString()));
+                } catch (RuntimeException e) {
+                    // the line shows the ring's nights only; the error's kind only, never a date or a value
+                    d.periodMouth.clear();
+                    app.openring.ble.RingManager.get(c).log("day load: drip temperatures for the period tracker: " + e.getClass().getSimpleName());
+                }
+            }
         } catch (RuntimeException e) {
             // the card says it could not be read. Not through failed(): the Data check names nothing of the period log, and
             // the log gets the error's kind only, never a date or an amount (issue #252)
             app.openring.ble.RingManager.get(c).log("day load: the period log could not be read: " + e.getClass().getSimpleName());
+        }
+        try {
+            // the Recent badges row on Today (issue #265): one read of the 7 days and the weeks before them
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            if (p.badgesOn()) {
+                d.badges.addAll(app.openring.data.BadgeDays.badges(db, date.minusDays(app.openring.core.analysis.Badges.WEEK - 1), date,
+                        p.targetKcal(), p.screenExcluded(), LocalDate.now(), System.currentTimeMillis() / 1000.0));
+                d.badgesSeen = BadgeViews.seen(db);
+            }
+        } catch (RuntimeException e) {
+            // Today shows no badge row; the badges hold nothing that is not on the other tabs
+            d.badges.clear();
+            d.ok = failed(c, date, "badges", e);
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
             JSONObject o = Json.parse(r[1]);

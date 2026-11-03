@@ -155,6 +155,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
         if (backupsCard != null) fillBackupsCard(p); // a copy made or checked meanwhile
+        if (watchCard != null) fillWatchCard(); // a watch added on the Watch check, or a sync that ended meanwhile (issue #251)
+        // back from Android's notification settings: the card shows whether the reminder can be shown now
+        if (periodCard != null && notifyShown != notificationsOn()) fillPeriodCard();
+        // back from Import from drip: its Undo line (issue #252, phase 1b)
+        else if (periodCard != null && DripImportActivity.changed) fillPeriodCard();
+        DripImportActivity.changed = false;
         if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !screenDaysKnown()) {
             screenRead = true;
             updateNights("Reading screen time");
@@ -242,6 +248,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             });
             root.addView(demo);
             root.addView(updatesCard());
+            periodCard = Ui.card(this);
+            fillPeriodCard();
+            root.addView(periodCard);
             watchCard = watchCard();
             root.addView(watchCard);
             stagesCard = stageDetailCard(p);
@@ -367,7 +376,37 @@ public final class SettingsActivity extends Activity implements RingManager.List
         psl.setMargins(0, Ui.dp(this, 14), 0, 0);
         prof.addView(periodSwitch, psl);
         prof.addView(Ui.text(this, "Shown when your profile says female. Your logged days stay stored when it is hidden.", 12, Ui.TEXT_3, Ui.REGULAR));
+        // badges (issue #265): on by default; nothing about them is stored, so switching off deletes nothing
+        final Switch badgesSwitch = new Switch(this);
+        badgesSwitch.setText(Explain.SHOW_BADGES);
+        badgesSwitch.setTextColor(Ui.TEXT);
+        badgesSwitch.setChecked(p.badgesOn());
+        badgesSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                Prefs.of(SettingsActivity.this).setBadgesOn(on);
+            }
+        });
+        LinearLayout.LayoutParams bsl = Ui.matchWrap();
+        bsl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        prof.addView(badgesSwitch, bsl);
+        prof.addView(Ui.text(this, Explain.SHOW_BADGES_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+        TextView openBadges = Ui.smallButton(this, "Open badges", Ui.GOOD);
+        openBadges.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new android.content.Intent(SettingsActivity.this, BadgesActivity.class));
+            }
+        });
+        LinearLayout.LayoutParams obl = Ui.matchWrap();
+        obl.setMargins(0, Ui.dp(this, 8), 0, 0);
+        prof.addView(openBadges, obl);
         root.addView(prof);
+
+        // ---- period tracker: the reminder and "My periods have stopped" (issue #252, phase 1a2) ----
+        periodCard = Ui.card(this);
+        fillPeriodCard();
+        root.addView(periodCard);
 
         // ---- sleep stage detail ----
         stagesCard = stageDetailCard(p);
@@ -584,9 +623,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. The Screen tab follows the idea of ScreenTime by Markus Fisch. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Updates", "Ring", "Watch", "Profile", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
+        String[] sections = {"Updates", "Ring", "Watch", "Profile", "Period", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
             "Advanced", "Careful", "About"};
-        View[] targets = {updates, ring, watchCard, prof, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, advancedCard, danger, about};
+        View[] targets = {updates, ring, watchCard, prof, periodCard, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, advancedCard, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -606,22 +645,407 @@ public final class SettingsActivity extends Activity implements RingManager.List
         scrollToSection();
     }
 
-    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard;
+    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard, periodCard;
+    /** The request code of the notification permission, asked when a reminder is first switched on. */
+    static final int ASK_NOTIFY = 21;
+    /** Whether Android lets the app notify, as the Period tracker card shows it (refilled when it changed). */
+    private boolean notifyShown;
 
-    /** The Watch card (issue #251): for now only the Watch check, which learns how a Withings watch talks. */
+    boolean notificationsOn() {
+        android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        return nm != null && nm.areNotificationsEnabled();
+    }
+
+    /**
+     * The Period tracker card (issue #252, phase 1a2): "Remind me before my period" (Off, 1, 2, 3 or 5 days, a time of day),
+     * the next reminder or why there is none, and "My periods have stopped". The notification permission is asked when a
+     * reminder is switched on and Android does not have it yet; the reminder is planned again after each change.
+     */
+    void fillPeriodCard() {
+        final LinearLayout card = periodCard;
+        if (card == null) return;
+        final Prefs p = Prefs.of(this);
+        card.removeAllViews();
+        card.addView(Ui.caption(this, "Period tracker"));
+        card.addView(Ui.gap(this, 4));
+        card.addView(Ui.text(this, "Remind me before my period", 14, Ui.TEXT, Ui.REGULAR));
+        LinearLayout row = Ui.hbox(this);
+        final int days = p.periodRemindDays();
+        int[] choices = app.openring.core.PeriodRemind.DAYS;
+        for (int i = 0; i < choices.length; i++) {
+            final int k = choices[i];
+            TextView chip = Ui.smallButton(this, app.openring.core.PeriodRemind.chip(k), k == days ? Ui.PERIOD : Ui.TEXT_3);
+            chip.setPadding(Ui.dp(this, 4), chip.getPaddingTop(), Ui.dp(this, 4), chip.getPaddingBottom());
+            if (k == days) chip.setBackground(Ui.rounded(Ui.alpha(Ui.PERIOD, 0.18f), Ui.dp(this, 24))); // filled, not only colored
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    p.setPeriodRemindDays(k);
+                    if (k > 0) askNotifications();
+                    app.openring.sync.PeriodReminder.planLater(SettingsActivity.this);
+                    fillPeriodCard();
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
+            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 3), 0, i == choices.length - 1 ? 0 : Ui.dp(this, 3), 0);
+            row.addView(chip, lp);
+        }
+        LinearLayout.LayoutParams rl = Ui.matchWrap();
+        rl.setMargins(0, Ui.dp(this, 6), 0, 0);
+        card.addView(row, rl);
+        card.addView(Ui.text(this, "Days before the earliest day of the expected range", 12, Ui.TEXT_3, Ui.REGULAR));
+        final int minute = p.periodRemindMinute();
+        small(card, app.openring.core.PeriodRemind.time(minute), Ui.TEXT_2, new Runnable() {
+            @Override
+            public void run() {
+                new android.app.TimePickerDialog(SettingsActivity.this, new android.app.TimePickerDialog.OnTimeSetListener() {
+                    @Override
+                    public void onTimeSet(android.widget.TimePicker view, int h, int m) {
+                        p.setPeriodRemindMinute(h * 60 + m);
+                        app.openring.sync.PeriodReminder.planLater(SettingsActivity.this);
+                        fillPeriodCard();
+                    }
+                }, minute / 60, minute % 60, true).show();
+            }
+        });
+        notifyShown = notificationsOn();
+        if (days > 0 && !notifyShown) {
+            TextView off = Ui.text(this, "Notifications are off for Open Ring. Tap to open Android settings.", 13, Ui.WARN, Ui.REGULAR);
+            off.setPadding(0, Ui.dp(this, 8), 0, 0);
+            off.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    try {
+                        startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
+                    } catch (RuntimeException e) {
+                        Permissions.openSettings(SettingsActivity.this);
+                    }
+                }
+            });
+            card.addView(off);
+        }
+        final TextView next = Ui.text(this, days > 0 ? "Working out the next reminder" : "Reminders are off.", 13, Ui.TEXT_2, Ui.REGULAR);
+        next.setPadding(0, Ui.dp(this, 8), 0, 0);
+        card.addView(next);
+        if (days > 0) {
+            final Context ctx = getApplicationContext();
+            new AsyncTask<Void, Void, String>() {
+                @Override
+                protected String doInBackground(Void... v) {
+                    try {
+                        long now = System.currentTimeMillis();
+                        return app.openring.core.PeriodRemind.status(app.openring.sync.PeriodReminder.next(ctx, now), java.time.ZoneId.systemDefault(), now, Locale.getDefault());
+                    } catch (RuntimeException e) {
+                        // the error's kind only (the log can be shared), never a date
+                        RingManager.get(ctx).log("period reminder: " + e.getClass().getSimpleName());
+                        return "Your period log could not be read for the reminder just now. Try again later.";
+                    }
+                }
+
+                @Override
+                protected void onPostExecute(String s) {
+                    next.setText(s);
+                }
+            }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        }
+        card.addView(Ui.text(this, Explain.PERIOD_REMIND, 12, Ui.TEXT_3, Ui.REGULAR));
+        Switch stop = new Switch(this);
+        stop.setText("My periods have stopped");
+        stop.setTextColor(Ui.TEXT);
+        stop.setChecked(p.periodStopped() != null);
+        stop.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                p.setPeriodStopped(on ? java.time.LocalDate.now().toString() : null);
+                app.openring.sync.PeriodReminder.planLater(SettingsActivity.this);
+                fillPeriodCard();
+            }
+        });
+        LinearLayout.LayoutParams swl = Ui.matchWrap();
+        swl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        card.addView(stop, swl);
+        card.addView(Ui.text(this, Explain.PERIOD_STOPPED, 12, Ui.TEXT_3, Ui.REGULAR));
+        dripImports(card);
+    }
+
+    /**
+     * Import from drip (issue #252, phase 1b) at the end of the Period tracker card: the button that opens the import, and
+     * one "Undo the drip import of 30 Oct" per import in force, read in the background (in demo mode the demo's file).
+     */
+    void dripImports(final LinearLayout card) {
+        card.addView(Ui.gap(this, 14));
+        card.addView(Ui.text(this, "Your history from drip", 14, Ui.TEXT, Ui.REGULAR));
+        card.addView(Ui.text(this, Explain.DRIP_SETTINGS, 12, Ui.TEXT_3, Ui.REGULAR));
+        small(card, "Import from drip", Ui.PERIOD, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, DripImportActivity.class));
+            }
+        });
+        final LinearLayout box = Ui.vbox(this);
+        card.addView(box, Ui.matchWrap());
+        final Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, java.util.List<app.openring.data.Periods.Import>>() {
+            @Override
+            protected java.util.List<app.openring.data.Periods.Import> doInBackground(Void... v) {
+                try {
+                    return app.openring.data.Periods.imports(app.openring.data.Db.get(ctx));
+                } catch (RuntimeException e) {
+                    RingManager.get(ctx).log("drip imports not read: " + e.getClass().getSimpleName());
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(java.util.List<app.openring.data.Periods.Import> list) {
+                if (isFinishing() || list == null || list.isEmpty()) return;
+                java.util.Set<String> days = new java.util.HashSet<String>(), twice = new java.util.HashSet<String>();
+                for (app.openring.data.Periods.Import im : list) if (!days.add(importDay(im, false))) twice.add(importDay(im, false));
+                for (final app.openring.data.Periods.Import im : list) {
+                    final String when = importDay(im, twice.contains(importDay(im, false)));
+                    small(box, "Undo the drip import of " + when, Ui.TEXT_2, new Runnable() {
+                        @Override
+                        public void run() {
+                            confirm("Undo the drip import of " + when + "?", Explain.dripAdded(im.days, im.temps) + " " + Explain.DRIP_UNDO, new Runnable() {
+                                @Override
+                                public void run() {
+                                    undoImport(im.id);
+                                }
+                            });
+                        }
+                    });
+                    box.addView(Ui.text(SettingsActivity.this, Explain.dripAdded(im.days, im.temps) + " " + Explain.DRIP_UNDO, 12, Ui.TEXT_3, Ui.REGULAR));
+                }
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** "30 Oct" (with the year when not this one), with the time when two imports share the day. */
+    static String importDay(app.openring.data.Periods.Import im, boolean withTime) {
+        java.time.ZonedDateTime t = java.time.Instant.ofEpochMilli(im.id).atZone(java.time.ZoneId.systemDefault());
+        String d = PeriodCard.day(t.toLocalDate());
+        return withTime ? d + ", " + String.format(Locale.ROOT, "%02d:%02d", t.getHour(), t.getMinute()) : d;
+    }
+
+    /** Undoes one drip import in the background (one transaction), then the card and the reminder follow. */
+    void undoImport(final long id) {
+        final Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, String>() {
+            @Override
+            protected String doInBackground(Void... v) {
+                try {
+                    boolean ok = app.openring.data.Periods.undoImport(app.openring.data.Db.get(ctx), id, System.currentTimeMillis() / 1000.0);
+                    return ok ? "Import undone" : "This import was already undone.";
+                } catch (RuntimeException e) {
+                    RingManager.get(ctx).log("drip import not undone: " + e.getClass().getSimpleName());
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(String r) {
+                if (r == null) problem("The import could not be undone, nothing was changed. Please try again.");
+                else say(r);
+                app.openring.sync.PeriodReminder.planLater(ctx);
+                fillPeriodCard();
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** Asks for the notification permission in context, when a reminder is switched on (Android 13 and newer). */
+    void askNotifications() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return;
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(new String[] {android.Manifest.permission.POST_NOTIFICATIONS}, ASK_NOTIFY);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code == ASK_NOTIFY) fillPeriodCard();
+    }
+
+    /** The Watch card (issue #251): the watch this app syncs, its state, Sync the watch now, how often, the Watch check. */
     LinearLayout watchCard() {
         LinearLayout card = Ui.card(this);
+        watchCard = card;
+        fillWatchCard();
+        return card;
+    }
+
+    /** A watch sync started from this card runs; its sentence shows when it ends. */
+    private static volatile boolean watchSyncing;
+
+    void fillWatchCard() {
+        final LinearLayout card = watchCard;
+        if (card == null) return;
+        final Prefs p = Prefs.of(this);
+        card.removeAllViews();
         card.addView(Ui.caption(this, "Watch"));
         card.addView(Ui.gap(this, 6));
-        card.addView(Ui.body(this, "Withings Steel HR: no sync yet. The check looks at how the watch talks, so syncing can be built next."));
-        action(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+        if (p.demo()) {
+            card.addView(Ui.body(this, "Demo mode: a made up Withings Steel HR. Turn demo mode off to sync a real watch."));
+            watchPageButton(card);
+            small(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+                @Override
+                public void run() {
+                    startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
+                }
+            });
+            return;
+        }
+        final String address = p.watchAddress();
+        if (address == null) {
+            card.addView(Ui.body(this, Explain.WATCH_ADD));
+            action(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+                @Override
+                public void run() {
+                    startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
+                }
+            });
+            return;
+        }
+        card.addView(line("Watch", nz(p.watchName())));
+        card.addView(line("Paired with this phone", watchBonded(address)));
+        card.addView(line("Last sync", p.watchLastOk() == 0 ? "never" : ago(p.watchLastOk())));
+        final LinearLayout bat = Ui.vbox(this);
+        bat.addView(line("Battery", "reading..."));
+        card.addView(bat, Ui.matchWrap());
+        final Context appCtx = getApplicationContext();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                long[] b = null;
+                try {
+                    b = app.openring.data.WatchStore.newestBattery(app.openring.data.Db.get(appCtx));
+                } catch (RuntimeException e) {
+                    RingManager.get(appCtx).log("watch battery not read (" + e.getClass().getSimpleName() + ")");
+                }
+                final long[] got = b;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        bat.removeAllViews();
+                        bat.addView(line("Battery", got == null ? "--" : got[0] + "%  (" + ago(got[1]) + ")"));
+                    }
+                });
+            }
+        }, "watch battery").start();
+        if (watchSyncing || app.openring.ble.WatchSync.running()) {
+            card.addView(Ui.text(this, "Syncing the watch, this takes up to two minutes.", 13, Ui.TEXT_2, Ui.REGULAR));
+        } else if (p.watchError() != null) {
+            card.addView(Ui.text(this, p.watchError(), 13, Ui.WARN, Ui.REGULAR));
+        }
+        action(card, "Sync the watch now", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                if (!Permissions.granted(SettingsActivity.this)) {
+                    Permissions.request(SettingsActivity.this);
+                    return;
+                }
+                if (watchSyncing || app.openring.ble.WatchSync.running()) {
+                    say(app.openring.ble.WatchSync.ALREADY);
+                    return;
+                }
+                watchSyncing = true;
+                fillWatchCard();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        final String r = app.openring.ble.WatchSync.run(appCtx);
+                        watchSyncing = false;
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (isFinishing() || isDestroyed()) return;
+                                say(r == null ? "Watch synced" : r);
+                                fillWatchCard();
+                            }
+                        });
+                    }
+                }, "watch sync").start();
+            }
+        });
+        card.addView(Ui.gap(this, 10));
+        card.addView(Ui.text(this, "Sync in the background", 12, Ui.TEXT_3, Ui.REGULAR));
+        final int per = p.watchPerDay();
+        for (int row = 0; row < 2; row++) {
+            LinearLayout r = Ui.hbox(this);
+            for (int k = row * 2; k < row * 2 + 2; k++) {
+                final int value = app.openring.core.withings.WatchDue.PER_DAY[k];
+                boolean on = value == per;
+                TextView chip = Ui.smallButton(this, app.openring.core.withings.WatchDue.LABELS[k], on ? Ui.OXY : Ui.TEXT_3);
+                if (on) chip.setBackground(Ui.rounded(Ui.alpha(Ui.OXY, 0.18f), Ui.dp(this, 24)));
+                chip.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        p.setWatchPerDay(value);
+                        SyncJob.schedule(SettingsActivity.this);
+                        fillWatchCard();
+                    }
+                });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+                lp.setMargins(k % 2 == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), k % 2 == 0 ? Ui.dp(this, 4) : 0, 0);
+                r.addView(chip, lp);
+            }
+            card.addView(r, Ui.matchWrap());
+        }
+        card.addView(Ui.text(this, app.openring.core.withings.WatchDue.explain(per), 12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.gap(this, 6));
+        card.addView(Ui.text(this, Explain.WATCH_WITHINGS_APP, 12, Ui.TEXT_3, Ui.REGULAR));
+        watchPageButton(card);
+        small(card, "Check a Withings watch", Ui.OXY, new Runnable() {
             @Override
             public void run() {
                 startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
             }
         });
-        return card;
+        small(card, "Forget the watch", Ui.WARN, new Runnable() {
+            @Override
+            public void run() {
+                confirm("Forget this watch?", Explain.WATCH_FORGET, new Runnable() {
+                    @Override
+                    public void run() {
+                        p.forgetWatch();
+                        SyncJob.schedule(SettingsActivity.this);
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    app.openring.data.WatchStore.removeDevice(app.openring.data.Db.get(appCtx), address, System.currentTimeMillis() / 1000.0);
+                                } catch (RuntimeException e) {
+                                    RingManager.get(appCtx).log("watch: forgetting not noted (" + e.getClass().getSimpleName() + ")");
+                                }
+                            }
+                        }, "watch forget").start();
+                        fillWatchCard();
+                    }
+                });
+            }
+        });
     }
+
+    void watchPageButton(LinearLayout card) {
+        small(card, "Open the watch page", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, WatchPageActivity.class));
+            }
+        });
+    }
+
+    /** Whether Android keeps the watch paired with this phone (the Withings app paired it). */
+    String watchBonded(String address) {
+        try {
+            android.bluetooth.BluetoothAdapter a = app.openring.ble.RingScanner.adapter(this);
+            if (a == null) return "--";
+            return a.getRemoteDevice(address).getBondState() == android.bluetooth.BluetoothDevice.BOND_BONDED ? "yes" : "no";
+        } catch (RuntimeException e) {
+            return "--"; // no Bluetooth permission yet
+        }
+    }
+
     /** Usage access as shown in the Screen time card, to refresh it only when it changed. */
     private boolean screenAllowedShown;
     /** The first read of the screen log was started (once per app run, even if the log was empty). */
@@ -1335,12 +1759,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Opens at a card when started with the extra {@code section} ("stages", "watch", "screen", "games", "backups" or "advanced"), used by the screen test.
+     * Opens at a card when started with the extra {@code section} ("period", "stages", "watch", "screen", "games", "backups" or "advanced"), used by the screen test.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "stages".equals(section) ? stagesCard : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
+        final View card = "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
         // the demo page is short: room below the last card, so every card can reach the top (issue #160)
@@ -1566,7 +1990,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }
     }
 
-    /** Version line and a button that opens the releases page in the browser (issue #7). */
+    /** Version line and a button that opens the releases page in the browser (issue #7): the latest stable release, or for a nightly the list of all releases. */
     void addUpdateRow(LinearLayout parent) {
         LinearLayout row = Ui.hbox(this);
         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -1576,25 +2000,23 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams tl = Ui.weight(1);
         tl.setMargins(0, 0, Ui.dp(this, 8), 0);
         row.addView(t, tl);
+        final String url = app.openring.core.Updates.url(version());
         TextView check = Ui.smallButton(this, "Check for updates", Ui.SLEEP);
         check.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 try {
-                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES)));
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 } catch (android.content.ActivityNotFoundException e) {
-                    say("No browser found. The releases are at " + RELEASES);
+                    say("No browser found. The releases are at " + url);
                 }
             }
         });
         row.addView(check);
         parent.addView(row);
         parent.addView(Ui.gap(this, 6));
-        parent.addView(Ui.text(this, "Opens the releases page in your browser, because this app has no internet access. "
-                + "A higher version number there means an update; installing it keeps your data.", 12, Ui.TEXT_3, Ui.REGULAR));
+        parent.addView(Ui.text(this, app.openring.core.Updates.note(version()), 12, Ui.TEXT_3, Ui.REGULAR));
     }
-
-    static final String RELEASES = "https://github.com/busssard/OpenRing/releases/latest";
 
     String version() {
         try {

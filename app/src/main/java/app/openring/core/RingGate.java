@@ -18,6 +18,19 @@ public final class RingGate {
     public final ReentrantLock op = new ReentrantLock();
     /** Syncs under way, counted from their start (also while they wait for the ring) to the end of their analysis. */
     public final AtomicInteger syncs = new AtomicInteger();
+    /**
+     * One watch sync at a time (issue #251, phase 1b). A watch sync also holds {@link #op}, taken by {@link #takeIfFree}, so
+     * the phone never keeps two links and swaps and Delete all wait for it like for any ring task.
+     */
+    public final ReentrantLock watch = new ReentrantLock();
+
+    /**
+     * True when a ring task waits for {@link #op} or a ring sync is counted: a watch sync that holds the ring then ends
+     * between two messages and gives it back (the ring always wins, issue #251).
+     */
+    public boolean ringWanted() {
+        return syncs.get() > 0 || op.hasQueuedThreads();
+    }
 
     /**
      * What {@link #whenFree} returns: {@link #RAN}, or why it gave up (the last thing it waited for, or a stop). The same
