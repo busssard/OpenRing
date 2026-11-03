@@ -1001,6 +1001,7 @@ public class CoreTest {
         watchCheck251();
         modeRestore221();
         cycles252();
+        updatesLink();
         cycles252b();
         remind252();
         drip252();
@@ -2682,6 +2683,22 @@ public class CoreTest {
     }
 
     /** Issue #251, phase 1a: the Watch check's report, names, the 2 byte rule, the length limit, the demo and the ring lock. */
+    static void updatesLink() {
+        eq("updates: stable opens the latest release", Updates.url("1.93"), Updates.LATEST);
+        eq("updates: nightly opens all releases", Updates.url("1.93 nightly abc1234"), Updates.ALL);
+        eq("updates: unknown version opens the latest release", Updates.url(""), Updates.LATEST);
+        eq("updates: no version name opens the latest release", Updates.url(null), Updates.LATEST);
+        check("updates: nightly found in any case", Updates.nightly("1.93 Nightly abc1234"));
+        check("updates: a stable version is not a nightly", !Updates.nightly("1.93"));
+        check("updates: the nightly note names both", Updates.note("1.93 nightly abc1234").contains("nightly at the top")
+                && Updates.note("1.93 nightly abc1234").contains("stable release below"));
+        check("updates: the stable note says no internet", Updates.note("1.93").contains("no internet access"));
+        for (String v : new String[] {"1.93", "1.93 nightly abc1234"}) {
+            String n = Updates.note(v);
+            check("updates: no dash in the note " + v, !n.contains(" - ") && !n.contains("\u2013") && !n.contains("\u2014"));
+        }
+    }
+
     static void watchCheck251() throws Exception {
         String base = "-0000-1000-8000-00805f9b34fb";
         // property names
