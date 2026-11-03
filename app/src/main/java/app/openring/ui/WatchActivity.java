@@ -377,6 +377,7 @@ public final class WatchActivity extends Activity {
             }
         }
         boolean running = scan != null;
+        all = WatchCheck.shown(all); // devices without a name are left out unless they look like a Withings watch
         all = running ? WatchCheck.stableOrder(shownOrder, all) : WatchCheck.strongestFirst(all);
         if (all.isEmpty()) scanStatus.setText(running ? "Scanning. Keep the watch next to the phone." : WatchCheck.NOTHING_FOUND);
         else scanStatus.setText(running ? "Scanning, tap your watch to check it." : demo ? "Made up watches nearby. Tap one to see an example report." : "Tap your watch to check it.");
