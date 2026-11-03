@@ -47,6 +47,8 @@ public final class DayData {
      * {@code Cycles.tempFrom()} to today, for the line next to the cycles (phase 1a2). Left out nights have no summary value.
      */
     public final java.util.TreeMap<LocalDate, Double> periodTemps = new java.util.TreeMap<LocalDate, Double>();
+    /** The morning temperatures by mouth imported from drip (phase 1b) over the same days, read only while the tracker shows. */
+    public final java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp> periodMouth = new java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp>();
     /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
     public boolean ok = true;
 
@@ -151,6 +153,13 @@ public final class DayData {
                     // the line says it has no nights; the cycles still show
                     d.periodTemps.clear();
                     app.openring.ble.RingManager.get(c).log("day load: night temperatures for the period tracker: " + e.getClass().getSimpleName());
+                }
+                try {
+                    d.periodMouth.putAll(app.openring.data.Periods.temps(db, d.periods.tempFrom().toString(), today.toString()));
+                } catch (RuntimeException e) {
+                    // the line shows the ring's nights only; the error's kind only, never a date or a value
+                    d.periodMouth.clear();
+                    app.openring.ble.RingManager.get(c).log("day load: drip temperatures for the period tracker: " + e.getClass().getSimpleName());
                 }
             }
         } catch (RuntimeException e) {

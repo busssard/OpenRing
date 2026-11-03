@@ -591,6 +591,14 @@ public class PipelineTest {
         check("#252 demo: 8 made up cycles, today on cycle day 18", demoCycles.cycles.size() == 8 && demoCycles.cycleDay(demoToday) == 18
                 && demoCycles.estimates(), demoCycles.cycles);
         check("#252 demo: the real file holds no period day", daysIn252(phone2.getDatabasePath(Db.REAL)).isEmpty(), daysIn252(phone2.getDatabasePath(Db.REAL)));
+        check("#252d demo: made up morning temperatures by mouth as one import, in the demo file", demo.count("SELECT COUNT(*) FROM period_imports WHERE gone = 0") == 1
+                && demo.count("SELECT COUNT(*) FROM period_temps WHERE gone = 0") > 90 && app.openring.data.Periods.imports(demo).get(0).days == 0, null);
+        long realTemps;
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + phone2.getDatabasePath(Db.REAL).getPath()); java.sql.Statement st = cn.createStatement();
+             java.sql.ResultSet rs = st.executeQuery("SELECT (SELECT COUNT(*) FROM period_temps) + (SELECT COUNT(*) FROM period_imports)")) {
+            realTemps = rs.next() ? rs.getLong(1) : -1;
+        }
+        check("#252d demo: the real file holds no temperature and no import", realTemps == 0, realTemps);
         app.openring.core.analysis.LastWorn.Result demoLast = app.openring.data.RightNow.lastWorn(demo, demoNow);
         check("ring finder: the demo ring reads as worn, confirmed by heart rate (#94)", demoLast.state == app.openring.core.analysis.LastWorn.WORN
                 && !Double.isNaN(demoLast.skinC) && !demoLast.justOn && !Double.isNaN(demoLast.lastHr), demoLast.state + " " + demoLast.skinC + " " + demoLast.lastHr);
@@ -860,6 +868,8 @@ public class PipelineTest {
         largeLog252();
         tracker252();
         phase1a2_252();
+        drip252();
+        dripLarge252();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -9824,6 +9834,234 @@ public class PipelineTest {
         check("#252 an older backup without the switch leaves it as it is", r.ok && !json.contains("period_shown") && app.openring.data.Prefs.of(b).periodChoice() == 1,
                 r.message + ", " + app.openring.data.Prefs.of(b).periodChoice());
         rmTree(b.dir);
+        clean254();
+    }
+
+    // ---------------------------------------------------------------- issue #252, phase 1b: import from drip
+
+    static final String DRIP_CSV = "﻿date,bleeding.value,bleeding.exclude,temperature.value,temperature.time,temperature.exclude,mood.happy,note.value\r\n"
+            + "2019-01-05,3,,36.40,07:00,false,true,\r\n" // the same as typed
+            + "2019-01-06,3,,36.45,07:05,false,,\"slept late, tired\"\r\n" // typed light: differs
+            + "2019-01-07,2,,36.50,07:10,false,,\r\n" // typed "Nothing": no entry, the file's day comes in
+            + "2019-01-08,2,,97.9,07:00,true,,\r\n" // °F, left out in drip
+            + "2019-01-09,1,,,,,,\r\n"
+            + "2019-02-02,2,,,,,,\r\n" // a 1 day period
+            + "2019-02-20,1,true,36.60,,,,\r\n" // bleeding drip did not count: spotting
+            + "2019-03-01,1,,,,,,\r\n2019-03-02,1,,,,,,\r\n" // a 2 day period
+            + "\r\n";
+
+    static void setField252(Class<?> k, String name, Object v) throws Exception {
+        java.lang.reflect.Field f = k.getDeclaredField(name);
+        f.setAccessible(true);
+        f.set(null, v);
+    }
+
+    static app.openring.core.DripCsv.File dripFile252(String csv) throws Exception {
+        return app.openring.core.DripCsv.parse(csv, LocalDate.parse("2019-06-30"));
+    }
+
+    static app.openring.data.Periods.Imported import252(Db db, app.openring.core.DripCsv.File f, boolean take, long id) {
+        return app.openring.data.Periods.importDrip(db, f.flows, f.temps, take, id, id / 1000.0);
+    }
+
+    static String row252(Db db, String day) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT flow, src, prev, made FROM period_days WHERE day = ?", new String[] {day});
+        try {
+            if (!c.moveToFirst()) return "none";
+            return c.getInt(0) + " " + c.getLong(1) + " " + (c.isNull(2) ? "null" : c.getString(2)) + " " + (long) c.getDouble(3);
+        } finally {
+            c.close();
+        }
+    }
+
+    /** The import's stop at {@code after} rows: an exception, nothing written. */
+    static boolean stops252(Db db, app.openring.core.DripCsv.File f, int after, long id) throws Exception {
+        String before = periodRows252(db);
+        setField252(app.openring.data.Periods.class, "failImportAfter", after);
+        boolean threw = false;
+        try {
+            import252(db, f, true, id);
+        } catch (IllegalStateException e) {
+            threw = true;
+        } finally {
+            setField252(app.openring.data.Periods.class, "failImportAfter", -1);
+        }
+        return threw && periodRows252(db).equals(before) && db.count("SELECT COUNT(*) FROM period_imports WHERE id = " + id) == 0;
+    }
+
+    /**
+     * Issue #252, phase 1b, data safety of the drip import: one transaction (a stop halfway saves nothing, in the days and in
+     * the temperatures), days logged in Open Ring win (a removal mark is no entry), the same file twice changes nothing,
+     * Undo removes exactly the rows the import added (never a typed row, also not one changed after the import) and is safe
+     * twice, "take the file's values" puts the typed amounts back on Undo, the ring history and the analysis are never
+     * touched, the Data check, the analysis log and the daily CSV hold nothing of it, backups of this and an older version
+     * restore with the phone's imports (an undone one stays undone), an older database with history upgrades and imports,
+     * Delete all wipes the import, and demo mode keeps its made up import in the demo file.
+     */
+    static void drip252() throws Exception {
+        Context c = phone254("openring252-drip");
+        Db db = Db.get(c);
+        Analyzer.runAll(c, null);
+        List<String> results = results139(db), ev = events58(db);
+        String check0 = DataCheck.run(c).text;
+        java.io.ByteArrayOutputStream csv0 = new java.io.ByteArrayOutputStream();
+        app.openring.data.Exporter.dailyCsv(c, csv0);
+        app.openring.data.Periods.setFlow(db, "2019-01-05", 3, 100);
+        app.openring.data.Periods.setFlow(db, "2019-01-06", 1, 101);
+        app.openring.data.Periods.setFlow(db, "2019-01-07", -1, 102);
+        app.openring.data.Periods.setEnd(db, "2019-01-09", 103);
+        app.openring.core.DripCsv.File f = dripFile252(DRIP_CSV);
+        check("#252d the test file: 9 days (one spotting), 5 temperatures (one °F), mood and note counted", f.flows.size() == 9 && f.temps.size() == 5
+                && f.fahrenheit == 1 && f.excludedBleeding == 1 && f.other.size() == 2, f.flows + " " + f.temps);
+
+        // ---- a stop halfway saves nothing: in the days, at the first temperature, at the last one ----
+        check("#252d a stop after 3 days written: nothing saved, no import row", stops252(db, f, 3, 1546000000000L), periodRows252(db));
+        check("#252d a stop at the first temperature: the days written before are gone too", stops252(db, f, 9, 1546000000000L), periodRows252(db));
+        check("#252d a stop at the last row: nothing saved", stops252(db, f, 13, 1546000000000L), periodRows252(db));
+
+        // ---- the import ----
+        String typed = row252(db, "2019-01-05") + "|" + row252(db, "2019-01-06");
+        app.openring.data.Periods.Imported r = import252(db, f, false, 1546000000000L);
+        check("#252d import: 7 days (not the same one, not the one that differs), 5 temperatures, one import row", r.id == 1546000000000L && r.days == 7
+                && r.temps == 5 && db.count("SELECT COUNT(*) FROM period_imports WHERE gone = 0 AND days = 7 AND temps = 5") == 1, r.days + " " + r.temps);
+        check("#252d import: days logged in Open Ring win, row for row as they were", (row252(db, "2019-01-05") + "|" + row252(db, "2019-01-06")).equals(typed), typed);
+        eq252("#252d import: a removal mark is no entry, the file's day comes in with the mark kept for Undo", row252(db, "2019-01-07"), "2 1546000000000 -1 1546000000");
+        eq252("#252d import: a new day carries the import's id and no replaced amount", row252(db, "2019-01-08"), "2 1546000000000 null 1546000000");
+        eq252("#252d import: bleeding drip did not count is spotting", row252(db, "2019-02-20"), "0 1546000000000 null 1546000000");
+        check("#252d import: the end mark stays, the temperatures by mouth are stored in °C apart from the ring's, one left out",
+                app.openring.data.Periods.allEnds(db).equals(Arrays.asList("2019-01-09")) && db.count("SELECT COUNT(*) FROM period_temps WHERE src = 1546000000000 AND gone = 0") == 5
+                        && db.count("SELECT COUNT(*) FROM period_temps WHERE day = '2019-01-08' AND excluded = 1 AND ABS(c - 36.61) < 0.001") == 1, periodRows252(db));
+        java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp> shown = app.openring.data.Periods.temps(db, "2019-01-06", "2019-01-31");
+        check("#252d the temperatures of a range for the night temperature card", shown.size() == 3 && "07:05".equals(shown.get(LocalDate.parse("2019-01-06")).time), shown);
+        check("#252d the import touches no event, night or day and starts no analysis", results139(db).equals(results) && events58(db).equals(ev)
+                && Analyzer.upToDate(c), null);
+        check("#252d the Data check is the same after an import (no date, no count, no word of drip)", DataCheck.run(c).text.equals(check0), DataCheck.run(c).text);
+        java.io.ByteArrayOutputStream csv1 = new java.io.ByteArrayOutputStream();
+        app.openring.data.Exporter.dailyCsv(c, csv1);
+        check("#252d the daily CSV holds nothing of the import, like the rest of the period log", Arrays.equals(csv0.toByteArray(), csv1.toByteArray()), null);
+        check("#252d the imports in force", app.openring.data.Periods.imports(db).size() == 1 && app.openring.data.Periods.imports(db).get(0).days == 7, null);
+
+        // ---- the same file twice changes nothing ----
+        String once = periodRows252(db);
+        app.openring.data.Periods.Imported again = import252(db, f, false, 1546000100000L);
+        check("#252d the same file twice: nothing written, not even an import row", again.id == 0 && periodRows252(db).equals(once), periodRows252(db));
+        app.openring.core.DripImport.Preview pv = app.openring.core.DripImport.preview(f.flows, f.temps, app.openring.data.Periods.flowsForImport(db),
+                temps252(db), new java.util.HashMap<LocalDate, Boolean>(), LocalDate.parse("2019-06-30"));
+        check("#252d the preview of the same file again: nothing new, only the day that differs could be taken", !pv.anything(false) && pv.writes(true) == 1
+                && pv.sameTemps == 5, pv.writes(true));
+
+        // ---- Undo: exactly the rows it added ----
+        app.openring.data.Periods.setFlow(db, "2019-02-02", 3, 200); // changed after the import: now typed
+        check("#252d undo", app.openring.data.Periods.undoImport(db, r.id, 300), null);
+        eq252("#252d undo: a day it added keeps a removal mark with its id (no entry, a restore cannot bring it back)", row252(db, "2019-01-08"), "-1 1546000000000 null 300");
+        eq252("#252d undo: the day whose removal mark it replaced has its mark back, as typed", row252(db, "2019-01-07"), "-1 0 null 300");
+        check("#252d undo: the typed days are untouched, also the one changed after the import", (row252(db, "2019-01-05") + "|" + row252(db, "2019-01-06")).equals(typed)
+                && row252(db, "2019-02-02").equals("3 0 null 200"), periodRows252(db));
+        check("#252d undo: its temperatures and the import are marked gone, nothing deleted", db.count("SELECT COUNT(*) FROM period_temps WHERE gone = 1") == 5
+                && db.count("SELECT COUNT(*) FROM period_imports WHERE gone = 1") == 1 && app.openring.data.Periods.imports(db).isEmpty()
+                && app.openring.data.Periods.temps(db, "2019-01-01", "2019-12-31").isEmpty(), periodRows252(db));
+        java.util.Map<LocalDate, Integer> left = new java.util.TreeMap<LocalDate, Integer>();
+        left.put(LocalDate.parse("2019-01-05"), 3);
+        left.put(LocalDate.parse("2019-01-06"), 1);
+        left.put(LocalDate.parse("2019-02-02"), 3);
+        check("#252d undo: the estimate is the one of the typed days alone", app.openring.data.Periods.cycles(db, LocalDate.parse("2019-06-30")).flows.equals(left),
+                app.openring.data.Periods.cycles(db, LocalDate.parse("2019-06-30")).flows);
+        String undone = periodRows252(db);
+        check("#252d undo twice: no import in force, nothing changes", !app.openring.data.Periods.undoImport(db, r.id, 400) && periodRows252(db).equals(undone), null);
+        check("#252d undo of an import that never was", !app.openring.data.Periods.undoImport(db, 42, 400), null);
+
+        // ---- the file's values taken, then undone: the typed amounts come back ----
+        app.openring.data.Periods.Imported t = import252(db, f, true, 1546000200000L);
+        eq252("#252d the file's values: the day that differed takes it, the typed amount kept for Undo", row252(db, "2019-01-06"), "3 1546000200000 1 1546000200");
+        check("#252d the file's values: the undone import's days and temperatures come in again", t.days == 8 && t.temps == 5
+                && row252(db, "2019-01-08").startsWith("2 1546000200000 -1 "), t.days + " " + t.temps);
+        app.openring.data.Periods.undoImport(db, t.id, 500);
+        eq252("#252d undoing it puts the typed amount back", row252(db, "2019-01-06"), "1 0 null 500");
+        check("#252d and the other typed days come back as typed (the one the file replaced too)", row252(db, "2019-01-05").equals("3 0 null 100") && row252(db, "2019-02-02").equals("3 0 null 500")
+                && row252(db, "2019-01-08").startsWith("-1 "), periodRows252(db));
+        check("#252d import ids: one higher while an id is taken", import252(db, dripFile252("date,bleeding.value\n2019-05-01,1\n"), false, 1546000200000L).id == 1546000200001L, null);
+
+        // ---- backups and restores of this and an older version ----
+        app.openring.data.Periods.Imported b = import252(db, f, false, 1546000300000L);
+        byte[] full = backup252(c);
+        app.openring.data.Periods.undoImport(db, b.id, 600);
+        String phone = periodRows252(db);
+        app.openring.data.Backup.Result res = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#252d restore of a backup holding the import: undone on the phone after the backup, it stays undone, row for row", res.ok
+                && periodRows252(db).equals(phone) && app.openring.data.Periods.imports(db).size() == 1 && db.eventCount() > 0, res.message);
+        app.openring.data.Periods.Imported b2 = import252(db, dripFile252("date,bleeding.value,temperature.value\n2019-04-01,2,36.5\n"), false, 1546000400000L);
+        String phone2 = periodRows252(db);
+        byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), 7, DROP8));
+        res = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
+        db = Db.get(c);
+        check("#252d restore of a schema 7 backup: the phone's imports and their rows are carried in, row for row", res.ok && periodRows252(db).equals(phone2)
+                && app.openring.data.Periods.imports(db).get(0).id == b2.id, res.message);
+        // ---- Delete all wipes the import with the rest of the log ----
+        db = Db.get(c);
+        Analyzer.deleteAll(c);
+        db = Db.get(c);
+        check("#252d Delete all empties the temperatures and the imports", periodCount252(db) == 0, periodRows252(db));
+        Context fresh = freshDb("openring252-drip-fresh");
+        res = app.openring.data.Backup.read(fresh, new java.io.ByteArrayInputStream(full));
+        Db fdb = Db.get(fresh);
+        check("#252d the backup restored on another phone brings the imports in force and their temperatures", res.ok && app.openring.data.Periods.imports(fdb).size() == 2
+                && app.openring.data.Periods.temps(fdb, "2019-01-01", "2019-12-31").size() == 5, res.message);
+        check("#252d and Undo works there", app.openring.data.Periods.undoImport(fdb, b.id, 700) && app.openring.data.Periods.temps(fdb, "2019-01-01", "2019-12-31").isEmpty(), null);
+        rmTree(fresh.dir);
+
+        clean254();
+
+        // ---- an older database with history upgrades, then imports; its events and nights stay ----
+        Context u = phone254("openring252-drip-up");
+        Db udb = Db.get(u);
+        Analyzer.runAll(u, null);
+        List<String> ures = results139(udb), uev = events58(udb);
+        restart242();
+        java.io.File file = u.getDatabasePath(Db.REAL);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+            for (String x : DROP8) st.execute(x);
+            st.execute("PRAGMA user_version = 7");
+        }
+        udb = Db.get(u);
+        app.openring.data.Periods.Imported ur = import252(udb, f, false, 1546000500000L);
+        check("#252d a schema 7 history upgrades and imports: every day and temperature, the same events, nights and days", udb.getReadableDatabase().getVersion() == 8
+                && ur.days == 9 && ur.temps == 5 && results139(udb).equals(ures) && events58(udb).equals(uev), ur.days + " " + ur.temps);
+        clean254();
+    }
+
+    static java.util.Map<LocalDate, app.openring.core.DripCsv.Temp> temps252(Db db) {
+        java.util.Map<LocalDate, app.openring.core.DripCsv.Temp> out = new java.util.HashMap<LocalDate, app.openring.core.DripCsv.Temp>();
+        for (app.openring.data.Periods.Temp t : app.openring.data.Periods.allTemps(db)) out.put(LocalDate.parse(t.day), t.t);
+        return out;
+    }
+
+    static void eq252(String name, String got, String want) {
+        check(name, got.equals(want), got);
+    }
+
+    /** Issue #252, phase 1b: ten years of drip in one file go in in one transaction and out again with Undo, in seconds. */
+    static void dripLarge252() throws Exception {
+        Context c = phone254("openring252-drip-large");
+        Db db = Db.get(c);
+        StringBuilder big = new StringBuilder("date,bleeding.value,temperature.value,temperature.time,mood.happy,note.value\r\n");
+        LocalDate d0 = LocalDate.parse("2009-01-01");
+        int n = 0;
+        for (LocalDate x = d0; x.isBefore(LocalDate.parse("2019-01-01")); x = x.plusDays(1), n++) {
+            big.append(x).append(',').append(n % 28 < 5 ? String.valueOf(1 + n % 3) : "").append(",36.").append(40 + n % 30).append(",07:00,")
+                    .append(n % 5 == 0 ? "true" : "").append(',').append(n % 50 == 0 ? "\"tired, slept late\"" : "").append("\r\n");
+        }
+        long t0 = System.nanoTime();
+        app.openring.core.DripCsv.File f = dripFile252(big.toString());
+        app.openring.data.Periods.Imported r = import252(db, f, false, 1547000000000L);
+        double in = (System.nanoTime() - t0) / 1e9;
+        long t1 = System.nanoTime();
+        boolean undone = app.openring.data.Periods.undoImport(db, r.id, 1);
+        double out = (System.nanoTime() - t1) / 1e9;
+        System.out.printf("    #252d a 10 year drip file (%d days): read and imported in %.2f s, undone in %.2f s%n", n, in, out);
+        check("#252d a 10 year file: every bleeding day and temperature in one import, undone as a whole, in seconds", r.days == f.flows.size() && r.temps == n
+                && undone && db.count("SELECT COUNT(*) FROM period_days WHERE flow <> -1") == 0 && db.count("SELECT COUNT(*) FROM period_temps WHERE gone = 0") == 0
+                && in < 30 && out < 30, r.days + " " + r.temps);
         clean254();
     }
 

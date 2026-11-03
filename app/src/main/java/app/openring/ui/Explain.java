@@ -210,6 +210,55 @@ public final class Explain {
             + "The tracker then shows no next period and no late line, and sends no reminders. Your logged days and past cycles stay. "
             + "Logging a period day turns this off by itself.";
 
+    // -------------------------------------------- period tracker, import from drip (issue #252, phase 1b)
+
+    /** Settings, under "Import from drip". */
+    public static final String DRIP_SETTINGS = "Reads the file drip exports (in drip: Settings, Export data). You see what it holds "
+            + "before anything is saved, and you can undo an import as a whole. Nothing leaves the phone.";
+
+    /** The import screen's first lines. */
+    public static final String DRIP_INTRO = "Bleeding days, spotting and morning temperatures from drip. Days you already logged in "
+            + "Open Ring are kept. Nothing is saved until you tap Import.";
+
+    /** Demo mode: the made up file, and that nothing is imported. */
+    public static final String DRIP_DEMO = "Demo mode: this is a made up drip file, compared with the demo's made up log. "
+            + "Nothing is imported in demo mode.";
+
+    /** Under the file's numbers. */
+    public static final String DRIP_COUNTS = "Periods are counted the way Open Ring counts them: light, medium or heavy days with at most "
+            + "2 days without an entry between them. Spotting is counted apart and never starts a period. Temperatures are drip's "
+            + "morning temperatures by mouth, at most one a day, in °C.";
+
+    /** Under "Not imported: 40 mood entries". */
+    public static final String DRIP_OTHER = "Rows of each kind with an entry. They are counted so you know what the file holds, but the "
+            + "period log does not keep them.";
+
+    /** Under the flagged short periods. */
+    public static final String DRIP_SHORT = "A period of 1 or 2 days is often a day that was not logged, or spotting logged as bleeding. "
+            + "Correct opens those days so you can add the missing ones or join the period with a close one. Ignore keeps it as it is.";
+
+    /** Under the days that differ. */
+    public static final String DRIP_DIFFER = "Days with another amount in Open Ring keep Open Ring's entry. Switch this on to take the "
+            + "file's values instead; undoing the import puts Open Ring's back. Temperatures already there are never replaced.";
+
+    /** The Correct screen. */
+    public static final String DRIP_CORRECT = "Tap a day to add it or change it. These changes are for this import only, nothing is saved "
+            + "until you tap Import.";
+
+    /** Settings, under each "Undo the drip import of 30 Oct". */
+    public static final String DRIP_UNDO = "Undo removes exactly what this import added and puts back the days it replaced. Days you "
+            + "logged or changed in Open Ring since then stay.";
+
+    /** "Added 186 days and 312 temperatures." for Settings. */
+    public static String dripAdded(int days, int temps) {
+        return "Added " + days + (days == 1 ? " day" : " days") + " and " + temps + (temps == 1 ? " temperature." : " temperatures.");
+    }
+
+    /** Under the night temperature line when drip temperatures are on it. */
+    public static final String PERIOD_MOUTH = "Mouth: the morning temperatures imported from drip, in °C on the right scale. They are a "
+            + "different measurement from the ring's skin temperature at night, so each line has its own scale. A hollow dot is a "
+            + "reading drip left out.";
+
     public static String of(String key) {
         if (key == null) return null;
         switch (key) {

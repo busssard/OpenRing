@@ -34,7 +34,8 @@ Not affiliated with Oura, not a medical device.
 * Live heart rate, HRV and blood oxygen on demand
 * A period tracker: log with one tap, a calendar with the expected next period and a calendar
   estimate of ovulation, your cycles over time next to the ring's night temperature, and a
-  reminder before the next period. Shown when your profile says female, or switched on in Settings
+  reminder before the next period. Imports your history from drip. Shown when your profile says
+  female, or switched on in Settings
 * Find my ring, when the ring is lost at home (see below)
 * Nights keep the time zone you slept in, so a trip does not move your other nights
 * Touch the night timeline, the heart rate and trend lines or the screen time clock to see the exact

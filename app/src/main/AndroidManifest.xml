@@ -56,6 +56,9 @@
         <!-- the Watch check (issue #251): a turn must not stop a running check, so the screen is not rebuilt -->
         <activity android:name="app.openring.ui.WatchActivity" android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+        <!-- Import from drip (issue #252): a turn keeps the preview and its corrections, so the screen is not rebuilt -->
+        <activity android:name="app.openring.ui.DripImportActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name="app.openring.ui.games.GamesActivity" android:exported="false" android:screenOrientation="portrait" />
 
         <service

@@ -997,6 +997,7 @@ public class CoreTest {
         cycles252();
         cycles252b();
         remind252();
+        drip252();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1034,6 +1035,246 @@ public class CoreTest {
 
     static boolean plain252(String s) {
         return s == null || (!s.contains(" - ") && !s.contains("–") && !s.contains("—") && !s.contains("±"));
+    }
+
+    // ---------------------------------------------------------------- issue #252, phase 1b: import from drip
+
+    static java.time.LocalDate ld(String s) {
+        return java.time.LocalDate.parse(s);
+    }
+
+    static DripCsv.File drip(String text) {
+        try {
+            return DripCsv.parse(text, ld("2026-11-03"));
+        } catch (DripCsv.Refused e) {
+            throw new AssertionError(e.getMessage());
+        }
+    }
+
+    static String refused(String text) {
+        try {
+            DripCsv.parse(text, ld("2026-11-03"));
+            return null;
+        } catch (DripCsv.Refused e) {
+            return e.sentence();
+        }
+    }
+
+    static void drip252() {
+        java.time.LocalDate today = ld("2026-11-03");
+        // ---- a file with every column, as public converters write drip's file ----
+        String all = "date,temperature.value,temperature.exclude,temperature.time,temperature.note,bleeding.value,bleeding.exclude,mucus.feeling,"
+                + "mucus.texture,mucus.value,mucus.exclude,cervix.opening,cervix.firmness,cervix.position,cervix.exclude,note.value,desire.value,"
+                + "sex.solo,sex.partner,sex.condom,sex.pill,sex.iud,sex.patch,sex.ring,sex.implant,sex.diaphragm,sex.none,sex.other,sex.note,"
+                + "pain.cramps,pain.ovulationPain,pain.headache,pain.backache,pain.nausea,pain.tenderBreasts,pain.migraine,pain.other,pain.note,"
+                + "mood.happy,mood.sad,mood.stressed,mood.balanced,mood.fine,mood.anxious,mood.energetic,mood.fatigue,mood.angry,mood.other,mood.note\n"
+                + "2025-03-11,36.55,false,07:05,,1,false,0,1,2,false,,,,,\"Long walk, felt fine\",,,,,,,,,,,,,,true,,,,,,,,,true,,,,,,,,,,\n"
+                + "2025-03-12,36.60,false,7:10,,1,false,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,\n"
+                + "2025-03-20,97.7,true,06:50:12,,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,\n"
+                + "2025-03-22,,,,,2,true,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,true,,,,,,,,,,\n";
+        DripCsv.File f = drip(all);
+        eq("#252d every column: bleeding days by date with their amounts", f.flows.toString(), "{2025-03-11=1, 2025-03-12=1, 2025-03-20=0, 2025-03-22=0}");
+        check("#252d every column: bleeding drip did not count is kept as spotting and counted", f.flows.get(ld("2025-03-22")) == 0 && f.excludedBleeding == 1);
+        check("#252d every column: temperatures in °C with time and exclude", f.temps.size() == 3 && f.temps.get(ld("2025-03-11")).c == 36.55
+                && "07:05".equals(f.temps.get(ld("2025-03-11")).time) && "07:10".equals(f.temps.get(ld("2025-03-12")).time) && !f.temps.get(ld("2025-03-11")).excluded);
+        DripCsv.Temp fahr = f.temps.get(ld("2025-03-20"));
+        check("#252d °F above 45 is converted: 97.7 °F is 36.5 °C, its time cut to minutes, drip's exclude kept", fahr.c == 36.5 && "06:50".equals(fahr.time)
+                && fahr.excluded && f.fahrenheit == 1);
+        eq("#252d other columns are counted per kind, not stored", f.other.toString(), "{mood=2, mucus=1, note=1, pain=1}");
+        eq("#252d the summary names them", DripCsv.notImported(f), "Not imported: 2 mood entries, 1 mucus entry, 1 note entry, 1 pain entry.");
+        check("#252d 4 rows, nothing left out", f.rows == 4 && f.duplicates == 0 && f.unreadable == 0 && f.future == 0 && f.badValues == 0);
+
+        // ---- by name, not by position: reordered, missing and extra columns ----
+        DripCsv.File g = drip("bleeding.value,extra.thing,date\n3,x,2025-01-02\n2,,2025-01-01\n");
+        eq("#252d reordered columns, missing temperature columns, an extra column", g.flows.toString(), "{2025-01-01=2, 2025-01-02=3}");
+        check("#252d no temperature columns: no temperatures", g.temps.isEmpty() && g.other.get("extra") == 1);
+        DripCsv.File h = drip(" Date , BLEEDING.VALUE \n2025-01-01,1\n");
+        check("#252d column names with spaces and capitals", h.flows.size() == 1);
+        DripCsv.File shortRow = drip("date,bleeding.value,temperature.value\n2025-01-01\n2025-01-02,1\n");
+        check("#252d a row shorter than the header (missing cells) is read with what it has", shortRow.rows == 2 && shortRow.flows.size() == 1);
+
+        // ---- BOM, Windows and old Mac line ends, quotes, empty lines ----
+        DripCsv.File w = drip("﻿date,bleeding.value,note.value\r\n\r\n2025-02-01,1,\"a, b\r\nc \"\"quoted\"\"\"\r\n,,\r\n2025-02-02,2,\r\n");
+        check("#252d a BOM and Windows line ends, a quoted note with a comma, a line break and quotes, empty lines", w.flows.size() == 2 && w.rows == 2
+                && w.other.get("note") == 1 && w.unreadable == 0);
+        DripCsv.File mac = drip("date,bleeding.value\r2025-02-01,1\r2025-02-02,1");
+        check("#252d old Mac line ends and no line end at the end", mac.flows.size() == 2);
+        List<List<String>> rec = DripCsv.records("a,\"b\"\"c\",\"d,e\"\n\"open");
+        check("#252d CSV records: doubled quotes, a quoted comma, an unclosed quote running to the end", rec.size() == 2 && rec.get(0).get(1).equals("b\"c")
+                && rec.get(0).get(2).equals("d,e") && rec.get(1).get(0).equals("open"));
+
+        // ---- rows in any order, duplicates (the last wins), unreadable, future, bad values ----
+        DripCsv.File d = drip("date,bleeding.value,temperature.value\n2025-05-03,1,36.4\n2025-05-01,3,\n2025-05-03,2,\n2025-5-4,1,\nnot a date,1,\n2027-01-01,1,\n"
+                + "2025-05-05,7,\n2025-05-06,1.5,\n2025-05-07,x,\n2025-05-08,,12\n2025-05-09,,36,7\n2025-05-10,,\"36,8\"\n2025-02-30,1,\n");
+        eq("#252d rows in any order, the last row of a date wins as a whole (its temperature too)", d.flows.toString(), "{2025-05-01=3, 2025-05-03=2}");
+        check("#252d the duplicate is counted", d.duplicates == 1);
+        check("#252d unreadable dates (2025-5-4, text, 30 Feb) and a day after today are counted and left out", d.unreadable == 3 && d.future == 1);
+        check("#252d amounts 7, 1.5 and x and a temperature of 12 are not readings, left out and counted", d.badValues == 4);
+        check("#252d a comma as decimal point in a quoted cell is read, a bare one splits the row", d.temps.containsKey(ld("2025-05-10")) && d.temps.get(ld("2025-05-10")).c == 36.8
+                && d.temps.get(ld("2025-05-09")).c == 36.0 && !d.temps.containsKey(ld("2025-05-03")));
+        List<String> notes = DripCsv.notes(d);
+        check("#252d the notes say what was left out, each with its number", notes.contains("1 date came twice, the last row of each counts.")
+                && notes.contains("3 rows have no readable date and are left out.") && notes.contains("1 row is dated after today and left out.")
+                && notes.contains("4 values are not a bleeding amount or temperature this app can read, left out."));
+        check("#252d the °F note", DripCsv.notes(f).contains("1 temperature was in °F and is shown in °C."));
+        check("#252d a time that is not a time is dropped, the reading kept", drip("date,bleeding.value,temperature.value,temperature.time\n2025-01-01,,36.5,25:00\n").temps.get(ld("2025-01-01")).time == null);
+        check("#252d values in range edges: 34 and 43 °C kept, 33.9 and 109.5 °F (43.1 °C) left out",
+                drip("date,bleeding.value,temperature.value\n2025-01-01,,34\n2025-01-02,,43\n2025-01-03,,33.9\n2025-01-04,,109.5\n").temps.size() == 2);
+
+        // ---- refused files: a plain sentence, nothing read ----
+        eq("#252d a file without a date column is refused", refused("day,bleeding.value\n2025-01-01,1\n"), DripCsv.NOT_DRIP);
+        eq("#252d a file without bleeding.value is refused", refused("date,temperature.value\n2025-01-01,36.5\n"), DripCsv.NOT_DRIP);
+        eq("#252d an empty file is refused", refused(""), DripCsv.EMPTY);
+        eq("#252d a file of empty lines is refused", refused("﻿\r\n\r\n ,\n"), DripCsv.EMPTY);
+        eq("#252d a binary file is refused", refused("PK\u0003\u0004\0\0"), DripCsv.NOT_TEXT);
+        eq("#252d no text at all is refused", refused(null), DripCsv.EMPTY);
+        check("#252d a header only file is read with nothing in it", drip("date,bleeding.value\n").rows == 0);
+
+        // ---- the preview: periods by Cycles' rules, the short ones flagged ----
+        java.util.TreeMap<java.time.LocalDate, Integer> file = new java.util.TreeMap<java.time.LocalDate, Integer>();
+        for (int k = 0; k < 5; k++) file.put(ld("2025-01-05").plusDays(k), k < 2 ? 3 : 2);
+        file.put(ld("2025-02-02"), 2); // a 1 day period
+        file.put(ld("2025-03-11"), 1);
+        file.put(ld("2025-03-12"), 1); // a 2 day period
+        file.put(ld("2025-03-15"), 0); // spotting never makes it longer
+        for (int k = 0; k < 4; k++) file.put(ld("2025-04-08").plusDays(k), 2);
+        java.util.TreeMap<java.time.LocalDate, DripCsv.Temp> temps = new java.util.TreeMap<java.time.LocalDate, DripCsv.Temp>();
+        temps.put(ld("2025-01-01"), new DripCsv.Temp(36.4, "07:00", false));
+        temps.put(ld("2025-04-20"), new DripCsv.Temp(36.7, null, true));
+        java.util.Map<java.time.LocalDate, Integer> none = new java.util.HashMap<java.time.LocalDate, Integer>();
+        java.util.Map<java.time.LocalDate, DripCsv.Temp> noT = new java.util.HashMap<java.time.LocalDate, DripCsv.Temp>();
+        java.util.Map<java.time.LocalDate, Boolean> noG = new java.util.HashMap<java.time.LocalDate, Boolean>();
+        DripImport.Preview pv = DripImport.preview(file, temps, none, noT, noG, today);
+        check("#252d preview: 4 periods by Cycles' rules, 12 bleeding days, 1 spotting day, 2 temperatures", pv.cycles.periods.size() == 4
+                && pv.bleedingDays == 12 && pv.spottingDays == 1 && pv.tempCount == 2);
+        eq("#252d preview summary: the range runs from the first to the last day with an entry or a temperature", pv.summary(),
+                "From 2025-01-01 to 2025-04-20: 4 periods, 12 bleeding days, 2 temperatures.");
+        check("#252d preview: the 1 and the 2 day period are flagged, each on its own line", pv.shorts.size() == 2);
+        eq("#252d the 1 day line", pv.shorts.get(0).line(), "Period of 1 day starting 2025-02-02 (medium)");
+        eq("#252d the 2 day line, as the owner wrote it", pv.shorts.get(1).line(), "Period of 2 days starting 2025-03-11 (light, light)");
+        eq("#252d spotting line", pv.spottingLine(0), "Also 1 spotting day.");
+        eq("#252d spotting line with bleeding drip did not count", pv.spottingLine(1), "Also 1 spotting day (1 of them bleeding drip did not count as a period).");
+        check("#252d nothing on the phone: every day and temperature is added", pv.addDays == 13 && pv.addTemps == 2 && pv.differ.isEmpty() && pv.anything(false)
+                && pv.differLine(false) == null && pv.tempsLine() == null && pv.sameLine() == null);
+        eq("#252d what Import does", pv.willDo(false), "Import adds 13 days and 2 temperatures.");
+        // a gap of 3 days with a day filled in joins two periods (Correct)
+        java.util.TreeMap<java.time.LocalDate, Integer> fixed = new java.util.TreeMap<java.time.LocalDate, Integer>(file);
+        fixed.put(ld("2025-03-13"), 1);
+        fixed.put(ld("2025-03-14"), 1);
+        DripImport.Preview pf = DripImport.preview(fixed, temps, none, noT, noG, today);
+        check("#252d Correct: days added to the 2 day period make it 4 days, only the 1 day period stays flagged", pf.shorts.size() == 1
+                && pf.shorts.get(0).period.start.equals(ld("2025-02-02")) && pf.cycles.periods.size() == 4);
+        fixed.remove(ld("2025-02-02"));
+        check("#252d Correct: Nothing on the single day takes it out of the import, no flag left", DripImport.preview(fixed, temps, none, noT, noG, today).shorts.isEmpty());
+        eq("#252d Correct names the nearest period, here the next one", DripImport.nearestLine(pv.cycles, pv.shorts.get(1).period),
+                "The next period starts 2025-04-08, 26 days after this one. Fill the days between to join them.");
+        eq("#252d Correct names the period before when it is nearer", DripImport.nearestLine(pv.cycles, pv.shorts.get(0).period),
+                "The period before ends 2025-01-09, 23 days before this one. Fill the days between to join them.");
+        java.util.TreeMap<java.time.LocalDate, Integer> two = new java.util.TreeMap<java.time.LocalDate, Integer>();
+        two.put(ld("2025-06-01"), 1);
+        two.put(ld("2025-06-06"), 2);
+        DripImport.Preview p2 = DripImport.preview(two, noT, none, noT, noG, today);
+        eq("#252d Correct: the next period, the days between", DripImport.nearestLine(p2.cycles, p2.cycles.periods.get(0)),
+                "The next period starts 2025-06-06, 4 days after this one. Fill the days between to join them.");
+        check("#252d no other period: no line", DripImport.nearestLine(Cycles.of(two.headMap(ld("2025-06-02")), null, today), p2.cycles.periods.get(0)) == null);
+
+        // ---- against the phone's log: Open Ring wins, differences listed, the same file twice ----
+        java.util.Map<java.time.LocalDate, Integer> have = new java.util.HashMap<java.time.LocalDate, Integer>();
+        have.put(ld("2025-01-05"), 3); // the same
+        have.put(ld("2025-01-06"), 1); // differs
+        have.put(ld("2025-01-07"), Cycles.REMOVED); // "Nothing" is no entry: the file's day is added
+        have.put(ld("2025-04-11"), 0); // spotting in Open Ring, medium in the file: differs
+        java.util.Map<java.time.LocalDate, DripCsv.Temp> haveT = new java.util.HashMap<java.time.LocalDate, DripCsv.Temp>();
+        haveT.put(ld("2025-01-01"), new DripCsv.Temp(36.4, "07:00", false)); // the same
+        haveT.put(ld("2025-04-20"), new DripCsv.Temp(36.9, null, true)); // differs, from an earlier import
+        DripImport.Preview ph = DripImport.preview(file, temps, have, haveT, noG, today);
+        check("#252d against the log: 1 the same, 2 differ, 10 added", ph.sameDays == 1 && ph.differ.size() == 2 && ph.addDays == 10);
+        eq("#252d the differences in order", ph.differ.get(0).line() + " / " + ph.differ.get(1).line(),
+                "2025-01-06: Open Ring Light, file Heavy / 2025-04-11: Open Ring Spotting, file Medium");
+        eq("#252d differ line, Open Ring kept", ph.differLine(false), "2 days differ, Open Ring's entries are kept.");
+        eq("#252d differ line, the file's values taken", ph.differLine(true), "2 days differ, the file's values replace Open Ring's. Undoing the import puts Open Ring's back.");
+        check("#252d with the file's values 12 days are written, without 10", ph.writes(true) == 12 && ph.writes(false) == 10);
+        eq("#252d what Import does with the file's values", ph.willDo(true), "Import adds 12 days and 0 temperatures, 2 of the days replacing Open Ring's.");
+        eq("#252d same line", ph.sameLine(), "1 day is the same in Open Ring and in the file.");
+        eq("#252d temperatures already there are never replaced", ph.tempsLine(), "1 temperature is already in Open Ring. 1 temperature differs from an earlier import, those are kept.");
+        java.util.Map<java.time.LocalDate, Boolean> gone = new java.util.HashMap<java.time.LocalDate, Boolean>();
+        gone.put(ld("2025-04-20"), true);
+        check("#252d a temperature of an undone import is no reading: the file's is added", DripImport.preview(file, temps, have, haveT, gone, today).addTemps == 1);
+        // the same file twice: the phone holds what the first import wrote
+        java.util.Map<java.time.LocalDate, Integer> after = new java.util.HashMap<java.time.LocalDate, Integer>(file);
+        DripImport.Preview twice = DripImport.preview(file, temps, after, new java.util.HashMap<java.time.LocalDate, DripCsv.Temp>(temps), noG, today);
+        check("#252d the same file twice: nothing to write, nothing differs", !twice.anything(false) && !twice.anything(true) && twice.sameDays == 13
+                && twice.differ.isEmpty() && twice.sameTemps == 2);
+        eq("#252d and it says so", twice.willDo(true), DripImport.NOTHING_NEW);
+        check("#252d the decisions one by one", DripImport.day(2, null) == DripImport.ADD && DripImport.day(2, -1) == DripImport.ADD && DripImport.day(2, 2) == DripImport.SAME
+                && DripImport.day(2, 0) == DripImport.DIFFER && DripImport.temp(temps.get(ld("2025-01-01")), null, false) == DripImport.ADD);
+        check("#252d a temperature with another time or exclude mark differs", !new DripCsv.Temp(36.4, "07:00", false).same(new DripCsv.Temp(36.4, "07:01", false))
+                && !new DripCsv.Temp(36.4, null, false).same(new DripCsv.Temp(36.4, null, true)) && new DripCsv.Temp(36.4, null, false).same(new DripCsv.Temp(36.401, null, false))
+                && !new DripCsv.Temp(36.4, null, false).same(null));
+        check("#252d an empty file previews as empty", DripImport.preview(none, noT, none, noT, noG, today).summary().equals("This file holds no bleeding day and no temperature."));
+        java.util.Map<java.time.LocalDate, Integer> odd = new java.util.HashMap<java.time.LocalDate, Integer>();
+        odd.put(ld("2025-01-01"), 9);
+        odd.put(ld("2025-01-02"), null);
+        check("#252d amounts that are no amount are not in the preview", DripImport.preview(odd, noT, none, noT, noG, today).flows.isEmpty());
+
+        // ---- the demo's made up file (screens.sh) ----
+        DripCsv.File demo = drip(DripCsv.demo(today));
+        java.util.Map<java.time.LocalDate, Integer> demoLog = new java.util.HashMap<java.time.LocalDate, Integer>(Cycles.demo(today));
+        DripImport.Preview dp = DripImport.preview(demo.flows, demo.temps, demoLog, noT, noG, today);
+        check("#252d demo file: a BOM, Windows line ends, newest row first, read by name", DripCsv.demo(today).startsWith("﻿date,") && DripCsv.demo(today).contains("\r\n")
+                && demo.rows > 150 && demo.unreadable == 0 && demo.badValues == 0);
+        check("#252d demo file: a 1 and a 2 day period flagged, one day that differs from the demo log, four the same", dp.shorts.size() == 2 && dp.differ.size() == 1
+                && dp.sameDays == 4 && dp.shorts.get(0).period.days() == 2 && dp.shorts.get(1).period.days() == 1);
+        check("#252d demo file: bleeding drip did not count, one °F, one temperature left out, mood, note and mucus counted", demo.excludedBleeding == 1 && demo.fahrenheit == 1
+                && demo.other.containsKey("mood") && demo.other.containsKey("note") && demo.other.containsKey("mucus") && !demo.other.containsKey("cervix")
+                && demo.temps.size() == demo.rows);
+        int excl = 0;
+        for (DripCsv.Temp t : demo.temps.values()) if (t.excluded) excl++;
+        check("#252d demo file: one temperature left out in drip", excl == 1);
+        java.util.TreeMap<java.time.LocalDate, DripCsv.Temp> mouth = DripCsv.demoMouth(today, Cycles.demoWarmNights(today));
+        check("#252d demo mouth temperatures: the last 100 days with some missing, warmer after the made up ovulation", mouth.size() > 90 && mouth.size() < 100
+                && mouth.lastKey().equals(today) && mouth.firstKey().equals(today.minusDays(99)));
+
+        // ---- the night temperature line's touch text with the mouth reading ----
+        Cycles cy = Cycles.of(Cycles.demo(today), null, today);
+        java.time.LocalDate t1 = today.minusDays(3);
+        String tip = cy.tempTip(t1, 0.2, 36.62, "07:10", false, EN);
+        check("#252d touch: date and cycle day, then the ring and the mouth reading on a second line", tip.startsWith(t1.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", EN)) + ", cycle day ")
+                && tip.endsWith("\nRing +0.2 °C, mouth 36.62 °C at 07:10"));
+        check("#252d touch: no ring night, a reading drip left out, no time", cy.tempTip(t1, Double.NaN, 36.5, null, true, EN).endsWith("\nNo ring night, mouth 36.50 °C, left out in drip")
+                && cy.tempTip(t1, 0.1, Double.NaN, null, false, EN).endsWith("\nRing +0.1 °C, no mouth reading"));
+        check("#252d touch without drip readings stays as before", cy.tempTip(t1, 0.2, EN).startsWith(t1.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", EN)) + ": +0.2 °C, cycle day " + cy.cycleDay(t1))
+                && !cy.tempTip(t1, 0.2, EN).contains("\n"));
+
+        // ---- ten years in one file ----
+        StringBuilder big = new StringBuilder("date,bleeding.value,temperature.value,temperature.time,mood.happy,note.value\r\n");
+        java.time.LocalDate s0 = ld("2016-01-01");
+        int n = 0;
+        for (java.time.LocalDate x = s0; x.isBefore(ld("2026-01-01")); x = x.plusDays(1), n++) {
+            big.append(x).append(',').append(n % 28 < 5 ? String.valueOf(1 + n % 3) : "").append(",36.").append(40 + n % 30).append(",07:00,").append(n % 5 == 0 ? "true" : "")
+                    .append(',').append(n % 50 == 0 ? "\"tired, slept late\"" : "").append("\r\n");
+        }
+        long t0 = System.nanoTime();
+        DripCsv.File ten = drip(big.toString());
+        DripImport.Preview tp = DripImport.preview(ten.flows, ten.temps, none, noT, noG, today);
+        double sec = (System.nanoTime() - t0) / 1e9;
+        System.out.printf("    #252d a 10 year drip file (%d rows): read and previewed in %.2f s%n", n, sec);
+        check("#252d a 10 year file: every row, about 130 periods, read and previewed in seconds", ten.rows == n && ten.temps.size() == n && tp.cycles.periods.size() == (n + 27) / 28
+                && tp.bleedingDays == ten.flows.size() && sec < 10);
+
+        // ---- plain texts ----
+        List<String> tx = new ArrayList<String>(Arrays.asList(DripCsv.EMPTY, DripCsv.NOT_TEXT, DripCsv.NOT_DRIP, DripImport.NOTHING_NEW, pv.summary(), ph.differLine(true),
+                ph.differLine(false), ph.tempsLine(), ph.willDo(true), pv.shorts.get(1).line(), DripCsv.notImported(f), tip,
+                app.openring.ui.Explain.DRIP_SETTINGS, app.openring.ui.Explain.DRIP_INTRO, app.openring.ui.Explain.DRIP_DEMO, app.openring.ui.Explain.DRIP_COUNTS,
+                app.openring.ui.Explain.DRIP_OTHER, app.openring.ui.Explain.DRIP_SHORT, app.openring.ui.Explain.DRIP_DIFFER, app.openring.ui.Explain.DRIP_CORRECT,
+                app.openring.ui.Explain.DRIP_UNDO, app.openring.ui.Explain.PERIOD_MOUTH, app.openring.ui.Explain.dripAdded(1, 1), app.openring.ui.Explain.dripAdded(186, 312)));
+        tx.addAll(DripCsv.notes(d));
+        boolean plain = true;
+        for (String t : tx) plain &= t != null && plain252(t);
+        check("#252d texts use no dashes as punctuation", plain);
+        eq("#252d the Settings line", app.openring.ui.Explain.dripAdded(1, 186), "Added 1 day and 186 temperatures.");
+        check("#252d the texts say it is not birth control and nothing is saved before Import", Cycles.NOT_ADVICE.contains("not birth control")
+                && app.openring.ui.Explain.DRIP_INTRO.contains("Nothing is saved until you tap Import"));
     }
 
     static void cycles252() {

@@ -201,6 +201,12 @@ if touch_desc "Night temperature since"; then shot body-period-temp 1
 else echo "::warning::issue #252 step: the night temperature line was not on screen to touch it"; shot body-period-temp 1; fi
 # the gentle question "Have your periods stopped?" (extra period_ask, demo mode only; nothing is saved without a tap)
 launch --ei tab 4 --ez period_ask true;    shot period-ask 3
+# Import from drip (phase 1b of #252): in demo mode the preview of a made up drip file against the demo's log (extra drip;
+# demo mode never imports), scrolled down to its short periods and the days that differ, then Correct on its first short
+# period (drip_correct) with the day editor's calendar. The night temperature shot above shows the demo's mouth line.
+launch --ez drip true;                      shot drip-preview 4
+swipe_up; swipe_up;                         shot drip-preview-more 1
+launch --ez drip true --ez drip_correct true; shot drip-correct 4
 launch --ei tab 5;                          shot screen
 adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fling
 # read the clock by touch (issue #109): at the trailing edge of the first blue line, so the picture shows a
