@@ -38,6 +38,8 @@ final class PeriodCalendar extends View {
     static final int ROWS = 6;
     private final Cycles cy;
     private final Listener listener;
+    /** The estimate's bands and their legend; off in the drip import's preview, which shows only the file's days. */
+    boolean bands = true;
     private final DayOfWeek firstDay = WeekFields.of(Locale.getDefault()).getFirstDayOfWeek();
     private YearMonth month;
     private LocalDate readDay;
@@ -155,7 +157,7 @@ final class PeriodCalendar extends View {
         int off = offset(), len = month.lengthOfMonth();
         float rad = Math.min(cw, cellH) * 0.36f;
         // bands behind the days: the ovulation range, then the expected period on top
-        for (int pass = 0; pass < 3; pass++) {
+        for (int pass = 0; pass < (bands ? 3 : 0); pass++) {
             for (int dom = 1; dom <= len; dom++) {
                 LocalDate d = month.atDay(dom);
                 boolean in = pass == 0 ? cy.inOvulation(d) : pass == 1 ? cy.inExpected(d) : cy.inFertile(d);
@@ -213,8 +215,8 @@ final class PeriodCalendar extends View {
         txt.setTextSize(Ui.dp(c, 11));
         txt.setColor(Ui.TEXT_2);
         txt.setTextAlign(Paint.Align.LEFT);
-        String[] names = {"Logged", "Expected period", "Ovulation range", "Fertile days"};
-        for (int k = 0; k < 4; k++) {
+        String[] names = {bands ? "Logged" : "In the file", "Expected period", "Ovulation range", "Fertile days"};
+        for (int k = 0; k < (bands ? 4 : 1); k++) {
             float x = (k % 2) * (w / 2), y = ly + (k / 2) * Ui.dp(c, 18);
             float s = Ui.dp(c, 5);
             if (k == 0) {

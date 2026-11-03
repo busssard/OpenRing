@@ -40,7 +40,8 @@ public final class Demo {
      * least one wake up a night), the last week is easy (no long wake up, and none of the late nights that
      * otherwise come about one night in eight, so its bedtimes are a little earlier). Otherwise bed and wake times follow
      * the same rule as before, so the clock change checks keep their meaning. A short cold {@code COLD_BACK} days before the end (two nights {@code COLD_C} °C warmer with
-     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
+     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower; with the period tracker's cycle only the heart rate and HRV, so
+     * the made up temperature rise stays clear) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
      * the best (heart rate {@code GREAT_BPM} lower, HRV {@code GREAT_HRV} ms higher, 16 minutes to fall asleep). The phone
      * free evenings and quiet days: {@link #phoneFree} and {@link #quiet}.
      */
@@ -159,7 +160,7 @@ public final class Demo {
         long t0 = today.minusDays(days).atStartOfDay(zone).toEpochSecond();
         List<double[]> screen = new ArrayList<double[]>();
         java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
-        List<RingEvent> ev = history(t0, days, now, zone, new Random(7), screen, apps, true);
+        List<RingEvent> ev = warmNights(history(t0, days, now, zone, new Random(7), screen, apps, true), t0, zone, app.openring.core.analysis.Cycles.demoWarmNights(today));
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
@@ -175,7 +176,7 @@ public final class Demo {
     }
 
     /**
-     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on about cycle day 18
+     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on cycle day 20
      * ({@code Cycles.demo}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
      */
     static void periods(final Db db, LocalDate today, final long now) {
@@ -186,6 +187,36 @@ public final class Demo {
                 for (java.util.Map.Entry<LocalDate, Integer> e : log.entrySet()) Periods.setFlow(db, e.getKey().toString(), e.getValue(), now);
             }
         });
+        // made up morning temperatures by mouth, as a drip import would bring them (phase 1b): the night temperature card
+        // shows its second line and Settings an import to undo, all in the demo file
+        Periods.importDrip(db, new java.util.TreeMap<LocalDate, Integer>(),
+                app.openring.core.DripCsv.demoMouth(today, app.openring.core.analysis.Cycles.demoWarmNights(today)), false, now * 1000L, now);
+    }
+
+    /**
+     * The demo's nights after ovulation (issue #252, phase 1a2): every night skin temperature reading of a night in
+     * {@code warm} (by the day its morning falls on, the reading's time plus 12 hours) gets {@code Cycles.DEMO_RISE} more,
+     * so the period tracker's temperature line shows the rise many people have. Only for {@link #enter}; the other events
+     * and {@link #history} itself stay as they are.
+     */
+    public static List<RingEvent> warmNights(List<RingEvent> ev, long t0, ZoneId zone, java.util.Set<LocalDate> warm) {
+        List<RingEvent> out = new ArrayList<RingEvent>(ev.size());
+        int add = (int) Math.round(app.openring.core.analysis.Cycles.DEMO_RISE * 100);
+        for (RingEvent e : ev) {
+            if (e.tag == EventCodec.SLEEP_TEMP_EVENT && e.body.length >= 2) {
+                long unix = t0 + (e.ds - DS0) / 10;
+                LocalDate night = java.time.Instant.ofEpochSecond(unix + 12 * 3600).atZone(zone).toLocalDate();
+                if (warm.contains(night)) {
+                    int c = (e.body[0] & 0xff) | (e.body[1] & 0xff) << 8;
+                    byte[] b = e.body.clone();
+                    b[0] = (byte) (c + add);
+                    b[1] = (byte) ((c + add) >> 8);
+                    e = new RingEvent(e.tag, e.ds, b);
+                }
+            }
+            out.add(e);
+        }
+        return out;
     }
 
     /**
@@ -249,13 +280,25 @@ public final class Demo {
     /**
      * As above; when {@code screen} is not null it also gets made up phone screen sessions (issue #13). {@code story}: the
      * five weeks of demo mode, with the busy month, the easy week, the cold, the best night, the quiet days and the phone
-     * free evenings that earn each kind of badge (issue #265). Without it the history is exactly the one before #265, so
-     * the tests built on it keep their results.
+     * free evenings that earn each kind of badge (issue #265), and the period tracker's cycle below. Without it the history
+     * is exactly the one before #265, so the tests built on it keep their results.
      */
     static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
             java.util.Map<String, List<double[]>> apps, boolean story) {
+        return history(t0, days, now, zone, r, screen, apps, story, story);
+    }
+
+    /**
+     * As above. With {@code cycle} (only for {@link #enter}, issue #252 phase 2) the nights' skin temperature varies less from
+     * night to night (0.07 °C instead of 0.12) and its one warm night (0.6 °C, a fever or a warm room) lies 9 days back instead
+     * of the warm spell of 2 nights lately, so the period tracker's rise rule finds the made up rise and shows such a night
+     * left out. The random draws are the same either way, so everything else is as before.
+     */
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
+            java.util.Map<String, List<double[]>> apps, boolean story, boolean cycle) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         List<Object[]> kept = new ArrayList<Object[]>();
+        Random cycleNoise = new Random(252);
         LocalDate first = java.time.Instant.ofEpochSecond(t0).atZone(zone).toLocalDate();
         for (int d = 1; d <= days; d++) {
             // every time is a clock time on this day, so a daylight saving switch does not move it (issue #22)
@@ -274,7 +317,10 @@ public final class Demo {
             if (wake - bed < 3 * 3600) continue;
             // the story's short cold two weeks back: two warm nights with a higher heart rate, readiness drops and comes back
             boolean cold = story && (d == days - COLD_BACK || d == days - COLD_BACK + 1);
-            double tempOffset = r.nextGaussian() * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0) + (cold ? COLD_C : 0); // a warm spell lately
+            double g = r.nextGaussian();
+            if (cycle) g = cycleNoise.nextGaussian(); // its own draws, so the story's extra draws (issue #265) do not move the rise
+            double tempOffset = (cycle ? g * 0.07 + (d == days - 9 ? 0.6 : 0) : g * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0)) // a warm spell lately
+                    + (cold && !cycle ? COLD_C : 0); // with the cycle the cold shows in heart rate only, so the rise stays clear
             int sick = cold ? COLD_BPM : great ? -GREAT_BPM : 0;
             double fitness = d * 0.06; // resting HR slowly improves
             // a few wake ups per night, longer on restless nights

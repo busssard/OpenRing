@@ -167,16 +167,24 @@ public final class Charts {
             return super.performClick();
         }
 
-        /** Vertical cursor at {@code x} from {@code top} to {@code bottom} with a label bubble on top. */
+        /** Vertical cursor at {@code x} from {@code top} to {@code bottom} with a label bubble on top (a line break gives two lines). */
         protected void drawTip(Canvas cv, float x, float top, float bottom, String text) {
             cv.drawLine(x, top, x, bottom, cursor);
             float pad = Ui.dp(getContext(), 6);
-            float tw = tipTxt.measureText(text);
-            float bw = tw + pad * 2, bh = tipTxt.getTextSize() + pad * 1.4f;
+            String[] lines = text.split("\n");
+            float tw = 0;
+            for (String l : lines) tw = Math.max(tw, tipTxt.measureText(l));
+            float lh = tipTxt.getTextSize() * 1.25f;
+            float bw = tw + pad * 2, bh = tipTxt.getTextSize() + pad * 1.4f + (lines.length - 1) * lh;
             float left = Math.max(0, Math.min(getWidth() - bw, x - bw / 2));
             tipR.set(left, 0, left + bw, bh);
-            cv.drawRoundRect(tipR, bh / 2, bh / 2, tipBg);
-            cv.drawText(text, left + pad, bh / 2 + tipTxt.getTextSize() * 0.36f, tipTxt);
+            float r = Math.min(bh / 2, (tipTxt.getTextSize() + pad * 1.4f) / 2);
+            cv.drawRoundRect(tipR, r, r, tipBg);
+            float y = (tipTxt.getTextSize() + pad * 1.4f) / 2 + tipTxt.getTextSize() * 0.36f;
+            for (String l : lines) {
+                cv.drawText(l, left + pad, y, tipTxt);
+                y += lh;
+            }
         }
     }
 
