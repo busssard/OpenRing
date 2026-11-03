@@ -17,3 +17,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
 The Withings watch notes and code (docs/ARCHITECTURE.md, core/withings, issue #251) use protocol
 facts from public discussions, written in our own words and implemented anew. No code from other
 Withings projects is included.
+
+The Withings watch sign in (core/withings/SignIn) uses the challenge secret and message layout
+from Gadgetbridge's public Withings support (AGPL, https://codeberg.org/Freeyourgadget/Gadgetbridge);
+no code taken.

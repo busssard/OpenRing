@@ -132,6 +132,7 @@ public final class WatchSync {
             final long session = System.currentTimeMillis();
             final double captured = session / 1000.0;
             Session.Plan plan = plan(session / 1000, WatchStore.since(db, address, false), WatchStore.since(db, address, true));
+            plan.address = address;
             final int[] seq = {0};
             Session.Result r = Session.run(link, plan, new Session.Gate() {
                 @Override

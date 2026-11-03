@@ -10,7 +10,7 @@ import java.util.*;
 
 /**
  * JVM tests for the Withings watch sync (issue #251, phase 1b): the frame, the requests, the decoder, the session
- * against a made up watch, the day sums and when a sync is due. Every message here is made up; none comes from a real
+ * against a made up watch, the sign in, the day sums and when a sync is due. Every message here is made up; none comes from a real
  * watch. Run with tests/run_tests.sh, after CoreTest.
  */
 public class WatchTest {
@@ -35,6 +35,8 @@ public class WatchTest {
         requests();
         records();
         session();
+        signIn();
+        signInSession();
         days();
         due();
         demo();
@@ -217,12 +219,14 @@ public class WatchTest {
     // ---------------------------------------------------------------------------------- session
 
     /** A made up watch: answers each request with scripted messages, records every write, can stay silent or drop the link. */
-    static final class FakeWatch implements Session.Link {
+    static class FakeWatch implements Session.Link {
         final List<byte[]> sent = new ArrayList<byte[]>();
         final Deque<byte[]> inbox = new ArrayDeque<byte[]>();
         final Map<Integer, List<byte[]>> answers = new HashMap<Integer, List<byte[]>>();
         final Set<Integer> silent = new HashSet<Integer>();
         Integer dropAt;
+        /** The watch takes a message of this type, then closes the link. */
+        Integer closeAfter;
         boolean down;
         int pending; // messages a request queued that were not read yet when the next request came
 
@@ -253,6 +257,10 @@ public class WatchTest {
             if (dropAt != null && dropAt == t) {
                 down = true;
                 throw new IOException("link gone");
+            }
+            if (closeAfter != null && closeAfter == t) {
+                down = true;
+                return;
             }
             if (silent.contains(t)) return;
             List<byte[]> a = answers.get(t);
@@ -338,17 +346,17 @@ public class WatchTest {
         check("session: the log names types and lengths only, never a value", noValues(log.lines), log.lines);
         check("session: the log says the end was reached", joined(log.lines).contains("activity: 5 messages") && joined(log.lines).contains("end reached"), log.lines);
 
-        // the watch asks for a sign in: the session ends, says so, and still sends sync done
+        // a sign in of an unknown layout: the session ends, says so, and still sends sync done (more in signInSession)
         w = new FakeWatch();
-        w.answer(Proto.HELLO, Frame.message(Proto.CHALLENGE, Frame.part(Proto.CHALLENGE_PART, new byte[] {3, 'a', 'b', 'c', 2, 9, 9})));
+        w.answer(Proto.HELLO, Frame.message(Proto.CHALLENGE, Frame.part(Proto.CHALLENGE_PART, new byte[] {3, 'a', 'b'})));
         r = Session.run(w, plan(), new Gate(), new Store(), new Lines());
-        check("session: a challenge ends it with its sentence, sync done still sent", Session.CHALLENGE.equals(r.ended) && last(w) == Proto.SYNC_DONE
-                && w.types().size() == 2, w.types());
+        check("session: a challenge of an unknown layout ends it with its sentence, sync done still sent", Session.CHALLENGE.equals(r.ended)
+                && last(w) == Proto.SYNC_DONE && w.types().size() == 2, w.types());
         // a challenge part inside the hello answer counts too
         w = new FakeWatch();
         w.answer(Proto.HELLO, Frame.message(Proto.HELLO, Frame.part(Proto.CHALLENGE_PART, new byte[] {0})));
         r = Session.run(w, plan(), new Gate(), new Store(), new Lines());
-        check("session: a challenge part in an answer ends it too", Session.CHALLENGE.equals(r.ended));
+        check("session: a challenge part in an answer is a sign in too", Session.CHALLENGE.equals(r.ended));
 
         // silent watch
         w = new FakeWatch();
@@ -459,11 +467,11 @@ public class WatchTest {
         st.failAt = 5 + w.answers.get(Proto.ACTIVITY).size() + w.answers.get(Proto.HEART_RATE).size() - 1;
         r = Session.run(w, plan(), new Gate(), st, new Lines());
         check("session: the answer to sync done cannot be stored: its sentence", Session.NOT_STORED.equals(r.ended) && r.doneSent, r.ended);
-        // a challenge in the middle of a data answer
+        // a challenge of an unknown layout in the middle of a data answer
         w = new FakeWatch();
         w.answers.get(Proto.HEART_RATE).add(1, Frame.message(Proto.CHALLENGE, Frame.part(Proto.CHALLENGE_PART, new byte[] {0})));
         r = Session.run(w, plan(), new Gate(), new Store(), new Lines());
-        check("session: a challenge during a data answer ends it", Session.CHALLENGE.equals(r.ended) && r.activityDone && !r.heartDone && last(w) == Proto.SYNC_DONE);
+        check("session: an unknown challenge during a data answer ends it", Session.CHALLENGE.equals(r.ended) && r.activityDone && !r.heartDone && last(w) == Proto.SYNC_DONE);
 
         // the watch's own messages on the way are stored and do not count as the answer
         w = new FakeWatch();
@@ -494,6 +502,205 @@ public class WatchTest {
             if (Frame.type(m) == Proto.HEART_RATE) hs = Frame.u32(Frame.first(m, Proto.SINCE).value, 0);
         }
         check("session: activity and heart rate ask from their own times", as == 1234 && hs == 5678, as + " " + hs);
+    }
+
+    // ---------------------------------------------------------------------------------- sign in
+
+    /** A made up watch address and challenge; nothing here comes from a real watch. */
+    static final String MAC = "00:24:E4:12:34:56";
+    static final byte[] THEIRS = Hex.decode("0102030405060708090a0b0c0d0e0f10");
+    static final byte[] OURS = Hex.decode("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
+    /** SHA-1 of THEIRS, then MAC, then the secret, worked out outside this repository (Python hashlib). */
+    static final String PROOF_THEIRS = "6c86e76407725e16b23bc9e296dac9b7ac136a4e";
+    /** SHA-1 of OURS, then MAC, then the secret, worked out the same way. */
+    static final String PROOF_OURS = "08ab04c4ad23a9da37a840bb8b6232aa707e5f66";
+
+    /** The watch's challenge message: its address text and 16 bytes, each with a length byte, in one part. */
+    static byte[] challenge(String mac, byte[] bytes) {
+        byte[] a = mac.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        byte[] v = new byte[2 + a.length + bytes.length];
+        v[0] = (byte) a.length;
+        System.arraycopy(a, 0, v, 1, a.length);
+        v[1 + a.length] = (byte) bytes.length;
+        System.arraycopy(bytes, 0, v, 2 + a.length, bytes.length);
+        return Frame.message(Proto.CHALLENGE, Frame.part(Proto.CHALLENGE_PART, v));
+    }
+
+    /** {@code msg} with one more part at its end. */
+    static byte[] withPart(byte[] msg, int type, byte[] value) {
+        List<byte[]> parts = new ArrayList<byte[]>();
+        for (Frame.Part p : Frame.parts(msg)) parts.add(Frame.part(p.type, p.value));
+        parts.add(Frame.part(type, value));
+        return Frame.message(Frame.type(msg), parts.toArray(new byte[0][]));
+    }
+
+    /** A proof part's value: a length byte, then the 20 bytes. */
+    static byte[] proofPart(String hex) {
+        byte[] p = Hex.decode(hex);
+        byte[] v = new byte[1 + p.length];
+        v[0] = (byte) p.length;
+        System.arraycopy(p, 0, v, 1, p.length);
+        return v;
+    }
+
+    static void signIn() {
+        byte[] c = challenge(MAC, THEIRS);
+        check("sign in: a made up challenge has the 44 bytes and 1 part the real watch sent", c.length == 44 && Frame.parts(c).size() == 1, c.length);
+        SignIn.Challenge read = SignIn.read(c, null);
+        check("sign in: the address and the 16 bytes are read", read != null && MAC.equals(read.address) && Arrays.equals(THEIRS, read.bytes));
+        check("sign in: the proof is SHA-1 of challenge, address and secret", PROOF_THEIRS.equals(Hex.encode(SignIn.proof(THEIRS, MAC)).toLowerCase()),
+                Hex.encode(SignIn.proof(THEIRS, MAC)));
+
+        byte[] a = SignIn.answer(c, null, OURS);
+        // put together by hand: start, type 0128, length 0x40; part 0123 (21 bytes: 20, proof); part 0122 (35 bytes: 17, address, 16, ours)
+        String want = "01" + "0128" + "0040" + "0123" + "0015" + "14" + PROOF_THEIRS + "0122" + "0023" + "11"
+                + Hex.encode(MAC.getBytes(java.nio.charset.StandardCharsets.US_ASCII)) + "10" + Hex.encode(OURS);
+        check("sign in: the answer byte for byte", a != null && want.equalsIgnoreCase(Hex.encode(a)), a == null ? "null" : Hex.encode(a));
+        check("sign in: the answer is 69 bytes, type 0x0128, proof part first", a != null && a.length == 69 && Frame.type(a) == Proto.CHALLENGE
+                && Frame.parts(a).size() == 2 && Frame.parts(a).get(0).type == Proto.CHALLENGE_ANSWER && Frame.parts(a).get(1).type == Proto.CHALLENGE_PART);
+        check("sign in: the answer's pieces join again (MTU 115)", a != null && joinsAgain(a, 112));
+        check("sign in: our own challenge goes back with the watch's address", a != null && SignIn.read(a, null) != null
+                && Arrays.equals(OURS, SignIn.read(a, null).bytes) && MAC.equals(SignIn.read(a, null).address));
+        check("sign in: a different challenge gives a different answer", !Arrays.equals(a, SignIn.answer(challenge(MAC, OURS), null, OURS)));
+
+        // layouts not known: no answer
+        check("sign in: no challenge part, no answer", SignIn.answer(Frame.message(Proto.CHALLENGE), MAC, OURS) == null);
+        check("sign in: a cut challenge, no answer", SignIn.answer(Frame.message(Proto.CHALLENGE, Frame.part(Proto.CHALLENGE_PART, new byte[] {17, '0', '0'})), MAC, OURS) == null);
+        check("sign in: a challenge without bytes, no answer", SignIn.answer(challenge(MAC, new byte[0]), MAC, OURS) == null);
+        check("sign in: no address in the challenge and none connected, no answer", SignIn.answer(challenge("", THEIRS), null, OURS) == null);
+        SignIn.Challenge fb = SignIn.read(challenge("", THEIRS), "00:24:e4:12:34:56");
+        check("sign in: no address in the challenge: the connected one, in capitals", fb != null && MAC.equals(fb.address));
+        check("sign in: no own challenge, no answer", SignIn.answer(c, null, new byte[0]) == null);
+
+        // the watch's own proof in its hello answer
+        byte[] hello = WatchDemo.helloReply("Steel HR test", 1971);
+        check("sign in: the watch's proof for our challenge is right", Boolean.TRUE.equals(SignIn.watchProof(withPart(hello, Proto.CHALLENGE_ANSWER, proofPart(PROOF_OURS)), OURS, MAC)));
+        check("sign in: a wrong proof is found", Boolean.FALSE.equals(SignIn.watchProof(withPart(hello, Proto.CHALLENGE_ANSWER, proofPart(PROOF_THEIRS)), OURS, MAC)));
+        check("sign in: a cut proof is wrong", Boolean.FALSE.equals(SignIn.watchProof(withPart(hello, Proto.CHALLENGE_ANSWER, new byte[] {20, 1}), OURS, MAC)));
+        check("sign in: no proof part: nothing to check", SignIn.watchProof(hello, OURS, MAC) == null);
+    }
+
+    static boolean joinsAgain(byte[] msg, int size) {
+        Frame.Assembler as = new Frame.Assembler();
+        byte[] got = null;
+        for (byte[] p : Frame.pieces(msg, size)) got = as.feed(p);
+        return Arrays.equals(msg, got);
+    }
+
+    /** A made up watch that asks for a sign in after the hello, and answers the hello once the right proof came. */
+    static FakeWatch signingWatch(String expectProof, byte[] helloAfter) {
+        final String want = expectProof;
+        final byte[] after = helloAfter;
+        FakeWatch w = new FakeWatch() {
+            @Override
+            public void send(byte[] msg) throws IOException {
+                if (Frame.type(msg) == Proto.CHALLENGE) {
+                    Frame.Part p = Frame.first(msg, Proto.CHALLENGE_ANSWER);
+                    boolean right = p != null && p.value.length == 21 && want.equalsIgnoreCase(Hex.encode(Arrays.copyOfRange(p.value, 1, 21)));
+                    // a wrong proof: the watch asks again (one way a refusal could look)
+                    answer(Proto.CHALLENGE, right ? after : challenge(MAC, THEIRS));
+                }
+                super.send(msg);
+            }
+        };
+        w.answer(Proto.HELLO, challenge(MAC, THEIRS));
+        return w;
+    }
+
+    static Session.Plan signPlan() {
+        Session.Plan p = plan();
+        p.address = MAC;
+        p.ours = OURS;
+        return p;
+    }
+
+    static void signInSession() throws Exception {
+        byte[] helloOk = withPart(WatchDemo.helloReply("Steel HR test", 1971), Proto.CHALLENGE_ANSWER, proofPart(PROOF_OURS));
+        FakeWatch w = signingWatch(PROOF_THEIRS, helloOk);
+        Store st = new Store();
+        Lines log = new Lines();
+        Session.Result r = Session.run(w, signPlan(), new Gate(), st, log);
+        List<Integer> order = Arrays.asList(Proto.HELLO, Proto.CHALLENGE, Proto.CONNECT, Proto.BATTERY, Proto.SET_TIME, Proto.ACTIVITY, Proto.HEART_RATE, Proto.SYNC_DONE);
+        check("sign in session: answered, then the sync goes on to the end", r.ended == null && w.types().equals(order) && r.activityDone && r.heartDone, r.ended + " " + w.types());
+        check("sign in session: accepted", r.signIn == Session.SIGN_IN_ACCEPTED, r.signIn);
+        check("sign in session: the challenge and the hello answer are stored like every message", st.got.size() > 1
+                && Frame.type(st.got.get(0)) == Proto.CHALLENGE && Frame.type(st.got.get(1)) == Proto.HELLO, st.got.size());
+        check("sign in session: the log names types and lengths only", noValues(log.lines) && !joined(log.lines).contains(MAC)
+                && !joined(log.lines).contains("2EM5"), log.lines);
+        check("sign in session: the log says the answer went and was accepted", joined(log.lines).contains("sent 0x0128 sign in answer, 69 bytes")
+                && joined(log.lines).contains("proof: right") && joined(log.lines).contains("sign in accepted"), log.lines);
+        Records.Decoded d = new Records.Decoded();
+        for (byte[] m : st.got) Records.decode(m, 1, d);
+        check("sign in session: the name and firmware still come from the hello answer", "Steel HR test".equals(d.name) && d.firmware == 1971, d.name);
+
+        // no proof from the watch: accepted all the same (the watch need not prove itself)
+        w = signingWatch(PROOF_THEIRS, WatchDemo.helloReply("Steel HR test", 1971));
+        log = new Lines();
+        r = Session.run(w, signPlan(), new Gate(), new Store(), log);
+        check("sign in session: no proof from the watch: the sync goes on", r.ended == null && r.heartDone && joined(log.lines).contains("proof: none sent"), r.ended);
+
+        // a random own challenge when none is given
+        w = signingWatch(PROOF_THEIRS, WatchDemo.helloReply("Steel HR test", 1971));
+        Session.Plan rp = signPlan();
+        rp.ours = null;
+        r = Session.run(w, rp, new Gate(), new Store(), new Lines());
+        byte[] sentAnswer = w.sent.get(1);
+        SignIn.Challenge back = SignIn.read(sentAnswer, null);
+        check("sign in session: a random own challenge of 16 bytes", r.ended == null && back != null && back.bytes.length == 16 && !Arrays.equals(OURS, back.bytes));
+
+        // the watch's proof is wrong: nothing more is asked
+        w = signingWatch(PROOF_THEIRS, withPart(WatchDemo.helloReply("Steel HR test", 1971), Proto.CHALLENGE_ANSWER, proofPart(PROOF_THEIRS)));
+        r = Session.run(w, signPlan(), new Gate(), new Store(), new Lines());
+        check("sign in session: a wrong proof from the watch ends it, sync done sent", Session.WATCH_PROOF.equals(r.ended)
+                && w.types().equals(Arrays.asList(Proto.HELLO, Proto.CHALLENGE, Proto.SYNC_DONE)), r.ended + " " + w.types());
+
+        // the watch refuses: it asks again
+        w = signingWatch("00", helloOk);
+        log = new Lines();
+        r = Session.run(w, signPlan(), new Gate(), new Store(), log);
+        check("sign in session: asked again after our answer: refused, sync done sent, nothing else asked", Session.SIGN_IN_REFUSED.equals(r.ended)
+                && w.types().equals(Arrays.asList(Proto.HELLO, Proto.CHALLENGE, Proto.SYNC_DONE)) && r.signIn == Session.SIGN_IN_SENT, r.ended + " " + w.types());
+        check("sign in session: the log says it was asked again", joined(log.lines).contains("asked for a sign in again") && noValues(log.lines), log.lines);
+
+        // the watch refuses: it stays silent
+        w = signingWatch(PROOF_THEIRS, helloOk);
+        w.silent.add(Proto.CHALLENGE);
+        log = new Lines();
+        r = Session.run(w, signPlan(), new Gate(), new Store(), log);
+        check("sign in session: silent after our answer: refused", Session.SIGN_IN_REFUSED.equals(r.ended) && last(w) == Proto.SYNC_DONE
+                && joined(log.lines).contains("after the sign in answer"), r.ended);
+
+        // the watch refuses: it closes the link
+        w = signingWatch(PROOF_THEIRS, helloOk);
+        w.closeAfter = Proto.CHALLENGE;
+        r = Session.run(w, signPlan(), new Gate(), new Store(), new Lines());
+        check("sign in session: link closed after our answer: refused, no sync done on a closed link", Session.SIGN_IN_REFUSED.equals(r.ended) && !r.doneSent, r.ended);
+
+        // the link is lost while the answer is sent: lost, not refused
+        w = signingWatch(PROOF_THEIRS, helloOk);
+        w.dropAt = Proto.CHALLENGE;
+        r = Session.run(w, signPlan(), new Gate(), new Store(), new Lines());
+        check("sign in session: link lost while sending the answer: its own sentence", Session.LINK_LOST.equals(r.ended), r.ended);
+
+        // a sign in in the middle of a data answer is answered and the data goes on
+        w = new FakeWatch();
+        w.answers.get(Proto.HEART_RATE).add(1, challenge(MAC, THEIRS));
+        log = new Lines();
+        r = Session.run(w, signPlan(), new Gate(), new Store(), log);
+        check("sign in session: a sign in during a data answer is answered, the data goes on", r.ended == null && r.heartDone
+                && r.signIn == Session.SIGN_IN_ACCEPTED && w.types().contains(Proto.CHALLENGE) && last(w) == Proto.SYNC_DONE, r.ended + " " + w.types());
+
+        // the ring asks right after our answer: the ring still wins
+        w = signingWatch(PROOF_THEIRS, helloOk);
+        Gate g = new Gate();
+        g.askedUntilRing = 1;
+        r = Session.run(w, signPlan(), g, new Store(), new Lines());
+        check("sign in session: the ring wants Bluetooth right after our answer: ends for the ring", Session.FOR_RING.equals(r.ended)
+                && w.types().equals(Arrays.asList(Proto.HELLO, Proto.CHALLENGE, Proto.SYNC_DONE)), r.ended + " " + w.types());
+
+        // the plain sentences have no dashes
+        for (String t : new String[] {Session.CHALLENGE, Session.SIGN_IN_REFUSED, Session.WATCH_PROOF})
+            check("sign in: plain sentence without dashes: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
     }
 
     static int last(FakeWatch w) {

@@ -1,11 +1,13 @@
 package app.openring.core.withings;
 
 import java.io.IOException;
+import java.security.SecureRandom;
 
 /**
  * One sync with the watch over an open link (issue #251, phase 1b), kept apart from Android so the JVM tests run it
  * against a made up watch. The order: hello, connect, battery, set the time, activity records since a time, heart rate
- * records since a time, and always "sync done" at the end while the link is up. Each request waits for its answer
+ * records since a time, and always "sync done" at the end while the link is up. When the watch asks for a sign in (it
+ * does so right after the hello), the session answers it ({@link SignIn}) and goes on once the awaited answer comes. Each request waits for its answer
  * before the next one (the watch drops what comes while it is busy). Every message the watch sends is handed to the
  * {@link Sink} as it arrives, so what came is stored even when the session ends early. Between messages it asks the
  * {@link Gate}: when a ring task wants the ring, the session ends at once (the ring always wins) and the rest follows
@@ -61,7 +63,14 @@ public final class Session {
         public long limitMs = 120000;
         /** Longest wait for a simple answer and between the messages of a data answer (ms; the tests make them short). */
         public long answerMs = ANSWER_MS, silenceMs = DATA_SILENCE_MS;
+        /** The address Android connected to; used for the sign in only when the watch's challenge names none. */
+        public String address;
+        /** Our own challenge for the sign in ({@link SignIn#OURS} bytes); null makes a random one (the tests fix it). */
+        public byte[] ours;
     }
+
+    /** {@link Result#signIn}: the watch did not ask, we answered and wait, the watch went on after our answer. */
+    public static final int SIGN_IN_NONE = 0, SIGN_IN_SENT = 1, SIGN_IN_ACCEPTED = 2;
 
     /** How the session went. {@code ended} is null when everything was asked and answered, else a plain sentence. */
     public static final class Result {
@@ -69,11 +78,18 @@ public final class Session {
         public int received;
         public long bytes;
         public boolean activityDone, heartDone, doneSent;
+        /** How the sign in went ({@link #SIGN_IN_NONE}, {@link #SIGN_IN_SENT}, {@link #SIGN_IN_ACCEPTED}). */
+        public int signIn = SIGN_IN_NONE;
+        /** Our challenge and the address of the last answered sign in, to check the watch's own proof; never logged. */
+        byte[] ours;
+        String signAddress;
     }
 
     // plain sentences for the screen; the log says more
     public static final String NO_ANSWER = "The watch did not answer. Keep it next to the phone, force stop the Withings app and try again.";
-    public static final String CHALLENGE = "The watch asked for a sign in that this version cannot answer yet. Nothing was changed on the watch. Please send the log.";
+    public static final String CHALLENGE = "The watch asked for a sign in of a kind this version does not know. Nothing was changed on the watch. Please send the log.";
+    public static final String SIGN_IN_REFUSED = "The watch did not accept the sign in. Nothing was changed on the watch. Please send the log.";
+    public static final String WATCH_PROOF = "The watch answered the sign in wrongly, so nothing more was asked. Please send the log.";
     public static final String FOR_RING = "Stopped to leave Bluetooth to the ring. The rest follows at the next sync.";
     public static final String STOPPED = "The watch sync was stopped. What arrived is stored.";
     public static final String LINK_LOST = "The connection to the watch was lost. What arrived is stored, the rest follows at the next sync.";
@@ -95,19 +111,20 @@ public final class Session {
         long end = System.currentTimeMillis() + plan.limitMs;
         boolean linkUp = true;
         try {
-            ask(link, Proto.hello(plan.androidSdk), Proto.HELLO, "hello", r, gate, sink, log, end, plan.answerMs);
-            ask(link, Proto.connect(), Proto.CONNECT, "connect", r, gate, sink, log, end, plan.answerMs);
-            ask(link, Proto.battery(), Proto.BATTERY, "battery", r, gate, sink, log, end, plan.answerMs);
-            ask(link, Proto.setTime(plan.now, plan.offset, plan.nextChange, plan.offsetAfter), Proto.SET_TIME, "set time", r, gate, sink, log, end, plan.answerMs);
-            r.activityDone = data(link, Proto.activity(plan.activitySince), Proto.ACTIVITY, "activity", r, gate, sink, log, end, plan.silenceMs);
-            r.heartDone = data(link, Proto.heartRate(plan.heartSince), Proto.HEART_RATE, "heart rate", r, gate, sink, log, end, plan.silenceMs);
+            ask(link, Proto.hello(plan.androidSdk), Proto.HELLO, "hello", r, gate, sink, log, end, plan);
+            ask(link, Proto.connect(), Proto.CONNECT, "connect", r, gate, sink, log, end, plan);
+            ask(link, Proto.battery(), Proto.BATTERY, "battery", r, gate, sink, log, end, plan);
+            ask(link, Proto.setTime(plan.now, plan.offset, plan.nextChange, plan.offsetAfter), Proto.SET_TIME, "set time", r, gate, sink, log, end, plan);
+            r.activityDone = data(link, Proto.activity(plan.activitySince), Proto.ACTIVITY, "activity", r, gate, sink, log, end, plan);
+            r.heartDone = data(link, Proto.heartRate(plan.heartSince), Proto.HEART_RATE, "heart rate", r, gate, sink, log, end, plan);
         } catch (Ended e) {
             r.ended = e.why;
             log.log("watch: ended early: " + e.why);
         } catch (IOException e) {
-            r.ended = LINK_LOST;
+            // the watch closing the link right after our answer most likely means it refused it
+            r.ended = r.signIn == SIGN_IN_SENT ? SIGN_IN_REFUSED : LINK_LOST;
             linkUp = false;
-            log.log("watch: link lost (" + e.getClass().getSimpleName() + ")");
+            log.log("watch: link lost" + (r.signIn == SIGN_IN_SENT ? " after the sign in answer" : "") + " (" + e.getClass().getSimpleName() + ")");
         }
         if (linkUp) {
             // always, also after a failure: the notes say the watch stops answering when a session ends without it
@@ -148,6 +165,49 @@ public final class Session {
         }
     }
 
+    /** True when {@code m} is the watch asking for a sign in. */
+    private static boolean asksSignIn(byte[] m) {
+        return Frame.type(m) == Proto.CHALLENGE || Frame.has(m, Proto.CHALLENGE_PART);
+    }
+
+    /**
+     * Answers the watch's sign in {@code m}. A second ask before the watch went on after the first answer means it
+     * refused that answer; a challenge of an unknown layout cannot be answered. Both end the session.
+     */
+    private static void signIn(Link link, byte[] m, Plan plan, Result r, Log log) throws IOException, InterruptedException, Ended {
+        if (r.signIn == SIGN_IN_SENT) {
+            log.log("watch: asked for a sign in again, the first answer was not accepted");
+            throw new Ended(SIGN_IN_REFUSED);
+        }
+        byte[] ours = plan.ours;
+        if (ours == null) {
+            ours = new byte[SignIn.OURS];
+            new SecureRandom().nextBytes(ours);
+        }
+        SignIn.Challenge c = SignIn.read(m, plan.address);
+        byte[] answer = c == null ? null : SignIn.answer(m, plan.address, ours);
+        if (answer == null) {
+            log.log("watch: the sign in is of a kind not known, " + m.length + " bytes, " + Frame.parts(m).size() + " parts");
+            throw new Ended(CHALLENGE);
+        }
+        link.send(answer);
+        r.signIn = SIGN_IN_SENT;
+        r.ours = ours;
+        r.signAddress = c.address;
+        log.log("watch: sent " + Frame.hexType(Proto.CHALLENGE) + " sign in answer, " + answer.length + " bytes"
+                + (plan.address != null ? ", address in the challenge is the connected one: " + (c.address.equalsIgnoreCase(plan.address) ? "yes" : "no") : ""));
+    }
+
+    /** The awaited answer came after our sign in answer: the watch accepted it; its own proof, when it sends one, must be right. */
+    private static void accepted(byte[] m, Result r, Log log) throws Ended {
+        if (r.signIn != SIGN_IN_SENT) return;
+        Boolean proof = SignIn.watchProof(m, r.ours, r.signAddress);
+        log.log("watch: the watch's own sign in proof: " + (proof == null ? "none sent" : proof ? "right" : "wrong"));
+        if (Boolean.FALSE.equals(proof)) throw new Ended(WATCH_PROOF);
+        r.signIn = SIGN_IN_ACCEPTED;
+        log.log("watch: sign in accepted");
+    }
+
     private static void check(Gate gate, long end) throws Ended {
         if (gate.stopped()) throw new Ended(STOPPED);
         if (gate.ringWanted()) throw new Ended(FOR_RING);
@@ -171,8 +231,9 @@ public final class Session {
     }
 
     /** Sends {@code req} and waits for its answer of {@code type}; other messages are stored and logged on the way. */
-    private static byte[] ask(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end, long answerMs)
+    private static byte[] ask(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end, Plan plan)
             throws IOException, InterruptedException, Ended {
+        long answerMs = plan.answerMs;
         check(gate, end);
         link.send(req);
         log.log("watch: sent " + Frame.hexType(type) + " " + what + ", " + req.length + " bytes");
@@ -181,6 +242,10 @@ public final class Session {
             long left = until - System.currentTimeMillis();
             byte[] m = left > 0 ? next(link, left, gate) : null;
             if (m == null) {
+                if (r.signIn == SIGN_IN_SENT) {
+                    log.log("watch: no answer to " + what + " within " + Math.max(1, answerMs / 1000) + " s after the sign in answer");
+                    throw new Ended(SIGN_IN_REFUSED);
+                }
                 log.log("watch: no answer to " + what + " within " + Math.max(1, answerMs / 1000) + " s");
                 throw new Ended(NO_ANSWER);
             }
@@ -188,15 +253,25 @@ public final class Session {
             int t = Frame.type(m);
             log.log("watch: got " + Frame.hexType(t) + (Frame.fromWatch(m) ? " (the watch's own)" : "") + ", " + m.length + " bytes, "
                     + Frame.parts(m).size() + " parts");
-            if (t == Proto.CHALLENGE || Frame.has(m, Proto.CHALLENGE_PART)) throw new Ended(CHALLENGE);
-            if (t == type && !Frame.fromWatch(m)) return m;
+            if (asksSignIn(m)) {
+                signIn(link, m, plan, r, log);
+                // the watch answers the request once it accepted the sign in: a fresh wait for it
+                until = System.currentTimeMillis() + answerMs;
+                check(gate, end);
+                continue;
+            }
+            if (t == type && !Frame.fromWatch(m)) {
+                accepted(m, r, log);
+                return m;
+            }
             check(gate, end);
         }
     }
 
     /** Sends a data request and takes its answers until one holds the end part; true when the end came. */
-    private static boolean data(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end, long silenceMs)
+    private static boolean data(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end, Plan plan)
             throws IOException, InterruptedException, Ended {
+        long silenceMs = plan.silenceMs;
         check(gate, end);
         link.send(req);
         log.log("watch: sent " + Frame.hexType(type) + " " + what + ", " + req.length + " bytes");
@@ -211,15 +286,18 @@ public final class Session {
                 }
                 take(m, r, sink, log);
                 int t = Frame.type(m);
-                if (t == Proto.CHALLENGE || Frame.has(m, Proto.CHALLENGE_PART)) {
-                    log.log("watch: got " + Frame.hexType(t) + ", " + m.length + " bytes");
-                    throw new Ended(CHALLENGE);
+                if (asksSignIn(m)) {
+                    log.log("watch: got " + Frame.hexType(t) + " during " + what + ", " + m.length + " bytes");
+                    signIn(link, m, plan, r, log);
+                    check(gate, end);
+                    continue;
                 }
                 if (t != type || Frame.fromWatch(m)) {
                     log.log("watch: got " + Frame.hexType(t) + (Frame.fromWatch(m) ? " (the watch's own)" : "") + " during " + what + ", " + m.length + " bytes");
                     check(gate, end);
                     continue;
                 }
+                accepted(m, r, log);
                 n++;
                 bytes += m.length;
                 if (n <= LOGGED) log.log("watch: got " + Frame.hexType(t) + " " + what + " " + n + ", " + m.length + " bytes, " + Frame.parts(m).size() + " parts");
