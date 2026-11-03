@@ -583,10 +583,11 @@ watch (besides switching its notifications on) or stored. Phase 1b (below) syncs
 report has "Use this watch for syncing" when the device shows the Withings service; that saves its address (`Prefs.setWatch`).
 
 * **Lock, the ring always wins:** one watch sync at a time (`RingGate.watch`, `tryLock`), and the ring lock taken without
-  waiting through `RingManager.whileRingFree(r, WatchSync.RUNNING)` (no sync counted, no ring task holding it; otherwise
-  "The ring is busy right now", and the job tries at its next run). Between two messages the session asks
-  `RingGate.ringWanted()` (a ring task queued on `op`, or a ring sync counted): then it sends "sync done", closes and gives
-  the ring back within about 2 s, far inside the 15 s a ring sync waits. The download takes `Db.holdForRing` like a ring
+  waiting through `RingManager.whileRingFree(r, WatchSync.RUNNING, false)` (no sync counted, no ring task holding it;
+  otherwise "The ring is busy right now", and the job tries at its next run). It does not mark the ring busy, so a sync by
+  hand, Live or a game is not refused but waits for the lock as usual. Between two messages, and every 250 ms while it
+  waits for one, the session asks `RingGate.ringWanted()` (a ring task queued on `op`, or a ring sync counted): then it
+  sends "sync done", closes and gives the ring back within about 2 s, far inside the 15 s a ring sync waits. The download takes `Db.holdForRing` like a ring
   task, so a long analysis is waited for ("Re analysing your history, the watch syncs after it"). Never in demo mode.
 * **Link:** its own (`WatchSync.Link`, not `GattLink`): `TRANSPORT_LE` to the saved address (15 s), the phone's existing bond
   (the Withings app made it; no bond is asked for), `CONNECTION_PRIORITY_HIGH` only for this session, MTU 119 asked

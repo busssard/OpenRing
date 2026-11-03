@@ -31,7 +31,8 @@ import app.openring.data.WatchStore;
 /**
  * One sync with the Withings watch (issue #251, phase 1b): connect, download what is new, set its clock, let go.
  * Its own link, not {@link GattLink} (which is made for the ring), and its own lock ({@link RingGate#watch}). It also
- * holds the ring lock, taken without waiting ({@link RingManager#whileRingFree(Runnable, String)}), so the phone never
+ * holds the ring lock, taken without waiting ({@link RingManager#whileRingFree(Runnable, String, boolean)}, without marking the
+ * ring busy, so a sync by hand is not refused), so the phone never
  * keeps two links, and gives it back between two messages as soon as a ring task asks for it ({@link RingGate#ringWanted}):
  * the ring always wins. The order of the messages is {@code core/withings/Session}; every message is stored as it comes
  * ({@code data/WatchStore}) and decoded at the end. The log names steps, message types and lengths, never a value.
@@ -102,7 +103,7 @@ public final class WatchSync {
                         out[0] = Session.STOPPED;
                     }
                 }
-            }, RUNNING);
+            }, RUNNING, false);
             if (!ran) {
                 ring.log("watch: not synced, the ring is busy");
                 return BUSY;

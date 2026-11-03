@@ -157,6 +157,14 @@ public class WatchTest {
         check("battery: missing part gives null", Proto.battery(Frame.message(Proto.BATTERY)) == null
                 && Proto.battery(Frame.message(Proto.BATTERY, Frame.part(Proto.BATTERY_PART, new byte[] {1}))) == null);
         check("workout names", Proto.workoutName(2).equals("Running") && Proto.workoutName(6).equals("Cycling") && Proto.workoutName(999).equals("Workout"));
+        int[] codes = {1, 2, 3, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 28, 29, 30, 34, 35, 36, 188, 191, 192, 193, 194, 195, 196, 227};
+        Set<String> names = new HashSet<String>();
+        boolean named = true;
+        for (int k : codes) {
+            String n = Proto.workoutName(k);
+            named &= !n.equals("Workout") && !n.contains("-") && names.add(n);
+        }
+        check("workout names: every code of the public list has its own plain name", named && names.size() == codes.length, names.size());
     }
 
     // ---------------------------------------------------------------------------------- records
@@ -307,6 +315,9 @@ public class WatchTest {
         p.offset = 3600;
         p.activitySince = 0;
         p.heartSince = 0;
+        // short waits: the made up watch answers at once or never
+        p.answerMs = 300;
+        p.silenceMs = 600;
         return p;
     }
 
@@ -390,6 +401,69 @@ public class WatchTest {
         st.failAt = 3;
         r = Session.run(w, plan(), new Gate(), st, new Lines());
         check("session: a message that cannot be stored ends the session, sync done sent", Session.NOT_STORED.equals(r.ended) && last(w) == Proto.SYNC_DONE, r.ended);
+
+        // the ring asks while the session waits for a silent watch: it ends within a slice, not after the whole wait
+        final long[] since = {0};
+        Session.Gate later = new Session.Gate() {
+            @Override
+            public boolean ringWanted() {
+                return since[0] > 0 && System.currentTimeMillis() - since[0] > 100;
+            }
+
+            @Override
+            public boolean stopped() {
+                return false;
+            }
+        };
+        Session.Plan slow = plan();
+        slow.silenceMs = 20000;
+        Session.Link waiting = new Session.Link() {
+            final FakeWatch inner = new FakeWatch();
+            {
+                List<byte[]> a = inner.answers.get(Proto.ACTIVITY);
+                a.remove(a.size() - 1);
+            }
+
+            @Override
+            public void send(byte[] msg) throws IOException {
+                inner.send(msg);
+            }
+
+            @Override
+            public byte[] next(long ms) throws IOException, InterruptedException {
+                byte[] m = inner.next(ms);
+                if (m == null) {
+                    if (since[0] == 0) since[0] = System.currentTimeMillis();
+                    Thread.sleep(Math.min(ms, 50));
+                }
+                return m;
+            }
+        };
+        long w0 = System.currentTimeMillis();
+        r = Session.run(waiting, slow, later, new Store(), new Lines());
+        check("session: the ring asks during a long wait: the session ends within a slice", Session.FOR_RING.equals(r.ended)
+                && System.currentTimeMillis() - w0 < 3000, (System.currentTimeMillis() - w0) + " ms");
+
+        // the link drops just when sync done is sent, or right after it: the session's result stays as it was
+        w = new FakeWatch();
+        w.dropAt = Proto.SYNC_DONE;
+        r = Session.run(w, plan(), new Gate(), new Store(), new Lines());
+        check("session: the link drops at sync done: still complete, sync done not sent", r.ended == null && !r.doneSent && r.heartDone, r.ended);
+        w = new FakeWatch();
+        w.silent.add(Proto.SYNC_DONE);
+        Lines dl = new Lines();
+        r = Session.run(w, plan(), new Gate(), new Store(), dl);
+        check("session: no answer to sync done: complete all the same, the log says so", r.ended == null && r.doneSent && joined(dl.lines).contains("no answer to sync done"));
+        w = new FakeWatch();
+        st = new Store();
+        st.failAt = 5 + w.answers.get(Proto.ACTIVITY).size() + w.answers.get(Proto.HEART_RATE).size() - 1;
+        r = Session.run(w, plan(), new Gate(), st, new Lines());
+        check("session: the answer to sync done cannot be stored: its sentence", Session.NOT_STORED.equals(r.ended) && r.doneSent, r.ended);
+        // a challenge in the middle of a data answer
+        w = new FakeWatch();
+        w.answers.get(Proto.HEART_RATE).add(1, Frame.message(Proto.CHALLENGE, Frame.part(Proto.CHALLENGE_PART, new byte[] {0})));
+        r = Session.run(w, plan(), new Gate(), new Store(), new Lines());
+        check("session: a challenge during a data answer ends it", Session.CHALLENGE.equals(r.ended) && r.activityDone && !r.heartDone && last(w) == Proto.SYNC_DONE);
 
         // the watch's own messages on the way are stored and do not count as the answer
         w = new FakeWatch();

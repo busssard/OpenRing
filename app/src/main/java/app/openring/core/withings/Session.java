@@ -44,6 +44,8 @@ public final class Session {
     public static final long ANSWER_MS = 5000, DATA_SILENCE_MS = 20000;
     /** Longest wait for the answer to "sync done" (the session ends either way). */
     public static final long DONE_MS = 2000;
+    /** A wait for the watch is cut into slices this long, and the gate is asked between them (the ring always wins). */
+    static final long SLICE_MS = 250;
     /** Messages of one data answer that the log names one by one; the rest are summed up. */
     static final int LOGGED = 5;
 
@@ -57,6 +59,8 @@ public final class Session {
         public long activitySince, heartSince;
         /** Longest session (ms); the session ends between messages once it is over. */
         public long limitMs = 120000;
+        /** Longest wait for a simple answer and between the messages of a data answer (ms; the tests make them short). */
+        public long answerMs = ANSWER_MS, silenceMs = DATA_SILENCE_MS;
     }
 
     /** How the session went. {@code ended} is null when everything was asked and answered, else a plain sentence. */
@@ -91,12 +95,12 @@ public final class Session {
         long end = System.currentTimeMillis() + plan.limitMs;
         boolean linkUp = true;
         try {
-            ask(link, Proto.hello(plan.androidSdk), Proto.HELLO, "hello", r, gate, sink, log, end);
-            ask(link, Proto.connect(), Proto.CONNECT, "connect", r, gate, sink, log, end);
-            ask(link, Proto.battery(), Proto.BATTERY, "battery", r, gate, sink, log, end);
-            ask(link, Proto.setTime(plan.now, plan.offset, plan.nextChange, plan.offsetAfter), Proto.SET_TIME, "set time", r, gate, sink, log, end);
-            r.activityDone = data(link, Proto.activity(plan.activitySince), Proto.ACTIVITY, "activity", r, gate, sink, log, end);
-            r.heartDone = data(link, Proto.heartRate(plan.heartSince), Proto.HEART_RATE, "heart rate", r, gate, sink, log, end);
+            ask(link, Proto.hello(plan.androidSdk), Proto.HELLO, "hello", r, gate, sink, log, end, plan.answerMs);
+            ask(link, Proto.connect(), Proto.CONNECT, "connect", r, gate, sink, log, end, plan.answerMs);
+            ask(link, Proto.battery(), Proto.BATTERY, "battery", r, gate, sink, log, end, plan.answerMs);
+            ask(link, Proto.setTime(plan.now, plan.offset, plan.nextChange, plan.offsetAfter), Proto.SET_TIME, "set time", r, gate, sink, log, end, plan.answerMs);
+            r.activityDone = data(link, Proto.activity(plan.activitySince), Proto.ACTIVITY, "activity", r, gate, sink, log, end, plan.silenceMs);
+            r.heartDone = data(link, Proto.heartRate(plan.heartSince), Proto.HEART_RATE, "heart rate", r, gate, sink, log, end, plan.silenceMs);
         } catch (Ended e) {
             r.ended = e.why;
             log.log("watch: ended early: " + e.why);
@@ -150,18 +154,34 @@ public final class Session {
         if (System.currentTimeMillis() > end) throw new Ended(TOO_LONG);
     }
 
+    /**
+     * The next message within {@code ms}, or null; the wait is cut into {@link #SLICE_MS} slices and between them the gate is
+     * asked, so a ring task waits at most a slice for the ring, never a whole answer's wait.
+     */
+    private static byte[] next(Link link, long ms, Gate gate) throws IOException, InterruptedException, Ended {
+        long until = System.currentTimeMillis() + ms;
+        while (true) {
+            long left = until - System.currentTimeMillis();
+            if (left <= 0) return null;
+            byte[] m = link.next(Math.min(SLICE_MS, left));
+            if (m != null) return m;
+            if (gate.stopped()) throw new Ended(STOPPED);
+            if (gate.ringWanted()) throw new Ended(FOR_RING);
+        }
+    }
+
     /** Sends {@code req} and waits for its answer of {@code type}; other messages are stored and logged on the way. */
-    private static byte[] ask(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end)
+    private static byte[] ask(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end, long answerMs)
             throws IOException, InterruptedException, Ended {
         check(gate, end);
         link.send(req);
         log.log("watch: sent " + Frame.hexType(type) + " " + what + ", " + req.length + " bytes");
-        long until = System.currentTimeMillis() + ANSWER_MS;
+        long until = System.currentTimeMillis() + answerMs;
         while (true) {
             long left = until - System.currentTimeMillis();
-            byte[] m = left > 0 ? link.next(left) : null;
+            byte[] m = left > 0 ? next(link, left, gate) : null;
             if (m == null) {
-                log.log("watch: no answer to " + what + " within " + ANSWER_MS / 1000 + " s");
+                log.log("watch: no answer to " + what + " within " + Math.max(1, answerMs / 1000) + " s");
                 throw new Ended(NO_ANSWER);
             }
             take(m, r, sink, log);
@@ -175,7 +195,7 @@ public final class Session {
     }
 
     /** Sends a data request and takes its answers until one holds the end part; true when the end came. */
-    private static boolean data(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end)
+    private static boolean data(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end, long silenceMs)
             throws IOException, InterruptedException, Ended {
         check(gate, end);
         link.send(req);
@@ -184,9 +204,9 @@ public final class Session {
         long bytes = 0;
         try {
             while (true) {
-                byte[] m = link.next(DATA_SILENCE_MS);
+                byte[] m = next(link, silenceMs, gate);
                 if (m == null) {
-                    log.log("watch: " + what + ": nothing more within " + DATA_SILENCE_MS / 1000 + " s, no end part");
+                    log.log("watch: " + what + ": nothing more within " + Math.max(1, silenceMs / 1000) + " s, no end part");
                     throw new Ended(NO_ANSWER);
                 }
                 take(m, r, sink, log);

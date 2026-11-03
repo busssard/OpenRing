@@ -365,10 +365,19 @@ public final class RingManager {
      * {@code core/RingGate.takeIfFree}: no wait, never while a sync is counted.
      */
     public boolean whileRingFree(Runnable r, String line) {
+        return whileRingFree(r, line, true);
+    }
+
+    /**
+     * As {@link #whileRingFree(Runnable, String)}; with {@code markBusy} false {@link #busy()} stays false meanwhile, so a sync
+     * by hand, Live or a game is not refused but waits for the lock as usual, and the holder gives the ring back as soon as
+     * {@code RingGate.ringWanted()} says so (the watch sync, issue #251: the ring always wins).
+     */
+    public boolean whileRingFree(Runnable r, String line, boolean markBusy) {
         if (!app.openring.core.RingGate.RING.takeIfFree()) return false;
         String before = status;
         try {
-            busy = true;
+            busy = markBusy;
             if (line != null) status = line;
             notifyListeners();
             r.run();
