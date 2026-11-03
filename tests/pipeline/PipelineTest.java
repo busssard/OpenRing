@@ -9470,7 +9470,23 @@ public class PipelineTest {
         } finally {
             fail.set(null, false);
         }
-        check("#272 shrinking fails: Delete all reports no error and every table is empty", got == null && notEmpty272(db).isEmpty(), got + " " + notEmpty272(db));
+        // issue #299: the failure is noted after the delete, as the only row left (kv, one row), with the step, time and error class
+        String note = db.kv(DataCheck.SHRINK_ERROR, null);
+        check("#272 shrinking fails: Delete all reports no error and every table is empty but the note (#299)", got == null
+                && notEmpty272(db).equals(Arrays.asList("kv 1")) && note != null, got + " " + notEmpty272(db));
+        check("#299 the note names Delete all, the local time and the error's class and place in Db.java, never its message",
+                note != null && note.matches("Delete all\\|\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}\\|IllegalStateException at Db\\.java:\\d+")
+                        && !note.contains("test stop"), note);
+        String text = DataCheck.run(c).text;
+        String line = null;
+        for (String l : text.split("\n")) if (l.startsWith("[note] Making the file smaller: ")) line = l;
+        check("#299 the Data check has the line, with the step, time and error and no exception message", line != null
+                && line.equals("[note] Making the file smaller: after Delete all (" + note.split("\\|")[1] + ") the freed space could not be given back"
+                        + " to the phone (" + note.split("\\|")[2] + "). The deleted data is gone; the file stays larger until the next Delete all,"
+                        + " and new data reuses the space first.") && !text.contains("test stop at shrink"), line);
+        Analyzer.deleteAll(c);
+        check("#299 the next Delete all that shrinks removes the note and the line", db.kv(DataCheck.SHRINK_ERROR, null) == null
+                && notEmpty272(db).isEmpty() && !DataCheck.run(c).text.contains("Making the file smaller"), notEmpty272(db));
 
         // a read open on another connection while deleting: no error, the file shrinks at the next checkpoint once it ends
         large272(db, ev, end);
@@ -9500,6 +9516,45 @@ public class PipelineTest {
         db.resetRingData();
         check("#272 pairing another ring frees the space and keeps the period log", size272(c)[0] * 10 < big && periodRows252(db).equals(rows)
                 && db.eventCount() == 0, big + " to " + size272(c)[0]);
+        check("#299 a delete that shrinks leaves no note", db.kv(DataCheck.SHRINK_ERROR, null) == null, db.kv(DataCheck.SHRINK_ERROR, null));
+
+        // issue #299: pairing another ring and shrinking fails, the note names it, the period log still stays
+        db.insertBatch(ev.subList(0, 1000), 9, end);
+        got = null;
+        fail.set(null, true);
+        try {
+            db.resetRingData();
+        } catch (RuntimeException e) {
+            got = e;
+        } finally {
+            fail.set(null, false);
+        }
+        note = db.kv(DataCheck.SHRINK_ERROR, null);
+        check("#299 pairing another ring, shrinking fails: no error, the note names the step, the period log stays", got == null
+                && note != null && note.startsWith("pairing another ring|") && note.contains("|IllegalStateException at Db.java:")
+                && periodRows252(db).equals(rows) && db.eventCount() == 0, got + " " + note);
+        check("#299 the Data check line says after pairing another ring", DataCheck.run(c).text.contains(
+                "[note] Making the file smaller: after pairing another ring (" + note.split("\\|")[1] + ")"), note);
+
+        // issue #299: the note cannot be written either (a full disk): the delete stays done, no error reaches the person
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop299 BEFORE INSERT ON kv WHEN NEW.k = '" + DataCheck.SHRINK_ERROR
+                + "' BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        db.insertBatch(ev.subList(0, 1000), 9, end);
+        got = null;
+        fail.set(null, true);
+        try {
+            Analyzer.deleteAll(c);
+        } catch (RuntimeException e) {
+            got = e;
+        } finally {
+            fail.set(null, false);
+            db.getWritableDatabase().execSQL("DROP TRIGGER stop299");
+        }
+        check("#299 the note cannot be written: Delete all reports no error, every table is empty, no note", got == null
+                && notEmpty272(db).isEmpty(), got + " " + notEmpty272(db));
+        db.put(DataCheck.SHRINK_ERROR, "odd");
+        check("#299 a note in another form is shown as it is", DataCheck.run(c).text.contains("[note] Making the file smaller: "
+                + "the freed space could not be given back to the phone (odd). The deleted data is gone"), db.kv(DataCheck.SHRINK_ERROR, null));
 
         // a backup of this version and of schema 7, restored after Delete all: everything back
         Analyzer.deleteAll(c);
