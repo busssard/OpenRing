@@ -189,6 +189,12 @@ out=$(python3 -I "$DIAL" "$t/card.raw" --view 10 20 190 180 85 2>&1); a=$(angle 
 check "dial: --view with no line touches 13:00" '[ "$a" = 195 ]'
 out=$(python3 -I "$DIAL" "$t/line.raw" --view 10 20 190 120 85 2>&1); code=$?
 check "dial: --view with a clock cut off at the screen edge prints nothing" '[ $code = 0 ] && [ -z "$out" ]'
+# the fixed tap in screens.sh when dial_touch.py prints nothing is 13:00 on its fixed circle (issue #300)
+fallback=$(sed -n 's/^DIAL_FALLBACK="\(.*\)"$/\1/p' "$here/.github/scripts/screens.sh")
+expected=$(python3 -I -B -c 'import importlib.util, sys
+s = importlib.util.spec_from_file_location("dial_touch", sys.argv[1]); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+print(*m.point(540, 1047, 300, 195))' "$DIAL")
+check "dial: the fallback tap in screens.sh ($fallback) is 13:00 on the fixed circle ($expected)" '[ -n "$fallback" ] && [ "$fallback" = "$expected" ]'
 
 # screens.sh with an adb stand in that gets stuck (issue #278): the run must stop within its limits,
 # with a line that says what happened, instead of waiting for the job timeout.
