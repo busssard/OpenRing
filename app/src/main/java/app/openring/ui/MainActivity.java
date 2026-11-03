@@ -219,6 +219,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
      * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252),
      * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
+     * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
+     * rise it marks (phase 2),
      * drip (boolean, demo mode only) opens Import from drip with a made up drip file (the preview only, nothing is imported in
      * demo mode) and drip_correct (boolean) with it opens Correct on its first short period.
      */
@@ -250,6 +252,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("period_edit", false) && Prefs.of(this).demo()) PeriodCard.editPending = true;
         // screen test: the gentle question of phase 1a2 on the period cards, demo mode only; nothing is saved without a tap
         PeriodCard.askPending = i.getBooleanExtra("period_ask", false) && Prefs.of(this).demo();
+        // screen test: the marked temperature rise of phase 2, read by touch on its first high night, demo mode only
+        PeriodAnalysis.risePending = i.getBooleanExtra("period_rise", false) && Prefs.of(this).demo();
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)

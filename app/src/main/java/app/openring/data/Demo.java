@@ -146,7 +146,7 @@ public final class Demo {
         long t0 = today.minusDays(days).atStartOfDay(zone).toEpochSecond();
         List<double[]> screen = new ArrayList<double[]>();
         java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
-        List<RingEvent> ev = warmNights(history(t0, days, now, zone, new Random(7), screen, apps), t0, zone, app.openring.core.analysis.Cycles.demoWarmNights(today));
+        List<RingEvent> ev = warmNights(history(t0, days, now, zone, new Random(7), screen, apps, true), t0, zone, app.openring.core.analysis.Cycles.demoWarmNights(today));
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
@@ -162,7 +162,7 @@ public final class Demo {
     }
 
     /**
-     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on about cycle day 18
+     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on cycle day 20
      * ({@code Cycles.demo}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
      */
     static void periods(final Db db, LocalDate today, final long now) {
@@ -261,6 +261,17 @@ public final class Demo {
     /** As above; when {@code screen} is not null it also gets made up phone screen sessions (issue #13). */
     static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
             java.util.Map<String, List<double[]>> apps) {
+        return history(t0, days, now, zone, r, screen, apps, false);
+    }
+
+    /**
+     * As above. With {@code cycle} (only for {@link #enter}, issue #252 phase 2) the nights' skin temperature varies less from
+     * night to night (0.07 °C instead of 0.12) and its one warm night (0.6 °C, a fever or a warm room) lies 9 days back instead
+     * of the warm spell of 2 nights lately, so the period tracker's rise rule finds the made up rise and shows such a night
+     * left out. The random draws are the same either way, so everything else is as before.
+     */
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
+            java.util.Map<String, List<double[]>> apps, boolean cycle) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         List<Object[]> kept = new ArrayList<Object[]>();
         LocalDate first = java.time.Instant.ofEpochSecond(t0).atZone(zone).toLocalDate();
@@ -274,7 +285,8 @@ public final class Demo {
             double wake = at(day, weekend ? 8.0 : 6.7, zone) + r.nextGaussian() * 1200;
             if (wake > now - 1200) wake = now - 1200;
             if (wake - bed < 3 * 3600) continue;
-            double tempOffset = r.nextGaussian() * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0); // a warm spell lately
+            double g = r.nextGaussian();
+            double tempOffset = cycle ? g * 0.07 + (d == days - 9 ? 0.6 : 0) : g * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0); // a warm spell lately
             double fitness = d * 0.06; // resting HR slowly improves
             // a few wake ups per night, longer on restless nights
             int bouts = r.nextInt(3) + (r.nextDouble() < 0.25 ? 2 : 0);

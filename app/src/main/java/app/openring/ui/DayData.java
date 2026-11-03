@@ -38,7 +38,7 @@ public final class DayData {
     public final List<double[]> leftOut = new ArrayList<double[]>();
     /** The period tracker shows (issue #252): the profile says female, the Settings switch, or demo mode. */
     public boolean periodShown;
-    /** The period tracker's estimate from the whole log, today; null when hidden or when the log could not be read. */
+    /** The period tracker's estimate from the whole log and the temperature rise (phase 2), today; null when hidden or when the log could not be read. */
     public app.openring.core.analysis.Cycles periods;
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
@@ -143,6 +143,13 @@ public final class DayData {
                 LocalDate today = LocalDate.now();
                 d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped()));
                 d.periodAsk = d.periods.askStopped(p.age(), app.openring.core.analysis.Cycles.day(p.periodAskLater()));
+                try {
+                    // phase 2: the temperature rise of each cycle, from the ring's nights and the mouth temperatures
+                    d.periods = app.openring.data.Periods.measured(db, d.periods, java.time.ZoneId.systemDefault());
+                } catch (RuntimeException e) {
+                    // the calendar estimate stays; the error's kind only, never a date or a value
+                    app.openring.ble.RingManager.get(c).log("day load: the temperature rise for the period tracker: " + e.getClass().getSimpleName());
+                }
                 // the day summaries hold no period data; read here so the line can sit next to the cycles
                 try {
                     for (String[] r : db.daysJson(d.periods.tempFrom().toString(), today.toString())) {

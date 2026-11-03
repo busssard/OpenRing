@@ -162,7 +162,7 @@ public final class Periods {
 
     /**
      * The reminder's read only helper (issue #252, phase 1a2; Design review): the estimate from the person's own log in
-     * the real file {@code openring.db}, also while demo mode is on, without {@link Db#get}: no {@code Db} is opened,
+     * the real file {@code openring.db}, with the temperature rise of its nights (phase 2, {@link #measuredOrNot}), also while demo mode is on, without {@link Db#get}: no {@code Db} is opened,
      * closed or swapped, nothing is upgraded or written, and the demo file is never read. One read only connection that
      * is closed again. Null when the real file does not exist (no log); any other problem (a file from before the
      * period tables, a damaged page, a swap under way) throws, and the caller keeps what it had planned.
@@ -172,10 +172,84 @@ public final class Periods {
         if (!f.isFile()) return null;
         SQLiteDatabase d = SQLiteDatabase.openDatabase(f.getPath(), null, SQLiteDatabase.OPEN_READONLY | SQLiteDatabase.NO_LOCALIZED_COLLATORS, KEEP_FILE);
         try {
-            return cycles(d, today, stoppedSince);
+            return measuredOrNot(d, cycles(d, today, stoppedSince));
         } finally {
             d.close();
         }
+    }
+
+    /**
+     * {@code base} with the temperature rise (phase 2), so the reminder follows the same estimate as the screens; should
+     * reading the nights fail, {@code base} (the calendar estimate of the log, as before phase 2).
+     */
+    static app.openring.core.analysis.Cycles measuredOrNot(SQLiteDatabase d, app.openring.core.analysis.Cycles base) {
+        try {
+            return measured(d, base, java.time.ZoneId.systemDefault());
+        } catch (RuntimeException e) {
+            return base;
+        }
+    }
+
+    // ------------------------------------------------------------ the temperature rise (phase 2)
+
+    /**
+     * {@code base} (the estimate from the log) with the temperature rise of each cycle (phase 2): the ring's nights
+     * ({@link #ringNights}) and the morning temperatures by mouth ({@link #mouthTemps}) from just before the first period
+     * on. Reads only, nothing is stored: worked out on each load like the rest of the estimate. Errors are thrown.
+     */
+    public static app.openring.core.analysis.Cycles measured(Db db, app.openring.core.analysis.Cycles base, java.time.ZoneId zone) {
+        return measured(db.getReadableDatabase(), base, zone);
+    }
+
+    static app.openring.core.analysis.Cycles measured(SQLiteDatabase d, app.openring.core.analysis.Cycles base, java.time.ZoneId zone) {
+        if (base.periods.isEmpty()) return base;
+        java.time.LocalDate from = base.periods.get(0).start.minusDays(app.openring.core.analysis.TempRise.ODD_DAYS);
+        return base.measured(ringNights(d, from, base.today, zone), mouthTemps(d, from, base.today));
+    }
+
+    /**
+     * The ring's nightly skin temperature ({@code temp} of each day summary, °C, by the day the morning falls on) from
+     * {@code from} to {@code to} for the rise: a night with less than {@code TempRise.SHORT_NIGHT_MIN} minutes asleep is
+     * left out, and so is every night whose time (18:00 the evening before to 12:00 that day, in {@code zone}) touches a
+     * time left out because someone else wore the ring (issue #254), even when the analysis kept part of the night.
+     */
+    public static java.util.TreeMap<java.time.LocalDate, Double> ringNights(Db db, java.time.LocalDate from, java.time.LocalDate to, java.time.ZoneId zone) {
+        return ringNights(db.getReadableDatabase(), from, to, zone);
+    }
+
+    static java.util.TreeMap<java.time.LocalDate, Double> ringNights(SQLiteDatabase d, java.time.LocalDate from, java.time.LocalDate to, java.time.ZoneId zone) {
+        List<double[]> rows = new ArrayList<double[]>();
+        Cursor c = d.rawQuery("SELECT start, stop FROM excluded", null);
+        try {
+            while (c.moveToNext()) rows.add(new double[] {c.getDouble(0), c.getDouble(1)});
+        } finally {
+            c.close();
+        }
+        app.openring.core.analysis.LeftOut left = app.openring.core.analysis.LeftOut.of(rows);
+        java.util.TreeMap<java.time.LocalDate, Double> out = new java.util.TreeMap<java.time.LocalDate, Double>();
+        c = d.rawQuery("SELECT day, json FROM days WHERE day >= ? AND day <= ? ORDER BY day", new String[] {from.toString(), to.toString()});
+        try {
+            while (c.moveToNext()) {
+                org.json.JSONObject o = Json.parse(c.getString(1));
+                double t = app.openring.core.analysis.TempRise.ringNight(Json.d(o, "temp"), Json.d(o, "asleep_min"));
+                if (Double.isNaN(t)) continue;
+                java.time.LocalDate day = java.time.LocalDate.parse(c.getString(0));
+                if (!left.isEmpty() && left.overlaps(day.minusDays(1).atTime(18, 0).atZone(zone).toEpochSecond(), day.atTime(12, 0).atZone(zone).toEpochSecond())) continue;
+                out.put(day, t);
+            }
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** The morning temperatures by mouth (°C) in force from {@code from} to {@code to}, without those drip left out. */
+    static java.util.TreeMap<java.time.LocalDate, Double> mouthTemps(SQLiteDatabase d, java.time.LocalDate from, java.time.LocalDate to) {
+        java.util.TreeMap<java.time.LocalDate, Double> out = new java.util.TreeMap<java.time.LocalDate, Double>();
+        for (Temp t : readTemps(d, "WHERE gone = 0 AND excluded = 0 AND day >= ? AND day <= ? ", new String[] {from.toString(), to.toString()})) {
+            out.put(java.time.LocalDate.parse(t.day), t.t.c);
+        }
+        return out;
     }
 
     private static List<Day> readDays(Db db, String where, String[] args) {

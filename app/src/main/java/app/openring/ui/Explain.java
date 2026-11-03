@@ -194,11 +194,74 @@ public final class Explain {
         return "Each dot is one period at the day it started, touch it to read. The line is the average.";
     }
 
-    /** Under the night temperature line (the plan's text). */
+    /** Under the night temperature line (the plan's text, with the marked rise of phase 2). */
     public static final String PERIOD_TEMP = "Your ring's nightly skin temperature compared with your usual. In many people it rises a little "
-            + "after ovulation and stays higher until the next period. Shown as evidence only, the app does not find ovulation from it yet. "
-            + "Red bands are period days, green the ovulation range of the estimate. Nights you left out are not shown, and illness, "
-            + "alcohol or a warm room move it too. Touch the line to read a night.";
+            + "after ovulation and stays higher until the next period. Where the app found that rise, the dashed line is the baseline "
+            + "(the highest of the 6 nights before), the ringed dots are the high nights and the thin line the likely ovulation, the day "
+            + "before the first high night. Red bands are period days, green the ovulation range of the estimate. Nights you left out are "
+            + "not shown, and illness, alcohol, travel or a warm room move it too. Touch the line to read a night.";
+
+    // ------------------------------------------ period tracker, ovulation from the temperature (issue #252, phase 2)
+
+    /**
+     * How the rise is found, with the third night's height for the ring's own noise ({@code ringNoise}, °C) and, when there
+     * are temperatures by mouth, for theirs ({@code mouthNoise}, NaN without).
+     */
+    public static String periodRise(double ringNoise, double mouthNoise) {
+        java.util.Locale l = java.util.Locale.getDefault();
+        String third = String.format(l, "%.2f °C for your ring", app.openring.core.analysis.TempRise.thirdNeed(ringNoise));
+        if (!Double.isNaN(mouthNoise)) third += String.format(l, ", %.2f °C by mouth", app.openring.core.analysis.TempRise.thirdNeed(mouthNoise));
+        return "Three over six, the classic rule: the baseline is the highest of 6 nights, then 3 nights in a row must lie above it, "
+                + "the third at least " + third + " (0.2 °C for a steady signal, less for one that varies more from night to night: yours "
+                + "varies by about " + String.format(l, "%.2f", ringNoise) + " °C). A night may be missing, and one night that dips or a third "
+                + "that falls short needs a fourth high night. The rise must last until the next period, and nights far from the ones around "
+                + "them (a fever, a warm room) are left out. The likely ovulation is the day before the first high night. The ring and the "
+                + "temperatures by mouth are checked apart; when both find it within 2 days, it is clear. In made up cycles with a rise of "
+                + "0.3 °C and night to night noise of 0.1 °C, the rule found 7 in 10 rises and a clear one was within 1 day of the real "
+                + "ovulation 4 times in 5. With noise of 0.2 °C it finds about a third. Illness, alcohol, travel and a warm room move the "
+                + "temperature too. An estimate, not birth control and not a medical diagnosis.";
+    }
+
+    /** Under "Found in 4 of 6 cycles". */
+    public static String periodFound(int over, int found) {
+        return "Cycles that are over and had a lasting rise, out of " + (over == 1 ? "your 1 cycle" : "your " + over + " cycles")
+                + " that are over. Not every cycle shows one: too few nights with the ring, a small rise, or a cycle without ovulation.";
+    }
+
+    /** Under the own luteal phase: from how many cycles, how much it varies, and what it changes. */
+    public static String periodLuteal(int n, int days, double sd) {
+        if (n < app.openring.core.analysis.TempRise.LUTEAL_FROM) {
+            return "The days from ovulation to the next period, from cycles with a rise. Until " + app.openring.core.analysis.TempRise.LUTEAL_FROM
+                    + " cycles have one (" + n + " so far), the estimate uses the usual " + app.openring.core.analysis.Cycles.LUTEAL + " days.";
+        }
+        return "The days from ovulation to the next period: the middle value of your " + n + " newest cycles with a rise, which vary by about "
+                + String.format(java.util.Locale.getDefault(), "%.1f", Double.isNaN(sd) ? 0 : sd) + " days. It replaces the usual "
+                + app.openring.core.analysis.Cycles.LUTEAL + " days for your ovulation estimate, and once this cycle's rise shows, for your next period.";
+    }
+
+    /** Under the ovulation line, for whichever way the estimate was made. */
+    public static String periodOvulation(app.openring.core.analysis.Cycles cy) {
+        if (cy.method == app.openring.core.analysis.Cycles.MEASURED) {
+            boolean clear = cy.rise.current.confidence == app.openring.core.analysis.TempRise.CLEAR;
+            return "Give or take " + cy.ovulationRange + (cy.ovulationRange == 1 ? " day" : " days") + ": " + (clear ? "a clear rise" : "a weaker rise")
+                    + ", found within that many days of the real day about 4 times in 5 in made up cycles. Measured means the day before the "
+                    + "temperature rose, not a test. How it is found is under Your cycles.";
+        }
+        if (cy.method == app.openring.core.analysis.Cycles.OWN_LUTEAL) {
+            return "Give or take " + cy.ovulationRange + " days: how much " + yourCycles(cy.used.size()) + " vary, together with how much your own "
+                    + "time from ovulation to the period varies, times 1.28 for about 4 in 5. At least 3 days.";
+        }
+        return periodOvulation(cy.used.size(), cy.ovulationRange);
+    }
+
+    /** Under "Expected ...", for whichever way the estimate was made. */
+    public static String periodRange(app.openring.core.analysis.Cycles cy) {
+        if (cy.method != app.openring.core.analysis.Cycles.MEASURED) return periodRange(cy.used.size(), cy.length, cy.range, cy.sd);
+        boolean own = cy.rise.ownLuteal();
+        return "Measured: the ovulation day plus " + cy.luteal + " days, " + (own ? "your own time from ovulation to the period" : "the usual time from ovulation to the period")
+                + ". Give or take " + cy.range + (cy.range == 1 ? " day" : " days") + ": how much " + (own ? "your own time varies" : "that time varies (about 2.4 days in a large study)")
+                + " together with the error of the measured day, times 1.28 for about 4 in 5. The calendar estimate from your typical cycle is shown for comparison.";
+    }
 
     /** Settings, under "Remind me before my period". */
     public static final String PERIOD_REMIND = "A notification on this phone before the earliest day of the expected range, at the time you pick. "

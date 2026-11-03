@@ -322,7 +322,8 @@ public final class DripCsv {
      * and note columns, a quoted note with a comma; newest row first, Windows line ends and a byte order mark.
      */
     public static String demo(LocalDate today) {
-        LocalDate demoStart = today.minusDays(250);
+        // the first period of the demo's own log (Cycles.demo), so the file overlaps it there
+        LocalDate demoStart = app.openring.core.analysis.Cycles.demo(today).firstKey();
         int[] cycle = {28, 30, 27, 29, 31, 26};
         int[] days = {5, 2, 5, 4, 6, 5};
         TreeMap<LocalDate, String[]> rows = new TreeMap<LocalDate, String[]>();
