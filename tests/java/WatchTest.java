@@ -39,6 +39,8 @@ public class WatchTest {
         due();
         demo();
         gate();
+        mainDevice();
+        mainDeviceEdges();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -711,5 +713,321 @@ public class WatchTest {
         t.start();
         t.join();
         return got[0];
+    }
+
+    // ------------------------------------------------------------------- main device (one set of numbers)
+
+    static final ZoneId MD_ZONE = ZoneId.of("Europe/Zurich");
+    static final LocalDate MD_DAY = LocalDate.of(2026, 6, 10);
+
+    static double mdFrom(LocalDate d, ZoneId z) {
+        return d.atStartOfDay(z).toEpochSecond();
+    }
+
+    static double mdAt(LocalDate d, double hours, ZoneId z) {
+        return d.atStartOfDay(z).toEpochSecond() + hours * 3600;
+    }
+
+    /** A ring worn the whole day (movement 1.3 every quarter hour, a heart rate point in each) except from {@code offFrom} to {@code offTo} hours. */
+    static MainDevice.Ring mdRing(LocalDate d, ZoneId z, double offFrom, double offTo, double steps) {
+        MainDevice.Ring r = new MainDevice.Ring();
+        r.steps = steps;
+        r.metres = app.openring.core.analysis.Wellness.stepsToMeters(steps);
+        double from = mdFrom(d, z), to = mdFrom(d.plusDays(1), z);
+        for (double t = from; t < to; t += 900) {
+            double h = (t - from) / 3600;
+            if (h >= offFrom && h < offTo) continue;
+            int q = MainDevice.clockQuarter(t, z);
+            r.met[q] = h >= 12 && h < 13 ? 3.0 : 1.3;
+            r.hr.add(t + 450, 60 + (int) h);
+        }
+        return r;
+    }
+
+    /** A watch worn the whole day except from {@code offFrom} to {@code offTo} hours: 100 steps (72 m) a quarter hour, heart rate every 30 minutes. */
+    static MainDevice.Watch mdWatch(LocalDate d, ZoneId z, double offFrom, double offTo) {
+        MainDevice.Watch w = new MainDevice.Watch();
+        double from = mdFrom(d, z), to = mdFrom(d.plusDays(1), z);
+        for (double t = from; t < to; t += 900) {
+            double h = (t - from) / 3600;
+            if (h >= offFrom && h < offTo) continue;
+            w.steps.add(new Records.Steps((long) t, 900, 100, 72, 4));
+            if (((long) (t - from)) % 1800 == 0) w.heart.add(new Records.Heart((long) t, 70));
+        }
+        return w;
+    }
+
+    static boolean sameTs(app.openring.core.analysis.TS a, app.openring.core.analysis.TS b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            if (Double.doubleToLongBits(a.t(i)) != Double.doubleToLongBits(b.t(i)) || Double.doubleToLongBits(a.v(i)) != Double.doubleToLongBits(b.v(i))) return false;
+        }
+        return true;
+    }
+
+    static boolean bits(double a, double b) {
+        return Double.doubleToLongBits(a) == Double.doubleToLongBits(b);
+    }
+
+    static boolean plain(String t) {
+        return t == null || !t.contains(" - ") && !t.contains("–") && !t.contains("—") && !t.contains("--");
+    }
+
+    static void mainDevice() {
+        ZoneId z = MD_ZONE;
+        LocalDate day = MD_DAY;
+        double from = mdFrom(day, z), to = mdFrom(day.plusDays(1), z);
+        check("main device: a stored value that is no choice is the ring", MainDevice.valid(7) == MainDevice.RING && MainDevice.valid(-1) == MainDevice.RING
+                && MainDevice.valid(MainDevice.WATCH) == MainDevice.WATCH);
+
+        // ---- only a ring: its numbers exactly as stored, nothing named
+        MainDevice.Ring ring = mdRing(day, z, 14, 16, 6543.0);
+        ring.night = true;
+        for (MainDevice.Watch none : new MainDevice.Watch[] {null, new MainDevice.Watch()}) {
+            for (int main : new int[] {MainDevice.RING, MainDevice.WATCH}) {
+                MainDevice.Day d = MainDevice.of(main, day, from, to, z, ring, none);
+                check("main device: ring only gives the ring's steps, distance and line byte for byte (main " + main + ", watch " + (none == null ? "null" : "empty") + ")",
+                        bits(d.steps, 6543.0) && bits(d.metres, ring.metres) && d.hr == ring.hr && d.fillSteps == 0 && d.stepFill.isEmpty() && d.hrFill.isEmpty()
+                                && d.watchNight == null && d.workouts.isEmpty(), d.steps);
+                check("main device: ring only names nothing", MainDevice.stepsLine(d, z, Locale.US) == null && MainDevice.heartLine(d, z) == null
+                        && MainDevice.nightLine(d) == null && MainDevice.ringTooLine(d, 80) == null && (main == MainDevice.WATCH || MainDevice.stepsNote(d) == null)
+                        && !d.filled(), MainDevice.nightLine(d));
+            }
+        }
+        MainDevice.Ring nothing = new MainDevice.Ring();
+        MainDevice.Day empty = MainDevice.of(MainDevice.RING, day, from, to, z, nothing, null);
+        check("main device: a day without the ring's summary and without a watch has nothing to show", !empty.any() && Double.isNaN(empty.steps) && Double.isNaN(empty.metres));
+
+        // ---- both, the ring worn all day: the ring's numbers, the watch only lists its workout
+        MainDevice.Ring full = mdRing(day, z, 99, 99, 7000);
+        MainDevice.Watch watch = mdWatch(day, z, 99, 99);
+        watch.workouts.add(new Records.Workout((long) mdAt(day, 18, z), 1800, Records.RUN, 4000, 5000, 300));
+        watch.workouts.add(new Records.Workout((long) mdAt(day, 7, z), 1200, 6, 0, 8000, 200));
+        watch.workouts.add(new Records.Workout((long) mdAt(day, -2, z), 1200, 6, 0, 8000, 200));
+        MainDevice.Day both = MainDevice.of(MainDevice.RING, day, from, to, z, full, watch);
+        check("main device: ring main and worn all day: the ring's numbers byte for byte", bits(both.steps, 7000) && both.hr == full.hr && both.stepFill.isEmpty()
+                && both.hrFill.isEmpty() && !both.whole, both.steps);
+        check("main device: the watch's workouts of the day are listed, oldest first, the day before's not", both.workouts.size() == 2
+                && both.workouts.get(0).start < both.workouts.get(1).start, both.workouts.size());
+
+        // ---- ring main with a gap (charging 14:00 to 16:00): the watch fills it
+        MainDevice.Day gap = MainDevice.of(MainDevice.RING, day, from, to, z, ring, watch);
+        check("main device: the watch's steps in the ring's gap are added (8 quarter hours of 100)", bits(gap.fillSteps, 800) && bits(gap.steps, 6543 + 800)
+                && bits(gap.metres, ring.metres + 8 * 72), gap.steps + " " + gap.fillSteps);
+        check("main device: the steps' gap is one stretch, 14:00 to 16:00", gap.stepFill.size() == 1 && gap.stepFill.get(0)[0] == mdAt(day, 14, z)
+                && gap.stepFill.get(0)[1] == mdAt(day, 16, z), gap.stepFill.size());
+        int ringPts = ring.hr.size();
+        check("main device: the watch's heart rate fills the gap, 4 readings every 30 minutes, the ring's points kept", gap.hr.size() == ringPts + 4
+                && gap.hrFill.size() == 1 && gap.hrFill.get(0)[0] == mdAt(day, 14, z) && gap.hrFill.get(0)[1] == mdAt(day, 16, z), gap.hr.size());
+        boolean ordered = true;
+        for (int i = 1; i < gap.hr.size(); i++) ordered &= gap.hr.t(i) >= gap.hr.t(i - 1);
+        check("main device: the joined line is in time order", ordered);
+        String sl = MainDevice.stepsLine(gap, z, Locale.US);
+        check("main device: the steps line names the watch, the count and the time", "Includes 800 steps from your watch, 14:00 to 16:00, when your ring was not worn.".equals(sl), sl);
+        String hl = MainDevice.heartLine(gap, z);
+        check("main device: the heart rate line names the watch and the time", "From your watch 14:00 to 16:00, when your ring was not worn.".equals(hl), hl);
+        check("main device: the Steps tile says some came from the watch", "Estimated from your movement, some counted by your watch".equals(MainDevice.stepsNote(gap)));
+
+        // ---- watch main, worn all day: the watch's numbers, nothing from the ring
+        MainDevice.Day wm = MainDevice.of(MainDevice.WATCH, day, from, to, z, ring, watch);
+        check("main device: watch main: its steps, distance and its own quarter hour line", bits(wm.steps, 96 * 100) && bits(wm.metres, 96 * 72)
+                && wm.hr.size() == 48 && wm.fillSteps == 0 && wm.stepFill.isEmpty() && wm.hrFill.isEmpty(), wm.steps + " " + wm.hr.size());
+        check("main device: watch main: the tile says counted by the watch", "Counted by your watch".equals(MainDevice.stepsNote(wm)) && MainDevice.stepsLine(wm, z, Locale.US) == null);
+
+        // ---- watch main with a gap 11:00 to 15:00: the ring fills where the watch has no record within 30 minutes
+        MainDevice.Watch wgap = mdWatch(day, z, 11, 15);
+        MainDevice.Day wf = MainDevice.of(MainDevice.WATCH, day, from, to, z, full, wgap);
+        // records up to the 10:45 one, which lasts to 11:00: worn up to 11:30 with its reach of 30 minutes; from 15:00 on, so worn from 14:30
+        // ring estimate 11:45 to 14:30: 12:00 to 13:00 at movement 3.0 gives 105 steps a minute, the rest 1.3 gives none
+        check("main device: watch main: the ring's estimate fills its gap, only quarter hours with enough movement count", bits(wf.fillSteps, 4 * 105 * 15)
+                && bits(wf.steps, (96 - 16) * 100 + 4 * 105 * 15), wf.fillSteps + " " + wf.steps);
+        check("main device: watch main: the gap is the stretch without the watch", wf.stepFill.size() == 1 && wf.stepFill.get(0)[0] == mdAt(day, 11.75, z)
+                && wf.stepFill.get(0)[1] == mdAt(day, 14.5, z), wf.stepFill.isEmpty() ? null : MainDevice.clockRanges(wf.stepFill, z));
+        check("main device: watch main: the ring's heart rate fills that stretch", wf.hrFill.size() == 1 && wf.hrFill.get(0)[0] == mdAt(day, 11.75, z), wf.hrFill.size());
+        String wl = MainDevice.stepsLine(wf, z, Locale.US);
+        check("main device: watch main: the line says about, from the ring", "Includes about 6,300 steps from your ring, 11:45 to 14:30, when your watch was not worn.".equals(wl), wl);
+        check("main device: watch main: the tile says some are the ring's estimate", "Counted by your watch, some estimated by your ring".equals(MainDevice.stepsNote(wf)));
+        check("main device: the ring's quarter hour steps follow its per minute rule", MainDevice.ringSlotSteps(7.5) == 150 * 15 && MainDevice.ringSlotSteps(2.5) == 105 * 15
+                && MainDevice.ringSlotSteps(1.8) == 25 * 15 && MainDevice.ringSlotSteps(1.7) == 0 && MainDevice.ringSlotSteps(Double.NaN) == 0);
+        // asleep in the ring's night: no estimate there
+        MainDevice.Ring sleepy = mdRing(day, z, 99, 99, 7000);
+        sleepy.sleeps.add(new double[] {mdAt(day, 11, z), mdAt(day, 15, z)});
+        check("main device: watch main: no ring steps while the ring says asleep", MainDevice.of(MainDevice.WATCH, day, from, to, z, sleepy, wgap).fillSteps == 0);
+
+        // ---- the whole day from the other device
+        MainDevice.Day wo = MainDevice.of(MainDevice.RING, day, from, to, z, nothing, watch);
+        check("main device: watch only: every step and heart rate is the watch's", wo.whole && bits(wo.steps, 96 * 100) && wo.hr.size() == 48 && wo.any(), wo.steps);
+        String wol = MainDevice.stepsLine(wo, z, Locale.US);
+        check("main device: watch only: the line says the ring has nothing", "From your watch: your ring has no data for this day.".equals(wol)
+                && "From your watch: your ring has no data for this day.".equals(MainDevice.heartLine(wo, z)) && "Counted by your watch".equals(MainDevice.stepsNote(wo)), wol);
+        MainDevice.Day ro = MainDevice.of(MainDevice.WATCH, day, from, to, z, full, mdWatch(day.minusDays(3), z, 99, 99));
+        check("main device: watch main, the watch has nothing on this day: the ring's day as stored", ro.whole && bits(ro.steps, 7000) && ro.hr == full.hr
+                && "From your ring: your watch has no data for this day.".equals(MainDevice.stepsLine(ro, z, Locale.US)), ro.steps);
+
+        // ---- day borders: by the record's start, in the day's zone
+        MainDevice.Watch edge = new MainDevice.Watch();
+        edge.steps.add(new Records.Steps((long) (from - 600), 900, 50, 30, 1));   // 23:50 the day before
+        edge.steps.add(new Records.Steps((long) (from + 300), 600, 40, 30, 1));   // 00:05
+        edge.steps.add(new Records.Steps((long) (to - 300), 900, 30, 20, 1));     // 23:55
+        edge.heart.add(new Records.Heart((long) to, 99));                         // the next midnight
+        MainDevice.Day ed = MainDevice.of(MainDevice.RING, day, from, to, z, nothing, edge);
+        check("main device: a record before midnight belongs to the day before, one at 23:55 to this day", bits(ed.steps, 70) && ed.hr.size() == 0, ed.steps);
+        // the same instants in another zone fall on other days
+        ZoneId ny = ZoneId.of("America/New_York");
+        double nf = mdFrom(day, ny), nt = mdFrom(day.plusDays(1), ny);
+        MainDevice.Day other = MainDevice.of(MainDevice.RING, day, nf, nt, ny, nothing, mdWatch(day, z, 99, 99));
+        check("main device: in New York the Zurich day's records from 06:00 on fall on this day", bits(other.steps, (96 - 24) * 100), other.steps);
+
+        // ---- clock change days: 100 and 92 quarter hours
+        LocalDate back = LocalDate.of(2026, 10, 25), fwd = LocalDate.of(2026, 3, 29);
+        for (LocalDate cd : new LocalDate[] {back, fwd}) {
+            double cf = mdFrom(cd, z), ct = mdFrom(cd.plusDays(1), z);
+            int n = MainDevice.slots(cf, ct);
+            MainDevice.Watch cw = new MainDevice.Watch();
+            for (double t = cf; t < ct; t += 900) cw.steps.add(new Records.Steps((long) t, 900, 10, 7, 0));
+            MainDevice.Day cday = MainDevice.of(MainDevice.RING, cd, cf, ct, z, nothing, cw);
+            check("main device: clock change " + cd + ": " + n + " quarter hours, every one filled once", n == (cd.equals(back) ? 100 : 92) && bits(cday.steps, n * 10)
+                    && cday.whole, n + " " + cday.steps);
+            MainDevice.Ring cr = mdRing(cd, z, 99, 99, 5000);
+            check("main device: clock change " + cd + ": a ring worn all day leaves no gap", MainDevice.of(MainDevice.RING, cd, cf, ct, z, cr, cw).stepFill.isEmpty());
+        }
+
+        // ---- nights and switching the main device on the same data
+        MainDevice.Watch nw = mdWatch(day, z, 99, 99);
+        for (long t = (long) mdAt(day, -1, z); t < mdAt(day, 7, z); t += 1800) nw.sleep.add(new Records.Sleep(t, 1800, Records.LIGHT));
+        MainDevice.Ring rn = mdRing(day, z, 99, 99, 7000);
+        rn.night = true;
+        MainDevice.Day r1 = MainDevice.of(MainDevice.RING, day, from, to, z, rn, nw), w1 = MainDevice.of(MainDevice.WATCH, day, from, to, z, rn, nw);
+        check("main device: ring main with its own night: the ring's night is shown", r1.watchNight == null && !r1.nightFromOther() && MainDevice.nightLine(r1) == null);
+        check("main device: watch main: the watch's night, and a line naming the ring's", w1.watchNight != null && w1.watchNight.lightMin == 8 * 60 && !w1.nightFromOther()
+                && MainDevice.ringTooLine(w1, 81).contains("sleep score of 81") && MainDevice.ringTooLine(w1, Double.NaN).startsWith("Your ring also recorded this night."),
+                MainDevice.ringTooLine(w1, 81));
+        check("main device: switching changes only what is shown, the inputs stay", bits(rn.steps, 7000) && r1.steps != w1.steps && rn.hr.size() == 96);
+        rn.night = false;
+        MainDevice.Day r2 = MainDevice.of(MainDevice.RING, day, from, to, z, rn, nw);
+        check("main device: ring main without a night: the watch's, with its line", r2.watchNight != null && r2.nightFromOther()
+                && "From your watch: your ring has no night for this day.".equals(MainDevice.nightLine(r2)), MainDevice.nightLine(r2));
+        rn.night = true;
+        MainDevice.Watch nonight = mdWatch(day, z, 99, 99);
+        MainDevice.Day w2 = MainDevice.of(MainDevice.WATCH, day, from, to, z, rn, nonight);
+        check("main device: watch main without a watch night: the ring's night, with its line", w2.watchNight == null && w2.nightFromOther()
+                && "From your ring: your watch has no night for this day.".equals(MainDevice.nightLine(w2)));
+
+        // ---- texts
+        List<double[]> two = new ArrayList<double[]>();
+        two.add(new double[] {mdAt(day, 14, z), mdAt(day, 16, z)});
+        two.add(new double[] {mdAt(day, 22.5, z), mdAt(day, 23, z)});
+        check("main device: two stretches read 'and'", "14:00 to 16:00 and 22:30 to 23:00".equals(MainDevice.clockRanges(two, z)), MainDevice.clockRanges(two, z));
+        two.add(0, new double[] {mdAt(day, 7, z), mdAt(day, 7.25, z)});
+        check("main device: three read with a comma and 'and'", "07:00 to 07:15, 14:00 to 16:00 and 22:30 to 23:00".equals(MainDevice.clockRanges(two, z)));
+        check("main device: the last stretch ends at midnight", "23:45 to 00:00".equals(MainDevice.clockRanges(MainDevice.ranges(new boolean[] {false, true}, to - 1800, to), z)));
+        MainDevice.Day one = MainDevice.of(MainDevice.RING, day, from, to, z, mdRing(day, z, 14, 14.25, 100), mdWatch(day, z, 99, 99));
+        check("main device: one step reads 'step'", MainDevice.stepsLine(one, z, Locale.US).startsWith("Includes 100 steps"));
+        boolean ok = true;
+        for (String t : new String[] {sl, hl, wl, wol, MainDevice.nightLine(r2), MainDevice.nightLine(w2), MainDevice.ringTooLine(w1, 81), MainDevice.stepsNote(wf),
+            MainDevice.stepsNote(gap), app.openring.ui.Explain.MAIN_DEVICE, app.openring.ui.Explain.MAIN_FILLED, app.openring.ui.Explain.MAIN_WATCH_NIGHT}) ok &= plain(t);
+        check("main device: every text is plain, no dash as punctuation", ok);
+    }
+
+    /** The main device rule's edges: a watch with only one kind of record, records outside the day, gaps without the other device. */
+    static void mainDeviceEdges() {
+        ZoneId z = MD_ZONE;
+        LocalDate day = MD_DAY;
+        double from = mdFrom(day, z), to = mdFrom(day.plusDays(1), z);
+        MainDevice.Ring nothing = new MainDevice.Ring();
+        // a watch with only heart rate, only sleep, only a workout: each counts as rows, each fills a day without the ring
+        MainDevice.Watch hrOnly = new MainDevice.Watch();
+        hrOnly.heart.add(new Records.Heart((long) mdAt(day, 10, z), 66));
+        hrOnly.heart.add(new Records.Heart((long) mdAt(day, -1, z), 55));   // the day before
+        hrOnly.heart.add(new Records.Heart((long) mdAt(day, 25, z), 55));   // the day after
+        MainDevice.Day h = MainDevice.of(MainDevice.RING, day, from, to, z, nothing, hrOnly);
+        check("edges: a watch with only heart rate fills only the line, steps stay empty", !hrOnly.isEmpty() && h.whole && Double.isNaN(h.steps) && h.hr.size() == 1
+                && h.any() && h.filled() && MainDevice.stepsLine(h, z, Locale.US) == null && MainDevice.heartLine(h, z).startsWith("From your watch: "), h.hr.size());
+        MainDevice.Day hw = MainDevice.of(MainDevice.WATCH, day, from, to, z, nothing, hrOnly);
+        check("edges: watch main with only heart rate: no steps, its line", Double.isNaN(hw.steps) && hw.hr.size() == 1 && hw.fillSteps == 0 && !hw.whole
+                && "Counted by your watch".equals(MainDevice.stepsNote(hw)), hw.steps);
+        MainDevice.Watch sleepOnly = new MainDevice.Watch();
+        sleepOnly.sleep.add(new Records.Sleep((long) mdAt(day, -1, z), 7 * 3600, Records.DEEP));
+        MainDevice.Day so = MainDevice.of(MainDevice.RING, day, from, to, z, nothing, sleepOnly);
+        check("edges: a watch with only a night: the night, nothing else", so.watchNight != null && so.whole && so.any() && Double.isNaN(so.steps) && so.hr.size() == 0
+                && MainDevice.heartLine(so, z) == null && MainDevice.stepsLine(so, z, Locale.US) == null, so.watchNight);
+        MainDevice.Watch wkOnly = new MainDevice.Watch();
+        wkOnly.workouts.add(new Records.Workout((long) mdAt(day, 9, z), 600, Records.SWIM, 0, 500, 80));
+        MainDevice.Day wk = MainDevice.of(MainDevice.WATCH, day, from, to, z, nothing, wkOnly);
+        check("edges: a watch with only a workout: listed, no numbers", wk.workouts.size() == 1 && wk.any() && Double.isNaN(wk.steps) && !wk.filled(), wk.steps);
+        MainDevice.Watch elsewhere = new MainDevice.Watch();
+        elsewhere.workouts.add(new Records.Workout((long) mdAt(day, 30, z), 600, Records.SWIM, 0, 500, 80));
+        elsewhere.sleep.add(new Records.Sleep((long) mdAt(day, 30, z), 600, Records.LIGHT));
+        elsewhere.heart.add(new Records.Heart((long) mdAt(day, 30, z), 60));
+        elsewhere.steps.add(new Records.Steps((long) mdAt(day, 30, z), 900, 10, 7, 0));
+        MainDevice.Day el = MainDevice.of(MainDevice.RING, day, from, to, z, nothing, elsewhere);
+        check("edges: watch rows only on another day: nothing shown, nothing named", !el.whole && !el.any() && !el.filled() && el.workouts.isEmpty(), el.steps);
+        MainDevice.Ring ringFull = mdRing(day, z, 99, 99, 4000);
+        MainDevice.Day elw = MainDevice.of(MainDevice.WATCH, day, from, to, z, ringFull, elsewhere);
+        check("edges: watch main, its rows only on another day: the ring's day, named", elw.whole && bits(elw.steps, 4000) && elw.hr == ringFull.hr
+                && MainDevice.stepsNote(elw) == null && "From your ring: your watch has no data for this day.".equals(MainDevice.heartLine(elw, z)), elw.steps);
+        MainDevice.Day noRing = MainDevice.of(MainDevice.WATCH, day, from, to, z, nothing, elsewhere);
+        check("edges: watch main, neither device on this day: nothing named", !noRing.whole && !noRing.any() && MainDevice.stepsLine(noRing, z, Locale.US) == null
+                && MainDevice.heartLine(noRing, z) == null, noRing.steps);
+
+        // the ring's line with a point outside the day and one without a value: neither marks a quarter hour worn
+        MainDevice.Ring odd = new MainDevice.Ring();
+        odd.steps = 0;
+        odd.hr.add(from - 450, 70);
+        odd.hr.add(from + 450, Double.NaN);
+        odd.hr.add(to + 450, 70);
+        MainDevice.Day od = MainDevice.of(MainDevice.RING, day, from, to, z, odd, mdWatch(day, z, 99, 99));
+        check("edges: a ring point outside the day or without a value leaves the quarter hour to the watch", od.whole && bits(od.steps, 96 * 100), od.steps);
+        MainDevice.Day odw = MainDevice.of(MainDevice.WATCH, day, from, to, z, odd, mdWatch(day, z, 0, 2));
+        check("edges: watch main: those ring points fill nothing", odw.hrFill.isEmpty(), odw.hrFill.size());
+
+        // a ring gap where the watch is off too: not named; the other gap is
+        MainDevice.Ring twoGaps = mdRing(day, z, 14, 16, 5000);
+        for (int q = 80; q < 84; q++) twoGaps.met[q] = Double.NaN;  // 20:00 to 21:00
+        app.openring.core.analysis.TS keep = new app.openring.core.analysis.TS();
+        for (int i = 0; i < twoGaps.hr.size(); i++) {
+            double t = twoGaps.hr.t(i);
+            if (t < mdAt(day, 20, z) || t >= mdAt(day, 21, z)) keep.add(t, twoGaps.hr.v(i));
+        }
+        twoGaps.hr = keep;
+        MainDevice.Watch offEvening = mdWatch(day, z, 19.5, 21.5);
+        MainDevice.Day tg = MainDevice.of(MainDevice.RING, day, from, to, z, twoGaps, offEvening);
+        check("edges: a ring gap the watch did not cover either is not named", tg.stepFill.size() == 1 && tg.hrFill.size() == 1
+                && "14:00 to 16:00".equals(MainDevice.clockRanges(tg.stepFill, z)), MainDevice.clockRanges(tg.stepFill, z));
+        // watch main, its gap inside the ring's night or with the ring off as well
+        MainDevice.Ring night = mdRing(day, z, 99, 99, 5000);
+        night.sleeps.add(new double[] {mdAt(day, 12, z), mdAt(day, 12.5, z)});
+        night.sleeps.add(new double[] {mdAt(day, 30, z), mdAt(day, 31, z)});
+        MainDevice.Day ng = MainDevice.of(MainDevice.WATCH, day, from, to, z, night, mdWatch(day, z, 11, 15));
+        check("edges: watch main: the ring's nap inside the gap gives no steps there", bits(ng.fillSteps, 2 * 105 * 15), ng.fillSteps);
+        MainDevice.Ring bothOff = mdRing(day, z, 11, 15, 5000);
+        MainDevice.Day bo = MainDevice.of(MainDevice.WATCH, day, from, to, z, bothOff, mdWatch(day, z, 11, 15));
+        check("edges: watch main: where neither was worn nothing is filled", bo.fillSteps == 0 && bo.stepFill.isEmpty() && bo.hrFill.isEmpty(), bo.fillSteps);
+        // watch main, the watch with heart rate only and the ring with movement in its gap: the ring's estimate alone
+        MainDevice.Watch hrMorning = new MainDevice.Watch();
+        for (double hh = 0; hh < 10; hh += 0.5) hrMorning.heart.add(new Records.Heart((long) mdAt(day, hh, z), 60));
+        MainDevice.Day hm = MainDevice.of(MainDevice.WATCH, day, from, to, z, ringFull, hrMorning);
+        check("edges: watch main without its steps: the ring's estimate is the day's steps", bits(hm.steps, hm.fillSteps) && hm.fillSteps == 4 * 105 * 15
+                && bits(hm.metres, app.openring.core.analysis.Wellness.stepsToMeters(hm.fillSteps)), hm.steps);
+
+        // one step, a night line with the watch main and no ring night
+        MainDevice.Watch oneStep = new MainDevice.Watch();
+        oneStep.steps.add(new Records.Steps((long) mdAt(day, 15, z), 900, 1, 1, 0));
+        MainDevice.Day os = MainDevice.of(MainDevice.RING, day, from, to, z, mdRing(day, z, 14, 16, 3000), oneStep);
+        check("edges: one step reads 'step'", "Includes 1 step from your watch, 14:00 to 16:00, when your ring was not worn.".equals(MainDevice.stepsLine(os, z, Locale.US)),
+                MainDevice.stepsLine(os, z, Locale.US));
+        MainDevice.Watch wn = new MainDevice.Watch();
+        wn.sleep.add(new Records.Sleep((long) mdAt(day, -1, z), 7 * 3600, Records.REM));
+        MainDevice.Ring noNight = mdRing(day, z, 99, 99, 3000);
+        MainDevice.Day nn = MainDevice.of(MainDevice.WATCH, day, from, to, z, noNight, wn);
+        check("edges: watch main, the ring without a night: no line about the ring's night", MainDevice.ringTooLine(nn, 70) == null && nn.watchNight != null
+                && MainDevice.nightLine(nn) == null, MainDevice.ringTooLine(nn, 70));
+        MainDevice.Day rn = MainDevice.of(MainDevice.RING, day, from, to, z, noNight, wn);
+        check("edges: ring main: never the line about the ring's night", MainDevice.ringTooLine(rn, 70) == null && rn.nightFromOther() && rn.filled());
+        MainDevice.Ring withNight = mdRing(day, z, 99, 99, 3000);
+        withNight.night = true;
+        MainDevice.Day wnn = MainDevice.of(MainDevice.WATCH, day, from, to, z, withNight, mdWatch(day, z, 99, 99));
+        check("edges: watch main, no watch night: the ring's night named, no score line", MainDevice.ringTooLine(wnn, 70) == null && wnn.nightFromOther() && wnn.filled());
+        check("edges: the devices' names", "your watch".equals(MainDevice.name(MainDevice.WATCH)) && "your ring".equals(MainDevice.name(MainDevice.RING)));
     }
 }

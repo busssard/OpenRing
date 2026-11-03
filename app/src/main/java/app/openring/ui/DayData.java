@@ -56,6 +56,12 @@ public final class DayData {
     public final java.util.TreeMap<LocalDate, Double> periodTemps = new java.util.TreeMap<LocalDate, Double>();
     /** The morning temperatures by mouth imported from drip (phase 1b) over the same days, read only while the tracker shows. */
     public final java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp> periodMouth = new java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp>();
+    /**
+     * The day as shown with the main device (issue #251, {@code core/withings/MainDevice}): steps, distance, the heart rate
+     * line, the night when the ring has none, the watch's workouts. With only a ring it holds the ring's own numbers. Never
+     * null after {@link #load}.
+     */
+    public app.openring.core.withings.MainDevice.Day merged;
     /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
     public boolean ok = true;
 
@@ -198,7 +204,31 @@ public final class DayData {
             JSONObject o = Json.parse(r[1]);
             if (o != null) d.history.put(r[0], o);
         }
+        d.merge(c, db);
         return d;
+    }
+
+    /**
+     * Works out {@link #merged}: the ring's stored results of this day, and the watch's rows around it when any watch
+     * message is stored. Reads only. When the watch's rows cannot be read the ring's numbers are shown alone.
+     */
+    void merge(Context c, Db db) {
+        double ds = dayStart(), de = dayEnd();
+        List<JSONObject> nights = new ArrayList<JSONObject>(recent);
+        nights.addAll(naps);
+        if (night != null) nights.add(night);
+        app.openring.core.withings.MainDevice.Ring ring = app.openring.data.WatchStore.ringDay(day, night, nights, ds, de);
+        int main = app.openring.core.withings.MainDevice.RING;
+        app.openring.core.withings.MainDevice.Watch watch = null;
+        try {
+            main = app.openring.data.Prefs.of(c).mainDevice();
+            // a day earlier for the night that ends this morning
+            if (app.openring.data.WatchStore.any(db)) watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
+        } catch (RuntimeException e) {
+            watch = null;
+            ok = failed(c, date, "watch data", e);
+        }
+        merged = app.openring.core.withings.MainDevice.of(main, date, ds, de, zone, ring, watch);
     }
 
     /** Values of a day field for the {@code n} days ending at the selected date (NaN if missing). */
@@ -291,5 +321,10 @@ public final class DayData {
 
     public boolean empty() {
         return day == null && night == null;
+    }
+
+    /** Nothing to show from either device (the ring's summary and night missing, the watch with nothing either). */
+    public boolean emptyAll() {
+        return empty() && (merged == null || !merged.any());
     }
 }

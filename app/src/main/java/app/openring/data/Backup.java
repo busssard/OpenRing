@@ -104,6 +104,7 @@ public final class Backup {
         Json.put(o, "watch_address", p.watchAddress());
         Json.put(o, "watch_name", p.watchName());
         Json.put(o, "watch_per_day", p.watchPerDay());
+        Json.put(o, "main_device", p.mainDevice());
         ZipOutputStream z = new ZipOutputStream(os);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
@@ -481,6 +482,9 @@ public final class Backup {
         // the watch (issue #251); an older backup has none and leaves the phone's as it is
         if (!o.isNull("watch_address") && o.optString("watch_address").length() > 0) p.setWatch(o.optString("watch_address"), o.isNull("watch_name") ? null : o.optString("watch_name", null));
         if (app.openring.core.withings.WatchDue.valid(o.optInt("watch_per_day", -1))) p.setWatchPerDay(o.optInt("watch_per_day"));
+        // the main device (one set of numbers): an older backup has none and keeps the phone's
+        int main = o.optInt("main_device", -1);
+        if (main == app.openring.core.withings.MainDevice.RING || main == app.openring.core.withings.MainDevice.WATCH) p.setMainDevice(main);
     }
 
     static boolean looksLikeSqlite(File f) throws IOException {

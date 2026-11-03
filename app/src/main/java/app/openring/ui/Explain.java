@@ -482,4 +482,15 @@ public final class Explain {
 
     public static final String WATCH_DROP = "How much the battery fell per day over the last 7 days, charges left out. "
             + "It shows what the syncs and your use cost; more syncs a day cost more.";
+
+    // ---- the main device (issue #251, one set of numbers) ----
+
+    public static final String MAIN_DEVICE = "Your numbers come from the main device. When it was not worn (charging, off your hand), "
+            + "the other one fills that time, and the screen says so under the number. Switching changes only what is shown, nothing stored.";
+
+    public static final String MAIN_FILLED = "Not worn means no movement and no heart rate from the main device in a quarter hour. "
+            + "Readiness, the sleep score, burn and movement minutes stay the ring's. Settings, Watch, Open the watch page shows everything the watch sent.";
+
+    public static final String MAIN_WATCH_NIGHT = "Stages from Withings' own analysis on the watch, not from this app. "
+            + "The sleep score needs the ring's night, so there is none here.";
 }

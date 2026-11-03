@@ -343,6 +343,22 @@ swipe_up; swipe_up;                         shot live-charts 1
 # A saved ring key this phone cannot read (issue #199): the status line says so and leads to Setup. key_unreadable
 # only shows the line in demo mode, nothing is stored or sent to a ring
 launch --ez key_unreadable true --ei tab 0; shot today-key-unreadable
+# One set of numbers (issue #251, main device): the demo's ring is on its charger yesterday 14:00 to 16:00 and the made up
+# watch fills that time. Activity names the steps from the watch (with the watch's workouts below), Body the heart rate
+# from the watch; settings-watch above shows the Main device chips with Ring picked. Then with the watch as main device
+# (extra main_device, demo mode only): Settings with Watch picked, and Sleep with Withings' own night and the line naming
+# the ring's night. Back to Ring after, so the shots below stay as they were
+FILL_DAY=$(date -d '1 day ago' +%F)
+launch --ei tab 3 --es day "$FILL_DAY"; sleep 3
+scroll_to "GOAL PROGRESS" 6 || echo "::warning::issue #251 step: the Goal progress card was not found on Activity"
+shot activity-watch-fill 1
+launch --ei tab 4 --es day "$FILL_DAY"; sleep 3
+scroll_to "HEART RATE TODAY" 12 || echo "::warning::issue #251 step: the Heart rate today card was not found on Body"
+shot body-watch-fill 1
+launch --es settings watch --ei main_device 1; shot settings-main-watch
+launch --ei tab 1 --ei main_device 1;       shot sleep-watch-main
+swipe_up;                                   shot sleep-watch-main-stages 1
+launch --ei tab 0 --ei main_device 0;       sleep 3
 # A time left out because someone else wore the ring (issue #254), last: the example changes the demo's results for
 # every shot after it. left_out leaves out the day before yesterday 13:00 to 17:00, only in demo mode (the demo file),
 # then the analysis runs again: the Body tab shows the grey band on Heart rate today, Today the Left out card, and

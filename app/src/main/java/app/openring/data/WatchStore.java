@@ -304,6 +304,65 @@ public final class WatchStore {
         return out;
     }
 
+    /**
+     * The watch's rows from {@code from} to {@code to} (unix seconds) for one day's main device rule (issue #251,
+     * {@code core/withings/MainDevice}): records that start in it, sleep pieces that reach into it. Read on each day load.
+     */
+    public static app.openring.core.withings.MainDevice.Watch window(Db db, double from, double to) {
+        app.openring.core.withings.MainDevice.Watch w = new app.openring.core.withings.MainDevice.Watch();
+        SQLiteDatabase d = db.getReadableDatabase();
+        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+        Cursor c = d.rawQuery("SELECT start, dur, steps, metres, kcal FROM watch_steps WHERE start >= ? AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.steps.add(new Records.Steps(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4)));
+        } finally {
+            c.close();
+        }
+        c = d.rawQuery("SELECT t, bpm FROM watch_hr WHERE t >= ? AND t < ? ORDER BY t", a);
+        try {
+            while (c.moveToNext()) w.heart.add(new Records.Heart(c.getLong(0), c.getInt(1)));
+        } finally {
+            c.close();
+        }
+        // a night's pieces start the evening before; the day load asks from a day earlier. The cast: an expression has no
+        // column affinity, so a text parameter would never compare as a number
+        c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.sleep.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
+        } finally {
+            c.close();
+        }
+        c = d.rawQuery("SELECT start, dur, kind, steps, metres, kcal FROM watch_workouts WHERE start >= ? AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.workouts.add(new Records.Workout(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4), c.getInt(5)));
+        } finally {
+            c.close();
+        }
+        return w;
+    }
+
+    /**
+     * What the ring's stored results give for the main device rule: the day summary's steps, distance, movement per
+     * quarter hour and heart rate line, and every night or nap in {@code nights} that reaches the day ({@code from} to
+     * {@code to}). Reads only; a missing summary gives NaN and empty values.
+     */
+    public static app.openring.core.withings.MainDevice.Ring ringDay(org.json.JSONObject day, org.json.JSONObject night, List<org.json.JSONObject> nights,
+            double from, double to) {
+        app.openring.core.withings.MainDevice.Ring r = new app.openring.core.withings.MainDevice.Ring();
+        r.steps = Json.d(day, "steps");
+        r.metres = Json.d(day, "distance_m");
+        org.json.JSONArray prof = day == null ? null : day.optJSONArray("met_profile");
+        for (int i = 0; prof != null && i < Math.min(96, prof.length()); i++) r.met[i] = prof.isNull(i) ? Double.NaN : prof.optDouble(i, Double.NaN);
+        r.hr = Json.series(day == null ? null : day.optJSONArray("hr_day"));
+        r.night = night != null;
+        for (org.json.JSONObject n : nights) {
+            if (n == null) continue;
+            double s = Json.d(n, "start"), e = Json.d(n, "end");
+            if (!Double.isNaN(s) && !Double.isNaN(e) && e > from && s < to) r.sleeps.add(new double[] {s, e});
+        }
+        return r;
+    }
+
     /** The newest battery reading as {percent, unix seconds}, null for none (Settings, Watch). */
     public static long[] newestBattery(Db db) {
         Cursor c = db.getReadableDatabase().rawQuery("SELECT pct, t FROM watch_battery ORDER BY t DESC LIMIT 1", null);

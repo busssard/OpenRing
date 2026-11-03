@@ -884,6 +884,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.removeAllViews();
         card.addView(Ui.caption(this, "Watch"));
         card.addView(Ui.gap(this, 6));
+        // the main device (issue #251, one set of numbers): only once a watch was added
+        if (p.demo() || p.watchAddress() != null) mainDeviceChoice(card, p);
         if (p.demo()) {
             card.addView(Ui.body(this, "Demo mode: a made up Withings Steel HR. Turn demo mode off to sync a real watch."));
             watchPageButton(card);
@@ -1024,6 +1026,38 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 });
             }
         });
+    }
+
+    /**
+     * Main device: Ring or Watch (issue #251). The other one fills the time the main one was not worn; only what is shown
+     * changes, so the tabs load again when the person goes back.
+     */
+    void mainDeviceChoice(LinearLayout card, final Prefs p) {
+        card.addView(Ui.text(this, "Main device", 14, Ui.TEXT, Ui.MEDIUM));
+        final int main = p.mainDevice();
+        LinearLayout r = Ui.hbox(this);
+        String[] labels = {"Ring", "Watch"};
+        int[] values = {app.openring.core.withings.MainDevice.RING, app.openring.core.withings.MainDevice.WATCH};
+        for (int k = 0; k < 2; k++) {
+            final int value = values[k];
+            boolean on = value == main;
+            TextView chip = Ui.smallButton(this, labels[k], on ? Ui.OXY : Ui.TEXT_3);
+            if (on) chip.setBackground(Ui.rounded(Ui.alpha(Ui.OXY, 0.18f), Ui.dp(this, 24)));
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (value == p.mainDevice()) return;
+                    p.setMainDevice(value);
+                    fillWatchCard();
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            lp.setMargins(k == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), k == 0 ? Ui.dp(this, 4) : 0, 0);
+            r.addView(chip, lp);
+        }
+        card.addView(r, Ui.matchWrap());
+        card.addView(Ui.text(this, Explain.MAIN_DEVICE, 12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.gap(this, 10));
     }
 
     void watchPageButton(LinearLayout card) {

@@ -161,6 +161,8 @@ public final class Demo {
         List<double[]> screen = new ArrayList<double[]>();
         java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
         List<RingEvent> ev = warmNights(history(t0, days, now, zone, new Random(7), screen, apps, true), t0, zone, app.openring.core.analysis.Cycles.demoWarmNights(today));
+        // the ring on its charger yesterday afternoon, so the made up watch fills that time (issue #251, main device)
+        ev = charging(ev, t0, at(today.minusDays(1), CHARGE_FROM_H, zone), at(today.minusDays(1), CHARGE_TO_H, zone));
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
@@ -174,6 +176,26 @@ public final class Demo {
         Analyzer.runAll(c, null);
         db.put(BUILT, today.toString());
         return true;
+    }
+
+    /** The demo ring's charging time yesterday, clock hours (issue #251): no movement, no heart rate, no temperature. */
+    public static final double CHARGE_FROM_H = 14, CHARGE_TO_H = 16;
+
+    /**
+     * Leaves out the daytime readings (movement, heart beats, temperature) from {@code from} to {@code to}, as a ring on its
+     * charger has none (issue #251: the demo's gap the made up watch fills). Time records and every other event stay, so the
+     * dating is the same. Only for {@link #enter}; {@link #history} itself stays as it is.
+     */
+    static List<RingEvent> charging(List<RingEvent> ev, long t0, double from, double to) {
+        List<RingEvent> out = new ArrayList<RingEvent>(ev.size());
+        for (RingEvent e : ev) {
+            boolean reading = e.tag == EventCodec.ACTIVITY_INFO || e.tag == EventCodec.GREEN_IBI_QUALITY || e.tag == EventCodec.TEMP_EVENT;
+            double unix = t0 + (e.ds - DS0) / 10.0;
+            // a movement or heart beat event spans the 10 minutes after its time
+            if (reading && unix + 600 > from && unix < to) continue;
+            out.add(e);
+        }
+        return out;
     }
 
     /**

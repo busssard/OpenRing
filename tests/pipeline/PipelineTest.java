@@ -876,6 +876,7 @@ public class PipelineTest {
         restore251();
         large251();
         demo251();
+        mainDevice251();
         badges265();
         phase1a2_252();
         rise252();
@@ -10909,7 +10910,9 @@ public class PipelineTest {
         app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         p.setWatch(DEV251, "Steel HR test");
         p.setWatchPerDay(4);
+        p.setMainDevice(app.openring.core.withings.MainDevice.WATCH);
         byte[] full = backup252(c);
+        p.setMainDevice(app.openring.core.withings.MainDevice.RING);
         // after the backup: two more syncs only the phone has
         session251(db, 2000, made251(T251 + 86400, 87), T251 + 2 * 86400);
         session251(db, 3000, made251(T251 + 2 * 86400, 84), T251 + 3 * 86400);
@@ -10922,6 +10925,7 @@ public class PipelineTest {
         check("#251 restore: the ring history is the backup's", r.ok && r.history && db.eventCount() == events && results139(db).equals(results), r.message);
         check("#251 restore: every watch row of the phone is there, the newer syncs too", watchRows251(db).equals(phone), watchRows251(db));
         check("#251 restore: the watch's settings come from the backup", DEV251.equals(p.watchAddress()) && p.watchPerDay() == 4, p.watchPerDay());
+        check("#251 restore: the main device comes from the backup", p.mainDevice() == app.openring.core.withings.MainDevice.WATCH, p.mainDevice());
         app.openring.data.Backup.Result again = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
         db = Db.get(c);
         check("#251 the same restore twice gives the same watch rows", again.ok && watchRows251(db).equals(phone), null);
@@ -11015,5 +11019,91 @@ public class PipelineTest {
         check("#251 demo mode never touches the real watch rows", Db.REAL.equals(back.fileName) && watchRows251(back).equals(realRows)
                 && back.count("SELECT COUNT(*) FROM watch_raw WHERE device = '" + app.openring.core.withings.WatchDemo.ADDRESS + "'") == 0, null);
         clean254();
+    }
+
+    /**
+     * Issue #251, main device: the demo's ring is on its charger yesterday 14:00 to 16:00, and its made up watch fills that
+     * time when the day is shown; the stored results stay the ring's (no watch steps in them), and switching the main
+     * device changes only what is worked out on load. An older backup without the choice keeps the phone's.
+     */
+    static void mainDevice251() throws Exception {
+        Context c = phone254("openring251-main");
+        LocalDate today = LocalDate.now();
+        app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        Db db = Db.get(c);
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        LocalDate y = today.minusDays(1);
+        double from = y.atStartOfDay(z).toEpochSecond(), to = y.plusDays(1).atStartOfDay(z).toEpochSecond();
+        org.json.JSONObject day = app.openring.data.Json.parse(db.dayJson(y.toString()));
+        List<org.json.JSONObject> nights = new ArrayList<org.json.JSONObject>();
+        org.json.JSONObject main = null;
+        for (String js : db.recentNights(y, today)) {
+            org.json.JSONObject o = app.openring.data.Json.parse(js);
+            if (o == null) continue;
+            nights.add(o);
+            if (o.optBoolean("main") && y.toString().equals(o.optString("day"))) main = o;
+        }
+        String stored = db.dayJson(y.toString());
+        double charge = app.openring.data.Demo.CHARGE_TO_H - app.openring.data.Demo.CHARGE_FROM_H;
+        check("#251 main device: the demo ring has no movement yesterday 14:00 to 16:00 (on its charger)", day != null
+                && day.optDouble("non_wear_min", 0) >= charge * 60 && day.optJSONArray("met_profile").isNull((int) (app.openring.data.Demo.CHARGE_FROM_H * 4))
+                && day.optJSONArray("met_profile").isNull((int) (app.openring.data.Demo.CHARGE_TO_H * 4) - 1), day == null ? null : day.optDouble("non_wear_min"));
+        app.openring.core.withings.MainDevice.Ring ring = app.openring.data.WatchStore.ringDay(day, main, nights, from, to);
+        app.openring.core.withings.MainDevice.Watch watch = app.openring.data.WatchStore.window(db, from - 86400, to);
+        check("#251 main device: the day's watch rows are read for the day and the night before", !watch.steps.isEmpty() && !watch.heart.isEmpty() && !watch.sleep.isEmpty(),
+                watch.steps.size());
+        app.openring.core.withings.MainDevice.Day d = app.openring.core.withings.MainDevice.of(app.openring.core.withings.MainDevice.RING, y, from, to, z, ring, watch);
+        double cf = from + app.openring.data.Demo.CHARGE_FROM_H * 3600, ct = from + app.openring.data.Demo.CHARGE_TO_H * 3600;
+        boolean covered = false;
+        for (double[] r : d.stepFill) covered |= r[0] <= cf && r[1] >= ct;
+        boolean hrCovered = false;
+        for (double[] r : d.hrFill) hrCovered |= r[0] <= cf && r[1] >= ct;
+        check("#251 main device: the watch fills the charging time, steps and heart rate", d.fillSteps > 0 && covered && hrCovered
+                && d.steps == day.optDouble("steps") + d.fillSteps, app.openring.core.withings.MainDevice.clockRanges(d.stepFill, z));
+        String line = app.openring.core.withings.MainDevice.stepsLine(d, z, java.util.Locale.US);
+        check("#251 main device: the line names the watch and 14:00 to 16:00", line != null && line.contains("from your watch") && line.contains("14:00 to 16:00"), line);
+        check("#251 main device: the ring's own night is shown, not the watch's", main == null || d.watchNight == null, null);
+        app.openring.core.withings.MainDevice.Day w = app.openring.core.withings.MainDevice.of(app.openring.core.withings.MainDevice.WATCH, y, from, to, z, ring, watch);
+        check("#251 main device: the watch as main device shows its own steps and night", w.watchNight != null && w.steps != d.steps, w.steps);
+        check("#251 main device: showing the day stores nothing, the ring's summary is as it was", stored.equals(db.dayJson(y.toString())), null);
+        check("#251 main device: the ring's summary holds only the ring's steps", day.optDouble("steps") < d.steps, null);
+        // reading it with the watch rows of a whole day before the watch: nothing named
+        app.openring.core.withings.MainDevice.Day none = app.openring.core.withings.MainDevice.of(app.openring.core.withings.MainDevice.RING, y, from, to, z, ring,
+                app.openring.data.WatchStore.window(db, from - 400 * 86400.0, from - 300 * 86400.0));
+        check("#251 main device: without watch rows the day is the ring's, byte for byte", none.steps == day.optDouble("steps") && none.stepFill.isEmpty()
+                && none.hr == ring.hr && !none.filled(), none.steps);
+        // an older backup has no choice: the phone's stays
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setDemo(false);
+        p.setMainDevice(app.openring.core.withings.MainDevice.WATCH);
+        byte[] full = backup252(c);
+        java.util.zip.ZipInputStream zin = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(full));
+        java.io.ByteArrayOutputStream rebuilt = new java.io.ByteArrayOutputStream();
+        java.util.zip.ZipOutputStream zout = new java.util.zip.ZipOutputStream(rebuilt);
+        boolean had = false;
+        for (java.util.zip.ZipEntry e = zin.getNextEntry(); e != null; e = zin.getNextEntry()) {
+            byte[] b = readAll251(zin);
+            if (e.getName().endsWith(".json")) {
+                org.json.JSONObject o = new org.json.JSONObject(new String(b, java.nio.charset.StandardCharsets.UTF_8));
+                had = o.has("main_device");
+                o.remove("main_device");
+                b = o.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            }
+            zout.putNextEntry(new java.util.zip.ZipEntry(e.getName()));
+            zout.write(b);
+            zout.closeEntry();
+        }
+        zout.close();
+        p.setMainDevice(app.openring.core.withings.MainDevice.RING);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(rebuilt.toByteArray()));
+        check("#251 main device: the backup holds the choice, an older one without it keeps the phone's", had && r.ok && p.mainDevice() == app.openring.core.withings.MainDevice.RING, r.message);
+        clean254();
+    }
+
+    static byte[] readAll251(java.io.InputStream in) throws java.io.IOException {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        for (int n; (n = in.read(buf)) > 0; ) b.write(buf, 0, n);
+        return b.toByteArray();
     }
 }
