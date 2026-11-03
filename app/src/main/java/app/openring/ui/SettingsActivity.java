@@ -1566,7 +1566,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }
     }
 
-    /** Version line and a button that opens the releases page in the browser (issue #7). */
+    /** Version line and a button that opens the releases page in the browser (issue #7): the latest stable release, or for a nightly the list of all releases. */
     void addUpdateRow(LinearLayout parent) {
         LinearLayout row = Ui.hbox(this);
         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -1576,25 +1576,23 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams tl = Ui.weight(1);
         tl.setMargins(0, 0, Ui.dp(this, 8), 0);
         row.addView(t, tl);
+        final String url = app.openring.core.Updates.url(version());
         TextView check = Ui.smallButton(this, "Check for updates", Ui.SLEEP);
         check.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 try {
-                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES)));
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 } catch (android.content.ActivityNotFoundException e) {
-                    say("No browser found. The releases are at " + RELEASES);
+                    say("No browser found. The releases are at " + url);
                 }
             }
         });
         row.addView(check);
         parent.addView(row);
         parent.addView(Ui.gap(this, 6));
-        parent.addView(Ui.text(this, "Opens the releases page in your browser, because this app has no internet access. "
-                + "A higher version number there means an update; installing it keeps your data.", 12, Ui.TEXT_3, Ui.REGULAR));
+        parent.addView(Ui.text(this, app.openring.core.Updates.note(version()), 12, Ui.TEXT_3, Ui.REGULAR));
     }
-
-    static final String RELEASES = "https://github.com/busssard/OpenRing/releases/latest";
 
     String version() {
         try {
