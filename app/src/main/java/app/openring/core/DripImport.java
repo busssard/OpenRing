@@ -51,16 +51,19 @@ public final class DripImport {
         public final Cycles.Period period;
         /** The amount of each day from its first to its last day (null for a day without an entry). */
         public final List<Integer> amounts;
+        /** The preview's periods, for writing the date like the period cards do. */
+        private final Cycles cycles;
 
-        Short(Cycles.Period p, List<Integer> amounts) {
+        Short(Cycles.Period p, List<Integer> amounts, Cycles cycles) {
             this.period = p;
             this.amounts = amounts;
+            this.cycles = cycles;
         }
 
-        /** "Period of 2 days starting 2025-03-11 (light, light)" */
-        public String line() {
+        /** "Period of 2 days starting 6 Oct 2025 (light, light)", the year only when it is not this year. */
+        public String line(Locale loc) {
             StringBuilder sb = new StringBuilder("Period of ").append(Texts.count(period.days(), "day", "days")).append(" starting ")
-                    .append(period.start).append(" (");
+                    .append(cycles.date(period.start, loc)).append(" (");
             for (int i = 0; i < amounts.size(); i++) {
                 if (i > 0) sb.append(", ");
                 sb.append(Cycles.amount(amounts.get(i)).toLowerCase(Locale.ROOT));
@@ -73,16 +76,19 @@ public final class DripImport {
     public static final class Diff {
         public final LocalDate day;
         public final int have, file;
+        /** The preview's periods, for writing the date like the period cards do. */
+        private final Cycles cycles;
 
-        Diff(LocalDate day, int have, int file) {
+        Diff(LocalDate day, int have, int file, Cycles cycles) {
             this.day = day;
             this.have = have;
             this.file = file;
+            this.cycles = cycles;
         }
 
-        /** "2025-03-12: Open Ring Heavy, file Medium" */
-        public String line() {
-            return day + ": Open Ring " + Cycles.amount(have) + ", file " + Cycles.amount(file);
+        /** "12 Sep 2025: Open Ring Heavy, file Medium", the year only when it is not this year. */
+        public String line(Locale loc) {
+            return cycles.date(day, loc) + ": Open Ring " + Cycles.amount(have) + ", file " + Cycles.amount(file);
         }
     }
 
@@ -138,7 +144,7 @@ public final class DripImport {
                 if (p.days() >= SHORT) continue;
                 List<Integer> am = new ArrayList<Integer>();
                 for (LocalDate d = p.start; !d.isAfter(p.last); d = d.plusDays(1)) am.add(flows.get(d));
-                s.add(new Short(p, Collections.unmodifiableList(am)));
+                s.add(new Short(p, Collections.unmodifiableList(am), cycles));
             }
             shorts = Collections.unmodifiableList(s);
             List<Diff> diffs = new ArrayList<Diff>();
@@ -148,7 +154,7 @@ public final class DripImport {
                 int k = day(e.getValue(), have);
                 if (k == ADD) add++;
                 else if (k == SAME) same++;
-                else diffs.add(new Diff(e.getKey(), have, e.getValue()));
+                else diffs.add(new Diff(e.getKey(), have, e.getValue(), cycles));
             }
             differ = Collections.unmodifiableList(diffs);
             addDays = add;
@@ -176,10 +182,10 @@ public final class DripImport {
             return writes(takeFile) + addTemps > 0;
         }
 
-        /** "From 2023-01-04 to 2026-10-28: 41 periods, 186 bleeding days, 312 temperatures." */
-        public String summary() {
+        /** "From 8 Sep 2025 to 2 Mar: 7 periods, 34 bleeding days, 12 temperatures.", the year only when it is not this year. */
+        public String summary(Locale loc) {
             if (from == null) return "This file holds no bleeding day and no temperature.";
-            return "From " + from + " to " + to + ": " + Texts.count(cycles.periods.size(), "period", "periods") + ", "
+            return "From " + cycles.date(from, loc) + " to " + cycles.date(to, loc) + ": " + Texts.count(cycles.periods.size(), "period", "periods") + ", "
                     + Texts.count(bleedingDays, "bleeding day", "bleeding days") + ", " + Texts.count(tempCount, "temperature", "temperatures") + ".";
         }
 
@@ -250,15 +256,18 @@ public final class DripImport {
         return best;
     }
 
-    /** "The nearest other period starts 2025-03-16, 3 days after this one ends." for the Correct screen; null without one. */
-    public static String nearestLine(Cycles c, Cycles.Period p) {
+    /**
+     * "The next period starts 16 Mar 2025, 3 days after this one. Fill the days between to join them." (or "The period
+     * before ends ...") for the Correct screen, dates written by {@code c} like the period cards; null without one.
+     */
+    public static String nearestLine(Cycles c, Cycles.Period p, Locale loc) {
         Cycles.Period q = nearest(c, p);
         if (q == null) return null;
         if (q.start.isAfter(p.last)) {
             long g = ChronoUnit.DAYS.between(p.last, q.start) - 1;
-            return "The next period starts " + q.start + ", " + Texts.count(g, "day", "days") + " after this one. Fill the days between to join them.";
+            return "The next period starts " + c.date(q.start, loc) + ", " + Texts.count(g, "day", "days") + " after this one. Fill the days between to join them.";
         }
         long g = ChronoUnit.DAYS.between(q.last, p.start) - 1;
-        return "The period before ends " + q.last + ", " + Texts.count(g, "day", "days") + " before this one. Fill the days between to join them.";
+        return "The period before ends " + c.date(q.last, loc) + ", " + Texts.count(g, "day", "days") + " before this one. Fill the days between to join them.";
     }
 }

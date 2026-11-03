@@ -29,6 +29,7 @@ import java.util.TreeMap;
 import app.openring.ble.RingManager;
 import app.openring.core.DripCsv;
 import app.openring.core.DripImport;
+import app.openring.core.Texts;
 import app.openring.core.analysis.Cycles;
 import app.openring.data.Db;
 import app.openring.data.Periods;
@@ -98,8 +99,6 @@ public final class DripImportActivity extends Activity {
         root.addView(Ui.gap(this, 8));
         LinearLayout intro = Ui.card(this);
         intro.addView(Ui.body(this, Explain.DRIP_INTRO));
-        intro.addView(Ui.gap(this, 6));
-        intro.addView(PeriodCard.note(this, Cycles.NOT_ADVICE));
         if (demo) {
             intro.addView(Ui.gap(this, 8));
             intro.addView(Ui.text(this, Explain.DRIP_DEMO, 13, Ui.WARN, Ui.REGULAR));
@@ -287,7 +286,7 @@ public final class DripImportActivity extends Activity {
         LinearLayout sum = Ui.card(this);
         sum.addView(Ui.caption(this, "In this file"));
         sum.addView(Ui.gap(this, 4));
-        sum.addView(Ui.text(this, pv.summary(), 16, Ui.TEXT, Ui.MEDIUM));
+        sum.addView(Ui.text(this, pv.summary(Locale.getDefault()), 16, Ui.TEXT, Ui.MEDIUM));
         String spot = pv.spottingLine(file.excludedBleeding);
         if (spot != null) sum.addView(Ui.text(this, spot, 13, Ui.TEXT_2, Ui.REGULAR));
         sum.addView(PeriodCard.note(this, Explain.DRIP_COUNTS));
@@ -311,7 +310,7 @@ public final class DripImportActivity extends Activity {
             sh.addView(Ui.gap(this, 4));
             for (final DripImport.Short s : pv.shorts) {
                 if (ignored.contains(s.period.start)) continue;
-                sh.addView(Ui.text(this, s.line(), 14, Ui.TEXT, Ui.REGULAR));
+                sh.addView(Ui.text(this, s.line(Locale.getDefault()), 14, Ui.TEXT, Ui.REGULAR));
                 LinearLayout row = Ui.hbox(this);
                 TextView fix = Ui.smallButton(this, "Correct", Ui.PERIOD), skip = Ui.smallButton(this, "Ignore", Ui.TEXT_2);
                 fix.setOnClickListener(new View.OnClickListener() {
@@ -363,7 +362,7 @@ public final class DripImportActivity extends Activity {
             if (diff != null) {
                 dc.addView(Ui.text(this, diff, 14, Ui.TEXT, Ui.MEDIUM));
                 StringBuilder sb = new StringBuilder();
-                for (DripImport.Diff x : pv.differ) sb.append(sb.length() == 0 ? "" : "\n").append(x.line());
+                for (DripImport.Diff x : pv.differ) sb.append(sb.length() == 0 ? "" : "\n").append(x.line(Locale.getDefault()));
                 TextView list = Ui.text(this, sb.toString(), 12, Ui.TEXT_2, Ui.REGULAR);
                 list.setPadding(0, Ui.dp(this, 4), 0, 0);
                 dc.addView(list);
@@ -434,7 +433,7 @@ public final class DripImportActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
         new android.app.AlertDialog.Builder(this)
-                .setTitle("Period starting " + s.period.start)
+                .setTitle("Period starting " + preview.cycles.date(s.period.start, Locale.getDefault()))
                 .setView(sv)
                 .setPositiveButton("Done", null)
                 .show();
@@ -446,10 +445,10 @@ public final class DripImportActivity extends Activity {
         box.addView(Ui.text(this, Explain.DRIP_CORRECT, 13, Ui.TEXT_2, Ui.REGULAR));
         Cycles.Period now = null;
         for (Cycles.Period p : cy.periods) if (!p.start.isAfter(s.period.last) && !p.last.isBefore(s.period.start)) now = p;
-        String near = now == null ? null : DripImport.nearestLine(cy, now);
+        String near = now == null ? null : DripImport.nearestLine(cy, now, Locale.getDefault());
         if (near != null) box.addView(Ui.text(this, near, 13, Ui.TEXT_2, Ui.REGULAR));
         if (now != null && now.days() >= DripImport.SHORT) {
-            box.addView(Ui.text(this, "Now a period of " + now.days() + " days starting " + now.start + ".", 13, Ui.GOOD, Ui.MEDIUM));
+            box.addView(Ui.text(this, "Now a period of " + Texts.count(now.days(), "day", "days") + " starting " + cy.date(now.start, Locale.getDefault()) + ".", 13, Ui.GOOD, Ui.MEDIUM));
         }
         box.addView(Ui.gap(this, 8));
         final TextView title = Ui.text(this, PeriodCard.monthTitle(month[0]), 15, Ui.TEXT, Ui.MEDIUM);
