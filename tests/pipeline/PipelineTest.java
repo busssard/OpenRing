@@ -3652,11 +3652,6 @@ public class PipelineTest {
         }
     }
 
-    /** A context with a database of its own ({@code Db.get} keeps one open instance). */
-    /*
-     * Known order dependence (issue #216, not changed): freshDb swaps the shared database, so a test that calls it
-     * must not run in the middle of main's own section, which keeps using the database it opened at the start.
-     */
     /**
      * The profile and screen goal defaults and the limits a restore keeps them in, pinned so the named limits
      * (core/InputLimit, shared with Setup and Settings) give exactly the numbers that were typed in each place.
@@ -3697,6 +3692,11 @@ public class PipelineTest {
         }
     }
 
+    /** A context with a database of its own ({@code Db.get} keeps one open instance). */
+    /*
+     * Known order dependence (issue #216, not changed): freshDb swaps the shared database, so a test that calls it
+     * must not run in the middle of main's own section, which keeps using the database it opened at the start.
+     */
     static Context freshDb(String name) throws Exception {
         java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
         f.setAccessible(true);
