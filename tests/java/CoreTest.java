@@ -996,6 +996,7 @@ public class CoreTest {
         modeRestore221();
         cycles252();
         badges265();
+        badgeScreens265();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1318,8 +1319,9 @@ public class CoreTest {
         eq("#265 goal: every day reached gives one badge a week, not one a day", kind265(d, G),
                 Arrays.asList("3: Activity goal reached on 4 of the last 7 days (this day 500 of 300 kcal; each goal lowered after a low readiness day)",
                         "10: Activity goal reached on 7 of the last 7 days (this day 500 of 300 kcal; each goal lowered after a low readiness day)"));
-        check("#265 goal lowered: only without an own target and under Good readiness", Badges.goalLowered(false, 69) && !Badges.goalLowered(true, 60)
-                && !Badges.goalLowered(false, Scores.GOOD) && !Badges.goalLowered(false, Double.NaN));
+        check("#265 goal lowered: under Good readiness, unless the stored target is the own target", Badges.goalLowered(0, 280, 69)
+                && !Badges.goalLowered(400, 400, 60) && Badges.goalLowered(400, 320, 60) && !Badges.goalLowered(0, 280, Scores.GOOD)
+                && !Badges.goalLowered(0, 280, Double.NaN));
 
         // ---- calm screen day: 30 % under the 28 day mean of fully read days ----
         d = days265(40);
@@ -1465,6 +1467,47 @@ public class CoreTest {
                 && app.openring.ui.Explain.badge(G).contains("4 of the last 7 days") && app.openring.ui.Explain.badge(G).contains("first goal day after 7 days")
                 && app.openring.ui.Explain.badge(S).contains("at least 30% less") && app.openring.ui.Explain.badge(S).contains("last 4 weeks")
                 && app.openring.ui.Explain.BADGES.contains("left out"));
+    }
+
+    /** Phase 1b (issue #265): the screens' texts and the small helpers they use. */
+    static void badgeScreens265() {
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 3);
+        List<String> texts = new ArrayList<String>(Arrays.asList(app.openring.ui.Explain.BADGES_ROW, app.openring.ui.Explain.BADGES_ROW_NOTE,
+                app.openring.ui.Explain.BADGES_NEW, app.openring.ui.Explain.BADGES_ALL, app.openring.ui.Explain.BADGES_CALENDAR,
+                app.openring.ui.Explain.BADGES_COUNT_NOTE, app.openring.ui.Explain.BADGES_SCREEN_ACCESS, app.openring.ui.Explain.BADGES_SCREEN_OLD,
+                app.openring.ui.Explain.SHOW_BADGES, app.openring.ui.Explain.SHOW_BADGES_NOTE, app.openring.ui.Explain.BADGES_FAILED,
+                app.openring.ui.Explain.badgesWait(0), app.openring.ui.Explain.badgesWait(1), app.openring.ui.Explain.badgesWait(13)));
+        boolean plain = true;
+        for (String t : texts) plain &= plain265(t);
+        check("#265 the badge screens' texts are plain, no dash as punctuation", plain);
+        eq("#265 under 14 nights: most comparisons wait", app.openring.ui.Explain.badgesWait(5),
+                "Most badges compare with your own last 2 to 4 weeks, so they come after about 14 nights with the ring. You have 5 nights so far.");
+        check("#265 from 14 nights on no waiting line", app.openring.ui.Explain.badgesWait(14) == null);
+        eq("#265 when: today, yesterday, a weekday and date in English", Arrays.asList(app.openring.ui.Explain.badgeWhen(today, today),
+                app.openring.ui.Explain.badgeWhen(today.minusDays(1), today), app.openring.ui.Explain.badgeWhen(today.minusDays(3), today),
+                app.openring.ui.Explain.badgeWhen(java.time.LocalDate.of(2025, 12, 30), today)), Arrays.asList("Today", "Yesterday", "Sat 31 Oct", "Tue 30 Dec 2025"));
+        eq("#265 how often: none, once, several", Arrays.asList(app.openring.ui.Explain.badgeCount(0, null, today),
+                app.openring.ui.Explain.badgeCount(1, today.minusDays(3), today), app.openring.ui.Explain.badgeCount(3, today.minusDays(3), today)),
+                Arrays.asList("Not yet", "1 time, last on 31 Oct", "3 times, last on 31 Oct"));
+        List<Badges.Day> d = days265(40);
+        for (Badges.Day x : d) x.sleepScore = 80;
+        d.get(35).sleepScore = 90;
+        List<Badges.Badge> got = Badges.of(d);
+        eq("#265 a touched day reads its badges with their numbers", app.openring.ui.Explain.badgeDay(D265.plusDays(35), got, today),
+                "Tue 6 Oct\nBest night: Best night in 30 days: score 90 (before: 80 on 5 Oct)");
+        eq("#265 a touched day without a badge says so", app.openring.ui.Explain.badgeDay(today, new ArrayList<Badges.Badge>(), today), "Today: no badge");
+        check("#265 New: after the newest date seen, every one when none was seen", Badges.isNew(got.get(0), null)
+                && Badges.isNew(got.get(0), D265.plusDays(34)) && !Badges.isNew(got.get(0), D265.plusDays(35)));
+        eq("#265 the newest badge date", Badges.newest(got), D265.plusDays(35));
+        check("#265 no badge, no newest date", Badges.newest(new ArrayList<Badges.Badge>()) == null);
+        d.get(20).sleepScore = 95; // a second best night, earlier: the newest date is still the later one, in any order
+        d.get(35).sleepScore = 99;
+        List<Badges.Badge> two = Badges.of(d), backwards = new ArrayList<Badges.Badge>(two);
+        Collections.reverse(backwards);
+        check("#265 the newest of several badges, in any order", two.size() == 2 && D265.plusDays(35).equals(Badges.newest(two))
+                && D265.plusDays(35).equals(Badges.newest(backwards)));
+        check("#265 night and day badges", Badges.fromNight(Badges.BEST_NIGHT) && Badges.fromNight(Badges.RESTFUL_WEEK) && Badges.fromNight(Badges.RECOVERED)
+                && Badges.fromNight(Badges.PHONE_FREE) && !Badges.fromNight(Badges.ABOVE_USUAL) && !Badges.fromNight(Badges.GOAL) && !Badges.fromNight(Badges.CALM_SCREEN));
     }
 
     static Badges.Day dayWorn265(double covered, double rest) {

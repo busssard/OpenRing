@@ -164,6 +164,52 @@ public final class Explain {
             + "A day without a badge says nothing. Days with a left out time count for no badge and in no average. "
             + "A day gets its badges once it has ended, a night once it is analysed. A tie never earns a badge.";
 
+    // the badge screens (issue #265, phase 1b)
+    public static final String BADGES_ROW = "Recent badges";
+    public static final String BADGES_ROW_NOTE = "Good days and nights of the last " + Badges.WEEK + " days, compared with your own usual. "
+            + "Tap one to open that day.";
+    public static final String BADGES_NEW = "New";
+    public static final String BADGES_ALL = "All badges";
+    public static final String BADGES_CALENDAR = "A dot marks a day with at least one badge, a bigger dot two or more. "
+            + "Touch and slide across the days to read them, tap a day to open it.";
+    public static final String BADGES_COUNT_NOTE = "How often counts the days with this badge in all your history. It is not a score to beat: "
+            + "a day without a badge says nothing.";
+    public static final String BADGES_SCREEN_ACCESS = "Phone free evening and Calm screen day come from your screen time. For that, switch on "
+            + "Open Ring in Android's usage access list (the button takes you there). It stays on this phone.";
+    public static final String BADGES_SCREEN_OLD = "Phone free evening and Calm screen day come from your screen time, which needs Android 9 or newer.";
+    public static final String SHOW_BADGES = "Show badges";
+    public static final String SHOW_BADGES_NOTE = "Shows Recent badges on Today. Badges are worked out from your data each time and nothing "
+            + "about them is stored, so switching this off deletes nothing.";
+    public static final String BADGES_FAILED = "The badges could not be read this time. Your data is as before. Diagnostics, Log tab, shows why.";
+
+    /** Under 14 nights: most comparisons still wait. Null from then on. */
+    public static String badgesWait(int nights) {
+        if (nights >= Badges.MIN_NIGHTS) return null;
+        return "Most badges compare with your own last " + Badges.MIN_DAYS / 7 + " to " + Badges.WEEKS + " weeks, so they come after about " + Badges.MIN_NIGHTS
+                + " nights with the ring. You have " + (nights == 1 ? "1 night" : nights + " nights") + " so far.";
+    }
+
+    /** "Today", "Yesterday", "Sat 31 Oct" (with the year when it is not this year). */
+    public static String badgeWhen(java.time.LocalDate d, java.time.LocalDate today) {
+        if (d.equals(today)) return "Today";
+        if (d.equals(today.minusDays(1))) return "Yesterday";
+        return d.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH) + " " + Badges.date(d, today);
+    }
+
+    /** A kind's line on the Badges page: "Not yet", "1 time, last on 31 Oct", "3 times, last on 31 Oct". */
+    public static String badgeCount(int n, java.time.LocalDate last, java.time.LocalDate today) {
+        if (n == 0 || last == null) return "Not yet";
+        return (n == 1 ? "1 time" : n + " times") + ", last on " + Badges.date(last, today);
+    }
+
+    /** What touching a day of the badge calendar shows: the date, then each badge with its numbers, or that it has none. */
+    public static String badgeDay(java.time.LocalDate d, java.util.List<Badges.Badge> on, java.time.LocalDate today) {
+        StringBuilder sb = new StringBuilder(badgeWhen(d, today));
+        if (on.isEmpty()) return sb.append(": no badge").toString();
+        for (Badges.Badge b : on) sb.append('\n').append(Badges.NAMES[b.kind]).append(": ").append(b.text);
+        return sb.toString();
+    }
+
     /** One line per badge rule ({@code Badges.BEST_NIGHT} and so on), with the numbers the rule uses. */
     public static String badge(int kind) {
         String week = Badges.WEEK + " days", weeks = Badges.WEEKS + " weeks";

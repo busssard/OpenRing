@@ -217,7 +217,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185), left_out
      * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254),
      * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
-     * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252).
+     * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252),
+     * badges (boolean) opens the Badges page (issue #265).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -250,6 +251,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false)));
         }
+        // screen test: the Badges page (issue #265); it only reads, so it needs no demo mode
+        if (i.getBooleanExtra("badges", false)) startActivity(new Intent(this, BadgesActivity.class));
         // screen test: open Find my ring (issue #74)
         if (i.getBooleanExtra("finder", false)) {
             startActivity(new Intent(this, FinderActivity.class).putExtra("demo_turn", i.getBooleanExtra("finder_turn", false))

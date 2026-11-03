@@ -145,12 +145,14 @@ public final class Badges {
     }
 
     /**
-     * Whether the analysis lowered the day's activity target: no own target in the profile and readiness under Good.
-     * {@code ownTarget} is the profile as it is now; a day analysed before the person set or cleared a target was
-     * analysed under the other rule, which the caller (phase 1b) has to keep in mind.
+     * Whether the analysis lowered the day's activity target (Analyzer: without an own target in the profile the target is
+     * lowered by a fifth after readiness under Good). The day stores the target it used ({@code target_kcal}) but not
+     * why, so: readiness under Good, and the stored target is not the person's own target ({@code ownTarget}, 0 without
+     * one). A day analysed while the profile had another own target than now looks lowered on a low readiness day; that
+     * is rare and only changes the note in the text, never the badge.
      */
-    public static boolean goalLowered(boolean ownTarget, double readiness) {
-        return !ownTarget && readiness < Scores.GOOD;
+    public static boolean goalLowered(int ownTarget, double usedTarget, double readiness) {
+        return readiness < Scores.GOOD && !(ownTarget > 0 && usedTarget == ownTarget);
     }
 
     /** A worn day: the ring on for at least {@link #WORN_MIN} minutes, 12 hours ({@code covered_min + rest_min}). */
@@ -417,8 +419,25 @@ public final class Badges {
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH),
             DAY_YEAR = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH);
 
+    /** Badges from the night (sleep, readiness, the evening before), shown with the night; the others with the day. */
+    public static boolean fromNight(int kind) {
+        return kind == BEST_NIGHT || kind == RESTFUL_WEEK || kind == RECOVERED || kind == PHONE_FREE;
+    }
+
+    /** Whether a badge came after {@code seen}, the newest date already seen (kv {@code badges_seen}); every one without. */
+    public static boolean isNew(Badge b, LocalDate seen) {
+        return seen == null || b.date.isAfter(seen);
+    }
+
+    /** The newest date of {@code badges}, null without any. */
+    public static LocalDate newest(List<Badge> badges) {
+        LocalDate n = null;
+        for (Badge b : badges) if (n == null || b.date.isAfter(n)) n = b.date;
+        return n;
+    }
+
     /** "12 Oct" in English like every text of the app, with the year when it differs from {@code ref}'s. */
-    static String date(LocalDate d, LocalDate ref) {
+    public static String date(LocalDate d, LocalDate ref) {
         return d.format(d.getYear() == ref.getYear() ? DAY : DAY_YEAR);
     }
 }

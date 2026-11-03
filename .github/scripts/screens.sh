@@ -99,6 +99,8 @@ else
   echo "::warning::issue #69 step: no cut off demo was finished after opening again (the preparation may have ended before the app was)"
 fi
 shot today 2
+# the Recent badges row under the score rings (issue #265): the demo's story earns badges in its last 7 days on any day
+swipe_up;                                 shot today-badges 1
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
@@ -188,6 +190,9 @@ log "clock touch at ${xy:-464 1331}"
 adb shell input tap ${xy:-464 1331};       shot screen-touch 1
 swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
+# the Badges page (issue #265): calendar with a dot on each day with a badge, then each kind with how often and its rule
+launch --ez badges true;                    shot badges 4
+swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
 launch --es settings top;                   shot settings
 launch --es settings stages;                shot settings-stage-detail
 # Count phone use as awake switched off and on (issue #204): when the nights are analysed again the

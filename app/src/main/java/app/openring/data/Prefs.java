@@ -89,6 +89,10 @@ public final class Prefs {
     public int periodChoice() { return sp.getInt("period_shown", -1); }
     public void setPeriodChoice(int v) { sp.edit().putInt("period_shown", v < 0 ? -1 : v > 0 ? 1 : 0).apply(); }
 
+    /** The Settings switch "Show badges" (issue #265), on by default: the Recent badges row on Today. Nothing is stored either way. */
+    public boolean badgesOn() { return sp.getBoolean("badges_on", true); }
+    public void setBadgesOn(boolean b) { sp.edit().putBoolean("badges_on", b).apply(); }
+
     public boolean profileSet() { return sp.getBoolean("profile_set", false); }
     public void setProfileSet() { sp.edit().putBoolean("profile_set", true).apply(); }
 
