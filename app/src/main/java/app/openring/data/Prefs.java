@@ -92,6 +92,41 @@ public final class Prefs {
     /** The Settings switch "Show badges" (issue #265), on by default: the Recent badges row on Today. Nothing is stored either way. */
     public boolean badgesOn() { return sp.getBoolean("badges_on", true); }
     public void setBadgesOn(boolean b) { sp.edit().putBoolean("badges_on", b).apply(); }
+    /**
+     * "Remind me before my period" (issue #252, phase 1a2): days before the expected range ({@code core/PeriodRemind.DAYS},
+     * 0 off, the default) and the time of day in minutes after midnight (9:00 by default). Anything else is stored as off
+     * or 9:00. The reminder always comes from the person's own log, never from the demo's.
+     */
+    public int periodRemindDays() {
+        int d = sp.getInt("period_remind_days", 0);
+        return app.openring.core.PeriodRemind.validDays(d) ? d : 0;
+    }
+    public void setPeriodRemindDays(int d) { sp.edit().putInt("period_remind_days", app.openring.core.PeriodRemind.validDays(d) ? d : 0).apply(); }
+    public int periodRemindMinute() { return app.openring.core.PeriodRemind.minute(sp.getInt("period_remind_min", app.openring.core.PeriodRemind.DEFAULT_MINUTE)); }
+    public void setPeriodRemindMinute(int m) { sp.edit().putInt("period_remind_min", app.openring.core.PeriodRemind.minute(m)).apply(); }
+    /** The cycle already reminded of (the start of its period), so one cycle never gets two; not in a backup. */
+    public String periodRemindSent() { return sp.getString("period_remind_sent", null); }
+    /** Written to disk before it returns, before the notification is posted, so a stop in between never sends twice. */
+    public void setPeriodRemindSent(String key) { sp.edit().putString("period_remind_sent", key).commit(); }
+
+    /**
+     * "My periods have stopped": the day it was said (yyyy-mm-dd), null when not. Demo mode keeps its own, so the demo
+     * never changes the person's. {@code core/analysis/Cycles} ends it by itself once a period is logged on that day or later.
+     */
+    public String periodStopped() { return sp.getString(demo() ? "period_stopped_demo" : "period_stopped", null); }
+    /** The person's own, also while demo mode is on (the reminder and the backup use it). */
+    public String periodStoppedReal() { return sp.getString("period_stopped", null); }
+    public void setPeriodStopped(String day) { setDayKey(demo() ? "period_stopped_demo" : "period_stopped", day); }
+    void setPeriodStoppedReal(String day) { setDayKey("period_stopped", day); }
+    private void setDayKey(String key, String day) { // a date, or (null or not a date) none
+        if (app.openring.core.analysis.Cycles.day(day) == null) sp.edit().remove(key).apply();
+        else sp.edit().putString(key, day).apply();
+    }
+    /** When the person answered "Not yet" to "Have your periods stopped?" (yyyy-mm-dd), null when never; demo keeps its own. */
+    public String periodAskLater() { return sp.getString(demo() ? "period_ask_later_demo" : "period_ask_later", null); }
+    public String periodAskLaterReal() { return sp.getString("period_ask_later", null); }
+    public void setPeriodAskLater(String day) { setDayKey(demo() ? "period_ask_later_demo" : "period_ask_later", day); }
+    void setPeriodAskLaterReal(String day) { setDayKey("period_ask_later", day); }
 
     public boolean profileSet() { return sp.getBoolean("profile_set", false); }
     public void setProfileSet() { sp.edit().putBoolean("profile_set", true).apply(); }

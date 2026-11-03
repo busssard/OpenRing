@@ -201,6 +201,58 @@ shot body-trends 1
 # Today's compact period card near the bottom (issue #252)
 launch --ei tab 0; sleep 3
 swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
+# Phase 1a2 of #252 at the end of Body: "Your cycles" (cycle day, next period, the cycle length dots next to the typical
+# length, then period length and amount), touched on the newest cycle dot, and the night temperature line next to the
+# cycles (the demo's nights are warmer after ovulation), touched on its newest night. Slow swipes until the caption is in
+# the upper third; a chart is found by its content description and touched 10 px inside its right end, where the newest is
+caption_top() { ui_dump | grep -o "text=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p; }  # $1 the text or its start
+scroll_to() {  # $1 caption text, $2 the most swipes
+  local y
+  for i in $(seq 1 "$2"); do
+    y=$(caption_top "$1")
+    if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 3 )) ]; then return 0; fi
+    adb shell input swipe 30 1500 30 900 1500; sleep 1
+  done
+  return 1
+}
+touch_desc() {  # $1 the start of a content description: taps 10 px inside the right end, in the middle; fails when not on screen
+  local b
+  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  local y=$(( ($2 + $4) / 2 ))
+  [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} - 450 )) ] || return 1
+  adb shell input tap $(( $3 - 10 )) $y
+}
+launch --ei tab 4; sleep 3
+scroll_to "YOUR CYCLES" 40 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
+shot body-cycles 1
+if touch_desc "Cycle lengths"; then shot body-cycles-touch 1
+else echo "::warning::issue #252 step skipped: the cycle length chart was not on screen to touch it"; fi
+scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 20 || echo "::warning::issue #252 step: the night temperature card was not found on Body"
+if touch_desc "Night temperature since"; then shot body-period-temp 1
+else echo "::warning::issue #252 step: the night temperature line was not on screen to touch it"; shot body-period-temp 1; fi
+# Phase 2 of #252: "Ovulation from your temperature" in Your cycles (this cycle's measured day, in how many cycles a rise
+# was found, the own time from ovulation to the period, a line under each cycle), the Period card's measured lines, and the
+# rise marked on the night temperature line (baseline, ringed high nights, the ovulation line), opened touched on its first
+# high night (extra period_rise, demo mode only)
+launch --ei tab 4; sleep 3
+scroll_to "Ovulation from your temperature" 40 || echo "::warning::issue #252 phase 2 step: Ovulation from your temperature was not found on Body"
+shot body-cycles-ovulation 1
+launch --ei tab 4; sleep 3
+scroll_to "Likely fertile days were" 6 || echo "::warning::issue #252 phase 2 step: the measured lines were not found on the Period card"
+shot body-period-measured 1
+launch --ei tab 4 --ez period_rise true; sleep 3
+scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 40 || echo "::warning::issue #252 phase 2 step: the night temperature card was not found on Body"
+shot body-period-rise 1
+# the gentle question "Have your periods stopped?" (extra period_ask, demo mode only; nothing is saved without a tap)
+launch --ei tab 4 --ez period_ask true;    shot period-ask 3
+# Import from drip (phase 1b of #252): in demo mode the preview of a made up drip file against the demo's log (extra drip;
+# demo mode never imports), scrolled down to its short periods and the days that differ, then Correct on its first short
+# period (drip_correct) with the day editor's calendar. The night temperature shot above shows the demo's mouth line.
+launch --ez drip true;                      shot drip-preview 4
+swipe_up; swipe_up;                         shot drip-preview-more 1
+launch --ez drip true --ez drip_correct true; shot drip-correct 4
 launch --ei tab 5;                          shot screen
 adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fling
 # read the clock by touch (issue #109): at the trailing edge of the first blue line, so the picture shows a
@@ -259,14 +311,15 @@ else
   log "the stage detail preview followed the phone use switch both ways"
 fi
 launch --es settings screen;                shot settings-screen-time
+# the period tracker's reminder and "My periods have stopped" (issue #252, phase 1a2); the reminder follows the real log only
+launch --es settings period;                shot settings-period
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
 # The Watch check (issue #251, phase 1a): the Settings card, then in demo mode the made up scan (never Bluetooth) and
-# the made up report, built by the same code as a real one; the report's copy buttons and texts are below it
+# the made up report, built by the same code as a real one (the screen scrolls to it, copy buttons included)
 launch --es settings watch;                 shot settings-watch
 launch --ez watch true;                     shot watch 3
-launch --ez watch true --ez watch_report true; shot watch-report 3
-swipe_up; swipe_up;                         shot watch-report-copy 1
+launch --ez watch true --ez watch_report true; shot watch-report 3   # scrolls to the report itself, copy buttons included
 # Find my ring (issues #74, #191), all on one screen without swiping: in demo a made up signal fills
 # the gauge and the trail; finder_start shows the screen before a walk (you in the middle of the dial),
 # the default a made up walk on the map with its circle, finder_turn a made up turn with the arrow, and

@@ -39,6 +39,8 @@ final class PeriodCard {
     private static LocalDate monthFor;
     /** Screen test (extra {@code period_edit}, demo mode only): open the day editor once the Body page is built. */
     static boolean editPending;
+    /** Screen test (extra {@code period_ask}, demo mode only): show "Have your periods stopped?" until it is answered. */
+    static boolean askPending;
     /** The last change, until Undo, the next change or 10 minutes. */
     static Undo undo;
 
@@ -82,17 +84,18 @@ final class PeriodCard {
         Locale loc = Locale.getDefault();
         if (cy.running != null) card.setBackground(Ui.rounded(Ui.blend(Ui.CARD, Ui.PERIOD, 0.2f), Ui.dp(c, 18)));
         status(c, card, cy, loc);
+        ask(c, card, d, nav);
         buttons(c, card, cy, d, nav);
         String next = cy.nextLine();
         if (next != null) {
             card.addView(Ui.gap(c, 14));
             card.addView(Ui.text(c, next, 16, Ui.TEXT, Ui.MEDIUM));
             card.addView(Ui.text(c, cy.expectedLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
-            card.addView(note(c, Explain.periodRange(cy.used.size(), cy.length, cy.range, cy.sd)));
+            card.addView(note(c, Explain.periodRange(cy)));
             card.addView(Ui.gap(c, 10));
             card.addView(Ui.text(c, cy.ovulationLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
             card.addView(Ui.text(c, cy.fertileLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
-            card.addView(note(c, Explain.periodOvulation(cy.used.size(), cy.ovulationRange)));
+            card.addView(note(c, Explain.periodOvulation(cy)));
         }
         String vary = cy.regularityLine();
         if (vary != null) {
@@ -109,6 +112,17 @@ final class PeriodCard {
         calendar(c, card, cy, d, nav);
         card.addView(Ui.gap(c, 10));
         card.addView(note(c, Cycles.NOT_ADVICE));
+        // the card's settings: reminders and "My periods have stopped" live in Settings, card Period tracker
+        TextView set = Ui.smallButton(c, "Reminders and settings", Ui.TEXT_2);
+        set.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                c.startActivity(new android.content.Intent(c, SettingsActivity.class).putExtra("section", "period"));
+            }
+        });
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(-2, -2);
+        sl.setMargins(0, Ui.dp(c, 8), 0, 0);
+        card.addView(set, sl);
         if (editPending) {
             editPending = false;
             card.post(new Runnable() {
@@ -134,6 +148,53 @@ final class PeriodCard {
         card.addView(Ui.text(c, cy.status(loc), 20, Ui.TEXT, Ui.LIGHT));
         String n = cy.statusNote(loc);
         if (!n.isEmpty()) card.addView(Ui.text(c, n, 13, Ui.TEXT_2, Ui.REGULAR));
+        String year = cy.yearLine(loc);
+        if (year != null) {
+            card.addView(Ui.gap(c, 6));
+            card.addView(Ui.text(c, year, 13, Ui.TEXT_2, Ui.REGULAR));
+        }
+    }
+
+    /**
+     * "No period for 74 days. Have your periods stopped?" with Yes and Not yet (phase 1a2): asked from the profile age of 40
+     * on, after more than twice the typical cycle and at least 60 days without a period; Not yet asks again after 60 days.
+     */
+    static void ask(final Context c, LinearLayout card, DayData d, final Pages.Nav nav) {
+        if (!d.periodAsk && !(askPending && Prefs.of(c).demo())) return;
+        final Cycles cy = d.periods;
+        LinearLayout box = Ui.vbox(c);
+        int pad = Ui.dp(c, 12);
+        box.setPadding(pad, pad, pad, pad);
+        box.setBackground(Ui.rounded(Ui.blend(Ui.CARD, Ui.PERIOD, 0.12f), Ui.dp(c, 14)));
+        box.addView(Ui.text(c, cy.askLine(), 15, Ui.TEXT, Ui.MEDIUM));
+        box.addView(note(c, Cycles.ASK_NOTE));
+        LinearLayout row = Ui.hbox(c);
+        TextView yes = Ui.smallButton(c, "Yes", Ui.PERIOD), later = Ui.smallButton(c, "Not yet", Ui.TEXT_2);
+        yes.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                askPending = false;
+                Prefs.of(c).setPeriodStopped(LocalDate.now().toString());
+                app.openring.sync.PeriodReminder.planLater(c);
+                nav.reload();
+            }
+        });
+        later.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                askPending = false;
+                Prefs.of(c).setPeriodAskLater(LocalDate.now().toString());
+                nav.reload();
+            }
+        });
+        row.addView(yes, cell(c, 0));
+        row.addView(later, cell(c, 1));
+        LinearLayout.LayoutParams rl = Ui.matchWrap();
+        rl.setMargins(0, Ui.dp(c, 8), 0, 0);
+        box.addView(row, rl);
+        LinearLayout.LayoutParams bl = Ui.matchWrap();
+        bl.setMargins(0, Ui.dp(c, 10), 0, 0);
+        card.addView(box, bl);
     }
 
     /** Heavy, Medium, Light (and Ended while a period runs) for the day shown, with "Log for 27 Oct" on a past day, and Undo. */
@@ -218,6 +279,7 @@ final class PeriodCard {
         Locale loc = Locale.getDefault();
         if (cy.running != null) card.setBackground(Ui.rounded(Ui.blend(Ui.CARD, Ui.PERIOD, 0.2f), Ui.dp(c, 18)));
         status(c, card, cy, loc);
+        ask(c, card, d, nav);
         buttons(c, card, cy, d, nav);
         String next = cy.nextLine();
         if (next != null) {
@@ -300,6 +362,31 @@ final class PeriodCard {
 
     /** The day editor: Heavy, Medium, Light, Spotting, Nothing; "Not the end" when the day holds an end mark. Future days are refused. */
     static void edit(final Context c, Cycles cy, final LocalDate day, final Pages.Nav nav) {
+        editor(c, cy, day, new Pick() {
+            @Override
+            public void flow(int flow) {
+                write(c, nav, day.toString(), FLOW, flow);
+            }
+
+            @Override
+            public void unend() {
+                write(c, nav, day.toString(), UNEND, 0);
+            }
+        });
+    }
+
+    /** What the day editor's choice does: write it to the log (Body), or change the drip import's preview (phase 1b). */
+    interface Pick {
+        void flow(int flow);
+
+        void unend();
+    }
+
+    /**
+     * The day editor with its choices handed to {@code pick} (the same dialog for the log and for the drip import's
+     * preview); "Not the end" only when {@code cy} holds an end mark on the day. Future days are refused.
+     */
+    static void editor(final Context c, Cycles cy, final LocalDate day, final Pick pick) {
         if (day.isAfter(LocalDate.now())) {
             Toast.makeText(c, "This day is still to come.", Toast.LENGTH_SHORT).show();
             return;
@@ -315,7 +402,7 @@ final class PeriodCard {
                     @Override
                     public void onClick(android.content.DialogInterface dlg, int which) {
                         dlg.dismiss();
-                        write(c, nav, day.toString(), FLOW, flows[which]);
+                        pick.flow(flows[which]);
                     }
                 })
                 .setNegativeButton("Cancel", null);
@@ -323,7 +410,7 @@ final class PeriodCard {
             b.setNeutralButton("Not the end", new android.content.DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(android.content.DialogInterface dlg, int which) {
-                    write(c, nav, day.toString(), UNEND, 0);
+                    pick.unend();
                 }
             });
         }
@@ -347,6 +434,10 @@ final class PeriodCard {
                     if (kind == FLOW) {
                         Periods.Day before = Periods.day(db, day);
                         Periods.setFlow(db, day, flow);
+                        // a period day logged on or after "My periods have stopped" ends it (phase 1a2), so the switch says so too
+                        Prefs p = Prefs.of(ctx);
+                        LocalDate stopped = Cycles.day(p.periodStopped());
+                        if (flow >= Cycles.LIGHT && stopped != null && !LocalDate.parse(day).isBefore(stopped)) p.setPeriodStopped(null);
                         String what = flow == Periods.REMOVED ? "Entry taken away from " + when + "." : Cycles.amount(flow) + " logged for " + when + ".";
                         return new Undo(demo, day, FLOW, before == null ? null : before.flow, false, what);
                     }
@@ -368,6 +459,8 @@ final class PeriodCard {
             protected void onPostExecute(Undo u) {
                 if (u == null) Toast.makeText(screen, "Could not save. Please try again.", Toast.LENGTH_LONG).show();
                 else undo = u;
+                // the estimate may have moved: the reminder follows (it reads the person's own log only)
+                app.openring.sync.PeriodReminder.planLater(ctx);
                 nav.reload();
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
@@ -397,6 +490,7 @@ final class PeriodCard {
             @Override
             protected void onPostExecute(Boolean ok) {
                 if (!ok) Toast.makeText(screen, "Could not undo. Please try again.", Toast.LENGTH_LONG).show();
+                app.openring.sync.PeriodReminder.planLater(ctx);
                 nav.reload();
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
