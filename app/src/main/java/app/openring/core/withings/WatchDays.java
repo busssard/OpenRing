@@ -24,6 +24,32 @@ public final class WatchDays {
         ZoneId at(double unix);
     }
 
+    /**
+     * The zone id at {@code unix} from the rows of the {@code zones} table ({start, stop, id}, ordered by start), by the
+     * rule of {@code Db.zoneAt}: the first row that has not stopped before it (so between two rows the later one), after the
+     * newest row the newest; null without rows.
+     */
+    public static String zoneIn(List<Object[]> rows, double unix) {
+        if (rows == null || rows.isEmpty()) return null;
+        for (Object[] r : rows) if (((Number) r[1]).doubleValue() >= unix) return (String) r[2];
+        return (String) rows.get(rows.size() - 1)[2];
+    }
+
+    /** {@link Zones} from the rows of the {@code zones} table, the phone's zone {@code fallback} where they say nothing. */
+    public static Zones zones(final List<Object[]> rows, final ZoneId fallback) {
+        return new Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                String id = zoneIn(rows, unix);
+                try {
+                    return id == null ? fallback : ZoneId.of(id);
+                } catch (RuntimeException e) {
+                    return fallback;
+                }
+            }
+        };
+    }
+
     public static LocalDate day(long t, Zones z) {
         return Instant.ofEpochSecond(t).atZone(z.at(t)).toLocalDate();
     }

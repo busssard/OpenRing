@@ -324,6 +324,11 @@ public final class RingManager {
     /** One sync, so a stop can name it (issue #43). */
     public static final class SyncTicket {
         volatile boolean stop;
+
+        /** Android stopped the job this ticket belongs to (the watch sync after the ring's then does not start, issue #251). */
+        public boolean stopped() {
+            return stop;
+        }
     }
 
     /**

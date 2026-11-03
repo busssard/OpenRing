@@ -155,6 +155,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
         if (backupsCard != null) fillBackupsCard(p); // a copy made or checked meanwhile
+        if (watchCard != null) fillWatchCard(); // a watch added on the Watch check, or a sync that ended meanwhile (issue #251)
         if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !screenDaysKnown()) {
             screenRead = true;
             updateNights("Reading screen time");
@@ -608,20 +609,186 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard;
 
-    /** The Watch card (issue #251): for now only the Watch check, which learns how a Withings watch talks. */
+    /** The Watch card (issue #251): the watch this app syncs, its state, Sync the watch now, how often, the Watch check. */
     LinearLayout watchCard() {
         LinearLayout card = Ui.card(this);
+        watchCard = card;
+        fillWatchCard();
+        return card;
+    }
+
+    /** A watch sync started from this card runs; its sentence shows when it ends. */
+    private static volatile boolean watchSyncing;
+
+    void fillWatchCard() {
+        final LinearLayout card = watchCard;
+        if (card == null) return;
+        final Prefs p = Prefs.of(this);
+        card.removeAllViews();
         card.addView(Ui.caption(this, "Watch"));
         card.addView(Ui.gap(this, 6));
-        card.addView(Ui.body(this, "Withings Steel HR: no sync yet. The check looks at how the watch talks, so syncing can be built next."));
-        action(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+        if (p.demo()) {
+            card.addView(Ui.body(this, "Demo mode: a made up Withings Steel HR. Turn demo mode off to sync a real watch."));
+            watchPageButton(card);
+            small(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+                @Override
+                public void run() {
+                    startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
+                }
+            });
+            return;
+        }
+        final String address = p.watchAddress();
+        if (address == null) {
+            card.addView(Ui.body(this, Explain.WATCH_ADD));
+            action(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+                @Override
+                public void run() {
+                    startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
+                }
+            });
+            return;
+        }
+        card.addView(line("Watch", nz(p.watchName())));
+        card.addView(line("Paired with this phone", watchBonded(address)));
+        card.addView(line("Last sync", p.watchLastOk() == 0 ? "never" : ago(p.watchLastOk())));
+        final LinearLayout bat = Ui.vbox(this);
+        bat.addView(line("Battery", "reading..."));
+        card.addView(bat, Ui.matchWrap());
+        final Context appCtx = getApplicationContext();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                long[] b = null;
+                try {
+                    b = app.openring.data.WatchStore.newestBattery(app.openring.data.Db.get(appCtx));
+                } catch (RuntimeException e) {
+                    RingManager.get(appCtx).log("watch battery not read (" + e.getClass().getSimpleName() + ")");
+                }
+                final long[] got = b;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        bat.removeAllViews();
+                        bat.addView(line("Battery", got == null ? "--" : got[0] + "%  (" + ago(got[1]) + ")"));
+                    }
+                });
+            }
+        }, "watch battery").start();
+        if (watchSyncing || app.openring.ble.WatchSync.running()) {
+            card.addView(Ui.text(this, "Syncing the watch, this takes up to two minutes.", 13, Ui.TEXT_2, Ui.REGULAR));
+        } else if (p.watchError() != null) {
+            card.addView(Ui.text(this, p.watchError(), 13, Ui.WARN, Ui.REGULAR));
+        }
+        action(card, "Sync the watch now", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                if (!Permissions.granted(SettingsActivity.this)) {
+                    Permissions.request(SettingsActivity.this);
+                    return;
+                }
+                if (watchSyncing || app.openring.ble.WatchSync.running()) {
+                    say(app.openring.ble.WatchSync.ALREADY);
+                    return;
+                }
+                watchSyncing = true;
+                fillWatchCard();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        final String r = app.openring.ble.WatchSync.run(appCtx);
+                        watchSyncing = false;
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (isFinishing() || isDestroyed()) return;
+                                say(r == null ? "Watch synced" : r);
+                                fillWatchCard();
+                            }
+                        });
+                    }
+                }, "watch sync").start();
+            }
+        });
+        card.addView(Ui.gap(this, 10));
+        card.addView(Ui.text(this, "Sync in the background", 12, Ui.TEXT_3, Ui.REGULAR));
+        final int per = p.watchPerDay();
+        for (int row = 0; row < 2; row++) {
+            LinearLayout r = Ui.hbox(this);
+            for (int k = row * 2; k < row * 2 + 2; k++) {
+                final int value = app.openring.core.withings.WatchDue.PER_DAY[k];
+                boolean on = value == per;
+                TextView chip = Ui.smallButton(this, app.openring.core.withings.WatchDue.LABELS[k], on ? Ui.OXY : Ui.TEXT_3);
+                if (on) chip.setBackground(Ui.rounded(Ui.alpha(Ui.OXY, 0.18f), Ui.dp(this, 24)));
+                chip.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        p.setWatchPerDay(value);
+                        SyncJob.schedule(SettingsActivity.this);
+                        fillWatchCard();
+                    }
+                });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+                lp.setMargins(k % 2 == 0 ? 0 : Ui.dp(this, 4), Ui.dp(this, 4), k % 2 == 0 ? Ui.dp(this, 4) : 0, 0);
+                r.addView(chip, lp);
+            }
+            card.addView(r, Ui.matchWrap());
+        }
+        card.addView(Ui.text(this, app.openring.core.withings.WatchDue.explain(per), 12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.gap(this, 6));
+        card.addView(Ui.text(this, Explain.WATCH_WITHINGS_APP, 12, Ui.TEXT_3, Ui.REGULAR));
+        watchPageButton(card);
+        small(card, "Check a Withings watch", Ui.OXY, new Runnable() {
             @Override
             public void run() {
                 startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
             }
         });
-        return card;
+        small(card, "Forget the watch", Ui.WARN, new Runnable() {
+            @Override
+            public void run() {
+                confirm("Forget this watch?", Explain.WATCH_FORGET, new Runnable() {
+                    @Override
+                    public void run() {
+                        p.forgetWatch();
+                        SyncJob.schedule(SettingsActivity.this);
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    app.openring.data.WatchStore.removeDevice(app.openring.data.Db.get(appCtx), address, System.currentTimeMillis() / 1000.0);
+                                } catch (RuntimeException e) {
+                                    RingManager.get(appCtx).log("watch: forgetting not noted (" + e.getClass().getSimpleName() + ")");
+                                }
+                            }
+                        }, "watch forget").start();
+                        fillWatchCard();
+                    }
+                });
+            }
+        });
     }
+
+    void watchPageButton(LinearLayout card) {
+        small(card, "Open the watch page", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, WatchPageActivity.class));
+            }
+        });
+    }
+
+    /** Whether Android keeps the watch paired with this phone (the Withings app paired it). */
+    String watchBonded(String address) {
+        try {
+            android.bluetooth.BluetoothAdapter a = app.openring.ble.RingScanner.adapter(this);
+            if (a == null) return "--";
+            return a.getRemoteDevice(address).getBondState() == android.bluetooth.BluetoothDevice.BOND_BONDED ? "yes" : "no";
+        } catch (RuntimeException e) {
+            return "--"; // no Bluetooth permission yet
+        }
+    }
+
     /** Usage access as shown in the Screen time card, to refresh it only when it changed. */
     private boolean screenAllowedShown;
     /** The first read of the screen log was started (once per app run, even if the log was empty). */

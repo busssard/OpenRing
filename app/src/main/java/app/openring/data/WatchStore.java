@@ -304,6 +304,16 @@ public final class WatchStore {
         return out;
     }
 
+    /** The newest battery reading as {percent, unix seconds}, null for none (Settings, Watch). */
+    public static long[] newestBattery(Db db) {
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT pct, t FROM watch_battery ORDER BY t DESC LIMIT 1", null);
+        try {
+            return c.moveToFirst() ? new long[] {c.getLong(0), c.getLong(1)} : null;
+        } finally {
+            c.close();
+        }
+    }
+
     /** True when any watch message is stored. */
     public static boolean any(Db db) {
         return db.count("SELECT COUNT(*) FROM (SELECT 1 FROM watch_raw LIMIT 1)") > 0;

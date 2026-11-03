@@ -470,6 +470,13 @@ public class WatchTest {
             }
         };
         check("days: the zone of the time decides the day (a trip)", WatchDays.day(midnight + 60, trip).equals(d.minusDays(1)));
+        List<Object[]> rows = Arrays.asList(new Object[] {0.0, 100.0, "Europe/Zurich"}, new Object[] {200.0, 300.0, "America/New_York"});
+        check("days: zones from the table, the later row between two, the newest after the last", "Europe/Zurich".equals(WatchDays.zoneIn(rows, 50))
+                && "America/New_York".equals(WatchDays.zoneIn(rows, 150)) && "America/New_York".equals(WatchDays.zoneIn(rows, 999))
+                && WatchDays.zoneIn(new ArrayList<Object[]>(), 1) == null && WatchDays.zoneIn(null, 1) == null);
+        WatchDays.Zones fromRows = WatchDays.zones(Collections.singletonList(new Object[] {0.0, 1.0, "Not/AZone"}), zurich);
+        check("days: zones without a table or with a bad id fall back to the phone's zone", WatchDays.zones(null, zurich).at(5).equals(zurich)
+                && fromRows.at(0).equals(zurich) && WatchDays.zones(rows, zurich).at(150).equals(ZoneId.of("America/New_York")));
         check("days: the day starts at its midnight", WatchDays.dayStart(d, z) == midnight);
         List<Records.Workout> ws = Arrays.asList(new Records.Workout(d.atTime(18, 0).atZone(zurich).toEpochSecond(), 2100, 2, 5000, 5500, 380), new Records.Workout(midnight + 7 * 3600, 600, 6, 0, 3000, 90),
                 new Records.Workout(midnight - 3600, 600, 1, 900, 600, 30));

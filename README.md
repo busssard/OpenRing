@@ -109,7 +109,7 @@ More in [SECURITY.md](SECURITY.md).
 | --- | --- |
 | Oura Ring 4 | Tested (firmware 2.6.7) |
 | Oura Ring 3 and Ring 5 | Should work (same Bluetooth protocol as far as known), not tested yet. Reports welcome |
-| Withings Steel HR and Steel HR Sport | Only the Watch check for now (Settings, Watch), no sync |
+| Withings Steel HR and Steel HR Sport | Sync of steps, heart rate, sleep, workouts and battery (Settings, Watch), not confirmed with a real watch yet |
 
 ## Getting started
 

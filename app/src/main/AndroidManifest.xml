@@ -56,6 +56,7 @@
         <!-- the Watch check (issue #251): a turn must not stop a running check, so the screen is not rebuilt -->
         <activity android:name="app.openring.ui.WatchActivity" android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+        <activity android:name="app.openring.ui.WatchPageActivity" android:exported="false" />
         <activity android:name="app.openring.ui.games.GamesActivity" android:exported="false" android:screenOrientation="portrait" />
 
         <service

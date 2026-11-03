@@ -230,7 +230,12 @@ launch --es settings backups;               shot settings-backups   # automatic 
 launch --es settings watch;                 shot settings-watch
 launch --ez watch true;                     shot watch 3
 launch --ez watch true --ez watch_report true; shot watch-report 3
-swipe_up; swipe_up;                         shot watch-report-copy 1
+swipe_up; swipe_up;                         shot watch-report-copy 1   # with Use this watch for syncing (phase 1b)
+# The Watch page (issue #251, phase 1b): the demo's made up watch, decoded by the same code as a real one: steps per
+# day, workouts, heart rate, Withings' own sleep and the battery
+launch --ez watch_data true;                shot watch-data 4
+swipe_up; swipe_up;                         shot watch-data-heart 1
+swipe_up; swipe_up; swipe_up;               shot watch-data-sleep 1   # sleep and battery at the end of the page
 # Find my ring (issues #74, #191), all on one screen without swiping: in demo a made up signal fills
 # the gauge and the trail; finder_start shows the screen before a walk (you in the middle of the dial),
 # the default a made up walk on the map with its circle, finder_turn a made up turn with the arrow, and
