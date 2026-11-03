@@ -127,7 +127,9 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
 * **New chart:** add a view to `ui/Charts.java`; extend `Charts.Scrub` for touch readout.
 * **New game:** subclass `ui/games/Game.java`, add it to `GamesActivity.create` before the motion check (which stays last) and raise `COUNT`. Games live in Settings, card *Ring games* (issue #15).
 * **Demo data:** `data/Demo.java` generates five weeks in the ring's own format; keep it realistic,
-  it is what screenshots and visitors see.
+  it is what screenshots and visitors see. Keep its story too (a busy month, an easy last week, a short cold, a best
+  night, quiet days and phone free evenings; issue #265), so it earns every kind of badge on any day (the pipeline test
+  checks that). The tests' own histories (`Demo.history` without the story) stay exactly as before #265.
 
 ## Versions and releases
 
