@@ -91,7 +91,9 @@ shots are the same picture (`.github/scripts/same_shots.sh`); `tests/test_ci_scr
 
 The emulator uses the plain Android image (no Google apps) with 4 GB of memory; if a system "isn't
 responding" dialog appears, the script taps *Wait*, and it fails if the dialog stays, so the README
-pictures are never replaced by spoiled ones. Look at the pictures before asking for a review. When you
+pictures are never replaced by spoiled ones. Every adb call in `screens.sh` has a time limit (6 minutes for the boot, 3 for the install, 1 for
+every other call, issue #278) and the job stops after 20 minutes, so a stuck emulator fails with a line that
+says so instead of hanging. Look at the pictures before asking for a review. When you
 add a screen or a state worth seeing, add it to `.github/scripts/screens.sh`. The main screen accepts
 these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
