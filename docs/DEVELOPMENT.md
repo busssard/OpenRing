@@ -91,7 +91,9 @@ shots are the same picture (`.github/scripts/same_shots.sh`); `tests/test_ci_scr
 
 The emulator uses the plain Android image (no Google apps) with 4 GB of memory; if a system "isn't
 responding" dialog appears, the script taps *Wait*, and it fails if the dialog stays, so the README
-pictures are never replaced by spoiled ones. Look at the pictures before asking for a review. When you
+pictures are never replaced by spoiled ones. Every adb call in `screens.sh` has a time limit (6 minutes for the boot, 3 for the install, 1 for
+every other call, issue #278) and the job stops after 20 minutes, so a stuck emulator fails with a line that
+says so instead of hanging. Look at the pictures before asking for a review. When you
 add a screen or a state worth seeing, add it to `.github/scripts/screens.sh`. The main screen accepts
 these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
@@ -125,7 +127,9 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
 * **New chart:** add a view to `ui/Charts.java`; extend `Charts.Scrub` for touch readout.
 * **New game:** subclass `ui/games/Game.java`, add it to `GamesActivity.create` before the motion check (which stays last) and raise `COUNT`. Games live in Settings, card *Ring games* (issue #15).
 * **Demo data:** `data/Demo.java` generates five weeks in the ring's own format; keep it realistic,
-  it is what screenshots and visitors see.
+  it is what screenshots and visitors see. Keep its story too (a busy month, an easy last week, a short cold, a best
+  night, quiet days and phone free evenings; issue #265), so it earns every kind of badge on any day (the pipeline test
+  checks that). The tests' own histories (`Demo.history` without the story) stay exactly as before #265.
 
 ## Versions and releases
 

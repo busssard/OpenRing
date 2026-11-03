@@ -124,6 +124,8 @@ Check every plan and PR against these before showing it:
     data, locks out the ring, crashes), `high`, `medium`, `low` or `wish` (a new idea, no defect), and
     re-rates when new facts arrive. The build run works `breaking` first, then `high`, `medium`, `low`,
     `wish`, oldest first within each. The owner can change a label at any time; his label wins.
+    An `[EXP]` issue rated `breaking` or `high` is released by the review run itself (it removes
+    `[EXP]` from the title and says why in one comment); `medium`, `low` and `wish` wait for the owner.
 * **Design round** (label `design-round`, the owner's big features): nothing is built until all three
   runs commented once, in whatever order they come to it (whoever reads the issue first starts):
   the build run posts "Design round: plan", the review run "Design review", the experiment run
