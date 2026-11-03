@@ -19,6 +19,12 @@ public class CoreTest {
         }
     }
 
+    /** {@link #check}, printing {@code detail} when it fails. */
+    static void check(String name, boolean ok, Object detail) {
+        if (!ok) System.out.println("  detail: " + detail);
+        check(name, ok);
+    }
+
     static void eq(String name, Object a, Object b) {
         boolean ok = a == null ? b == null : a.equals(b);
         if (!ok) System.out.println("  expected " + b + " got " + a);
@@ -998,6 +1004,7 @@ public class CoreTest {
         cycles252b();
         remind252();
         drip252();
+        rise252();
         badges265();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -1036,6 +1043,324 @@ public class CoreTest {
 
     static boolean plain252(String s) {
         return s == null || (!s.contains(" - ") && !s.contains("–") && !s.contains("—") && !s.contains("±"));
+    }
+
+    // --------------------------------------------- issue #252, phase 2: ovulation from the temperature rise
+
+    /**
+     * Made up nights for the cycles of {@code lengths} from {@code from}: base 35.0 °C, noise {@code sigma}, {@code missing}
+     * of the nights without a value, {@code warm} of them 0.6 °C warmer (a warm room, a fever night), and after each
+     * ovulation (the next start minus {@code luteal[i]}, none when 0) {@code rise} more, half of it on the first night.
+     * Adds each cycle's {start, next, ovulation or null} to {@code out}.
+     */
+    static TreeMap<java.time.LocalDate, Double> nights252(Random r, java.time.LocalDate from, int[] lengths, int[] luteal, double sigma, double rise,
+            double missing, double warm, List<java.time.LocalDate[]> out) {
+        TreeMap<java.time.LocalDate, Double> v = new TreeMap<java.time.LocalDate, Double>();
+        java.time.LocalDate d = from;
+        for (int k = 0; k < lengths.length; k++) {
+            java.time.LocalDate next = d.plusDays(lengths[k]);
+            java.time.LocalDate ov = luteal[k] == 0 ? null : next.minusDays(luteal[k]);
+            for (java.time.LocalDate x = d; x.isBefore(next); x = x.plusDays(1)) {
+                if (r.nextDouble() < missing) continue;
+                double t = 35.0 + r.nextGaussian() * sigma;
+                long after = ov == null ? 0 : java.time.temporal.ChronoUnit.DAYS.between(ov, x);
+                if (after >= 1) t += after == 1 ? rise / 2 : rise;
+                if (r.nextDouble() < warm) t += 0.6;
+                v.put(x, t);
+            }
+            out.add(new java.time.LocalDate[] {d, next, ov});
+            d = next;
+        }
+        return v;
+    }
+
+    /** {found, clear, clear within 1 day, possible within 2 days, cycles, summed error} over many made up people. */
+    static double[] accuracy252(double sigma, double rise, long seed) {
+        Random r = new Random(seed);
+        double[] a = new double[6];
+        for (int person = 0; person < 150; person++) {
+            int own = (int) Math.round(12.4 + r.nextGaussian() * 1.2);
+            int[] len = new int[8], lut = new int[8];
+            for (int k = 0; k < 8; k++) {
+                len[k] = (int) Math.round(29.3 + r.nextGaussian() * 2.6);
+                lut[k] = rise == 0 ? 0 : Math.max(8, Math.min(17, own + (int) Math.round(r.nextGaussian())));
+            }
+            List<java.time.LocalDate[]> cyc = new ArrayList<java.time.LocalDate[]>();
+            TreeMap<java.time.LocalDate, Double> v = nights252(r, C0, len, lut, sigma, rise, 0.15, 0.03, cyc);
+            double noise = TempRise.noise(v, TempRise.NOISE_RING);
+            for (java.time.LocalDate[] c : cyc) {
+                a[4]++;
+                TempRise.Rise x = TempRise.find(v, c[0], c[1], null, noise);
+                if (!x.found()) continue;
+                a[0]++;
+                if (c[2] == null) continue;
+                long e = Math.abs(java.time.temporal.ChronoUnit.DAYS.between(c[2], x.ovulation));
+                a[5] += e;
+                if (x.confidence == TempRise.CLEAR) {
+                    a[1]++;
+                    if (e <= TempRise.CLEAR_RANGE) a[2]++;
+                } else if (e <= TempRise.POSSIBLE_RANGE) a[3]++;
+            }
+        }
+        return a;
+    }
+
+    /** A night series from day {@code first}: one value per day, NaN for a missing night. */
+    static TreeMap<java.time.LocalDate, Double> series252(java.time.LocalDate first, double... v) {
+        TreeMap<java.time.LocalDate, Double> m = new TreeMap<java.time.LocalDate, Double>();
+        for (int i = 0; i < v.length; i++) if (!Double.isNaN(v[i])) m.put(first.plusDays(i), v[i]);
+        return m;
+    }
+
+    /** {@code n} nights of {@code low}, then nights of {@code high} up to {@code total}. */
+    static double[] step252(int n, int total, double low, double high) {
+        double[] v = new double[total];
+        for (int i = 0; i < total; i++) v[i] = i < n ? low + (i % 3 - 1) * 0.02 : high + (i % 3 - 1) * 0.02;
+        return v;
+    }
+
+    static void rise252() {
+        final double N = Double.NaN;
+        // ---- the rule on one cycle, by hand ----
+        java.time.LocalDate s = C0;
+        // a 28 day cycle, 15 low nights, the first high night on day 16 (index 15): ovulation on day 15
+        TreeMap<java.time.LocalDate, Double> v = series252(s, step252(15, 28, 36.0, 36.3));
+        TempRise.Rise x = TempRise.find(v, s, s.plusDays(28), null, 0.05);
+        check("#252e a clean step: clear, the day before the first high night, six low and three high nights", x.confidence == TempRise.CLEAR
+                && x.ovulation.equals(s.plusDays(14)) && x.first.equals(s.plusDays(15)) && x.low.size() == 6 && x.high.size() == 3
+                && x.low.get(5).equals(s.plusDays(14)) && x.high.get(2).equals(s.plusDays(17)) && Math.abs(x.baseline - 36.02) < 1e-9);
+        check("#252e a clean step: the rise is about 0.3 and lasts", Math.abs(x.size() - 0.3) < 0.03 && x.why == TempRise.FOUND && x.toString().startsWith("clear "));
+        double[] gap = step252(15, 28, 36.0, 36.3);
+        gap[16] = N;
+        x = TempRise.find(series252(s, gap), s, s.plusDays(28), null, 0.05);
+        check("#252e one missing night between the high ones: still found on the same day", x.found() && x.ovulation.equals(s.plusDays(14)) && x.high.get(1).equals(s.plusDays(17)));
+        gap[17] = N;
+        x = TempRise.find(series252(s, gap), s, s.plusDays(28), null, 0.05);
+        check("#252e two missing nights in a row after the first high one: the rule waits for nights that follow each other", !x.found() || !x.ovulation.equals(s.plusDays(14)), x);
+        double[] lowGap = step252(15, 28, 36.0, 36.3);
+        lowGap[11] = N;
+        lowGap[13] = N;
+        x = TempRise.find(series252(s, lowGap), s, s.plusDays(28), null, 0.05);
+        check("#252e two missing nights among the eight before: the six baseline nights still found", x.found() && x.ovulation.equals(s.plusDays(14))
+                && x.low.size() == 6 && x.low.get(0).equals(s.plusDays(7)));
+        double[] fewLow = step252(15, 28, 36.0, 36.3);
+        for (int i = 0; i < 15; i++) if (i != 1 && i != 4 && i != 8) fewLow[i] = N;
+        x = TempRise.find(series252(s, fewLow), s, s.plusDays(28), null, 0.05);
+        check("#252e too few nights before the rise: no baseline, not found", !x.found() && x.why == TempRise.FLAT && x.nights == 16, x.nights);
+        x = TempRise.find(series252(s, N, N, 36.0, 36.0, N, 36.1, N, 36.3), s, s.plusDays(28), null, 0.05);
+        check("#252e fewer than 9 nights in the cycle: too few to look", !x.found() && x.why == TempRise.FEW && x.nights == 4 && x.toString().equals("few nights"));
+        x = TempRise.find(null, s, s.plusDays(28), null, 0.05);
+        check("#252e no nights at all", !x.found() && x.nights == 0 && Double.isNaN(x.size()));
+
+        // the third night falls short of the third night's height: a fourth high night confirms it, as possible
+        double[] shy = step252(15, 28, 36.0, 36.3);
+        shy[15] = 36.1;
+        shy[16] = 36.1;
+        shy[17] = 36.1;
+        x = TempRise.find(series252(s, shy), s, s.plusDays(28), null, 0.05);
+        check("#252e a third night that falls short: a fourth confirms it, possible", x.confidence == TempRise.POSSIBLE && x.high.size() == 4
+                && x.ovulation.equals(s.plusDays(14)), x);
+        // one night dips to the baseline: a fourth high night is needed, the dipped night is named
+        double[] dip = step252(15, 28, 36.0, 36.3);
+        dip[16] = 36.0;
+        x = TempRise.find(series252(s, dip), s, s.plusDays(28), null, 0.05);
+        check("#252e one night that dips: four high nights, the dip named, possible", x.confidence == TempRise.POSSIBLE && x.high.size() == 4
+                && s.plusDays(16).equals(x.dipped) && x.ovulation.equals(s.plusDays(14)), x);
+        dip[17] = 36.0;
+        x = TempRise.find(series252(s, dip), s, s.plusDays(28), null, 0.05);
+        check("#252e two nights that dip: not that day", !x.found() || !x.ovulation.equals(s.plusDays(14)), x);
+
+        // a fever night among the baseline nights is left out and named; the rise is still found
+        double[] fever = step252(15, 28, 36.0, 36.3);
+        fever[12] = 37.0;
+        x = TempRise.find(series252(s, fever), s, s.plusDays(28), null, 0.05);
+        check("#252e a fever night before the rise: left out as far from its neighbours, the rise found", x.found() && x.ovulation.equals(s.plusDays(14))
+                && x.odd.contains(s.plusDays(12)) && !x.low.contains(s.plusDays(12)), x.odd);
+        // three warm nights early in the cycle, then flat: three high nights but no lasting rise
+        double[] spell = step252(28, 28, 36.0, 36.0);
+        spell[9] = spell[10] = spell[11] = 36.4;
+        x = TempRise.find(series252(s, spell), s, s.plusDays(28), null, 0.05);
+        check("#252e three warm nights that do not last (a cold, a warm room): not found", !x.found() && x.why == TempRise.FLAT, x);
+        x = TempRise.find(series252(s, step252(28, 28, 36.0, 36.0)), s, s.plusDays(28), null, 0.05);
+        check("#252e a flat cycle (no ovulation): not found", !x.found() && x.why == TempRise.FLAT && x.toString().equals("no rise"));
+
+        // short and long cycles, and the time from ovulation to the next start
+        x = TempRise.find(series252(s, step252(9, 21, 36.0, 36.3)), s, s.plusDays(21), null, 0.05);
+        check("#252e a 21 day cycle: ovulation on day 9", x.found() && x.ovulation.equals(s.plusDays(8)), x);
+        x = TempRise.find(series252(s, step252(27, 40, 36.0, 36.3)), s, s.plusDays(40), null, 0.05);
+        check("#252e a 40 day cycle: ovulation on day 27", x.found() && x.ovulation.equals(s.plusDays(26)), x);
+        x = TempRise.find(series252(s, step252(24, 28, 36.0, 36.3)), s, s.plusDays(28), null, 0.05);
+        check("#252e a rise only 4 days before the next start: too late for an ovulation, not found", !x.found(), x);
+        x = TempRise.find(series252(s, step252(6, 28, 36.0, 36.3)), s, s.plusDays(28), null, 0.05);
+        check("#252e a rise on day 7 of a 28 day cycle: more than 19 days before the next start, not found", !x.found(), x);
+
+        // the cycle running today: three high nights are needed, then the rise is found as it lasts
+        x = TempRise.find(v, s, null, s.plusDays(16), 0.05);
+        check("#252e this cycle with two high nights so far: not yet", !x.found() && x.why == TempRise.FLAT);
+        x = TempRise.find(v, s, null, s.plusDays(17), 0.05);
+        check("#252e this cycle with three high nights: found", x.confidence == TempRise.CLEAR && x.ovulation.equals(s.plusDays(14)));
+
+        // the noise: measured from the nights, the third night's height from it
+        Random nr = new Random(3);
+        TreeMap<java.time.LocalDate, Double> noisy = new TreeMap<java.time.LocalDate, Double>();
+        for (int i = 0; i < 300; i++) noisy.put(s.plusDays(i), 35 + nr.nextGaussian() * 0.12);
+        double nz = TempRise.noise(noisy, 9);
+        check("#252e noise: measured from night to night steps, about the made up 0.12", nz > 0.105 && nz < 0.135, nz);
+        check("#252e noise: with too few steps the fallback", TempRise.noise(series252(s, 36, 36.1, N, 36.2), 0.15) == 0.15 && TempRise.noise(null, 0.1) == 0.1);
+        check("#252e the third night's height: 0.2 for a steady signal, the noise in between, at least 0.1",
+                TempRise.thirdNeed(0.3) == 0.2 && Math.abs(TempRise.thirdNeed(0.14) - 0.14) < 1e-12 && TempRise.thirdNeed(0.05) == 0.1);
+        check("#252e a short night is no value for the rise", Double.isNaN(TempRise.ringNight(35.2, 120)) && TempRise.ringNight(35.2, 400) == 35.2
+                && TempRise.ringNight(35.2, Double.NaN) == 35.2 && Double.isNaN(TempRise.ringNight(Double.NaN, 400)));
+
+        // ---- accuracy on made up cycles (the Experiment view's setting: rise 0.3, noise 0.1 to 0.3, missing nights) ----
+        double[] a1 = accuracy252(0.1, 0.3, 42), a2 = accuracy252(0.2, 0.3, 43), f1 = accuracy252(0.1, 0, 44), f3 = accuracy252(0.3, 0, 45);
+        System.out.printf(Locale.ROOT, "    #252e noise 0.1: found %.0f %%, clear %.0f %% (within 1 day %.0f %%), possible within 2 days %.0f %%, mean error %.2f days%n",
+                100 * a1[0] / a1[4], 100 * a1[1] / a1[4], 100 * a1[2] / a1[1], 100 * a1[3] / (a1[0] - a1[1]), a1[5] / a1[0]);
+        System.out.printf(Locale.ROOT, "    #252e noise 0.2: found %.0f %%, mean error %.2f days; flat noise 0.1: %.1f %% found, 0.3: %.1f %%%n",
+                100 * a2[0] / a2[4], a2[5] / a2[0], 100 * f1[0] / f1[4], 100 * f3[0] / f3[4]);
+        check("#252e noise 0.1: about 7 in 10 rises found", a1[0] / a1[4] > 0.6, a1[0] / a1[4]);
+        check("#252e noise 0.1: a clear rise within 1 day at least 4 times in 5", a1[2] / a1[1] >= 0.8, a1[2] / a1[1]);
+        check("#252e noise 0.1: a possible one within 2 days at least 3 times in 4", a1[3] / (a1[0] - a1[1]) >= 0.75, a1[3] / (a1[0] - a1[1]));
+        check("#252e noise 0.1: mean error about a day", a1[5] / a1[0] < 1.2, a1[5] / a1[0]);
+        check("#252e noise 0.2: about a third found, mean error under 2 days", a2[0] / a2[4] > 0.25 && a2[0] / a2[4] < 0.5 && a2[5] / a2[0] < 2, a2[0] / a2[4]);
+        check("#252e flat noise (no ovulation): hardly ever a rise, never a clear one at noise 0.1", f1[0] / f1[4] < 0.03 && f3[0] / f3[4] < 0.06 && f1[1] == 0,
+                f1[0] / f1[4] + " " + f3[0] / f3[4]);
+
+        // ---- each cycle with both signals, the own luteal length, the estimate ----
+        int[] len = {28, 28, 28, 28, 28, 28};
+        Map<java.time.LocalDate, Integer> log = log252(5, len);
+        java.time.LocalDate last = lastStart252(len);
+        // the ring rises on day 17 of each 28 day cycle: ovulation on day 16, 13 days before the next start
+        TreeMap<java.time.LocalDate, Double> ring = new TreeMap<java.time.LocalDate, Double>();
+        for (int k = 0; k <= len.length; k++) {
+            java.time.LocalDate cs = C0.plusDays(28L * k);
+            double[] st = step252(16, 28, 35.2, 35.5);
+            for (int i = 0; i < 28; i++) ring.put(cs.plusDays(i), st[i]);
+        }
+        java.time.LocalDate today = last.plusDays(14);
+        Cycles cal = cyc252(log, today);
+        Cycles m = cal.measured(ring, null);
+        TempRise.Analysis an = m.rise;
+        check("#252e every cycle has its rise, ovulation 13 days before each next start", an.cycles.size() == 7 && an.over() == 6 && an.overFound() == 6
+                && an.cycles.get(0).ovulation.equals(C0.plusDays(15)) && an.cycles.get(0).luteal() == 13 && an.cycles.get(0).source == TempRise.RING);
+        check("#252e the own luteal length: 13 days from 6 cycles", an.ownLuteal() && an.lutealDays() == 13 && an.lutealN == 6 && an.lutealSd == 0);
+        check("#252e this cycle on day 15: no rise yet, the calendar with the own 13 days", m.method == Cycles.OWN_LUTEAL && m.next.equals(cal.next)
+                && m.range == cal.range && m.ovulation.equals(cal.next.minusDays(13)) && m.ovulationRange == 3 && m.luteal == 13, m.ovulation);
+        String ol = m.ovulationLine(EN);
+        check("#252e the line says it is the calendar with the own time", ol.contains("A calendar estimate from your own 13 days from ovulation to the period in 6 cycles")
+                && ol.endsWith("No lasting temperature rise in this cycle yet."), ol);
+        check("#252e this cycle is in the analysis, not found yet", an.current != null && an.current.next == null && !an.current.found()
+                && TempRise.line(an.current, m, EN).equals("No lasting rise yet in this cycle."), an.current);
+        // three days later the rise of this cycle shows: measured
+        today = last.plusDays(18);
+        cal = cyc252(log, today);
+        m = cal.measured(ring, null);
+        check("#252e this cycle's rise found: the measured day, the next start that day plus 13", m.method == Cycles.MEASURED
+                && m.ovulation.equals(last.plusDays(15)) && m.next.equals(last.plusDays(28)) && m.ovulationRange == 1 && m.range == 1
+                && m.calendarNext.equals(cal.next) && m.calendarRange == cal.range, m.next + " " + m.range);
+        eq("#252e the card's line (the owner's example)", m.ovulationLine(EN), "Ovulation likely on " + m.date(last.plusDays(15), EN)
+                + ", measured by your ring's temperature: next period expected " + m.span(last.plusDays(27), last.plusDays(29), EN) + ".");
+        check("#252e the expected line says the method and the calendar's answer", m.expectedLine(EN).contains("From the ovulation your temperature shows plus your own 13 days to the period (from 6 cycles with a temperature rise). The calendar alone says ")
+                , m.expectedLine(EN));
+        check("#252e fertile days once measured: in the past, and the rise cannot tell them ahead", m.fertileLine(EN).startsWith("Likely fertile days were ")
+                && m.fertileLine(EN).endsWith("so it cannot tell them ahead."));
+        check("#252e the calendar band narrows to the measured day", m.inOvulation(last.plusDays(16)) && !m.inOvulation(last.plusDays(17))
+                && cal.inOvulation(last.plusDays(17)));
+        String rd = m.describe(last.plusDays(15), EN);
+        check("#252e the calendar readout says why the day is in the band", rd.contains("the day before the temperature rose, give or take 1 day."), rd);
+        rd = m.describe(last.plusDays(28), EN);
+        check("#252e the calendar readout of the expected day: the measured ovulation plus 13 days", rd.contains("the measured ovulation plus 13 days, give or take 1 day."), rd);
+        PeriodRemind.Plan plan = PeriodRemind.plan(m, 2, 540, java.time.ZoneOffset.UTC, today.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli(), null);
+        check("#252e the reminder follows the measured estimate", plan.planned() && plan.at == last.plusDays(25).atTime(9, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli(), plan.at);
+        String tip = m.tempTip(last.plusDays(16), 0.3, EN);
+        check("#252e touching a high night reads it", tip.contains("\nRing: high night 1 of 3, 0.28 °C above the line"), tip);
+        tip = m.tempTip(last.plusDays(15), 0.0, EN);
+        check("#252e touching the ovulation day and a baseline night", tip.contains("\nRing: likely ovulation, the day before the rise")
+                && m.tempTip(last.plusDays(14), 0.0, EN).contains("\nRing: baseline night 5 of 6, the highest: the line"), tip);
+        check("#252e a night outside the rise reads as before", !m.tempTip(last.plusDays(3), 0.0, EN).contains("Ring:"));
+        // with only 2 cycles of rise: the usual 14 days
+        TreeMap<java.time.LocalDate, Double> two = new TreeMap<java.time.LocalDate, Double>(ring.tailMap(C0.plusDays(28 * 4)));
+        m = cal.measured(two, null);
+        check("#252e two cycles with a rise: not enough for the own time, the usual 14 days", !m.rise.ownLuteal() && m.rise.lutealN == 2 && m.luteal == 14
+                && m.method == Cycles.MEASURED && m.next.equals(last.plusDays(29)) && m.range == 3, m.range);
+        check("#252e the line says the usual 14 days", m.expectedLine(EN).contains("plus about 14 days, the usual time from ovulation to the period, until 3 cycles with a rise give your own"));
+        // fallback: no temperature at all is the calendar estimate, the same numbers
+        m = cal.measured(null, new TreeMap<java.time.LocalDate, Double>());
+        check("#252e no temperatures: the calendar estimate, unchanged", m.method == Cycles.CALENDAR && m.next.equals(cal.next) && m.range == cal.range
+                && m.ovulation.equals(cal.ovulation) && m.ovulationRange == cal.ovulationRange && m.ovulationLine(EN).equals(cal.ovulationLine(EN) + " No temperatures in this cycle to measure it.")
+                && cal.method == Cycles.CALENDAR && cal.rise == null);
+        check("#252e no temperatures: each cycle says so", TempRise.line(m.rise.cycles.get(0), m, EN).equals("No temperatures in this cycle."));
+        // the mouth alone, and both: agree (clear), disagree (possible, not for the own time)
+        TreeMap<java.time.LocalDate, Double> mouth = new TreeMap<java.time.LocalDate, Double>();
+        for (Map.Entry<java.time.LocalDate, Double> e : ring.entrySet()) mouth.put(e.getKey(), e.getValue() + 1.3);
+        m = cal.measured(null, mouth);
+        check("#252e the mouth alone: found, from the mouth", m.method == Cycles.MEASURED && m.rise.cycles.get(0).source == TempRise.MOUTH
+                && m.ovulationLine(EN).contains("measured by your temperatures by mouth"));
+        m = cal.measured(ring, mouth);
+        check("#252e ring and mouth agree: clear, from both", m.rise.cycles.get(0).source == TempRise.BOTH && m.rise.cycles.get(0).confidence == TempRise.CLEAR
+                && !m.rise.cycles.get(0).disagree && TempRise.line(m.rise.cycles.get(0), m, EN).endsWith(", a clear rise in your ring's and your mouth temperatures, 13 days before the next period."));
+        TreeMap<java.time.LocalDate, Double> late = new TreeMap<java.time.LocalDate, Double>();
+        for (int i = 0; i < 28; i++) late.put(C0.plusDays(i), 36.4 + (i >= 20 ? 0.3 : 0) + (i % 3 - 1) * 0.02);
+        m = cal.measured(ring, late);
+        TempRise.Result dis = m.rise.cycles.get(0);
+        check("#252e ring and mouth 4 days apart: possible, said so, left out of the own time", dis.disagree && dis.confidence == TempRise.POSSIBLE
+                && dis.ovulation.equals(C0.plusDays(15)) && m.rise.lutealN == 5
+                && TempRise.line(dis, m, EN).contains(": ring and mouth disagree by 4 days"), dis + " " + m.rise.lutealN);
+        // "My periods have stopped": no estimate, also measured
+        m = Cycles.of(log, null, today, today.minusDays(1)).measured(ring, null);
+        check("#252e periods stopped: no estimate even with a rise", !m.estimates() && m.ovulationLine(EN) == null);
+        // a left out cycle (maybe a period was not logged) has no result and no luteal length
+        Map<java.time.LocalDate, Integer> miss = log252(5, 28, 28, 28, 56, 28);
+        m = Cycles.of(miss, null, lastStart252(28, 28, 28, 56, 28).plusDays(5)).measured(ring, null);
+        check("#252e a left out cycle: no result for it", m.cycles.get(3).leftOut && m.rise.at(m.cycles.get(3).start) == null && m.rise.cycles.size() == 5);
+        // a few nights only
+        m = cal.measured(series252(last, 35.2, 35.2, 35.3), null);
+        check("#252e this cycle with a few nights: too few yet", TempRise.line(m.rise.current, m, EN).equals("Too few nights yet to look for a rise (9 needed)."));
+        check("#252e a cycle that is over with a few nights", TempRise.line(m.rise.cycles.get(0), m, EN).equals("No temperatures in this cycle.")
+                && TempRise.line(Cycles.of(log, null, today).measured(series252(C0, 35.2, 35.2, 35.3), null).rise.cycles.get(0), m, EN).equals("Too few nights to look for a rise."));
+        TreeMap<java.time.LocalDate, Double> flat = new TreeMap<java.time.LocalDate, Double>();
+        for (int i = 0; i < 28; i++) flat.put(C0.plusDays(i), 35.2 + (i % 3 - 1) * 0.02);
+        check("#252e a cycle that is over without a rise: said gently", TempRise.line(cal.measured(flat, null).rise.cycles.get(0), m, EN)
+                .equals("No clear rise found. That happens, also in cycles with an ovulation."));
+
+        // ---- the demo: its made up mouth temperatures rise after each made up ovulation ----
+        java.time.LocalDate dt = java.time.LocalDate.of(2026, 11, 2);
+        TreeMap<java.time.LocalDate, Double> dm = new TreeMap<java.time.LocalDate, Double>();
+        for (Map.Entry<java.time.LocalDate, DripCsv.Temp> e : DripCsv.demoMouth(dt, Cycles.demoWarmNights(dt)).entrySet()) if (!e.getValue().excluded) dm.put(e.getKey(), e.getValue().c);
+        Cycles demo = Cycles.of(Cycles.demo(dt), null, dt).measured(null, dm);
+        int demoFound = 0;
+        boolean onDay = true;
+        for (TempRise.Result r : demo.rise.cycles) {
+            if (!r.found()) continue;
+            demoFound++;
+            java.time.LocalDate want = r.next != null ? r.next.minusDays(Cycles.LUTEAL) : demo.calendarNext.minusDays(Cycles.LUTEAL);
+            onDay &= Math.abs(java.time.temporal.ChronoUnit.DAYS.between(want, r.ovulation)) <= 1;
+        }
+        check("#252e demo: the mouth temperatures show the rise in the cycles they cover and in this one, within a day of the made up ovulation",
+                demoFound >= 4 && onDay && demo.rise.current.found() && demo.method == Cycles.MEASURED && demo.rise.ownLuteal(), demoFound + " " + demo.rise.cycles);
+
+        // ---- texts: plain, explained ----
+        m = cal.measured(ring, null);
+        List<String> tx = new ArrayList<String>(Arrays.asList(m.ovulationLine(EN), m.expectedLine(EN), m.fertileLine(EN), m.describe(last.plusDays(16), EN),
+                app.openring.ui.Explain.periodRise(0.12, 0.08), app.openring.ui.Explain.periodRise(0.2, Double.NaN), app.openring.ui.Explain.periodFound(6, 4),
+                app.openring.ui.Explain.periodFound(1, 0), app.openring.ui.Explain.periodLuteal(2, 14, Double.NaN), app.openring.ui.Explain.periodLuteal(6, 12, 0.8),
+                app.openring.ui.Explain.periodOvulation(m), app.openring.ui.Explain.periodRange(m), app.openring.ui.Explain.PERIOD_TEMP));
+        for (TempRise.Result r : m.rise.cycles) tx.add(TempRise.line(r, m, EN));
+        boolean plain = true;
+        for (String t : tx) plain &= t != null && plain252(t);
+        check("#252e texts use no dashes as punctuation", plain);
+        String rule = app.openring.ui.Explain.periodRise(0.12, 0.08);
+        check("#252e explain: the rule with its numbers, the limits, not birth control", rule.contains("Three over six") && rule.contains("the third at least 0.12 °C for your ring, 0.10 °C by mouth")
+                && rule.contains("varies by about 0.12 °C") && rule.contains("Illness, alcohol, travel and a warm room move the temperature too")
+                && rule.contains("not birth control and not a medical diagnosis"), rule);
+        check("#252e explain: the own luteal length and how many cycles", app.openring.ui.Explain.periodLuteal(6, 12, 0.8).contains("your 6 newest cycles with a rise, which vary by about 0.8 days")
+                && app.openring.ui.Explain.periodLuteal(2, 14, Double.NaN).contains("(2 so far), the estimate uses the usual 14 days."));
+        check("#252e explain: the measured ranges", app.openring.ui.Explain.periodOvulation(m).startsWith("Give or take 1 day: a clear rise")
+                && app.openring.ui.Explain.periodRange(m).startsWith("Measured: the ovulation day plus 13 days, your own time")
+                && app.openring.ui.Explain.periodRange(cal).equals(app.openring.ui.Explain.periodRange(cal.used.size(), cal.length, cal.range, cal.sd))
+                && app.openring.ui.Explain.periodOvulation(cal).equals(app.openring.ui.Explain.periodOvulation(cal.used.size(), cal.ovulationRange)));
+        m = Cycles.of(log, null, last.plusDays(14)).measured(ring, null);
+        check("#252e explain: the calendar with the own time", app.openring.ui.Explain.periodOvulation(m).contains("together with how much your own time from ovulation"));
     }
 
     // ---------------------------------------------------------------- issue #252, phase 1b: import from drip
@@ -1949,7 +2274,7 @@ public class CoreTest {
         for (Cycles.Cycle x : c.cycles) lengths &= x.length >= 27 && x.length <= 31 && !x.leftOut;
         for (Cycles.Period x : c.periods) days &= x.days() >= 4 && x.days() <= 6;
         check("#252 demo: 8 cycles of 27 to 31 days, periods of 4 to 6, one spotting day", c.cycles.size() == 8 && lengths && days && spot == 1);
-        check("#252 demo: today on cycle day 18, nothing logged after today", c.cycleDay(today) == 18 && demo.lastKey().isBefore(today) && c.estimates()
+        check("#252 demo: today on cycle day 20, nothing logged after today", c.cycleDay(today) == Cycles.DEMO_DAY && Cycles.DEMO_DAY == 20 && demo.lastKey().isBefore(today) && c.estimates()
                 && c.running == null && c.lateBy() == 0);
 
         // ---- plain texts, no dashes as punctuation ----
@@ -2137,7 +2462,7 @@ public class CoreTest {
                         && app.openring.ui.Explain.periodCycles(1, 1).contains("your 1 cycle") && app.openring.ui.Explain.periodCycles(1, 1).contains("1 cycle more than 10 days from the middle value is left out")
                         && app.openring.ui.Explain.periodCycles(8, 0).endsWith("uses only your newest 12 cycles.") && !app.openring.ui.Explain.periodCycles(8, 0).contains("left out"));
         check("#252b explain: the amount is a relative score, not millilitres", app.openring.ui.Explain.PERIOD_AMOUNT.contains("not a measured amount")
-                && app.openring.ui.Explain.PERIOD_TEMP.contains("evidence only") && app.openring.ui.Explain.periodLengths(1).contains("your 1 period ")
+                && app.openring.ui.Explain.PERIOD_TEMP.contains("the likely ovulation, the day before the first high night") && app.openring.ui.Explain.periodLengths(1).contains("your 1 period ")
                 && app.openring.ui.Explain.periodNext(null, true, 0).contains("stopped"));
     }
 

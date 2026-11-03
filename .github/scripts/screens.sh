@@ -204,7 +204,7 @@ swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
 # length, then period length and amount), touched on the newest cycle dot, and the night temperature line next to the
 # cycles (the demo's nights are warmer after ovulation), touched on its newest night. Slow swipes until the caption is in
 # the upper third; a chart is found by its content description and touched 10 px inside its right end, where the newest is
-caption_top() { ui_dump | grep -o "text=\"$1\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p; }
+caption_top() { ui_dump | grep -o "text=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p; }  # $1 the text or its start
 scroll_to() {  # $1 caption text, $2 the most swipes
   local y
   for i in $(seq 1 "$2"); do
@@ -231,6 +231,19 @@ else echo "::warning::issue #252 step skipped: the cycle length chart was not on
 scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 20 || echo "::warning::issue #252 step: the night temperature card was not found on Body"
 if touch_desc "Night temperature since"; then shot body-period-temp 1
 else echo "::warning::issue #252 step: the night temperature line was not on screen to touch it"; shot body-period-temp 1; fi
+# Phase 2 of #252: "Ovulation from your temperature" in Your cycles (this cycle's measured day, in how many cycles a rise
+# was found, the own time from ovulation to the period, a line under each cycle), the Period card's measured lines, and the
+# rise marked on the night temperature line (baseline, ringed high nights, the ovulation line), opened touched on its first
+# high night (extra period_rise, demo mode only)
+launch --ei tab 4; sleep 3
+scroll_to "Ovulation from your temperature" 40 || echo "::warning::issue #252 phase 2 step: Ovulation from your temperature was not found on Body"
+shot body-cycles-ovulation 1
+launch --ei tab 4; sleep 3
+scroll_to "Likely fertile days were" 6 || echo "::warning::issue #252 phase 2 step: the measured lines were not found on the Period card"
+shot body-period-measured 1
+launch --ei tab 4 --ez period_rise true; sleep 3
+scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 40 || echo "::warning::issue #252 phase 2 step: the night temperature card was not found on Body"
+shot body-period-rise 1
 # the gentle question "Have your periods stopped?" (extra period_ask, demo mode only; nothing is saved without a tap)
 launch --ei tab 4 --ez period_ask true;    shot period-ask 3
 # Import from drip (phase 1b of #252): in demo mode the preview of a made up drip file against the demo's log (extra drip;

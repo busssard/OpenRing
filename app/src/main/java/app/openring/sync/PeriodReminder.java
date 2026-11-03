@@ -91,7 +91,13 @@ public final class PeriodReminder extends BroadcastReceiver {
             return Periods.readReal(c, today, stopped);
         } catch (RuntimeException e) {
             if (p.demo()) throw e;
-            return Periods.cycles(app.openring.data.Db.get(c), today, stopped);
+            app.openring.data.Db db = app.openring.data.Db.get(c);
+            Cycles base = Periods.cycles(db, today, stopped);
+            try {
+                return Periods.measured(db, base, java.time.ZoneId.systemDefault());
+            } catch (RuntimeException again) {
+                return base;
+            }
         }
     }
 

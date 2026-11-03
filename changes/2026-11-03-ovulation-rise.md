@@ -1,0 +1,5 @@
+* The period tracker now looks for the temperature rise after ovulation in each cycle, in your ring's nightly temperature and in morning temperatures imported from drip, with the classic three over six rule. "Your cycles" shows under each cycle where ovulation most likely was and how clear the rise is, or that none was found.
+* Once this cycle's rise shows, the Period card says so ("Ovulation likely on 1 Nov, measured by your ring's temperature: next period expected 14 to 16 Nov"), the calendar's ovulation band narrows to that day, and the reminder follows the new estimate. Without a rise it stays the calendar estimate, and the card says which one it is.
+* After 3 cycles with a rise, your own time from ovulation to the next period replaces the usual 14 days.
+* The night temperature card marks the rise: the baseline line, the high nights and the likely ovulation, each readable by touch. Nights far from the ones around them (a fever, a warm room) and nights someone else wore the ring are left out.
+* An estimate, not birth control and not a medical diagnosis: illness, alcohol, travel and a warm room move the temperature too.

@@ -23,8 +23,9 @@ import app.openring.core.analysis.Cycles;
  * The period tracker's analysis at the end of Body (issue #252, phase 1a2): "Your cycles" (cycle day, days to the next
  * expected period, regularity, cycle length, period length and amount over time with their numbers, every cycle and period
  * a dot readable by touch next to the typical length) and the ring's nightly temperature line as evidence next to the
- * cycles (no ovulation is found from it yet, that is phase 2). Everything is worked out from the log on each load
- * ({@code core/analysis/Cycles}); nothing is stored.
+ * cycles. Phase 2: the ovulation each cycle's temperature rise shows ({@code core/analysis/TempRise}), a line under each
+ * cycle, and the rise marked on the temperature line (baseline, high nights, the likely ovulation). Everything is worked
+ * out from the log and the nights on each load ({@code core/analysis/Cycles}); nothing is stored.
  */
 final class PeriodAnalysis {
     private PeriodAnalysis() {}
@@ -94,6 +95,7 @@ final class PeriodAnalysis {
             }
             list(c, card, cy, loc);
         }
+        if (cy.rise != null) ovulation(c, card, cy, loc);
 
         // period length and amount over time
         List<Cycles.Period> done = cy.finished();
@@ -157,6 +159,13 @@ final class PeriodAnalysis {
         for (int i = n - 1; i >= n - shown; i--) {
             Cycles.Cycle k = cy.cycles.get(i);
             box.addView(Ui.text(c, cy.cycleRow(k, loc), 13, k.leftOut || cy.unusual(k) ? Ui.TEXT_2 : Ui.TEXT, Ui.REGULAR));
+            // phase 2: where ovulation most likely was, from the temperature rise
+            app.openring.core.analysis.TempRise.Result r = cy.rise == null || k.leftOut ? null : cy.rise.at(k.start);
+            if (r != null) {
+                TextView t = Ui.text(c, app.openring.core.analysis.TempRise.line(r, cy, loc), 12, r.found() ? Ui.TEXT_2 : Ui.TEXT_3, Ui.REGULAR);
+                t.setPadding(Ui.dp(c, 12), 0, 0, Ui.dp(c, 4));
+                box.addView(t);
+            }
         }
         if (n > LIST) {
             TextView more = Ui.smallButton(c, listAll ? "Show the newest " + LIST : "Show all " + n + " cycles", Ui.TEXT_2);
@@ -173,6 +182,22 @@ final class PeriodAnalysis {
         }
     }
 
+    /** "Ovulation from your temperature": this cycle, in how many cycles a rise was found, the own luteal length, how. */
+    static void ovulation(Context c, LinearLayout card, Cycles cy, Locale loc) {
+        app.openring.core.analysis.TempRise.Analysis a = cy.rise;
+        card.addView(Ui.gap(c, 14));
+        card.addView(Ui.text(c, "Ovulation from your temperature", 15, Ui.TEXT, Ui.MEDIUM));
+        if (a.current != null) card.addView(Ui.text(c, "This cycle: " + app.openring.core.analysis.TempRise.line(a.current, cy, loc), 13, Ui.TEXT, Ui.REGULAR));
+        int over = a.over(), found = a.overFound();
+        card.addView(Ui.statRow(c,
+                Ui.stat(c, "Rise found", over == 0 ? "--" : found + " of " + over, "cycles", Ui.PERIOD, Explain.periodFound(over, found)),
+                Ui.stat(c, "Ovulation to period", a.ownLuteal() ? String.valueOf(a.lutealDays()) : "--", "days", Ui.PERIOD,
+                        Explain.periodLuteal(a.lutealN, a.lutealDays(), a.lutealSd))));
+        boolean mouth = false;
+        for (app.openring.core.analysis.TempRise.Result r : a.cycles) mouth |= r.mouth.nights > 0;
+        card.addView(PeriodCard.note(c, Explain.periodRise(a.ringNoise, mouth ? a.mouthNoise : Double.NaN)));
+    }
+
     // ------------------------------------------------------------------- temperature
 
     static View temperature(Context c, DayData d) {
@@ -187,7 +212,9 @@ final class PeriodAnalysis {
         if (first != null && first.isAfter(from)) from = first;
         boolean mouth = !d.periodMouth.isEmpty();
         card.addView(Ui.gap(c, 6));
-        card.addView(new TempLine(c, cy, from, cy.today, d.periodTemps, d.periodMouth), Ui.sized(c, -1, mouth ? 170 : 150));
+        // a found rise adds lines to the touch text: a little more room
+        int h = (mouth ? 170 : 150) + (cy.rise != null ? 30 : 0);
+        card.addView(new TempLine(c, cy, from, cy.today, d.periodTemps, d.periodMouth), Ui.sized(c, -1, h));
         if (mouth) {
             // the two lines, labelled in their own colours
             LinearLayout keys = Ui.hbox(c);
@@ -201,6 +228,9 @@ final class PeriodAnalysis {
         if (mouth) card.addView(PeriodCard.note(c, Explain.PERIOD_MOUTH));
         return card;
     }
+
+    /** Screen test (extra {@code period_rise}, demo mode only): the temperature line opens touched on the first high night. */
+    static boolean risePending;
 
     /** The colour of the drip temperatures by mouth (phase 1b), apart from the ring's line. */
     static final int MOUTH = Ui.OXY;
@@ -336,7 +366,8 @@ final class PeriodAnalysis {
         private final TreeMap<LocalDate, Double> v;
         private final TreeMap<LocalDate, app.openring.core.DripCsv.Temp> mouth;
         private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG), dot = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG),
-                grid = new Paint(Paint.ANTI_ALIAS_FLAG), col = new Paint(), mline = new Paint(Paint.ANTI_ALIAS_FLAG), mdot = new Paint(Paint.ANTI_ALIAS_FLAG);
+                grid = new Paint(Paint.ANTI_ALIAS_FLAG), col = new Paint(), mline = new Paint(Paint.ANTI_ALIAS_FLAG), mdot = new Paint(Paint.ANTI_ALIAS_FLAG),
+                base = new Paint(Paint.ANTI_ALIAS_FLAG), ring = new Paint(Paint.ANTI_ALIAS_FLAG), ovu = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         TempLine(Context c, Cycles cy, LocalDate from, LocalDate to, TreeMap<LocalDate, Double> v, TreeMap<LocalDate, app.openring.core.DripCsv.Temp> mouth) {
             super(c);
@@ -361,6 +392,13 @@ final class PeriodAnalysis {
             grid.setColor(Ui.LINE);
             grid.setStrokeWidth(1);
             grid.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 3), Ui.dp(c, 4)}, 0));
+            base.setStyle(Paint.Style.STROKE);
+            base.setStrokeWidth(Ui.dp(c, 1.4f));
+            base.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 5), Ui.dp(c, 3)}, 0));
+            ring.setStyle(Paint.Style.STROKE);
+            ring.setStrokeWidth(Ui.dp(c, 1.5f));
+            ovu.setColor(Ui.READY);
+            ovu.setStrokeWidth(Ui.dp(c, 1.5f));
             setContentDescription("Night temperature since " + shortDate(from, false) + (mouth.isEmpty() ? "" : ", with morning temperatures by mouth from drip")
                     + ", touch to read a night");
         }
@@ -452,6 +490,15 @@ final class PeriodAnalysis {
                 }
                 cv.drawPath(mp, mline);
             }
+            marks(cv, cw, left, top, bottom, span, hasMouth, mlo, mhi);
+            if (risePending && Float.isNaN(scrubX)) {
+                // the screen test's touch: the first high night of the newest rise on the line
+                LocalDate f = null;
+                for (app.openring.core.analysis.TempRise.Result r : cy.rise == null ? new java.util.ArrayList<app.openring.core.analysis.TempRise.Result>() : cy.rise.cycles) {
+                    if (r.ring.found() && !r.ring.first.isBefore(from)) f = r.ring.first;
+                }
+                if (f != null) scrubX = xOf(f, cw, left);
+            }
             if (!started && !hasMouth) {
                 txt.setTextAlign(Paint.Align.CENTER);
                 cv.drawText("No nights with the ring in this time yet", (left + right) / 2, (top + bottom) / 2, txt);
@@ -482,6 +529,66 @@ final class PeriodAnalysis {
                         : cy.tempTip(d, dev, Locale.getDefault());
                 drawTip(cv, x, Ui.dp(c, hasMouth ? 36 : 22), bottom, tip);
             }
+        }
+
+        /**
+         * The rise each cycle shows (phase 2), evidence first: the baseline as a dashed line over its six nights and the high
+         * ones, a ring around each high night, and a thin green line at the likely ovulation. The ring's line shows the
+         * difference from the usual while the rise is found in the nightly temperature itself, so its baseline is drawn
+         * moved by the middle difference between the two on those nights (a few hundredths at most).
+         */
+        private void marks(Canvas cv, float cw, float left, float top, float bottom, double span, boolean hasMouth, double mlo, double mhi) {
+            if (cy.rise == null) return;
+            Context c = getContext();
+            for (app.openring.core.analysis.TempRise.Result r : cy.rise.cycles) {
+                if (r.ring.found()) {
+                    java.util.List<Double> off = new java.util.ArrayList<Double>();
+                    for (java.util.Map.Entry<LocalDate, Double> e : r.ring.values.entrySet()) {
+                        Double dv = v.get(e.getKey());
+                        if (dv != null) off.add(e.getValue() - dv);
+                    }
+                    if (!off.isEmpty()) {
+                        java.util.Collections.sort(off);
+                        double b = r.ring.baseline - off.get(off.size() / 2);
+                        base.setColor(Ui.alpha(Ui.TEMP, 0.9f));
+                        line(cv, r.ring, cw, left, (float) py(b, span, top, bottom));
+                        ring.setColor(Ui.TEXT);
+                        for (LocalDate d : r.ring.high) {
+                            Double dv = v.get(d);
+                            float x = xOf(d, cw, left);
+                            if (dv != null && x >= left) cv.drawCircle(x, py(dv, span, top, bottom), Ui.dp(c, 4.5f), ring);
+                        }
+                    }
+                }
+                if (hasMouth && r.mouth.found()) {
+                    base.setColor(Ui.alpha(MOUTH, 0.9f));
+                    line(cv, r.mouth, cw, left, my(r.mouth.baseline, mlo, mhi, top, bottom));
+                    ring.setColor(MOUTH);
+                    for (LocalDate d : r.mouth.high) {
+                        app.openring.core.DripCsv.Temp m = mouth.get(d);
+                        float x = xOf(d, cw, left);
+                        if (m != null && x >= left) cv.drawCircle(x, my(m.c, mlo, mhi, top, bottom), Ui.dp(c, 4.2f), ring);
+                    }
+                }
+                if (r.found()) {
+                    float x = xOf(r.ovulation, cw, left);
+                    if (x >= left && !r.ovulation.isAfter(to)) cv.drawLine(x, top, x, bottom, ovu);
+                }
+            }
+        }
+
+        /** The dashed baseline at {@code y} from the first of the six nights to the last high one, inside the chart. */
+        private void line(Canvas cv, app.openring.core.analysis.TempRise.Rise r, float cw, float left, float y) {
+            float x0 = Math.max(left, xOf(r.low.get(0), cw, left)), x1 = xOf(r.high.get(r.high.size() - 1), cw, left);
+            if (x1 <= left) return;
+            Path p = new Path();
+            p.moveTo(x0, y);
+            p.lineTo(x1, y);
+            cv.drawPath(p, base);
+        }
+
+        private float xOf(LocalDate d, float cw, float left) {
+            return left + (ChronoUnit.DAYS.between(from, d) + 0.5f) * cw;
         }
 
         private static float my(double val, double lo, double hi, float top, float bottom) {

@@ -91,11 +91,11 @@ final class PeriodCard {
             card.addView(Ui.gap(c, 14));
             card.addView(Ui.text(c, next, 16, Ui.TEXT, Ui.MEDIUM));
             card.addView(Ui.text(c, cy.expectedLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
-            card.addView(note(c, Explain.periodRange(cy.used.size(), cy.length, cy.range, cy.sd)));
+            card.addView(note(c, Explain.periodRange(cy)));
             card.addView(Ui.gap(c, 10));
             card.addView(Ui.text(c, cy.ovulationLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
             card.addView(Ui.text(c, cy.fertileLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
-            card.addView(note(c, Explain.periodOvulation(cy.used.size(), cy.ovulationRange)));
+            card.addView(note(c, Explain.periodOvulation(cy)));
         }
         String vary = cy.regularityLine();
         if (vary != null) {

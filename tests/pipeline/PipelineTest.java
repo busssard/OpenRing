@@ -586,9 +586,9 @@ public class PipelineTest {
         }
         Db demo = Db.get(phone2);
         check("demo uses its own database", demo.fileName.equals(Db.DEMO), demo.fileName);
-        // issue #252: the made up period log is in the demo file only, today on about cycle day 18
+        // issue #252: the made up period log is in the demo file only, today on cycle day 20
         app.openring.core.analysis.Cycles demoCycles = app.openring.data.Periods.cycles(demo, demoToday);
-        check("#252 demo: 8 made up cycles, today on cycle day 18", demoCycles.cycles.size() == 8 && demoCycles.cycleDay(demoToday) == 18
+        check("#252 demo: 8 made up cycles, today on cycle day 20", demoCycles.cycles.size() == 8 && demoCycles.cycleDay(demoToday) == 20
                 && demoCycles.estimates(), demoCycles.cycles);
         check("#252 demo: the real file holds no period day", daysIn252(phone2.getDatabasePath(Db.REAL)).isEmpty(), daysIn252(phone2.getDatabasePath(Db.REAL)));
         check("#252d demo: made up morning temperatures by mouth as one import, in the demo file", demo.count("SELECT COUNT(*) FROM period_imports WHERE gone = 0") == 1
@@ -870,6 +870,7 @@ public class PipelineTest {
         largeLog252();
         tracker252();
         phase1a2_252();
+        rise252();
         drip252();
         dripLarge252();
 
@@ -9859,7 +9860,7 @@ public class PipelineTest {
         app.openring.core.analysis.Cycles direct = app.openring.core.analysis.Cycles.of(made, Arrays.asList(made.lastKey()), today);
         check("#252 cycles: the whole log as stored gives the same estimate as the same days in memory", fromDb.periods.toString().equals(direct.periods.toString())
                 && fromDb.cycles.toString().equals(direct.cycles.toString()) && fromDb.next.equals(direct.next) && fromDb.range == direct.range
-                && fromDb.cycleDay(today) == 18 && fromDb.periods.get(fromDb.periods.size() - 1).marked && fromDb.ends.size() == 1,
+                && fromDb.cycleDay(today) == 20 && fromDb.periods.get(fromDb.periods.size() - 1).marked && fromDb.ends.size() == 1,
                 fromDb.periods + " / " + direct.periods);
         Analyzer.runAll(c, new Analyzer.Log() {
             @Override
@@ -10295,7 +10296,123 @@ public class PipelineTest {
         double rise = wn > 0 && on > 0 ? wSum / wn - oSum / on : Double.NaN;
         System.out.printf("    #252b demo: nights after ovulation %.2f degrees warmer than the others (%d and %d nights)%n", rise, wn, on);
         check("#252b demo: the period tracker's temperature line shows nights after ovulation about 0.3 degrees warmer", wn >= 5 && on >= 5 && rise > 0.2 && rise < 0.4, rise);
+        // phase 2: the demo's ring nights show the rise of the cycle running today, on the made up ovulation day
+        app.openring.core.analysis.Cycles dCal = app.openring.data.Periods.cycles(dd, dToday);
+        app.openring.core.analysis.Cycles dm = app.openring.data.Periods.measured(dd, dCal, z);
+        app.openring.core.analysis.TempRise.Rise dr = dm.rise.current.ring;
+        check("#252e demo: the ring's nights show this cycle's rise, the day before the first warm night", dr.found() && dr.ovulation.equals(dCal.ovulation)
+                && dm.method == app.openring.core.analysis.Cycles.MEASURED && warm.contains(dr.first) && !warm.contains(dr.ovulation), dr + " " + dCal.ovulation);
+        check("#252e demo: the mouth temperatures give the own time from ovulation to the period", dm.rise.ownLuteal()
+                && dm.rise.lutealDays() == app.openring.core.analysis.Cycles.LUTEAL, dm.rise.lutealN + " " + dm.rise.luteal);
         app.openring.data.Demo.leave(dc);
+        clean254();
+    }
+
+    /**
+     * Issue #252, phase 2: the temperature rise read from the stored day summaries and drip temperatures. Left out and short
+     * nights are not used, the reminder's read only helper gives the same measured estimate, nothing is stored or changed,
+     * and a 5 year history is worked out quickly enough for each load.
+     */
+    static void rise252() throws Exception {
+        Context c = freshDb("openring252-rise");
+        MADE_254.add(c);
+        final Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        final LocalDate today = LocalDate.parse("2026-10-20");
+        final LocalDate first = today.minusDays(5 * 365);
+        // cycles of 27 to 30 days back from this one (today is its day 19), ovulation 13 days before each next start, the
+        // ring 0.3 warmer after it; in this cycle from its day 16 (4 warm nights so far)
+        final java.util.TreeMap<LocalDate, Integer> log = new java.util.TreeMap<LocalDate, Integer>();
+        final java.util.TreeSet<LocalDate> warm = new java.util.TreeSet<LocalDate>();
+        int[] lens = {28, 30, 27, 29};
+        final LocalDate lastStart = today.minusDays(18);
+        for (LocalDate d = lastStart.plusDays(15); !d.isAfter(today); d = d.plusDays(1)) warm.add(d);
+        List<LocalDate> starts = new ArrayList<LocalDate>();
+        starts.add(lastStart);
+        for (int k = 0; !starts.get(starts.size() - 1).isBefore(first); k++) starts.add(starts.get(starts.size() - 1).minusDays(lens[k % lens.length]));
+        for (int k = 0; k < starts.size(); k++) {
+            for (int i = 0; i < 5; i++) log.put(starts.get(k).plusDays(i), app.openring.core.analysis.Cycles.MEDIUM);
+            if (k > 0) for (LocalDate d = starts.get(k - 1).minusDays(12); d.isBefore(starts.get(k - 1)); d = d.plusDays(1)) warm.add(d);
+        }
+        final java.util.Random r = new java.util.Random(5);
+        final String filler = new String(new char[1500]).replace('\0', 'x');
+        final LocalDate shortNight = lastStart.minusDays(20), leftNight = lastStart.minusDays(21);
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                for (java.util.Map.Entry<LocalDate, Integer> e : log.entrySet()) {
+                    if (!e.getKey().isAfter(today)) app.openring.data.Periods.setFlow(db, e.getKey().toString(), e.getValue(), 8000);
+                }
+                for (LocalDate d = first; !d.isAfter(today); d = d.plusDays(1)) {
+                    if (r.nextDouble() < 0.1) continue;
+                    double t = 35.2 + r.nextGaussian() * 0.08 + (warm.contains(d) ? 0.3 : 0);
+                    db.putDay(d.toString(), "{\"day\":\"" + d + "\",\"temp\":" + t + ",\"temp_dev\":" + (t - 35.3) + ",\"asleep_min\":"
+                            + (d.equals(shortNight) ? 95 : 430) + ",\"radar\":{\"temp\":99},\"notes\":\"" + filler + "\"}");
+                }
+            }
+        });
+        // drip temperatures by mouth for the last year, one left out by drip
+        java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp> mouth = new java.util.TreeMap<LocalDate, app.openring.core.DripCsv.Temp>();
+        for (LocalDate d = today.minusDays(364); !d.isAfter(today); d = d.plusDays(1)) {
+            mouth.put(d, new app.openring.core.DripCsv.Temp(Math.round((36.4 + r.nextGaussian() * 0.05 + (warm.contains(d) ? 0.3 : 0)) * 100) / 100.0, "06:40", d.equals(today.minusDays(40))));
+        }
+        app.openring.data.Periods.importDrip(db, new java.util.TreeMap<LocalDate, Integer>(), mouth, false, 9000L * 1000, 9000);
+        db.addExcluded(leftNight.minusDays(1).atTime(23, 0).atZone(z).toEpochSecond(), leftNight.atTime(3, 0).atZone(z).toEpochSecond(), 9100);
+        String rows = periodRows252(db), results = results252(db);
+        long version = db.count("PRAGMA user_version");
+
+        java.util.TreeMap<LocalDate, Double> nights = app.openring.data.Periods.ringNights(db, first, today, z);
+        check("#252e ring nights: the nightly temperature of each day, without a short night and without a night someone else wore the ring",
+                nights.size() > 1500 && !nights.containsKey(shortNight) && !nights.containsKey(leftNight) && nights.containsKey(leftNight.minusDays(2))
+                        && db.dayJson(shortNight.toString()) != null && db.dayJson(leftNight.toString()) != null, nights.size());
+        LocalDate any = nights.lastKey();
+        check("#252e ring nights: the stored temp, not the difference from the usual", Math.abs(nights.get(any) - Json.d(Json.parse(db.dayJson(any.toString())), "temp")) < 1e-9, any);
+
+        app.openring.core.analysis.Cycles cal = app.openring.data.Periods.cycles(db, today);
+        long t = System.nanoTime();
+        app.openring.core.analysis.Cycles m = app.openring.data.Periods.measured(db, cal, z);
+        double ms = (System.nanoTime() - t) / 1e6;
+        int over = m.rise.over(), found = m.rise.overFound(), within = 0, within1 = 0;
+        for (app.openring.core.analysis.TempRise.Result x : m.rise.cycles) {
+            long e = x.found() && x.next != null ? Math.abs(java.time.temporal.ChronoUnit.DAYS.between(x.next.minusDays(13), x.ovulation)) : 99;
+            if (e <= 2) within++;
+            if (e <= 1) within1++;
+        }
+        System.out.printf("    #252e 5 years: %d cycles, a rise found in %d, %d of them within a day, %d within 2; worked out in %.0f ms%n", over, found, within1, within, ms);
+        check("#252e 5 years: a rise in nearly every cycle (noise 0.08, 1 in 10 nights missing), within 2 days of the made up day", over > 60 && found >= 0.85 * over
+                && within >= 0.9 * found, found + " of " + over + ", " + within);
+        check("#252e 5 years: the own time from ovulation to the period is 13 days", m.rise.ownLuteal() && m.rise.lutealDays() == 13, m.rise.luteal);
+        check("#252e 5 years: this cycle's rise is measured, the next start that day plus 13", m.method == app.openring.core.analysis.Cycles.MEASURED
+                && m.ovulation.equals(lastStart.plusDays(14)) && m.next.equals(lastStart.plusDays(27)), m.ovulation + " " + m.next);
+        check("#252e 5 years: worked out on each load in well under a second on this computer", ms < 1500, ms);
+        check("#252e nothing is stored: the period log, the results and the schema as before", periodRows252(db).equals(rows) && results252(db).equals(results)
+                && db.count("PRAGMA user_version") == version, null);
+        app.openring.core.analysis.Cycles ro = app.openring.data.Periods.readReal(c, today, null);
+        check("#252e the reminder's helper gives the same measured estimate", ro.method == app.openring.core.analysis.Cycles.MEASURED && ro.next.equals(m.next)
+                && ro.range == m.range && ro.rise.lutealN == m.rise.lutealN, ro.next);
+        // a day row that is no date (a damaged row): the screens get an error and keep the calendar estimate, so does the reminder
+        db.putDay("2026-10-1x", "{\"temp\":35.2}");
+        String err = null;
+        try {
+            app.openring.data.Periods.measured(db, cal, z);
+        } catch (RuntimeException e) {
+            err = e.getClass().getSimpleName();
+        }
+        app.openring.core.analysis.Cycles roBad = app.openring.data.Periods.readReal(c, today, null);
+        check("#252e a damaged day row: an error for the screens, the reminder keeps the calendar estimate", err != null
+                && roBad.method == app.openring.core.analysis.Cycles.CALENDAR && roBad.rise == null && roBad.next.equals(cal.next), err);
+        db.deleteDay("2026-10-1x");
+        // the drip import undone: the ring alone, the same day
+        app.openring.data.Periods.undoImport(db, app.openring.data.Periods.imports(db).get(0).id, 9200);
+        app.openring.core.analysis.Cycles noMouth = app.openring.data.Periods.measured(db, cal, z);
+        check("#252e without the mouth temperatures: the ring alone, the same estimate", noMouth.method == app.openring.core.analysis.Cycles.MEASURED
+                && noMouth.ovulation.equals(m.ovulation) && noMouth.rise.current.source == app.openring.core.analysis.TempRise.RING, noMouth.rise.current);
+        // no period logged: nothing to measure, the estimate as it is
+        Context e = freshDb("openring252-rise-empty");
+        MADE_254.add(e);
+        Db edb = Db.get(e);
+        app.openring.core.analysis.Cycles none = app.openring.data.Periods.cycles(edb, today);
+        check("#252e no period logged: nothing is read, the same estimate", app.openring.data.Periods.measured(edb, none, z) == none && none.rise == null, null);
         clean254();
     }
 

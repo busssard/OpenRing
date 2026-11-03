@@ -40,7 +40,8 @@ public final class Demo {
      * least one wake up a night), the last week is easy (no long wake up, and none of the late nights that
      * otherwise come about one night in eight, so its bedtimes are a little earlier). Otherwise bed and wake times follow
      * the same rule as before, so the clock change checks keep their meaning. A short cold {@code COLD_BACK} days before the end (two nights {@code COLD_C} °C warmer with
-     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
+     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower; with the period tracker's cycle only the heart rate and HRV, so
+     * the made up temperature rise stays clear) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
      * the best (heart rate {@code GREAT_BPM} lower, HRV {@code GREAT_HRV} ms higher, 16 minutes to fall asleep). The phone
      * free evenings and quiet days: {@link #phoneFree} and {@link #quiet}.
      */
@@ -175,7 +176,7 @@ public final class Demo {
     }
 
     /**
-     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on about cycle day 18
+     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on cycle day 20
      * ({@code Cycles.demo}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
      */
     static void periods(final Db db, LocalDate today, final long now) {
@@ -279,13 +280,25 @@ public final class Demo {
     /**
      * As above; when {@code screen} is not null it also gets made up phone screen sessions (issue #13). {@code story}: the
      * five weeks of demo mode, with the busy month, the easy week, the cold, the best night, the quiet days and the phone
-     * free evenings that earn each kind of badge (issue #265). Without it the history is exactly the one before #265, so
-     * the tests built on it keep their results.
+     * free evenings that earn each kind of badge (issue #265), and the period tracker's cycle below. Without it the history
+     * is exactly the one before #265, so the tests built on it keep their results.
      */
     static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
             java.util.Map<String, List<double[]>> apps, boolean story) {
+        return history(t0, days, now, zone, r, screen, apps, story, story);
+    }
+
+    /**
+     * As above. With {@code cycle} (only for {@link #enter}, issue #252 phase 2) the nights' skin temperature varies less from
+     * night to night (0.07 °C instead of 0.12) and its one warm night (0.6 °C, a fever or a warm room) lies 9 days back instead
+     * of the warm spell of 2 nights lately, so the period tracker's rise rule finds the made up rise and shows such a night
+     * left out. The random draws are the same either way, so everything else is as before.
+     */
+    static List<RingEvent> history(long t0, int days, long now, ZoneId zone, Random r, List<double[]> screen,
+            java.util.Map<String, List<double[]>> apps, boolean story, boolean cycle) {
         List<RingEvent> ev = new ArrayList<RingEvent>();
         List<Object[]> kept = new ArrayList<Object[]>();
+        Random cycleNoise = new Random(252);
         LocalDate first = java.time.Instant.ofEpochSecond(t0).atZone(zone).toLocalDate();
         for (int d = 1; d <= days; d++) {
             // every time is a clock time on this day, so a daylight saving switch does not move it (issue #22)
@@ -304,7 +317,10 @@ public final class Demo {
             if (wake - bed < 3 * 3600) continue;
             // the story's short cold two weeks back: two warm nights with a higher heart rate, readiness drops and comes back
             boolean cold = story && (d == days - COLD_BACK || d == days - COLD_BACK + 1);
-            double tempOffset = r.nextGaussian() * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0) + (cold ? COLD_C : 0); // a warm spell lately
+            double g = r.nextGaussian();
+            if (cycle) g = cycleNoise.nextGaussian(); // its own draws, so the story's extra draws (issue #265) do not move the rise
+            double tempOffset = (cycle ? g * 0.07 + (d == days - 9 ? 0.6 : 0) : g * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0)) // a warm spell lately
+                    + (cold && !cycle ? COLD_C : 0); // with the cycle the cold shows in heart rate only, so the rise stays clear
             int sick = cold ? COLD_BPM : great ? -GREAT_BPM : 0;
             double fitness = d * 0.06; // resting HR slowly improves
             // a few wake ups per night, longer on restless nights
