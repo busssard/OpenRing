@@ -58,6 +58,9 @@ public final class WatchActivity extends Activity {
     private final Map<String, WatchCheck.Found> latest = new HashMap<String, WatchCheck.Found>();
     /** The last report: in memory only, gone with the screen. */
     private WatchCheck.Report report;
+    /** The device of the last check, for Use this watch for syncing (issue #251, phase 1b). */
+    private String checkedAddress, checkedName;
+    private TextView useButton;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -162,6 +165,18 @@ public final class WatchActivity extends Activity {
         reportCard.addView(Ui.text(this, WatchCheck.PRIVATE, 12, Ui.WARN, Ui.REGULAR));
         reportCard.addView(Ui.gap(this, 10));
         reportCard.addView(Ui.text(this, WatchCheck.SEND_BACK, 13, Ui.TEXT_2, Ui.REGULAR));
+        // phase 1b: a checked Withings watch can be the one this app syncs
+        useButton = Ui.button(this, "Use this watch for syncing", Ui.OXY, true);
+        useButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                useWatch();
+            }
+        });
+        LinearLayout.LayoutParams ul = Ui.matchWrap();
+        ul.setMargins(0, Ui.dp(this, 12), 0, 0);
+        reportCard.addView(useButton, ul);
+        useButton.setVisibility(View.GONE);
         reportCard.setVisibility(View.GONE);
         root.addView(reportCard);
         setContentView(scroll);
@@ -440,6 +455,8 @@ public final class WatchActivity extends Activity {
     /** Checks the device in {@code f}: in demo mode the made up report, otherwise one short session holding the ring lock. */
     void pick(final WatchCheck.Found f) {
         if (session != null) return;
+        checkedAddress = f.address;
+        checkedName = WatchCheck.title(f);
         if (demo) {
             showReport(report = WatchCheck.demoReport());
             return;
@@ -522,6 +539,23 @@ public final class WatchActivity extends Activity {
         reportStatus.setText(WatchCheck.outcome(r));
         if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.PAIRED_NOW);
         reportText.setText(WatchCheck.text(r, false));
+        boolean withings = false;
+        for (WatchCheck.Service s : r.services) withings |= WatchCheck.withings(s.uuid);
+        useButton.setVisibility(withings && checkedAddress != null ? View.VISIBLE : View.GONE);
+    }
+
+    /** Saves the checked watch as the one to sync (issue #251, phase 1b); demo mode never does. */
+    void useWatch() {
+        if (demo) {
+            Toast.makeText(this, app.openring.ble.WatchSync.DEMO, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (checkedAddress == null) return;
+        Prefs.of(this).setWatch(checkedAddress, checkedName);
+        app.openring.sync.SyncJob.schedule(this);
+        RingManager.get(this).log("watch: added for syncing");
+        Toast.makeText(this, "Added. Sync it in Settings, Watch.", Toast.LENGTH_SHORT).show();
+        finish();
     }
 
     void copy(boolean bytes) {

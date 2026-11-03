@@ -159,12 +159,43 @@ public final class Pages {
         root.addView(live);
         // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
         if (d.periodShown) root.addView(PeriodCard.today(c, d, nav));
+        // the Withings watch (issue #251): its page, when a watch is added (always in demo mode)
+        View watch = watchCard(c);
+        if (watch != null) root.addView(watch);
 
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
         root.addView(foot);
         return root;
+    }
+
+    /** The Watch card on Today (issue #251): when the watch last synced, a tap opens the Watch page; null without a watch. */
+    static View watchCard(final Context c) {
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        if (!p.demo() && p.watchAddress() == null) return null;
+        LinearLayout card = Ui.card(c);
+        LinearLayout row = Ui.hbox(c);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout t = Ui.vbox(c);
+        t.addView(Ui.h2(c, "Watch"));
+        String line = p.demo() ? "Made up steps, heart rate, sleep and battery" : p.watchLastOk() == 0 ? "Not synced yet"
+                : "Synced " + SettingsActivity.ago(p.watchLastOk());
+        t.addView(Ui.body(c, line));
+        if (!p.demo() && p.watchError() != null) t.addView(Ui.text(c, p.watchError(), 12, Ui.WARN, Ui.REGULAR));
+        row.addView(t, Ui.weight(1));
+        TextView open = Ui.button(c, "Open", Ui.OXY, false);
+        View.OnClickListener go = new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                c.startActivity(new android.content.Intent(c, WatchPageActivity.class));
+            }
+        };
+        open.setOnClickListener(go);
+        card.setOnClickListener(go);
+        row.addView(open);
+        card.addView(row);
+        return card;
     }
 
     static View ringButton(Context c, double v, String label, int color, final Nav nav, final int tab) {

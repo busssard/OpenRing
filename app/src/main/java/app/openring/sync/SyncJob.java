@@ -46,7 +46,9 @@ public final class SyncJob extends JobService {
         Prefs prefs = Prefs.of(c);
         // a key this phone cannot read could only fail every few hours; the job comes back once it is entered again (issue #199)
         boolean paused = prefs.backgroundSync() && keyState == app.openring.core.KeyState.UNREADABLE;
-        switch (BackgroundJob.decide(prefs.backgroundSync() && app.openring.core.KeyState.syncs(keyState), known, pending, wanted)) {
+        // the watch syncs in the same job (issue #251): it needs the job too when it syncs on its own
+        boolean watch = !prefs.demo() && prefs.watchAddress() != null && prefs.watchPerDay() > 0;
+        switch (BackgroundJob.decide(prefs.backgroundSync() && app.openring.core.KeyState.syncs(keyState) || watch, known, pending, wanted)) {
             case CANCEL:
                 js.cancel(JOB_ID);
                 RingManager.get(c).log(paused ? "background sync paused: the saved key cannot be read" : "background sync off");
@@ -72,18 +74,27 @@ public final class SyncJob extends JobService {
     @Override
     public boolean onStartJob(final JobParameters params) {
         if (RingManager.get(this).busy()) return false;
-        // a sync of the person's own, or an attempt, a few minutes ago: nothing new to fetch yet (issue #194)
         Prefs prefs = Prefs.of(this);
-        if (BackgroundJob.recent(System.currentTimeMillis() / 1000, prefs.lastSync(), prefs.lastAttempt())) {
-            RingManager.get(this).log("background sync skipped: the last sync was less than 30 minutes ago");
-            return false;
-        }
+        long now = System.currentTimeMillis() / 1000;
+        // the ring first, as before; the watch after it when one of its clock times passed (issue #251)
+        final boolean ringPart = prefs.backgroundSync() && app.openring.core.KeyState.syncs(prefs.keyState());
+        final boolean watchPart = !prefs.demo() && prefs.watchAddress() != null
+                && app.openring.core.withings.WatchDue.due(now, prefs.watchPerDay(), prefs.watchLastOk(), prefs.watchLastAttempt(), java.time.ZoneId.systemDefault());
+        // a sync of the person's own, or an attempt, a few minutes ago: nothing new to fetch yet (issue #194)
+        final boolean ringRecent = BackgroundJob.recent(now, prefs.lastSync(), prefs.lastAttempt());
+        if (ringPart && ringRecent) RingManager.get(this).log("background sync skipped: the last sync was less than 30 minutes ago");
+        if ((!ringPart || ringRecent) && !watchPart) return false;
         final RingManager.SyncTicket t = new RingManager.SyncTicket();
         ticket = t;
         new Thread(new Runnable() {
             @Override
             public void run() {
-                RingManager.SyncResult res = RingManager.get(SyncJob.this).syncBlocking(t);
+                RingManager.SyncResult res = new RingManager.SyncResult();
+                if (ringPart && !ringRecent) res = RingManager.get(SyncJob.this).syncBlocking(t);
+                if (watchPart && !t.stopped()) {
+                    String w = app.openring.ble.WatchSync.run(SyncJob.this);
+                    RingManager.get(SyncJob.this).log("background watch sync: " + (w == null ? "done" : w));
+                }
                 // a background sync that worked removes the notice of an earlier failed one (issue #91)
                 if (res.ok) {
                     try {
@@ -103,6 +114,8 @@ public final class SyncJob extends JobService {
         // stops this job's download only; once it has given the ring back (it then analyses), Live, a
         // game or a sync the person started keep running (issue #43)
         RingManager.get(this).cancelSync(ticket);
+        // a watch sync ends between two messages (issue #251)
+        app.openring.ble.WatchSync.stop();
         return false;
     }
 }

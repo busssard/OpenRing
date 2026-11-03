@@ -452,4 +452,34 @@ public final class Explain {
             default: return null;
         }
     }
+
+    // ---- the Withings watch (issue #251, phase 1b) ----
+
+    public static final String WATCH_ADD = "Withings Steel HR: check the watch, then tap Use this watch for syncing under its report. "
+            + "Open Ring then reads steps, heart rate, sleep, workouts and battery from it, without the Withings account.";
+
+    public static final String WATCH_WITHINGS_APP = "The watch stays paired with this phone, so the Withings app keeps working. "
+            + "Do not remove the watch in Android's Bluetooth settings: pairing it again may need a reset that erases the watch. "
+            + "If a sync fails, force stop the Withings app and try again.";
+
+    public static final String WATCH_FORGET = "Open Ring stops syncing it. What it synced stays on this phone. Nothing changes on the watch or in the Withings app.";
+
+    public static final String WATCH_PAGE = "What your watch measured, as it sent it. Our own analysis of the watch's data comes in a later version.";
+
+    public static final String WATCH_STEPS = "Steps the watch counted on each day, from midnight to midnight. Steps of a workout are listed with the workout "
+            + "and are not in this number, so compare it with the Withings app.";
+
+    public static final String WATCH_WORKOUTS = "Workouts the watch recorded on this day: the type, when it started, how long it lasted, and the distance, steps "
+            + "and calories the watch counted for it.";
+
+    public static final String WATCH_HEART = "Heart rate as the watch stored it on this day. Outside workouts the watch measures about every 30 minutes, "
+            + "in a workout more often. Touch the chart to read a time and its value.";
+
+    public static final String WATCH_SLEEP = "Withings' own sleep stages for the night that ended on this day, as the watch worked them out. "
+            + "Time asleep adds light, deep and REM. Parts with a code we do not know yet show as no data.";
+
+    public static final String WATCH_BATTERY = "The watch's battery at the last sync of each day. A jump up is a charge.";
+
+    public static final String WATCH_DROP = "How much the battery fell per day over the last 7 days, charges left out. "
+            + "It shows what the syncs and your use cost; more syncs a day cost more.";
 }

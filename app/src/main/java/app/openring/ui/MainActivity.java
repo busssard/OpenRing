@@ -262,6 +262,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
         // demo mode, which never touches Bluetooth
+        if (i.getBooleanExtra("watch_data", false) && Prefs.of(this).demo()) startActivity(new Intent(this, WatchPageActivity.class));
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false)));
         }

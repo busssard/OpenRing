@@ -25,7 +25,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 8;
+    static final int VERSION = 9;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -95,6 +95,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo6(db);
         upgradeTo7(db);
         upgradeTo8(db);
+        upgradeTo9(db);
     }
 
     @Override
@@ -106,6 +107,16 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 6) upgradeTo6(db);
         if (oldV < 7) upgradeTo7(db);
         if (oldV < 8) upgradeTo8(db);
+        if (oldV < 9) upgradeTo9(db);
+    }
+
+    /**
+     * v9: the watch (issue #251, phase 1b), see {@link WatchStore}: its raw messages as they came, its devices and the
+     * rows worked out from the messages. Only adds tables, each on its own ({@code IF NOT EXISTS}): safe to run twice, and an
+     * upgrade stopped after some of them goes on with the rest. Older databases (and restored older backups) get them empty.
+     */
+    private static void upgradeTo9(SQLiteDatabase db) {
+        WatchStore.create(db);
     }
 
     /**
@@ -1417,6 +1428,13 @@ public final class Db extends SQLiteOpenHelper {
         {"period_ends", 8, new String[] {"day", "made", "gone"}},
         {"period_temps", 8, new String[] {"day", "time", "c", "excluded", "src", "gone"}},
         {"period_imports", 8, new String[] {"id", "made", "days", "temps", "gone"}},
+        {"watch_raw", 9, new String[] {"session", "seq", "device", "type", "body", "captured"}},
+        {"watch_devices", 9, new String[] {"address", "name", "firmware", "added", "removed"}},
+        {"watch_steps", 9, new String[] {"device", "start", "dur", "steps", "metres", "kcal"}},
+        {"watch_hr", 9, new String[] {"device", "t", "bpm"}},
+        {"watch_sleep", 9, new String[] {"device", "start", "dur", "stage"}},
+        {"watch_workouts", 9, new String[] {"device", "start", "dur", "kind", "steps", "metres", "kcal"}},
+        {"watch_battery", 9, new String[] {"device", "t", "pct", "state", "mv"}},
     };
 
     /**
@@ -1593,6 +1611,7 @@ public final class Db extends SQLiteOpenHelper {
         if (instance == null && dst.exists()) instance = new Db(c.getApplicationContext(), REAL);
         // the period log typed on this phone (issue #252), read before anything moves; it goes into the restored file
         Periods.Rows phoneLog = null;
+        WatchStore.Rows phoneWatch = null;
         boolean logDamaged = false;
         if (instance != null) {
             try {
@@ -1603,12 +1622,15 @@ public final class Db extends SQLiteOpenHelper {
                     cp.close();
                 }
                 phoneLog = Periods.read(instance.getReadableDatabase());
+                // the watch's messages (issue #251): the watch may have dropped them after the sync, so they are kept too
+                phoneWatch = WatchStore.read(instance.getReadableDatabase());
                 mergeStep(MERGE_READ);
             } catch (RuntimeException e) {
                 // a damaged file (at the open or in a period table) has no log that can be read: it is replaced without it,
                 // the way out of a damaged file (#255); any other error refuses, nothing moved yet
                 if (!damaged(e)) throw closed(new PeriodLogUnreadable(e));
                 phoneLog = null;
+                phoneWatch = null;
                 logDamaged = true;
             } catch (java.io.IOException e) {
                 // nothing moved yet: the phone keeps everything as it is; the person is told it was the phone's log, not the backup
@@ -1632,6 +1654,8 @@ public final class Db extends SQLiteOpenHelper {
             if (missing != null) throw new java.io.IOException("the restored history is incomplete: " + missing);
             // the phone's period rows win over the backup's on the same day, in one transaction (issue #252)
             if (phoneLog != null) Periods.merge(instance.getWritableDatabase(), phoneLog);
+            // the phone's watch messages and devices too, then every watch row worked out again from all of them (issue #251)
+            if (phoneWatch != null) WatchStore.merge(instance.getWritableDatabase(), phoneWatch);
             mergeStep(MERGE_DONE);
         } catch (java.io.IOException | RuntimeException e) {
             if (instance != null) {
@@ -1719,11 +1743,23 @@ public final class Db extends SQLiteOpenHelper {
     static final String[] ALL_TABLES = tables(null);
 
     /**
-     * The tables of one ring's history and what was worked out from it, emptied when a different ring is paired
-     * ({@link #resetRingData}): every table of {@link #SCHEMA} except the period log ({@link Periods#TABLES}). A new table
-     * is wiped by default; keeping one takes an entry in that keep list (issue #272).
+     * The tables that do not belong to one ring and stay when a different ring is paired: the period log
+     * ({@link Periods#TABLES}, issue #252) and the watch's data ({@link WatchStore#TABLES}, issue #251).
      */
-    static final String[] RING_TABLES = tables(Periods.TABLES);
+    static final String[] KEPT_TABLES = join(Periods.TABLES, WatchStore.TABLES);
+
+    /**
+     * The tables of one ring's history and what was worked out from it, emptied when a different ring is paired
+     * ({@link #resetRingData}): every table of {@link #SCHEMA} except {@link #KEPT_TABLES}. A new table is wiped by default;
+     * keeping one takes an entry in that keep list (issue #272).
+     */
+    static final String[] RING_TABLES = tables(KEPT_TABLES);
+
+    private static String[] join(String[] a, String[] b) {
+        String[] out = Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, out, a.length, b.length);
+        return out;
+    }
 
     /** The tables of {@link #SCHEMA} in its order, without those in {@code keep} (null: none). */
     private static String[] tables(String[] keep) {
@@ -1742,7 +1778,8 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     /**
-     * A different ring was paired: its history starts fresh, but the period log the person typed stays (issue #252). One
+     * A different ring was paired: its history starts fresh, but the period log the person typed (issue #252) and the
+     * watch's data (issue #251) stay. One
      * transaction, like {@link #resetAll}, and the file shrinks too: the old ring's history is gone, what is left is small.
      */
     public void resetRingData() {

@@ -14,5 +14,6 @@ furnished to do so, subject to the following conditions: The above copyright not
 permission notice shall be included in all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
 
-The Withings watch notes (docs/ARCHITECTURE.md, issue #251) are protocol facts from public
-discussions, written in our own words. No code from other Withings projects is included.
+The Withings watch notes and code (docs/ARCHITECTURE.md, core/withings, issue #251) use protocol
+facts from public discussions, written in our own words and implemented anew. No code from other
+Withings projects is included.

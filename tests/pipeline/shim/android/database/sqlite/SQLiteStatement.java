@@ -7,6 +7,7 @@ public class SQLiteStatement {
     public void bindLong(int i, long v) { try { p.setLong(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
     public void bindDouble(int i, double v) { try { p.setDouble(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
     public void bindNull(int i) { try { p.setNull(i, Types.NULL); } catch (SQLException e) { throw new RuntimeException(e); } }
+    public void bindString(int i, String v) { try { p.setString(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
     public void bindBlob(int i, byte[] v) { try { p.setBytes(i, v); } catch (SQLException e) { throw new RuntimeException(e); } }
     public int executeUpdateDelete() { db.mayWrite(); try { return p.executeUpdate(); } catch (SQLException e) { throw db.fail(e); } }
     public void close() { try { p.close(); } catch (SQLException e) { throw new RuntimeException(e); } }
