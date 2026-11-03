@@ -1359,6 +1359,11 @@ public final class Pages {
         root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).unit("/min"), null));
         root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).range(88, 100).unit("%"), null));
         root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
+        // the period tracker's analysis at the end (issue #252, phase 1a2): the cycles over time, then the night temperature next to them
+        if (d.periodShown && d.periods != null) {
+            root.addView(PeriodAnalysis.cycles(c, d));
+            if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
+        }
         return root;
     }
 

@@ -127,11 +127,55 @@ public final class Periods {
      * marks count as no entry) and every end mark in force. Reads only; nothing is stored.
      */
     public static app.openring.core.analysis.Cycles cycles(Db db, java.time.LocalDate today) {
+        return cycles(db, today, null);
+    }
+
+    /** As above, with the day the person said "My periods have stopped" (null when not; phase 1a2). */
+    public static app.openring.core.analysis.Cycles cycles(Db db, java.time.LocalDate today, java.time.LocalDate stoppedSince) {
+        return cycles(db.getReadableDatabase(), today, stoppedSince);
+    }
+
+    /** The estimate from the period tables of {@code d}: every day and every end mark in force. Reads only. */
+    static app.openring.core.analysis.Cycles cycles(SQLiteDatabase d, java.time.LocalDate today, java.time.LocalDate stoppedSince) {
         java.util.Map<java.time.LocalDate, Integer> flows = new java.util.HashMap<java.time.LocalDate, Integer>();
-        for (Day d : all(db)) flows.put(java.time.LocalDate.parse(d.day), d.flow);
+        Cursor c = d.rawQuery("SELECT day, flow FROM period_days ORDER BY day", null);
+        try {
+            while (c.moveToNext()) flows.put(java.time.LocalDate.parse(c.getString(0)), c.getInt(1));
+        } finally {
+            c.close();
+        }
         List<java.time.LocalDate> ends = new ArrayList<java.time.LocalDate>();
-        for (String e : allEnds(db)) ends.add(java.time.LocalDate.parse(e));
-        return app.openring.core.analysis.Cycles.of(flows, ends, today);
+        c = d.rawQuery("SELECT day FROM period_ends WHERE gone = 0 ORDER BY day", null);
+        try {
+            while (c.moveToNext()) ends.add(java.time.LocalDate.parse(c.getString(0)));
+        } finally {
+            c.close();
+        }
+        return app.openring.core.analysis.Cycles.of(flows, ends, today, stoppedSince);
+    }
+
+    /** A damaged page found while reading for the reminder leaves the file as it is (Android's default would delete it). */
+    private static final android.database.DatabaseErrorHandler KEEP_FILE = new android.database.DatabaseErrorHandler() {
+        @Override
+        public void onCorruption(SQLiteDatabase db) {}
+    };
+
+    /**
+     * The reminder's read only helper (issue #252, phase 1a2; Design review): the estimate from the person's own log in
+     * the real file {@code openring.db}, also while demo mode is on, without {@link Db#get}: no {@code Db} is opened,
+     * closed or swapped, nothing is upgraded or written, and the demo file is never read. One read only connection that
+     * is closed again. Null when the real file does not exist (no log); any other problem (a file from before the
+     * period tables, a damaged page, a swap under way) throws, and the caller keeps what it had planned.
+     */
+    public static app.openring.core.analysis.Cycles readReal(android.content.Context c, java.time.LocalDate today, java.time.LocalDate stoppedSince) {
+        java.io.File f = c.getDatabasePath(Db.REAL);
+        if (!f.isFile()) return null;
+        SQLiteDatabase d = SQLiteDatabase.openDatabase(f.getPath(), null, SQLiteDatabase.OPEN_READONLY | SQLiteDatabase.NO_LOCALIZED_COLLATORS, KEEP_FILE);
+        try {
+            return cycles(d, today, stoppedSince);
+        } finally {
+            d.close();
+        }
     }
 
     private static List<Day> readDays(Db db, String where, String[] args) {

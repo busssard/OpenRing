@@ -155,6 +155,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
         if (backupsCard != null) fillBackupsCard(p); // a copy made or checked meanwhile
+        // back from Android's notification settings: the card shows whether the reminder can be shown now
+        if (periodCard != null && notifyShown != notificationsOn()) fillPeriodCard();
         if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !screenDaysKnown()) {
             screenRead = true;
             updateNights("Reading screen time");
@@ -242,6 +244,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             });
             root.addView(demo);
             root.addView(updatesCard());
+            periodCard = Ui.card(this);
+            fillPeriodCard();
+            root.addView(periodCard);
             watchCard = watchCard();
             root.addView(watchCard);
             stagesCard = stageDetailCard(p);
@@ -368,6 +373,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         prof.addView(periodSwitch, psl);
         prof.addView(Ui.text(this, "Shown when your profile says female. Your logged days stay stored when it is hidden.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(prof);
+
+        // ---- period tracker: the reminder and "My periods have stopped" (issue #252, phase 1a2) ----
+        periodCard = Ui.card(this);
+        fillPeriodCard();
+        root.addView(periodCard);
 
         // ---- sleep stage detail ----
         stagesCard = stageDetailCard(p);
@@ -584,9 +594,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. The Screen tab follows the idea of ScreenTime by Markus Fisch. Not affiliated with Oura Health. "
                 + "Not a medical device."));
         root.addView(about);
-        String[] sections = {"Updates", "Ring", "Watch", "Profile", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
+        String[] sections = {"Updates", "Ring", "Watch", "Profile", "Period", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
             "Advanced", "Careful", "About"};
-        View[] targets = {updates, ring, watchCard, prof, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, advancedCard, danger, about};
+        View[] targets = {updates, ring, watchCard, prof, periodCard, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, advancedCard, danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
             TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
@@ -606,7 +616,141 @@ public final class SettingsActivity extends Activity implements RingManager.List
         scrollToSection();
     }
 
-    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard;
+    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard, periodCard;
+    /** The request code of the notification permission, asked when a reminder is first switched on. */
+    static final int ASK_NOTIFY = 21;
+    /** Whether Android lets the app notify, as the Period tracker card shows it (refilled when it changed). */
+    private boolean notifyShown;
+
+    boolean notificationsOn() {
+        android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        return nm != null && nm.areNotificationsEnabled();
+    }
+
+    /**
+     * The Period tracker card (issue #252, phase 1a2): "Remind me before my period" (Off, 1, 2, 3 or 5 days, a time of day),
+     * the next reminder or why there is none, and "My periods have stopped". The notification permission is asked when a
+     * reminder is switched on and Android does not have it yet; the reminder is planned again after each change.
+     */
+    void fillPeriodCard() {
+        final LinearLayout card = periodCard;
+        if (card == null) return;
+        final Prefs p = Prefs.of(this);
+        card.removeAllViews();
+        card.addView(Ui.caption(this, "Period tracker"));
+        card.addView(Ui.gap(this, 4));
+        card.addView(Ui.text(this, "Remind me before my period", 14, Ui.TEXT, Ui.REGULAR));
+        LinearLayout row = Ui.hbox(this);
+        final int days = p.periodRemindDays();
+        int[] choices = app.openring.core.PeriodRemind.DAYS;
+        for (int i = 0; i < choices.length; i++) {
+            final int k = choices[i];
+            TextView chip = Ui.smallButton(this, app.openring.core.PeriodRemind.chip(k), k == days ? Ui.PERIOD : Ui.TEXT_3);
+            chip.setPadding(Ui.dp(this, 4), chip.getPaddingTop(), Ui.dp(this, 4), chip.getPaddingBottom());
+            if (k == days) chip.setBackground(Ui.rounded(Ui.alpha(Ui.PERIOD, 0.18f), Ui.dp(this, 24))); // filled, not only colored
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    p.setPeriodRemindDays(k);
+                    if (k > 0) askNotifications();
+                    app.openring.sync.PeriodReminder.planLater(SettingsActivity.this);
+                    fillPeriodCard();
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 1);
+            lp.setMargins(i == 0 ? 0 : Ui.dp(this, 3), 0, i == choices.length - 1 ? 0 : Ui.dp(this, 3), 0);
+            row.addView(chip, lp);
+        }
+        LinearLayout.LayoutParams rl = Ui.matchWrap();
+        rl.setMargins(0, Ui.dp(this, 6), 0, 0);
+        card.addView(row, rl);
+        card.addView(Ui.text(this, "Days before the earliest day of the expected range", 12, Ui.TEXT_3, Ui.REGULAR));
+        final int minute = p.periodRemindMinute();
+        small(card, app.openring.core.PeriodRemind.time(minute), Ui.TEXT_2, new Runnable() {
+            @Override
+            public void run() {
+                new android.app.TimePickerDialog(SettingsActivity.this, new android.app.TimePickerDialog.OnTimeSetListener() {
+                    @Override
+                    public void onTimeSet(android.widget.TimePicker view, int h, int m) {
+                        p.setPeriodRemindMinute(h * 60 + m);
+                        app.openring.sync.PeriodReminder.planLater(SettingsActivity.this);
+                        fillPeriodCard();
+                    }
+                }, minute / 60, minute % 60, true).show();
+            }
+        });
+        notifyShown = notificationsOn();
+        if (days > 0 && !notifyShown) {
+            TextView off = Ui.text(this, "Notifications are off for Open Ring. Tap to open Android settings.", 13, Ui.WARN, Ui.REGULAR);
+            off.setPadding(0, Ui.dp(this, 8), 0, 0);
+            off.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    try {
+                        startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
+                    } catch (RuntimeException e) {
+                        Permissions.openSettings(SettingsActivity.this);
+                    }
+                }
+            });
+            card.addView(off);
+        }
+        final TextView next = Ui.text(this, days > 0 ? "Working out the next reminder" : "Reminders are off.", 13, Ui.TEXT_2, Ui.REGULAR);
+        next.setPadding(0, Ui.dp(this, 8), 0, 0);
+        card.addView(next);
+        if (days > 0) {
+            final Context ctx = getApplicationContext();
+            new AsyncTask<Void, Void, String>() {
+                @Override
+                protected String doInBackground(Void... v) {
+                    try {
+                        long now = System.currentTimeMillis();
+                        return app.openring.core.PeriodRemind.status(app.openring.sync.PeriodReminder.next(ctx, now), java.time.ZoneId.systemDefault(), now, Locale.getDefault());
+                    } catch (RuntimeException e) {
+                        // the error's kind only (the log can be shared), never a date
+                        RingManager.get(ctx).log("period reminder: " + e.getClass().getSimpleName());
+                        return "Your period log could not be read for the reminder just now. Try again later.";
+                    }
+                }
+
+                @Override
+                protected void onPostExecute(String s) {
+                    next.setText(s);
+                }
+            }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        }
+        card.addView(Ui.text(this, Explain.PERIOD_REMIND, 12, Ui.TEXT_3, Ui.REGULAR));
+        Switch stop = new Switch(this);
+        stop.setText("My periods have stopped");
+        stop.setTextColor(Ui.TEXT);
+        stop.setChecked(p.periodStopped() != null);
+        stop.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                p.setPeriodStopped(on ? java.time.LocalDate.now().toString() : null);
+                app.openring.sync.PeriodReminder.planLater(SettingsActivity.this);
+                fillPeriodCard();
+            }
+        });
+        LinearLayout.LayoutParams swl = Ui.matchWrap();
+        swl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        card.addView(stop, swl);
+        card.addView(Ui.text(this, Explain.PERIOD_STOPPED, 12, Ui.TEXT_3, Ui.REGULAR));
+    }
+
+    /** Asks for the notification permission in context, when a reminder is switched on (Android 13 and newer). */
+    void askNotifications() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return;
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(new String[] {android.Manifest.permission.POST_NOTIFICATIONS}, ASK_NOTIFY);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code == ASK_NOTIFY) fillPeriodCard();
+    }
 
     /** The Watch card (issue #251): for now only the Watch check, which learns how a Withings watch talks. */
     LinearLayout watchCard() {
@@ -1335,12 +1479,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Opens at a card when started with the extra {@code section} ("stages", "watch", "screen", "games", "backups" or "advanced"), used by the screen test.
+     * Opens at a card when started with the extra {@code section} ("period", "stages", "watch", "screen", "games", "backups" or "advanced"), used by the screen test.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "stages".equals(section) ? stagesCard : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
+        final View card = "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
         // the demo page is short: room below the last card, so every card can reach the top (issue #160)

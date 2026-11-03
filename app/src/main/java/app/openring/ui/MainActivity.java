@@ -217,7 +217,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185), left_out
      * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254),
      * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
-     * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252).
+     * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252),
+     * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered.
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -245,6 +246,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         previewUnreadable = i.getBooleanExtra("key_unreadable", false) && Prefs.of(this).demo();
         // screen test: the period tracker's day editor on Body (issue #252), demo mode only; nothing is saved without a tap
         if (i.getBooleanExtra("period_edit", false) && Prefs.of(this).demo()) PeriodCard.editPending = true;
+        // screen test: the gentle question of phase 1a2 on the period cards, demo mode only; nothing is saved without a tap
+        PeriodCard.askPending = i.getBooleanExtra("period_ask", false) && Prefs.of(this).demo();
         // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
         // demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
@@ -465,6 +468,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         SyncJob.schedule(this, keyState);
         // the automatic backups' daily job, and the check of a copy made before an update (issue #242)
         app.openring.sync.BackupJob.schedule(this);
+        // the reminder before the expected period (issue #252): planned again from the person's own log, in the background
+        app.openring.sync.PeriodReminder.planLater(this);
         RingManager.get(this).addListener(this);
         wasBusy = RingManager.get(this).busy();
         updateStatus();

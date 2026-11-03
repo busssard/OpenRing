@@ -995,6 +995,8 @@ public class CoreTest {
         watchCheck251();
         modeRestore221();
         cycles252();
+        cycles252b();
+        remind252();
         badges265();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -1727,6 +1729,257 @@ public class CoreTest {
         check("#252 explain: give or take and vary by", app.openring.ui.Explain.periodOvulation(8, 4).startsWith("Give or take 4 days: how much your last 8 cycles vary")
                 && app.openring.ui.Explain.periodOvulation(2, 5).contains("a typical spread of 2.6 days")
                 && app.openring.ui.Explain.periodVary(4).startsWith("Vary by: the standard deviation of your 4 cycles"));
+    }
+
+    /** Issue #252, phase 1a2: "Your cycles" over time, the night temperature line's window and touch text, "My periods have stopped". */
+    static void cycles252b() {
+        // ---- cycle length over every kept cycle; a far cycle is counted as left out ----
+        int[] mix = {26, 30, 28, 31, 27, 29, 33, 25};
+        java.time.LocalDate sm = lastStart252(mix);
+        Cycles c = cyc252(log252(4, mix), sm.plusDays(10));
+        Cycles.Summary s = c.cycleSummary();
+        check("#252b cycle summary: 8 cycles, average 28.625, shortest 25, longest 33", s.n == 8 && Math.abs(s.mean - 28.625) < 1e-9 && s.min == 25 && s.max == 33);
+        check("#252b cycle summary: the spread is the sample SD of all of them", Math.abs(s.sd - Math.sqrt(49.875 / 7)) < 1e-9);
+        c = cyc252(log252(5, 28, 28, 58, 28, 28, 28), d252(205));
+        s = c.cycleSummary();
+        check("#252b a 58 day cycle is left out of the numbers and counted apart", s.n == 5 && s.mean == 28 && s.sd == 0 && c.leftOutCount() == 1 && c.kept().size() == 5);
+        eq("#252b its row says why", c.cycleRow(c.cycles.get(2), EN), c.span(c.cycles.get(2).start, c.cycles.get(2).next.minusDays(1), EN)
+                + ": 58 days, left out of the estimate, maybe a period was not logged");
+        check("#252b its tip says left out", c.cycleTip(c.cycles.get(2), EN).endsWith(": 58 days, left out"));
+        eq("#252b a usual cycle's tip", c.cycleTip(c.cycles.get(0), EN), "Cycle from " + c.date(C0, EN) + ": 28 days");
+        c = cyc252(log252(5, 28, 28, 28, 28, 20), d252(160));
+        check("#252b an unusual cycle's tip and row say so", c.cycleTip(c.cycles.get(4), EN).endsWith(": 20 days, unusual") && c.cycleRow(c.cycles.get(4), EN).endsWith(", unusual for you"));
+        Cycles none = cyc252(log252(5), d252(3));
+        s = none.cycleSummary();
+        check("#252b no cycle: an empty summary", s.n == 0 && Double.isNaN(s.mean) && Double.isNaN(s.sd) && s.min == 0 && s.max == 0);
+
+        // ---- period length and amount over the periods that are over ----
+        Map<java.time.LocalDate, Integer> m = new HashMap<java.time.LocalDate, Integer>();
+        // period 1: heavy, heavy, medium, (no log), light = 5 days, score 3 + 3 + 2 + 1 = 9
+        m.put(d252(1), Cycles.HEAVY);
+        m.put(d252(2), Cycles.HEAVY);
+        m.put(d252(3), Cycles.MEDIUM);
+        m.put(d252(5), Cycles.LIGHT);
+        // period 2 from day 29: medium, light, light (3 days, score 4), spotting after it
+        m.put(d252(29), Cycles.MEDIUM);
+        m.put(d252(30), Cycles.LIGHT);
+        m.put(d252(31), Cycles.LIGHT);
+        m.put(d252(33), Cycles.SPOTTING);
+        // period 3 from day 57, running on day 58
+        m.put(d252(57), Cycles.HEAVY);
+        c = cyc252(m, d252(58));
+        check("#252b finished: the running period is not counted", c.periods.size() == 3 && c.finished().size() == 2 && c.running == c.periods.get(2));
+        Cycles.Amount a = c.amountOf(c.periods.get(0));
+        check("#252b amount: 2 heavy, 1 medium, 1 light, score 9 (a day without a log counts nothing)", a.heavy == 2 && a.medium == 1 && a.light == 1
+                && a.spotting == 0 && a.score == 9);
+        check("#252b amount: spotting after a period is not in it", c.amountOf(c.periods.get(1)).spotting == 0 && c.amountOf(c.periods.get(1)).score == 4);
+        s = c.periodSummary();
+        check("#252b period length: 5 and 3 days, average 4", s.n == 2 && s.mean == 4 && s.min == 3 && s.max == 5 && Math.abs(s.sd - Math.sqrt(2)) < 1e-9);
+        s = c.amountSummary();
+        check("#252b amount score: 9 and 4, average 6.5", s.n == 2 && s.mean == 6.5 && s.min == 4 && s.max == 9);
+        eq("#252b amount tip", c.amountTip(c.periods.get(0), EN), c.date(d252(1), EN) + ": score 9 (2 heavy, 1 medium, 1 light)");
+        eq("#252b amount tip, only light and medium", c.amountTip(c.periods.get(1), EN), c.date(d252(29), EN) + ": score 4 (1 medium, 2 light)");
+        eq("#252b period tip", c.periodTip(c.periods.get(0), EN), "Period from " + c.date(d252(1), EN) + ": 5 days");
+        Map<java.time.LocalDate, Integer> sp = new HashMap<java.time.LocalDate, Integer>();
+        sp.put(d252(1), Cycles.LIGHT);
+        sp.put(d252(2), Cycles.SPOTTING);
+        sp.put(d252(3), Cycles.LIGHT);
+        Cycles spc = cyc252(sp, d252(20));
+        check("#252b spotting inside a period counts as spotting, score 0", spc.amountOf(spc.periods.get(0)).spotting == 1 && spc.amountOf(spc.periods.get(0)).score == 2
+                && spc.amountTip(spc.periods.get(0), EN).endsWith("(2 light)"));
+        Cycles fut = cyc252(log252(5), C0.minusDays(3));
+        check("#252b a period logged for a later day is not over", fut.finished().isEmpty() && fut.periodSummary().n == 0);
+
+        // ---- days to the next start ----
+        int[] l12 = new int[12];
+        Arrays.fill(l12, 28);
+        java.time.LocalDate s12 = lastStart252(l12);
+        Map<java.time.LocalDate, Integer> reg = log252(5, l12);
+        eq("#252b 18 days to the next start on cycle day 11", cyc252(reg, s12.plusDays(10)).daysToNext(), 18);
+        eq("#252b the expected day itself: 0", cyc252(reg, s12.plusDays(28)).daysToNext(), 0);
+        eq("#252b late by 4: below 0", cyc252(reg, s12.plusDays(32)).daysToNext(), -4);
+        check("#252b no estimate: null", cyc252(reg, s12.plusDays(57)).daysToNext() == null && Cycles.of(null, null, C0).daysToNext() == null);
+
+        // ---- the night temperature line: its window and what touch reads ----
+        c = cyc252(reg, s12.plusDays(10));
+        eq("#252b temperature from the start of the period before the last", c.tempFrom(), s12.minusDays(28));
+        eq("#252b one period: from its start", cyc252(log252(5), d252(10)).tempFrom(), C0);
+        eq("#252b no period: the last 30 days", Cycles.of(null, null, d252(40)).tempFrom(), d252(11));
+        eq("#252b a long gap: at most 100 days back", cyc252(log252(5, 28), d252(400)).tempFrom(), d252(400).minusDays(99));
+        eq("#252b a period logged for later: not after today", fut.tempFrom(), C0.minusDays(3));
+        String tip = c.tempTip(s12.plusDays(1), 0.24, EN);
+        check("#252b temperature tip on a period day", tip.endsWith(": +0.2 °C, period day 2") && tip.startsWith(s12.plusDays(1).getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, EN)));
+        check("#252b temperature tip on cycle day 10, no night", c.tempTip(s12.plusDays(9), Double.NaN, EN).endsWith(": no night, cycle day 10"));
+        check("#252b temperature tip in the ovulation range", c.tempTip(s12.plusDays(12), -0.31, EN).endsWith(": -0.3 °C, cycle day 13, ovulation range"));
+        Cycles lateC = cyc252(reg, s12.plusDays(28));
+        check("#252b temperature tip on the expected day", lateC.tempTip(s12.plusDays(28), 0.0, EN).endsWith(": 0.0 °C, cycle day 29, expected period"));
+        check("#252b before the first period: the date and the value only", c.tempTip(C0.minusDays(2), 0.1, EN).endsWith(": +0.1 °C"));
+
+        // ---- "My periods have stopped" ----
+        java.time.LocalDate last = s12.plusDays(4); // the last bleeding day
+        Cycles st = Cycles.of(reg, null, s12.plusDays(80), s12.plusDays(40));
+        check("#252b stopped: no estimate, no late line, no band", st.stopped && !st.estimates() && st.nextLine() == null && st.lateBy() == 0
+                && !st.inExpected(s12.plusDays(56)) && !st.inOvulation(s12.plusDays(42)) && st.expectedLine(EN) == null && st.daysToNext() == null);
+        eq("#252b stopped: the status names the last start", st.status(EN), "No period logged since " + st.date(s12, EN));
+        eq("#252b stopped: the note", st.statusNote(EN), Cycles.STOPPED_NOTE);
+        check("#252b stopped: the past cycles stay", st.cycles.size() == 12 && st.cycleSummary().n == 12 && st.periodSummary().n == 13);
+        Cycles early = Cycles.of(reg, null, s12.plusDays(10), s12.plusDays(5));
+        check("#252b stopped soon after a period: no estimate either (not yet waiting)", early.stopped && !early.waiting && !early.estimates()
+                && early.status(EN).startsWith("No period logged since"));
+        Map<java.time.LocalDate, Integer> again = new HashMap<java.time.LocalDate, Integer>(reg);
+        again.put(s12.plusDays(40), Cycles.LIGHT);
+        check("#252b a period day on the day it was said ends it by itself", !Cycles.of(again, null, s12.plusDays(41), s12.plusDays(40)).stopped);
+        again.put(s12.plusDays(40), Cycles.SPOTTING);
+        check("#252b spotting does not end it", Cycles.of(again, null, s12.plusDays(41), s12.plusDays(40)).stopped);
+        Map<java.time.LocalDate, Integer> forgot = new HashMap<java.time.LocalDate, Integer>(reg);
+        forgot.put(s12.plusDays(30), Cycles.MEDIUM);
+        check("#252b a forgotten period day logged later for a day before it keeps it, one on that day ends it",
+                Cycles.of(forgot, null, s12.plusDays(80), s12.plusDays(40)).stopped && !Cycles.of(forgot, null, s12.plusDays(80), s12.plusDays(30)).stopped);
+        check("#252b while a period runs it is not in force", !Cycles.of(reg, null, s12.plusDays(5), s12.plusDays(5)).stopped);
+        check("#252b without any period it is in force (the empty texts stay)", Cycles.of(null, null, C0, C0).stopped
+                && Cycles.of(null, null, C0, C0).status(EN).equals("No period logged yet"));
+        check("#252b not said: as before", !cyc252(reg, s12.plusDays(80)).stopped && cyc252(reg, s12.plusDays(80)).stoppedSince == null);
+        check("#252b a year: no line before 365 days", Cycles.of(reg, null, last.plusDays(364), s12.plusDays(40)).yearLine(EN) == null);
+        eq("#252b a year without a period, said plainly", Cycles.of(reg, null, last.plusDays(365), s12.plusDays(40)).yearLine(EN),
+                "A year without a period now (the last one ended " + Cycles.of(reg, null, last.plusDays(365), null).date(last, EN)
+                        + "). Twelve months without a period is how menopause is usually defined.");
+        check("#252b a year without a period but not said: no line", cyc252(reg, last.plusDays(400)).yearLine(EN) == null);
+        check("#252b day(): a date, else null", Cycles.day("2026-03-03").equals(java.time.LocalDate.of(2026, 3, 3)) && Cycles.day(null) == null
+                && Cycles.day("3 Mar") == null && Cycles.day("") == null);
+
+        // ---- the gentle question ----
+        java.time.LocalDate t74 = last.plusDays(74);
+        c = cyc252(reg, t74);
+        check("#252b asked at 40 after 74 days without a period", c.waiting && c.daysWithout() == 74 && c.askStopped(40, null) && c.askStopped(67, null));
+        eq("#252b the question", c.askLine(), "No period for 74 days. Have your periods stopped?");
+        check("#252b never under 40", !c.askStopped(39, null) && !c.askStopped(0, null));
+        check("#252b not when it is said already", !Cycles.of(reg, null, t74, t74.minusDays(3)).askStopped(50, null));
+        check("#252b not yet waiting (twice the typical cycle) or under 60 days: not asked", !cyc252(reg, s12.plusDays(56)).askStopped(50, null)
+                && !cyc252(reg, last.plusDays(59)).askStopped(50, null) && cyc252(reg, last.plusDays(60)).askStopped(50, null));
+        check("#252b Not yet asks again only after 60 days", !c.askStopped(50, t74.minusDays(59)) && c.askStopped(50, t74.minusDays(60)));
+        check("#252b no period at all: not asked", !Cycles.of(null, null, C0).askStopped(60, null) && Cycles.of(null, null, C0).daysWithout() == -1);
+        Map<java.time.LocalDate, Integer> shortC = log252(4, 22, 22, 22, 22, 22);
+        Cycles sc = cyc252(shortC, lastStart252(22, 22, 22, 22, 22).plusDays(50));
+        check("#252b short cycles: waiting after 44 days, but asked only from 60 days", sc.waiting && sc.daysWithout() == 47 && !sc.askStopped(45, null));
+        check("#252b the answers' note", Cycles.ASK_NOTE.contains("Not yet: the app asks again in 60 days."));
+
+        // ---- the demo's warmer nights after ovulation ----
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 2);
+        TreeSet<java.time.LocalDate> warm = Cycles.demoWarmNights(today);
+        Cycles demo = Cycles.of(Cycles.demo(today), null, today);
+        boolean inside = true;
+        for (java.time.LocalDate d : warm) {
+            java.time.LocalDate nextStart = null;
+            for (Cycles.Period p : demo.periods) if (p.start.isAfter(d)) { nextStart = p.start; break; }
+            if (nextStart == null) nextStart = demo.next;
+            long before = java.time.temporal.ChronoUnit.DAYS.between(d, nextStart);
+            inside &= before >= 1 && before <= Cycles.LUTEAL - 1 && !d.isAfter(today);
+        }
+        check("#252b demo: warm nights lie in the 13 days before a start, never after today", inside && !warm.isEmpty());
+        check("#252b demo: 13 warm nights before each of the 8 starts, and the current cycle's after its ovulation estimate",
+                warm.size() == 8 * 13 + (int) java.time.temporal.ChronoUnit.DAYS.between(demo.ovulation, today) && warm.contains(today) && !warm.contains(demo.ovulation));
+        check("#252b demo: no warm night during a period", !warm.contains(demo.periods.get(demo.periods.size() - 1).start));
+
+        // ---- plain texts ----
+        List<String> texts = new ArrayList<String>(Arrays.asList(Cycles.STOPPED_NOTE, Cycles.ASK_NOTE, c.askLine(), st.yearLine(EN),
+                app.openring.ui.Explain.PERIOD_CYCLE_DAY, app.openring.ui.Explain.periodNext(3, false, 0), app.openring.ui.Explain.periodNext(null, false, 0),
+                app.openring.ui.Explain.periodNext(-2, false, 2), app.openring.ui.Explain.periodNext(null, true, 0),
+                app.openring.ui.Explain.periodCycles(8, 0), app.openring.ui.Explain.periodCycles(1, 1), app.openring.ui.Explain.periodCycles(9, 2),
+                app.openring.ui.Explain.periodLengths(1), app.openring.ui.Explain.periodLengths(9), app.openring.ui.Explain.PERIOD_AMOUNT,
+                app.openring.ui.Explain.periodDots(true), app.openring.ui.Explain.periodDots(false), app.openring.ui.Explain.PERIOD_TEMP,
+                app.openring.ui.Explain.PERIOD_REMIND, app.openring.ui.Explain.PERIOD_STOPPED));
+        boolean plain = true;
+        for (String t : texts) plain &= t == null || plain252(t);
+        check("#252b texts use no dashes as punctuation", plain);
+        check("#252b explain: from how many cycles, what is left out, the window of the estimate",
+                app.openring.ui.Explain.periodCycles(9, 2).contains("over all your 9 cycles") && app.openring.ui.Explain.periodCycles(9, 2).contains("2 cycles more than 10 days from the middle value are left out")
+                        && app.openring.ui.Explain.periodCycles(1, 1).contains("your 1 cycle") && app.openring.ui.Explain.periodCycles(1, 1).contains("1 cycle more than 10 days from the middle value is left out")
+                        && app.openring.ui.Explain.periodCycles(8, 0).endsWith("uses only your newest 12 cycles.") && !app.openring.ui.Explain.periodCycles(8, 0).contains("left out"));
+        check("#252b explain: the amount is a relative score, not millilitres", app.openring.ui.Explain.PERIOD_AMOUNT.contains("not a measured amount")
+                && app.openring.ui.Explain.PERIOD_TEMP.contains("evidence only") && app.openring.ui.Explain.periodLengths(1).contains("your 1 period ")
+                && app.openring.ui.Explain.periodNext(null, true, 0).contains("stopped"));
+    }
+
+    /** Issue #252, phase 1a2: the reminder before the expected period. */
+    static void remind252() {
+        java.time.ZoneId zurich = java.time.ZoneId.of("Europe/Zurich");
+        check("#252r choices: Off, 1, 2, 3, 5", PeriodRemind.validDays(0) && PeriodRemind.validDays(5) && !PeriodRemind.validDays(4) && !PeriodRemind.validDays(-1) && !PeriodRemind.validDays(7));
+        check("#252r time: within a day, else 9:00", PeriodRemind.minute(0) == 0 && PeriodRemind.minute(1439) == 1439 && PeriodRemind.minute(1440) == 540
+                && PeriodRemind.minute(-5) == 540 && PeriodRemind.DEFAULT_MINUTE == 540);
+        eq("#252r chips", PeriodRemind.chip(0) + "|" + PeriodRemind.chip(1) + "|" + PeriodRemind.chip(3), "Off|1 day|3 days");
+        eq("#252r time chip", PeriodRemind.time(540) + "|" + PeriodRemind.time(7 * 60 + 5), "At 9:00|At 7:05");
+
+        int[] l12 = new int[12];
+        Arrays.fill(l12, 28);
+        java.time.LocalDate s12 = lastStart252(l12); // next start s12 + 28, give or take 1: the range begins on s12 + 27
+        Map<java.time.LocalDate, Integer> reg = log252(5, l12);
+        java.time.LocalDate today = s12.plusDays(10);
+        Cycles c = cyc252(reg, today);
+        long now = today.atTime(12, 0).atZone(zurich).toInstant().toEpochMilli();
+        PeriodRemind.Plan p = PeriodRemind.plan(c, 2, 540, zurich, now, null);
+        long want = s12.plusDays(25).atTime(9, 0).atZone(zurich).toInstant().toEpochMilli();
+        check("#252r 2 days before the range's first day, at 9:00", p.planned() && p.at == want && p.key.equals(s12.toString()));
+        eq("#252r its line in Settings", PeriodRemind.status(p, zurich, now, EN), "Next reminder: "
+                + s12.plusDays(25).format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", EN)) + " at 9:00.");
+        PeriodRemind.Plan p5 = PeriodRemind.plan(c, 5, 7 * 60 + 30, zurich, now, null);
+        check("#252r 5 days before at 7:30", p5.at == s12.plusDays(22).atTime(7, 30).atZone(zurich).toInstant().toEpochMilli());
+        check("#252r not due before its moment, due from 15 minutes before it", !PeriodRemind.due(p, want - 16 * 60000L) && PeriodRemind.due(p, want - 15 * 60000L)
+                && PeriodRemind.due(p, want + 3600000L));
+        // the moment has passed but the range is still to come: sent now
+        long late = s12.plusDays(26).atTime(8, 0).atZone(zurich).toInstant().toEpochMilli();
+        PeriodRemind.Plan pl = PeriodRemind.plan(cyc252(reg, s12.plusDays(26)), 2, 540, zurich, late, null);
+        check("#252r a moment that has passed while the range is still to come: now", pl.planned() && pl.at == late && PeriodRemind.due(pl, late));
+        eq("#252r sent now: the Settings line", PeriodRemind.status(pl, zurich, late, EN), "Next reminder: in a few minutes.");
+        // never twice for one cycle
+        PeriodRemind.Plan ps = PeriodRemind.plan(c, 2, 540, zurich, now, s12.toString());
+        check("#252r never twice for one cycle", !ps.planned() && ps.why == PeriodRemind.SENT && !PeriodRemind.due(ps, now)
+                && PeriodRemind.status(ps, zurich, now, EN).equals("The reminder for this period was sent."));
+        check("#252r a key of an older cycle does not stop the new one", PeriodRemind.plan(c, 2, 540, zurich, now, s12.minusDays(28).toString()).planned());
+        // the range has begun: none
+        PeriodRemind.Plan pb = PeriodRemind.plan(cyc252(reg, s12.plusDays(27)), 2, 540, zurich, s12.plusDays(27).atTime(6, 0).atZone(zurich).toInstant().toEpochMilli(), null);
+        check("#252r once the range has begun: none", pb.why == PeriodRemind.BEGUN && PeriodRemind.status(pb, zurich, now, EN).startsWith("No reminder for this period"));
+        // off, no log, running, waiting, stopped
+        check("#252r off", PeriodRemind.plan(c, 0, 540, zurich, now, null).why == PeriodRemind.OFF
+                && PeriodRemind.status(PeriodRemind.plan(c, 0, 540, zurich, now, null), zurich, now, EN).equals("Reminders are off."));
+        check("#252r no log", PeriodRemind.plan(null, 2, 540, zurich, now, null).why == PeriodRemind.NO_LOG
+                && PeriodRemind.plan(Cycles.of(null, null, today), 2, 540, zurich, now, null).why == PeriodRemind.NO_LOG);
+        PeriodRemind.Plan pr = PeriodRemind.plan(cyc252(reg, s12.plusDays(2)), 2, 540, zurich, now, null);
+        check("#252r never while a period is logged", pr.why == PeriodRemind.RUNNING && PeriodRemind.status(pr, zurich, now, EN).equals("No reminder while a period is logged."));
+        check("#252r waiting for the next start: none", PeriodRemind.plan(cyc252(reg, s12.plusDays(57)), 2, 540, zurich, now, null).why == PeriodRemind.WAITING);
+        PeriodRemind.Plan pst = PeriodRemind.plan(Cycles.of(reg, null, today, today), 2, 540, zurich, now, null);
+        check("#252r stopped: none", pst.why == PeriodRemind.STOPPED && PeriodRemind.status(pst, zurich, now, EN).contains("stopped"));
+        // a new period logged early: the next cycle gets its own reminder
+        Map<java.time.LocalDate, Integer> early = new HashMap<java.time.LocalDate, Integer>(reg);
+        for (int k = 0; k < 4; k++) early.put(s12.plusDays(24 + k), Cycles.MEDIUM);
+        java.time.LocalDate after = s12.plusDays(32);
+        PeriodRemind.Plan pn = PeriodRemind.plan(cyc252(early, after), 2, 540, zurich, after.atTime(12, 0).atZone(zurich).toInstant().toEpochMilli(), s12.toString());
+        check("#252r the next cycle after an early period: planned again", pn.planned() && pn.key.equals(s12.plusDays(24).toString()));
+        // clock changes: spring forward in Zurich on 29 March 2026 (02:00 to 03:00). 13 periods 28 days apart, the last on
+        // 3 March: next start 31 March give or take 1, so 1 day before the range is 29 March, and 02:30 does not exist then
+        Map<java.time.LocalDate, Integer> dst = new HashMap<java.time.LocalDate, Integer>();
+        java.time.LocalDate st = java.time.LocalDate.of(2026, 3, 3);
+        for (int i = 0; i <= 12; i++) for (int k = 0; k < 4; k++) dst.put(st.minusDays(28 * i).plusDays(k), Cycles.MEDIUM);
+        Cycles cd = Cycles.of(dst, null, java.time.LocalDate.of(2026, 3, 10));
+        long nowD = java.time.LocalDate.of(2026, 3, 10).atTime(12, 0).atZone(zurich).toInstant().toEpochMilli();
+        PeriodRemind.Plan pd = PeriodRemind.plan(cd, 1, 2 * 60 + 30, zurich, nowD, null);
+        check("#252r the clocks spring forward: 02:30 on 29 March does not exist, the reminder comes at 03:30 that day",
+                cd.next.equals(java.time.LocalDate.of(2026, 3, 31)) && cd.range == 1
+                        && pd.at == java.time.Instant.parse("2026-03-29T01:30:00Z").toEpochMilli());
+        PeriodRemind.Plan pd9 = PeriodRemind.plan(cd, 1, 540, zurich, nowD, null);
+        check("#252r the clocks spring forward: 9:00 stays 9:00 on the new clock", pd9.at == java.time.Instant.parse("2026-03-29T07:00:00Z").toEpochMilli());
+        // the same plan in another zone: 9:00 on that zone's clock (planned again after a time zone change)
+        java.time.ZoneId ny = java.time.ZoneId.of("America/New_York");
+        PeriodRemind.Plan pz = PeriodRemind.plan(c, 2, 540, ny, now, null);
+        check("#252r after a time zone change: 9:00 on the new clock", pz.at == s12.plusDays(25).atTime(9, 0).atZone(ny).toInstant().toEpochMilli() && pz.at != p.at);
+        // the text
+        eq("#252r text 2 days before", PeriodRemind.text(c, s12.plusDays(25), EN), "Your next period may start in about 2 days (expected "
+                + c.span(s12.plusDays(27), s12.plusDays(29), EN) + ").");
+        check("#252r text the day before", PeriodRemind.text(c, s12.plusDays(26), EN).startsWith("Your next period may start tomorrow (expected "));
+        check("#252r text once the range began", PeriodRemind.text(c, s12.plusDays(27), EN).startsWith("Your next period may start any day now"));
+        check("#252r titles: the lock screen shows only the app's reminder", PeriodRemind.TITLE.equals("Period expected soon") && PeriodRemind.PUBLIC_TITLE.equals("Open Ring reminder"));
+        boolean plain = plain252(PeriodRemind.text(c, s12.plusDays(25), EN));
+        for (int why = 0; why <= 7; why++) plain &= plain252(PeriodRemind.status(new PeriodRemind.Plan(why, now + 86400000L, "k"), zurich, now, EN));
+        check("#252r texts use no dashes as punctuation", plain);
     }
 
     /** Issue #251, phase 1a: the Watch check's report, names, the 2 byte rule, the length limit, the demo and the ring lock. */
