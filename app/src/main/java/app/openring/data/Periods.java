@@ -226,6 +226,196 @@ public final class Periods {
         return day;
     }
 
+    // ------------------------------------------------------------- the drip import (phase 1b)
+
+    /** One row of {@code period_temps}: an imported mouth temperature. */
+    public static final class Temp {
+        public final String day;
+        public final app.openring.core.DripCsv.Temp t;
+        /** The import that added it. */
+        public final long src;
+        /** The import was undone: a removal mark, no reading. */
+        public final boolean gone;
+
+        Temp(String day, app.openring.core.DripCsv.Temp t, long src, boolean gone) {
+            this.day = day;
+            this.t = t;
+            this.src = src;
+            this.gone = gone;
+        }
+    }
+
+    /** One import in force (not undone). */
+    public static final class Import {
+        /** Its time in milliseconds, also the {@code src} of the rows it added. */
+        public final long id;
+        /** Unix seconds. */
+        public final double made;
+        /** The days and temperatures it added. */
+        public final int days, temps;
+
+        Import(long id, double made, int days, int temps) {
+            this.id = id;
+            this.made = made;
+            this.days = days;
+            this.temps = temps;
+        }
+    }
+
+    /** Every imported temperature, undone ones included (the preview needs both), oldest first. */
+    public static List<Temp> allTemps(Db db) {
+        return readTemps(db.getReadableDatabase(), "", null);
+    }
+
+    /** The imported temperatures in force from {@code from} to {@code to} (both included), oldest first. */
+    public static java.util.TreeMap<java.time.LocalDate, app.openring.core.DripCsv.Temp> temps(Db db, String from, String to) {
+        java.util.TreeMap<java.time.LocalDate, app.openring.core.DripCsv.Temp> out = new java.util.TreeMap<java.time.LocalDate, app.openring.core.DripCsv.Temp>();
+        for (Temp t : readTemps(db.getReadableDatabase(), "WHERE gone = 0 AND day >= ? AND day <= ? ", new String[] {date(from), date(to)})) {
+            out.put(java.time.LocalDate.parse(t.day), t.t);
+        }
+        return out;
+    }
+
+    private static List<Temp> readTemps(SQLiteDatabase d, String where, String[] args) {
+        List<Temp> out = new ArrayList<Temp>();
+        Cursor c = d.rawQuery("SELECT day, time, c, excluded, src, gone FROM period_temps " + where + "ORDER BY day", args);
+        try {
+            while (c.moveToNext()) {
+                out.add(new Temp(c.getString(0), new app.openring.core.DripCsv.Temp(c.getDouble(2), c.isNull(1) ? null : c.getString(1), c.getInt(3) != 0),
+                        c.getLong(4), c.getInt(5) != 0));
+            }
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** The imports in force (not undone), newest first. */
+    public static List<Import> imports(Db db) {
+        List<Import> out = new ArrayList<Import>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT id, made, days, temps FROM period_imports WHERE gone = 0 ORDER BY id DESC", null);
+        try {
+            while (c.moveToNext()) out.add(new Import(c.getLong(0), c.getDouble(1), c.getInt(2), c.getInt(3)));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** The phone's days as the preview compares them: every day with its amount, removal marks as {@link #REMOVED}. */
+    public static java.util.TreeMap<java.time.LocalDate, Integer> flowsForImport(Db db) {
+        java.util.TreeMap<java.time.LocalDate, Integer> out = new java.util.TreeMap<java.time.LocalDate, Integer>();
+        for (Day d : all(db)) out.put(java.time.LocalDate.parse(d.day), d.flow);
+        return out;
+    }
+
+    /** What an import wrote: its id (0 when it had nothing to write, then nothing at all was written), days and temperatures. */
+    public static final class Imported {
+        public final long id;
+        public final int days, temps;
+
+        Imported(long id, int days, int temps) {
+            this.id = id;
+            this.days = days;
+            this.temps = temps;
+        }
+    }
+
+    /** Tests only: the import throws after this many rows were written, as a stop halfway would (-1: never). */
+    static volatile int failImportAfter = -1;
+
+    /**
+     * Imports a drip file's days ({@code flows}, 0 spotting to 3 heavy) and mouth temperatures into the period log, in ONE
+     * transaction: a stop or failure on the way saves nothing. The decision of each day and temperature is made again
+     * inside the transaction from the rows there now ({@link app.openring.core.DripImport#day}, {@code temp}), so a day
+     * logged between the preview and the tap keeps winning: days already logged win, unless {@code takeFile}; then the
+     * replaced amount goes into {@code prev}, so undoing puts it back. Temperatures already there are never replaced. Rows
+     * it adds carry {@code src} = the import's id. With nothing to write (the same file again) nothing is written, not
+     * even an import row, and the id is 0. The id is the time in milliseconds, one higher while it is taken.
+     */
+    public static Imported importDrip(Db db, final java.util.Map<java.time.LocalDate, Integer> flows,
+            final java.util.Map<java.time.LocalDate, app.openring.core.DripCsv.Temp> temps, final boolean takeFile, long idTime, final double made) {
+        for (java.time.LocalDate d : flows.keySet()) date(d.toString());
+        for (java.time.LocalDate d : temps.keySet()) date(d.toString());
+        SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            java.util.Map<java.time.LocalDate, Integer> have = flowsForImport(db);
+            java.util.Map<java.time.LocalDate, Temp> haveT = new java.util.HashMap<java.time.LocalDate, Temp>();
+            for (Temp t : readTemps(w, "", null)) haveT.put(java.time.LocalDate.parse(t.day), t);
+            long id = idTime;
+            while (count(w, "SELECT COUNT(*) FROM period_imports WHERE id = ?", String.valueOf(id)) > 0) id++;
+            int days = 0, nt = 0, written = 0;
+            for (java.util.Map.Entry<java.time.LocalDate, Integer> e : flows.entrySet()) {
+                int f = e.getValue();
+                if (f < SPOTTING || f > HEAVY) throw new IllegalArgumentException("flow " + f);
+                Integer h = have.get(e.getKey());
+                int k = app.openring.core.DripImport.day(f, h);
+                if (k == app.openring.core.DripImport.SAME || (k == app.openring.core.DripImport.DIFFER && !takeFile)) continue;
+                w.execSQL("INSERT OR REPLACE INTO period_days(day, flow, src, prev, made) VALUES (?, ?, ?, ?, ?)",
+                        new Object[] {e.getKey().toString(), (long) f, id, h == null ? null : (Object) (long) (int) h, made});
+                days++;
+                stop(++written);
+            }
+            for (java.util.Map.Entry<java.time.LocalDate, app.openring.core.DripCsv.Temp> e : temps.entrySet()) {
+                Temp h = haveT.get(e.getKey());
+                if (app.openring.core.DripImport.temp(e.getValue(), h == null ? null : h.t, h != null && h.gone) != app.openring.core.DripImport.ADD) continue;
+                app.openring.core.DripCsv.Temp t = e.getValue();
+                w.execSQL("INSERT OR REPLACE INTO period_temps(day, time, c, excluded, src, gone) VALUES (?, ?, ?, ?, ?, 0)",
+                        new Object[] {e.getKey().toString(), t.time, t.c, t.excluded ? 1L : 0L, id});
+                nt++;
+                stop(++written);
+            }
+            if (days + nt == 0) {
+                w.setTransactionSuccessful();
+                return new Imported(0, 0, 0);
+            }
+            w.execSQL("INSERT INTO period_imports(id, made, days, temps, gone) VALUES (?, ?, ?, ?, 0)", new Object[] {id, made, (long) days, (long) nt});
+            w.setTransactionSuccessful();
+            return new Imported(id, days, nt);
+        } finally {
+            w.endTransaction();
+        }
+    }
+
+    private static void stop(int written) {
+        if (written == failImportAfter) throw new IllegalStateException("test stop after " + written + " rows");
+    }
+
+    private static long count(SQLiteDatabase d, String sql, String arg) {
+        Cursor c = d.rawQuery(sql, new String[] {arg});
+        try {
+            return c.moveToFirst() ? c.getLong(0) : 0;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
+     * Undoes the import {@code id} as a whole, in one transaction, removing exactly the rows it added, never a row logged
+     * in Open Ring: each day it still holds ({@code src} = id; a day the person changed since counts as typed and stays)
+     * gets back the amount it replaced ({@code prev}, as typed) or, where it added the day, a removal mark that keeps the
+     * import's id (no entry, so a restore cannot bring the day back); its temperatures and the import get {@code gone} 1.
+     * Nothing is deleted. False when there is no such import in force (also the second time).
+     */
+    public static boolean undoImport(Db db, long id, double made) {
+        SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            if (count(w, "SELECT COUNT(*) FROM period_imports WHERE gone = 0 AND id = ?", String.valueOf(id)) == 0) return false;
+            Object[] a = {made, id};
+            // first the days it replaced (back to the person's amount), then the days it added (a mark with its id)
+            w.execSQL("UPDATE period_days SET flow = prev, src = 0, prev = NULL, made = ? WHERE src = ? AND prev IS NOT NULL", a);
+            w.execSQL("UPDATE period_days SET flow = -1, made = ? WHERE src = ? AND prev IS NULL", a);
+            w.execSQL("UPDATE period_temps SET gone = 1 WHERE src = ?", new Object[] {id});
+            w.execSQL("UPDATE period_imports SET gone = 1 WHERE id = ?", new Object[] {id});
+            w.setTransactionSuccessful();
+            return true;
+        } finally {
+            w.endTransaction();
+        }
+    }
+
     // ------------------------------------------------------------- the restore merge (Db.replaceWith)
 
     /** Every row of the period tables of one file, as read before a restore's swap. */

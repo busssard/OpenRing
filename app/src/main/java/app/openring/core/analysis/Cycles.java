@@ -629,13 +629,35 @@ public final class Cycles {
     public String tempTip(LocalDate d, double dev, Locale loc) {
         StringBuilder sb = new StringBuilder(d.format(DateTimeFormatter.ofPattern("EEE d MMM", loc))).append(": ");
         sb.append(Double.isNaN(dev) ? "no night" : Texts.signed(dev, loc) + " °C");
+        appendPlace(sb, d);
+        return sb.toString();
+    }
+
+    /**
+     * The same with the morning temperature by mouth imported from drip (phase 1b) next to the ring's, on two lines:
+     * "Tue 28 Oct, cycle day 14" and "Ring +0.2 °C, mouth 36.62 °C at 07:10". {@code mouth} NaN without one; {@code time}
+     * null without a time; {@code excluded} when drip left the reading out.
+     */
+    public String tempTip(LocalDate d, double dev, double mouth, String time, boolean excluded, Locale loc) {
+        StringBuilder sb = new StringBuilder(d.format(DateTimeFormatter.ofPattern("EEE d MMM", loc)));
+        appendPlace(sb, d);
+        sb.append('\n').append(Double.isNaN(dev) ? "No ring night" : "Ring " + Texts.signed(dev, loc) + " °C").append(", ");
+        if (Double.isNaN(mouth)) sb.append("no mouth reading");
+        else {
+            sb.append("mouth ").append(String.format(loc, "%.2f", mouth)).append(" °C");
+            if (time != null) sb.append(" at ").append(time);
+            if (excluded) sb.append(", left out in drip");
+        }
+        return sb.toString();
+    }
+
+    private void appendPlace(StringBuilder sb, LocalDate d) {
         Period p = periodOn(d);
         int cd = cycleDay(d);
         if (p != null) sb.append(", period day ").append(ChronoUnit.DAYS.between(p.start, d) + 1);
         else if (cd > 0) sb.append(", cycle day ").append(cd);
         if (inOvulation(d)) sb.append(", ovulation range");
         else if (inExpected(d)) sb.append(", expected period");
-        return sb.toString();
     }
 
     // --------------------------------------------- "My periods have stopped" (phase 1a2, the owner's wish of 30 Oct)

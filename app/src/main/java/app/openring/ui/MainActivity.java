@@ -218,7 +218,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254),
      * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
      * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252),
-     * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered.
+     * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
+     * drip (boolean, demo mode only) opens Import from drip with a made up drip file (the preview only, nothing is imported in
+     * demo mode) and drip_correct (boolean) with it opens Correct on its first short period.
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -248,6 +250,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("period_edit", false) && Prefs.of(this).demo()) PeriodCard.editPending = true;
         // screen test: the gentle question of phase 1a2 on the period cards, demo mode only; nothing is saved without a tap
         PeriodCard.askPending = i.getBooleanExtra("period_ask", false) && Prefs.of(this).demo();
+        // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
+        if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
+            startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)
+                    .putExtra("demo_correct", i.getBooleanExtra("drip_correct", false)));
+        }
         // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
         // demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {

@@ -362,6 +362,31 @@ final class PeriodCard {
 
     /** The day editor: Heavy, Medium, Light, Spotting, Nothing; "Not the end" when the day holds an end mark. Future days are refused. */
     static void edit(final Context c, Cycles cy, final LocalDate day, final Pages.Nav nav) {
+        editor(c, cy, day, new Pick() {
+            @Override
+            public void flow(int flow) {
+                write(c, nav, day.toString(), FLOW, flow);
+            }
+
+            @Override
+            public void unend() {
+                write(c, nav, day.toString(), UNEND, 0);
+            }
+        });
+    }
+
+    /** What the day editor's choice does: write it to the log (Body), or change the drip import's preview (phase 1b). */
+    interface Pick {
+        void flow(int flow);
+
+        void unend();
+    }
+
+    /**
+     * The day editor with its choices handed to {@code pick} (the same dialog for the log and for the drip import's
+     * preview); "Not the end" only when {@code cy} holds an end mark on the day. Future days are refused.
+     */
+    static void editor(final Context c, Cycles cy, final LocalDate day, final Pick pick) {
         if (day.isAfter(LocalDate.now())) {
             Toast.makeText(c, "This day is still to come.", Toast.LENGTH_SHORT).show();
             return;
@@ -377,7 +402,7 @@ final class PeriodCard {
                     @Override
                     public void onClick(android.content.DialogInterface dlg, int which) {
                         dlg.dismiss();
-                        write(c, nav, day.toString(), FLOW, flows[which]);
+                        pick.flow(flows[which]);
                     }
                 })
                 .setNegativeButton("Cancel", null);
@@ -385,7 +410,7 @@ final class PeriodCard {
             b.setNeutralButton("Not the end", new android.content.DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(android.content.DialogInterface dlg, int which) {
-                    write(c, nav, day.toString(), UNEND, 0);
+                    pick.unend();
                 }
             });
         }

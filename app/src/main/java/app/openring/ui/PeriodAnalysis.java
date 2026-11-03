@@ -180,13 +180,30 @@ final class PeriodAnalysis {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Night temperature and your cycle"));
         LocalDate from = cy.tempFrom();
-        // the time axis fits the data: from the first night with a value, when that is later
-        if (!d.periodTemps.isEmpty() && d.periodTemps.firstKey().isAfter(from)) from = d.periodTemps.firstKey();
+        // the time axis fits the data: from the first night (or drip morning) with a value, when that is later
+        LocalDate first = null;
+        if (!d.periodTemps.isEmpty()) first = d.periodTemps.firstKey();
+        if (!d.periodMouth.isEmpty() && (first == null || d.periodMouth.firstKey().isBefore(first))) first = d.periodMouth.firstKey();
+        if (first != null && first.isAfter(from)) from = first;
+        boolean mouth = !d.periodMouth.isEmpty();
         card.addView(Ui.gap(c, 6));
-        card.addView(new TempLine(c, cy, from, cy.today, d.periodTemps), Ui.sized(c, -1, 150));
+        card.addView(new TempLine(c, cy, from, cy.today, d.periodTemps, d.periodMouth), Ui.sized(c, -1, mouth ? 170 : 150));
+        if (mouth) {
+            // the two lines, labelled in their own colours
+            LinearLayout keys = Ui.hbox(c);
+            keys.addView(Ui.text(c, "\u25CF Ring, skin at night (left)", 12, Ui.TEMP, Ui.MEDIUM), Ui.weight(1));
+            keys.addView(Ui.text(c, "\u25CF Mouth, morning (right)", 12, MOUTH, Ui.MEDIUM), Ui.weight(1));
+            LinearLayout.LayoutParams kl = Ui.matchWrap();
+            kl.setMargins(0, Ui.dp(c, 4), 0, 0);
+            card.addView(keys, kl);
+        }
         card.addView(PeriodCard.note(c, Explain.PERIOD_TEMP));
+        if (mouth) card.addView(PeriodCard.note(c, Explain.PERIOD_MOUTH));
         return card;
     }
+
+    /** The colour of the drip temperatures by mouth (phase 1b), apart from the ring's line. */
+    static final int MOUTH = Ui.OXY;
 
     // ------------------------------------------------------------------------ charts
 
@@ -308,45 +325,73 @@ final class PeriodAnalysis {
 
     /**
      * The nights' skin temperature compared with the usual, day by day from {@code from} to {@code to}: period days as red
-     * columns, the estimate's ovulation range green and its expected period light red behind the line. Touch reads the
-     * day under the finger, also one without a night.
+     * columns, the estimate's ovulation range green and its expected period light red behind the line. With drip
+     * temperatures by mouth (phase 1b) a second line in its own colour on its own scale (°C, on the right): a different
+     * measurement, never mixed with the ring's; a reading drip left out is a hollow dot outside the line. Touch reads the
+     * day under the finger, also one without a value.
      */
     static final class TempLine extends Charts.Scrub {
         private final Cycles cy;
         private final LocalDate from, to;
         private final TreeMap<LocalDate, Double> v;
+        private final TreeMap<LocalDate, app.openring.core.DripCsv.Temp> mouth;
         private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG), dot = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG),
-                grid = new Paint(Paint.ANTI_ALIAS_FLAG), col = new Paint();
+                grid = new Paint(Paint.ANTI_ALIAS_FLAG), col = new Paint(), mline = new Paint(Paint.ANTI_ALIAS_FLAG), mdot = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-        TempLine(Context c, Cycles cy, LocalDate from, LocalDate to, TreeMap<LocalDate, Double> v) {
+        TempLine(Context c, Cycles cy, LocalDate from, LocalDate to, TreeMap<LocalDate, Double> v, TreeMap<LocalDate, app.openring.core.DripCsv.Temp> mouth) {
             super(c);
             this.cy = cy;
             this.from = from;
             this.to = to.isBefore(from) ? from : to;
             this.v = v;
+            this.mouth = mouth;
             line.setStyle(Paint.Style.STROKE);
             line.setStrokeWidth(Ui.dp(c, 2));
             line.setStrokeJoin(Paint.Join.ROUND);
             line.setColor(Ui.TEMP);
             dot.setColor(Ui.TEMP);
+            mline.setStyle(Paint.Style.STROKE);
+            mline.setStrokeWidth(Ui.dp(c, 1.6f));
+            mline.setStrokeJoin(Paint.Join.ROUND);
+            mline.setColor(MOUTH);
+            mdot.setColor(MOUTH);
+            mdot.setStrokeWidth(Ui.dp(c, 1.2f));
             txt.setColor(Ui.TEXT_3);
             txt.setTextSize(Ui.dp(c, 10));
             grid.setColor(Ui.LINE);
             grid.setStrokeWidth(1);
             grid.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 3), Ui.dp(c, 4)}, 0));
-            setContentDescription("Night temperature since " + shortDate(from, false) + ", touch to read a night");
+            setContentDescription("Night temperature since " + shortDate(from, false) + (mouth.isEmpty() ? "" : ", with morning temperatures by mouth from drip")
+                    + ", touch to read a night");
         }
 
         @Override
         protected void onDraw(Canvas cv) {
             Context c = getContext();
             float w = getWidth(), h = getHeight();
-            float left = Ui.dp(c, 34), top = Ui.dp(c, 26), bottom = h - Ui.dp(c, 18);
+            java.util.SortedMap<LocalDate, app.openring.core.DripCsv.Temp> ms = mouth.subMap(from, true, to, true);
+            boolean hasMouth = !ms.isEmpty();
+            float left = Ui.dp(c, 34), right = hasMouth ? w - Ui.dp(c, 38) : w, top = Ui.dp(c, hasMouth ? 40 : 26), bottom = h - Ui.dp(c, 18);
             int n = (int) ChronoUnit.DAYS.between(from, to) + 1;
-            float cw = (w - left) / n;
+            float cw = (right - left) / n;
             double span = 0.6;
             for (double x : v.subMap(from, true, to, true).values()) span = Math.max(span, Math.abs(x) + 0.15);
             span = Math.ceil(span * 10) / 10;
+            // the mouth scale: its own range in °C, at least 0.6 wide
+            double mlo = Double.POSITIVE_INFINITY, mhi = Double.NEGATIVE_INFINITY;
+            for (app.openring.core.DripCsv.Temp t : ms.values()) {
+                mlo = Math.min(mlo, t.c);
+                mhi = Math.max(mhi, t.c);
+            }
+            if (hasMouth) {
+                mlo = Math.floor((mlo - 0.1) * 10) / 10;
+                mhi = Math.ceil((mhi + 0.1) * 10) / 10;
+                if (mhi - mlo < 0.6) {
+                    double m = (mhi + mlo) / 2;
+                    mlo = Math.floor((m - 0.3) * 10) / 10;
+                    mhi = mlo + 0.6;
+                }
+            }
             // the bands behind: period days, the estimate's expected period and ovulation range
             for (int i = 0; i < n; i++) {
                 LocalDate d = from.plusDays(i);
@@ -360,8 +405,17 @@ final class PeriodAnalysis {
             for (int k = -1; k <= 1; k++) {
                 double val = k * span;
                 float gy = py(val, span, top, bottom);
-                cv.drawLine(left, gy, w, gy, grid);
+                cv.drawLine(left, gy, right, gy, grid);
                 cv.drawText(Texts.signed(val, Locale.getDefault()), 0, gy + Ui.dp(c, 3), txt);
+            }
+            if (hasMouth) {
+                txt.setTextAlign(Paint.Align.RIGHT);
+                txt.setColor(MOUTH);
+                for (int k = 0; k <= 2; k++) {
+                    double val = mlo + (mhi - mlo) * k / 2;
+                    cv.drawText(String.format(Locale.getDefault(), "%.1f", val), w, my(val, mlo, mhi, top, bottom) + Ui.dp(c, 3), txt);
+                }
+                txt.setColor(Ui.TEXT_3);
             }
             Path p = new Path();
             boolean started = false;
@@ -376,27 +430,62 @@ final class PeriodAnalysis {
                 cv.drawCircle(x, y, Ui.dp(c, 2.5f), dot);
             }
             cv.drawPath(p, line);
-            if (!started) {
+            if (hasMouth) {
+                // the readings drip counted make the line; one it left out is a hollow dot
+                Path mp = new Path();
+                boolean ms0 = false;
+                LocalDate mprev = null;
+                for (java.util.Map.Entry<LocalDate, app.openring.core.DripCsv.Temp> e : ms.entrySet()) {
+                    int i = (int) ChronoUnit.DAYS.between(from, e.getKey());
+                    float x = left + (i + 0.5f) * cw, y = my(e.getValue().c, mlo, mhi, top, bottom);
+                    if (e.getValue().excluded) {
+                        mdot.setStyle(Paint.Style.STROKE);
+                        cv.drawCircle(x, y, Ui.dp(c, 2.8f), mdot);
+                        mdot.setStyle(Paint.Style.FILL);
+                        continue;
+                    }
+                    if (!ms0 || ChronoUnit.DAYS.between(mprev, e.getKey()) > 3) mp.moveTo(x, y);
+                    else mp.lineTo(x, y);
+                    ms0 = true;
+                    mprev = e.getKey();
+                    cv.drawCircle(x, y, Ui.dp(c, 2.2f), mdot);
+                }
+                cv.drawPath(mp, mline);
+            }
+            if (!started && !hasMouth) {
                 txt.setTextAlign(Paint.Align.CENTER);
-                cv.drawText("No nights with the ring in this time yet", w / 2, (top + bottom) / 2, txt);
+                cv.drawText("No nights with the ring in this time yet", (left + right) / 2, (top + bottom) / 2, txt);
             }
             float base = h - Ui.dp(c, 3);
             txt.setTextAlign(Paint.Align.LEFT);
             cv.drawText(shortDate(from, false), left, base, txt);
             txt.setTextAlign(Paint.Align.RIGHT);
-            cv.drawText(shortDate(to, false), w, base, txt);
+            cv.drawText(shortDate(to, false), right, base, txt);
             if (!Float.isNaN(scrubX)) {
                 int i = (int) Math.max(0, Math.min(n - 1, Math.floor((scrubX - left) / cw)));
                 LocalDate d = from.plusDays(i);
                 Double val = v.get(d);
+                app.openring.core.DripCsv.Temp m = hasMouth ? mouth.get(d) : null;
                 float x = left + (i + 0.5f) * cw;
                 if (val != null) {
                     dot.setColor(Ui.TEXT);
                     cv.drawCircle(x, py(val, span, top, bottom), Ui.dp(c, 4), dot);
                     dot.setColor(Ui.TEMP);
                 }
-                drawTip(cv, x, Ui.dp(c, 22), bottom, cy.tempTip(d, val == null ? Double.NaN : val, Locale.getDefault()));
+                if (m != null) {
+                    mdot.setColor(Ui.TEXT);
+                    cv.drawCircle(x, my(m.c, mlo, mhi, top, bottom), Ui.dp(c, 4), mdot);
+                    mdot.setColor(MOUTH);
+                }
+                double dev = val == null ? Double.NaN : val;
+                String tip = hasMouth ? cy.tempTip(d, dev, m == null ? Double.NaN : m.c, m == null ? null : m.time, m != null && m.excluded, Locale.getDefault())
+                        : cy.tempTip(d, dev, Locale.getDefault());
+                drawTip(cv, x, Ui.dp(c, hasMouth ? 36 : 22), bottom, tip);
             }
+        }
+
+        private static float my(double val, double lo, double hi, float top, float bottom) {
+            return (float) (bottom - (val - lo) / (hi - lo) * (bottom - top));
         }
 
         private static float py(double val, double span, float top, float bottom) {

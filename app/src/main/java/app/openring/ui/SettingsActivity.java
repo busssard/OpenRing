@@ -157,6 +157,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (backupsCard != null) fillBackupsCard(p); // a copy made or checked meanwhile
         // back from Android's notification settings: the card shows whether the reminder can be shown now
         if (periodCard != null && notifyShown != notificationsOn()) fillPeriodCard();
+        // back from Import from drip: its Undo line (issue #252, phase 1b)
+        else if (periodCard != null && DripImportActivity.changed) fillPeriodCard();
+        DripImportActivity.changed = false;
         if (!screenRead && !p.demo() && ScreenUse.supported() && allowedNow && !screenDaysKnown()) {
             screenRead = true;
             updateNights("Reading screen time");
@@ -737,6 +740,91 @@ public final class SettingsActivity extends Activity implements RingManager.List
         swl.setMargins(0, Ui.dp(this, 14), 0, 0);
         card.addView(stop, swl);
         card.addView(Ui.text(this, Explain.PERIOD_STOPPED, 12, Ui.TEXT_3, Ui.REGULAR));
+        dripImports(card);
+    }
+
+    /**
+     * Import from drip (issue #252, phase 1b) at the end of the Period tracker card: the button that opens the import, and
+     * one "Undo the drip import of 30 Oct" per import in force, read in the background (in demo mode the demo's file).
+     */
+    void dripImports(final LinearLayout card) {
+        card.addView(Ui.gap(this, 14));
+        card.addView(Ui.text(this, "Your history from drip", 14, Ui.TEXT, Ui.REGULAR));
+        card.addView(Ui.text(this, Explain.DRIP_SETTINGS, 12, Ui.TEXT_3, Ui.REGULAR));
+        small(card, "Import from drip", Ui.PERIOD, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, DripImportActivity.class));
+            }
+        });
+        final LinearLayout box = Ui.vbox(this);
+        card.addView(box, Ui.matchWrap());
+        final Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, java.util.List<app.openring.data.Periods.Import>>() {
+            @Override
+            protected java.util.List<app.openring.data.Periods.Import> doInBackground(Void... v) {
+                try {
+                    return app.openring.data.Periods.imports(app.openring.data.Db.get(ctx));
+                } catch (RuntimeException e) {
+                    RingManager.get(ctx).log("drip imports not read: " + e.getClass().getSimpleName());
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(java.util.List<app.openring.data.Periods.Import> list) {
+                if (isFinishing() || list == null || list.isEmpty()) return;
+                java.util.Set<String> days = new java.util.HashSet<String>(), twice = new java.util.HashSet<String>();
+                for (app.openring.data.Periods.Import im : list) if (!days.add(importDay(im, false))) twice.add(importDay(im, false));
+                for (final app.openring.data.Periods.Import im : list) {
+                    final String when = importDay(im, twice.contains(importDay(im, false)));
+                    small(box, "Undo the drip import of " + when, Ui.TEXT_2, new Runnable() {
+                        @Override
+                        public void run() {
+                            confirm("Undo the drip import of " + when + "?", Explain.dripAdded(im.days, im.temps) + " " + Explain.DRIP_UNDO, new Runnable() {
+                                @Override
+                                public void run() {
+                                    undoImport(im.id);
+                                }
+                            });
+                        }
+                    });
+                    box.addView(Ui.text(SettingsActivity.this, Explain.dripAdded(im.days, im.temps) + " " + Explain.DRIP_UNDO, 12, Ui.TEXT_3, Ui.REGULAR));
+                }
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** "30 Oct" (with the year when not this one), with the time when two imports share the day. */
+    static String importDay(app.openring.data.Periods.Import im, boolean withTime) {
+        java.time.ZonedDateTime t = java.time.Instant.ofEpochMilli(im.id).atZone(java.time.ZoneId.systemDefault());
+        String d = PeriodCard.day(t.toLocalDate());
+        return withTime ? d + ", " + String.format(Locale.ROOT, "%02d:%02d", t.getHour(), t.getMinute()) : d;
+    }
+
+    /** Undoes one drip import in the background (one transaction), then the card and the reminder follow. */
+    void undoImport(final long id) {
+        final Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, String>() {
+            @Override
+            protected String doInBackground(Void... v) {
+                try {
+                    boolean ok = app.openring.data.Periods.undoImport(app.openring.data.Db.get(ctx), id, System.currentTimeMillis() / 1000.0);
+                    return ok ? "Import undone" : "This import was already undone.";
+                } catch (RuntimeException e) {
+                    RingManager.get(ctx).log("drip import not undone: " + e.getClass().getSimpleName());
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(String r) {
+                if (r == null) problem("The import could not be undone, nothing was changed. Please try again.");
+                else say(r);
+                app.openring.sync.PeriodReminder.planLater(ctx);
+                fillPeriodCard();
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /** Asks for the notification permission in context, when a reminder is switched on (Android 13 and newer). */

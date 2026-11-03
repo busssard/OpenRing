@@ -186,6 +186,10 @@ public final class Demo {
                 for (java.util.Map.Entry<LocalDate, Integer> e : log.entrySet()) Periods.setFlow(db, e.getKey().toString(), e.getValue(), now);
             }
         });
+        // made up morning temperatures by mouth, as a drip import would bring them (phase 1b): the night temperature card
+        // shows its second line and Settings an import to undo, all in the demo file
+        Periods.importDrip(db, new java.util.TreeMap<LocalDate, Integer>(),
+                app.openring.core.DripCsv.demoMouth(today, app.openring.core.analysis.Cycles.demoWarmNights(today)), false, now * 1000L, now);
     }
 
     /**
