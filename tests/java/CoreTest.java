@@ -1306,6 +1306,12 @@ public class CoreTest {
                 && !WatchCheck.standard(WatchCheck.WITHINGS_SERVICE) && !WatchCheck.standard(null) && WatchCheck.shortId("12342a37" + base) == null);
         eq("watch: no UUID", WatchCheck.name(null), "?");
 
+        // only named devices are listed, and an unnamed one that advertises the Withings service (owner, 3 Nov)
+        WatchCheck.Found unnamed = new WatchCheck.Found("a", null, -60), blank = new WatchCheck.Found("b", "  ", -61),
+                named = new WatchCheck.Found("c", "FnR 6ATAG72R", -62), withingsNoName = new WatchCheck.Found("d", null, -63);
+        withingsNoName.service("00000020-5749-5448-0037-000000000000");
+        List<WatchCheck.Found> listed = WatchCheck.shown(Arrays.asList(unnamed, blank, named, withingsNoName));
+        eq("watch check: unnamed devices are hidden, a Withings without a name stays", listed.size() + " " + listed.get(0).address + listed.get(1).address, "2 cd");
         // scan list: strongest first, unknown signal (127) last, then by name
         List<WatchCheck.Found> in = new ArrayList<WatchCheck.Found>();
         in.add(new WatchCheck.Found("a", "Far", -90));
