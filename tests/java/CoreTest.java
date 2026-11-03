@@ -1049,7 +1049,7 @@ public class CoreTest {
     /** The badges of one kind, as "index: text". */
     static List<String> kind265(List<Badges.Day> days, int kind) {
         List<String> out = new ArrayList<String>();
-        for (Badges.Badge b : Badges.of(days, Locale.ENGLISH)) {
+        for (Badges.Badge b : Badges.of(days)) {
             if (b.kind == kind) out.add(java.time.temporal.ChronoUnit.DAYS.between(D265, b.date) + ": " + b.text);
         }
         return out;
@@ -1057,7 +1057,7 @@ public class CoreTest {
 
     static List<Integer> at265(List<Badges.Day> days, int kind) {
         List<Integer> out = new ArrayList<Integer>();
-        for (Badges.Badge b : Badges.of(days, Locale.ENGLISH)) if (b.kind == kind) out.add((int) java.time.temporal.ChronoUnit.DAYS.between(D265, b.date));
+        for (Badges.Badge b : Badges.of(days)) if (b.kind == kind) out.add((int) java.time.temporal.ChronoUnit.DAYS.between(D265, b.date));
         return out;
     }
 
@@ -1105,7 +1105,7 @@ public class CoreTest {
             x.sleepScore = i == 0 ? 85 : i == 29 ? 88 : 70;
             ny.add(x);
         }
-        List<Badges.Badge> nyB = Badges.of(ny, Locale.ENGLISH);
+        List<Badges.Badge> nyB = Badges.of(ny);
         eq("#265 best night: the text of the design, with the year when it differs", nyB.size() == 1 ? nyB.get(0).text : nyB.toString(),
                 "Best night in 30 days: score 88 (before: 85 on 12 Dec 2025)");
         check("#265 best night: its numbers", nyB.size() == 1 && nyB.get(0).value == 88 && nyB.get(0).usual == 85 && nyB.get(0).count == 30
@@ -1178,15 +1178,39 @@ public class CoreTest {
         eq("#265 recovered: 13 days with readiness in the 4 weeks are not enough", at265(d, C), Collections.emptyList());
         d.get(14).readiness = 84;
         eq("#265 recovered: 14 are", at265(d, C), Arrays.asList(30));
+        // a longer dip: the usual comes from the 4 weeks before its first day, never from the dip itself
+        for (int len : new int[] {3, 4}) {
+            d = days265(40);
+            for (int i = 0; i < 28; i++) d.get(i).readiness = i % 2 == 0 ? 80 : 84;
+            for (int i = 28; i < 28 + len; i++) d.get(i).readiness = 70;
+            d.get(28 + len).readiness = 82;
+            eq("#265 recovered: a " + len + " day dip, the usual from the 4 weeks before it", kind265(d, C),
+                    Arrays.asList((28 + len) + ": Readiness 82, back to your usual 82 (the 4 weeks before) after " + len + " low days in a row (lowest 70)"));
+        }
+        // the usual's window: 28 days before the dip's first day (58), so day 30 is in it and day 29 is not
+        for (int out : new int[] {29, 30}) {
+            d = days265(70);
+            for (int i = 0; i < 58; i++) d.get(i).readiness = i % 2 == 0 ? 80 : 84;
+            d.get(out).readiness = 40;
+            d.get(58).readiness = 75;
+            d.get(59).readiness = 75;
+            d.get(60).readiness = 83;
+            eq("#265 recovered: a very low day " + (58 - out) + " days before the dip " + (out == 29 ? "is outside" : "is inside") + " its usual",
+                    at265(d, C), out == 29 ? Arrays.asList(60) : Collections.<Integer>emptyList());
+        }
 
         // ---- phone free evening: at most 2 min; 3 in 7 days or the first after 7 evenings with more ----
         d = days265(30);
         for (Badges.Day x : d) x.eveningMin = 20;
         d.get(10).eveningMin = 3;
         eq("#265 phone free: 3 min is not phone free", at265(d, P), Collections.emptyList());
+        d.get(10).eveningMin = 2.5;
+        eq("#265 phone free: 2.5 min (shown as 3 min) is not phone free", at265(d, P), Collections.emptyList());
+        d.get(10).eveningMin = 2.4;
+        eq("#265 phone free: 2.4 min (shown as 2 min) is", at265(d, P), Arrays.asList(10));
         d.get(10).eveningMin = 2;
         eq("#265 phone free: 2 min is, the first after 7 evenings", kind265(d, P),
-                Arrays.asList("10: First phone free evening in 8 days: 2 min on the phone in the hour before sleep"));
+                Arrays.asList("10: Phone free evening after 7 evenings with more: 2 min on the phone in the hour before sleep"));
         d.get(5).eveningMin = Double.NaN;
         eq("#265 phone free: not the first when one of the 7 evenings before is unknown", at265(d, P), Collections.emptyList());
         d.get(5).eveningMin = 20;
@@ -1201,7 +1225,7 @@ public class CoreTest {
         eq("#265 phone free: 3 in 7 days, but at most one badge in 7 days", at265(d, P), Arrays.asList(10));
         d.get(18).eveningMin = 1;
         eq("#265 phone free: 3 in 7 days earns it once the week is free of one", kind265(d, P),
-                Arrays.asList("10: First phone free evening in 8 days: 0 min on the phone in the hour before sleep",
+                Arrays.asList("10: Phone free evening after 7 evenings with more: 0 min on the phone in the hour before sleep",
                         "18: 3 phone free evenings in 7 days: this one 1 min on the phone in the hour before sleep"));
         d = days265(8);
         for (Badges.Day x : d) x.eveningMin = 20;
@@ -1264,7 +1288,8 @@ public class CoreTest {
         d.get(6).activeKcal = 420;
         eq("#265 goal: 4 of 7 is, on the 4th", kind265(d, G), Arrays.asList("6: Activity goal reached on 4 of the last 7 days (this day 420 of 300 kcal)"));
         d.get(4).goalLowered = true;
-        eq("#265 goal: a lowered goal among them says so", kind265(d, G).toString().contains("(on 1 of them the goal was lowered after a low readiness day)"), true);
+        eq("#265 goal: a lowered goal among them says so, in the same brackets", kind265(d, G),
+                Arrays.asList("6: Activity goal reached on 4 of the last 7 days (this day 420 of 300 kcal; on 1 of them the goal was lowered after a low readiness day)"));
         d = days265(30);
         for (Badges.Day x : d) {
             x.activeKcal = 200;
@@ -1272,10 +1297,10 @@ public class CoreTest {
         }
         d.get(7).activeKcal = 310;
         eq("#265 goal: the first goal day after 7 without one", kind265(d, G),
-                Arrays.asList("7: Activity goal reached, the first time in 8 days: 310 of 300 kcal"));
+                Arrays.asList("7: Activity goal reached after 7 days without it: 310 of 300 kcal"));
         d.get(7).goalLowered = true;
         eq("#265 goal: with a lowered goal the text says so", kind265(d, G),
-                Arrays.asList("7: Activity goal reached, the first time in 8 days: 310 of 300 kcal (goal lowered after a low readiness day)"));
+                Arrays.asList("7: Activity goal reached after 7 days without it: 310 of 300 kcal (goal lowered after a low readiness day)"));
         d.get(3).targetKcal = Double.NaN;
         eq("#265 goal: not the first when a day before has no summary", at265(d, G), Collections.emptyList());
         d.get(3).targetKcal = 300;
@@ -1291,8 +1316,8 @@ public class CoreTest {
             x.goalLowered = true;
         }
         eq("#265 goal: every day reached gives one badge a week, not one a day", kind265(d, G),
-                Arrays.asList("3: Activity goal reached on 4 of the last 7 days (this day 500 of 300 kcal) (each goal lowered after a low readiness day)",
-                        "10: Activity goal reached on 7 of the last 7 days (this day 500 of 300 kcal) (each goal lowered after a low readiness day)"));
+                Arrays.asList("3: Activity goal reached on 4 of the last 7 days (this day 500 of 300 kcal; each goal lowered after a low readiness day)",
+                        "10: Activity goal reached on 7 of the last 7 days (this day 500 of 300 kcal; each goal lowered after a low readiness day)"));
         check("#265 goal lowered: only without an own target and under Good readiness", Badges.goalLowered(false, 69) && !Badges.goalLowered(true, 60)
                 && !Badges.goalLowered(false, Scores.GOOD) && !Badges.goalLowered(false, Double.NaN));
 
@@ -1316,6 +1341,14 @@ public class CoreTest {
         eq("#265 calm screen: 13 fully read days are not enough", at265(d, S), Collections.emptyList());
         d.get(14).screenMin = 100;
         eq("#265 calm screen: 14 are", at265(d, S), Arrays.asList(28));
+        for (int back : new int[] {28, 29}) {
+            List<Badges.Day> w = days265(40);
+            for (int i = 0; i < 30; i++) w.get(i).screenMin = 100;
+            w.get(30 - back).screenMin = 0;
+            w.get(30).screenMin = 69;
+            eq("#265 calm screen: a day " + back + " days back is " + (back == 28 ? "in" : "not in") + " the usual", at265(w, S),
+                    back == 28 ? Collections.<Integer>emptyList() : Arrays.asList(30));
+        }
         d.get(10).screenMin = 1000;
         d.get(10).leftOut = true;
         d.get(9).screenMin = 1000;
@@ -1344,6 +1377,38 @@ public class CoreTest {
         eq("#265 a second entry for a date replaces the first", kind265(twice, B),
                 Arrays.asList("19: Best night in 30 days: score 95 (before: 80 on 19 Sep)"));
 
+        // ---- English month names also on a phone in another language ----
+        Locale was = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.GERMANY);
+            List<Badges.Badge> de = Badges.of(ny);
+            eq("#265 the text stays English with a German phone", de.size() == 1 ? de.get(0).text : de.toString(),
+                    "Best night in 30 days: score 88 (before: 85 on 12 Dec 2025)");
+            List<Badges.Day> oct = days265(40);
+            for (Badges.Day x : oct) x.sleepScore = 80;
+            oct.get(35).sleepScore = 90;
+            eq("#265 an English month name with a German phone", kind265(oct, B), Arrays.asList("35: Best night in 30 days: score 90 (before: 80 on 5 Oct)"));
+        } finally {
+            Locale.setDefault(was);
+        }
+
+        // ---- a stray date far away does not blow up the arrays: year 1 and year 9999 are left out ----
+        List<Badges.Day> stray = days265(40);
+        for (Badges.Day x : stray) x.sleepScore = 80;
+        stray.get(35).sleepScore = 90;
+        List<String> plainOnes = kind265(stray, B);
+        Badges.Day y1 = new Badges.Day(java.time.LocalDate.of(1, 1, 1)), y9999 = new Badges.Day(java.time.LocalDate.of(9999, 12, 31));
+        y1.sleepScore = 99;
+        y9999.sleepScore = 99;
+        stray.add(y1);
+        stray.add(y9999);
+        long st = System.nanoTime();
+        List<String> withStray = kind265(stray, B);
+        long stMs = (System.nanoTime() - st) / 1000000;
+        eq("#265 dates in year 1 and 9999 are left out, the rest as before", withStray, plainOnes);
+        check("#265 ... and quickly (" + stMs + " ms)", stMs < 1000);
+        eq("#265 a date after today is left out", Badges.of(Arrays.asList(y9999), D265).size(), 0);
+
         // ---- a made up history of 3 years: fast, one per kind and date, every text plain ----
         Random rnd = new Random(265);
         List<Badges.Day> years = new ArrayList<Badges.Day>();
@@ -1363,7 +1428,7 @@ public class CoreTest {
             years.add(x);
         }
         long t0 = System.nanoTime();
-        List<Badges.Badge> all = Badges.of(years, Locale.ENGLISH);
+        List<Badges.Badge> all = Badges.of(years);
         long ms = (System.nanoTime() - t0) / 1000000;
         check("#265 3 years of days in one pass, well under 2 s (" + ms + " ms)", ms < 2000);
         Set<String> seen = new HashSet<String>();

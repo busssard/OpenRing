@@ -2546,27 +2546,10 @@ public class PipelineTest {
         return out;
     }
 
-    /** Clock minutes after 12:00 the day before (so 23:00 is 660, 07:00 is 1140). */
-    static double clockFromNoon(double unix, ZoneId z) {
-        java.time.LocalTime t = java.time.Instant.ofEpochSecond((long) unix).atZone(z).toLocalTime();
-        double m = t.getHour() * 60 + t.getMinute() - 12 * 60;
-        return m < 0 ? m + 1440 : m;
-    }
-
-    static double median(List<Double> v) {
-        List<Double> s = new ArrayList<Double>(v);
-        java.util.Collections.sort(s);
-        return s.isEmpty() ? Double.NaN : s.size() % 2 == 1 ? s.get(s.size() / 2) : (s.get(s.size() / 2 - 1) + s.get(s.size() / 2)) / 2;
-    }
-
-    /**
-     * Issue #22: demo bed and wake times keep their clock time across a switch (median of up to 14 nights on each side
-     * moves by under 30 minutes, the old bug moved it by 60), and the switch night carries the marker.
-     */
-    /** Issue #137: the average night of the demo's clock change nights 2026-10-25 and 2027-03-28 keeps their clock times. */
     /**
      * Issue #265, phase 1a: the demo's stored days and nights, its screen days as the Screen tab counts them and its
-     * evenings, passed through {@code Badges} the way phase 1b will read them (one row per date, nothing stored).
+     * evenings, as one {@code Badges.Day} per date (nothing stored). A test shortcut: it calls {@code ScreenDays.info}
+     * once per day, which phase 1b's reader must not do (it reads the whole range once).
      */
     static List<app.openring.core.analysis.Badges.Day> badgeDays(Db db, app.openring.data.Prefs prefs, LocalDate today, long now) {
         java.time.ZoneId z = java.time.ZoneId.systemDefault();
@@ -2597,7 +2580,7 @@ public class PipelineTest {
 
     static void demoBadges(Db demo, app.openring.data.Prefs prefs, LocalDate today, long now) {
         List<app.openring.core.analysis.Badges.Day> days = badgeDays(demo, prefs, today, now);
-        List<app.openring.core.analysis.Badges.Badge> got = app.openring.core.analysis.Badges.of(days, java.util.Locale.ENGLISH);
+        List<app.openring.core.analysis.Badges.Badge> got = app.openring.core.analysis.Badges.of(days, today);
         int[] per = new int[app.openring.core.analysis.Badges.KINDS];
         StringBuilder sb = new StringBuilder();
         for (app.openring.core.analysis.Badges.Badge b : got) {
@@ -2626,6 +2609,20 @@ public class PipelineTest {
         System.out.println("    #265 demo badges: " + sb);
     }
 
+    /** Clock minutes after 12:00 the day before (so 23:00 is 660, 07:00 is 1140). */
+    static double clockFromNoon(double unix, ZoneId z) {
+        java.time.LocalTime t = java.time.Instant.ofEpochSecond((long) unix).atZone(z).toLocalTime();
+        double m = t.getHour() * 60 + t.getMinute() - 12 * 60;
+        return m < 0 ? m + 1440 : m;
+    }
+
+    static double median(List<Double> v) {
+        List<Double> s = new ArrayList<Double>(v);
+        java.util.Collections.sort(s);
+        return s.isEmpty() ? Double.NaN : s.size() % 2 == 1 ? s.get(s.size() / 2) : (s.get(s.size() / 2 - 1) + s.get(s.size() / 2)) / 2;
+    }
+
+    /** Issue #137: the average night of the demo's clock change nights 2026-10-25 and 2027-03-28 keeps their clock times. */
     static void demoSwitchPattern() throws Exception {
         Context phone = freshDb("openring137");
         ZoneId z = ZoneId.systemDefault();
@@ -2710,6 +2707,10 @@ public class PipelineTest {
         return String.format("%02d:%02d", t.getHour(), t.getMinute());
     }
 
+    /**
+     * Issue #22: demo bed and wake times keep their clock time across a switch (median of up to 14 nights on each side
+     * moves by under 30 minutes, the old bug moved it by 60), and the switch night carries the marker.
+     */
     static void dstChecks(Db db, String way, String switchDay, String switchUtc, int minutes, String from, String to) {
         ZoneId z = ZoneId.systemDefault();
         LocalDate sw = LocalDate.parse(switchDay);

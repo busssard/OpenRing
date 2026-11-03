@@ -1,5 +1,7 @@
 package app.openring.ui;
 
+import app.openring.core.analysis.Badges;
+
 /** Plain language explanations of the scores and their contributors. */
 public final class Explain {
     private Explain() {}
@@ -164,36 +166,36 @@ public final class Explain {
 
     /** One line per badge rule ({@code Badges.BEST_NIGHT} and so on), with the numbers the rule uses. */
     public static String badge(int kind) {
+        String week = Badges.WEEK + " days", weeks = Badges.WEEKS + " weeks";
         switch (kind) {
-            case app.openring.core.analysis.Badges.BEST_NIGHT:
-                return "Best night: your highest sleep score of the last " + app.openring.core.analysis.Badges.BEST_DAYS + " days, with at least "
-                        + app.openring.core.analysis.Badges.MIN_NIGHTS + " nights in them. Equal to an earlier night does not count.";
-            case app.openring.core.analysis.Badges.RESTFUL_WEEK:
-                return "Restful week: your sleep score over the last 7 days is on average at least " + app.openring.core.analysis.Badges.RESTFUL_GAP
-                        + " points above your usual (the 4 weeks before). Needs " + app.openring.core.analysis.Badges.RESTFUL_WEEK_NIGHTS
-                        + " nights in the week and " + app.openring.core.analysis.Badges.MIN_NIGHTS + " in the 4 weeks, and comes at most once in 7 days.";
-            case app.openring.core.analysis.Badges.RECOVERED:
-                return "Recovered: readiness back to your usual (its average over the 4 weeks before) after at least "
-                        + app.openring.core.analysis.Badges.LOW_DAYS + " days in a row clearly below it (lower than the average minus its usual "
-                        + "day to day spread, one standard deviation). Needs readiness on each of these days and on "
-                        + app.openring.core.analysis.Badges.MIN_DAYS + " days of the 4 weeks.";
-            case app.openring.core.analysis.Badges.PHONE_FREE:
-                return "Phone free evening: at most " + app.openring.core.analysis.Badges.PHONE_FREE_MAX + " min on the phone in the hour before "
-                        + "your night started (a look at the clock is fine). Comes for " + app.openring.core.analysis.Badges.PHONE_FREE_OF
-                        + " such evenings in 7 days, at most once in 7 days, or for the first one after 7 evenings with more. "
+            case Badges.BEST_NIGHT:
+                return "Best night: your highest sleep score of the last " + Badges.BEST_DAYS + " days, with at least "
+                        + Badges.MIN_NIGHTS + " nights in them. Equal to an earlier night does not count.";
+            case Badges.RESTFUL_WEEK:
+                return "Restful week: your sleep score over the last " + week + " is on average at least " + Badges.RESTFUL_GAP
+                        + " points above your usual (the " + weeks + " before). Needs " + Badges.RESTFUL_WEEK_NIGHTS + " nights in the week and "
+                        + Badges.MIN_NIGHTS + " in the " + weeks + ", and comes at most once in " + week + ".";
+            case Badges.RECOVERED:
+                return "Recovered: readiness back to your usual (its average over the " + weeks + " before the low days) after at least "
+                        + Badges.LOW_DAYS + " days in a row clearly below it (lower than the average minus its usual day to day spread, "
+                        + "one standard deviation). Needs readiness on each of these days and on " + Badges.MIN_DAYS + " days of the " + weeks + ".";
+            case Badges.PHONE_FREE:
+                return "Phone free evening: at most " + Badges.PHONE_FREE_MAX + " min on the phone in the hour before your night started "
+                        + "(a look at the clock is fine). Comes for " + Badges.PHONE_FREE_OF + " such evenings in " + week + ", at most once in "
+                        + week + ", or for the first one after " + Badges.WEEK + " evenings with more. "
                         + "Reading in bed moves the start of your night to after it, so it does not count as phone free.";
-            case app.openring.core.analysis.Badges.ABOVE_USUAL:
-                return "Above your usual: at least " + Math.round(app.openring.core.analysis.Badges.STEPS_ABOVE * 100) + "% more steps than your "
-                        + "average on your last " + app.openring.core.analysis.Badges.USUAL_DAYS + " days with the ring (at least "
-                        + app.openring.core.analysis.Badges.MIN_DAYS + " of them). Only days with the ring on for 12 hours or more count, sleep included.";
-            case app.openring.core.analysis.Badges.GOAL:
-                return "Goal reached: your daily activity goal reached on " + app.openring.core.analysis.Badges.GOAL_OF + " of the last 7 days "
-                        + "(at most once in 7 days), or the first goal day after 7 days without one. There is no badge for every single day, "
+            case Badges.ABOVE_USUAL:
+                return "Above your usual: at least " + Math.round(Badges.STEPS_ABOVE * 100) + "% more steps than your average on your last "
+                        + Badges.USUAL_DAYS + " days with the ring (at least " + Badges.MIN_DAYS + " of them). Only days with the ring on for "
+                        + Badges.WORN_MIN / 60 + " hours or more count, sleep included.";
+            case Badges.GOAL:
+                return "Goal reached: your daily activity goal reached on " + Badges.GOAL_OF + " of the last " + week + " (at most once in "
+                        + week + "), or the first goal day after " + week + " without one. There is no badge for every single day, "
                         + "rest days matter too. Without your own goal in the profile the app lowers it after a low readiness day.";
-            case app.openring.core.analysis.Badges.CALM_SCREEN:
-                return "Calm screen day: at least " + Math.round(app.openring.core.analysis.Badges.CALM_UNDER * 100) + "% less screen time than your "
-                        + "usual (your average over the last 4 weeks, at least " + app.openring.core.analysis.Badges.MIN_DAYS + " fully read days). "
-                        + "Counted as on the Screen tab: apps you left out do not count, and only days whose phone log was read completely.";
+            case Badges.CALM_SCREEN:
+                return "Calm screen day: at least " + Math.round(Badges.CALM_UNDER * 100) + "% less screen time than your usual (your average "
+                        + "over the last " + weeks + ", at least " + Badges.MIN_DAYS + " fully read days). Counted as on the Screen tab: apps "
+                        + "you left out do not count, and only days whose phone log was read completely.";
             default:
                 return null;
         }

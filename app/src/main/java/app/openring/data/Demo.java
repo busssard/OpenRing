@@ -37,8 +37,9 @@ public final class Demo {
     /**
      * The story of demo mode's five weeks (issue #265), so the made up person earns each kind of badge on any day the demo
      * is built: the 4 weeks before the last one are busy ({@code BUSY_ONSET_MIN} more minutes to fall asleep, at
-     * least one wake up a night), the last week is easy (no long wake up, no late night). Bed and
-     * wake times stay as before, so the clock change checks keep their meaning. A short cold {@code COLD_BACK} days before the end (two nights {@code COLD_C} °C warmer with
+     * least one wake up a night), the last week is easy (no long wake up, and none of the late nights that
+     * otherwise come about one night in eight, so its bedtimes are a little earlier). Otherwise bed and wake times follow
+     * the same rule as before, so the clock change checks keep their meaning. A short cold {@code COLD_BACK} days before the end (two nights {@code COLD_C} °C warmer with
      * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
      * the best (heart rate {@code GREAT_BPM} lower, HRV {@code GREAT_HRV} ms higher, 16 minutes to fall asleep). The phone
      * free evenings and quiet days: {@link #phoneFree} and {@link #quiet}.

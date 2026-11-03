@@ -27,7 +27,7 @@ import app.openring.core.Texts;
  * <li><b>Restful week</b>: the mean sleep score of the last 7 days is at least {@link #RESTFUL_GAP} points above the
  * 4 weeks before, with at least {@link #RESTFUL_WEEK_NIGHTS} nights in the week and {@link #MIN_NIGHTS} in the 4 weeks;
  * at most once in 7 days, and on a date with a night.</li>
- * <li><b>Recovered</b>: readiness back to its mean of the 4 weeks before the last {@link #LOW_DAYS} days, after at least
+ * <li><b>Recovered</b>: readiness back to its mean of the 4 weeks before the dip's first day, after at least
  * {@link #LOW_DAYS} days in a row below that mean minus one standard deviation; readiness on all of these days, at least
  * {@link #MIN_DAYS} days with readiness in the 4 weeks.</li>
  * <li><b>Phone free evening</b>: at most {@link #PHONE_FREE_MAX} minutes on the phone in the hour before the main
@@ -66,6 +66,8 @@ public final class Badges {
     public static final int WEEK = 7;
     /** "Your usual": the 4 weeks (28 days) a day or week is compared with. */
     public static final int MONTH = 28;
+    /** {@link #MONTH} in weeks, for the texts. */
+    public static final int WEEKS = MONTH / 7;
     /** Restful week: points the week's mean is above the 4 weeks before, and nights needed in the week. */
     public static final int RESTFUL_GAP = 5, RESTFUL_WEEK_NIGHTS = 5;
     /** Days needed in a "your usual" average (readiness, steps, screen time). */
@@ -142,30 +144,41 @@ public final class Badges {
         }
     }
 
-    /** Whether the analysis lowered the day's activity target: no own target in the profile and readiness under Good. */
+    /**
+     * Whether the analysis lowered the day's activity target: no own target in the profile and readiness under Good.
+     * {@code ownTarget} is the profile as it is now; a day analysed before the person set or cleared a target was
+     * analysed under the other rule, which the caller (phase 1b) has to keep in mind.
+     */
     public static boolean goalLowered(boolean ownTarget, double readiness) {
         return !ownTarget && readiness < Scores.GOOD;
     }
 
-    /** A worn day: the ring on for at least 12 hours ({@code covered_min + rest_min}). */
+    /** A worn day: the ring on for at least {@link #WORN_MIN} minutes, 12 hours ({@code covered_min + rest_min}). */
     public static boolean worn(Day d) {
         return d.coveredMin + d.restMin >= WORN_MIN;
     }
 
-    /** As {@link #of(Collection, Locale)} in the phone's language. */
+    /** Dates more than this many days before the newest one (or after today) are left out: about 20 years. */
+    public static final int MAX_SPAN = 20 * 366;
+
+    /** As {@link #of(Collection, LocalDate)} with today's date. */
     public static List<Badge> of(Collection<Day> days) {
-        return of(days, Locale.getDefault());
+        return of(days, LocalDate.now());
     }
 
     /**
      * Every badge the dates earned, by date and then kind. {@code days} in any order; a second entry for the same
-     * date replaces the first. Never two badges of one kind for one date.
+     * date replaces the first. Never two badges of one kind for one date. Dates after {@code today} plus one day (a
+     * wrong clock) and more than {@link #MAX_SPAN} days before the newest date left are ignored, so one stray date
+     * cannot make the arrays below huge. The texts are English like the rest of the app, also the month names.
      */
-    public static List<Badge> of(Collection<Day> days, Locale loc) {
+    public static List<Badge> of(Collection<Day> days, LocalDate today) {
         List<Badge> out = new ArrayList<Badge>();
         TreeMap<LocalDate, Day> byDate = new TreeMap<LocalDate, Day>();
-        for (Day d : days) if (d != null && d.date != null) byDate.put(d.date, d);
+        LocalDate latest = today.plusDays(1);
+        for (Day d : days) if (d != null && d.date != null && !d.date.isAfter(latest)) byDate.put(d.date, d);
         if (byDate.isEmpty()) return out;
+        byDate.headMap(byDate.lastKey().minusDays(MAX_SPAN)).clear();
         LocalDate first = byDate.firstKey();
         int n = (int) ChronoUnit.DAYS.between(first, byDate.lastKey()) + 1;
         Day[] at = new Day[n];
@@ -177,7 +190,7 @@ public final class Badges {
         for (int i = 0; i < n; i++) {
             Day d = at[i];
             if (d != null && !d.leftOut) {
-                bestNight(at, i, got, loc);
+                bestNight(at, i, got);
                 restfulWeek(at, i, got);
                 recovered(at, i, got);
                 phoneFree(at, i, got);
@@ -220,7 +233,7 @@ public final class Badges {
         return false;
     }
 
-    private static void bestNight(Day[] at, int i, Badge[][] got, Locale loc) {
+    private static void bestNight(Day[] at, int i, Badge[][] got) {
         Day d = at[i];
         if (!night(d)) return;
         int nights = 1;
@@ -236,7 +249,7 @@ public final class Badges {
         }
         if (nights < MIN_NIGHTS || !(d.sleepScore > best)) return;
         String text = "Best night in " + BEST_DAYS + " days: score " + Math.round(d.sleepScore) + " (before: " + Math.round(best) + " on "
-                + date(bestOn, d.date, loc) + ")";
+                + date(bestOn, d.date) + ")";
         got[i][BEST_NIGHT] = new Badge(d.date, BEST_NIGHT, d.sleepScore, best, nights, bestOn, text);
     }
 
@@ -261,8 +274,8 @@ public final class Badges {
         week /= wn;
         month /= mn;
         if (week - month < RESTFUL_GAP) return;
-        String text = "Sleep score " + Math.round(week) + " on average over the last 7 days (" + Texts.count(wn, "night", "nights")
-                + "), your usual " + Math.round(month) + " (the 4 weeks before)";
+        String text = "Sleep score " + Math.round(week) + " on average over the last " + WEEK + " days (" + Texts.count(wn, "night", "nights")
+                + "), your usual " + Math.round(month) + " (the " + WEEKS + " weeks before)";
         got[i][RESTFUL_WEEK] = new Badge(d.date, RESTFUL_WEEK, week, month, wn, null, text);
     }
 
@@ -270,38 +283,52 @@ public final class Badges {
         return ok(d) && !Double.isNaN(d.readiness);
     }
 
+    /**
+     * The dip is the run of days with readiness right before {@code i} that are below the usual minus one standard
+     * deviation, the usual being the mean of the 28 days before the run's first day (so the dip never counts in its own
+     * usual). The shortest run whose day before is not low (or has no readiness) is the dip; it needs {@link #LOW_DAYS}.
+     */
     private static void recovered(Day[] at, int i, Badge[][] got) {
         Day d = at[i];
-        if (!readiness(d) || i < LOW_DAYS) return;
-        // the 4 weeks before the dip: the days before i - LOW_DAYS
-        int base = i - LOW_DAYS;
-        double[] v = new double[MONTH];
-        int k = 0;
-        for (int j = Math.max(0, base - MONTH); j < base; j++) if (readiness(at[j])) v[k++] = at[j].readiness;
-        if (k < MIN_DAYS) return;
-        double[] have = java.util.Arrays.copyOf(v, k);
-        double mean = Stats.mean(have), low = mean - Stats.sd(have);
-        if (d.readiness < mean) return;
-        int lows = 0;
-        double lowest = Double.NaN;
-        for (int j = i - 1; j >= 0 && readiness(at[j]) && at[j].readiness < low; j--) {
-            lows++;
-            if (Double.isNaN(lowest) || at[j].readiness < lowest) lowest = at[j].readiness;
+        if (!readiness(d)) return;
+        for (int len = 1; len <= MONTH && i - len >= 0; len++) {
+            int start = i - len;
+            if (!readiness(at[start])) return;
+            double[] v = new double[MONTH];
+            int k = 0;
+            for (int j = Math.max(0, start - MONTH); j < start; j++) if (readiness(at[j])) v[k++] = at[j].readiness;
+            if (k < MIN_DAYS) continue;
+            double[] have = java.util.Arrays.copyOf(v, k);
+            double mean = Stats.mean(have), low = mean - Stats.sd(have);
+            boolean allLow = true;
+            double lowest = Double.NaN;
+            for (int j = start; j < i; j++) {
+                if (!(at[j].readiness < low)) allLow = false;
+                if (Double.isNaN(lowest) || at[j].readiness < lowest) lowest = at[j].readiness;
+            }
+            if (!allLow) return; // a day of the run is not low: no dip of this length or longer either
+            boolean before = start > 0 && readiness(at[start - 1]) && at[start - 1].readiness < low;
+            if (before) continue; // the dip began earlier
+            if (len < LOW_DAYS || d.readiness < mean) return;
+            String dip = len == LOW_DAYS ? Math.round(at[i - 2].readiness) + " and " + Math.round(at[i - 1].readiness)
+                    : "lowest " + Math.round(lowest);
+            String text = "Readiness " + Math.round(d.readiness) + ", back to your usual " + Math.round(mean) + " (the " + WEEKS
+                    + " weeks before) after " + len + " low days in a row (" + dip + ")";
+            got[i][RECOVERED] = new Badge(d.date, RECOVERED, d.readiness, mean, len, null, text);
+            return;
         }
-        if (lows < LOW_DAYS) return;
-        String dip = lows == LOW_DAYS ? Math.round(at[i - 2].readiness) + " and " + Math.round(at[i - 1].readiness)
-                : "lowest " + Math.round(lowest);
-        String text = "Readiness " + Math.round(d.readiness) + ", back to your usual " + Math.round(mean) + " (the 4 weeks before) after "
-                + lows + " low days in a row (" + dip + ")";
-        got[i][RECOVERED] = new Badge(d.date, RECOVERED, d.readiness, mean, lows, null, text);
     }
 
     private static boolean evening(Day d) {
         return ok(d) && !Double.isNaN(d.eveningMin);
     }
 
+    /**
+     * At most {@link #PHONE_FREE_MAX} minutes as the screens show them: rounded like {@code Texts.minutes}, so an evening
+     * shown as "2 min" (2.4) counts and one shown as "3 min" (2.5) does not.
+     */
     private static boolean phoneFreeEvening(Day d) {
-        return evening(d) && d.eveningMin <= PHONE_FREE_MAX;
+        return evening(d) && Math.round(d.eveningMin) <= PHONE_FREE_MAX;
     }
 
     private static void phoneFree(Day[] at, int i, Badge[][] got) {
@@ -312,13 +339,13 @@ public final class Badges {
         for (int j = Math.max(0, i - WEEK + 1); j <= i; j++) if (phoneFreeEvening(at[j])) free++;
         if (free >= PHONE_FREE_OF && !recentBadge(got, i, PHONE_FREE)) {
             got[i][PHONE_FREE] = new Badge(d.date, PHONE_FREE, d.eveningMin, Double.NaN, free, null,
-                    free + " phone free evenings in 7 days: this one " + mins);
+                    free + " phone free evenings in " + WEEK + " days: this one " + mins);
             return;
         }
         if (i < WEEK) return;
-        for (int j = i - WEEK; j < i; j++) if (!evening(at[j]) || at[j].eveningMin <= PHONE_FREE_MAX) return;
+        for (int j = i - WEEK; j < i; j++) if (!evening(at[j]) || phoneFreeEvening(at[j])) return;
         got[i][PHONE_FREE] = new Badge(d.date, PHONE_FREE, d.eveningMin, Double.NaN, 1, null,
-                "First phone free evening in " + (WEEK + 1) + " days: " + mins);
+                "Phone free evening after " + WEEK + " evenings with more: " + mins);
     }
 
     private static void aboveUsual(Day d, int i, double mean, int days, Badge[][] got) {
@@ -350,15 +377,15 @@ public final class Badges {
             }
         }
         if (days >= GOAL_OF && !recentBadge(got, i, GOAL)) {
-            String text = "Activity goal reached on " + days + " of the last 7 days (this day " + kcal + ")";
-            if (lowered > 0) text += lowered == days ? " (each goal lowered after a low readiness day)"
-                    : " (on " + lowered + " of them the goal was lowered after a low readiness day)";
+            String note = lowered == 0 ? "" : lowered == days ? "; each goal lowered after a low readiness day"
+                    : "; on " + lowered + " of them the goal was lowered after a low readiness day";
+            String text = "Activity goal reached on " + days + " of the last " + WEEK + " days (this day " + kcal + note + ")";
             got[i][GOAL] = new Badge(d.date, GOAL, days, d.targetKcal, days, null, text);
             return;
         }
         if (i < WEEK) return;
         for (int j = i - WEEK; j < i; j++) if (!goalKnown(at[j]) || goalDay(at[j])) return;
-        String text = "Activity goal reached, the first time in " + (WEEK + 1) + " days: " + kcal;
+        String text = "Activity goal reached after " + WEEK + " days without it: " + kcal;
         if (d.goalLowered) text += " (goal lowered after a low readiness day)";
         got[i][GOAL] = new Badge(d.date, GOAL, 1, d.targetKcal, 1, null, text);
     }
@@ -383,12 +410,15 @@ public final class Badges {
         if (!(mean > 0) || d.screenMin > mean * (1 - CALM_UNDER)) return;
         long less = Math.round(mean) - Math.round(d.screenMin);
         String text = Texts.minutes(d.screenMin) + " on the phone, " + Texts.minutes(less) + " less than your usual " + Texts.minutes(mean)
-                + " (last 4 weeks)";
+                + " (last " + WEEKS + " weeks)";
         got[i][CALM_SCREEN] = new Badge(d.date, CALM_SCREEN, d.screenMin, mean, k, null, text);
     }
 
-    /** "12 Oct", with the year when it differs from {@code ref}'s. */
-    static String date(LocalDate d, LocalDate ref, Locale loc) {
-        return d.format(DateTimeFormatter.ofPattern(d.getYear() == ref.getYear() ? "d MMM" : "d MMM yyyy", loc));
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH),
+            DAY_YEAR = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH);
+
+    /** "12 Oct" in English like every text of the app, with the year when it differs from {@code ref}'s. */
+    static String date(LocalDate d, LocalDate ref) {
+        return d.format(d.getYear() == ref.getYear() ? DAY : DAY_YEAR);
     }
 }
