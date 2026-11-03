@@ -226,11 +226,10 @@ launch --es settings screen;                shot settings-screen-time
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
 # The Watch check (issue #251, phase 1a): the Settings card, then in demo mode the made up scan (never Bluetooth) and
-# the made up report, built by the same code as a real one; the report's copy buttons and texts are below it
+# the made up report, built by the same code as a real one (the screen scrolls to it, copy buttons included)
 launch --es settings watch;                 shot settings-watch
 launch --ez watch true;                     shot watch 3
-launch --ez watch true --ez watch_report true; shot watch-report 3
-swipe_up; swipe_up;                         shot watch-report-copy 1
+launch --ez watch true --ez watch_report true; shot watch-report 3   # scrolls to the report itself, copy buttons included
 # Find my ring (issues #74, #191), all on one screen without swiping: in demo a made up signal fills
 # the gauge and the trail; finder_start shows the screen before a walk (you in the middle of the dial),
 # the default a made up walk on the map with its circle, finder_turn a made up turn with the arrow, and
