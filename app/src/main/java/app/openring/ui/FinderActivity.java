@@ -41,6 +41,7 @@ import java.util.Random;
 import app.openring.ble.RingManager;
 import app.openring.ble.RingScanner;
 import app.openring.core.FingerCheck;
+import app.openring.core.InputLimit;
 import app.openring.core.PermissionAsk;
 import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.FinderLayout;
@@ -1112,9 +1113,9 @@ public final class FinderActivity extends Activity implements SensorEventListene
         showTurn();
     }
 
-    /** Metres per step: 0.41 × the height from the profile (175 cm when none was entered, and in the demo). */
+    /** Metres per step: 0.41 × the height from the profile (the profile default of {@link InputLimit#HEIGHT_CM} when none was entered, and in the demo). */
     double stepLength() {
-        return StepDetector.stepLength(demo ? 175 : Prefs.of(this).heightCm());
+        return StepDetector.stepLength(demo ? InputLimit.HEIGHT_CM.def : Prefs.of(this).heightCm());
     }
 
     /**

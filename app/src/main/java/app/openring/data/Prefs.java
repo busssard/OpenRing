@@ -37,7 +37,7 @@ public final class Prefs {
     public int sex() { return sp.getInt("sex", 2); } // 0 male, 1 female, 2 unspecified
     public int weightKg() { return sp.getInt("weight", InputLimit.WEIGHT_KG.def); }
     public int heightCm() { return sp.getInt("height", InputLimit.HEIGHT_CM.def); }
-    /** Whether a height was ever entered (the finder's step length says so when it uses 175 cm). */
+    /** Whether a height was ever entered (the finder's step length says so when it uses the default height). */
     public boolean hasHeight() { return sp.contains("height"); }
     /** Active calorie target; 0 means automatic. */
     public int targetKcal() { return sp.getInt("target_kcal", InputLimit.TARGET_KCAL.def); }
