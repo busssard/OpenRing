@@ -154,10 +154,25 @@ public final class Demo {
         // the made up usage log was "read" from the first demo day to now, so no day is a gap (issue #131)
         db.putScreenRead(t0, now);
         db.putApps(apps);
+        periods(db, today, now);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
         db.put(BUILT, today.toString());
         return true;
+    }
+
+    /**
+     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on about cycle day 18
+     * ({@code Cycles.demo}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
+     */
+    static void periods(final Db db, LocalDate today, final long now) {
+        final java.util.Map<LocalDate, Integer> log = app.openring.core.analysis.Cycles.demo(today);
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                for (java.util.Map.Entry<LocalDate, Integer> e : log.entrySet()) Periods.setFlow(db, e.getKey().toString(), e.getValue(), now);
+            }
+        });
     }
 
     /**

@@ -568,6 +568,7 @@ public class PipelineTest {
         check("plain text key file accepted", bt.ok, bt.message);
         app.openring.data.Backup.Result bad = app.openring.data.Backup.read(phone2, new java.io.ByteArrayInputStream("hello".getBytes("UTF-8")));
         check("random file rejected", !bad.ok, bad.message);
+        profileLimits(phone2);
 
         // ---- demo mode: made up history in its own file, real data untouched ----
         long realEvents = Db.get(phone2).count("SELECT COUNT(*) FROM events");
@@ -585,6 +586,11 @@ public class PipelineTest {
         }
         Db demo = Db.get(phone2);
         check("demo uses its own database", demo.fileName.equals(Db.DEMO), demo.fileName);
+        // issue #252: the made up period log is in the demo file only, today on about cycle day 18
+        app.openring.core.analysis.Cycles demoCycles = app.openring.data.Periods.cycles(demo, demoToday);
+        check("#252 demo: 8 made up cycles, today on cycle day 18", demoCycles.cycles.size() == 8 && demoCycles.cycleDay(demoToday) == 18
+                && demoCycles.estimates(), demoCycles.cycles);
+        check("#252 demo: the real file holds no period day", daysIn252(phone2.getDatabasePath(Db.REAL)).isEmpty(), daysIn252(phone2.getDatabasePath(Db.REAL)));
         app.openring.core.analysis.LastWorn.Result demoLast = app.openring.data.RightNow.lastWorn(demo, demoNow);
         check("ring finder: the demo ring reads as worn, confirmed by heart rate (#94)", demoLast.state == app.openring.core.analysis.LastWorn.WORN
                 && !Double.isNaN(demoLast.skinC) && !demoLast.justOn && !Double.isNaN(demoLast.lastHr), demoLast.state + " " + demoLast.skinC + " " + demoLast.lastHr);
@@ -852,6 +858,7 @@ public class PipelineTest {
         damagedLog252();
         demo252();
         largeLog252();
+        tracker252();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -3540,6 +3547,46 @@ public class PipelineTest {
      * Known order dependence (issue #216, not changed): freshDb swaps the shared database, so a test that calls it
      * must not run in the middle of main's own section, which keeps using the database it opened at the start.
      */
+    /**
+     * The profile and screen goal defaults and the limits a restore keeps them in, pinned so the named limits
+     * (core/InputLimit, shared with Setup and Settings) give exactly the numbers that were typed in each place.
+     * Leaves the phone's settings as they were.
+     */
+    static void profileLimits(Context phone) throws Exception {
+        app.openring.data.Prefs fresh = app.openring.data.Prefs.of(new Context(Files.createTempDirectory("prefs").toFile()));
+        check("profile defaults: age 35, weight 72 kg, height 175 cm, calorie goal automatic, screen goal 180 min",
+                fresh.age() == 35 && fresh.weightKg() == 72 && fresh.heightCm() == 175 && fresh.targetKcal() == 0 && fresh.screenGoalMin() == 180,
+                fresh.age() + " " + fresh.weightKg() + " " + fresh.heightCm() + " " + fresh.targetKcal() + " " + fresh.screenGoalMin());
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(phone);
+        int age = p.age(), sex = p.sex(), weight = p.weightKg(), height = p.heightCm(), kcal = p.targetKcal(), goal = p.screenGoalMin();
+        try {
+            // {age, weight, height, calorie goal, screen goal} in a backup, and what the restore keeps
+            int[][] cases = {
+                    {5, 20, 90, -1, -5}, {10, 30, 100, 0, 0},
+                    {101, 251, 231, 3001, 1441}, {100, 250, 230, 3000, 1440},
+                    {-40, -1, 0, -100000, Integer.MIN_VALUE}, {10, 30, 100, 0, 0},
+                    {Integer.MAX_VALUE, 99999, 5000, Integer.MAX_VALUE, 99999}, {100, 250, 230, 3000, 1440},
+                    {44, 81, 190, 2500, 90}, {44, 81, 190, 2500, 90},
+            };
+            for (int i = 0; i < cases.length; i += 2) {
+                int[] in = cases[i], want = cases[i + 1];
+                p.setProfile(in[0], 0, in[1], in[2], in[3]);
+                p.setScreenGoalMin(in[4]);
+                java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+                app.openring.data.Backup.write(phone, b, false);
+                p.setProfile(50, 1, 60, 160, 1000);
+                p.setScreenGoalMin(60);
+                app.openring.data.Backup.Result r = app.openring.data.Backup.read(phone, new java.io.ByteArrayInputStream(b.toByteArray()));
+                int[] got = {p.age(), p.weightKg(), p.heightCm(), p.targetKcal(), p.screenGoalMin()};
+                check("restore keeps the profile in its limits: " + Arrays.toString(in), r.ok && Arrays.equals(got, want),
+                        Arrays.toString(got) + " " + r.message);
+            }
+        } finally {
+            p.setProfile(age, sex, weight, height, kcal);
+            p.setScreenGoalMin(goal);
+        }
+    }
+
     static Context freshDb(String name) throws Exception {
         java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
         f.setAccessible(true);
@@ -9699,5 +9746,97 @@ public class PipelineTest {
         check("#252 a 5 year log (" + n + " days) goes through a restore row for row", r.ok && r.history && n == 5 * 365 && periodRows252(after).equals(rows)
                 && s < 30, s);
         clean254();
+    }
+
+    /**
+     * Issue #252, phase 1a1: the read methods the period card uses ({@code Periods.day}, {@code Periods.cycles}), and the
+     * privacy rule: logging a whole made up log changes nothing in the Data check and puts no logged date into the analysis
+     * log. The tracker switch travels with a backup; an older backup without it leaves it as it is.
+     */
+    static void tracker252() throws Exception {
+        Context c = phone254("openring252-tracker");
+        Db db = Db.get(c);
+        final List<String> logBefore = new ArrayList<String>(), logAfter = new ArrayList<String>();
+        Analyzer.runAll(c, new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                logBefore.add(m);
+            }
+        });
+        String before = DataCheck.run(c).text;
+        String results = results252(db);
+        LocalDate today = LocalDate.parse("2019-06-30");
+        java.util.TreeMap<LocalDate, Integer> made = app.openring.core.analysis.Cycles.demo(today);
+        check("#252 day: a day never logged reads as null", app.openring.data.Periods.day(db, "2019-06-01") == null, null);
+        for (java.util.Map.Entry<LocalDate, Integer> e : made.entrySet()) app.openring.data.Periods.setFlow(db, e.getKey().toString(), e.getValue(), 5000);
+        app.openring.data.Periods.remove(db, made.firstKey().toString());
+        app.openring.data.Periods.setEnd(db, made.lastKey().toString(), 5001);
+        app.openring.data.Periods.setEnd(db, "2019-06-29", 5002);
+        app.openring.data.Periods.clearEnd(db, "2019-06-29", 5003);
+        app.openring.data.Periods.Day first = app.openring.data.Periods.day(db, made.firstKey().toString());
+        app.openring.data.Periods.Day last = app.openring.data.Periods.day(db, made.lastKey().toString());
+        check("#252 day: a removed day reads as its removal mark, a logged one with its amount", first != null && first.removed() && last != null
+                && last.flow == made.lastEntry().getValue() && last.made == 5000, first + " / " + last);
+        check("#252 logging starts no analysis: nights, days and the analysis state as before", results252(db).equals(results), null);
+        made.put(made.firstKey(), app.openring.core.analysis.Cycles.REMOVED);
+        app.openring.core.analysis.Cycles fromDb = app.openring.data.Periods.cycles(db, today);
+        app.openring.core.analysis.Cycles direct = app.openring.core.analysis.Cycles.of(made, Arrays.asList(made.lastKey()), today);
+        check("#252 cycles: the whole log as stored gives the same estimate as the same days in memory", fromDb.periods.toString().equals(direct.periods.toString())
+                && fromDb.cycles.toString().equals(direct.cycles.toString()) && fromDb.next.equals(direct.next) && fromDb.range == direct.range
+                && fromDb.cycleDay(today) == 18 && fromDb.periods.get(fromDb.periods.size() - 1).marked && fromDb.ends.size() == 1,
+                fromDb.periods + " / " + direct.periods);
+        Analyzer.runAll(c, new Analyzer.Log() {
+            @Override
+            public void log(String m) {
+                logAfter.add(m);
+            }
+        });
+        String after = DataCheck.run(c).text;
+        check("#252 the Data check is the same with a whole period log as without (no date, no count)", after.equals(before), after.equals(before) ? null : after);
+        boolean clean = logAfter.size() == logBefore.size();
+        for (String l : logAfter) {
+            String low = l.toLowerCase(java.util.Locale.ROOT).replace("sleep period", "");
+            for (LocalDate d : made.keySet()) clean &= !l.contains(d.toString());
+            clean &= !low.contains("period") && !low.contains("flow");
+        }
+        check("#252 the analysis log holds no logged date and nothing about the period log", clean, clean ? null : logAfter);
+
+        // the switch in the backup
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        check("#252 the tracker switch is untouched by default", p.periodChoice() == -1, p.periodChoice());
+        p.setPeriodChoice(0);
+        java.io.ByteArrayOutputStream ko = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, ko, false);
+        Context b = freshDb("openring252-switch");
+        app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(ko.toByteArray()));
+        check("#252 a backup keeps the tracker switch (hidden)", app.openring.data.Prefs.of(b).periodChoice() == 0, app.openring.data.Prefs.of(b).periodChoice());
+        app.openring.data.Prefs.of(b).setPeriodChoice(7);
+        check("#252 the switch stores only on or off", app.openring.data.Prefs.of(b).periodChoice() == 1, app.openring.data.Prefs.of(b).periodChoice());
+        String json = new String(zipEntry(ko.toByteArray(), "openring-backup.json"), "UTF-8").replaceAll(",?\"period_shown\":-?\\d+", "");
+        java.io.ByteArrayOutputStream old = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(old)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(json.getBytes("UTF-8"));
+            z.closeEntry();
+        }
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(old.toByteArray()));
+        check("#252 an older backup without the switch leaves it as it is", r.ok && !json.contains("period_shown") && app.openring.data.Prefs.of(b).periodChoice() == 1,
+                r.message + ", " + app.openring.data.Prefs.of(b).periodChoice());
+        rmTree(b.dir);
+        clean254();
+    }
+
+    /** Every stored night and day and the analysis state, as one text. */
+    static String results252(Db db) {
+        StringBuilder sb = new StringBuilder();
+        for (String q : new String[] {"SELECT json FROM nights ORDER BY rowid", "SELECT json FROM days ORDER BY rowid", "SELECT v FROM kv WHERE k IN ('analysis_inputs', 'analyzed_until') ORDER BY k"}) {
+            android.database.Cursor cu = db.getReadableDatabase().rawQuery(q, null);
+            try {
+                while (cu.moveToNext()) sb.append(cu.getString(0)).append('\n');
+            } finally {
+                cu.close();
+            }
+        }
+        return sb.toString();
     }
 }

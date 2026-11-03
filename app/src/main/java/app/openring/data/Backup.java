@@ -17,6 +17,7 @@ import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 import app.openring.core.Hex;
+import app.openring.core.InputLimit;
 import app.openring.core.analysis.StageFilter;
 
 /**
@@ -86,6 +87,7 @@ public final class Backup {
         Json.put(o, "screen_awake", p.screenAwake());
         Json.put(o, "screen_exclude", new org.json.JSONArray(p.screenExcluded()));
         Json.put(o, "games_on", p.gamesOn());
+        Json.put(o, "period_shown", p.periodChoice());
         Json.put(o, "screen_min_show", p.screenMinShowMin());
         Json.put(o, "stage_detail", p.stageDetail());
         Json.put(o, "finder_sound", p.finderSound());
@@ -426,13 +428,13 @@ public final class Backup {
         JSONObject prof = o.optJSONObject("profile");
         if (prof != null) {
             int sex = prof.optInt("sex", p.sex());
-            p.setProfile(clamp(prof.optInt("age", p.age()), 10, 100), sex >= 0 && sex <= 2 ? sex : p.sex(),
-                    clamp(prof.optInt("weight", p.weightKg()), 30, 250), clamp(prof.optInt("height", p.heightCm()), 100, 230),
-                    clamp(prof.optInt("target_kcal", p.targetKcal()), 0, 3000));
+            p.setProfile(InputLimit.AGE.clamp(prof.optInt("age", p.age())), sex >= 0 && sex <= 2 ? sex : p.sex(),
+                    InputLimit.WEIGHT_KG.clamp(prof.optInt("weight", p.weightKg())), InputLimit.HEIGHT_CM.clamp(prof.optInt("height", p.heightCm())),
+                    InputLimit.TARGET_KCAL.clamp(prof.optInt("target_kcal", p.targetKcal())));
             p.setProfileSet();
         }
         if (o.has("background_sync")) p.setBackgroundSync(o.optBoolean("background_sync", true));
-        if (o.has("screen_goal")) p.setScreenGoalMin(clamp(o.optInt("screen_goal", p.screenGoalMin()), 0, 1440));
+        if (o.has("screen_goal")) p.setScreenGoalMin(InputLimit.SCREEN_GOAL_MIN.clamp(o.optInt("screen_goal", p.screenGoalMin())));
         if (o.has("screen_awake")) p.setScreenAwake(o.optBoolean("screen_awake", true));
         org.json.JSONArray ex = o.optJSONArray("screen_exclude");
         if (ex != null) {
@@ -441,6 +443,8 @@ public final class Backup {
             p.setScreenExcluded(l);
         }
         if (o.has("games_on")) p.setGamesOn(o.optBoolean("games_on", false));
+        // the period tracker switch (issue #252); an older backup has none and leaves it as it is
+        if (o.has("period_shown")) p.setPeriodChoice(o.optInt("period_shown", -1));
         if (o.has("screen_min_show")) {
             int m = o.optInt("screen_min_show", 5);
             p.setScreenMinShowMin(m == 0 || m == 5 || m == 10 || m == 15 ? m : 5);
@@ -453,10 +457,6 @@ public final class Backup {
         // a value that is not one of the choices, or an older backup without them, keeps the current ones
         if (app.openring.core.Backups.validDays(o.optInt("backup_days", -1))) p.setBackupDays(o.optInt("backup_days"));
         if (app.openring.core.Backups.validKeep(o.optInt("backup_keep", -1))) p.setBackupKeep(o.optInt("backup_keep"));
-    }
-
-    static int clamp(int v, int lo, int hi) {
-        return Math.max(lo, Math.min(hi, v));
     }
 
     static boolean looksLikeSqlite(File f) throws IOException {

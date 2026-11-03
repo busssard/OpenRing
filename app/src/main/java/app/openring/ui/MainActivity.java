@@ -216,7 +216,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * Make it blink (issue #192; the demo never connects), live (boolean, demo mode
      * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185), left_out
      * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254),
-     * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199).
+     * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
+     * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -242,6 +243,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("left_out", false) && Prefs.of(this).demo()) leftOutDemo();
         // screen test: the status line of a saved key this phone cannot read (issue #199), demo mode only
         previewUnreadable = i.getBooleanExtra("key_unreadable", false) && Prefs.of(this).demo();
+        // screen test: the period tracker's day editor on Body (issue #252), demo mode only; nothing is saved without a tap
+        if (i.getBooleanExtra("period_edit", false) && Prefs.of(this).demo()) PeriodCard.editPending = true;
         // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
         // demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {

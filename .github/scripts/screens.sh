@@ -148,8 +148,26 @@ launch --ei tab 3 --es day "$(date -d '32 days ago' +%F)"
 # two slow swipes (no fling, about 1700 px): the note sits just above Contributors
 adb shell input swipe 30 1700 30 850 1500; adb shell input swipe 30 1700 30 850 1500
 shot activity-first-days 1
+# Body opens with the period tracker (issue #252, the demo's made up cycles): its card, then one slow swipe (no fling) to
+# its month calendar with the expected period, ovulation range and fertile days, then the day editor (extra period_edit,
+# demo mode only, a day of the newest period picked; nothing is saved without a tap)
 launch --ei tab 4;                          shot body
-swipe_up; swipe_up;                       shot body-trends 1
+adb shell input swipe 30 1700 30 700 1500; shot body-period-calendar 1
+launch --ei tab 4 --ez period_edit true;    shot period-edit 3
+# the trend charts below the period card (README picture): slow swipes until the Resting heart rate caption is in the
+# upper third of the screen
+launch --ei tab 4; sleep 3
+trend_top() { ui_dump | grep -o 'text="RESTING HEART RATE, 30 DAYS"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p; }
+for i in $(seq 1 14); do
+  y=$(trend_top)
+  if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 3 )) ]; then break; fi
+  adb shell input swipe 30 1500 30 900 1500; sleep 1
+done
+[ -n "$y" ] || echo "::warning::issue #252 step: the Resting heart rate chart was not found on Body, body-trends shows where the swipes ended"
+shot body-trends 1
+# Today's compact period card near the bottom (issue #252)
+launch --ei tab 0; sleep 3
+swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
 launch --ei tab 5;                          shot screen
 adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fling
 # read the clock by touch (issue #109): at the trailing edge of the first blue line, so the picture shows a

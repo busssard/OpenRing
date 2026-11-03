@@ -116,6 +116,24 @@ public final class Periods {
         return readDays(db, "", null);
     }
 
+    /** The row of {@code day} (a removal mark included), or null when the day was never logged. */
+    public static Day day(Db db, String day) {
+        List<Day> l = readDays(db, "WHERE day = ? ", new String[] {date(day)});
+        return l.isEmpty() ? null : l.get(0);
+    }
+
+    /**
+     * The period tracker's estimate on {@code today} from the whole log (issue #252): every logged day with its amount (removal
+     * marks count as no entry) and every end mark in force. Reads only; nothing is stored.
+     */
+    public static app.openring.core.analysis.Cycles cycles(Db db, java.time.LocalDate today) {
+        java.util.Map<java.time.LocalDate, Integer> flows = new java.util.HashMap<java.time.LocalDate, Integer>();
+        for (Day d : all(db)) flows.put(java.time.LocalDate.parse(d.day), d.flow);
+        List<java.time.LocalDate> ends = new ArrayList<java.time.LocalDate>();
+        for (String e : allEnds(db)) ends.add(java.time.LocalDate.parse(e));
+        return app.openring.core.analysis.Cycles.of(flows, ends, today);
+    }
+
     private static List<Day> readDays(Db db, String where, String[] args) {
         List<Day> out = new ArrayList<Day>();
         Cursor c = db.getReadableDatabase().rawQuery("SELECT day, flow, src, made FROM period_days " + where + "ORDER BY day", args);

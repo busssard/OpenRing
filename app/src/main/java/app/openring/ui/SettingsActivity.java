@@ -26,6 +26,7 @@ import java.util.Locale;
 import app.openring.ble.RingManager;
 import app.openring.core.Drafts;
 import app.openring.core.Hex;
+import app.openring.core.InputLimit;
 import app.openring.core.Protocol;
 import app.openring.core.Backups;
 import app.openring.core.Texts;
@@ -345,16 +346,27 @@ public final class SettingsActivity extends Activity implements RingManager.List
         action(prof, "Save and re analyse", Ui.ACTIVE, new Runnable() {
             @Override
             public void run() {
-                p.setProfile(SetupActivity.num(age, 35, 10, 100), sexChoice, SetupActivity.num(weight, 72, 30, 250),
-                        SetupActivity.num(height, 175, 100, 230), SetupActivity.num(target, 0, 0, 3000));
+                p.setProfile(SetupActivity.num(age, InputLimit.AGE), sexChoice, SetupActivity.num(weight, InputLimit.WEIGHT_KG),
+                        SetupActivity.num(height, InputLimit.HEIGHT_CM), SetupActivity.num(target, InputLimit.TARGET_KCAL));
                 // show what was really saved (a number out of range is saved at its limit)
                 age.setText(String.valueOf(p.age()));
                 weight.setText(String.valueOf(p.weightKg()));
                 height.setText(String.valueOf(p.heightCm()));
                 target.setText(String.valueOf(p.targetKcal()));
+                // the tracker follows the saved profile until its switch is touched (issue #252)
+                periodSwitch(p);
                 reanalyse();
             }
         });
+        // the period tracker (issue #252): shown by itself when the profile says female; hiding deletes nothing
+        periodSwitch = new Switch(this);
+        periodSwitch.setText("Show the period tracker");
+        periodSwitch.setTextColor(Ui.TEXT);
+        periodSwitch(p);
+        LinearLayout.LayoutParams psl = Ui.matchWrap();
+        psl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        prof.addView(periodSwitch, psl);
+        prof.addView(Ui.text(this, "Shown when your profile says female. Your logged days stay stored when it is hidden.", 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(prof);
 
         // ---- sleep stage detail ----
@@ -650,7 +662,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         small(card, "Save goal", Ui.OXY, new Runnable() {
             @Override
             public void run() {
-                p.setScreenGoalMin(SetupActivity.num(goal, 180, 0, 1440));
+                p.setScreenGoalMin(SetupActivity.num(goal, InputLimit.SCREEN_GOAL_MIN));
                 goal.setText(String.valueOf(p.screenGoalMin())); // what was really saved
                 say("Goal saved");
             }
@@ -763,6 +775,21 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /** Sex picked in the profile card (0 male, 1 female, 2 not set), saved with its button. */
     private int sexChoice = -1;
+
+    /** "Show the period tracker" in the Profile card (issue #252). */
+    private Switch periodSwitch;
+
+    /** Shows the tracker's state on its switch without counting that as a choice; a tap stores the choice. */
+    void periodSwitch(final Prefs p) {
+        periodSwitch.setOnCheckedChangeListener(null);
+        periodSwitch.setChecked(app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), false));
+        periodSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                p.setPeriodChoice(on ? 1 : 0);
+            }
+        });
+    }
     static final String[] SEXES = {"Male", "Female", "Not set"};
 
     void fillSex(final LinearLayout row) {

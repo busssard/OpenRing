@@ -18,6 +18,7 @@ import android.widget.Toast;
 
 import app.openring.ble.RingManager;
 import app.openring.core.Hex;
+import app.openring.core.InputLimit;
 import app.openring.core.Pairing;
 import app.openring.data.Prefs;
 import app.openring.sync.SyncJob;
@@ -676,7 +677,7 @@ public final class SetupActivity extends Activity {
         primary(l, "Continue", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                p.setProfile(num(age, 35, 10, 100), sex[0], num(weight, 72, 30, 250), num(height, 175, 100, 230), p.targetKcal());
+                p.setProfile(num(age, InputLimit.AGE), sex[0], num(weight, InputLimit.WEIGHT_KG), num(height, InputLimit.HEIGHT_CM), p.targetKcal());
                 p.setProfileSet();
                 step = 3;
                 show();
@@ -684,13 +685,9 @@ public final class SetupActivity extends Activity {
         });
     }
 
-    static int num(EditText e, int def, int lo, int hi) {
-        try {
-            int v = Integer.parseInt(e.getText().toString().trim());
-            return Math.max(lo, Math.min(hi, v));
-        } catch (NumberFormatException x) {
-            return def;
-        }
+    /** The typed number in its limits, the limit's default when it is not a whole number. */
+    static int num(EditText e, InputLimit limit) {
+        return limit.parse(e.getText().toString());
     }
 
     void connect() {
