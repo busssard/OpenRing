@@ -73,6 +73,8 @@ public final class Pages {
         // a time left out because someone else wore the ring (issue #254); a day left out as a whole shows only this
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
+        // the badges of the last 7 days (issue #265), only when there is one (no empty card), after a left out notice
+        if (!d.badges.isEmpty()) root.addView(BadgeViews.row(c, d, nav));
 
         if (d.empty() && d.allLeftOut()) {
             // nothing to show: the Left out card above says why

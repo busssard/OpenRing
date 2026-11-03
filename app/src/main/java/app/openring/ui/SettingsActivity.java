@@ -376,6 +376,31 @@ public final class SettingsActivity extends Activity implements RingManager.List
         psl.setMargins(0, Ui.dp(this, 14), 0, 0);
         prof.addView(periodSwitch, psl);
         prof.addView(Ui.text(this, "Shown when your profile says female. Your logged days stay stored when it is hidden.", 12, Ui.TEXT_3, Ui.REGULAR));
+        // badges (issue #265): on by default; nothing about them is stored, so switching off deletes nothing
+        final Switch badgesSwitch = new Switch(this);
+        badgesSwitch.setText(Explain.SHOW_BADGES);
+        badgesSwitch.setTextColor(Ui.TEXT);
+        badgesSwitch.setChecked(p.badgesOn());
+        badgesSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                Prefs.of(SettingsActivity.this).setBadgesOn(on);
+            }
+        });
+        LinearLayout.LayoutParams bsl = Ui.matchWrap();
+        bsl.setMargins(0, Ui.dp(this, 14), 0, 0);
+        prof.addView(badgesSwitch, bsl);
+        prof.addView(Ui.text(this, Explain.SHOW_BADGES_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+        TextView openBadges = Ui.smallButton(this, "Open badges", Ui.GOOD);
+        openBadges.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new android.content.Intent(SettingsActivity.this, BadgesActivity.class));
+            }
+        });
+        LinearLayout.LayoutParams obl = Ui.matchWrap();
+        obl.setMargins(0, Ui.dp(this, 8), 0, 0);
+        prof.addView(openBadges, obl);
         root.addView(prof);
 
         // ---- period tracker: the reminder and "My periods have stopped" (issue #252, phase 1a2) ----
@@ -1965,7 +1990,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }
     }
 
-    /** Version line and a button that opens the releases page in the browser (issue #7). */
+    /** Version line and a button that opens the releases page in the browser (issue #7): the latest stable release, or for a nightly the list of all releases. */
     void addUpdateRow(LinearLayout parent) {
         LinearLayout row = Ui.hbox(this);
         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -1975,25 +2000,23 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams tl = Ui.weight(1);
         tl.setMargins(0, 0, Ui.dp(this, 8), 0);
         row.addView(t, tl);
+        final String url = app.openring.core.Updates.url(version());
         TextView check = Ui.smallButton(this, "Check for updates", Ui.SLEEP);
         check.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 try {
-                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES)));
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 } catch (android.content.ActivityNotFoundException e) {
-                    say("No browser found. The releases are at " + RELEASES);
+                    say("No browser found. The releases are at " + url);
                 }
             }
         });
         row.addView(check);
         parent.addView(row);
         parent.addView(Ui.gap(this, 6));
-        parent.addView(Ui.text(this, "Opens the releases page in your browser, because this app has no internet access. "
-                + "A higher version number there means an update; installing it keeps your data.", 12, Ui.TEXT_3, Ui.REGULAR));
+        parent.addView(Ui.text(this, app.openring.core.Updates.note(version()), 12, Ui.TEXT_3, Ui.REGULAR));
     }
-
-    static final String RELEASES = "https://github.com/busssard/OpenRing/releases/latest";
 
     String version() {
         try {

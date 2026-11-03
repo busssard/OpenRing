@@ -42,7 +42,6 @@ import app.openring.ble.RingManager;
 import app.openring.ble.RingScanner;
 import app.openring.core.FingerCheck;
 import app.openring.core.PermissionAsk;
-import app.openring.core.Texts;
 import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.FinderLayout;
 import app.openring.core.analysis.FingerNow;
@@ -52,6 +51,7 @@ import app.openring.core.analysis.ScanRetry;
 import app.openring.core.analysis.SearchWalk;
 import app.openring.core.analysis.StepDetector;
 import app.openring.core.analysis.TS;
+import app.openring.core.analysis.WalkText;
 import app.openring.data.Db;
 import app.openring.data.Prefs;
 import app.openring.data.RightNow;
@@ -121,7 +121,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
     static final String UNUSABLE = "This phone receives the ring, so it is within Bluetooth range (about 10 m), "
             + "but the phone gives no usable signal strength for it right now.";
 
-    static final String HOLD = "Hold the phone upright, flat against your chest, screen towards you.";
+    static final String HOLD = WalkText.HOLD;
 
     static final String WALK = "Tap Start. Walk slowly, cover the room, take your time. To get only a direction, turn once around on the spot instead.";
     static final String TURN_NOTE = "Your body blocks the signal from behind, so it is strongest while you face the ring. "
@@ -983,7 +983,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
     void showSoundHint() {
         AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         boolean silent = am != null && am.getStreamVolume(AudioManager.STREAM_MUSIC) == 0;
-        soundHint.setText(silent && Prefs.of(this).finderSound() ? "Media volume is off, so you only feel the clicks." : "");
+        setText(soundHint, silent && Prefs.of(this).finderSound() ? "Media volume is off, so you only feel the clicks." : "");
         soundHint.setVisibility(soundHint.getText().length() == 0 ? View.GONE : View.VISIBLE);
     }
 
@@ -1147,15 +1147,15 @@ public final class FinderActivity extends Activity implements SensorEventListene
     }
 
     void showTurn() {
-        turnButton.setText(recording ? "Stop" : walk == null ? "Start" : "Start again");
+        setText(turnButton, recording ? "Stop" : walk == null ? "Start" : "Start again");
         boolean walked = walk != null && walk.reach() >= SearchWalk.SPOT_M;
         dial.setVisibility(walked ? View.GONE : View.VISIBLE);
         map.setVisibility(walked ? View.VISIBLE : View.GONE);
-        walkNote.setText(walked ? WALK_NOTE : TURN_NOTE);
+        setText(walkNote, walked ? WALK_NOTE : TURN_NOTE);
         showStepLength();
         if (!walked) dial.invalidate(); // a hidden dial needs no redraw (review of #285, could improve 2)
         if (walk == null) {
-            turnText.setText(rotation == null && !demo ? "This phone has no rotation sensor, so the search walk does not work on it." : START_HINT);
+            setText(turnText, rotation == null && !demo ? "This phone has no rotation sensor, so the search walk does not work on it." : START_HINT);
             return;
         }
         if (walked) {
@@ -1164,80 +1164,17 @@ public final class FinderActivity extends Activity implements SensorEventListene
             showWalk();
             return;
         }
-        StringBuilder b = new StringBuilder();
-        if (!demo && accel == null) b.append("This phone has no accelerometer, so steps are not counted; turning on the spot still works.\n");
-        SearchWalk.Direction d = walk.direction();
-        if (d == null) {
-            b.append("Covered ").append(walk.coveredDegrees()).append(" of 360 degrees (the directions you faced with the phone upright).");
-            if (!recording) b.append(" Too little for a direction: tap Start again and turn once all the way around.");
-        } else if (d.clear) {
-            b.append("Strongest towards the arrow, ").append(Math.round(d.spread)).append(" dB more than the weakest side (more dB is a clearer direction).");
-        } else {
-            b.append("No clear direction (").append(Math.round(d.spread)).append(" dB between strongest and weakest side, under ")
-                    .append(Math.round(SearchWalk.CLEAR_DB)).append("). The ring may be very close, above or below you, or the signal bounced off walls.");
-        }
-        appendWaiting(b);
-        if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted.");
-        if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the turn needs the ring to be heard.");
-        turnText.setText(b.toString());
+        setText(turnText, WalkText.turn(walk, !demo && accel == null, recording, upright, prox.band() == Proximity.NOT_HEARD));
     }
 
-    /** The walk's text: how far, how much of the room, and where the ring probably is. */
+    /** The walk's text: how far, how much of the room, and where the ring probably is ({@link WalkText#walk}). */
     void showWalk() {
-        StringBuilder b = new StringBuilder();
-        long moved = Math.round(walk.distance() / walk.stepLength());
-        b.append("Walked ").append(Ui.fmt(walk.distance(), 1)).append(" m (").append(moved).append(moved == 1 ? " step" : " steps")
-                .append(" of ").append(Ui.fmt(walk.stepLength(), 2)).append(" m).");
-        if (spot == null && walk.mapReady()) {
-            b.append("\nWorking out where the ring probably is.");
-        } else if (spot == null && walk.covered()) {
-            // enough of the room, but the ring was hardly heard
-            b.append("\nThe ring was heard for only ").append(Texts.count((long) Math.floor(walk.heardSeconds()), "second", "seconds")).append(" of the walk; the circle needs ")
-                    .append(SearchWalk.MIN_BINS / 2).append(". While a sync, Live or another app is connected to the ring, it sends no signal.");
-            if (linked()) b.append(" It is connected to this phone right now.");
-            else if (prox.band() == Proximity.NOT_HEARD) b.append(" This phone does not hear it right now.");
-        } else if (spot == null) {
-            double[] c = walk.cover();
-            double across = c[1] >= SearchWalk.WIDTH_M ? c[0] : c[1];
-            b.append(" Across ").append(Ui.fmt(Math.min(across, SearchWalk.COVER_M), 1)).append(" of ").append(Math.round(SearchWalk.COVER_M))
-                    .append(" m in two directions (the circle needs ").append(Math.round(SearchWalk.COVER_M)).append(" m both ways).");
-            b.append("\nWalk a bit more, across the room.");
-        } else if (spot.clear) {
-            b.append("\nProbably within the circle: ").append(SearchWalk.where(spot.x, spot.y)).append(" (radius ").append(Ui.fmt(spot.radius, 1))
-                    .append(" m). Start looking there.");
-            if (spot.beyond) b.append(" The circle lies outside where you walked, so the ring may also be farther that way (the signal cannot tell how far).");
-        } else if (spot.edge) {
-            b.append("\nThe signal gets stronger towards the edge of where you walked (the dashed circle, ").append(SearchWalk.where(spot.x, spot.y))
-                    .append("), so the ring is probably farther that way. "
-                    + "Walk on in that direction and look again.");
-        } else {
-            b.append("\nThe signal gave no clear spot yet (");
-            if (spot.explained < spot.needed) {
-                // issue #136: on a short walk plain noise fits some spot, so more is needed there
-                long[] pc = SearchWalk.percents(spot.explained, spot.needed);
-                b.append("its ups and downs could be plain noise: the model explains ").append(pc[0])
-                        .append(" % of them, a walk this short needs ").append(pc[1]).append(" %");
-            } else {
-                b.append("the circle would be wider than ").append(Math.round(SearchWalk.CLEAR_RADIUS_M)).append(" m");
+        setText(turnText, WalkText.walk(walk, spot, recording, upright, prox.band() == Proximity.NOT_HEARD, new WalkText.Linked() {
+            @Override
+            public boolean now() {
+                return linked();
             }
-            b.append("). Walk more of the room; if that does not help, the ring may be in another room, "
-                    + "upstairs or downstairs, or under something thick.");
-        }
-        appendWaiting(b);
-        if (recording && !upright) b.append("\n").append(HOLD).append(" Readings while it is tilted are not counted, steps keep your last direction.");
-        if (recording && prox.band() == Proximity.NOT_HEARD) b.append("\nNo signal right now; the walk needs the ring to be heard.");
-        turnText.setText(b.toString());
-    }
-
-    /**
-     * Steps counted while turning wait until the turn ends; say so, so the step count and the map agree (issue #108).
-     * Not for the one step that waits while the body sways on a straight walk ({@link SearchWalk#waitingToShow}).
-     */
-    void appendWaiting(StringBuilder b) {
-        int n = walk.waitingToShow();
-        if (n == 0) return;
-        b.append("\n").append(Texts.count(n, "step", "steps")).append(" counted while you turned ").append(n == 1 ? "waits" : "wait")
-                .append(": they move once you walk on, or stay if it was a turn on the spot.");
+        }));
     }
 
     void showStepLength() {
@@ -1246,10 +1183,9 @@ public final class FinderActivity extends Activity implements SensorEventListene
             return;
         }
         stepText.setVisibility(View.VISIBLE);
-        String len = "Steps of " + Ui.fmt(walk.stepLength(), 2) + " m: 0.41 × ";
-        if (demo) stepText.setText(len + "175 cm, a usual height (demo).");
-        else if (Prefs.of(this).hasHeight()) stepText.setText(len + "your height of " + Prefs.of(this).heightCm() + " cm from the profile.");
-        else stepText.setText(len + "175 cm, a usual height. Enter yours in Settings, Profile and goals for a truer map.");
+        Prefs p = demo ? null : Prefs.of(this);
+        boolean hasHeight = p != null && p.hasHeight();
+        setText(stepText, WalkText.stepLine(walk.stepLength(), demo, hasHeight, hasHeight ? p.heightCm() : 0));
     }
 
     // ------------------------------------------------------------------ demo

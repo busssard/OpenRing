@@ -174,24 +174,21 @@ public final class ScreenDays {
         List<double[]> reads = reads(db);
         LocalDate firstRow = date.minusDays(ROWS - 1);
         double qFrom = firstRow.atStartOfDay(zone).toEpochSecond() - 2 * 3600, qTo = in.to;
+        // (the counting below is shared with BadgeDays, issue #265: counted, span, bedMin)
         // main nights touching the rows, by the day they belong to
         List<double[]> nights = new ArrayList<double[]>();
         java.util.Map<String, double[]> byDay = new java.util.HashMap<String, double[]>();
         for (String js : db.nightsJson(firstRow.toString(), date.plusDays(1).toString(), true)) {
             JSONObject o = Json.parse(js);
-            if (o == null) continue;
-            double a = Json.d(o, "sleep_start"), b = Json.d(o, "sleep_end");
-            if (Double.isNaN(a)) a = Json.d(o, "start");
-            if (Double.isNaN(b)) b = Json.d(o, "end");
-            if (Double.isNaN(a) || !(b > a)) continue;
-            double[] n = {a, b};
+            double[] n = span(o);
+            if (n == null) continue;
             nights.add(n);
             byDay.put(o.optString("day"), n);
-            qFrom = Math.min(qFrom, a - ScreenScore.BEDTIME_WINDOW_S);
+            qFrom = Math.min(qFrom, n[0] - ScreenScore.BEDTIME_WINDOW_S);
         }
         List<double[]> raw = db.screen(qFrom, qTo);
         Map<String, List<double[]>> apps = db.apps(qFrom, qTo);
-        List<double[]> counted = excluded.isEmpty() ? raw : ScreenTime.subtract(raw, ScreenTime.ranges(apps, excluded));
+        List<double[]> counted = counted(raw, excluded.isEmpty() ? null : ScreenTime.ranges(apps, excluded));
         double appsFrom = db.appsStart();
 
         // the day itself
@@ -228,9 +225,8 @@ public final class ScreenDays {
             in.dayApps = front;
             if (night != null) in.firstLook = ScreenTime.firstAfter(counted, Math.max(in.from, night[1]), in.to);
             // the hours before bed and the night only count when the log was read for all of them
-            double bed = night == null ? Double.NaN : night[0] - ScreenScore.BEDTIME_WINDOW_S;
-            if (night != null && bed >= reads.get(0)[0] && ScreenTime.coverage(reads, bed, night[1], now) == ScreenTime.COVERED) {
-                in.bedMin = ScreenTime.minutes(counted, night[0] - ScreenScore.BEDTIME_WINDOW_S, night[0]);
+            if (nightRead(reads, night, now)) {
+                in.bedMin = bedMin(counted, night);
                 in.nightMin = ScreenTime.minutes(counted, night[0], night[1]);
             }
             in.score = ScreenScore.of(in.day.totalMin, goalMin, in.bedMin, in.nightMin);
@@ -260,6 +256,38 @@ public final class ScreenDays {
             in.rows[i] = r;
         }
         return in;
+    }
+
+    // ---------------------------------------------------------------- shared with BadgeDays (issue #265)
+
+    /**
+     * The sessions that count: {@code raw} without the times the left out apps were in front ({@code cuts}, null when
+     * no app is left out, then {@code raw} itself). The same for the Screen tab and the badges.
+     */
+    static List<double[]> counted(List<double[]> raw, List<double[]> cuts) {
+        return cuts == null ? raw : ScreenTime.subtract(raw, cuts);
+    }
+
+    /** A main night's {sleep start, sleep end} (its start and end when those are missing), null when it has none. */
+    static double[] span(JSONObject night) {
+        if (night == null) return null;
+        double a = Json.d(night, "sleep_start"), b = Json.d(night, "sleep_end");
+        if (Double.isNaN(a)) a = Json.d(night, "start");
+        if (Double.isNaN(b)) b = Json.d(night, "end");
+        if (Double.isNaN(a) || !(b > a)) return null;
+        return new double[] {a, b};
+    }
+
+    /** Whether the log was read for the whole hour before {@code night} and the night itself (false without one). */
+    static boolean nightRead(List<double[]> reads, double[] night, double now) {
+        if (night == null || reads.isEmpty()) return false;
+        double bed = night[0] - ScreenScore.BEDTIME_WINDOW_S;
+        return bed >= reads.get(0)[0] && ScreenTime.coverage(reads, bed, night[1], now) == ScreenTime.COVERED;
+    }
+
+    /** Minutes of counted phone use in the hour before the night's start (check {@link #nightRead} first). */
+    static double bedMin(List<double[]> counted, double[] night) {
+        return ScreenTime.minutes(counted, night[0] - ScreenScore.BEDTIME_WINDOW_S, night[0]);
     }
 
     /** Apps seen in front during the last {@code days} days, most used first (for the list of apps not to count). */

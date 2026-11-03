@@ -40,6 +40,13 @@ public final class DayData {
     public boolean periodShown;
     /** The period tracker's estimate from the whole log and the temperature rise (phase 2), today; null when hidden or when the log could not be read. */
     public app.openring.core.analysis.Cycles periods;
+    /**
+     * The badges of the 7 days ending at {@link #date} (issue #265), oldest first; empty when the switch "Show badges" is
+     * off, when there are none, or when they could not be read.
+     */
+    public final List<app.openring.core.analysis.Badges.Badge> badges = new ArrayList<app.openring.core.analysis.Badges.Badge>();
+    /** The newest badge date already seen (kv {@code badges_seen}); later ones are marked New. Null when none was seen. */
+    public LocalDate badgesSeen;
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
     /**
@@ -173,6 +180,19 @@ public final class DayData {
             // the card says it could not be read. Not through failed(): the Data check names nothing of the period log, and
             // the log gets the error's kind only, never a date or an amount (issue #252)
             app.openring.ble.RingManager.get(c).log("day load: the period log could not be read: " + e.getClass().getSimpleName());
+        }
+        try {
+            // the Recent badges row on Today (issue #265): one read of the 7 days and the weeks before them
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            if (p.badgesOn()) {
+                d.badges.addAll(app.openring.data.BadgeDays.badges(db, date.minusDays(app.openring.core.analysis.Badges.WEEK - 1), date,
+                        p.targetKcal(), p.screenExcluded(), LocalDate.now(), System.currentTimeMillis() / 1000.0));
+                d.badgesSeen = BadgeViews.seen(db);
+            }
+        } catch (RuntimeException e) {
+            // Today shows no badge row; the badges hold nothing that is not on the other tabs
+            d.badges.clear();
+            d.ok = failed(c, date, "badges", e);
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
             JSONObject o = Json.parse(r[1]);
