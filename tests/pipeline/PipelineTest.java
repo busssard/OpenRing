@@ -9482,8 +9482,8 @@ public class PipelineTest {
         for (String l : text.split("\n")) if (l.startsWith("[note] Making the file smaller: ")) line = l;
         check("#299 the Data check has the line, with the step, time and error and no exception message", line != null
                 && line.equals("[note] Making the file smaller: after Delete all (" + note.split("\\|")[1] + ") the freed space could not be given back"
-                        + " to the phone (" + note.split("\\|")[2] + "). The deleted data is gone; the file stays larger until the next Delete all,"
-                        + " and new data reuses the space first.") && !text.contains("test stop at shrink"), line);
+                        + " to the phone (" + note.split("\\|")[2] + "). The deleted data is gone; the file stays larger until the next delete"
+                        + " (Delete all or pairing another ring), and new data reuses the space first.") && !text.contains("test stop at shrink"), line);
         Analyzer.deleteAll(c);
         check("#299 the next Delete all that shrinks removes the note and the line", db.kv(DataCheck.SHRINK_ERROR, null) == null
                 && notEmpty272(db).isEmpty() && !DataCheck.run(c).text.contains("Making the file smaller"), notEmpty272(db));
@@ -9562,6 +9562,14 @@ public class PipelineTest {
         db = Db.get(c);
         check("#272 a backup restored after Delete all brings every event and night back", r.ok && r.history && db.eventCount() == events
                 && db.count("SELECT COUNT(*) FROM nights") == nights && events > 0 && nights > 0, r.message);
+        // issue #299: a backup made while a failed shrink is noted carries the row; the restored file is compact, so it goes
+        db.put(DataCheck.SHRINK_ERROR, "Delete all|2026-11-03 21:14|IllegalStateException at Db.java:1815");
+        byte[] noted = backup252(c);
+        Analyzer.deleteAll(c);
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(noted));
+        db = Db.get(c);
+        check("#299 a backup made with the note, restored: every event back, no note and no Data check line", r.ok && db.eventCount() == events
+                && db.kv(DataCheck.SHRINK_ERROR, null) == null && !DataCheck.run(c).text.contains("Making the file smaller"), r.message);
         Analyzer.deleteAll(c);
         byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), 7, DROP8));
         r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
@@ -11059,8 +11067,19 @@ public class PipelineTest {
         session251(real, 1000, made251(T251, 80), T251 + 86400);
         String realRows = watchRows251(real);
         LocalDate today = LocalDate.now();
-        app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        // issue #299: a failed shrink while building the demo names that step, in the demo file only
+        java.lang.reflect.Field fail = Db.class.getDeclaredField("failShrink");
+        fail.setAccessible(true);
+        fail.set(null, true);
+        try {
+            app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        } finally {
+            fail.set(null, false);
+        }
         Db demo = Db.get(c);
+        String note = demo.kv(DataCheck.SHRINK_ERROR, null);
+        check("#299 demo mode: a failed shrink names building the demo, not Delete all", Db.DEMO.equals(demo.fileName) && note != null
+                && note.startsWith("building the demo|"), note);
         app.openring.data.WatchStore.Data d = app.openring.data.WatchStore.load(demo);
         check("#251 demo mode: the made up watch is in the demo file", Db.DEMO.equals(demo.fileName) && d.steps.size() > 35 * 50 && d.heart.size() > 35 * 40
                 && d.workouts.size() >= 10 && app.openring.core.withings.WatchDemo.NAME.equals(d.name), d.steps.size());
@@ -11069,6 +11088,7 @@ public class PipelineTest {
         Db back = Db.get(c);
         check("#251 demo mode never touches the real watch rows", Db.REAL.equals(back.fileName) && watchRows251(back).equals(realRows)
                 && back.count("SELECT COUNT(*) FROM watch_raw WHERE device = '" + app.openring.core.withings.WatchDemo.ADDRESS + "'") == 0, null);
+        check("#299 the demo's note stays in the demo file, the real one has none", back.kv(DataCheck.SHRINK_ERROR, null) == null, null);
         clean254();
     }
 }

@@ -124,7 +124,8 @@ After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(
 before VACUUM leaves the file at full size), so the file gives the history's space back; an error there never reaches
 the person because the delete is already complete, and a read open at that moment only delays the shrink to the next checkpoint.
 A failed shrink is noted for the Data check (issue #299): one kv row `DataCheck.SHRINK_ERROR` written after the delete
-committed, with the step, the time and the error's class and place (never its message), gone with the next delete. The Data check never names the period tables,
+committed, with the step, the time and the error's class and place (never its message), gone with the next delete and
+removed from a restored file in `Db.replaceWith` (the restored file is compact). The Data check never names the period tables,
 their dates or their counts.
 
 **The period tracker (issue #252, phase 1a1).** Shown when the profile says female, when the Settings switch "Show the

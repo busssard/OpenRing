@@ -194,7 +194,7 @@ public final class DataCheck {
         String[] f = note.split("\\|", 3);
         String head = f.length == 3 ? "after " + f[0] + " (" + f[1] + ") the freed space could not be given back to the phone (" + f[2] + ")"
                 : "the freed space could not be given back to the phone (" + note + ")";
-        return head + ". The deleted data is gone; the file stays larger until the next Delete all, and new data reuses the space first.";
+        return head + ". The deleted data is gone; the file stays larger until the next delete (Delete all or pairing another ring), and new data reuses the space first.";
     }
 
     /** The data check counts the sleep periods of this many days, today included. */

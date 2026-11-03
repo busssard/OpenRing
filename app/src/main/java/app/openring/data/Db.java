@@ -1657,6 +1657,8 @@ public final class Db extends SQLiteOpenHelper {
             if (phoneLog != null) Periods.merge(instance.getWritableDatabase(), phoneLog);
             // the phone's watch messages and devices too, then every watch row worked out again from all of them (issue #251)
             if (phoneWatch != null) WatchStore.merge(instance.getWritableDatabase(), phoneWatch);
+            // a failed shrink noted in the backup's file (issue #299) is not true here: the restored file is compact
+            instance.getWritableDatabase().delete("kv", "k = ?", new String[] {DataCheck.SHRINK_ERROR});
             mergeStep(MERGE_DONE);
         } catch (java.io.IOException | RuntimeException e) {
             if (instance != null) {
@@ -1775,7 +1777,12 @@ public final class Db extends SQLiteOpenHelper {
      * was. Then the file shrinks ({@link #shrink}).
      */
     public void resetAll() {
-        delete(ALL_TABLES, DELETE_ALL);
+        resetAll(DELETE_ALL);
+    }
+
+    /** As {@link #resetAll}, with the step a failed shrink's note names ({@link #DEMO_BUILD} for the demo, issue #299). */
+    void resetAll(String step) {
+        delete(ALL_TABLES, step);
     }
 
     /**
@@ -1788,7 +1795,7 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     /** The steps a {@link DataCheck#SHRINK_ERROR} note names (issue #299), as the Data check line says them. */
-    static final String DELETE_ALL = "Delete all", NEW_RING = "pairing another ring";
+    static final String DELETE_ALL = "Delete all", NEW_RING = "pairing another ring", DEMO_BUILD = "building the demo";
 
     /**
      * Empties {@code tables} in one transaction, then shrinks the file. When shrinking fails, one note
