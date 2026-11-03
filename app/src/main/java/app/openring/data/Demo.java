@@ -138,7 +138,7 @@ public final class Demo {
         Db db = Db.get(c);
         // built completely today: nothing to do. Not "the newest day is today", which is still
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
-        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null))) return false;
+        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db)) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll();
         ZoneId zone = ZoneId.systemDefault();
@@ -155,6 +155,7 @@ public final class Demo {
         db.putScreenRead(t0, now);
         db.putApps(apps);
         periods(db, today, now);
+        watch(db, today, now, zone);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
         db.put(BUILT, today.toString());
@@ -171,6 +172,24 @@ public final class Demo {
             @Override
             public void run() {
                 for (java.util.Map.Entry<LocalDate, Integer> e : log.entrySet()) Periods.setFlow(db, e.getKey().toString(), e.getValue(), now);
+            }
+        });
+    }
+
+    /**
+     * The demo's made up watch (issue #251): sessions of made up messages ({@code core/withings/WatchDemo}) stored as raw
+     * messages and decoded by the same code as a real watch's. Written into {@code db}, the demo file, never the real one.
+     */
+    static void watch(final Db db, LocalDate today, final long now, ZoneId zone) {
+        final List<app.openring.core.withings.WatchDemo.Msg> msgs = app.openring.core.withings.WatchDemo.history(today, 35, now, zone, new Random(251));
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                WatchStore.noteDevice(db, app.openring.core.withings.WatchDemo.ADDRESS, app.openring.core.withings.WatchDemo.NAME, "1971", now - 35 * 86400.0);
+                for (app.openring.core.withings.WatchDemo.Msg m : msgs) {
+                    WatchStore.addRaw(db, m.session, m.seq, app.openring.core.withings.WatchDemo.ADDRESS, m.body, m.captured);
+                }
+                WatchStore.decodeAll(db.getWritableDatabase());
             }
         });
     }

@@ -157,6 +157,32 @@ public final class Prefs {
     public boolean backgroundSync() { return sp.getBoolean("bg_sync", true); }
     public void setBackgroundSync(boolean b) { sp.edit().putBoolean("bg_sync", b).apply(); }
     /** Demo mode: the app shows a made up history from its own database file. */
+    // ---- the watch (issue #251, phase 1b) ----
+    /** The watch this app syncs (its Bluetooth address), null for none. */
+    public String watchAddress() { return sp.getString("watch_address", null); }
+    public String watchName() { return sp.getString("watch_name", null); }
+    public void setWatch(String address, String name) {
+        sp.edit().putString("watch_address", address).putString("watch_name", name).remove("watch_error").apply();
+    }
+    /** Forget the watch: syncing stops, its stored data stays. */
+    public void forgetWatch() { sp.edit().remove("watch_address").remove("watch_name").remove("watch_error").apply(); }
+    /** Syncs a day in the background: 0 by hand, 1, 2 or 4 ({@code core/withings/WatchDue}). */
+    public int watchPerDay() { return sp.getInt("watch_per_day", app.openring.core.withings.WatchDue.DEFAULT); }
+    public void setWatchPerDay(int n) {
+        if (app.openring.core.withings.WatchDue.valid(n)) sp.edit().putInt("watch_per_day", n).apply();
+    }
+    public long watchLastOk() { return sp.getLong("watch_last_ok", 0); }
+    public long watchLastAttempt() { return sp.getLong("watch_last_try", 0); }
+    /** The plain sentence of the last watch sync that did not finish, null after one that did. */
+    public String watchError() { return sp.getString("watch_error", null); }
+    public void setWatchResult(long attempt, boolean ok, String error) {
+        SharedPreferences.Editor e = sp.edit().putLong("watch_last_try", attempt);
+        if (ok) e.putLong("watch_last_ok", attempt);
+        if (error == null) e.remove("watch_error");
+        else e.putString("watch_error", error);
+        e.apply();
+    }
+
     public boolean demo() { return sp.getBoolean("demo", false); }
     public void setDemo(boolean b) { sp.edit().putBoolean("demo", b).commit(); }
 
