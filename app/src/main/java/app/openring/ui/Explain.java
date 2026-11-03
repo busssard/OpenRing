@@ -157,6 +157,173 @@ public final class Explain {
                 + "Cycles far from the rest (more than 10 days from the middle value) are left out, maybe a period was not logged.";
     }
 
+    // ------------------------------------------------- period tracker, "Your cycles" (issue #252, phase 1a2)
+
+    /** Under Cycle day. */
+    public static final String PERIOD_CYCLE_DAY = "Cycle day: the days since your last period started, that day counted as 1.";
+
+    /** Under Next period: what the days count to, or why there is no number. */
+    public static String periodNext(Integer days, boolean stopped, int late) {
+        if (stopped) return "No estimate: you said your periods have stopped.";
+        if (days == null) return "Appears once you log a period. After twice your typical cycle without one, it waits for the next.";
+        if (late > 0) return "Days to the expected day of the estimate above. It has passed, cycles vary.";
+        return "Days to the expected day of the estimate above, the middle of its range.";
+    }
+
+    /** Under the cycle length numbers: what they count, from how many cycles, and what is left out. */
+    public static String periodCycles(int cycles, int leftOut) {
+        String s = "From one period start to the next, over " + (cycles == 1 ? "your 1 cycle" : "all your " + cycles + " cycles") + ". "
+                + "Average and spread (the standard deviation, how far a cycle usually lies from the average), shortest and longest. ";
+        if (leftOut > 0) s += (leftOut == 1 ? "1 cycle" : leftOut + " cycles") + " more than 10 days from the middle value "
+                + (leftOut == 1 ? "is" : "are") + " left out, maybe a period was not logged. ";
+        return s + "The estimate above uses only your newest " + app.openring.core.analysis.Cycles.WINDOW + " cycles.";
+    }
+
+    /** Under the period length numbers. */
+    public static String periodLengths(int periods) {
+        return "From the first to the last bleeding day of each period, both counted, over " + (periods == 1 ? "your 1 period" : "your " + periods + " periods")
+                + " that are over. Days without a log inside a period count, spotting does not.";
+    }
+
+    /** Under the amount numbers: a relative score, not millilitres (the issue's wording). */
+    public static final String PERIOD_AMOUNT = "Light 1, medium 2, heavy 3 for each logged day, added up for each period. "
+            + "A relative number from what you logged, not a measured amount, so it only compares your own periods.";
+
+    /** Under the cycle length dots ({@code cycles}) or the period length and amount dots. */
+    public static String periodDots(boolean cycles) {
+        if (cycles) return "Each dot is one cycle at the day it started, touch it to read. The line is your typical length, the band the "
+                + "range the estimate gives. A faded dot is left out of the estimate.";
+        return "Each dot is one period at the day it started, touch it to read. The line is the average.";
+    }
+
+    /** Under the night temperature line (the plan's text, with the marked rise of phase 2). */
+    public static final String PERIOD_TEMP = "Your ring's nightly skin temperature compared with your usual. In many people it rises a little "
+            + "after ovulation and stays higher until the next period. Where the app found that rise, the dashed line is the baseline "
+            + "(the highest of the 6 nights before), the ringed dots are the high nights and the thin line the likely ovulation, the day "
+            + "before the first high night. Red bands are period days, green the ovulation range of the estimate. Nights you left out are "
+            + "not shown, and illness, alcohol, travel or a warm room move it too. Touch the line to read a night.";
+
+    // ------------------------------------------ period tracker, ovulation from the temperature (issue #252, phase 2)
+
+    /**
+     * How the rise is found, with the third night's height for the ring's own noise ({@code ringNoise}, °C) and, when there
+     * are temperatures by mouth, for theirs ({@code mouthNoise}, NaN without).
+     */
+    public static String periodRise(double ringNoise, double mouthNoise) {
+        java.util.Locale l = java.util.Locale.getDefault();
+        String third = String.format(l, "%.2f °C for your ring", app.openring.core.analysis.TempRise.thirdNeed(ringNoise));
+        if (!Double.isNaN(mouthNoise)) third += String.format(l, ", %.2f °C by mouth", app.openring.core.analysis.TempRise.thirdNeed(mouthNoise));
+        return "Three over six, the classic rule: the baseline is the highest of 6 nights, then 3 nights in a row must lie above it, "
+                + "the third at least " + third + " (0.2 °C for a steady signal, less for one that varies more from night to night: yours "
+                + "varies by about " + String.format(l, "%.2f", ringNoise) + " °C). A night may be missing, and one night that dips or a third "
+                + "that falls short needs a fourth high night. The rise must last until the next period, and nights far from the ones around "
+                + "them (a fever, a warm room) are left out. The likely ovulation is the day before the first high night. The ring and the "
+                + "temperatures by mouth are checked apart; when both find it within 2 days, it is clear. In made up cycles with a rise of "
+                + "0.3 °C and night to night noise of 0.1 °C, the rule found 7 in 10 rises and a clear one was within 1 day of the real "
+                + "ovulation 4 times in 5. With noise of 0.2 °C it finds about a third. Illness, alcohol, travel and a warm room move the "
+                + "temperature too. An estimate, not birth control and not a medical diagnosis.";
+    }
+
+    /** Under "Found in 4 of 6 cycles". */
+    public static String periodFound(int over, int found) {
+        return "Cycles that are over and had a lasting rise, out of " + (over == 1 ? "your 1 cycle" : "your " + over + " cycles")
+                + " that are over. Not every cycle shows one: too few nights with the ring, a small rise, or a cycle without ovulation.";
+    }
+
+    /** Under the own luteal phase: from how many cycles, how much it varies, and what it changes. */
+    public static String periodLuteal(int n, int days, double sd) {
+        if (n < app.openring.core.analysis.TempRise.LUTEAL_FROM) {
+            return "The days from ovulation to the next period, from cycles with a rise. Until " + app.openring.core.analysis.TempRise.LUTEAL_FROM
+                    + " cycles have one (" + n + " so far), the estimate uses the usual " + app.openring.core.analysis.Cycles.LUTEAL + " days.";
+        }
+        return "The days from ovulation to the next period: the middle value of your " + n + " newest cycles with a rise, which vary by about "
+                + String.format(java.util.Locale.getDefault(), "%.1f", Double.isNaN(sd) ? 0 : sd) + " days. It replaces the usual "
+                + app.openring.core.analysis.Cycles.LUTEAL + " days for your ovulation estimate, and once this cycle's rise shows, for your next period.";
+    }
+
+    /** Under the ovulation line, for whichever way the estimate was made. */
+    public static String periodOvulation(app.openring.core.analysis.Cycles cy) {
+        if (cy.method == app.openring.core.analysis.Cycles.MEASURED) {
+            boolean clear = cy.rise.current.confidence == app.openring.core.analysis.TempRise.CLEAR;
+            return "Give or take " + cy.ovulationRange + (cy.ovulationRange == 1 ? " day" : " days") + ": " + (clear ? "a clear rise" : "a weaker rise")
+                    + ", found within that many days of the real day about 4 times in 5 in made up cycles. Measured means the day before the "
+                    + "temperature rose, not a test. How it is found is under Your cycles.";
+        }
+        if (cy.method == app.openring.core.analysis.Cycles.OWN_LUTEAL) {
+            return "Give or take " + cy.ovulationRange + " days: how much " + yourCycles(cy.used.size()) + " vary, together with how much your own "
+                    + "time from ovulation to the period varies, times 1.28 for about 4 in 5. At least 3 days.";
+        }
+        return periodOvulation(cy.used.size(), cy.ovulationRange);
+    }
+
+    /** Under "Expected ...", for whichever way the estimate was made. */
+    public static String periodRange(app.openring.core.analysis.Cycles cy) {
+        if (cy.method != app.openring.core.analysis.Cycles.MEASURED) return periodRange(cy.used.size(), cy.length, cy.range, cy.sd);
+        boolean own = cy.rise.ownLuteal();
+        return "Measured: the ovulation day plus " + cy.luteal + " days, " + (own ? "your own time from ovulation to the period" : "the usual time from ovulation to the period")
+                + ". Give or take " + cy.range + (cy.range == 1 ? " day" : " days") + ": how much " + (own ? "your own time varies" : "that time varies (about 2.4 days in a large study)")
+                + " together with the error of the measured day, times 1.28 for about 4 in 5. The calendar estimate from your typical cycle is shown for comparison.";
+    }
+
+    /** Settings, under "Remind me before my period". */
+    public static final String PERIOD_REMIND = "A notification on this phone before the earliest day of the expected range, at the time you pick. "
+            + "It moves when the estimate changes and comes once per period, not while a period is logged. Android may deliver it a few "
+            + "minutes late. It always follows your own log, never the demo.";
+
+    /** Settings, under "My periods have stopped". */
+    public static final String PERIOD_STOPPED = "For example after menopause, during pregnancy or breastfeeding, or with some medicines. "
+            + "The tracker then shows no next period and no late line, and sends no reminders. Your logged days and past cycles stay. "
+            + "Logging a period day turns this off by itself.";
+
+    // -------------------------------------------- period tracker, import from drip (issue #252, phase 1b)
+
+    /** Settings, under "Import from drip". */
+    public static final String DRIP_SETTINGS = "Reads the file drip exports (in drip: Settings, Export data). You see what it holds "
+            + "before anything is saved, and you can undo an import as a whole. Nothing leaves the phone.";
+
+    /** The import screen's first lines. */
+    public static final String DRIP_INTRO = "Bleeding days, spotting and morning temperatures from drip. Days you already logged in "
+            + "Open Ring are kept. Nothing is saved until you tap Import.";
+
+    /** Demo mode: the made up file, and that nothing is imported. */
+    public static final String DRIP_DEMO = "Demo mode: this is a made up drip file, compared with the demo's made up log. "
+            + "Nothing is imported in demo mode.";
+
+    /** Under the file's numbers. */
+    public static final String DRIP_COUNTS = "Periods are counted the way Open Ring counts them: light, medium or heavy days with at most "
+            + "2 days without an entry between them. Spotting is counted apart and never starts a period. Temperatures are drip's "
+            + "morning temperatures by mouth, at most one a day, in °C.";
+
+    /** Under "Not imported: 40 mood entries". */
+    public static final String DRIP_OTHER = "Rows of each kind with an entry. They are counted so you know what the file holds, but the "
+            + "period log does not keep them.";
+
+    /** Under the flagged short periods. */
+    public static final String DRIP_SHORT = "A period of 1 or 2 days is often a day that was not logged, or spotting logged as bleeding. "
+            + "Correct opens those days so you can add the missing ones or join the period with a close one. Ignore keeps it as it is.";
+
+    /** Under the days that differ. */
+    public static final String DRIP_DIFFER = "Days with another amount in Open Ring keep Open Ring's entry. Switch this on to take the "
+            + "file's values instead; undoing the import puts Open Ring's back. Temperatures already there are never replaced.";
+
+    /** The Correct screen. */
+    public static final String DRIP_CORRECT = "Tap a day to add it or change it. These changes are for this import only, nothing is saved "
+            + "until you tap Import.";
+
+    /** Settings, under each "Undo the drip import of 30 Oct". */
+    public static final String DRIP_UNDO = "Undo removes exactly what this import added and puts back the days it replaced. Days you "
+            + "logged or changed in Open Ring since then stay.";
+
+    /** "Added 186 days and 312 temperatures." for Settings. */
+    public static String dripAdded(int days, int temps) {
+        return "Added " + days + (days == 1 ? " day" : " days") + " and " + temps + (temps == 1 ? " temperature." : " temperatures.");
+    }
+
+    /** Under the night temperature line when drip temperatures are on it. */
+    public static final String PERIOD_MOUTH = "Mouth: the morning temperatures imported from drip, in °C on the right scale. They are a "
+            + "different measurement from the ring's skin temperature at night, so each line has its own scale. A hollow dot is a "
+            + "reading drip left out.";
+
     // ---------------------------------------------------------------- badges (issue #265)
 
     /** What every badge has in common: own history only, left out days, when a day or night gets its badges. */

@@ -57,6 +57,9 @@
         <activity android:name="app.openring.ui.WatchActivity" android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name="app.openring.ui.WatchPageActivity" android:exported="false" />
+        <!-- Import from drip (issue #252): a turn keeps the preview and its corrections, so the screen is not rebuilt -->
+        <activity android:name="app.openring.ui.DripImportActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name="app.openring.ui.games.GamesActivity" android:exported="false" android:screenOrientation="portrait" />
 
         <service
@@ -72,5 +75,17 @@
             android:name="app.openring.sync.BackupJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+        <!-- the reminder before the expected period (issue #252): its own alarm, and planned again after a reboot, a change
+             of time zone or clock and an update. Not exported: only the system and this app reach it -->
+        <receiver
+            android:name="app.openring.sync.PeriodReminder"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

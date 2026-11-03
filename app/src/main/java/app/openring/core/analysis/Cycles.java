@@ -36,6 +36,11 @@ import app.openring.core.Texts;
  * <li><b>Ovulation</b>: the next start minus {@link #LUTEAL} days, give or take max(3, round(1.28 × √(SD² + 2.4²)))
  * (2.4 days: the spread of the luteal phase in Bull et al. 2019; under 3 cycles SD is their 2.6 days). The fertile
  * window is the 5 days before the estimate plus that day. A calendar estimate, never a measurement.</li>
+ * <li><b>Measured</b> (phase 2, {@link #measured}): with the temperature rise of each cycle ({@link TempRise}), the
+ * person's own time from ovulation to the next period (the middle value of at least {@link TempRise#LUTEAL_FROM} cycles
+ * with a rise) replaces the {@link #LUTEAL} days, and once this cycle's rise is found its ovulation day is the estimate
+ * (give or take 1 or 2 days) and the next start that day plus the own time (or {@link #LUTEAL}), give or take
+ * max(1, round(1.28 × √(spread² + error²))). Without a rise it stays the calendar estimate; {@link #method} says which.</li>
  * </ul>
  */
 public final class Cycles {
@@ -69,6 +74,11 @@ public final class Cycles {
     public static final int FERTILE_BEFORE = 5;
     /** A cycle shorter or longer than these is unusual whatever the person's own spread. */
     public static final int SHORT = 21, LONG = 35;
+    /**
+     * Where the next start and the ovulation estimate come from: the calendar (the typical cycle minus {@link #LUTEAL}), the
+     * calendar with the person's own time from ovulation to the period, or this cycle's measured rise (phase 2).
+     */
+    public static final int CALENDAR = 0, OWN_LUTEAL = 1, MEASURED = 2;
 
     /** One period: its first and last bleeding day. */
     public static final class Period {
@@ -138,6 +148,15 @@ public final class Cycles {
     public final int range;
     /** The expected next start, null without any period. */
     public final LocalDate next;
+    /** The calendar's next start and range (the last start plus the typical length), the same as above unless {@link #MEASURED}. */
+    public final LocalDate calendarNext;
+    public final int calendarRange;
+    /** {@link #CALENDAR}, {@link #OWN_LUTEAL} or {@link #MEASURED}. */
+    public final int method;
+    /** The temperature rise of every cycle (phase 2), null when not worked out ({@link #of} alone). */
+    public final TempRise.Analysis rise;
+    /** The days from ovulation to the next period the estimate uses: {@link #LUTEAL}, or the own middle value. */
+    public final int luteal;
     /** The period running today, else null. */
     public final Period running;
     /** More than twice the typical length since the last start: the estimate waits for the next start. */
@@ -145,8 +164,14 @@ public final class Cycles {
     /** The calendar ovulation estimate (null without {@link #next}) and its range in days each way. */
     public final LocalDate ovulation;
     public final int ovulationRange;
+    /**
+     * "My periods have stopped" (phase 1a2): the day the person said so, else null. In force ({@link #stopped}) while no
+     * period runs and every bleeding day lies before that day, so a period logged on it or later ends it by itself.
+     */
+    public final LocalDate stoppedSince;
+    public final boolean stopped;
 
-    private Cycles(Map<LocalDate, Integer> logged, Collection<LocalDate> marks, LocalDate today) {
+    private Cycles(Map<LocalDate, Integer> logged, Collection<LocalDate> marks, LocalDate today, LocalDate stoppedSince, TempRise.Analysis rise) {
         this.today = today;
         flows = new TreeMap<LocalDate, Integer>();
         if (logged != null) {
@@ -172,14 +197,35 @@ public final class Cycles {
         typical = u.length == 0 ? DEFAULT_LENGTH : u.length < TRIM_FROM ? median(u) : trimmedMean(u);
         length = (int) Math.round(typical);
         sd = sd(u);
-        range = u.length < FEW ? WIDE : Math.max(1, (int) Math.round(Z80 * sd));
+        calendarRange = u.length < FEW ? WIDE : Math.max(1, (int) Math.round(Z80 * sd));
         Period last = periods.isEmpty() ? null : periods.get(periods.size() - 1);
-        next = last == null ? null : last.start.plusDays(length);
+        calendarNext = last == null ? null : last.start.plusDays(length);
         running = last != null && !last.marked && !last.start.isAfter(today) && ChronoUnit.DAYS.between(last.last, today) <= OPEN_DAYS ? last : null;
         waiting = last != null && running == null && ChronoUnit.DAYS.between(last.start, today) > 2L * length;
         double s = u.length < FEW ? PERSON_SD : sd;
-        ovulation = next == null ? null : next.minusDays(LUTEAL);
-        ovulationRange = Math.max(OVULATION_MIN, (int) Math.round(Z80 * Math.sqrt(s * s + LUTEAL_SD * LUTEAL_SD)));
+        this.rise = rise;
+        boolean own = rise != null && rise.ownLuteal();
+        luteal = own ? rise.lutealDays() : LUTEAL;
+        double lutealSd = own && !Double.isNaN(rise.lutealSd) ? rise.lutealSd : LUTEAL_SD;
+        TempRise.Result now = rise == null ? null : rise.current;
+        if (calendarNext != null && now != null && now.found() && now.start.equals(last.start)) {
+            // this cycle's rise: its day, and the next start that day plus the time to the period
+            method = MEASURED;
+            boolean clear = now.confidence == TempRise.CLEAR;
+            double err = clear ? TempRise.CLEAR_SD : TempRise.POSSIBLE_SD;
+            ovulation = now.ovulation;
+            ovulationRange = clear ? TempRise.CLEAR_RANGE : TempRise.POSSIBLE_RANGE;
+            next = ovulation.plusDays(luteal);
+            range = Math.max(1, (int) Math.round(Z80 * Math.sqrt(lutealSd * lutealSd + err * err)));
+        } else {
+            method = own ? OWN_LUTEAL : CALENDAR;
+            next = calendarNext;
+            range = calendarRange;
+            ovulation = next == null ? null : next.minusDays(luteal);
+            ovulationRange = Math.max(OVULATION_MIN, (int) Math.round(Z80 * Math.sqrt(s * s + lutealSd * lutealSd)));
+        }
+        this.stoppedSince = stoppedSince;
+        stopped = stoppedSince != null && running == null && (last == null || last.last.isBefore(stoppedSince));
     }
 
     /**
@@ -187,7 +233,31 @@ public final class Cycles {
      * {@link #HEAVY}; anything else is no entry) and the end marks.
      */
     public static Cycles of(Map<LocalDate, Integer> logged, Collection<LocalDate> ends, LocalDate today) {
-        return new Cycles(logged, ends, today);
+        return new Cycles(logged, ends, today, null, null);
+    }
+
+    /** As above, with the day the person said "My periods have stopped" ({@code stoppedSince}, null when not). */
+    public static Cycles of(Map<LocalDate, Integer> logged, Collection<LocalDate> ends, LocalDate today, LocalDate stoppedSince) {
+        return new Cycles(logged, ends, today, stoppedSince, null);
+    }
+
+    /**
+     * The same log with the temperature rise of each cycle (phase 2): the ring's nights ({@code ring}, °C by the day the
+     * morning falls on; left out and short nights not in it) and the morning temperatures by mouth ({@code mouth}, those
+     * drip left out not in it). Either may be empty or null; with neither it is the calendar estimate.
+     */
+    public Cycles measured(TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth) {
+        return new Cycles(flows, ends, today, stoppedSince, TempRise.analyse(this, ring, mouth));
+    }
+
+    /** {@code day} (yyyy-mm-dd) as a date, null when it is null or not a date (a setting from an older or damaged file). */
+    public static LocalDate day(String day) {
+        if (day == null) return null;
+        try {
+            return LocalDate.parse(day);
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     /** Whether the tracker shows: demo mode always, else the Settings switch (1 on, 0 off), unset (-1) when the profile says female (1). */
@@ -274,9 +344,12 @@ public final class Cycles {
         return running != null && !d.isBefore(running.start) && !d.isAfter(today);
     }
 
-    /** Whether there is an estimate to show: a period was logged and the last start is not more than twice the typical length ago. */
+    /**
+     * Whether there is an estimate to show: a period was logged, the last start is not more than twice the typical length
+     * ago, and the person did not say the periods have stopped.
+     */
     public boolean estimates() {
-        return next != null && !waiting;
+        return next != null && !waiting && !stopped;
     }
 
     /** Days the period is later than expected (from the expected day), once today is past the range; else 0. */
@@ -345,7 +418,7 @@ public final class Cycles {
         if (periods.isEmpty()) return "No period logged yet";
         if (running != null) return "Day " + (ChronoUnit.DAYS.between(running.start, today) + 1) + " of your period";
         Period last = periods.get(periods.size() - 1);
-        if (waiting) return "No period logged since " + date(last.start, loc);
+        if (waiting || stopped) return "No period logged since " + date(last.start, loc);
         if (last.start.isAfter(today)) return "Next period logged for " + date(last.start, loc);
         return "Cycle day " + cycleDay(today);
     }
@@ -355,6 +428,7 @@ public final class Cycles {
         if (periods.isEmpty()) return "Tap Heavy, Medium or Light on the first day of your period. The app then estimates when the next one starts.";
         if (running != null) return "Tap the amount for each day, or Ended when it is over.";
         Period last = periods.get(periods.size() - 1);
+        if (stopped) return STOPPED_NOTE;
         if (waiting) return "The estimate starts again with the next period you log.";
         if (last.start.isAfter(today)) return "";
         return "Days since your last period started on " + date(last.start, loc) + ", that day counted as 1.";
@@ -372,26 +446,65 @@ public final class Cycles {
         return "Next period expected any day now";
     }
 
-    /** "Expected 6 to 12 Nov." with how sure it is; null without an estimate. */
+    /** "Expected 6 to 12 Nov." with how sure it is and where it comes from; null without an estimate. */
     public String expectedLine(Locale loc) {
         if (!estimates()) return null;
         String when = "Expected " + span(next.minusDays(range), next.plusDays(range), loc) + ". ";
+        if (method == MEASURED) {
+            return when + "From the ovulation your temperature shows plus " + lutealWords() + ". The calendar alone says "
+                    + span(calendarNext.minusDays(calendarRange), calendarNext.plusDays(calendarRange), loc) + ".";
+        }
         if (used.isEmpty()) return when + "Until you have logged " + FEW + " cycles, this uses a typical cycle of " + DEFAULT_LENGTH + " days and a wider range.";
         if (used.size() < FEW) return when + "Until you have logged " + FEW + " cycles, this uses your own " + Texts.count(used.size(), "cycle", "cycles")
                 + " and a wider range.";
         return when + "About 4 in 5 periods start within such a range.";
     }
 
-    /** "Ovulation likely around 1 Nov (give or take 4 days). ..."; null without an estimate. */
+    /**
+     * "Ovulation likely around 1 Nov (give or take 4 days). ...", or once this cycle's rise is found "Ovulation likely on 1 Nov,
+     * measured by your ring's temperature: next period expected 14 to 16 Nov."; null without an estimate.
+     */
     public String ovulationLine(Locale loc) {
         if (!estimates()) return null;
-        return "Ovulation likely around " + date(ovulation, loc) + " (give or take " + Texts.count(ovulationRange, "day", "days") + "). A calendar estimate, about "
-                + LUTEAL + " days before the next expected period, not a measurement.";
+        if (method == MEASURED) {
+            TempRise.Result r = rise.current;
+            return (r.confidence == TempRise.CLEAR ? "Ovulation likely on " + date(ovulation, loc) + ", measured by "
+                    : "Ovulation possibly on " + date(ovulation, loc) + ", from a weaker rise in ") + TempRise.sourceWords(r.source)
+                    + ": next period expected " + span(next.minusDays(range), next.plusDays(range), loc) + ".";
+        }
+        String why = method == OWN_LUTEAL ? "your own " + luteal + " days from ovulation to the period in " + rise.lutealN + " cycles with a temperature rise"
+                : "about " + LUTEAL + " days before the next expected period";
+        return "Ovulation likely around " + date(ovulation, loc) + " (give or take " + Texts.count(ovulationRange, "day", "days") + "). A calendar estimate from "
+                + why + ", not a measurement." + riseYet();
     }
 
-    /** "Likely fertile days: 27 Oct to 1 Nov, from the calendar only."; null without an estimate. */
+    /** Why this cycle has no measured day yet, for the calendar estimate's line. */
+    private String riseYet() {
+        TempRise.Result r = rise == null ? null : rise.current;
+        if (r == null) return "";
+        if (Math.max(r.ring.nights, r.mouth.nights) == 0) return " No temperatures in this cycle to measure it.";
+        return " No lasting temperature rise in this cycle yet.";
+    }
+
+    /** "13 days, your own time from ovulation to the period (4 cycles)", or the usual 14 days. */
+    String lutealWords() {
+        if (method != CALENDAR && rise != null && rise.ownLuteal()) {
+            return "your own " + luteal + " days to the period (from " + rise.lutealN + " cycles with a temperature rise)";
+        }
+        return "about " + LUTEAL + " days, the usual time from ovulation to the period, until " + TempRise.LUTEAL_FROM
+                + " cycles with a rise give your own";
+    }
+
+    /**
+     * "Likely fertile days: 27 Oct to 1 Nov, from the calendar only.", or once measured that they were (the rise shows only
+     * after ovulation); null without an estimate.
+     */
     public String fertileLine(Locale loc) {
         if (!estimates()) return null;
+        if (method == MEASURED) {
+            return "Likely fertile days were " + span(ovulation.minusDays(FERTILE_BEFORE), ovulation, loc)
+                    + ". The rise shows only after ovulation, so it cannot tell them ahead.";
+        }
         return "Likely fertile days: " + span(ovulation.minusDays(FERTILE_BEFORE), ovulation, loc) + ", from the calendar only.";
     }
 
@@ -430,14 +543,16 @@ public final class Cycles {
         if (p != null) sb.append("\nDay ").append(ChronoUnit.DAYS.between(p.start, d) + 1).append(" of the period from ").append(date(p.start, loc));
         else if (cd > 0) sb.append("\nCycle day ").append(cd);
         if (inExpected(d)) {
-            sb.append("\nIn the expected next period (").append(span(next.minusDays(range), next.plusDays(range), loc)).append("): your last start plus ");
-            sb.append(used.isEmpty() ? "a typical cycle of " + length + " days" : "your typical cycle of " + length + " days");
+            sb.append("\nIn the expected next period (").append(span(next.minusDays(range), next.plusDays(range), loc)).append("): ");
+            if (method == MEASURED) sb.append("the measured ovulation plus ").append(luteal).append(" days");
+            else sb.append("your last start plus ").append(used.isEmpty() ? "a typical cycle of " + length + " days" : "your typical cycle of " + length + " days");
             sb.append(", give or take ").append(Texts.count(range, "day", "days")).append('.');
         }
         if (inOvulation(d)) {
-            sb.append("\nIn the likely ovulation range (").append(span(ovulation.minusDays(ovulationRange), ovulation.plusDays(ovulationRange), loc))
-                    .append("): about ").append(LUTEAL).append(" days before the expected period, give or take ")
-                    .append(Texts.count(ovulationRange, "day", "days")).append('.');
+            sb.append("\nIn the likely ovulation range (").append(span(ovulation.minusDays(ovulationRange), ovulation.plusDays(ovulationRange), loc)).append("): ");
+            if (method == MEASURED) sb.append("the day before the temperature rose");
+            else sb.append("about ").append(luteal).append(" days before the expected period");
+            sb.append(", give or take ").append(Texts.count(ovulationRange, "day", "days")).append('.');
         }
         if (inFertile(d)) {
             sb.append("\nIn the likely fertile days (").append(span(ovulation.minusDays(FERTILE_BEFORE), ovulation, loc))
@@ -446,17 +561,287 @@ public final class Cycles {
         return sb.toString();
     }
 
+    // ------------------------------------------------------- "Your cycles" (phase 1a2): the analysis over time
+
+    /** Average, spread (sample standard deviation), shortest and longest of some whole numbers of days or points. */
+    public static final class Summary {
+        public final int n;
+        /** NaN without values; {@link #sd} NaN with fewer than 2. */
+        public final double mean, sd;
+        /** 0 without values. */
+        public final int min, max;
+
+        Summary(int[] v) {
+            n = v.length;
+            double s = 0;
+            int lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
+            for (int x : v) {
+                s += x;
+                lo = Math.min(lo, x);
+                hi = Math.max(hi, x);
+            }
+            mean = n == 0 ? Double.NaN : s / n;
+            sd = Cycles.sd(v);
+            min = n == 0 ? 0 : lo;
+            max = n == 0 ? 0 : hi;
+        }
+    }
+
+    /** The logged days of one period by amount, and its score: light 1, medium 2, heavy 3 per day (spotting 0). */
+    public static final class Amount {
+        public final int light, medium, heavy, spotting, score;
+
+        Amount(int light, int medium, int heavy, int spotting) {
+            this.light = light;
+            this.medium = medium;
+            this.heavy = heavy;
+            this.spotting = spotting;
+            score = light * LIGHT + medium * MEDIUM + heavy * HEAVY;
+        }
+    }
+
+    /** The periods that are over: every period except the one running now and one logged for a later day. */
+    public List<Period> finished() {
+        List<Period> out = new ArrayList<Period>();
+        for (Period p : periods) if (p != running && !p.start.isAfter(today)) out.add(p);
+        return out;
+    }
+
+    /** The cycles kept (not left out), oldest first: every one of them, not only the newest the estimate uses. */
+    public List<Cycle> kept() {
+        List<Cycle> out = new ArrayList<Cycle>();
+        for (Cycle c : cycles) if (!c.leftOut) out.add(c);
+        return out;
+    }
+
+    /** How many cycles are left out (more than {@link #FAR} days from the middle value). */
+    public int leftOutCount() {
+        return cycles.size() - kept().size();
+    }
+
+    /** Cycle length over every kept cycle. */
+    public Summary cycleSummary() {
+        List<Cycle> k = kept();
+        int[] v = new int[k.size()];
+        for (int i = 0; i < v.length; i++) v[i] = k.get(i).length;
+        return new Summary(v);
+    }
+
+    /** Period length (first to last bleeding day, both counted) over the periods that are over. */
+    public Summary periodSummary() {
+        List<Period> f = finished();
+        int[] v = new int[f.size()];
+        for (int i = 0; i < v.length; i++) v[i] = f.get(i).days();
+        return new Summary(v);
+    }
+
+    /** The amount score over the periods that are over. */
+    public Summary amountSummary() {
+        List<Period> f = finished();
+        int[] v = new int[f.size()];
+        for (int i = 0; i < v.length; i++) v[i] = amountOf(f.get(i)).score;
+        return new Summary(v);
+    }
+
+    /** The logged days of {@code p} by amount (days without a log in between count nothing). */
+    public Amount amountOf(Period p) {
+        int l = 0, m = 0, h = 0, s = 0;
+        for (Map.Entry<LocalDate, Integer> e : flows.subMap(p.start, true, p.last, true).entrySet()) {
+            int f = e.getValue();
+            if (f == HEAVY) h++;
+            else if (f == MEDIUM) m++;
+            else if (f == LIGHT) l++;
+            else s++;
+        }
+        return new Amount(l, m, h, s);
+    }
+
+    /** Days from today to the expected start (0 today, below 0 once it passed), null without an estimate. */
+    public Integer daysToNext() {
+        return estimates() ? (int) ChronoUnit.DAYS.between(today, next) : null;
+    }
+
+    /** What touching a cycle's dot reads: "Cycle from 3 Oct: 29 days", with "left out" or "unusual" when so. */
+    public String cycleTip(Cycle c, Locale loc) {
+        String s = "Cycle from " + date(c.start, loc) + ": " + Texts.count(c.length, "day", "days");
+        if (c.leftOut) return s + ", left out";
+        return unusual(c) ? s + ", unusual" : s;
+    }
+
+    /** What touching a period's dot reads: "Period from 3 Oct: 5 days". */
+    public String periodTip(Period p, Locale loc) {
+        return "Period from " + date(p.start, loc) + ": " + Texts.count(p.days(), "day", "days");
+    }
+
+    /** What touching a period's amount reads: "3 Oct: score 11 (2 heavy, 2 medium, 1 light)". */
+    public String amountTip(Period p, Locale loc) {
+        Amount a = amountOf(p);
+        StringBuilder sb = new StringBuilder(date(p.start, loc)).append(": score ").append(a.score).append(" (");
+        boolean first = true;
+        int[] n = {a.heavy, a.medium, a.light};
+        String[] w = {"heavy", "medium", "light"};
+        for (int i = 0; i < 3; i++) {
+            if (n[i] == 0) continue;
+            if (!first) sb.append(", ");
+            sb.append(n[i]).append(' ').append(w[i]);
+            first = false;
+        }
+        if (first) sb.append("nothing logged");
+        return sb.append(')').toString();
+    }
+
+    /** One line of the list under the cycle chart: "3 Oct to 1 Nov: 29 days", with why it is marked. */
+    public String cycleRow(Cycle c, Locale loc) {
+        String s = span(c.start, c.next.minusDays(1), loc) + ": " + Texts.count(c.length, "day", "days");
+        if (c.leftOut) return s + ", left out of the estimate, maybe a period was not logged";
+        return unusual(c) ? s + ", unusual for you" : s;
+    }
+
+    /** The night temperature line goes back at most this many days. */
+    public static final int TEMP_DAYS = 100;
+
+    /**
+     * The first day of the night temperature line: the start of the period before the last one (a whole cycle and the
+     * one running now), else the last start, at most {@link #TEMP_DAYS} days back; without any period the last 30 days.
+     */
+    public LocalDate tempFrom() {
+        LocalDate from = periods.isEmpty() ? today.minusDays(29) : periods.get(Math.max(0, periods.size() - 2)).start;
+        LocalDate limit = today.minusDays(TEMP_DAYS - 1);
+        return from.isBefore(limit) ? limit : from.isAfter(today) ? today : from;
+    }
+
+    /**
+     * What touching a day of the night temperature line reads: "Tue 28 Oct: +0.2 °C, cycle day 14", with the period or
+     * the estimate's band the day lies in. {@code dev} is the night's difference from the usual, NaN without a night.
+     */
+    public String tempTip(LocalDate d, double dev, Locale loc) {
+        StringBuilder sb = new StringBuilder(d.format(DateTimeFormatter.ofPattern("EEE d MMM", loc))).append(": ");
+        sb.append(Double.isNaN(dev) ? "no night" : Texts.signed(dev, loc) + " °C");
+        appendPlace(sb, d);
+        appendRise(sb, d, loc);
+        return sb.toString();
+    }
+
+    /**
+     * The same with the morning temperature by mouth imported from drip (phase 1b) next to the ring's, on two lines:
+     * "Tue 28 Oct, cycle day 14" and "Ring +0.2 °C, mouth 36.62 °C at 07:10". {@code mouth} NaN without one; {@code time}
+     * null without a time; {@code excluded} when drip left the reading out.
+     */
+    public String tempTip(LocalDate d, double dev, double mouth, String time, boolean excluded, Locale loc) {
+        StringBuilder sb = new StringBuilder(d.format(DateTimeFormatter.ofPattern("EEE d MMM", loc)));
+        appendPlace(sb, d);
+        sb.append('\n').append(Double.isNaN(dev) ? "No ring night" : "Ring " + Texts.signed(dev, loc) + " °C").append(", ");
+        if (Double.isNaN(mouth)) sb.append("no mouth reading");
+        else {
+            sb.append("mouth ").append(String.format(loc, "%.2f", mouth)).append(" °C");
+            if (time != null) sb.append(" at ").append(time);
+            if (excluded) sb.append(", left out in drip");
+        }
+        appendRise(sb, d, loc);
+        return sb.toString();
+    }
+
+    /** A night the rise found in its cycle (baseline, high, the ovulation day), on a line for each signal (phase 2). */
+    private void appendRise(StringBuilder sb, LocalDate d, Locale loc) {
+        TempRise.Result r = rise == null ? null : rise.at(d);
+        if (r == null) return;
+        String a = TempRise.nightNote(r.ring, d, "Ring", loc), b = TempRise.nightNote(r.mouth, d, "Mouth", loc);
+        if (a != null && b != null && d.equals(r.ring.ovulation) && d.equals(r.mouth.ovulation)) b = null;
+        if (a != null) sb.append('\n').append(a);
+        if (b != null) sb.append('\n').append(b);
+        if (r.ring.odd.contains(d) || r.mouth.odd.contains(d)) sb.append("\nLeft out of the rise: far from the nights around it");
+    }
+
+    private void appendPlace(StringBuilder sb, LocalDate d) {
+        Period p = periodOn(d);
+        int cd = cycleDay(d);
+        if (p != null) sb.append(", period day ").append(ChronoUnit.DAYS.between(p.start, d) + 1);
+        else if (cd > 0) sb.append(", cycle day ").append(cd);
+        if (inOvulation(d)) sb.append(", ovulation range");
+        else if (inExpected(d)) sb.append(", expected period");
+    }
+
+    // --------------------------------------------- "My periods have stopped" (phase 1a2, the owner's wish of 30 Oct)
+
+    /** The gentle question is asked from this age on, never below. */
+    public static final int ASK_AGE = 40;
+    /** It needs at least this many days without a logged bleeding day, and "Not yet" waits this long before asking again. */
+    public static final int ASK_DAYS = 60;
+    /** A year without a period: how menopause is usually defined. */
+    public static final int YEAR_DAYS = 365;
+
+    /** Days since the last logged bleeding day, -1 without any. */
+    public int daysWithout() {
+        if (periods.isEmpty()) return -1;
+        return (int) ChronoUnit.DAYS.between(periods.get(periods.size() - 1).last, today);
+    }
+
+    /**
+     * Whether the card asks "Have your periods stopped?": the profile age is {@link #ASK_AGE} or more, the person has not
+     * said so yet, no period for more than twice the typical cycle ({@link #waiting}) and at least {@link #ASK_DAYS} days
+     * since the last bleeding day, and "Not yet" ({@code notYet}, null when never answered) was at least
+     * {@link #ASK_DAYS} days ago.
+     */
+    public boolean askStopped(int age, LocalDate notYet) {
+        if (age < ASK_AGE || stoppedSince != null || !waiting || daysWithout() < ASK_DAYS) return false;
+        return notYet == null || ChronoUnit.DAYS.between(notYet, today) >= ASK_DAYS;
+    }
+
+    /** "No period for 74 days. Have your periods stopped?" */
+    public String askLine() {
+        return "No period for " + Texts.count(Math.max(0, daysWithout()), "day", "days") + ". Have your periods stopped?";
+    }
+
+    /** What the question's two answers do, under it. */
+    public static final String ASK_NOTE = "Yes: no more estimates, late lines or reminders, your past cycles stay. "
+            + "Not yet: the app asks again in " + ASK_DAYS + " days.";
+
+    /** Under the status while the person said the periods have stopped. */
+    public static final String STOPPED_NOTE = "You said your periods have stopped, so there is no estimate and no reminder. "
+            + "Your past cycles stay below. Logging a period day turns this off by itself.";
+
+    /** After a year without a period while it is said to have stopped, plainly; else null. */
+    public String yearLine(Locale loc) {
+        if (!stopped || daysWithout() < YEAR_DAYS) return null;
+        return "A year without a period now (the last one ended " + date(periods.get(periods.size() - 1).last, loc)
+                + "). Twelve months without a period is how menopause is usually defined.";
+    }
+
     // -------------------------------------------------------------------------------- demo
+
+    /** The demo's nights after ovulation are this much warmer (°C), as in many people (issue #252, phase 1a2). */
+    public static final double DEMO_RISE = 0.3;
+    /** Today's day of the cycle in the demo: 4 nights after the made up ovulation, so the rise rule (3 high nights) holds. */
+    public static final int DEMO_DAY = 20;
+
+    /**
+     * The demo's warmer nights (each by the day its morning falls on): after the calendar ovulation of each made up cycle
+     * (its next start minus {@link #LUTEAL}) up to the night before that start, and in the cycle running today after the
+     * estimate's ovulation day. Only the demo's made up log, never a real one.
+     */
+    public static TreeSet<LocalDate> demoWarmNights(LocalDate today) {
+        Cycles c = of(demo(today), null, today);
+        List<LocalDate> starts = new ArrayList<LocalDate>();
+        for (Period p : c.periods) starts.add(p.start);
+        if (c.next != null) starts.add(c.next);
+        TreeSet<LocalDate> out = new TreeSet<LocalDate>();
+        for (int i = 1; i < starts.size(); i++) {
+            LocalDate s = starts.get(i);
+            for (LocalDate d = s.minusDays(LUTEAL - 1); d.isBefore(s) && !d.isAfter(today); d = d.plusDays(1)) out.add(d);
+        }
+        return out;
+    }
 
     /**
      * The demo's made up log (issue #252): 8 cycles of 27 to 31 days before the newest period, periods of 4 to 6 days
-     * (heavy first, then lighter), one spotting day between two periods, and today on about cycle day 18. Day to amount.
+     * (heavy first, then lighter), one spotting day between two periods, and today on cycle day {@link #DEMO_DAY}, so the
+     * running cycle already shows its temperature rise (phase 2). Day to amount.
      */
     public static TreeMap<LocalDate, Integer> demo(LocalDate today) {
         int[] cycle = {29, 27, 31, 28, 30, 28, 29, 31};
         int[] days = {5, 4, 6, 5, 4, 5, 6, 5, 5};
         TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
-        LocalDate start = today.minusDays(17);
+        LocalDate start = today.minusDays(DEMO_DAY - 1);
         for (int c : cycle) start = start.minusDays(c);
         for (int i = 0; i <= cycle.length; i++) {
             for (int k = 0; k < days[i]; k++) {

@@ -127,11 +127,129 @@ public final class Periods {
      * marks count as no entry) and every end mark in force. Reads only; nothing is stored.
      */
     public static app.openring.core.analysis.Cycles cycles(Db db, java.time.LocalDate today) {
+        return cycles(db, today, null);
+    }
+
+    /** As above, with the day the person said "My periods have stopped" (null when not; phase 1a2). */
+    public static app.openring.core.analysis.Cycles cycles(Db db, java.time.LocalDate today, java.time.LocalDate stoppedSince) {
+        return cycles(db.getReadableDatabase(), today, stoppedSince);
+    }
+
+    /** The estimate from the period tables of {@code d}: every day and every end mark in force. Reads only. */
+    static app.openring.core.analysis.Cycles cycles(SQLiteDatabase d, java.time.LocalDate today, java.time.LocalDate stoppedSince) {
         java.util.Map<java.time.LocalDate, Integer> flows = new java.util.HashMap<java.time.LocalDate, Integer>();
-        for (Day d : all(db)) flows.put(java.time.LocalDate.parse(d.day), d.flow);
+        Cursor c = d.rawQuery("SELECT day, flow FROM period_days ORDER BY day", null);
+        try {
+            while (c.moveToNext()) flows.put(java.time.LocalDate.parse(c.getString(0)), c.getInt(1));
+        } finally {
+            c.close();
+        }
         List<java.time.LocalDate> ends = new ArrayList<java.time.LocalDate>();
-        for (String e : allEnds(db)) ends.add(java.time.LocalDate.parse(e));
-        return app.openring.core.analysis.Cycles.of(flows, ends, today);
+        c = d.rawQuery("SELECT day FROM period_ends WHERE gone = 0 ORDER BY day", null);
+        try {
+            while (c.moveToNext()) ends.add(java.time.LocalDate.parse(c.getString(0)));
+        } finally {
+            c.close();
+        }
+        return app.openring.core.analysis.Cycles.of(flows, ends, today, stoppedSince);
+    }
+
+    /** A damaged page found while reading for the reminder leaves the file as it is (Android's default would delete it). */
+    private static final android.database.DatabaseErrorHandler KEEP_FILE = new android.database.DatabaseErrorHandler() {
+        @Override
+        public void onCorruption(SQLiteDatabase db) {}
+    };
+
+    /**
+     * The reminder's read only helper (issue #252, phase 1a2; Design review): the estimate from the person's own log in
+     * the real file {@code openring.db}, with the temperature rise of its nights (phase 2, {@link #measuredOrNot}), also while demo mode is on, without {@link Db#get}: no {@code Db} is opened,
+     * closed or swapped, nothing is upgraded or written, and the demo file is never read. One read only connection that
+     * is closed again. Null when the real file does not exist (no log); any other problem (a file from before the
+     * period tables, a damaged page, a swap under way) throws, and the caller keeps what it had planned.
+     */
+    public static app.openring.core.analysis.Cycles readReal(android.content.Context c, java.time.LocalDate today, java.time.LocalDate stoppedSince) {
+        java.io.File f = c.getDatabasePath(Db.REAL);
+        if (!f.isFile()) return null;
+        SQLiteDatabase d = SQLiteDatabase.openDatabase(f.getPath(), null, SQLiteDatabase.OPEN_READONLY | SQLiteDatabase.NO_LOCALIZED_COLLATORS, KEEP_FILE);
+        try {
+            return measuredOrNot(d, cycles(d, today, stoppedSince));
+        } finally {
+            d.close();
+        }
+    }
+
+    /**
+     * {@code base} with the temperature rise (phase 2), so the reminder follows the same estimate as the screens; should
+     * reading the nights fail, {@code base} (the calendar estimate of the log, as before phase 2).
+     */
+    static app.openring.core.analysis.Cycles measuredOrNot(SQLiteDatabase d, app.openring.core.analysis.Cycles base) {
+        try {
+            return measured(d, base, java.time.ZoneId.systemDefault());
+        } catch (RuntimeException e) {
+            return base;
+        }
+    }
+
+    // ------------------------------------------------------------ the temperature rise (phase 2)
+
+    /**
+     * {@code base} (the estimate from the log) with the temperature rise of each cycle (phase 2): the ring's nights
+     * ({@link #ringNights}) and the morning temperatures by mouth ({@link #mouthTemps}) from just before the first period
+     * on. Reads only, nothing is stored: worked out on each load like the rest of the estimate. Errors are thrown.
+     */
+    public static app.openring.core.analysis.Cycles measured(Db db, app.openring.core.analysis.Cycles base, java.time.ZoneId zone) {
+        return measured(db.getReadableDatabase(), base, zone);
+    }
+
+    static app.openring.core.analysis.Cycles measured(SQLiteDatabase d, app.openring.core.analysis.Cycles base, java.time.ZoneId zone) {
+        if (base.periods.isEmpty()) return base;
+        java.time.LocalDate from = base.periods.get(0).start.minusDays(app.openring.core.analysis.TempRise.ODD_DAYS);
+        return base.measured(ringNights(d, from, base.today, zone), mouthTemps(d, from, base.today));
+    }
+
+    /**
+     * The ring's nightly skin temperature ({@code temp} of each day summary, °C, by the day the morning falls on) from
+     * {@code from} to {@code to} for the rise: a night with less than {@code TempRise.SHORT_NIGHT_MIN} minutes asleep is
+     * left out, and so is every night whose time (18:00 the evening before to 12:00 that day, in {@code zone}) touches a
+     * time left out because someone else wore the ring (issue #254), even when the analysis kept part of the night.
+     */
+    public static java.util.TreeMap<java.time.LocalDate, Double> ringNights(Db db, java.time.LocalDate from, java.time.LocalDate to, java.time.ZoneId zone) {
+        return ringNights(db.getReadableDatabase(), from, to, zone);
+    }
+
+    static java.util.TreeMap<java.time.LocalDate, Double> ringNights(SQLiteDatabase d, java.time.LocalDate from, java.time.LocalDate to, java.time.ZoneId zone) {
+        List<double[]> rows = new ArrayList<double[]>();
+        Cursor c = d.rawQuery("SELECT start, stop FROM excluded", null);
+        try {
+            while (c.moveToNext()) rows.add(new double[] {c.getDouble(0), c.getDouble(1)});
+        } finally {
+            c.close();
+        }
+        app.openring.core.analysis.LeftOut left = app.openring.core.analysis.LeftOut.of(rows);
+        java.util.TreeMap<java.time.LocalDate, Double> out = new java.util.TreeMap<java.time.LocalDate, Double>();
+        c = d.rawQuery("SELECT day, json FROM days WHERE day >= ? AND day <= ? ORDER BY day", new String[] {from.toString(), to.toString()});
+        try {
+            while (c.moveToNext()) {
+                org.json.JSONObject o = Json.parse(c.getString(1));
+                double t = app.openring.core.analysis.TempRise.ringNight(Json.d(o, "temp"), Json.d(o, "asleep_min"));
+                if (Double.isNaN(t)) continue;
+                java.time.LocalDate day = java.time.LocalDate.parse(c.getString(0));
+                if (!left.isEmpty() && left.overlaps(day.minusDays(1).atTime(18, 0).atZone(zone).toEpochSecond(), day.atTime(12, 0).atZone(zone).toEpochSecond())) continue;
+                out.put(day, t);
+            }
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** The morning temperatures by mouth (°C) in force from {@code from} to {@code to}, without those drip left out. */
+    static java.util.TreeMap<java.time.LocalDate, Double> mouthTemps(SQLiteDatabase d, java.time.LocalDate from, java.time.LocalDate to) {
+        java.util.TreeMap<java.time.LocalDate, Double> out = new java.util.TreeMap<java.time.LocalDate, Double>();
+        for (Temp t : readTemps(d, "WHERE gone = 0 AND excluded = 0 AND day >= ? AND day <= ? ", new String[] {from.toString(), to.toString()})) {
+            out.put(java.time.LocalDate.parse(t.day), t.t.c);
+        }
+        return out;
     }
 
     private static List<Day> readDays(Db db, String where, String[] args) {
@@ -180,6 +298,196 @@ public final class Periods {
         }
         if (!d.toString().equals(day) || d.getYear() < FIRST_YEAR || d.getYear() > LAST_YEAR) throw new IllegalArgumentException("not a date: " + day);
         return day;
+    }
+
+    // ------------------------------------------------------------- the drip import (phase 1b)
+
+    /** One row of {@code period_temps}: an imported mouth temperature. */
+    public static final class Temp {
+        public final String day;
+        public final app.openring.core.DripCsv.Temp t;
+        /** The import that added it. */
+        public final long src;
+        /** The import was undone: a removal mark, no reading. */
+        public final boolean gone;
+
+        Temp(String day, app.openring.core.DripCsv.Temp t, long src, boolean gone) {
+            this.day = day;
+            this.t = t;
+            this.src = src;
+            this.gone = gone;
+        }
+    }
+
+    /** One import in force (not undone). */
+    public static final class Import {
+        /** Its time in milliseconds, also the {@code src} of the rows it added. */
+        public final long id;
+        /** Unix seconds. */
+        public final double made;
+        /** The days and temperatures it added. */
+        public final int days, temps;
+
+        Import(long id, double made, int days, int temps) {
+            this.id = id;
+            this.made = made;
+            this.days = days;
+            this.temps = temps;
+        }
+    }
+
+    /** Every imported temperature, undone ones included (the preview needs both), oldest first. */
+    public static List<Temp> allTemps(Db db) {
+        return readTemps(db.getReadableDatabase(), "", null);
+    }
+
+    /** The imported temperatures in force from {@code from} to {@code to} (both included), oldest first. */
+    public static java.util.TreeMap<java.time.LocalDate, app.openring.core.DripCsv.Temp> temps(Db db, String from, String to) {
+        java.util.TreeMap<java.time.LocalDate, app.openring.core.DripCsv.Temp> out = new java.util.TreeMap<java.time.LocalDate, app.openring.core.DripCsv.Temp>();
+        for (Temp t : readTemps(db.getReadableDatabase(), "WHERE gone = 0 AND day >= ? AND day <= ? ", new String[] {date(from), date(to)})) {
+            out.put(java.time.LocalDate.parse(t.day), t.t);
+        }
+        return out;
+    }
+
+    private static List<Temp> readTemps(SQLiteDatabase d, String where, String[] args) {
+        List<Temp> out = new ArrayList<Temp>();
+        Cursor c = d.rawQuery("SELECT day, time, c, excluded, src, gone FROM period_temps " + where + "ORDER BY day", args);
+        try {
+            while (c.moveToNext()) {
+                out.add(new Temp(c.getString(0), new app.openring.core.DripCsv.Temp(c.getDouble(2), c.isNull(1) ? null : c.getString(1), c.getInt(3) != 0),
+                        c.getLong(4), c.getInt(5) != 0));
+            }
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** The imports in force (not undone), newest first. */
+    public static List<Import> imports(Db db) {
+        List<Import> out = new ArrayList<Import>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT id, made, days, temps FROM period_imports WHERE gone = 0 ORDER BY id DESC", null);
+        try {
+            while (c.moveToNext()) out.add(new Import(c.getLong(0), c.getDouble(1), c.getInt(2), c.getInt(3)));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** The phone's days as the preview compares them: every day with its amount, removal marks as {@link #REMOVED}. */
+    public static java.util.TreeMap<java.time.LocalDate, Integer> flowsForImport(Db db) {
+        java.util.TreeMap<java.time.LocalDate, Integer> out = new java.util.TreeMap<java.time.LocalDate, Integer>();
+        for (Day d : all(db)) out.put(java.time.LocalDate.parse(d.day), d.flow);
+        return out;
+    }
+
+    /** What an import wrote: its id (0 when it had nothing to write, then nothing at all was written), days and temperatures. */
+    public static final class Imported {
+        public final long id;
+        public final int days, temps;
+
+        Imported(long id, int days, int temps) {
+            this.id = id;
+            this.days = days;
+            this.temps = temps;
+        }
+    }
+
+    /** Tests only: the import throws after this many rows were written, as a stop halfway would (-1: never). */
+    static volatile int failImportAfter = -1;
+
+    /**
+     * Imports a drip file's days ({@code flows}, 0 spotting to 3 heavy) and mouth temperatures into the period log, in ONE
+     * transaction: a stop or failure on the way saves nothing. The decision of each day and temperature is made again
+     * inside the transaction from the rows there now ({@link app.openring.core.DripImport#day}, {@code temp}), so a day
+     * logged between the preview and the tap keeps winning: days already logged win, unless {@code takeFile}; then the
+     * replaced amount goes into {@code prev}, so undoing puts it back. Temperatures already there are never replaced. Rows
+     * it adds carry {@code src} = the import's id. With nothing to write (the same file again) nothing is written, not
+     * even an import row, and the id is 0. The id is the time in milliseconds, one higher while it is taken.
+     */
+    public static Imported importDrip(Db db, final java.util.Map<java.time.LocalDate, Integer> flows,
+            final java.util.Map<java.time.LocalDate, app.openring.core.DripCsv.Temp> temps, final boolean takeFile, long idTime, final double made) {
+        for (java.time.LocalDate d : flows.keySet()) date(d.toString());
+        for (java.time.LocalDate d : temps.keySet()) date(d.toString());
+        SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            java.util.Map<java.time.LocalDate, Integer> have = flowsForImport(db);
+            java.util.Map<java.time.LocalDate, Temp> haveT = new java.util.HashMap<java.time.LocalDate, Temp>();
+            for (Temp t : readTemps(w, "", null)) haveT.put(java.time.LocalDate.parse(t.day), t);
+            long id = idTime;
+            while (count(w, "SELECT COUNT(*) FROM period_imports WHERE id = ?", String.valueOf(id)) > 0) id++;
+            int days = 0, nt = 0, written = 0;
+            for (java.util.Map.Entry<java.time.LocalDate, Integer> e : flows.entrySet()) {
+                int f = e.getValue();
+                if (f < SPOTTING || f > HEAVY) throw new IllegalArgumentException("flow " + f);
+                Integer h = have.get(e.getKey());
+                int k = app.openring.core.DripImport.day(f, h);
+                if (k == app.openring.core.DripImport.SAME || (k == app.openring.core.DripImport.DIFFER && !takeFile)) continue;
+                w.execSQL("INSERT OR REPLACE INTO period_days(day, flow, src, prev, made) VALUES (?, ?, ?, ?, ?)",
+                        new Object[] {e.getKey().toString(), (long) f, id, h == null ? null : (Object) (long) (int) h, made});
+                days++;
+                stop(++written);
+            }
+            for (java.util.Map.Entry<java.time.LocalDate, app.openring.core.DripCsv.Temp> e : temps.entrySet()) {
+                Temp h = haveT.get(e.getKey());
+                if (app.openring.core.DripImport.temp(e.getValue(), h == null ? null : h.t, h != null && h.gone) != app.openring.core.DripImport.ADD) continue;
+                app.openring.core.DripCsv.Temp t = e.getValue();
+                w.execSQL("INSERT OR REPLACE INTO period_temps(day, time, c, excluded, src, gone) VALUES (?, ?, ?, ?, ?, 0)",
+                        new Object[] {e.getKey().toString(), t.time, t.c, t.excluded ? 1L : 0L, id});
+                nt++;
+                stop(++written);
+            }
+            if (days + nt == 0) {
+                w.setTransactionSuccessful();
+                return new Imported(0, 0, 0);
+            }
+            w.execSQL("INSERT INTO period_imports(id, made, days, temps, gone) VALUES (?, ?, ?, ?, 0)", new Object[] {id, made, (long) days, (long) nt});
+            w.setTransactionSuccessful();
+            return new Imported(id, days, nt);
+        } finally {
+            w.endTransaction();
+        }
+    }
+
+    private static void stop(int written) {
+        if (written == failImportAfter) throw new IllegalStateException("test stop after " + written + " rows");
+    }
+
+    private static long count(SQLiteDatabase d, String sql, String arg) {
+        Cursor c = d.rawQuery(sql, new String[] {arg});
+        try {
+            return c.moveToFirst() ? c.getLong(0) : 0;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
+     * Undoes the import {@code id} as a whole, in one transaction, removing exactly the rows it added, never a row logged
+     * in Open Ring: each day it still holds ({@code src} = id; a day the person changed since counts as typed and stays)
+     * gets back the amount it replaced ({@code prev}, as typed) or, where it added the day, a removal mark that keeps the
+     * import's id (no entry, so a restore cannot bring the day back); its temperatures and the import get {@code gone} 1.
+     * Nothing is deleted. False when there is no such import in force (also the second time).
+     */
+    public static boolean undoImport(Db db, long id, double made) {
+        SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            if (count(w, "SELECT COUNT(*) FROM period_imports WHERE gone = 0 AND id = ?", String.valueOf(id)) == 0) return false;
+            Object[] a = {made, id};
+            // first the days it replaced (back to the person's amount), then the days it added (a mark with its id)
+            w.execSQL("UPDATE period_days SET flow = prev, src = 0, prev = NULL, made = ? WHERE src = ? AND prev IS NOT NULL", a);
+            w.execSQL("UPDATE period_days SET flow = -1, made = ? WHERE src = ? AND prev IS NULL", a);
+            w.execSQL("UPDATE period_temps SET gone = 1 WHERE src = ?", new Object[] {id});
+            w.execSQL("UPDATE period_imports SET gone = 1 WHERE id = ?", new Object[] {id});
+            w.setTransactionSuccessful();
+            return true;
+        } finally {
+            w.endTransaction();
+        }
     }
 
     // ------------------------------------------------------------- the restore merge (Db.replaceWith)

@@ -1,0 +1,4 @@
+* Your cycles, at the end of Body: today's cycle day, the days to the next expected period, how much your cycles vary, and your cycle length, period length and amount over time with average, spread, shortest and longest. Every cycle and period is a dot you can touch to read.
+* Night temperature and your cycle: the ring's nightly skin temperature since the period before the last, with your period days and the estimate's ovulation range behind it. Shown as evidence only, the app does not find ovulation from it yet.
+* Remind me before my period (Settings, Period tracker, or the button on the period card): Off, 1, 2, 3 or 5 days before the expected range, at the time you pick (9:00 at first). It follows your own log, comes once per period and not while a period is logged.
+* "My periods have stopped": no more estimates, late lines or reminders, your past cycles stay. From the age of 40, after a long time without a period, the card asks once, gently.
