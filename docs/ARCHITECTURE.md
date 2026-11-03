@@ -691,8 +691,9 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   each piece waiting for its write confirmation; `Frame.Assembler` joins the answer's pieces.
 * **Session** (`core/withings/Session`, JVM tested against a made up watch): hello, connect, battery, set time, activity
   records since T, heart rate records since T, and always "sync done" last while the link is up. Each request waits for its
-  answer (5 s; a data answer 20 s between messages, until a message with the end part), at most 2 minutes in all. A
-  challenge from the watch ends the session with a plain sentence (see the flag below). The watch's own messages on the way
+  answer (5 s; a data answer 20 s between messages, until a message with the end part), at most 2 minutes in all. The
+  watch asks for a sign in right after the hello; `core/withings/SignIn` answers it and the session goes on (see the sign in
+  below). The watch's own messages on the way
   are stored and skipped. Every message is stored as it arrives (`WatchStore.addRaw`), so an early end keeps what came.
 * **Storage (schema 9, only adds):** `watch_raw` (session start in ms, place in the session, device, type, the whole
   message, captured) keeps every message as it came, also two equal ones; `watch_devices`; and the rows worked out from
@@ -746,12 +747,31 @@ read, no Device Information or Battery service, silent until asked).
 * The notes also name `0x0506` "movement samples", nearly the same as `0x0978` without sleep; it is not asked for (it could
   count steps twice).
 * The watch drops a write that comes while it is busy, so each request waits for its answer.
-* **Flagged for the owner:** the watch can send a challenge (`0x0128`, part `0x0122`: address and 16 random bytes). The
-  answer is SHA-1 over the challenge, the address and a fixed secret. The secret is public only as a string constant in
-  Gadgetbridge's `AuthenticationHandler.java` (AGPL). A single constant is most likely a protocol fact rather than code, but
-  it is not in this build until the owner decides. Gadgetbridge's normal sync never answers a challenge (its handler is
-  never reached), so a sync most likely works without it; if the watch asks, the session ends with "The watch asked for a
-  sign in that this version cannot answer yet".
+* **Sign in** (`core/withings/SignIn`). The owner's watch (Steel HR, nightly 1.99, 3 November) answered our hello at once
+  with a challenge instead of the hello answer: message `0x0128`, 44 bytes, one part `0x0122`. So the sign in is needed for
+  every sync. Facts (the owner decided on 3 November to use the public secret as a protocol fact, see NOTICE):
+  * Part `0x0122` (challenge): a length byte and the watch's Bluetooth address as text (`XX:XX:XX:XX:XX:XX`, 17
+    characters), then a length byte and 16 random bytes. That is 4 + 35 bytes, exactly the 44 byte message seen.
+  * The proof is SHA-1 over the challenge bytes, then the address text as the watch sent it, then the fixed secret
+    `2EM5zNP37QzM00hmP6BFTD92nG15XwNd` (32 ASCII characters), simply one after the other.
+  * The answer is again message `0x0128` with two parts: `0x0123` (a length byte, 20, then the proof) and `0x0122` with
+    the watch's address text and 16 random bytes of our own (69 bytes in all with a 17 character address).
+  * The watch then sends the answer to the hello (`0x0101`), which may hold part `0x0123` with its own proof for our
+    challenge (SHA-1 over our bytes, the address and the same secret). When it is there and wrong, the session ends ("The
+    watch answered the sign in wrongly"); when it is missing, the session goes on, as Gadgetbridge does.
+  * What a refusal looks like is not documented. The session counts as refused (plain sentence "The watch did not accept the
+    sign in") when, after our answer, the hello answer does not come within 5 s, the watch asks again, or it closes the
+    link. A challenge of another layout ends the session as before ("a sign in of a kind this version does not know").
+  * Sources: Gadgetbridge's Withings Steel HR support (AGPL), files `AuthenticationHandler.java` (the secret, what is
+    hashed in which order, our own challenge back, the check of the watch's proof), `Challenge.java` and
+    `ChallengeResponse.java` (the part layouts), `WithingsStructureType.java` (parts 290 = `0x0122`, 291 = `0x0123`) and
+    `WithingsMessageType.java` (296 = `0x0128`), read on the GitHub mirror of `Freeyourgadget/Gadgetbridge` (master, 3
+    November 2026). Gadgetbridge answers the challenge after its hello on every connection that is not the first pairing,
+    then syncs. No code was copied or translated; `SignIn` is our own. No public example pair (challenge with its proof)
+    was found, so the JVM test checks against values worked out outside this repository.
+  * The log names only that a sign in was answered, its length, whether the address in the challenge is the connected one,
+    and whether the watch's proof was right; never the address, the bytes or the secret. The challenge itself is stored in
+    `watch_raw` like every message from the watch (it holds no health value); our answer is not stored.
 * Heart rate outside workouts seems to be one reading every 30 minutes by default, continuous during workouts.
 * Unknown: whether the watch drops records once one app synced them (requests ask "since a time", which suggests it keeps
   them for both apps), whether a workout's steps are also in the normal records, and the distance unit (shown as metres).

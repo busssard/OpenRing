@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * The Withings Steel HR's message and part types and the requests this app sends (issue #251, phase 1b). The numbers
  * are protocol facts from public discussions, written down in our own words in docs/ARCHITECTURE.md; nothing here is
- * copied code. Only requests that read or set the time are sent: no alarms, screens, user data or notifications, so
+ * copied code. Only requests that read, sign in or set the time are sent: no alarms, screens, user data or notifications, so
  * the watch's set up from the Withings app stays as it is.
  */
 public final class Proto {
@@ -16,7 +16,7 @@ public final class Proto {
     public static final int HELLO = 0x0101;
     /** Connect, sent once after the hello (the Withings app does the same). */
     public static final int CONNECT = 0x0111;
-    /** The watch asks the app to prove it knows a secret (see {@link #CHALLENGE_PART}); this app cannot answer it. */
+    /** The sign in: the watch asks the app to prove it knows a secret, and the app answers with the same type ({@link SignIn}). */
     public static final int CHALLENGE = 0x0128;
     /** Sync done: always the last message of a session, the notes say the watch stops answering without it. */
     public static final int SYNC_DONE = 0x0115;
@@ -32,7 +32,10 @@ public final class Proto {
     public static final int HELLO_REPLY = 0x0101;
     public static final int HELLO_APP = 0x012a;
     public static final int HELLO_OS = 0x0928;
+    /** A challenge: address text and random bytes, each with a length byte first (the watch's, and ours back). */
     public static final int CHALLENGE_PART = 0x0122;
+    /** The proof for a challenge: a length byte, then the SHA-1 (ours in the answer, the watch's in its hello answer). */
+    public static final int CHALLENGE_ANSWER = 0x0123;
     public static final int TIME = 0x0501;
     public static final int BATTERY_PART = 0x0504;
     public static final int SINCE = 0x0506;
