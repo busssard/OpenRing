@@ -1,5 +1,6 @@
 package app.openring.core.analysis;
 
+import app.openring.core.InputLimit;
 import app.openring.core.Texts;
 
 import java.util.Locale;
@@ -126,8 +127,8 @@ public final class WalkText {
      */
     public static String stepLine(double stepLength, boolean demo, boolean hasHeight, int heightCm) {
         String len = "Steps of " + fmt(stepLength, 2) + " m: 0.41 × ";
-        if (demo) return len + "175 cm, a usual height (demo).";
+        if (demo) return len + InputLimit.HEIGHT_CM.def + " cm, a usual height (demo).";
         if (hasHeight) return len + "your height of " + heightCm + " cm from the profile.";
-        return len + "175 cm, a usual height. Enter yours in Settings, Profile and goals for a truer map.";
+        return len + InputLimit.HEIGHT_CM.def + " cm, a usual height. Enter yours in Settings, Profile and goals for a truer map.";
     }
 }

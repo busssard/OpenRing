@@ -1833,6 +1833,9 @@ public class FinderTest {
             eq("step line: height from the profile", WalkText.stepLine(0.6560, false, true, 160), "Steps of 0.66 m: 0.41 × your height of 160 cm from the profile.");
             eq("step line: no height entered", WalkText.stepLine(0.7175, false, false, 0),
                     "Steps of 0.72 m: 0.41 × 175 cm, a usual height. Enter yours in Settings, Profile and goals for a truer map.");
+            check("step line: no height entered names the profile default (core/InputLimit, issue #322)",
+                    WalkText.stepLine(0.7175, false, false, 0).contains(" " + app.openring.core.InputLimit.HEIGHT_CM.def + " cm, a usual height")
+                    && WalkText.stepLine(0.7175, true, false, 0).contains(" " + app.openring.core.InputLimit.HEIGHT_CM.def + " cm, a usual height"));
             Locale.setDefault(Locale.GERMANY);
             eq("numbers in the phone's language", WalkText.stepLine(0.7175, false, false, 0).substring(0, 13), "Steps of 0,72");
         } finally {

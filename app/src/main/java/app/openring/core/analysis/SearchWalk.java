@@ -1,5 +1,6 @@
 package app.openring.core.analysis;
 
+import app.openring.core.InputLimit;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -89,7 +90,7 @@ public final class SearchWalk {
     private final ArrayDeque<double[]> recent = new ArrayDeque<double[]>();
     private boolean upright;
     private long headingAt = Long.MIN_VALUE;
-    private double stepLength = StepDetector.stepLength(175), x, y;
+    private double stepLength = StepDetector.stepLength(InputLimit.HEIGHT_CM.def), x, y;
     private int steps;
 
     public SearchWalk() {
