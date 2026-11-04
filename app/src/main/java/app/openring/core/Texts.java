@@ -69,7 +69,7 @@ public final class Texts {
     public static final String SAVING_AUTO = "An automatic backup is being saved, this can take a minute.";
 
     /** A backup or export asked for while another one, or the automatic backup, is saved (issue #222). */
-    public static final String SAVE_BUSY = "A backup is being saved. Try again when it is done.";
+    public static final String SAVE_BUSY = "A file is being saved. Try again when it is done.";
 
     /** Live could not get the ring within 10 seconds: a sync, a game or Delete all local data holds it (issue #43). */
     public static final String LIVE_BUSY = "The ring is busy right now (a sync or another task). Try again in a moment.";

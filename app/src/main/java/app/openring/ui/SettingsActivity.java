@@ -511,11 +511,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
         saveNote.setPadding(0, Ui.dp(this, 6), 0, 0);
         file.addView(saveNote);
         file.addView(Ui.gap(this, 6));
-        file.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself. The full backup also holds your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
-        // a saved key this phone cannot read: backups are still saved, without it (issue #288)
         if (p.keyState() == app.openring.core.KeyState.UNREADABLE) {
-            file.addView(Ui.gap(this, 6));
+            // a saved key this phone cannot read: backups are still saved, without it (issue #288); the sentence about the
+            // key in the file would not be true then
             file.addView(Ui.text(this, app.openring.core.KeyState.BACKUP_NO_KEY, 13, Ui.WARN, Ui.REGULAR));
+            file.addView(Ui.text(this, app.openring.core.KeyState.BACKUP_SETTINGS_ONLY, 12, Ui.TEXT_3, Ui.REGULAR));
+        } else {
+            file.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself. The full backup also holds your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
         }
         root.addView(file);
 
@@ -2485,6 +2487,17 @@ public final class SettingsActivity extends Activity implements RingManager.List
             note.setVisibility(line == null ? View.GONE : View.VISIBLE);
         }
         for (View row : new View[] {saveRow, exportRow}) if (row != null) row.setAlpha(saving ? 0.4f : 1f);
+        // the automatic backup does not tell this screen when it ends: look again every few seconds while it holds the lock
+        if (saving && savingLine == null && saveNote != null && !recheckPosted) {
+            recheckPosted = true;
+            saveNote.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    recheckPosted = false;
+                    if (!isFinishing() && !isDestroyed()) showJobState();
+                }
+            }, 5000);
+        }
         boolean analysing = LogActivity.REPAIR.running();
         if (reanalyseNote != null) reanalyseNote.setVisibility(analysing ? View.VISIBLE : View.GONE);
         if (reanalyseButton != null) reanalyseButton.setAlpha(analysing ? 0.4f : 1f);
@@ -2591,6 +2604,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         new SaveTask(getApplicationContext(), uri, code, !free).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
+    /** A look again at the automatic backup's line is waiting (see {@link #showJobState}). */
+    private boolean recheckPosted;
+
     /** What the running save of this screen writes, for its line; null when the automatic backup holds {@link AutoBackup#RUN}. */
     static volatile String savingLine;
 
@@ -2621,11 +2637,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         @Override
         protected String doInBackground(Void... v) {
             if (busy) {
-                try {
-                    android.provider.DocumentsContract.deleteDocument(ctx.getContentResolver(), uri);
-                } catch (Exception x) {
-                    RingManager.get(ctx).log("the empty file could not be removed: " + x);
-                }
+                // only a new, empty file goes: a file the person picked to replace is not opened and stays as it was
+                removeIfEmpty();
                 return Texts.SAVE_BUSY;
             }
             try {
@@ -2636,39 +2649,82 @@ public final class SettingsActivity extends Activity implements RingManager.List
             }
         }
 
-        private String save() {
-            final boolean[] withKey = {true};
-            app.openring.core.FileSave.Outcome o = app.openring.core.FileSave.save(new app.openring.core.FileSave.Target() {
-                @Override
-                public OutputStream open() throws Exception {
-                    return ctx.getContentResolver().openOutputStream(uri);
+        /**
+         * Removes the picked file only when it is empty (the new file Android made for the picker): a file the person
+         * picked to replace, which was never opened, stays as it was (review of #340).
+         */
+        private void removeIfEmpty() {
+            android.database.Cursor cur = null;
+            try {
+                cur = ctx.getContentResolver().query(uri, new String[] {android.provider.DocumentsContract.Document.COLUMN_SIZE}, null, null, null);
+                if (cur == null || !cur.moveToFirst() || cur.isNull(0) || cur.getLong(0) != 0) {
+                    RingManager.get(ctx).log("the picked file was not opened and stays as it was");
+                    return;
                 }
+                android.provider.DocumentsContract.deleteDocument(ctx.getContentResolver(), uri);
+            } catch (Exception x) {
+                RingManager.get(ctx).log("the empty file could not be removed: " + x);
+            } finally {
+                if (cur != null) cur.close();
+            }
+        }
 
-                @Override
-                public boolean delete() throws Exception {
-                    return android.provider.DocumentsContract.deleteDocument(ctx.getContentResolver(), uri);
-                }
-            }, new app.openring.core.FileSave.Body() {
-                @Override
-                public void write(OutputStream os) throws Exception {
-                    if (code == EXPORT_CSV) Exporter.dailyCsv(ctx, os);
-                    else if (backup) withKey[0] = Backup.write(ctx, os, code == BACKUP_FULL);
-                    else Exporter.database(ctx, os);
-                }
-            });
+        private String save() {
             String what = backup ? "backup" : "export";
+            // the checked copy of the history first, before the picked file is opened (review of #340): a copy that fails
+            // its check leaves that file as it was
+            Backup.Begun begun = null;
+            java.io.File snap = null;
+            try {
+                if (backup) begun = Backup.begin(ctx, code == BACKUP_FULL);
+                else if (code == EXPORT_DB) snap = Exporter.snapshot(ctx);
+            } catch (Exception e) {
+                Backup.release(begun);
+                failed = true;
+                removeIfEmpty();
+                if (e instanceof Exporter.NotSaved) {
+                    // the copy of the history did not pass its check (issue #115): nothing was written
+                    RingManager.get(ctx).log(what + " not saved: " + e.getMessage());
+                    shortText = Texts.saveFailedToast(backup, false);
+                    return Texts.notChecked(backup);
+                }
+                RingManager.get(ctx).log(what + " failed before the file was opened: " + android.util.Log.getStackTraceString(e));
+                shortText = Texts.saveFailedToast(backup, false);
+                return Texts.saveFailed(backup, false);
+            }
+            final Backup.Begun b = begun;
+            final java.io.File copy = snap;
+            final boolean[] withKey = {true};
+            app.openring.core.FileSave.Outcome o;
+            try {
+                o = app.openring.core.FileSave.save(new app.openring.core.FileSave.Target() {
+                    @Override
+                    public OutputStream open() throws Exception {
+                        return ctx.getContentResolver().openOutputStream(uri);
+                    }
+
+                    @Override
+                    public boolean delete() throws Exception {
+                        return android.provider.DocumentsContract.deleteDocument(ctx.getContentResolver(), uri);
+                    }
+                }, new app.openring.core.FileSave.Body() {
+                    @Override
+                    public void write(OutputStream os) throws Exception {
+                        if (code == EXPORT_CSV) Exporter.dailyCsv(ctx, os);
+                        else if (b != null) withKey[0] = Backup.write(b, os);
+                        else Exporter.stream(copy, os);
+                    }
+                });
+            } finally {
+                Backup.release(b);
+                Exporter.release(copy);
+            }
             if (o.ok()) {
                 if (!withKey[0]) RingManager.get(ctx).log("backup saved without the ring key: this phone cannot read it (" + Prefs.keyError() + ")");
                 return backup ? (withKey[0] ? "Backup saved" : app.openring.core.KeyState.BACKUP_SAVED_NO_KEY) : "Exported";
             }
             failed = true;
             if (o.removeError != null) RingManager.get(ctx).log("the " + what + " file that was started could not be removed: " + o.removeError);
-            if (o.error instanceof Exporter.NotSaved) {
-                // the copy of the history did not pass its check (issue #115): nothing was written
-                RingManager.get(ctx).log(what + " not saved: " + o.error.getMessage());
-                shortText = Texts.saveFailedToast(backup, false);
-                return Texts.notChecked(backup);
-            }
             // the raw reason goes to the log, the screen gets a sentence that says what to do (issue #89)
             RingManager.get(ctx).log(what + " failed after " + o.bytes + " bytes" + (o.removed ? ", the file was removed" : o.leftOver ? ", the incomplete file stays" : "")
                     + ": " + android.util.Log.getStackTraceString(o.error));

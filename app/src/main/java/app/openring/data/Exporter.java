@@ -210,7 +210,7 @@ public final class Exporter {
         public void onCorruption(SQLiteDatabase db) {}
     };
 
-    static void stream(File f, OutputStream os) throws IOException {
+    public static void stream(File f, OutputStream os) throws IOException {
         InputStream in = new FileInputStream(f);
         try {
             byte[] buf = new byte[64 * 1024];

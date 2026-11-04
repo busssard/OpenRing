@@ -47,6 +47,7 @@ public final class FileSave {
         }
     }
 
+    /** Writes the file; an {@link Error} from {@code b} is thrown on after the started file was removed. */
     public static Outcome save(Target t, Body b) {
         final Outcome o = new Outcome();
         OutputStream raw;
@@ -73,11 +74,16 @@ public final class FileSave {
                 o.bytes += len;
             }
         };
+        // also an Error (out of memory) removes the started file first, then goes on to the caller
+        Error fatal = null;
         try {
             b.write(os);
             os.flush();
         } catch (Exception e) {
             o.error = e;
+        } catch (Error e) {
+            fatal = e;
+            o.error = new IOException(e.toString());
         }
         try {
             os.close();
@@ -93,6 +99,7 @@ public final class FileSave {
             o.removeError = String.valueOf(e);
         }
         o.leftOver = !o.removed && o.bytes > 0;
+        if (fatal != null) throw fatal;
         return o;
     }
 }

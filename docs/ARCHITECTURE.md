@@ -274,8 +274,10 @@ history had, before anything is written to the file the person picked; otherwise
 
 Saving a backup or export from Settings (issue #222) runs in `SettingsActivity.SaveTask`, which holds only the application
 and `AutoBackup.RUN` (so one file at a time, also with the automatic backup; the buttons fade and a line says what is
-saved, a tap says why nothing starts). `core/FileSave` writes the picked file and, after any failure (also past the first
-byte), removes it; when it cannot be removed and holds something, the sentence calls it incomplete. A file the app does not
+saved, a tap says why nothing starts). The checked copy of the history is made before the picked file is opened, so a copy
+that fails its check leaves a file picked to be replaced as it was; a file that comes back while the automatic backup runs
+is removed only when it is empty. `core/FileSave` writes the picked file and, after any failure (also past the first
+byte, also an Error), removes it; when it cannot be removed and holds something, the sentence calls it incomplete. A file the app does not
 live to finish (Android ended it) stays cut off; restoring it says it is damaged and changes nothing. The zip is written at
 `Deflater.BEST_SPEED`: packing is about three times faster than at the default level (the whole backup about twice), the file about a tenth larger, read the same by every version.
 
@@ -285,7 +287,10 @@ Restoring such a file brings settings and history and never touches a key on the
 (address, serial, model, firmware) comes along only onto a phone without a key, since it belongs to the key. Without a key on
 the phone, Setup stays on its page and says to enter the key ("This copy has no ring key, ..."), `setup_done` is not set. An
 older version reads no key from the file and refuses it whole with "The backup holds no valid ring key." before it changes
-anything. Going back to a phone copy (`AutoBackup.goBack`) needs no key either.
+anything. Going back to a phone copy (`AutoBackup.goBack`) needs no key either. An automatic copy without the key is named
+`...-nokey.zip` (`Backups.withoutKey`), and `Backups.folderToDelete` never deletes the newest copy with the key for one
+without it: it stays beside the kept copies until a copy with the key is written again (review of #340). Older versions do
+not know the `-nokey` name and leave those files alone.
 
 ## Automatic backups (issue #242)
 

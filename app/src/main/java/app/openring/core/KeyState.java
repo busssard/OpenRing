@@ -72,12 +72,15 @@ public final class KeyState {
     public static final String BACKUP_NO_KEY = "This phone cannot read the saved ring key, so backups are saved without it. "
             + "After restoring one, enter your key in Setup.";
 
+    /** Under the backup buttons in that state: what "Key and settings only" then holds (review of #340). */
+    public static final String BACKUP_SETTINGS_ONLY = "Key and settings only then saves your settings alone, without the key.";
+
     /** A backup file saved in Settings while the key cannot be read (issue #288). */
     public static final String BACKUP_SAVED_NO_KEY = "Backup saved, without the ring key this phone cannot read.";
 
     /** Every text above, for the tests (plain, no dashes as punctuation). */
     public static String[] texts() {
         return new String[]{NO_KEY_RAW, UNREADABLE_RAW, PLAIN, STATUS, SYNC_TITLE, SYNC_TEXT, BUTTON, SETUP_TITLE, SETUP_TEXT, SETTINGS_TEXT, BACKUP_NO_KEY,
-            BACKUP_SAVED_NO_KEY};
+            BACKUP_SETTINGS_ONLY, BACKUP_SAVED_NO_KEY};
     }
 }

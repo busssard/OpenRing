@@ -825,6 +825,7 @@ public class PipelineTest {
         pairingPrefs218();
         keyUnreadable199();
         backupNoKey288();
+        rotationNoKey288();
         backupSpeed222();
         swapDuringSync219(full.toByteArray());
         syncDating220();
@@ -6491,6 +6492,60 @@ public class PipelineTest {
             version242(0);
             restart242();
             rmTree(a.dir);
+        }
+    }
+
+    /**
+     * Review of #340: while the key cannot be read every automatic run writes a copy without it; the rotation must never
+     * delete the last copy that still holds the key, or the person could lose the only place the key is left.
+     */
+    static void rotationNoKey288() throws Exception {
+        Context c = freshDb("openring288-rot");
+        java.io.File fdir = Files.createTempDirectory("folder288").toFile();
+        try {
+            add58(Db.get(c), 1, T58, 3, 0);
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            p.saveKey(KEY242);
+            p.setSetupDone(true);
+            Folder242 folder = new Folder242(fdir);
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/R288", "R288");
+            p.setBackupDays(1);
+            p.setBackupKeep(3);
+            long day = 86400L, now = 1780000000L;
+            List<String> keyed = new ArrayList<String>();
+            for (int i = 0; i < 4; i++, now += 2 * day) {
+                app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+                check("#288 rotation: a copy with the key, run " + i, o.error == null && o.written.size() == 1 && !app.openring.core.Backups.keyless(o.written.get(0)), o.error);
+                keyed.add(o.written.get(0));
+            }
+            check("#288 rotation: 3 copies with the key kept", folder.list().size() == 3 && !folder.list().contains(keyed.get(0)), folder.list().toString());
+            String lastKeyed = keyed.get(keyed.size() - 1);
+            unreadable288(c);
+            List<String> keyless = new ArrayList<String>();
+            for (int i = 0; i < 5; i++, now += 2 * day) {
+                app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+                check("#288 rotation: a copy without the key, named so, run " + i, o.error == null && o.written.size() == 1
+                        && app.openring.core.Backups.keyless(o.written.get(0)) && !zipJson288(Files.readAllBytes(new java.io.File(fdir, o.written.get(0)).toPath())).has("key"),
+                        o.error + " " + o.written);
+                keyless.add(o.written.get(0));
+            }
+            List<String> left = new ArrayList<String>(folder.list());
+            java.util.Collections.sort(left);
+            check("#288 rotation: after more runs than kept copies the newest copy with the key is still there", left.contains(lastKeyed), left.toString());
+            check("#288 rotation: beside it the 3 newest without the key, the rest went", left.size() == 4 && left.containsAll(keyless.subList(2, 5)), left.toString());
+            Context fresh = freshDb("openring288-rot-restore");
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(fresh, new java.io.ByteArrayInputStream(Files.readAllBytes(new java.io.File(fdir, lastKeyed).toPath())));
+            check("#288 rotation: the kept copy gives the key back", r.ok && Arrays.equals(app.openring.data.Prefs.of(fresh).loadKey(), KEY242), r.message);
+            rmTree(fresh.dir);
+            // the key is entered again: copies with the key, the rotation as before (the old copy with the key may go now)
+            Db.get(c);
+            app.openring.data.Prefs.of(c).saveKey(KEY242);
+            app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+            check("#288 rotation: with the key readable again a copy with the key, 3 kept, the old one with the key gone",
+                    o.error == null && !app.openring.core.Backups.keyless(o.written.get(0)) && folder.list().size() == 3 && !folder.list().contains(lastKeyed), folder.list().toString());
+        } finally {
+            rmTree(fdir);
+            rmTree(c.dir);
         }
     }
 

@@ -59,16 +59,49 @@ public final class Backup {
      * nothing is written.
      */
     public static boolean write(Context c, OutputStream os, boolean withHistory) throws IOException {
+        Begun b = begin(c, withHistory);
+        try {
+            return write(b, os);
+        } finally {
+            release(b);
+        }
+    }
+
+    /**
+     * A backup's first half (review of #340): the key read and, for a full backup, the checked copy of the history made,
+     * before the file the person picked is opened. A copy that fails its check ({@link Exporter.NotSaved}) then leaves
+     * that file as it was. Released with {@link #release(Begun)}.
+     */
+    public static final class Begun {
+        final Prefs p;
+        final byte[] key;
+        File snap;
+
+        Begun(Prefs p, byte[] key) {
+            this.p = p;
+            this.key = key;
+        }
+    }
+
+    public static Begun begin(Context c, boolean withHistory) throws IOException {
         Prefs p = Prefs.of(c);
         byte[] key = p.loadKey();
         if (key == null && !p.hasKey()) throw new IOException("no ring key saved on this phone");
-        File snap = withHistory ? Exporter.snapshot(c) : null;
-        try {
-            write(p, key, os, snap);
-        } finally {
-            Exporter.release(snap);
-        }
-        return key != null;
+        Begun b = new Begun(p, key);
+        b.snap = withHistory ? Exporter.snapshot(c) : null;
+        return b;
+    }
+
+    /** The second half: the file itself. Returns whether the key is in it (see {@link #write(Context, OutputStream, boolean)}). */
+    public static boolean write(Begun b, OutputStream os) throws IOException {
+        write(b.p, b.key, os, b.snap);
+        return b.key != null;
+    }
+
+    public static void release(Begun b) {
+        if (b == null) return;
+        Exporter.release(b.snap);
+        b.snap = null;
     }
 
     /**

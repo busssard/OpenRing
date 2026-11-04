@@ -91,7 +91,8 @@ public final class AutoBackup {
             return o;
         }
         if (!RUN.start()) {
-            o.skipped = "a backup is already running";
+            // a backup or export saved from Settings holds it too (issue #222); BackupJob logs this, the next run tries again
+            o.skipped = "a backup or export is already being saved, the next run tries again";
             return o;
         }
         try {
@@ -147,10 +148,12 @@ public final class AutoBackup {
     static String write(Context c, Prefs p, Folder folder, String name, File copy, long now, boolean regular, Outcome o, Analyzer.Log log) {
         String err = null;
         File snap = null;
+        byte[] key = p.loadKey();
+        // a copy without the key is named so (review of #340): the rotation then never deletes the last copy with the key
+        if (key == null && p.hasKey()) name = Backups.withoutKey(name);
         String partial = name + Backups.PART;
         boolean created = false;
         try {
-            byte[] key = p.loadKey();
             if (key == null && !p.hasKey()) throw new IOException("no ring key saved on this phone");
             // a saved key this phone cannot read (issue #199): the copy is made without it (issue #288), the history is
             // what matters most then. Backups.KEY stays only as the reason older versions stored
