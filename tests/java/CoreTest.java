@@ -950,6 +950,7 @@ public class CoreTest {
         vo2max();
         longWake();
         nightNumbers();
+        stageRuns189();
         timeline();
         activityWeek();
         activityDay();
@@ -5776,6 +5777,133 @@ public class CoreTest {
         check("#110 period without codes: no ring run", plain.ringRun() == null);
         plain.codes = new int[] {1, 2};
         check("#110 period without codesEnd: codes end at its end", plain.ringRun().end == 600 && plain.ringRun().start == 540);
+    }
+
+    /** Counts of each stage code (0 to 4) in {@code a}. */
+    static int[] codeCounts(int[] a) {
+        int[] n = new int[5];
+        for (int x : a) if (x >= 0 && x < 5) n[x]++;
+        return n;
+    }
+
+    /** {@code cells} steps of 30 s, all {@code code}. */
+    static int[] fill(int cells, int code) {
+        int[] a = new int[cells];
+        java.util.Arrays.fill(a, code);
+        return a;
+    }
+
+    /**
+     * Issue #189: two ring stage runs with a break of an hour or less between them are one night, and both runs keep
+     * their stages at their own times (before, the second run's stages were dropped). The break is awake where the
+     * ring's own sleep state says awake and has no stage data otherwise; it is never made asleep.
+     */
+    static void stageRuns189() {
+        double day = 1_760_000_000L - 1_760_000_000L % 86400;
+        double a0 = day - 3600, a1 = day + 2 * 3600, b0 = day + 2.5 * 3600, b1 = day + 6 * 3600; // 23:00 to 02:00, 02:30 to 06:00
+        // the issue's case: A 3 hours light, a break of 30 minutes, B 3.5 hours deep, no sleep state
+        List<NightFinder.RingRun> runs = new ArrayList<NightFinder.RingRun>();
+        runs.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        runs.add(new NightFinder.RingRun(b0, b1, fill(420, 1)));
+        List<NightFinder.Period> ps = NightFinder.find(new ArrayList<double[]>(), runs, new TS(), new TS());
+        eq("#189 two runs 30 min apart: one night", ps.size(), 1);
+        if (ps.size() == 1) {
+            NightFinder.Period q = ps.get(0);
+            check("#189 the night runs from the first run's start to the second run's end", near(q.start, a0) && near(q.end, b1), q.start + " " + q.end);
+            int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+            int[] n = codeCounts(al);
+            check("#189 both runs' stages kept: 3 h light and 3.5 h deep", n[2] == 360 && n[1] == 420, java.util.Arrays.toString(n));
+            check("#189 without sleep state the break has no stage data (not awake, not asleep)", n[0] == 60 && n[4] == 0, java.util.Arrays.toString(n));
+            check("#189 light at the first run's times, deep at the second's", al[(int) ((a0 + 60 - q.start) / 30)] == 2
+                    && al[(int) ((a1 - 60 - q.start) / 30)] == 2 && al[(int) ((b0 + 60 - q.start) / 30)] == 1 && al[(int) ((b1 - 60 - q.start) / 30)] == 1);
+            check("#189 the break has no stages from the ring", al[(int) ((day + 2.25 * 3600 - q.start) / 30)] == 0);
+            check("#189 no wake up added without sleep state", q.awake.isEmpty(), q.awake.size());
+            Night night = NightAnalyzer.analyze(nightInput(q, al));
+            check("#189 the ring's stages are used for the whole night (they cover 93%)", "ring".equals(night.stageSource), night.stageSource);
+            check("#189 180 min light, 210 min deep", near(night.lightMin, 180) && near(night.deepMin, 210), night.lightMin + " " + night.deepMin);
+        }
+
+        // with the ring's sleep state: asleep through both runs, awake 02:05 to 02:20 inside the break
+        TS st = new TS();
+        for (int m = -60; m < 6 * 60; m += 5) st.add(day + m * 60, m >= 125 && m < 140 ? 0 : 1);
+        TS support = new TS();
+        for (int i = 0; i < st.size(); i++) support.add(st.t(i), 1);
+        List<NightFinder.Period> ws = NightFinder.find(new ArrayList<double[]>(), runs, st, support);
+        eq("#189 with sleep state: one night", ws.size(), 1);
+        if (ws.size() == 1) {
+            NightFinder.Period q = ws.get(0);
+            int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+            int[] n = codeCounts(al);
+            check("#189 with sleep state: both runs kept", n[2] == 360 && n[1] == 420, java.util.Arrays.toString(n));
+            check("#189 with sleep state: the 15 min the ring says awake are awake", n[4] == 30
+                    && al[(int) ((day + 2 * 3600 + 6 * 60 - q.start) / 30)] == 4 && al[(int) ((day + 2 * 3600 + 19 * 60 - q.start) / 30)] == 4, java.util.Arrays.toString(n));
+            check("#189 with sleep state: the rest of the break is asleep without a stage, so it stays without data", n[0] == 30
+                    && al[(int) ((day + 2 * 3600 + 60 - q.start) / 30)] == 0 && al[(int) ((day + 2 * 3600 + 25 * 60 - q.start) / 30)] == 0, java.util.Arrays.toString(n));
+            check("#189 with sleep state: the wake up is the ring's own (kept by every detail level)", near(awakeMin(q), 15)
+                    && near(q.awake.get(0)[0], day + 2 * 3600 + 5 * 60), awakeMin(q));
+            NightAnalyzer.Input in = nightInput(q, al);
+            in.ringAwake.addAll(q.awake);
+            Night night = NightAnalyzer.analyze(in);
+            check("#189 with sleep state: one wake up of 15 min counted", "ring".equals(night.stageSource) && night.awakenings == 1 && near(night.wasoMin, 15),
+                    night.awakenings + " " + night.wasoMin);
+        }
+
+        // three runs, each 20 min apart: all three kept
+        List<NightFinder.RingRun> three = new ArrayList<NightFinder.RingRun>();
+        three.add(new NightFinder.RingRun(a0, a0 + 7200, fill(240, 2)));
+        three.add(new NightFinder.RingRun(a0 + 8400, a0 + 15600, fill(240, 1)));
+        three.add(new NightFinder.RingRun(a0 + 16800, a0 + 24000, fill(240, 3)));
+        List<NightFinder.Period> ts = NightFinder.find(new ArrayList<double[]>(), three, new TS(), new TS());
+        eq("#189 three runs 20 min apart: one night", ts.size(), 1);
+        if (ts.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(ts.get(0).ringRun(), ts.get(0).start, ts.get(0).end));
+            check("#189 three runs: every run's stages kept, the two breaks without data", n[2] == 240 && n[1] == 240 && n[3] == 240 && n[0] == 80,
+                    java.util.Arrays.toString(n));
+        }
+
+        // a ring run inside a bedtime period, then a second run 30 min after it: both kept, the bedtime's edges without data
+        List<double[]> beds = new ArrayList<double[]>();
+        beds.add(new double[] {a0 - 600, a1 + 600});
+        List<NightFinder.Period> bs = NightFinder.find(beds, runs, new TS(), new TS());
+        eq("#189 bedtime, run and a second run: one night", bs.size(), 1);
+        if (bs.size() == 1) {
+            NightFinder.Period q = bs.get(0);
+            int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+            int[] n = codeCounts(al);
+            check("#189 bedtime and two runs: both runs at their times (#110 kept)", n[2] == 360 && n[1] == 420 && al[(int) ((a0 + 60 - q.start) / 30)] == 2
+                    && al[(int) ((a0 - 300 - q.start) / 30)] == 0 && near(q.start, a0 - 600) && near(q.end, b1), java.util.Arrays.toString(n));
+        }
+
+        // a run the ring sent again (overlapping the first one): unchanged, the first run's stages stay (issue #68 decides odd pages)
+        List<NightFinder.RingRun> again = new ArrayList<NightFinder.RingRun>();
+        again.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        again.add(new NightFinder.RingRun(a0 + 3600, a1 + 3600, fill(360, 1)));
+        List<NightFinder.Period> os = NightFinder.find(new ArrayList<double[]>(), again, new TS(), new TS());
+        if (os.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(os.get(0).ringRun(), os.get(0).start, os.get(0).end));
+            check("#189 overlapping runs: unchanged, the first run's stages only", n[2] == 360 && n[1] == 0, java.util.Arrays.toString(n));
+        } else {
+            check("#189 overlapping runs: one night", false, os.size());
+        }
+
+        // the two runs with a break of over an hour stay two (outside the night window, no clock): unchanged
+        List<NightFinder.RingRun> far = new ArrayList<NightFinder.RingRun>();
+        far.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        far.add(new NightFinder.RingRun(a1 + 3700, a1 + 3700 + 12600, fill(420, 1)));
+        eq("#189 a break of over an hour without a night wake: still two sleeps", NightFinder.find(new ArrayList<double[]>(), far, new TS(), new TS()).size(), 2);
+
+        // the awake parts from the ring's sleep state: samples cover up to the next one, at most 5 minutes
+        TS s2 = new TS();
+        s2.add(100, 1);
+        s2.add(400, 0);
+        s2.add(700, 0);
+        s2.add(1000, 1);
+        s2.add(2000, 0);
+        List<double[]> aw = NightFinder.stateAwake(s2, 0, 2100);
+        check("#189 state awake: 400 to 1000 and 2000 to 2100", aw.size() == 2 && near(aw.get(0)[0], 400) && near(aw.get(0)[1], 1000)
+                && near(aw.get(1)[0], 2000) && near(aw.get(1)[1], 2100), aw.size());
+        check("#189 state awake: clipped to the break", NightFinder.stateAwake(s2, 500, 600).size() == 1 && near(NightFinder.stateAwake(s2, 500, 600).get(0)[0], 500));
+        check("#189 state awake: none without state or in an empty break", NightFinder.stateAwake(new TS(), 0, 100).isEmpty() && NightFinder.stateAwake(s2, 600, 600).isEmpty());
     }
 
     static NightAnalyzer.Input nightInput(NightFinder.Period q, int[] stages) {
