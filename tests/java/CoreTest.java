@@ -3385,6 +3385,17 @@ public class CoreTest {
         noLine.setStackTrace(new StackTraceElement[] {new StackTraceElement("app.openring.data.Db", "kv", "Db.java", -1)});
         eq("load note: an own frame without line", LoadNote.error(noLine), "RuntimeException at Db.java");
         eq("load note: none", LoadNote.error(null), "unknown error");
+        // issue #289: the safe form is recognised, a full text an older version stored never is
+        check("load note: the class and place are safe", LoadNote.safe(LoadNote.error(nfe)) && LoadNote.safe("NumberFormatException at Analyzer.java:412")
+                && LoadNote.safe("RuntimeException at Db.java") && LoadNote.safe("OutOfMemoryError") && LoadNote.safe(LoadNote.error(outside)));
+        check("load note: a full text is not safe", !LoadNote.safe("java.lang.NumberFormatException: For input string: \"61.5\"")
+                && !LoadNote.safe("org.json.JSONException: Value 61.5 at hr of type java.lang.Double cannot be converted to JSONObject")
+                && !LoadNote.safe("java.lang.OutOfMemoryError") && !LoadNote.safe("NumberFormatException: 61.5")
+                && !LoadNote.safe("NumberFormatException at Analyzer.java:412 61.5") && !LoadNote.safe("") && !LoadNote.safe(null)
+                && !LoadNote.safe(LoadNote.error(null)));
+        Throwable anon = new RuntimeException("61.5") {};
+        check("load note: an anonymous error class is named by its binary name, no value", LoadNote.error(anon).startsWith("CoreTest$")
+                && !LoadNote.error(anon).contains("61.5") && LoadNote.safe(LoadNote.error(anon)), LoadNote.error(anon));
         String later = LoadNote.line("2026-11-01", "screen time", nfe, "2026-11-02 09:30");
         check("load note: the same failure later is not written again", !LoadNote.differs(ln, later));
         check("load note: another part, date or error is written",

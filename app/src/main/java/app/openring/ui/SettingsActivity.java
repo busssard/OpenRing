@@ -1152,8 +1152,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 try {
                     ScreenUse.collect(SettingsActivity.this, true);
                     Analyzer.run(SettingsActivity.this, null);
-                } catch (Throwable ignored) {
-                    // the analysis rolled back and stores its own error for the data check, also out of memory (issue #230)
+                } catch (Throwable e) {
+                    // the analysis rolled back and stores its own error for the data check, also out of memory (issue #230);
+                    // its class and place only, so the full text goes to the Log tab (issue #289)
+                    logFailure("analysis failed", e);
                 }
                 return null;
             }
@@ -2162,6 +2164,15 @@ public final class SettingsActivity extends Activity implements RingManager.List
         Toast.makeText(getApplicationContext(), m, Toast.LENGTH_LONG).show();
     }
 
+    /** The full text and stack trace of a failure in the Log tab; the data check gets only its class and place (issue #289). Never throws. */
+    void logFailure(String what, Throwable e) {
+        try {
+            RingManager.get(getApplicationContext()).log(what + ": " + android.util.Log.getStackTraceString(e));
+        } catch (Throwable ignored) {
+            // the stored note for the data check is written anyway
+        }
+    }
+
     /** A note: a toast when it fits in two lines, otherwise the small dialog so nothing is cut (issue #89). */
     void say(String m) {
         if (Texts.fitsToast(m)) toast(m);
@@ -2268,7 +2279,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     Analyzer.runAll(SettingsActivity.this, null);
                     return true;
                 } catch (Throwable e) {
-                    // rolled back, also out of memory; the analysis stores its own error for the data check (issue #230)
+                    // rolled back, also out of memory; the analysis stores its own error for the data check (issue #230),
+                    // the full text goes to the Log tab (issue #289)
+                    logFailure("re analyse all failed", e);
                     return false;
                 }
             }

@@ -363,7 +363,9 @@ history had, before anything is written to the file the person picked; otherwise
    age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
    An analysis replaces its nights and days in one transaction (`Db.inTransaction`, issue #230): the screens keep
    reading the old ones (write ahead logging) until the new ones are all stored, and any stop or failure (also out of
-   memory, a full disk or the app being ended) rolls back to them, then `analysis_error` holds the text. Re analyse all
+   memory, a full disk or the app being ended) rolls back to them, then `analysis_error` holds the error's class and
+   first place in Open Ring's code (`core/LoadNote`, never its message, which can hold a value; issue #289; the full error
+   goes to Android's log and the Log tab, and the Data check leaves out a full text an older version stored). Re analyse all
    only writes kv `full_pending` first; the delete of every night and day happens inside that transaction, and a run
    that did not commit is done again by the next analysis. `dated_count`, `event_count`, `analyzed_until` and the rule
    versions are stored in the same commit, so they always describe the stored results.

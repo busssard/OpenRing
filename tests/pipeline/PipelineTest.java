@@ -4705,6 +4705,48 @@ public class PipelineTest {
         }
     }
 
+    /**
+     * Issue #289: a failed analysis stores the error's class and place, never its message (which can hold a stored value),
+     * and the data check never shows a full text an older version stored. Leaves no error behind.
+     */
+    static void analysisError289(Context c, Db db) {
+        final String value = "61.537";
+        java.util.TreeMap<String, String> days = days58(db);
+        Throwable got = null;
+        try {
+            Analyzer.run(c, new Analyzer.Log() {
+                @Override
+                public void log(String m) {
+                    throw new NumberFormatException("For input string: \"" + value + "\"");
+                }
+            });
+        } catch (NumberFormatException e) {
+            got = e;
+        }
+        String stored = db.kv("analysis_error", null);
+        check("#289 a failed analysis reaches the caller with its full message", got != null && got.getMessage().contains(value), got);
+        check("#289 the stored error is the class and its place in the analysis, without the value",
+                stored != null && stored.matches("NumberFormatException at Analyzer\\.java:[0-9]+") && app.openring.core.LoadNote.safe(stored), stored);
+        String text = DataCheck.run(c).text;
+        check("#289 the data check names the class and place, never the value", text.contains("Analysis error: " + stored) && !text.contains(value), text);
+        check("#289 the stored error still means the next sync analyses again", !Analyzer.upToDate(c) && days58(db).equals(days), null);
+
+        // a full text stored by an older version: kept as it is (nothing deleted), but never shown
+        String old = "org.json.JSONException: Value " + value + " at hr of type java.lang.Double cannot be converted to JSONObject";
+        db.put("analysis_error", old);
+        text = DataCheck.run(c).text;
+        check("#289 an older version's text: the data check says so and leaves the text out", text.contains("Analysis error: noted by an older version of the app "
+                + "(its text is left out, it can hold a measured value). The next sync analyses again") && !text.contains(value), text);
+        check("#289 an older version's text is not deleted and still means the next sync analyses again",
+                old.equals(db.kv("analysis_error", null)) && !Analyzer.upToDate(c), db.kv("analysis_error", null));
+        db.put("analysis_error", "java.lang.OutOfMemoryError");
+        check("#289 an older version's text without a message is left out too", DataCheck.run(c).text.contains("Analysis error: noted by an older version"), null);
+
+        Analyzer.run(c, null);
+        check("#289 the next good analysis clears the error, the data check has none", db.kv("analysis_error", null) == null
+                && !DataCheck.run(c).text.contains("Analysis error"), db.kv("analysis_error", null));
+    }
+
     static Analyzer.Log stopAt(final String text) {
         return new Analyzer.Log() {
             @Override
@@ -4790,6 +4832,7 @@ public class PipelineTest {
         // until the stop stayed)
         check("#58 stopped after removing the first stale day: every day as before the run (rolled back)", stopped && mid.equals(before), keys(mid));
         check("#58 the stop is recorded as an analysis error", db.kv("analysis_error", null) != null, db.kv("analysis_error", null));
+        analysisError289(c, db);
         Analyzer.run(c, null);
         check("#58 run again after the stop: the same days and nights as dated right at once",
                 days58(db).equals(refDays) && nights58(db).equals(refNights), diff(days58(db), refDays));
@@ -5526,8 +5569,9 @@ public class PipelineTest {
         check("#230 stopped in week 3: a screen reading meanwhile never sees fewer nights or days", r.looks > 20
                 && r.minNights >= nights0 && r.minDays >= days0, seen230(r, nights0, days0));
         check("#230 stopped in week 3: every old night and day is still there, byte for byte", results139(db).equals(before), firstDiff(results139(db), before));
-        check("#230 stopped in week 3: the error text is stored", String.valueOf(db.kv("analysis_error", null)).contains("stopped for the test"),
-                db.kv("analysis_error", null));
+        check("#230 stopped in week 3: the error's class and place are stored, not its message (#289)",
+                String.valueOf(db.kv("analysis_error", null)).startsWith("Stop")
+                        && !String.valueOf(db.kv("analysis_error", null)).contains("stopped for the test"), db.kv("analysis_error", null));
         check("#230 stopped in week 3: the analysis progress is the one of the stored results", db.kvLong("analyzed_until", -1) == until0,
                 db.kvLong("analyzed_until", -1) + ", before " + until0);
         r.reset();
@@ -5557,7 +5601,7 @@ public class PipelineTest {
         check("#230 out of memory: a screen never sees fewer nights or days", r2.looks > 20 && r2.minNights >= nights0 && r2.minDays >= days0,
                 seen230(r2, nights0, days0));
         check("#230 out of memory: every old night and day is still there", results139(db2).equals(before2), firstDiff(results139(db2), before2));
-        check("#230 out of memory: the error text is stored", String.valueOf(db2.kv("analysis_error", null)).contains("OutOfMemoryError"),
+        check("#230 out of memory: the error's class is stored", String.valueOf(db2.kv("analysis_error", null)).startsWith("OutOfMemoryError"),
                 db2.kv("analysis_error", null));
         check("#230 out of memory: the detail level is still marked as not analysed", db2.kvLong("stage_detail", -1) == detail + 1, db2.kvLong("stage_detail", -1));
         r2.reset();
@@ -8067,6 +8111,8 @@ public class PipelineTest {
             check("#242 the copy fails: the history opens, the reason is kept, the version noted", fo > 0 && fp.beforeUpdateNote() != null
                     && fp.beforeUpdateNote().startsWith("error: ") && fp.beforeUpdateUnseen() && fp.notedVersion() == 43, fp.beforeUpdateNote());
             check("#242 the copy fails: the data check gives the reason", DataCheck.run(fc).text.contains("Last update: no copy, error: "), null);
+            check("#289 the copy fails: the reason is the error's class and place, never its message",
+                    app.openring.core.LoadNote.safe(fp.beforeUpdateNote().substring("error: ".length())), fp.beforeUpdateNote());
             fp.clearBeforeUpdateUnseen();
             check("#242 OK on the main screen's note: it is not shown again, the reason stays for Data check", !fp.beforeUpdateUnseen() && fp.beforeUpdateNote() != null, null);
 
