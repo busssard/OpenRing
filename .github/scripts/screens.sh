@@ -369,6 +369,11 @@ LEFT_DAY=$(date -d '2 days ago' +%F)
 launch --ez left_out true --ei tab 4 --es day "$LEFT_DAY"; shot body-left-out 10
 launch --ei tab 0 --es day "$LEFT_DAY";     shot today-left-out
 launch --es settings advanced;              shot settings-advanced
+# Yesterday off the finger (issue #240), after the left out example for the same reason: unworn leaves out yesterday
+# 00:00 to 21:30 in the demo file (under an hour of ring data is left), then the analysis runs again. Readiness of today
+# leaves Previous day activity out and says why in a card above Contributors
+launch --ez unworn true --ei tab 2;         sleep 12
+swipe_up; swipe_up;                         shot readiness-unworn 2
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then

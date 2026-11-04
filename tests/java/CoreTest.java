@@ -968,6 +968,7 @@ public class CoreTest {
         texts();
         unitTexts();
         scoreLadder();
+        readinessUnworn240();
         movementShares();
         drafts();
         oneRun();
@@ -5460,6 +5461,127 @@ public class CoreTest {
     static Night.Contributor part(Night.Score s, String key) {
         for (Night.Contributor c : s.contributors) if (c.key.equals(key)) return c;
         return null;
+    }
+
+    /** The rule before issue #240: yesterday's activity and the 7 against 28 day balance, every stored day counted. */
+    static Scores.ReadinessInput oldReadinessActivity(double[] active, double[] target, boolean lastIsYesterday) {
+        Scores.ReadinessInput in = new Scores.ReadinessInput();
+        int n = active.length;
+        if (lastIsYesterday && n > 0 && target[n - 1] > 0) in.prevDayActivity = active[n - 1] / target[n - 1];
+        double[] a7 = Arrays.copyOfRange(active, Math.max(0, n - 7), n), a28 = Arrays.copyOfRange(active, Math.max(0, n - 28), n);
+        if (Stats.countFinite(a7) >= 3 && Stats.countFinite(a28) >= 7 && Stats.mean(a28) > 0) in.activityBalance = Stats.mean(a7) / Stats.mean(a28);
+        return in;
+    }
+
+    static double[] filled(int n, double v) {
+        double[] a = new double[n];
+        Arrays.fill(a, v);
+        return a;
+    }
+
+    /** Issue #240: a day without the ring is left out of readiness's activity parts, not counted as no activity. */
+    static void readinessUnworn240() {
+        eq("#240 worn day rule: 60 minutes", Scores.WORN_DAY_MIN, 60);
+        check("#240 worn: 60 minutes counts, 59 and unknown do not", Scores.worn(60) && Scores.worn(900) && !Scores.worn(59.9) && !Scores.worn(0)
+            && !Scores.worn(Double.NaN));
+        // every day worn: exactly the rule before, for many made up histories (also missing values and short lists)
+        java.util.Random r = new java.util.Random(240);
+        int same = 0;
+        for (int k = 0; k < 2000; k++) {
+            int n = r.nextInt(62);
+            double[] act = new double[n], tgt = new double[n], cov = new double[n];
+            for (int i = 0; i < n; i++) {
+                act[i] = r.nextInt(10) == 0 ? Double.NaN : r.nextInt(8) == 0 ? 0 : 50 + r.nextDouble() * 900;
+                tgt[i] = r.nextInt(12) == 0 ? Double.NaN : r.nextInt(15) == 0 ? 0 : 300 + 10 * r.nextInt(20);
+                cov[i] = 60 + r.nextInt(1380);
+            }
+            boolean y = r.nextBoolean();
+            Scores.ReadinessInput mine = new Scores.ReadinessInput();
+            boolean unworn = Scores.readinessActivity(mine, act, tgt, cov, y);
+            Scores.ReadinessInput old = oldReadinessActivity(act, tgt, y);
+            if (Double.compare(mine.prevDayActivity, old.prevDayActivity) == 0 && Double.compare(mine.activityBalance, old.activityBalance) == 0
+                && unworn == !(y && n > 0)) same++;
+        }
+        eq("#240 every day worn: the same numbers as the rule before, 2000 histories", same, 2000);
+
+        // 28 worn days of 400 kcal against a 400 goal, then yesterday on the charger (20 minutes, 0 kcal)
+        double[] act = filled(29, 400), tgt = filled(29, 400), cov = filled(29, 900);
+        act[28] = 0;
+        cov[28] = 20;
+        Scores.ReadinessInput in = new Scores.ReadinessInput();
+        check("#240 yesterday unworn: reported", Scores.readinessActivity(in, act, tgt, cov, true));
+        check("#240 yesterday unworn: previous day activity unknown", Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+        eq("#240 yesterday unworn: activity balance from the worn days only", in.activityBalance, 1.0);
+        Scores.ReadinessInput before = oldReadinessActivity(act, tgt, true);
+        eq("#240 the rule before: 55 for the charger day", Math.round(Scores.readiness(before).get("prev_activity").score), 55L);
+        check("#240 the rule before: the balance pulled down", before.activityBalance < 0.9, before.activityBalance);
+        // the readiness of such a day: the contributor is left out and the weights spread over the rest
+        in.rhr = 55;
+        in.sleepScore = 90;
+        in.hrvRecent = 100;
+        in.hrvBaseline = 100;
+        Night.Score sc = Scores.readiness(in);
+        check("#240 readiness without previous day activity", sc.get("prev_activity") == null && sc.get("activity_balance") != null, sc.contributors.size());
+        double w = 0, s = 0;
+        for (Night.Contributor c : sc.contributors) {
+            w += c.weight;
+            s += c.weight * c.score;
+        }
+        eq("#240 readiness: the other weights renormalised", (long) sc.value, Math.round(s / w));
+        eq("#240 readiness: weights without previous day activity", w, 17.0 + 15 + 15 + 8);
+
+        // yesterday worn just at the rule, missing, or not the day before
+        cov[28] = 60;
+        in = new Scores.ReadinessInput();
+        check("#240 an hour of wear counts", !Scores.readinessActivity(in, act, tgt, cov, true) && in.prevDayActivity == 0, in.prevDayActivity);
+        in = new Scores.ReadinessInput();
+        check("#240 the newest stored day is not yesterday: reported, no previous day activity", Scores.readinessActivity(in, act, tgt, cov, false)
+            && Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+        in = new Scores.ReadinessInput();
+        check("#240 no days before: reported, both unknown", Scores.readinessActivity(in, new double[0], new double[0], new double[0], true)
+            && Double.isNaN(in.prevDayActivity) && Double.isNaN(in.activityBalance), null);
+        in = new Scores.ReadinessInput();
+        check("#240 worn yesterday with no goal: not reported, unknown as before", !Scores.readinessActivity(in, new double[] {300}, new double[] {0},
+            new double[] {600}, true) && Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+
+        // the minimum counts: 3 worn of the last 7 and 7 worn of the last 28
+        act = filled(28, 400);
+        tgt = filled(28, 400);
+        cov = filled(28, 900);
+        for (int i = 21; i < 28; i++) cov[i] = i < 26 ? 0 : 900; // last 7: 2 worn
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 2 worn days of the last 7: no activity balance", Double.isNaN(in.activityBalance), in.activityBalance);
+        cov[25] = 900; // 3 worn
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        eq("#240 3 worn days of the last 7: activity balance", in.activityBalance, 1.0);
+        cov = filled(28, 0);
+        for (int i = 22; i < 28; i++) cov[i] = 900; // 6 worn in 28
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 6 worn days of the last 28: no activity balance", Double.isNaN(in.activityBalance) && !Double.isNaN(in.prevDayActivity), in.activityBalance);
+        cov[3] = 900; // 7 worn in 28
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        eq("#240 7 worn days of the last 28: activity balance", in.activityBalance, 1.0);
+        // an unworn day older than 28 days changes nothing
+        act = filled(40, 400);
+        tgt = filled(40, 400);
+        cov = filled(40, 900);
+        Scores.ReadinessInput all = new Scores.ReadinessInput();
+        Scores.readinessActivity(all, act, tgt, cov, true);
+        act[5] = 0;
+        cov[5] = 0;
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 an unworn day before the 28: the same numbers", in.activityBalance == all.activityBalance && in.prevDayActivity == all.prevDayActivity, null);
+
+        // texts
+        eq("#240 the note on the Readiness page", app.openring.ui.Explain.READINESS_UNWORN, "Previous day activity is left out today: the ring was "
+            + "on for less than an hour yesterday, so there is no activity to compare with your goal.");
+        check("#240 explanations name the rule", app.openring.ui.Explain.of("prev_activity").endsWith("A day with less than an hour of wear is left out.")
+            && app.openring.ui.Explain.of("activity_balance").endsWith("Days with less than an hour of wear are left out."), null);
     }
 
     static Scores.ActivityInput activityIn(int days, double met, int train, double kcal) {

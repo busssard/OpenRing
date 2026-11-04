@@ -215,7 +215,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * (boolean) opens the full last worn text and How it works (issue #191), finder_blink (boolean) the demo's
      * Make it blink (issue #192; the demo never connects), live (boolean, demo mode
      * only) opens Live with its made up readings and live_spo2 (boolean) with blood oxygen on (issue #185), left_out
-     * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254),
+     * (boolean, demo mode only) leaves out the day before yesterday 13:00 to 17:00 in the demo file (issue #254), unworn
+     * (boolean, demo mode only) leaves out yesterday 00:00 to 21:30 the same way, a day off the finger (issue #240),
      * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
      * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252),
      * badges (boolean) opens the Badges page (issue #265),
@@ -247,7 +248,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // ring session this way
         if (i.getBooleanExtra("live", false) && Prefs.of(this).demo()) live(i.getBooleanExtra("live_spo2", false));
         // screen test: a left out time in the demo (issue #254); Analyzer.leaveOutDemo writes only into the demo file
-        if (i.getBooleanExtra("left_out", false) && Prefs.of(this).demo()) leftOutDemo();
+        if (i.getBooleanExtra("left_out", false) && Prefs.of(this).demo()) leftOutDemo(2, 13, 0, 17, 0);
+        // screen test: yesterday off the finger (issue #240), as a left out time 00:00 to 21:30 in the demo file, so today's
+        // readiness leaves Previous day activity out
+        if (i.getBooleanExtra("unworn", false) && Prefs.of(this).demo()) leftOutDemo(1, 0, 0, 21, 30);
         // screen test: the status line of a saved key this phone cannot read (issue #199), demo mode only
         previewUnreadable = i.getBooleanExtra("key_unreadable", false) && Prefs.of(this).demo();
         // screen test: the period tracker's day editor on Body (issue #252), demo mode only; nothing is saved without a tap
@@ -280,16 +284,19 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
     }
 
-    /** The demo's example of a left out time (screen test, issue #254), then the day is loaded again. */
-    void leftOutDemo() {
+    /**
+     * The demo's example of a left out time (screen test, issue #254), {@code daysBack} days before today from the clock
+     * time {@code h0:m0} to {@code h1:m1}, then the day is loaded again.
+     */
+    void leftOutDemo(final int daysBack, final int h0, final int m0, final int h1, final int m1) {
         final android.content.Context ctx = getApplicationContext();
         new android.os.AsyncTask<Void, Void, Boolean>() {
             @Override
             protected Boolean doInBackground(Void... v) {
                 try {
                     java.time.ZoneId z = java.time.ZoneId.systemDefault();
-                    LocalDate d = LocalDate.now(z).minusDays(2);
-                    return app.openring.data.Analyzer.leaveOutDemo(ctx, d.atTime(13, 0).atZone(z).toEpochSecond(), d.atTime(17, 0).atZone(z).toEpochSecond());
+                    LocalDate d = LocalDate.now(z).minusDays(daysBack);
+                    return app.openring.data.Analyzer.leaveOutDemo(ctx, d.atTime(h0, m0).atZone(z).toEpochSecond(), d.atTime(h1, m1).atZone(z).toEpochSecond());
                 } catch (Throwable e) {
                     return false;
                 }

@@ -427,6 +427,12 @@ history had, before anything is written to the file the person picked; otherwise
    issue #155, as Oura's total burn grows through the day) and stores `total_until`, which the screen shows as "So far
    (up to 08:07)"; the next analysis after the day ended stores the whole day. These rules have no version of their own: stored days
    keep their numbers until they are analysed again (the last two days after each sync, or Re analyse all).
+10. A day counts as worn with 60 minutes or more of activity values (`covered_min`, `Scores.WORN_DAY_MIN`, the one name
+   for the rule of issue #44). The Activity score's weekly parts and readiness's activity parts (issue #240,
+   `Scores.readinessActivity`) leave the other days out: Previous day activity needs yesterday worn, otherwise it drops
+   out and its weight goes to the other contributors, and the day stores `prev_day_unworn` (the Readiness page says why);
+   Activity balance compares the last 7 with the last 28 stored days with the unworn ones as unknown (still 3 and 7 days
+   needed). kv `readiness_rules` holds the rules version (`Scores.READINESS_VERSION`); a change analyses everything again once.
 
 ## Threading
 

@@ -74,6 +74,9 @@ public final class Analyzer {
         } : log;
     }
 
+    /** kv: the readiness rules the stored days were worked out with ({@link Scores#READINESS_VERSION}, issue #240). */
+    static final String READINESS_RULES = "readiness_rules";
+
     /** kv: Re analyse all was asked for and has not been stored yet; the next analysis does it (issue #230). */
     static final String FULL_PENDING = "full_pending";
     /**
@@ -166,7 +169,7 @@ public final class Analyzer {
     /** What an analysis of the events up to id {@code lastId}, analysed up to {@code until}, on the day of {@code nowUnix} depends on. */
     private String inputs(long lastId, long until, long nowUnix) {
         return lastId + " " + until + " " + prefs.stageDetail() + " " + (prefs.screenAwake() ? 1 : 0) + " " + StageFilter.VERSION + " "
-                + NightFinder.VERSION + " " + DayHeart.VERSION + " " + ScreenTime.AWAKE_RULE + " " + prefs.age() + " " + prefs.sex() + " "
+                + NightFinder.VERSION + " " + DayHeart.VERSION + " " + Scores.READINESS_VERSION + " " + ScreenTime.AWAKE_RULE + " " + prefs.age() + " " + prefs.sex() + " "
                 + prefs.weightKg() + " " + prefs.heightCm() + " " + prefs.targetKcal() + " " + zone.getId() + " " + date(nowUnix)
                 // only when something is left out (issue #254), so everyone else keeps the inputs they had
                 + (left.isEmpty() ? "" : " left " + left.key());
@@ -341,6 +344,9 @@ public final class Analyzer {
         // the day's heart rate line changed (issue #97, plausibility range, readings after midnight): days from
         // older rules are analysed again once; databases from before the version existed read as version 1
         if (db.kvLong("day_heart", 1) != DayHeart.VERSION) db.put("analyzed_until", 0);
+        // readiness leaves days without the ring out of its activity parts (issue #240): days from older rules are
+        // analysed again once; databases from before the version existed read as version 1
+        if (db.kvLong(READINESS_RULES, 1) != Scores.READINESS_VERSION) db.put("analyzed_until", 0);
         // "count phone use as awake" switched (issue #13): only nights since the first screen data change
         final long screenAwake = prefs.screenAwake() ? 1 : 0;
         double firstScreen = db.screenStart(true);
@@ -393,6 +399,7 @@ public final class Analyzer {
                     db.put("stage_filter", StageFilter.VERSION);
                     db.put("night_finder", NightFinder.VERSION);
                     db.put("day_heart", DayHeart.VERSION);
+                    db.put(READINESS_RULES, Scores.READINESS_VERSION);
                     db.put("screen_awake", screenAwake);
                     db.put("phone_awake", ScreenTime.AWAKE_RULE);
                     if (all) db.put(FULL_PENDING, 0);
@@ -1048,19 +1055,23 @@ public final class Analyzer {
         Json.put(debtJ, "need_h", need[0] / 3600.0);
         Json.put(out, "sleep_debt", debtJ);
 
-        JSONObject yesterday = prevDays.isEmpty() ? null : prevDays.get(prevDays.size() - 1);
-        if (yesterday != null && yesterday.optString("date").equals(day.minusDays(1).toString())) {
-            double t = Json.d(yesterday, "target_kcal");
-            if (t > 0) ri.prevDayActivity = Json.d(yesterday, "active_kcal") / t;
+        // yesterday's activity and the activity balance, days without the ring left out (issue #240)
+        int np = prevDays.size();
+        double[] pActive = new double[np], pTarget = new double[np], pCovered = new double[np];
+        for (int i = 0; i < np; i++) {
+            JSONObject p = prevDays.get(i);
+            pActive[i] = Json.d(p, "active_kcal");
+            pTarget[i] = Json.d(p, "target_kcal");
+            pCovered[i] = p.optDouble("covered_min", 0);
         }
-        double[] act7 = lastValues(prevDays, "active_kcal", 7), act28 = lastValues(prevDays, "active_kcal", 28);
-        if (Stats.countFinite(act7) >= 3 && Stats.countFinite(act28) >= 7 && Stats.mean(act28) > 0) {
-            ri.activityBalance = Stats.mean(act7) / Stats.mean(act28);
-        }
+        boolean lastIsYesterday = np > 0 && prevDays.get(np - 1).optString("date").equals(day.minusDays(1).toString());
+        boolean unwornYesterday = Scores.readinessActivity(ri, pActive, pTarget, pCovered, lastIsYesterday);
         Night.Score readiness = null;
         if (mainNight != null) {
             readiness = Scores.readiness(ri);
             Json.put(out, "readiness", Json.score(readiness));
+            // the Readiness page says why Previous day activity is missing (only with days before, so not on the first)
+            if (unwornYesterday && np > 0) Json.put(out, "prev_day_unworn", true);
         }
 
         // ---- activity score and target ----
@@ -1073,7 +1084,7 @@ public final class Analyzer {
         }
         d.targetKcal = target;
         Scores.ActivityInput ai = new Scores.ActivityInput();
-        if (d.coveredMin >= 60) {
+        if (Scores.worn(d.coveredMin)) {
             ai.inactiveMin = d.inactiveMin;
             ai.longInactiveStreaks = d.longInactiveStreaks;
             int met7 = d.activeKcal >= target ? 1 : 0, n7 = 1, train = (d.mediumMin + d.highMin >= 30) ? 1 : 0;
@@ -1081,7 +1092,7 @@ public final class Analyzer {
             for (JSONObject p : prevDays) {
                 LocalDate pd = LocalDate.parse(p.optString("date", key));
                 if (pd.isBefore(day.minusDays(6))) continue;
-                if (p.optDouble("covered_min", 0) < 60) continue; // ring not worn: left out (issue #44)
+                if (!Scores.worn(p.optDouble("covered_min", 0))) continue; // ring not worn: left out (issue #44)
                 n7++;
                 if (p.optDouble("active_kcal", 0) >= p.optDouble("target_kcal", 1e9)) met7++;
                 if (p.optDouble("medium_min", 0) + p.optDouble("high_min", 0) >= 30) train++;
