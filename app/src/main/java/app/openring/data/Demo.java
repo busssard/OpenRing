@@ -153,7 +153,7 @@ public final class Demo {
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
         if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db)) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
-        db.resetAll();
+        db.resetAll(Db.DEMO_BUILD);
         ZoneId zone = ZoneId.systemDefault();
         int days = 35;
         long t0 = today.minusDays(days).atStartOfDay(zone).toEpochSecond();
