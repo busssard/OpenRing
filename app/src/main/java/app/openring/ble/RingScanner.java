@@ -58,6 +58,16 @@ public final class RingScanner {
      */
     public static BluetoothDevice find(final Context c, final String preferred, final Set<String> exclude, long timeoutMs, GattLink.Log log)
             throws IOException, InterruptedException {
+        return find(c, preferred, exclude, timeoutMs, true, true, log);
+    }
+
+    /**
+     * As {@link #find(Context, String, Set, long, GattLink.Log)}, with the scan's duty and its second half chosen
+     * (issue #195): {@code lowLatency} false uses Android's balanced mode, {@code widen} false keeps the filter for the
+     * whole scan (the background job, where an unfiltered scan hears nothing with the screen off).
+     */
+    public static BluetoothDevice find(final Context c, final String preferred, final Set<String> exclude, long timeoutMs,
+            boolean lowLatency, boolean widen, GattLink.Log log) throws IOException, InterruptedException {
         BluetoothAdapter a = adapter(c);
         if (a == null || !a.isEnabled()) throw new IOException("Bluetooth is off");
         BluetoothLeScanner s = a.getBluetoothLeScanner();
@@ -85,12 +95,13 @@ public final class RingScanner {
                 }
             }
         };
-        ScanSettings settings = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
+        ScanSettings settings = new ScanSettings.Builder()
+                .setScanMode(lowLatency ? ScanSettings.SCAN_MODE_LOW_LATENCY : ScanSettings.SCAN_MODE_BALANCED).build();
         // Filtered first (works with the screen off): Oura's company id or the Oura service.
         List<ScanFilter> filters = new ArrayList<ScanFilter>();
         filters.add(new ScanFilter.Builder().setManufacturerData(Protocol.COMPANY_ID, new byte[0]).build());
         filters.add(new ScanFilter.Builder().setServiceUuid(new ParcelUuid(Protocol.SERVICE)).build());
-        log.log("scanning for a ring");
+        log.log("scanning for a ring" + (lowLatency ? "" : " (balanced)") + (widen ? "" : " (filtered only)"));
         waitForStart();
         start(a, s, filters, settings, cb);
         boolean unfiltered = false;
@@ -104,7 +115,7 @@ public final class RingScanner {
                 synchronized (seen) {
                     empty = seen.isEmpty();
                 }
-                if (!unfiltered && empty && SystemClock.elapsedRealtime() - started > timeoutMs / 2) {
+                if (widen && !unfiltered && empty && SystemClock.elapsedRealtime() - started > timeoutMs / 2) {
                     // some rings only advertise a name; widen the scan for the second half
                     try {
                         s.stopScan(cb);
