@@ -155,5 +155,11 @@ Nobody types a version number, so pull requests never conflict over one.
    already have a release are skipped. A nightly and the stable release after it share the version
    code, so either can be installed over the other.
 
+**Old branches are deleted by themselves.** `branch-cleanup.yml` runs after every closed pull request
+and once a day (`.github/scripts/stale_branches.py`): it deletes a branch whose pull request was merged,
+or closed without merging more than 14 days ago, as long as the branch still points at that pull
+request's commit. It keeps `main`, `dev`, the screenshot and badge branches, every branch an open pull
+request comes from or goes into (stacked pull requests), and branches without a pull request.
+
 Changes without a note (docs, CI, a refactor nobody notices) publish nothing. Because a PR does not know
 its final number, write "next version" in PR texts, not a number.

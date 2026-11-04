@@ -136,6 +136,10 @@ public final class DataCheck {
         String load = db.kv(LOAD_ERROR, null);
         if (load != null) r.steps.add(new Step("Loading a day", 1, "Part of a day could not be read: " + load));
 
+        // 6. a delete whose shrink of the file failed (issue #299): the step, the time and the error's class and place
+        String shrink = db.kv(SHRINK_ERROR, null);
+        if (shrink != null) r.steps.add(new Step("Making the file smaller", 1, shrinkDetail(shrink)));
+
         t.append('\n');
         for (Step s : r.steps) {
             t.append(s.state == 0 ? "[ok]   " : s.state == 1 ? "[note] " : "[FAIL] ").append(s.title).append(": ").append(s.detail).append('\n');
@@ -173,6 +177,25 @@ public final class DataCheck {
 
     /** The kv key of the last part of loading a day that failed and kept its fallback (issue #235): a {@link app.openring.core.LoadNote} line, no values. */
     public static final String LOAD_ERROR = "day_load_error";
+
+    /**
+     * The kv key of the last delete whose shrink of the file failed (issue #299), written by {@link Db} after the delete
+     * committed: {@link #shrinkNote}, no values and no error message.
+     */
+    public static final String SHRINK_ERROR = "shrink_error";
+
+    /** The stored note: {@code step|when|error}, the error as {@link app.openring.core.LoadNote#error} gives it (class and place, no message). */
+    static String shrinkNote(String step, String when, Throwable e) {
+        return step + "|" + when + "|" + app.openring.core.LoadNote.error(e);
+    }
+
+    /** The Data check line for a {@link #shrinkNote}; a note in another form is shown as it is. */
+    static String shrinkDetail(String note) {
+        String[] f = note.split("\\|", 3);
+        String head = f.length == 3 ? "after " + f[0] + " (" + f[1] + ") the freed space could not be given back to the phone (" + f[2] + ")"
+                : "the freed space could not be given back to the phone (" + note + ")";
+        return head + ". The deleted data is gone; the file stays larger until the next delete (Delete all or pairing another ring), and new data reuses the space first.";
+    }
 
     /** The data check counts the sleep periods of this many days, today included. */
     public static final int NIGHT_DAYS = 14;
