@@ -111,15 +111,23 @@ public final class WatchSetupActivity extends Activity {
         }
         render();
         final int part = getIntent().getIntExtra("part", 0);
-        if (part > 0) {
-            h.post(new Runnable() {
-                @Override
-                public void run() {
-                    View t = root.findViewWithTag(part == 2 ? "hands" : "alarm");
-                    if (t != null) scroll.scrollTo(0, Math.max(0, t.getTop() - Ui.dp(WatchSetupActivity.this, 8)));
+        if (part > 0) scrollTo(part == 2 ? "hands" : "alarm", 0);
+    }
+
+    /** Scrolls to the card with {@code tag} once it is laid out (the screen test opens the alarm and the hands this way). */
+    void scrollTo(final String tag, final int tries) {
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (destroyed) return;
+                View t = root.findViewWithTag(tag);
+                if (t == null || t.getHeight() == 0 || t.getTop() == 0) {
+                    if (tries < 20) scrollTo(tag, tries + 1);
+                    return;
                 }
-            });
-        }
+                scroll.scrollTo(0, Math.max(0, t.getTop() - Ui.dp(WatchSetupActivity.this, 8)));
+            }
+        }, 150);
     }
 
     @Override
