@@ -29,7 +29,10 @@ import app.openring.core.RingGate;
 public final class AutoBackup {
     private AutoBackup() {}
 
-    /** Never two runs at once (the job and its one off check can meet). The manual backup should take it too (#222). */
+    /**
+     * Never two runs at once (the job and its one off check can meet). Settings takes it too while it saves a backup or
+     * export file (issue #222), so a manual and an automatic backup never copy the history at the same time.
+     */
     public static final OneRun<Object> RUN = new OneRun<Object>();
 
     /** How long a run waits for a sync, another ring task or an analysis before it tries again the next day. */
@@ -148,13 +151,10 @@ public final class AutoBackup {
         boolean created = false;
         try {
             byte[] key = p.loadKey();
-            if (key == null && p.hasKey()) {
-                // its own reason, not "the file could not be written": the folder is fine (issue #199, review of #281)
-                err = Backups.KEY;
-                if (log != null) log.log("automatic backup not made: this phone cannot read the saved ring key (" + Prefs.keyError() + ")");
-                return err;
-            }
-            if (key == null) throw new IOException("no ring key saved on this phone");
+            if (key == null && !p.hasKey()) throw new IOException("no ring key saved on this phone");
+            // a saved key this phone cannot read (issue #199): the copy is made without it (issue #288), the history is
+            // what matters most then. Backups.KEY stays only as the reason older versions stored
+            if (key == null && log != null) log.log("automatic backup without the ring key: this phone cannot read it (" + Prefs.keyError() + ")");
             List<String> present = folder.list();
             // a file of that name that the app did not write is never taken for one of its own (review of #259)
             if (present.contains(name) || present.contains(partial)) throw new IOException(name + " is there already");
@@ -355,10 +355,10 @@ public final class AutoBackup {
             fail.message = Backups.NOT_IN_DEMO;
             return fail;
         }
+        // going back needs no key: a saved key this phone cannot read stays as it is (issue #288)
         byte[] key = Prefs.of(c).loadKey();
-        if (key == null) {
-            fail.message = Prefs.of(c).hasKey() ? "This phone cannot read the saved ring key, nothing was changed."
-                    : "No ring key saved on this phone, nothing was changed.";
+        if (key == null && !Prefs.of(c).hasKey()) {
+            fail.message = "No ring key saved on this phone, nothing was changed.";
             return fail;
         }
         Backups.Copy cp = Backups.parse(file);

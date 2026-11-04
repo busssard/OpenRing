@@ -65,12 +65,19 @@ public final class KeyState {
     /** Settings, Key and backup, in place of the key. */
     public static final String SETTINGS_TEXT = "This phone cannot read the saved key. Enter it again to sync, your history stays.";
 
-    /** A backup file asked for in Settings while the key cannot be read (every backup holds the key, review of #281). */
-    public static final String BACKUP_TEXT = "No backup was saved, because this phone cannot read the saved ring key and every backup holds it. "
-            + "Enter the key again first (Key and backup, Enter the key again).";
+    /**
+     * Settings, the backup cards, while the key cannot be read (issue #288): backups are still saved, without the key.
+     * Before #288 no backup could be saved in this state.
+     */
+    public static final String BACKUP_NO_KEY = "This phone cannot read the saved ring key, so backups are saved without it. "
+            + "After restoring one, enter your key in Setup.";
+
+    /** A backup file saved in Settings while the key cannot be read (issue #288). */
+    public static final String BACKUP_SAVED_NO_KEY = "Backup saved, without the ring key this phone cannot read.";
 
     /** Every text above, for the tests (plain, no dashes as punctuation). */
     public static String[] texts() {
-        return new String[]{NO_KEY_RAW, UNREADABLE_RAW, PLAIN, STATUS, SYNC_TITLE, SYNC_TEXT, BUTTON, SETUP_TITLE, SETUP_TEXT, SETTINGS_TEXT, BACKUP_TEXT};
+        return new String[]{NO_KEY_RAW, UNREADABLE_RAW, PLAIN, STATUS, SYNC_TITLE, SYNC_TEXT, BUTTON, SETUP_TITLE, SETUP_TEXT, SETTINGS_TEXT, BACKUP_NO_KEY,
+            BACKUP_SAVED_NO_KEY};
     }
 }
