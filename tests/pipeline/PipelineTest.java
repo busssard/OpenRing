@@ -6208,6 +6208,57 @@ public class PipelineTest {
         check("#197 a new zone still waits for the lock, then opens its row as before", waited && done[0] && err[0] == null
                 && zones2.size() == rows + 1 && phone.getId().equals(zones2.get(zones2.size() - 1)[2]), zones2.size() + " rows, " + err[0]);
         awaitLateNotes();
+
+        // the background note is skipped while a run runs or waits (that run notes the zone itself) and in demo mode
+        java.lang.reflect.Method later = Analyzer.class.getDeclaredMethod("noteLater", Context.class);
+        later.setAccessible(true);
+        java.lang.reflect.Field runsField = Analyzer.class.getDeclaredField("RUNS");
+        runsField.setAccessible(true);
+        java.util.concurrent.atomic.AtomicInteger runs = (java.util.concurrent.atomic.AtomicInteger) runsField.get(null);
+        double stop2 = (Double) db.zones().get(db.zones().size() - 1)[1];
+        Object queued;
+        runs.incrementAndGet();
+        try {
+            queued = later.invoke(null, c);
+            awaitLateNotes();
+        } finally {
+            runs.decrementAndGet();
+        }
+        check("#197 the background note is skipped while a run waits: nothing stored", queued != null && db.zones().size() == rows + 1
+                && (Double) db.zones().get(db.zones().size() - 1)[1] == stop2, null);
+        Context demoCtx = new Context(c.dir);
+        app.openring.data.Prefs.of(demoCtx).setDemo(true);
+        queued = later.invoke(null, demoCtx);
+        awaitLateNotes();
+        // had the note gone on, it would have opened the demo database in place of this one
+        check("#197 the background note is skipped in demo mode: nothing stored", queued != null && Db.get(c) == db && db.zones().size() == rows + 1
+                && (Double) db.zones().get(db.zones().size() - 1)[1] == stop2, null);
+
+        // a failed background note is said by the next load once (so the screen records it for the data check, #235)
+        Context broken = new Context(c.dir) {
+            @Override
+            public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+                throw new IllegalStateException("test: settings unreadable");
+            }
+        };
+        queued = later.invoke(null, broken);
+        awaitLateNotes();
+        check("#197 set up: the failing background note was queued", queued != null, null);
+        Throwable first = null, second = null;
+        try {
+            Analyzer.beforeLoad(c);
+        } catch (Throwable e) {
+            first = e;
+        }
+        awaitLateNotes();
+        try {
+            Analyzer.beforeLoad(c);
+        } catch (Throwable e) {
+            second = e;
+        }
+        awaitLateNotes();
+        check("#197 a failed background note: the next load throws it once, the one after does not",
+                first instanceof IllegalStateException && "test: settings unreadable".equals(first.getMessage()) && second == null, first + " / " + second);
     }
 
     /**

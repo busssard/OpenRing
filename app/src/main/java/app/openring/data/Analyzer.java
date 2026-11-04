@@ -317,17 +317,20 @@ public final class Analyzer {
     /**
      * The zone note of {@link #beforeLoad} for an unchanged zone, done on its own thread (issue #197): the same call as
      * before, holding the analysis lock, only later. Skipped like before while an analysis runs or waits (it notes the
-     * zone itself) and in demo mode; a zone that changed meanwhile is noted and analysed as before.
+     * zone itself) and in demo mode. A zone that changed between the check in {@link #beforeLoad} and this note is noted
+     * and analysed here, so the stored data is the same as before; the screen shows it with its next load. A failure is
+     * kept and thrown by the next {@link #beforeLoad}, so that load records it (lost if the app closes before).
      */
     static java.util.concurrent.Future<?> noteLater(final Context c) {
         if (!LATE_NOTE_QUEUED.compareAndSet(false, true)) return null;
         return LATE_NOTES.submit(new Runnable() {
             @Override
             public void run() {
-                // cleared before the note, so a load from now on queues the next one
-                LATE_NOTE_QUEUED.set(false);
                 try {
                     synchronized (Analyzer.class) {
+                        // cleared once the lock is held, so loads while it waits for the lock queue no second note;
+                        // a load from now on queues the next one (it would note a later time)
+                        LATE_NOTE_QUEUED.set(false);
                         // under the lock, so the switch into demo mode cannot happen between the check and the note
                         if (running() || Prefs.of(c).demo()) return;
                         Db db = Db.get(c);
