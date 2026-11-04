@@ -890,15 +890,28 @@ public final class Db extends SQLiteOpenHelper {
 
     /** Nights as JSON strings ordered by start, for days in [fromDay, toDay]. */
     public List<String> nightsJson(String fromDay, String toDay, boolean mainOnly) {
-        List<String> out = new ArrayList<String>();
+        final List<String> out = new ArrayList<String>();
+        eachNightJson(fromDay, toDay, mainOnly, new java.util.function.Consumer<String>() {
+            @Override
+            public void accept(String json) {
+                out.add(json);
+            }
+        });
+        return out;
+    }
+
+    /**
+     * {@link #nightsJson} one night at a time, in the same order: {@code each} gets every JSON string as it is read, so
+     * a reader of years of nights never holds them all at once (issue #196).
+     */
+    public void eachNightJson(String fromDay, String toDay, boolean mainOnly, java.util.function.Consumer<String> each) {
         Cursor c = getReadableDatabase().rawQuery("SELECT json FROM nights WHERE day >= ? AND day <= ?" + (mainOnly ? " AND main=1" : "")
                 + " ORDER BY start", new String[] {fromDay, toDay});
         try {
-            while (c.moveToNext()) out.add(c.getString(0));
+            while (c.moveToNext()) each.accept(c.getString(0));
         } finally {
             c.close();
         }
-        return out;
     }
 
     /** Days before and after a date that the "Recent nights" strip shows (issue #98). */

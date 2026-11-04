@@ -259,13 +259,85 @@ public final class Analyzer {
      * What the main screen does before it loads a day (review of #243): note the phone's zone and, when a new zone
      * opened, analyse the nights since. While an analysis runs it does nothing and returns false at once, so the
      * screen shows the stored (old) nights instead of waiting for the run; the running analysis notes the zone itself.
+     * When the zone is the one noted last (nearly always) the note goes to the background ({@link #noteLater}), so a
+     * backup, a restore or a run that starts meanwhile does not hold up the day either (issue #197).
      */
     public static boolean beforeLoad(Context c) {
+        // a note left to the background failed on an earlier load: said now, so the screen's load notes it as before
+        Throwable late = LATE_NOTE_ERROR.getAndSet(null);
+        if (late instanceof RuntimeException) throw (RuntimeException) late;
+        if (late instanceof Error) throw (Error) late;
+        if (late != null) throw new RuntimeException(late);
         if (running()) return false;
         if (Prefs.of(c).demo()) return true;
         Db db = Db.get(c);
-        if (noteZone(db, System.currentTimeMillis() / 1000.0, ZoneId.systemDefault(), Double.NaN) && db.eventCount() > 0) run(c, null);
+        ZoneId zone = ZoneId.systemDefault();
+        if (sameZone(db, zone)) {
+            // the usual case (issue #197): the note would only stretch the newest row to now, so it waits for the
+            // analysis lock in the background and the day loads at once, also while a backup or another holder has it
+            noteLater(c.getApplicationContext());
+            return true;
+        }
+        if (noteZone(db, System.currentTimeMillis() / 1000.0, zone, Double.NaN) && db.eventCount() > 0) run(c, null);
         return true;
+    }
+
+    /**
+     * True when the newest row of the zone history is {@code zone}, read without the analysis lock (issue #197): then
+     * {@link #noteZone} would only extend that row, never open one or analyse anything again. False without any row.
+     */
+    static boolean sameZone(Db db, ZoneId zone) {
+        return zone.getId().equals(db.zoneAt(Double.MAX_VALUE));
+    }
+
+    /** One thread for the zone notes the main screen leaves to the background (issue #197); it never keeps the app alive. */
+    private static final java.util.concurrent.ExecutorService LATE_NOTES = java.util.concurrent.Executors.newSingleThreadExecutor(
+            new java.util.concurrent.ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "zone note");
+                    t.setDaemon(true);
+                    return t;
+                }
+            });
+    /** A late note is waiting to run: more loads meanwhile add none (each would only stretch the same row). */
+    private static final java.util.concurrent.atomic.AtomicBoolean LATE_NOTE_QUEUED = new java.util.concurrent.atomic.AtomicBoolean();
+    /** The failure of the last late note, said by the next {@link #beforeLoad}. */
+    private static final java.util.concurrent.atomic.AtomicReference<Throwable> LATE_NOTE_ERROR =
+            new java.util.concurrent.atomic.AtomicReference<Throwable>();
+
+    /** Tests only: waits until the late zone notes queued so far are done. */
+    static void awaitLateNotes() throws Exception {
+        LATE_NOTES.submit(new Runnable() {
+            @Override
+            public void run() {}
+        }).get(120, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    /**
+     * The zone note of {@link #beforeLoad} for an unchanged zone, done on its own thread (issue #197): the same call as
+     * before, holding the analysis lock, only later. Skipped like before while an analysis runs or waits (it notes the
+     * zone itself) and in demo mode; a zone that changed meanwhile is noted and analysed as before.
+     */
+    static java.util.concurrent.Future<?> noteLater(final Context c) {
+        if (!LATE_NOTE_QUEUED.compareAndSet(false, true)) return null;
+        return LATE_NOTES.submit(new Runnable() {
+            @Override
+            public void run() {
+                // cleared before the note, so a load from now on queues the next one
+                LATE_NOTE_QUEUED.set(false);
+                try {
+                    synchronized (Analyzer.class) {
+                        // under the lock, so the switch into demo mode cannot happen between the check and the note
+                        if (running() || Prefs.of(c).demo()) return;
+                        Db db = Db.get(c);
+                        if (noteZone(db, System.currentTimeMillis() / 1000.0, ZoneId.systemDefault(), Double.NaN) && db.eventCount() > 0) Analyzer.run(c, null);
+                    }
+                } catch (Throwable e) {
+                    LATE_NOTE_ERROR.set(e);
+                }
+            }
+        });
     }
 
     /**
