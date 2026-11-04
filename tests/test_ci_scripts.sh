@@ -230,5 +230,37 @@ check "screens: a stuck call with its output sent away still prints its line" '[
 stuck_run offline
 check "screens: adb failing at once while starting says so, not a time limit" '[ $code != 0 ] && [ $took -lt 5 ] && echo "$out" | grep -q "could not reach the emulator while it was starting (adb shell ended with code 1"'
 
+# ---- branch cleanup (.github/scripts/stale_branches.py): which branches go, which stay ----
+bc=$(mktemp -d)
+cat > "$bc/plan.json" <<'JSON'
+{"now": "2026-11-03T20:00:00Z",
+ "branches": {"main": "m1", "dev": "d1", "screenshots-preview": "s1", "badges": "b1",
+   "feat/merged": "a1", "feat/moved": "a2", "feat/base-of-open": "c1", "feat/open": "o1",
+   "feat/closed-old": "x1", "feat/closed-new": "y1", "feat/closed-moved": "z2", "wip/no-pr": "w1"},
+ "prs": [
+   {"head": "feat/merged", "head_sha": "a1", "base": "dev", "state": "closed", "merged_at": "2026-11-01T10:00:00Z", "closed_at": "2026-11-01T10:00:00Z"},
+   {"head": "feat/moved", "head_sha": "a1x", "base": "dev", "state": "closed", "merged_at": "2026-11-01T10:00:00Z", "closed_at": "2026-11-01T10:00:00Z"},
+   {"head": "feat/base-of-open", "head_sha": "c1", "base": "dev", "state": "closed", "merged_at": "2026-11-02T10:00:00Z", "closed_at": "2026-11-02T10:00:00Z"},
+   {"head": "feat/open", "head_sha": "o1", "base": "feat/base-of-open", "state": "open", "merged_at": null, "closed_at": null},
+   {"head": "feat/closed-old", "head_sha": "x1", "base": "dev", "state": "closed", "merged_at": null, "closed_at": "2026-10-01T10:00:00Z"},
+   {"head": "feat/closed-new", "head_sha": "y1", "base": "dev", "state": "closed", "merged_at": null, "closed_at": "2026-10-30T10:00:00Z"},
+   {"head": "feat/closed-moved", "head_sha": "z1", "base": "dev", "state": "closed", "merged_at": null, "closed_at": "2026-10-01T10:00:00Z"},
+   {"head": "dev", "head_sha": "d0", "base": "main", "state": "closed", "merged_at": "2026-11-03T10:00:00Z", "closed_at": "2026-11-03T10:00:00Z"},
+   {"head": "main", "head_sha": "zz", "base": "dev", "state": "closed", "merged_at": null, "closed_at": "2026-09-01T10:00:00Z", "same_repo": false}
+ ]}
+JSON
+out=$(python3 .github/scripts/stale_branches.py --plan "$bc/plan.json")
+check "branches: a merged branch is deleted" 'echo "$out" | grep -qx "delete feat/merged (merged)"'
+check "branches: commits after the merge keep it" 'echo "$out" | grep -qx "keep feat/moved (commits after the merge)"'
+check "branches: the base of an open pull request stays (stacked)" 'echo "$out" | grep -qx "keep feat/base-of-open (an open pull request uses it)"'
+check "branches: an open pull request keeps its branch" 'echo "$out" | grep -qx "keep feat/open (an open pull request uses it)"'
+check "branches: closed without merging over 14 days ago is deleted" 'echo "$out" | grep -qx "delete feat/closed-old (closed without merging)"'
+check "branches: closed without merging lately stays" 'echo "$out" | grep -q "^keep feat/closed-new (closed without merging less than"'
+check "branches: commits after closing keep it" 'echo "$out" | grep -qx "keep feat/closed-moved (commits after it was closed)"'
+check "branches: no pull request yet stays" 'echo "$out" | grep -qx "keep wip/no-pr (no pull request yet)"'
+check "branches: main, dev, screenshots and badges always stay" '[ "$(echo "$out" | grep -c "(always kept)")" = 4 ] && ! echo "$out" | grep -q "^delete \(main\|dev\|badges\|screenshots-preview\) "'
+check "branches: exactly two deleted" '[ "$(echo "$out" | grep -c "^delete ")" = 2 ]'
+rm -rf "$bc"
+
 echo "CI scripts: $passes passed, $fails failed"
 [ "$fails" = 0 ]
