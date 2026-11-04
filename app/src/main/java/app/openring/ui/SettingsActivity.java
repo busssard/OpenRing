@@ -884,6 +884,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.removeAllViews();
         card.addView(Ui.caption(this, "Watch"));
         card.addView(Ui.gap(this, 6));
+        // the watch setup (issue #251): find, pair, sign in, send the setup; the alarm and the hands
+        action(card, p.watchSetupAt() > 0 || p.demo() ? "Watch setup, alarm and hands" : "Set up the watch", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));
+            }
+        });
         // the main device (issue #251, one set of numbers): only once a watch was added
         if (p.demo() || p.watchAddress() != null) mainDeviceChoice(card, p);
         if (p.demo()) {

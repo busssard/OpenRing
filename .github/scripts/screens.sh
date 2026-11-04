@@ -324,6 +324,11 @@ launch --ez watch true;                     shot watch 3
 launch --ez watch true --ez watch_report true; shot watch-report 3   # scrolls to the report itself: copy buttons, Use this watch for syncing (phase 1b)
 # The Watch page (issue #251, phase 1b): the demo's made up watch, decoded by the same code as a real one: steps per
 # day, workouts, heart rate, Withings' own sleep and the battery
+# The watch setup (issue #251): every step with its state, what is sent from the profile, then the alarm, then the hand
+# calibration's controls (demo mode: a made up watch, every step done, nothing sent)
+launch --ez watch_setup true;               shot watch-setup 3
+launch --ez watch_setup true --ei watch_setup_part 1; shot watch-setup-alarm 3
+launch --ez watch_setup true --ei watch_setup_part 2 --ez watch_setup_hands true; shot watch-setup-hands 3
 launch --ez watch_data true;                shot watch-data 4
 swipe_up;                                   shot watch-data-heart 1   # the heart rate curve
 swipe_up; swipe_up;                         shot watch-data-sleep 1   # sleep and battery at the end of the page

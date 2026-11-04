@@ -37,6 +37,8 @@ public class WatchTest {
         session();
         signIn();
         signInSession();
+        setupMessages();
+        setupSession();
         days();
         due();
         demo();
@@ -243,7 +245,13 @@ public class WatchTest {
             List<byte[][]> hrs = new ArrayList<byte[][]>();
             for (int i = 0; i < 10; i++) hrs.add(new byte[][] {WatchDemo.time(1000 + i * 1800), WatchDemo.heart(60 + i)});
             answers.put(Proto.HEART_RATE, WatchDemo.answer(Proto.HEART_RATE, hrs, 4));
+            List<byte[][]> mov = new ArrayList<byte[][]>();
+            for (int i = 0; i < 5; i++) mov.add(new byte[][] {WatchDemo.time(1000 + i * 900), WatchDemo.duration(900), WatchDemo.steps(100 + i, 70, 3, 2)});
+            answers.put(Proto.MOVEMENT, WatchDemo.answer(Proto.MOVEMENT, mov, 3));
             answer(Proto.SYNC_DONE, WatchDemo.empty(Proto.SYNC_DONE));
+            // the setup's messages, the alarm and the hands: an empty answer of the same type
+            for (int t : new int[] {Proto.SET_UNIT, Proto.SETUP_FINISHED, Proto.SET_LOCALE, Proto.SET_USER, Proto.SET_GOAL, Proto.SET_SCREENS, Proto.HANDS_START,
+                Proto.HANDS_STOP, Proto.MOVE_HAND, Proto.SET_ALARM, Proto.ALARM_ON}) answer(t, WatchDemo.empty(t));
         }
 
         void answer(int type, byte[]... msgs) {
@@ -336,15 +344,19 @@ public class WatchTest {
         Store s = new Store();
         Lines log = new Lines();
         Session.Result r = Session.run(w, plan(), new Gate(), s, log);
-        List<Integer> order = Arrays.asList(Proto.HELLO, Proto.CONNECT, Proto.BATTERY, Proto.SET_TIME, Proto.ACTIVITY, Proto.HEART_RATE, Proto.SYNC_DONE);
+        List<Integer> order = Arrays.asList(Proto.HELLO, Proto.CONNECT, Proto.BATTERY, Proto.SET_TIME, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE, Proto.SYNC_DONE);
         check("session: the requests in order, sync done last", w.types().equals(order), w.types());
         check("session: complete, both data requests reached their end", r.ended == null && r.activityDone && r.heartDone && r.doneSent, r.ended);
         check("session: one request at a time (each answer read before the next request)", w.pending == 0, w.pending);
-        int expected = 5 + w.answers.get(Proto.ACTIVITY).size() + w.answers.get(Proto.HEART_RATE).size();
+        int expected = 5 + w.answers.get(Proto.ACTIVITY).size() + w.answers.get(Proto.MOVEMENT).size() + w.answers.get(Proto.HEART_RATE).size();
         check("session: every message from the watch stored as it came", s.got.size() == expected && r.received == expected, s.got.size() + " of " + expected);
         Records.Decoded d = new Records.Decoded();
         for (byte[] m : s.got) Records.decode(m, 1, d);
-        check("session: what was stored decodes to every record", d.steps.size() == 30 && d.heart.size() == 10 && d.battery.size() == 1, d.steps.size());
+        Set<Long> starts = new HashSet<Long>();
+        for (Records.Steps x : d.steps) starts.add(x.start);
+        // the movement answer repeats 5 of the activity records' times: stored by device and start, they count once
+        check("session: what was stored decodes to every record", d.steps.size() == 35 && starts.size() == 30 && d.heart.size() == 10 && d.battery.size() == 1
+                && d.moves.size() == 5 && d.moves.get(0).up == 3 && d.moves.get(0).down == 2, d.steps.size());
         check("session: the log names types and lengths only, never a value", noValues(log.lines), log.lines);
         check("session: the log says the end was reached", joined(log.lines).contains("activity: 5 messages") && joined(log.lines).contains("end reached"), log.lines);
 
@@ -466,7 +478,7 @@ public class WatchTest {
         check("session: no answer to sync done: complete all the same, the log says so", r.ended == null && r.doneSent && joined(dl.lines).contains("no answer to sync done"));
         w = new FakeWatch();
         st = new Store();
-        st.failAt = 5 + w.answers.get(Proto.ACTIVITY).size() + w.answers.get(Proto.HEART_RATE).size() - 1;
+        st.failAt = 5 + w.answers.get(Proto.ACTIVITY).size() + w.answers.get(Proto.MOVEMENT).size() + w.answers.get(Proto.HEART_RATE).size() - 1;
         r = Session.run(w, plan(), new Gate(), st, new Lines());
         check("session: the answer to sync done cannot be stored: its sentence", Session.NOT_STORED.equals(r.ended) && r.doneSent, r.ended);
         // a challenge of an unknown layout in the middle of a data answer
@@ -504,6 +516,302 @@ public class WatchTest {
             if (Frame.type(m) == Proto.HEART_RATE) hs = Frame.u32(Frame.first(m, Proto.SINCE).value, 0);
         }
         check("session: activity and heart rate ask from their own times", as == 1234 && hs == 5678, as + " " + hs);
+    }
+
+
+    // ---------------------------------------------------------------------------- watch setup
+
+    /** Every new message byte for byte, from the layouts in docs/ARCHITECTURE.md (made up values). */
+    static void setupMessages() {
+        check("setup: distance in km", Hex.encode(Proto.unit(Proto.UNIT_DISTANCE, Proto.KM)).equals("010112000a01190006000000020018"),
+                Hex.encode(Proto.unit(Proto.UNIT_DISTANCE, Proto.KM)));
+        check("setup: a 12 hour clock", Hex.encode(Proto.unit(Proto.UNIT_CLOCK, Proto.H12)).equals("010112000a01190006000000040" + "01b"), Hex.encode(Proto.unit(Proto.UNIT_CLOCK, Proto.H12)));
+        check("setup: the language with its length byte", Hex.encode(Proto.locale("de")).equals("01011a000701210003026465"), Hex.encode(Proto.locale("de")));
+        byte[] u = Proto.user(64, 168, 1, 576806400L);
+        check("setup: the user: number, kg, cm, sex, birth date, no name", Hex.encode(u).equals("010502" + "0016" + "05030012" + "0001e240" + "00000040" + "000000a8" + "01"
+                + "22615e00" + "00"), Hex.encode(u));
+        check("setup: male is 0, a sex not given is never sent as female", Frame.first(Proto.user(70, 180, 0, 0), Proto.USER).value[12] == 0
+                && Frame.first(Proto.user(70, 180, 2, 0), Proto.USER).value[12] == 0);
+        check("setup: the step goal in 8 bytes", Hex.encode(Proto.goal(10000)).equals("01050a000c051100080000000000002710"), Hex.encode(Proto.goal(10000)));
+        byte[] sc = Proto.screens();
+        List<Frame.Part> sp = Frame.parts(sc);
+        boolean layout = sp.size() == 8 && sp.get(7).type == Proto.END && sp.get(7).value.length == 0;
+        for (int i = 0; i < 7 && layout; i++) {
+            byte[] v = sp.get(i).value;
+            layout = sp.get(i).type == Proto.SCREEN && v.length == 18 && Frame.u32(v, 4) == 123456 && Frame.u32(v, 8) == 0 && Frame.u32(v, 12) == 0 && v[17] == 1;
+        }
+        check("setup: the screens: 7 parts of id, user, zeros, place and 1, then the end part", Frame.type(sc) == Proto.SET_SCREENS && layout
+                && Frame.u32(sp.get(0).value, 0) == 0xff && sp.get(0).value[16] == 6 && Frame.u32(sp.get(1).value, 0) == 0x3d && sp.get(1).value[16] == 1, sp.size());
+        check("setup: setup finished, hands start and stop are empty", Hex.encode(Proto.setupFinished()).equals("0101130000") && Hex.encode(Proto.handsStart()).equals("01011e0000")
+                && Hex.encode(Proto.handsStop()).equals("01011f0000"));
+        check("hands: hour hand 10 steps back", Hex.encode(Proto.moveHand(Proto.HAND_HOURS, -10)).equals("01011c0007050c000301fff6"), Hex.encode(Proto.moveHand(Proto.HAND_HOURS, -10)));
+        check("hands: a move beyond 2 bytes is held at the limit", Frame.u16(Frame.first(Proto.moveHand(0, 99999), Proto.HAND).value, 1) == 32767);
+        byte[] al = Proto.alarm(6, 45, 0x1f, 15);
+        check("alarm: hour, minute, days Mon to Fri, zeros, smart window", Hex.encode(al).equals("010145000b05120007062dbe0000000f"), Hex.encode(al));
+        check("alarm: the watch's day bits", Proto.watchDays(0) == 0x80 && Proto.watchDays(1 << 6) == 0x81 && Proto.watchDays(0x7f) == 0xff && Proto.watchDays(1) == 0x82
+                && Proto.watchDays(1 << 5) == 0xc0);
+        check("alarm: on and off", Hex.encode(Proto.alarmOn(true)).equals("01091b0005091900" + "0101") && Frame.first(Proto.alarmOn(false), Proto.ALARM_STATE).value[0] == 0,
+                Hex.encode(Proto.alarmOn(true)));
+        byte[] mv = Proto.movement(1700000000L);
+        check("movement: since, count 0 and version 1", Frame.type(mv) == Proto.MOVEMENT && Frame.u32(Frame.first(mv, Proto.SINCE).value, 0) == 1700000000L
+                && Frame.first(mv, Proto.REC_VERSION).value[0] == 1);
+        check("activity: no version part (as Gadgetbridge asks it)", !Frame.has(Proto.activity(5), Proto.REC_VERSION));
+        byte[] reply = Proto.syncAskReply();
+        check("the answer to the watch's own sync ask: type 0x4141, empty", Hex.encode(reply).equals("0141410000"), Hex.encode(reply));
+
+        // the profile
+        WatchSetup.Profile p = profile();
+        check("profile: born on 1 July of the year the age points to", p.birth() == java.time.LocalDate.of(1988, 7, 1).atStartOfDay(java.time.ZoneOffset.UTC).toEpochSecond());
+        p.language = "pt";
+        check("profile: a language the watch does not know is English", p.watchLanguage().equals("en"));
+        p.language = "FR";
+        check("profile: a known language", p.watchLanguage().equals("fr"));
+        p.sex = 2;
+        check("profile: no sex given is not complete", !p.complete());
+
+        // the texts the setup screen shows
+        WatchSetup.Alarm a = new WatchSetup.Alarm();
+        a.on = true;
+        a.hour = 6;
+        a.minute = 5;
+        a.smart = 15;
+        List<String> lines = WatchSetup.shown(profile(), "Europe/Zurich", a);
+        String all = String.join("\n", lines);
+        check("setup screen: what is sent, every value named", all.contains("female, 168 cm, 64 kg, born about 1988") && all.contains("10,000 steps")
+                && all.contains("Distance in km, 24 hour clock") && all.contains("Alarm: 06:05, Mon to Fri, smart wake 15 min") && all.contains("Europe/Zurich"), all);
+        p = profile();
+        p.sex = 2;
+        check("setup screen: without a sex the user is said not to be sent", String.join("\n", WatchSetup.shown(p, "UTC", null)).contains("not sent until"));
+        WatchSetup.Profile mp = profile();
+        mp.sex = 0;
+        mp.metric = false;
+        mp.h24 = false;
+        mp.language = null;
+        WatchSetup.Alarm noSmart = new WatchSetup.Alarm();
+        noSmart.on = true;
+        noSmart.days = 0x7f;
+        String ms = String.join("\n", WatchSetup.shown(mp, "UTC", noSmart));
+        WatchSetup.Alarm offA = new WatchSetup.Alarm();
+        check("setup screen: male, miles, 12 hour clock, English, an alarm without smart wake, an alarm off", mp.complete() && ms.contains("You: male")
+                && ms.contains("Distance in miles, 12 hour clock") && ms.contains("Language: English") && ms.contains("Alarm: 07:00, every day\n")
+                && String.join("\n", WatchSetup.shown(mp, "UTC", offA)).contains("Alarm: off"), ms);
+        check("setup: the person's steps for miles and 12 hours", Frame.u16(Frame.first(WatchSetup.person(mp).get(2).msg, Proto.UNIT).value, 4) == Proto.MILES
+                && Frame.u16(Frame.first(WatchSetup.person(mp).get(3).msg, Proto.UNIT).value, 4) == Proto.H12);
+        boolean dashes = false;
+        for (String t : lines) dashes |= t.contains(" - ") || t.contains("–") || t.contains("—");
+        for (String t : WatchSetup.HAND_TEXT) dashes |= t.contains(" - ") || t.contains("–") || t.contains("—");
+        check("setup screen: plain texts without dashes", !dashes);
+        check("alarm days in words", WatchSetup.days(0x7f).equals("every day") && WatchSetup.days(0x1f).equals("Mon to Fri") && WatchSetup.days(0x60).equals("Sat, Sun")
+                && WatchSetup.days(0).equals("no day") && WatchSetup.days(0x05).equals("Mon, Wed"));
+
+        // the decoder: intensity, climb, movement answers
+        byte[] m = Frame.message(Proto.MOVEMENT, WatchDemo.time(100), WatchDemo.duration(900), WatchDemo.steps(500, 380, 12, 9), WatchDemo.calories(20, 33),
+                WatchDemo.time(1000), WatchDemo.duration(900), WatchDemo.steps(50, 30), WatchDemo.end());
+        Records.Decoded d = new Records.Decoded();
+        Records.decode(m, 2000, d);
+        check("records: movement answers decode, with intensity and climb", d.steps.size() == 2 && d.steps.get(0).kcal == 20 && d.moves.size() == 1
+                && d.moves.get(0).start == 100 && d.moves.get(0).met == 33 && d.moves.get(0).up == 12 && d.moves.get(0).down == 9, d.moves.size());
+        check("records: decoder version 2", Records.VERSION == 2);
+        WatchDays.Zones utc = WatchDays.zones(new ArrayList<Object[]>(), ZoneId.of("UTC"));
+        List<Records.Steps> rows = Arrays.asList(new Records.Steps(100, 900, 500, 380, 20), new Records.Steps(1000, 900, 50, 30, 3), new Records.Steps(90000, 900, 5, 3, 7));
+        List<Records.Moves> mv2 = Arrays.asList(new Records.Moves(100, 33, 12, 9), new Records.Moves(1000, 10, 0, 4), new Records.Moves(90000, 5, 6, 0));
+        LocalDate d0 = LocalDate.of(1970, 1, 1), d1 = LocalDate.of(1970, 1, 2);
+        check("days: calories per day", WatchDays.kcalPerDay(rows, utc).get(d0) == 23 && WatchDays.kcalPerDay(rows, utc).get(d1) == 7);
+        check("days: metres climbed per day, descents left out", WatchDays.climbPerDay(mv2, utc).get(d0) == 12 && WatchDays.climbPerDay(mv2, utc).get(d1) == 6
+                && WatchDays.climbPerDay(new ArrayList<Records.Moves>(), utc).isEmpty());
+    }
+
+    static WatchSetup.Profile profile() {
+        WatchSetup.Profile p = new WatchSetup.Profile();
+        p.age = 38;
+        p.sex = 1;
+        p.weightKg = 64;
+        p.heightCm = 168;
+        p.year = 2026;
+        return p;
+    }
+
+    static final class Heard implements Session.Progress {
+        final List<String> events = new ArrayList<String>();
+
+        @Override
+        public void step(String key, int state) {
+            events.add(key + " " + state);
+        }
+    }
+
+    /** The setup, each sync, the alarm and the hands against the made up watch, in order. */
+    static void setupSession() throws Exception {
+        WatchSetup.Alarm a = new WatchSetup.Alarm();
+        a.on = true;
+        Session.Plan plan = plan();
+        plan.steps = WatchSetup.setup(plan, profile(), a, 77);
+        FakeWatch w = new FakeWatch();
+        Heard heard = new Heard();
+        plan.progress = heard;
+        Lines log = new Lines();
+        Session.Result r = Session.run(w, plan, new Gate(), new Store(), log);
+        List<Integer> order = Arrays.asList(Proto.HELLO, Proto.CONNECT, Proto.SET_LOCALE, Proto.SET_TIME, Proto.SET_USER, Proto.SET_GOAL, Proto.SET_UNIT, Proto.SET_UNIT,
+                Proto.SET_SCREENS, Proto.SET_ALARM, Proto.ALARM_ON, Proto.BATTERY, Proto.SETUP_FINISHED, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE, Proto.SYNC_DONE);
+        check("setup session: every step in order, the first sync after setup finished, sync done last", r.ended == null && w.types().equals(order), w.types());
+        check("setup session: each step started and done, setup finished among them", heard.events.contains(WatchSetup.FINISHED + " " + Session.DONE)
+                && heard.events.contains(Session.HEART + " " + Session.DONE) && heard.events.indexOf(Session.HELLO + " " + Session.STARTED) == 0
+                && r.done.contains(WatchSetup.ALARM_ON) && r.movementDone, heard.events);
+        long ms = -1;
+        for (byte[] m : w.sent) if (Frame.type(m) == Proto.MOVEMENT) ms = Frame.u32(Frame.first(m, Proto.SINCE).value, 0);
+        check("setup session: the movement request asks from its own time", ms == 77, ms);
+        check("setup session: the log names types, lengths and part counts, never a value", noValues(log.lines) && joined(log.lines).contains("activity part types: 0x0100 1, 0x0601 30"),
+                log.lines);
+
+        // no sex given: everything but the user
+        Session.Plan np = plan();
+        WatchSetup.Profile ns = profile();
+        ns.sex = 2;
+        np.steps = WatchSetup.setup(np, ns, null, 0);
+        w = new FakeWatch();
+        r = Session.run(w, np, new Gate(), new Store(), new Lines());
+        check("setup session: without a sex the user is not sent, the rest is", r.ended == null && !w.types().contains(Proto.SET_USER) && w.types().contains(Proto.SETUP_FINISHED)
+                && !w.types().contains(Proto.SET_ALARM), w.types());
+
+        // each sync: the person every time, the alarm only when it is pending
+        Session.Plan sp = plan();
+        sp.steps = WatchSetup.sync(sp, profile(), null, 5);
+        w = new FakeWatch();
+        r = Session.run(w, sp, new Gate(), new Store(), new Lines());
+        check("sync: the person and units every time, no alarm when none is pending, no setup finished", r.ended == null && w.types().equals(Arrays.asList(Proto.HELLO,
+                Proto.CONNECT, Proto.BATTERY, Proto.SET_TIME, Proto.SET_USER, Proto.SET_GOAL, Proto.SET_UNIT, Proto.SET_UNIT, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE,
+                Proto.SYNC_DONE)), w.types());
+        WatchSetup.Alarm off = new WatchSetup.Alarm();
+        sp.steps = WatchSetup.sync(sp, profile(), off, 5);
+        w = new FakeWatch();
+        Session.run(w, sp, new Gate(), new Store(), new Lines());
+        check("sync: a pending alarm that was switched off sends only off", w.types().contains(Proto.ALARM_ON) && !w.types().contains(Proto.SET_ALARM));
+
+        // a watch that does not know a setup message: the session ends at it and says which
+        w = new FakeWatch();
+        w.silent.add(Proto.SET_SCREENS);
+        Session.Plan bp = plan();
+        bp.steps = WatchSetup.setup(bp, profile(), null, 0);
+        heard = new Heard();
+        bp.progress = heard;
+        r = Session.run(w, bp, new Gate(), new Store(), new Lines());
+        check("setup session: no answer to a setup step: ends there, the step failed, sync done sent", Session.NO_ANSWER.equals(r.ended)
+                && WatchSetup.SCREENS.equals(r.failedStep) && heard.events.contains(WatchSetup.SCREENS + " " + Session.FAILED) && last(w) == Proto.SYNC_DONE
+                && !w.types().contains(Proto.SETUP_FINISHED), r.failedStep);
+
+        // the alarm alone
+        Session.Plan ap = plan();
+        ap.steps = WatchSetup.alarmOnly(a);
+        w = new FakeWatch();
+        r = Session.run(w, ap, new Gate(), new Store(), new Lines());
+        check("alarm: hello, connect, the alarm, on, sync done", r.ended == null && w.types().equals(Arrays.asList(Proto.HELLO, Proto.CONNECT, Proto.SET_ALARM, Proto.ALARM_ON,
+                Proto.SYNC_DONE)), w.types());
+
+        // the hands: moves while the screen is open, then calibration off and the time
+        final java.util.concurrent.LinkedBlockingQueue<Session.Step> q = new java.util.concurrent.LinkedBlockingQueue<Session.Step>();
+        q.add(WatchSetup.move(Proto.HAND_HOURS, 1));
+        q.add(WatchSetup.move(Proto.HAND_MINUTES, -10));
+        q.add(Session.FINISH);
+        Session.Plan hp = plan();
+        hp.steps = WatchSetup.handsStart();
+        hp.last = WatchSetup.handsEnd(hp);
+        hp.more = new Session.More() {
+            @Override
+            public Session.Step next(long ms) throws InterruptedException {
+                return q.poll(ms, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
+        };
+        w = new FakeWatch();
+        r = Session.run(w, hp, new Gate(), new Store(), new Lines());
+        check("hands: start, the moves, stop, the phone's time, sync done", r.ended == null && w.types().equals(Arrays.asList(Proto.HELLO, Proto.CONNECT, Proto.HANDS_START,
+                Proto.MOVE_HAND, Proto.MOVE_HAND, Proto.HANDS_STOP, Proto.SET_TIME, Proto.SYNC_DONE)), w.types());
+        // the ring wants Bluetooth while calibrating: calibration mode is still switched off before sync done
+        final java.util.concurrent.LinkedBlockingQueue<Session.Step> q2 = new java.util.concurrent.LinkedBlockingQueue<Session.Step>();
+        Session.Plan hp2 = plan();
+        hp2.steps = WatchSetup.handsStart();
+        hp2.last = WatchSetup.handsEnd(hp2);
+        hp2.more = new Session.More() {
+            @Override
+            public Session.Step next(long ms) throws InterruptedException {
+                return q2.poll(Math.min(ms, 20), java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
+        };
+        Gate g = new Gate();
+        g.askedUntilRing = 6;
+        w = new FakeWatch();
+        w.silent.add(Proto.MOVE_HAND);
+        r = Session.run(w, hp2, g, new Store(), new Lines());
+        List<Integer> t = w.types();
+        check("hands: an early end still switches calibration off and sends the time, then sync done", Session.FOR_RING.equals(r.ended)
+                && t.indexOf(Proto.HANDS_STOP) > 0 && t.indexOf(Proto.HANDS_STOP) < t.indexOf(Proto.SYNC_DONE) && last(w) == Proto.SYNC_DONE, t);
+        // a silent hand move does not end the session
+        q.clear();
+        q.add(WatchSetup.move(Proto.HAND_ACTIVITY, 1));
+        q.add(Session.FINISH);
+        w = new FakeWatch();
+        w.silent.add(Proto.MOVE_HAND);
+        Session.Plan hp3 = plan();
+        hp3.steps = WatchSetup.handsStart();
+        hp3.last = WatchSetup.handsEnd(hp3);
+        hp3.more = hp.more;
+        r = Session.run(w, hp3, new Gate(), new Store(), new Lines());
+        check("hands: a move without an answer goes on", r.ended == null && w.types().contains(Proto.HANDS_STOP), r.ended);
+
+        // while the calibration waits for a tap, the watch's own messages are read, stored and answered
+        final int[] polls = {0};
+        Session.Plan hp4 = plan();
+        hp4.steps = WatchSetup.handsStart();
+        hp4.last = WatchSetup.handsEnd(hp4);
+        hp4.more = new Session.More() {
+            @Override
+            public Session.Step next(long ms) {
+                return ++polls[0] < 4 ? null : Session.FINISH;
+            }
+        };
+        w = new FakeWatch();
+        byte[] own2 = Hex.decode("0141410000");
+        w.answer(Proto.HANDS_START, WatchDemo.empty(Proto.HANDS_START), own2);
+        Store st4 = new Store();
+        r = Session.run(w, hp4, new Gate(), st4, new Lines());
+        check("hands: the watch's own message while waiting for a tap is stored and answered", r.ended == null && st4.got.contains(own2)
+                && w.types().contains(Proto.SYNC_ASK), w.types());
+        // an early end, and the link drops at the calibration's end: no sync done, the result says why it ended
+        Gate g5 = new Gate();
+        g5.ring = true;
+        Session.Plan hp5 = plan();
+        hp5.steps = WatchSetup.handsStart();
+        hp5.last = WatchSetup.handsEnd(hp5);
+        w = new FakeWatch();
+        w.dropAt = Proto.HANDS_STOP;
+        Lines l5 = new Lines();
+        r = Session.run(w, hp5, g5, new Store(), l5);
+        check("hands: the link drops at the calibration's end after an early end: no sync done", Session.FOR_RING.equals(r.ended) && !r.doneSent
+                && joined(l5.lines).contains("link lost at hands stop"), l5.lines);
+        // an early end, and the answer to the calibration's end cannot be stored: the rest is left, sync done still sent
+        Session.Plan hp6 = plan();
+        hp6.steps = WatchSetup.handsStart();
+        hp6.last = WatchSetup.handsEnd(hp6);
+        w = new FakeWatch();
+        Store st6 = new Store();
+        st6.failAt = 0;
+        Lines l6 = new Lines();
+        r = Session.run(w, hp6, g5, st6, l6);
+        check("hands: the end's answer cannot be stored: noted, sync done sent", Session.FOR_RING.equals(r.ended) && r.doneSent && joined(l6.lines).contains("hands stop not sent"),
+                l6.lines);
+        check("setup: the language names", WatchSetup.languageName("de").equals("German") && WatchSetup.languageName("es").equals("Spanish")
+                && WatchSetup.languageName("fr").equals("French") && WatchSetup.languageName("it").equals("Italian") && WatchSetup.languageName("en").equals("English"));
+
+        // the watch asks for a sync itself: answered once, as Gadgetbridge does
+        w = new FakeWatch();
+        byte[] ask = Hex.decode("0141410000");
+        w.answer(Proto.CONNECT, ask, ask, WatchDemo.empty(Proto.CONNECT));
+        r = Session.run(w, plan(), new Gate(), new Store(), new Lines());
+        int replies = 0;
+        for (byte[] m : w.sent) if (Hex.encode(m).equals("0141410000")) replies++;
+        check("the watch's own sync ask: answered once with the empty answer, the sync goes on", r.ended == null && replies == 1, replies);
+
+        // the first sync asks a month back, later ones from the newest record
+        check("first sync asks 30 days back", WatchSetup.FIRST_SINCE_S == 30L * 86400);
     }
 
     // ---------------------------------------------------------------------------------- sign in
@@ -622,7 +930,7 @@ public class WatchTest {
         Store st = new Store();
         Lines log = new Lines();
         Session.Result r = Session.run(w, signPlan(), new Gate(), st, log);
-        List<Integer> order = Arrays.asList(Proto.HELLO, Proto.CHALLENGE, Proto.CONNECT, Proto.BATTERY, Proto.SET_TIME, Proto.ACTIVITY, Proto.HEART_RATE, Proto.SYNC_DONE);
+        List<Integer> order = Arrays.asList(Proto.HELLO, Proto.CHALLENGE, Proto.CONNECT, Proto.BATTERY, Proto.SET_TIME, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE, Proto.SYNC_DONE);
         check("sign in session: answered, then the sync goes on to the end", r.ended == null && w.types().equals(order) && r.activityDone && r.heartDone, r.ended + " " + w.types());
         check("sign in session: accepted", r.signIn == Session.SIGN_IN_ACCEPTED, r.signIn);
         check("sign in session: the challenge and the hello answer are stored like every message", st.got.size() > 1
@@ -700,8 +1008,23 @@ public class WatchTest {
         check("sign in session: the ring wants Bluetooth right after our answer: ends for the ring", Session.FOR_RING.equals(r.ended)
                 && w.types().equals(Arrays.asList(Proto.HELLO, Proto.CHALLENGE, Proto.SYNC_DONE)), r.ended + " " + w.types());
 
+        // review of #317: a sign in during a data answer, then silence: a refusal, with the text for a watch already told something
+        w = new FakeWatch();
+        List<byte[]> hra = w.answers.get(Proto.HEART_RATE);
+        while (hra.size() > 1) hra.remove(hra.size() - 1);
+        hra.add(challenge(MAC, THEIRS));
+        log = new Lines();
+        r = Session.run(w, signPlan(), new Gate(), new Store(), log);
+        check("sign in session: silence after a sign in answered during a data answer is a refusal, and says what arrived is stored",
+                Session.SIGN_IN_REFUSED_LATE.equals(r.ended) && !r.heartDone && last(w) == Proto.SYNC_DONE && joined(log.lines).contains("after the sign in answer"), r.ended);
+        // and the same refusal before anything was sent keeps the first text
+        w = signingWatch(PROOF_THEIRS, helloOk);
+        w.silent.add(Proto.CHALLENGE);
+        r = Session.run(w, signPlan(), new Gate(), new Store(), new Lines());
+        check("sign in session: refused right after the hello: nothing was changed on the watch", Session.SIGN_IN_REFUSED.equals(r.ended) && !r.wrote, r.ended);
+
         // the plain sentences have no dashes
-        for (String t : new String[] {Session.CHALLENGE, Session.SIGN_IN_REFUSED, Session.WATCH_PROOF})
+        for (String t : new String[] {Session.CHALLENGE, Session.SIGN_IN_REFUSED, Session.SIGN_IN_REFUSED_LATE, Session.WATCH_PROOF})
             check("sign in: plain sentence without dashes: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
     }
 

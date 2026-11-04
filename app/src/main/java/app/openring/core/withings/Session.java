@@ -2,16 +2,23 @@ package app.openring.core.withings;
 
 import java.io.IOException;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 /**
- * One sync with the watch over an open link (issue #251, phase 1b), kept apart from Android so the JVM tests run it
- * against a made up watch. The order: hello, connect, battery, set the time, activity records since a time, heart rate
- * records since a time, and always "sync done" at the end while the link is up. When the watch asks for a sign in (it
- * does so right after the hello), the session answers it ({@link SignIn}) and goes on once the awaited answer comes. Each request waits for its answer
- * before the next one (the watch drops what comes while it is busy). Every message the watch sends is handed to the
- * {@link Sink} as it arrives, so what came is stored even when the session ends early. Between messages it asks the
- * {@link Gate}: when a ring task wants the ring, the session ends at once (the ring always wins) and the rest follows
- * at the next sync. The log names message types and lengths only, never a value.
+ * One session with the watch over an open link (issue #251), kept apart from Android so the JVM tests run it against a
+ * made up watch. It always starts with the hello (and the sign in the watch asks for right after it), then sends the
+ * plan's {@link Step steps} one after the other ({@link WatchSetup} builds them: the first setup, each sync, the alarm,
+ * the hand calibration), then, when the plan has {@link More}, the steps a screen hands it while it is open, and always
+ * "sync done" at the end while the link is up. Each request waits for its answer before the next one (the watch drops
+ * what comes while it is busy). Every message the watch sends is handed to the {@link Sink} as it arrives, so what came
+ * is stored even when the session ends early. Between messages it asks the {@link Gate}: when a ring task wants the
+ * ring, the session ends at once (the ring always wins). The log names message types, lengths and part counts, never a
+ * value.
  */
 public final class Session {
     private Session() {}
@@ -42,10 +49,52 @@ public final class Session {
         void log(String line);
     }
 
+    /** Told when a step starts, is done or failed (the setup screen shows each step's state). */
+    public interface Progress {
+        void step(String key, int state);
+    }
+
+    /** {@link Progress} states. */
+    public static final int STARTED = 0, DONE = 1, FAILED = 2;
+
+    /** Steps a screen hands the open session (the hand calibration); {@link #FINISH} ends it. */
+    public interface More {
+        /** The next step, null when none came within {@code ms}. */
+        Step next(long ms) throws InterruptedException;
+    }
+
+    /**
+     * One request. {@link #ASK} waits for the answer of its type (5 s, else the session ends); {@link #DATA} takes answers
+     * until one holds the end part; {@link #SOFT} waits a moment for its answer and goes on without one (the hand moves,
+     * whose answer is not documented).
+     */
+    public static final class Step {
+        public static final int ASK = 0, DATA = 1, SOFT = 2;
+        /** A short name for the log and the screen, for example "activity". */
+        public final String key;
+        public final int kind, type;
+        public final byte[] msg;
+
+        public Step(String key, int kind, byte[] msg) {
+            this.key = key;
+            this.kind = kind;
+            this.msg = msg;
+            this.type = Frame.type(msg);
+        }
+    }
+
+    /** Handed by {@link More} to end the session (sync done follows). */
+    public static final Step FINISH = new Step("finish", Step.SOFT, Frame.message(0));
+
+    /** Step keys of the data requests. */
+    public static final String ACTIVITY = "activity", MOVEMENT = "movement", HEART = "heart rate", SIGN_IN = "sign in", HELLO = "hello";
+
     /** Longest wait for a simple answer, and for the next message of a data answer. */
     public static final long ANSWER_MS = 5000, DATA_SILENCE_MS = 20000;
     /** Longest wait for the answer to "sync done" (the session ends either way). */
     public static final long DONE_MS = 2000;
+    /** Longest wait for the answer to a {@link Step#SOFT} step. */
+    public static final long SOFT_MS = 1500;
     /** A wait for the watch is cut into slices this long, and the gate is asked between them (the ring always wins). */
     static final long SLICE_MS = 250;
     /** Messages of one data answer that the log names one by one; the rest are summed up. */
@@ -57,8 +106,19 @@ public final class Session {
         /** Now (unix seconds), the zone's offset from UTC now, the next clock change (0 for none) and the offset after it. */
         public long now, nextChange;
         public int offset, offsetAfter;
-        /** Records from these times on (unix seconds). */
+        /** Records from these times on (unix seconds); used by the steps {@link #steps} makes when none are given. */
         public long activitySince, heartSince;
+        /** The steps after the hello; null: the plain sync ({@link WatchSetup#basicSync}). */
+        public List<Step> steps;
+        /** Steps handed while the session is open (the hand calibration), null for none. */
+        public More more;
+        /**
+         * Steps sent last, before sync done, also when the session ends early while the link is up (then each once, without
+         * waiting long): the hand calibration's end, so the watch never stays in calibration mode. Null for none.
+         */
+        public List<Step> last;
+        /** Told about each step, may be null. */
+        public Progress progress;
         /** Longest session (ms); the session ends between messages once it is over. */
         public long limitMs = 120000;
         /** Longest wait for a simple answer and between the messages of a data answer (ms; the tests make them short). */
@@ -67,6 +127,10 @@ public final class Session {
         public String address;
         /** Our own challenge for the sign in ({@link SignIn#OURS} bytes); null makes a random one (the tests fix it). */
         public byte[] ours;
+
+        List<Step> steps() {
+            return steps != null ? steps : WatchSetup.basicSync(this);
+        }
     }
 
     /** {@link Result#signIn}: the watch did not ask, we answered and wait, the watch went on after our answer. */
@@ -77,18 +141,27 @@ public final class Session {
         public String ended;
         public int received;
         public long bytes;
-        public boolean activityDone, heartDone, doneSent;
+        public boolean activityDone, movementDone, heartDone, doneSent;
+        /** The keys of the steps that got their answer (data steps: their end), in order. */
+        public final Set<String> done = new LinkedHashSet<String>();
+        /** The key of the step the session ended in, null when none or all were done. */
+        public String failedStep;
         /** How the sign in went ({@link #SIGN_IN_NONE}, {@link #SIGN_IN_SENT}, {@link #SIGN_IN_ACCEPTED}). */
         public int signIn = SIGN_IN_NONE;
+        /** True once a step after the hello was sent: from then on the watch may have taken something. */
+        public boolean wrote;
         /** Our challenge and the address of the last answered sign in, to check the watch's own proof; never logged. */
         byte[] ours;
         String signAddress;
+        boolean askAnswered;
     }
 
     // plain sentences for the screen; the log says more
     public static final String NO_ANSWER = "The watch did not answer. Keep it next to the phone, force stop the Withings app and try again.";
     public static final String CHALLENGE = "The watch asked for a sign in of a kind this version does not know. Nothing was changed on the watch. Please send the log.";
     public static final String SIGN_IN_REFUSED = "The watch did not accept the sign in. Nothing was changed on the watch. Please send the log.";
+    /** A refusal after the watch was already told something (review of #317). */
+    public static final String SIGN_IN_REFUSED_LATE = "The watch did not accept the sign in. What arrived is stored. Please send the log.";
     public static final String WATCH_PROOF = "The watch answered the sign in wrongly, so nothing more was asked. Please send the log.";
     public static final String FOR_RING = "Stopped to leave Bluetooth to the ring. The rest follows at the next sync.";
     public static final String STOPPED = "The watch sync was stopped. What arrived is stored.";
@@ -110,22 +183,72 @@ public final class Session {
         Result r = new Result();
         long end = System.currentTimeMillis() + plan.limitMs;
         boolean linkUp = true;
+        String current = HELLO;
         try {
-            ask(link, Proto.hello(plan.androidSdk), Proto.HELLO, "hello", r, gate, sink, log, end, plan);
-            ask(link, Proto.connect(), Proto.CONNECT, "connect", r, gate, sink, log, end, plan);
-            ask(link, Proto.battery(), Proto.BATTERY, "battery", r, gate, sink, log, end, plan);
-            ask(link, Proto.setTime(plan.now, plan.offset, plan.nextChange, plan.offsetAfter), Proto.SET_TIME, "set time", r, gate, sink, log, end, plan);
-            r.activityDone = data(link, Proto.activity(plan.activitySince), Proto.ACTIVITY, "activity", r, gate, sink, log, end, plan);
-            r.heartDone = data(link, Proto.heartRate(plan.heartSince), Proto.HEART_RATE, "heart rate", r, gate, sink, log, end, plan);
+            progress(plan, HELLO, STARTED);
+            ask(link, new Step(HELLO, Step.ASK, Proto.hello(plan.androidSdk)), r, gate, sink, log, end, plan);
+            done(plan, r, HELLO);
+            for (Step s : plan.steps()) {
+                current = s.key;
+                run(link, s, r, gate, sink, log, end, plan);
+            }
+            if (plan.more != null) {
+                while (true) {
+                    check(gate, end);
+                    Step s = plan.more.next(SLICE_MS);
+                    if (s == FINISH) break;
+                    if (s == null) {
+                        // keep reading: the watch's own messages are stored meanwhile
+                        byte[] m = link.next(1);
+                        if (m != null) {
+                            take(m, r, sink, log);
+                            own(link, m, r, log);
+                        }
+                        continue;
+                    }
+                    current = s.key;
+                    run(link, s, r, gate, sink, log, end, plan);
+                }
+            }
+            if (plan.last != null) {
+                for (Step s : plan.last) {
+                    current = s.key;
+                    run(link, s, r, gate, sink, log, end, plan);
+                }
+            }
+            current = null;
         } catch (Ended e) {
             r.ended = e.why;
-            log.log("watch: ended early: " + e.why);
+            r.failedStep = current;
+            log.log("watch: ended early" + (current != null ? " at " + current : "") + ": " + e.why);
         } catch (IOException e) {
             // the watch closing the link right after our answer most likely means it refused it
-            r.ended = r.signIn == SIGN_IN_SENT ? SIGN_IN_REFUSED : LINK_LOST;
+            r.ended = r.signIn == SIGN_IN_SENT ? refused(r) : LINK_LOST;
+            r.failedStep = r.signIn == SIGN_IN_SENT ? SIGN_IN : current;
             linkUp = false;
             log.log("watch: link lost" + (r.signIn == SIGN_IN_SENT ? " after the sign in answer" : "") + " (" + e.getClass().getSimpleName() + ")");
         }
+        if (r.failedStep != null) progress(plan, r.failedStep, FAILED);
+        if (linkUp && r.ended != null && plan.last != null) {
+            // the session ended early: the last steps still go out once, so the watch is left as it should be
+            for (Step s : plan.last) {
+                if (r.done.contains(s.key)) continue;
+                try {
+                    soft(link, s, r, OPEN, sink, log, Long.MAX_VALUE, plan);
+                    done(plan, r, s.key);
+                } catch (IOException e) {
+                    linkUp = false;
+                    log.log("watch: link lost at " + s.key + " (" + e.getClass().getSimpleName() + ")");
+                    break;
+                } catch (Ended e) {
+                    log.log("watch: " + s.key + " not sent: " + e.why);
+                    break;
+                }
+            }
+        }
+        r.activityDone = r.done.contains(ACTIVITY);
+        r.movementDone = r.done.contains(MOVEMENT);
+        r.heartDone = r.done.contains(HEART);
         if (linkUp) {
             // always, also after a failure: the notes say the watch stops answering when a session ends without it
             try {
@@ -153,6 +276,45 @@ public final class Session {
         return r;
     }
 
+    /** A gate that never stops: for the last steps after an early end. */
+    private static final Gate OPEN = new Gate() {
+        @Override
+        public boolean ringWanted() {
+            return false;
+        }
+
+        @Override
+        public boolean stopped() {
+            return false;
+        }
+    };
+
+    private static void progress(Plan plan, String key, int state) {
+        if (plan.progress != null) plan.progress.step(key, state);
+    }
+
+    private static void done(Plan plan, Result r, String key) {
+        r.done.add(key);
+        progress(plan, key, DONE);
+    }
+
+    private static String refused(Result r) {
+        return r.wrote ? SIGN_IN_REFUSED_LATE : SIGN_IN_REFUSED;
+    }
+
+    private static void run(Link link, Step s, Result r, Gate gate, Sink sink, Log log, long end, Plan plan) throws IOException, InterruptedException, Ended {
+        progress(plan, s.key, STARTED);
+        if (s.kind == Step.DATA) {
+            if (data(link, s, r, gate, sink, log, end, plan)) done(plan, r, s.key);
+        } else if (s.kind == Step.SOFT) {
+            soft(link, s, r, gate, sink, log, end, plan);
+            done(plan, r, s.key);
+        } else {
+            ask(link, s, r, gate, sink, log, end, plan);
+            done(plan, r, s.key);
+        }
+    }
+
     /** Stores and counts one message from the watch. */
     private static void take(byte[] m, Result r, Sink sink, Log log) throws Ended {
         r.received++;
@@ -163,6 +325,15 @@ public final class Session {
             log.log("watch: storing a message failed (" + e.getClass().getSimpleName() + ")");
             throw new Ended(NOT_STORED);
         }
+    }
+
+    /** The watch's own sync ask gets the empty answer once per session (as Gadgetbridge does); other own messages are only stored. */
+    private static void own(Link link, byte[] m, Result r, Log log) throws IOException, InterruptedException {
+        if (!Frame.fromWatch(m) || Frame.type(m) != Proto.SYNC_ASK || r.askAnswered) return;
+        byte[] reply = Proto.syncAskReply();
+        link.send(reply);
+        r.askAnswered = true;
+        log.log("watch: the watch asked for a sync itself, sent the answer, " + reply.length + " bytes");
     }
 
     /** True when {@code m} is the watch asking for a sign in. */
@@ -177,17 +348,20 @@ public final class Session {
     private static void signIn(Link link, byte[] m, Plan plan, Result r, Log log) throws IOException, InterruptedException, Ended {
         if (r.signIn == SIGN_IN_SENT) {
             log.log("watch: asked for a sign in again, the first answer was not accepted");
-            throw new Ended(SIGN_IN_REFUSED);
+            progress(plan, SIGN_IN, FAILED);
+            throw new Ended(refused(r));
         }
+        progress(plan, SIGN_IN, STARTED);
         byte[] ours = plan.ours;
         if (ours == null) {
             ours = new byte[SignIn.OURS];
             new SecureRandom().nextBytes(ours);
         }
         SignIn.Challenge c = SignIn.read(m, plan.address);
-        byte[] answer = c == null ? null : SignIn.answer(m, plan.address, ours);
+        byte[] answer = SignIn.answer(c, ours);
         if (answer == null) {
             log.log("watch: the sign in is of a kind not known, " + m.length + " bytes, " + Frame.parts(m).size() + " parts");
+            progress(plan, SIGN_IN, FAILED);
             throw new Ended(CHALLENGE);
         }
         link.send(answer);
@@ -199,12 +373,16 @@ public final class Session {
     }
 
     /** The awaited answer came after our sign in answer: the watch accepted it; its own proof, when it sends one, must be right. */
-    private static void accepted(byte[] m, Result r, Log log) throws Ended {
+    private static void accepted(byte[] m, Result r, Log log, Plan plan) throws Ended {
         if (r.signIn != SIGN_IN_SENT) return;
         Boolean proof = SignIn.watchProof(m, r.ours, r.signAddress);
         log.log("watch: the watch's own sign in proof: " + (proof == null ? "none sent" : proof ? "right" : "wrong"));
-        if (Boolean.FALSE.equals(proof)) throw new Ended(WATCH_PROOF);
+        if (Boolean.FALSE.equals(proof)) {
+            progress(plan, SIGN_IN, FAILED);
+            throw new Ended(WATCH_PROOF);
+        }
         r.signIn = SIGN_IN_ACCEPTED;
+        done(plan, r, SIGN_IN);
         log.log("watch: sign in accepted");
     }
 
@@ -230,23 +408,29 @@ public final class Session {
         }
     }
 
-    /** Sends {@code req} and waits for its answer of {@code type}; other messages are stored and logged on the way. */
-    private static byte[] ask(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end, Plan plan)
+    private static void send(Link link, Step s, Result r, Log log) throws IOException, InterruptedException {
+        link.send(s.msg);
+        if (s.type != Proto.HELLO) r.wrote = true;
+        log.log("watch: sent " + Frame.hexType(s.type) + " " + s.key + ", " + s.msg.length + " bytes");
+    }
+
+    /** Sends {@code s} and waits for its answer of its type; other messages are stored and logged on the way. */
+    private static byte[] ask(Link link, Step s, Result r, Gate gate, Sink sink, Log log, long end, Plan plan)
             throws IOException, InterruptedException, Ended {
         long answerMs = plan.answerMs;
         check(gate, end);
-        link.send(req);
-        log.log("watch: sent " + Frame.hexType(type) + " " + what + ", " + req.length + " bytes");
+        send(link, s, r, log);
         long until = System.currentTimeMillis() + answerMs;
         while (true) {
             long left = until - System.currentTimeMillis();
             byte[] m = left > 0 ? next(link, left, gate) : null;
             if (m == null) {
                 if (r.signIn == SIGN_IN_SENT) {
-                    log.log("watch: no answer to " + what + " within " + Math.max(1, answerMs / 1000) + " s after the sign in answer");
-                    throw new Ended(SIGN_IN_REFUSED);
+                    log.log("watch: no answer to " + s.key + " within " + Math.max(1, answerMs / 1000) + " s after the sign in answer");
+                    progress(plan, SIGN_IN, FAILED);
+                    throw new Ended(refused(r));
                 }
-                log.log("watch: no answer to " + what + " within " + Math.max(1, answerMs / 1000) + " s");
+                log.log("watch: no answer to " + s.key + " within " + Math.max(1, answerMs / 1000) + " s");
                 throw new Ended(NO_ANSWER);
             }
             take(m, r, sink, log);
@@ -260,56 +444,99 @@ public final class Session {
                 check(gate, end);
                 continue;
             }
-            if (t == type && !Frame.fromWatch(m)) {
-                accepted(m, r, log);
+            own(link, m, r, log);
+            if (t == s.type && !Frame.fromWatch(m)) {
+                accepted(m, r, log, plan);
                 return m;
             }
             check(gate, end);
         }
     }
 
+    /** Sends {@code s}, waits a moment for its answer and goes on without one. */
+    private static void soft(Link link, Step s, Result r, Gate gate, Sink sink, Log log, long end, Plan plan)
+            throws IOException, InterruptedException, Ended {
+        check(gate, end);
+        send(link, s, r, log);
+        long until = System.currentTimeMillis() + Math.min(SOFT_MS, plan.answerMs);
+        while (true) {
+            long left = until - System.currentTimeMillis();
+            byte[] m = left > 0 ? next(link, left, gate) : null;
+            if (m == null) {
+                log.log("watch: no answer to " + s.key + ", going on");
+                return;
+            }
+            take(m, r, sink, log);
+            own(link, m, r, log);
+            if (Frame.type(m) == s.type && !Frame.fromWatch(m)) return;
+        }
+    }
+
     /** Sends a data request and takes its answers until one holds the end part; true when the end came. */
-    private static boolean data(Link link, byte[] req, int type, String what, Result r, Gate gate, Sink sink, Log log, long end, Plan plan)
+    private static boolean data(Link link, Step s, Result r, Gate gate, Sink sink, Log log, long end, Plan plan)
             throws IOException, InterruptedException, Ended {
         long silenceMs = plan.silenceMs;
         check(gate, end);
-        link.send(req);
-        log.log("watch: sent " + Frame.hexType(type) + " " + what + ", " + req.length + " bytes");
+        send(link, s, r, log);
         int n = 0;
         long bytes = 0;
+        // the part types of the answers and how often each came: names the kinds of records, never a value
+        Map<Integer, Integer> parts = new TreeMap<Integer, Integer>();
         try {
             while (true) {
                 byte[] m = next(link, silenceMs, gate);
                 if (m == null) {
-                    log.log("watch: " + what + ": nothing more within " + Math.max(1, silenceMs / 1000) + " s, no end part");
+                    if (r.signIn == SIGN_IN_SENT) {
+                        // review of #317: the same silence as in ask() after a sign in answer is a refusal
+                        log.log("watch: " + s.key + ": nothing within " + Math.max(1, silenceMs / 1000) + " s after the sign in answer");
+                        progress(plan, SIGN_IN, FAILED);
+                        throw new Ended(refused(r));
+                    }
+                    log.log("watch: " + s.key + ": nothing more within " + Math.max(1, silenceMs / 1000) + " s, no end part");
                     throw new Ended(NO_ANSWER);
                 }
                 take(m, r, sink, log);
                 int t = Frame.type(m);
                 if (asksSignIn(m)) {
-                    log.log("watch: got " + Frame.hexType(t) + " during " + what + ", " + m.length + " bytes");
+                    log.log("watch: got " + Frame.hexType(t) + " during " + s.key + ", " + m.length + " bytes");
                     signIn(link, m, plan, r, log);
                     check(gate, end);
                     continue;
                 }
-                if (t != type || Frame.fromWatch(m)) {
-                    log.log("watch: got " + Frame.hexType(t) + (Frame.fromWatch(m) ? " (the watch's own)" : "") + " during " + what + ", " + m.length + " bytes");
+                if (t != s.type || Frame.fromWatch(m)) {
+                    log.log("watch: got " + Frame.hexType(t) + (Frame.fromWatch(m) ? " (the watch's own)" : "") + " during " + s.key + ", " + m.length + " bytes");
+                    own(link, m, r, log);
                     check(gate, end);
                     continue;
                 }
-                accepted(m, r, log);
+                accepted(m, r, log, plan);
                 n++;
                 bytes += m.length;
-                if (n <= LOGGED) log.log("watch: got " + Frame.hexType(t) + " " + what + " " + n + ", " + m.length + " bytes, " + Frame.parts(m).size() + " parts");
+                for (Frame.Part p : Frame.parts(m)) {
+                    Integer k = parts.get(p.type);
+                    parts.put(p.type, k == null ? 1 : k + 1);
+                }
+                if (n <= LOGGED) log.log("watch: got " + Frame.hexType(t) + " " + s.key + " " + n + ", " + m.length + " bytes, " + Frame.parts(m).size() + " parts");
                 if (Frame.has(m, Proto.END)) {
-                    log.log("watch: " + what + ": " + n + " messages, " + bytes + " bytes, end reached");
+                    log.log("watch: " + s.key + ": " + n + " messages, " + bytes + " bytes, end reached");
+                    log.log("watch: " + s.key + " part types: " + partList(parts));
                     return true;
                 }
                 check(gate, end);
             }
         } catch (Ended e) {
-            if (n > 0) log.log("watch: " + what + ": " + n + " messages, " + bytes + " bytes, no end");
+            if (n > 0) {
+                log.log("watch: " + s.key + ": " + n + " messages, " + bytes + " bytes, no end");
+                log.log("watch: " + s.key + " part types: " + partList(parts));
+            }
             throw e;
         }
+    }
+
+    /** "0x0601 40, 0x0602 40": part types and how often each came. */
+    static String partList(Map<Integer, Integer> parts) {
+        List<String> out = new ArrayList<String>();
+        for (Map.Entry<Integer, Integer> e : parts.entrySet()) out.add(Frame.hexType(e.getKey()) + " " + e.getValue());
+        return out.isEmpty() ? "none" : String.join(", ", out);
     }
 }

@@ -25,7 +25,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 9;
+    static final int VERSION = 10;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -96,6 +96,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo7(db);
         upgradeTo8(db);
         upgradeTo9(db);
+        upgradeTo10(db);
     }
 
     @Override
@@ -108,6 +109,16 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 7) upgradeTo7(db);
         if (oldV < 8) upgradeTo8(db);
         if (oldV < 9) upgradeTo9(db);
+        if (oldV < 10) upgradeTo10(db);
+    }
+
+    /**
+     * v10: the watch setup (issue #251): {@code watch_moves}, per watch record its intensity and metres climbed and
+     * descended, see {@link WatchStore#create10}. Only adds one table ({@code IF NOT EXISTS}): safe to run twice. Older
+     * files get it empty; the new decoder version works it out from their raw messages before the next sync.
+     */
+    private static void upgradeTo10(SQLiteDatabase db) {
+        WatchStore.create10(db);
     }
 
     /**
@@ -1435,6 +1446,7 @@ public final class Db extends SQLiteOpenHelper {
         {"watch_sleep", 9, new String[] {"device", "start", "dur", "stage"}},
         {"watch_workouts", 9, new String[] {"device", "start", "dur", "kind", "steps", "metres", "kcal"}},
         {"watch_battery", 9, new String[] {"device", "t", "pct", "state", "mv"}},
+        {"watch_moves", 10, new String[] {"device", "start", "met", "up", "down"}},
     };
 
     /**

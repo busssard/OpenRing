@@ -204,7 +204,7 @@ public final class Prefs {
         sp.edit().putString("watch_address", address).putString("watch_name", name).remove("watch_error").apply();
     }
     /** Forget the watch: syncing stops, its stored data stays. */
-    public void forgetWatch() { sp.edit().remove("watch_address").remove("watch_name").remove("watch_error").apply(); }
+    public void forgetWatch() { sp.edit().remove("watch_address").remove("watch_name").remove("watch_error").remove("watch_setup_at").apply(); }
     /** Syncs a day in the background: 0 by hand, 1, 2 or 4 ({@code core/withings/WatchDue}). */
     public int watchPerDay() { return sp.getInt("watch_per_day", app.openring.core.withings.WatchDue.DEFAULT); }
     public void setWatchPerDay(int n) {
@@ -216,6 +216,37 @@ public final class Prefs {
      */
     public int mainDevice() { return app.openring.core.withings.MainDevice.valid(sp.getInt("main_device", app.openring.core.withings.MainDevice.RING)); }
     public void setMainDevice(int d) { sp.edit().putInt("main_device", app.openring.core.withings.MainDevice.valid(d)).apply(); }
+    // ---- the watch's setup (issue #251, watch setup): what the watch is told, in the backup ----
+    /** When the first setup was sent completely (unix seconds), 0 never. */
+    public long watchSetupAt() { return sp.getLong("watch_setup_at", 0); }
+    public void setWatchSetupAt(long t) { sp.edit().putLong("watch_setup_at", t).apply(); }
+    /** The daily step goal the watch shows on its activity hand. */
+    public int watchGoal() { return sp.getInt("watch_goal", app.openring.core.withings.WatchSetup.DEFAULT_GOAL); }
+    public void setWatchGoal(int g) { if (g >= 1000 && g <= 50000) sp.edit().putInt("watch_goal", g).apply(); }
+    /** Distance in km (true) or miles; by default miles only where the phone's country uses them. */
+    public boolean watchMetric() {
+        String c = java.util.Locale.getDefault().getCountry();
+        return sp.getBoolean("watch_metric", !("US".equals(c) || "GB".equals(c) || "LR".equals(c) || "MM".equals(c)));
+    }
+    public void setWatchMetric(boolean b) { sp.edit().putBoolean("watch_metric", b).apply(); }
+    /** The watch's alarm as the app last set it; {@link #watchAlarmPending} until the watch took it. */
+    public app.openring.core.withings.WatchSetup.Alarm watchAlarm() {
+        app.openring.core.withings.WatchSetup.Alarm a = new app.openring.core.withings.WatchSetup.Alarm();
+        a.on = sp.getBoolean("watch_alarm_on", false);
+        a.hour = sp.getInt("watch_alarm_h", 7);
+        a.minute = sp.getInt("watch_alarm_m", 0);
+        a.days = sp.getInt("watch_alarm_days", 0x1f) & 0x7f;
+        a.smart = sp.getInt("watch_alarm_smart", 0);
+        return a;
+    }
+    public void setWatchAlarm(app.openring.core.withings.WatchSetup.Alarm a) {
+        sp.edit().putBoolean("watch_alarm_on", a.on).putInt("watch_alarm_h", Math.max(0, Math.min(23, a.hour))).putInt("watch_alarm_m", Math.max(0, Math.min(59, a.minute)))
+                .putInt("watch_alarm_days", a.days & 0x7f).putInt("watch_alarm_smart", Math.max(0, Math.min(60, a.smart))).putBoolean("watch_alarm_pending", true).apply();
+    }
+    /** True when the alarm changed and the watch has not taken it yet (the next sync sends it). */
+    public boolean watchAlarmPending() { return sp.getBoolean("watch_alarm_pending", false); }
+    public void setWatchAlarmSent() { sp.edit().putBoolean("watch_alarm_pending", false).apply(); }
+
     public long watchLastOk() { return sp.getLong("watch_last_ok", 0); }
     public long watchLastAttempt() { return sp.getLong("watch_last_try", 0); }
     /** The plain sentence of the last watch sync that did not finish, null after one that did. */

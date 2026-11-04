@@ -77,7 +77,11 @@ public final class SignIn {
      * and {@link Proto#CHALLENGE_PART} (the watch's address text and {@code ours}, each with a length byte first).
      */
     public static byte[] answer(byte[] msg, String fallbackAddress, byte[] ours) {
-        Challenge c = read(msg, fallbackAddress);
+        return answer(read(msg, fallbackAddress), ours);
+    }
+
+    /** The whole answer to an already read challenge {@code c} (see {@link #answer(byte[], String, byte[])}), or null. */
+    public static byte[] answer(Challenge c, byte[] ours) {
         if (c == null || ours == null || ours.length == 0 || ours.length > 255) return null;
         byte[] proof = proof(c.bytes, c.address);
         byte[] address = c.address.getBytes(StandardCharsets.UTF_8);
