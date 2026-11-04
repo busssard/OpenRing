@@ -53,7 +53,8 @@ public final class RingScanner {
 
     /**
      * Scan up to {@code timeoutMs}. Returns the preferred address as soon as it is seen, otherwise
-     * the Oura ring with the strongest plausible signal after a short settle time ({@link Proximity#strongest}).
+     * the Oura ring with the strongest plausible signal after a short settle time ({@link Proximity#strongest}), or at
+     * the end of the scan when one was heard too late to settle (issue #195).
      * Addresses in {@code exclude} are skipped.
      */
     public static BluetoothDevice find(final Context c, final String preferred, final Set<String> exclude, long timeoutMs, GattLink.Log log)
@@ -128,14 +129,13 @@ public final class RingScanner {
                 }
                 synchronized (seen) {
                     if (preferred != null && seen.containsKey(preferred)) return seen.get(preferred).getDevice();
-                    if (!seen.isEmpty() && SystemClock.elapsedRealtime() - firstSeen[0] > 2500) {
-                        // the strongest real signal: an impossible value (127, "not available") never wins (issue #105)
-                        List<ScanResult> all = new ArrayList<ScanResult>(seen.values());
-                        int[] rssi = new int[all.size()];
-                        for (int i = 0; i < rssi.length; i++) rssi[i] = all.get(i).getRssi();
-                        return all.get(Proximity.strongest(rssi)).getDevice();
-                    }
+                    if (!seen.isEmpty() && SystemClock.elapsedRealtime() - firstSeen[0] > 2500) return strongest(seen);
                 }
+            }
+            // a ring first heard shortly before the end (likely with a short scan, issue #195): the strongest heard so far
+            synchronized (seen) {
+                if (preferred != null && seen.containsKey(preferred)) return seen.get(preferred).getDevice();
+                if (!seen.isEmpty()) return strongest(seen);
             }
         } finally {
             try {
@@ -144,6 +144,14 @@ public final class RingScanner {
             }
         }
         return null;
+    }
+
+    /** The ring with the strongest real signal: an impossible value (127, "not available") never wins (issue #105). */
+    private static BluetoothDevice strongest(Map<String, ScanResult> seen) {
+        List<ScanResult> all = new ArrayList<ScanResult>(seen.values());
+        int[] rssi = new int[all.size()];
+        for (int i = 0; i < rssi.length; i++) rssi[i] = all.get(i).getRssi();
+        return all.get(Proximity.strongest(rssi)).getDevice();
     }
 
     /** Starts a scan; Bluetooth switched off since the check gives the same error as the check (issue #273). */

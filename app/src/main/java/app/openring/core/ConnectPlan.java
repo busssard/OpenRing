@@ -24,8 +24,13 @@ public final class ConnectPlan {
     public final boolean widen;
     /** Time limit of the connect to the ring the scan heard, ms. */
     public final long connectMs;
-    /** Connect and download rounds of a sync, for errors worth another try. */
+    /** Rounds of a sync while the ring is not reached (the connect failed), for errors worth another try. */
     public final int rounds;
+    /**
+     * Rounds of a sync once a round had connected and then failed (a broken off download, issue #157): 3 in both plans,
+     * the ring is near then and the next round continues the download.
+     */
+    public final int connectedRounds = 3;
     /** Pause between two rounds, ms. */
     public final long roundGapMs;
 
@@ -52,14 +57,30 @@ public final class ConnectPlan {
         return background ? BACKGROUND : PERSON;
     }
 
+    /** The most rounds a sync can run, whatever failed. */
+    public int maxRounds() {
+        return Math.max(rounds, connectedRounds);
+    }
+
+    /**
+     * Whether a sync whose round {@code attempt} (from 1) failed with an error worth another try runs another round:
+     * {@code connected} says the round reached the ring and failed after that (then {@link #connectedRounds} count),
+     * otherwise the connect failed (then {@link #rounds}, fewer in the background).
+     */
+    public boolean another(int attempt, boolean connected) {
+        return attempt < (connected ? connectedRounds : rounds);
+    }
+
     /** Radio time of one attempt with the ring out of reach: every direct connect runs out, then the whole scan hears nothing. */
     public long awayMs() {
         return directTries * directMs + Math.max(0, directTries - 1) * directGapMs + scanMs;
     }
 
     /**
-     * The longest a sync can try to connect: the ring is heard at the end of every scan but never connects, in every
-     * round (the "not reached" case, retried).
+     * The longest a sync can try to connect when it never reaches the ring: the ring is heard at the end of every scan
+     * but never connects, in every round (the "not reached" case, retried). Not counted: rounds that connected and broke
+     * off later (they take download time and get {@link #connectedRounds}), and the extra scans after another person's
+     * ring answered and refused the key (at most 2, each {@link #scanMs} plus {@link #connectMs}).
      */
     public long worstMs() {
         return rounds * (awayMs() + connectMs) + Math.max(0, rounds - 1) * roundGapMs;

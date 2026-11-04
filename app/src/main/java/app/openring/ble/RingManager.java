@@ -592,7 +592,7 @@ public final class RingManager {
         Set<String> exclude = new HashSet<String>();
         if (plan.background) log("background sync: " + plan);
         try {
-            for (int attempt = 1; attempt <= plan.rounds; attempt++) {
+            for (int attempt = 1; attempt <= plan.maxRounds(); attempt++) {
                 if (cancelRequested) {
                     res.message = "Sync stopped";
                     break;
@@ -630,14 +630,18 @@ public final class RingManager {
                     // only Bluetooth really off, no ring found, a key problem or a stop end the sync at once;
                     // passing Bluetooth errors (a refused write, a failed scan) get the other attempts (issue #157)
                     if (!SyncError.retryable(res.message, on)) break;
-                    if (attempt < plan.rounds) Thread.sleep(plan.roundGapMs);
+                    // a ring away gets fewer rounds in the background, a link that broke off after connecting
+                    // keeps all of them (s is set only once open() connected, issue #195)
+                    if (!plan.another(attempt, s != null)) break;
+                    Thread.sleep(plan.roundGapMs);
                 } catch (HistoryBatch.BatchException e) {
                     String raw = SyncError.raw(e);
                     log("attempt " + attempt + " failed: " + raw);
                     boolean on = bluetoothOn();
                     res.message = SyncError.attemptError(raw, on);
                     if (!on) break;
-                    if (attempt < plan.rounds) Thread.sleep(plan.roundGapMs);
+                    if (!plan.another(attempt, s != null)) break;
+                    Thread.sleep(plan.roundGapMs);
                 } finally {
                     close(s);
                 }

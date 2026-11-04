@@ -7803,6 +7803,14 @@ public class CoreTest {
         check("#195 background: balanced and filtered only (an unfiltered scan hears nothing with the screen off)", !b.lowLatency && !b.widen);
         eq("#195 background: 20 s connect after a scan hit", b.connectMs, 20000L);
         eq("#195 background: 2 rounds", b.rounds, 2);
+        // rounds: a ring not reached gets the plan's rounds, a link that broke off after connecting keeps 3 (#157)
+        eq("#195 both plans: 3 rounds after connecting", b.connectedRounds + "," + p.connectedRounds, "3,3");
+        eq("#195 most rounds: 3 in both plans", b.maxRounds() + "," + p.maxRounds(), "3,3");
+        check("#195 person, not reached: rounds 2 and 3, then no more", p.another(1, false) && p.another(2, false) && !p.another(3, false));
+        check("#195 person, broke off after connecting: rounds 2 and 3, then no more", p.another(1, true) && p.another(2, true) && !p.another(3, true));
+        check("#195 background, not reached: round 2, then no more", b.another(1, false) && !b.another(2, false));
+        check("#195 background, broke off after connecting: rounds 2 and 3 as before #195", b.another(1, true) && b.another(2, true) && !b.another(3, true));
+        check("#195 background: a round not reached after one that connected ends the sync", !b.another(2, false) && !b.another(3, false));
         // radio time with the ring away and in the worst case
         eq("#195 person: ring away 65.5 s", p.awayMs(), 65500L);
         eq("#195 background: ring away 35.5 s", b.awayMs(), 35500L);
@@ -7823,9 +7831,14 @@ public class CoreTest {
         check("#195 the sync passes the ticket's plan", rm.contains("download(res, key, prefs, ConnectPlan.of(ticket.background))") && rm.contains("s = open(false, exclude, plan);"));
         check("#195 every other connection keeps the person plan", rm.contains("return open(anyRing, exclude, ConnectPlan.PERSON);"));
         check("#195 the connection reads the plan", rm.contains("plan.scanMs, plan.lowLatency, plan.widen") && rm.contains("GattLink.open(ctx, d, glog, plan.directMs)")
-                && rm.contains("GattLink.open(ctx, d, glog, plan.connectMs)") && rm.contains("attempt <= plan.rounds"));
-        check("#195 no timeout of the old plan typed in RingManager", !rm.contains("40000") && !rm.contains(", 12000)") && !rm.contains(", 20000)")
-                && !rm.contains("attempt <= 3") && !rm.contains("attempt < 3"));
+                && rm.contains("GattLink.open(ctx, d, glog, plan.connectMs)") && rm.contains("attempt <= plan.maxRounds()"));
+        check("#195 both retried failures ask the plan whether another round runs", rm.split("if \\(!plan.another\\(attempt, s != null\\)\\) break;", -1).length == 3);
+        int o = rm.indexOf("private Session open(boolean anyRing, Set<String> exclude, ConnectPlan plan)"), oe = rm.indexOf("private void close(Session s)", o);
+        int d = rm.indexOf("private void download(SyncResult res"), de = rm.indexOf("private boolean bluetoothOn()", d);
+        check("#195 open() and download() found", o > 0 && oe > o && d > 0 && de > d);
+        String openBody = rm.substring(o, oe), dlBody = rm.substring(d, de);
+        check("#195 open() types no timeout of its own", !openBody.contains("12000") && !openBody.contains("20000") && !openBody.contains("40000") && !openBody.contains("sleep(1500)"));
+        check("#195 download() types no round count of its own", !dlBody.contains("attempt <= 3") && !dlBody.contains("attempt < 3"));
     }
 
     /** Issue #194: the rule for skipping a sync shortly after the last one, and screen sessions read again unchanged. */
