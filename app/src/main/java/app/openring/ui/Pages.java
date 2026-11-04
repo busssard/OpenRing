@@ -1325,23 +1325,50 @@ public final class Pages {
 
     /** A list of the apps seen in the last 10 days (and those already left out) with tick boxes. */
     static void pickExcluded(final Context c, final Nav nav) {
+        // one list at a time: a second tap while the first is read opens nothing more
+        if (picking) return;
+        picking = true;
         final Prefs p = Prefs.of(c);
         final java.util.Set<String> ex = p.screenExcluded();
-        final List<String> pkgs = new ArrayList<String>();
-        List<String> labels = new ArrayList<String>();
-        app.openring.data.Db db = app.openring.data.Db.get(c);
-        // per day over the days app times are known (fewer than 10 right after installing 1.15)
-        double since = db.appsStart();
-        double days = since < 0 ? 10 : Math.max(1, Math.min(10, (System.currentTimeMillis() / 1000.0 - since) / 86400));
-        for (java.util.Map.Entry<String, Double> e : app.openring.data.ScreenDays.recentApps(db, 10)) {
-            pkgs.add(e.getKey());
-            labels.add(app.openring.data.ScreenUse.label(c, e.getKey()) + "  (" + span(e.getValue() / days) + " a day)");
-        }
-        for (String x : ex) {
-            if (pkgs.contains(x)) continue;
-            pkgs.add(x);
-            labels.add(app.openring.data.ScreenUse.label(c, x) + "  (not used lately)");
-        }
+        // the stored app times and the app names are read in the background, so the tap never holds the screen (issue #223)
+        new android.os.AsyncTask<Void, Void, List<List<String>>>() {
+            @Override
+            protected List<List<String>> doInBackground(Void... v) {
+                List<String> pkgs = new ArrayList<String>(), labels = new ArrayList<String>();
+                app.openring.data.Db db = app.openring.data.Db.get(c);
+                // per day over the days app times are known (fewer than 10 right after installing 1.15)
+                double since = db.appsStart();
+                double days = since < 0 ? 10 : Math.max(1, Math.min(10, (System.currentTimeMillis() / 1000.0 - since) / 86400));
+                for (java.util.Map.Entry<String, Double> e : app.openring.data.ScreenDays.recentApps(db, 10)) {
+                    pkgs.add(e.getKey());
+                    labels.add(app.openring.data.ScreenUse.label(c, e.getKey()) + "  (" + span(e.getValue() / days) + " a day)");
+                }
+                for (String x : ex) {
+                    if (pkgs.contains(x)) continue;
+                    pkgs.add(x);
+                    labels.add(app.openring.data.ScreenUse.label(c, x) + "  (not used lately)");
+                }
+                List<List<String>> r = new ArrayList<List<String>>();
+                r.add(pkgs);
+                r.add(labels);
+                return r;
+            }
+
+            @Override
+            protected void onPostExecute(List<List<String>> r) {
+                picking = false;
+                // the screen went away meanwhile (turned, closed): no dialog on a screen that is gone
+                if (c instanceof android.app.Activity && (((android.app.Activity) c).isFinishing() || ((android.app.Activity) c).isDestroyed())) return;
+                showExcluded(c, nav, p, ex, r.get(0), r.get(1));
+            }
+        }.executeOnExecutor(android.os.AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** True while {@link #pickExcluded} reads the apps (main thread only). */
+    private static boolean picking;
+
+    /** The tick box list of {@link #pickExcluded}, on the main thread. */
+    static void showExcluded(final Context c, final Nav nav, final Prefs p, java.util.Set<String> ex, final List<String> pkgs, List<String> labels) {
         if (pkgs.isEmpty()) {
             android.widget.Toast.makeText(c, "No apps known yet. Use the phone a little and try again.", android.widget.Toast.LENGTH_LONG).show();
             return;

@@ -795,6 +795,8 @@ public class PipelineTest {
         longHistoryTiming();
         dialClockChange();
         appRowsStored();
+        screenReads223();
+        screenAnalysis223();
         activityGap();
         activityClockChange();
         totalBurnSoFar();
@@ -2023,6 +2025,329 @@ public class PipelineTest {
                 && b2.excludedMin == b.excludedMin && a2.score.value == a.score.value && b2.score.value == b.score.value
                 && a2.rawMin == a.rawMin, b.day.totalMin + " / " + b2.day.totalMin);
         check("with no app left out the total is all phone use", Math.abs(a.day.totalMin - a.rawMin) < 1e-9 && Math.abs(a.day.totalMin - 291 / 60.0) < 1e-9, a.day.totalMin);
+    }
+
+    /** Sets {@code Db.boundedReads} (tests only): false reads screen and app rows as before issue #223. */
+    static void setBounded(boolean on) throws Exception {
+        java.lang.reflect.Field f = Db.class.getDeclaredField("boundedReads");
+        f.setAccessible(true);
+        f.set(null, on);
+    }
+
+    /** The query plan of {@code sql}, all lines in one string. */
+    static String plan223(Db db, String sql, String[] args) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("EXPLAIN QUERY PLAN " + sql, args);
+        StringBuilder b = new StringBuilder();
+        try {
+            while (c.moveToNext()) b.append(c.getString(3)).append(" | ");
+        } finally {
+            c.close();
+        }
+        return b.toString();
+    }
+
+    /** Sessions as exact bits, so "the same" means the same doubles. */
+    static String rows223(List<double[]> rows) {
+        StringBuilder b = new StringBuilder();
+        for (double[] r : rows) b.append(Double.doubleToLongBits(r[0])).append(',').append(Double.doubleToLongBits(r[1])).append(';');
+        return b.toString();
+    }
+
+    static String apps223(java.util.Map<String, List<double[]>> m) {
+        StringBuilder b = new StringBuilder();
+        for (java.util.Map.Entry<String, List<double[]>> e : m.entrySet()) b.append(e.getKey()).append('=').append(rows223(e.getValue())).append(' ');
+        return b.toString();
+    }
+
+    /** Every field of a result, deep, doubles by their bits (for "row for row the same"). */
+    static String dump223(Object o) throws Exception {
+        if (o == null) return "null";
+        if (o instanceof Double) return "d" + Double.doubleToLongBits((Double) o);
+        if (o instanceof Float) return "f" + Float.floatToIntBits((Float) o);
+        if (o instanceof Number || o instanceof Boolean || o instanceof CharSequence || o instanceof Enum || o instanceof Character
+                || o instanceof java.time.temporal.Temporal || o instanceof ZoneId) return String.valueOf(o);
+        if (o.getClass().isArray()) {
+            StringBuilder b = new StringBuilder("[");
+            for (int i = 0; i < java.lang.reflect.Array.getLength(o); i++) b.append(dump223(java.lang.reflect.Array.get(o, i))).append(',');
+            return b.append(']').toString();
+        }
+        if (o instanceof java.util.Collection) {
+            StringBuilder b = new StringBuilder("(");
+            for (Object x : (java.util.Collection<?>) o) b.append(dump223(x)).append(',');
+            return b.append(')').toString();
+        }
+        if (o instanceof java.util.Map) {
+            StringBuilder b = new StringBuilder("{");
+            for (java.util.Map.Entry<?, ?> e : ((java.util.Map<?, ?>) o).entrySet()) b.append(dump223(e.getKey())).append(':').append(dump223(e.getValue())).append(',');
+            return b.append('}').toString();
+        }
+        if (o instanceof java.util.Map.Entry) {
+            java.util.Map.Entry<?, ?> e = (java.util.Map.Entry<?, ?>) o;
+            return dump223(e.getKey()) + "=" + dump223(e.getValue());
+        }
+        if (o instanceof JSONObject || o instanceof org.json.JSONArray) return o.toString();
+        StringBuilder b = new StringBuilder(o.getClass().getSimpleName()).append('<');
+        for (Class<?> k = o.getClass(); k != null && k != Object.class; k = k.getSuperclass()) {
+            for (java.lang.reflect.Field f : k.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.isSynthetic()) continue;
+                f.setAccessible(true);
+                b.append(f.getName()).append('=').append(dump223(f.get(o))).append(' ');
+            }
+        }
+        return b.append('>').toString();
+    }
+
+    /** {@code Db.appRows} (package private): the stored app rows as they are. */
+    @SuppressWarnings("unchecked")
+    static java.util.Map<String, List<double[]>> appRows223(Db db, double from, double to) throws Exception {
+        java.lang.reflect.Method m = Db.class.getDeclaredMethod("appRows", double.class, double.class);
+        m.setAccessible(true);
+        return (java.util.Map<String, List<double[]>>) m.invoke(db, from, to);
+    }
+
+    static long indexes223(Db db) {
+        return db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('screen_long', 'apps_start', 'apps_long')");
+    }
+
+    /**
+     * Issue #223: screen and app rows are read from the index on start near the time asked for (plus the few rows longer than a
+     * day), not from the first row ever stored, and give exactly the rows, apps and Screen tab of the single query before:
+     * for today, a year back, windows inside rows longer than a day, ties, edges and a row written around the app's code.
+     */
+    static void screenReads223() throws Exception {
+        Context c = freshDb("openring-screen-223");
+        Db db = Db.get(c);
+        ZoneId z = ZONE;
+        check("#223: the read indexes exist on a new file", indexes223(db) == 3, indexes223(db));
+        LocalDate last = LocalDate.of(2026, 10, 30), first = last.minusDays(420);
+        Random r = new Random(223);
+        String[] pkgs = {"com.chat", "com.maps", "com.mail", "com.video", "com.news", "com.bank", "com.game", "com.camera"};
+        android.database.sqlite.SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        int sessions = 0;
+        for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1)) {
+            double t = d.atStartOfDay(z).toEpochSecond() + 6 * 3600 + r.nextInt(1800);
+            for (int i = 0; i < 30; i++) {
+                double len = 10 + r.nextInt(900) + r.nextDouble();
+                w.execSQL("INSERT INTO screen (start, stop) VALUES (?, ?)", new Object[] {t, t + len});
+                // one or two apps in front during the session
+                String a = pkgs[r.nextInt(pkgs.length)];
+                w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {a, t, t + len / 2});
+                w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {pkgs[(r.nextInt(pkgs.length - 1) + 1 + java.util.Arrays.asList(pkgs).indexOf(a)) % pkgs.length], t + len / 2, t + len});
+                sessions++;
+                t += len + 120 + r.nextInt(2400);
+            }
+        }
+        w.setTransactionSuccessful();
+        w.endTransaction();
+        db.putScreenRead(first.atStartOfDay(z).toEpochSecond(), last.plusDays(1).atStartOfDay(z).toEpochSecond());
+        // the edges: rows of exactly a day, just over and just under it, long rows across midnight a year and a half year back
+        double year = last.minusDays(365).atStartOfDay(z).toEpochSecond(), half = last.minusDays(180).atStartOfDay(z).toEpochSecond();
+        double[][] edges = {
+            {year - 3 * 86400 + 0.25, year + 2 * 3600},      // 3 days and 2 hours, over midnight a year back
+            {half - 20 * 3600 + 0.5, half + 10 * 3600 + 0.5}, // 30 hours, over midnight half a year back
+            {half - 5 * 86400, half - 5 * 86400 + 86400},     // exactly a day
+            {half - 7 * 86400 + 0.1, half - 6 * 86400 + 0.6}, // half a second over a day
+            {half - 9 * 86400 + 0.7, half - 8 * 86400 + 0.2}, // half a second under a day
+            {half - 11 * 86400 + 1e-6, half - 10 * 86400 + 1.5e-6}, // a millionth over a day, with fractions
+        };
+        List<double[]> long1 = new ArrayList<double[]>();
+        for (double[] e : edges) long1.add(e);
+        db.putScreen(long1);
+        // a long row written around putScreen (as a restore or an older version would), after the file was opened
+        w.execSQL("INSERT INTO screen (start, stop) VALUES (?, ?)", new Object[] {year + 100 * 86400 + 0.5, year + 102 * 86400});
+        for (double[] e : edges) {
+            java.util.Map<String, List<double[]>> m = new java.util.LinkedHashMap<String, List<double[]>>();
+            m.put("com.maps", new ArrayList<double[]>(java.util.Arrays.asList(new double[] {e[0], e[1]})));
+            db.putApps(m);
+        }
+        w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {"com.tv", year + 100 * 86400 + 0.5, year + 102 * 86400});
+        // two apps starting at the same moment, written in the order that sorts last first
+        w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {"zz.second", half + 3 * 3600, half + 3 * 3600 + 60});
+        w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {"aa.first", half + 3 * 3600, half + 3 * 3600 + 90});
+
+        // the windows: today, the 14 days of the Screen tab, a year back, inside the long rows, at their edges, all, random
+        List<double[]> win = new ArrayList<double[]>();
+        double today = last.atStartOfDay(z).toEpochSecond(), end = last.plusDays(1).atStartOfDay(z).toEpochSecond();
+        win.add(new double[] {today, end});
+        win.add(new double[] {today - 13 * 86400 - 2 * 3600, end});
+        win.add(new double[] {year, year + 86400});
+        win.add(new double[] {year - 86400, year});
+        win.add(new double[] {half, half + 86400});
+        win.add(new double[] {half - 86400, half});
+        win.add(new double[] {half + 3 * 3600, half + 3 * 3600 + 30});
+        win.add(new double[] {year + 101 * 86400, year + 101 * 86400 + 60});
+        for (double[] e : edges) {
+            win.add(new double[] {e[1] - 1, e[1] + 1});
+            win.add(new double[] {e[1], e[1] + 10});
+            win.add(new double[] {e[0] - 10, e[0]});
+            win.add(new double[] {(e[0] + e[1]) / 2, (e[0] + e[1]) / 2 + 1});
+        }
+        win.add(new double[] {0, Double.MAX_VALUE});
+        win.add(new double[] {-Double.MAX_VALUE, Double.MAX_VALUE});
+        win.add(new double[] {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY});
+        win.add(new double[] {end, end + 86400});
+        win.add(new double[] {today + 5000, today + 4000});
+        for (int i = 0; i < 300; i++) {
+            double a = first.atStartOfDay(z).toEpochSecond() + r.nextDouble() * 422 * 86400;
+            win.add(new double[] {a, a + r.nextDouble() * (i % 3 == 0 ? 14 : 1) * 86400});
+        }
+        int same = 0, rowsSeen = 0;
+        List<String> diff = new ArrayList<String>();
+        for (double[] x : win) {
+            setBounded(false);
+            String s0 = rows223(db.screen(x[0], x[1])), a0 = apps223(appRows223(db, x[0], x[1])), m0 = apps223(db.apps(x[0], x[1]));
+            setBounded(true);
+            List<double[]> sNew = db.screen(x[0], x[1]);
+            String s1 = rows223(sNew), a1 = apps223(appRows223(db, x[0], x[1])), m1 = apps223(db.apps(x[0], x[1]));
+            rowsSeen += sNew.size();
+            if (s0.equals(s1) && a0.equals(a1) && m0.equals(m1)) same++;
+            else diff.add(x[0] + ".." + x[1]);
+        }
+        check("#223: screen, app rows and apps read row for row the same as before (" + win.size() + " windows, " + sessions + " sessions)",
+                same == win.size() && rowsSeen > 1000, diff);
+        java.util.Map<String, List<double[]>> tie = appRows223(db, half + 3 * 3600, half + 3 * 3600 + 30);
+        List<String> tieKeys = new ArrayList<String>(tie.keySet());
+        check("#223: two apps starting at the same moment come in a fixed order", tieKeys.indexOf("aa.first") >= 0
+                && tieKeys.indexOf("aa.first") < tieKeys.indexOf("zz.second"), tieKeys);
+        List<double[]> inLong = db.screen(year + 101 * 86400, year + 101 * 86400 + 60);
+        check("#223: a row longer than a day written around putScreen is found inside it", inLong.size() == 1 && inLong.get(0)[0] == year + 100 * 86400 + 0.5, rows223(inLong));
+        check("#223: the oldest app start is the same", db.appsStart() == minStart223(db) && minStart223(db) > 0, db.appsStart());
+
+        // the query plans: the index on start from near the window, the small index for long rows, never the whole table
+        String[] args = {"1", "2", "3", "4", "5"};
+        java.lang.reflect.Method sql = Db.class.getDeclaredMethod("boundedSql", String.class, String.class, String.class);
+        sql.setAccessible(true);
+        String ps = plan223(db, (String) sql.invoke(null, "screen", "start, stop", "start"), args);
+        String pa = plan223(db, (String) sql.invoke(null, "apps", "pkg, start, stop", "start, pkg"), args);
+        check("#223: screen read from the window on (start>? AND start<?) and long rows from their own index", ps.contains("start>? AND start<?")
+                && ps.contains("screen_long") && !ps.contains("SCAN screen"), ps);
+        check("#223: app rows read the same way", pa.contains("apps_start (start>? AND start<?)") && pa.contains("apps_long") && !pa.contains("SCAN apps") && !pa.contains("TEMP B-TREE"), pa);
+        String pm = plan223(db, "SELECT MIN(start) FROM apps", null);
+        check("#223: the oldest app start is one step in the index on start", pm.contains("apps_start") && !pm.contains("SCAN"), pm);
+
+        // the Screen tab, for today, a year back, the days of the long rows, with and without an app left out
+        java.util.Set<String> none = new java.util.HashSet<String>(), maps = new java.util.HashSet<String>(java.util.Arrays.asList("com.maps"));
+        LocalDate[] days = {last, last.minusDays(365), LocalDate.ofInstant(java.time.Instant.ofEpochSecond((long) half), z),
+            LocalDate.ofInstant(java.time.Instant.ofEpochSecond((long) year), z), LocalDate.ofInstant(java.time.Instant.ofEpochSecond((long) year + 101 * 86400), z)};
+        double now = end - 600;
+        int infoSame = 0;
+        String example = "";
+        for (LocalDate d : days) {
+            for (java.util.Set<String> ex : java.util.Arrays.asList(none, maps)) {
+                setBounded(false);
+                String i0 = dump223(app.openring.data.ScreenDays.info(db, d, z, 180, ex, 300, now));
+                setBounded(true);
+                String i1 = dump223(app.openring.data.ScreenDays.info(db, d, z, 180, ex, 300, now));
+                if (i0.equals(i1)) infoSame++;
+                else example = d + " " + ex;
+                if (d.equals(last) && ex == none) check("#223: the compared Screen tab has phone use", i1.contains("totalMin") && i1.length() > 2000, i1.length());
+            }
+        }
+        check("#223: the Screen tab is the same in every field (today, a year back, days of rows longer than a day)", infoSame == days.length * 2, example);
+
+        // timing on 420 days: printed only (machines differ); the plans above are the check
+        long t = System.nanoTime();
+        for (int i = 0; i < 20; i++) db.screen(today - 13 * 86400, end);
+        long fast = System.nanoTime() - t;
+        setBounded(false);
+        t = System.nanoTime();
+        for (int i = 0; i < 20; i++) db.screen(today - 13 * 86400, end);
+        long slow = System.nanoTime() - t;
+        setBounded(true);
+        System.out.println("#223 timing, 14 days of screen rows from 420 days: " + slow / 20000 + " us before, " + fast / 20000 + " us now");
+
+        // an older file without the indexes (an older version, a restored backup): they come at the next open, twice is a no op
+        long rows = db.count("SELECT COUNT(*) FROM screen") + db.count("SELECT COUNT(*) FROM apps");
+        String all = rows223(db.screen(0, Double.MAX_VALUE)) + apps223(appRows223(db, 0, Double.MAX_VALUE));
+        for (String ix : new String[] {"screen_long", "apps_start", "apps_long"}) w.execSQL("DROP INDEX " + ix);
+        check("#223: the indexes are gone as in an older file", indexes223(db) == 0, indexes223(db));
+        check("#223: without the indexes the reads are still the same", (rows223(db.screen(0, Double.MAX_VALUE)) + apps223(appRows223(db, 0, Double.MAX_VALUE))).equals(all), null);
+        for (int i = 0; i < 2; i++) {
+            java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
+            f.setAccessible(true);
+            ((Db) f.get(null)).close();
+            f.set(null, null);
+            db = Db.get(c);
+        }
+        check("#223: reopened (twice) the file has the indexes again, every row kept", indexes223(db) == 3
+                && db.count("SELECT COUNT(*) FROM screen") + db.count("SELECT COUNT(*) FROM apps") == rows
+                && (rows223(db.screen(0, Double.MAX_VALUE)) + apps223(appRows223(db, 0, Double.MAX_VALUE))).equals(all), indexes223(db));
+        long schema = db.count("SELECT COUNT(*) FROM sqlite_master");
+        java.lang.reflect.Method again2 = Db.class.getDeclaredMethod("createReadIndexes", android.database.sqlite.SQLiteDatabase.class);
+        again2.setAccessible(true);
+        again2.invoke(null, db.getWritableDatabase());
+        check("#223: making the indexes again changes nothing", db.count("SELECT COUNT(*) FROM sqlite_master") == schema, schema);
+        // Delete all: new rows after it, long ones too, are read
+        Analyzer.deleteAll(db);
+        List<double[]> again = new ArrayList<double[]>();
+        again.add(new double[] {today - 2 * 86400, today + 600});
+        again.add(new double[] {today + 3600, today + 3700});
+        db.putScreen(again);
+        check("#223: after Delete all new rows are read, also one longer than a day", rows223(db.screen(today, end)).equals(rows223(again)), rows223(db.screen(today, end)));
+        db.close();
+    }
+
+    static double minStart223(Db db) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start FROM apps NOT INDEXED ORDER BY start LIMIT 1", null);
+        try {
+            return c.moveToFirst() ? c.getDouble(0) : -1;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
+     * Issue #223, the sync path: the analysis (Analyzer.analyzeNights, once per week of nights) and the Settings stage preview
+     * read phone use through the same bounded query; nights and days come out byte for byte as with the old query.
+     */
+    static void screenAnalysis223() throws Exception {
+        String[] got = new String[2];
+        String[] preview = new String[2];
+        int nights = 0;
+        for (int k = 0; k < 2; k++) {
+            setBounded(k == 1);
+            Context c = freshDb("openring-screen-223-" + k);
+            Db db = Db.get(c);
+            ZoneId z = ZoneId.systemDefault();
+            long t0 = LocalDate.parse("2026-03-02").atStartOfDay(z).toEpochSecond(), end = t0 + 29 * 86400L + 12 * 3600;
+            putBoot(db, app.openring.data.Demo.history(t0, 28, end, z, new Random(223)), 1, t0, end);
+            // a year of phone use before the ring, then phone checks at night, an evening on the phone, a row over a day
+            List<double[]> s = new ArrayList<double[]>();
+            Random r = new Random(2230);
+            for (long d = t0 - 365 * 86400L; d < end; d += 86400) {
+                for (int i = 0; i < 12; i++) {
+                    double a = d + 7 * 3600 + i * 3600 + r.nextInt(1800);
+                    s.add(new double[] {a, a + 30 + r.nextInt(600)});
+                }
+                double night = d + 26 * 3600 + r.nextInt(7200);
+                s.add(new double[] {night, night + 120 + r.nextInt(300)});
+                double eve = d + 22 * 3600 + 1800;
+                s.add(new double[] {eve, eve + 1200 + r.nextInt(1800)});
+            }
+            double lng = t0 + 10 * 86400L + 9 * 3600;
+            s.add(new double[] {lng, lng + 30 * 3600}); // left on for 30 hours over a night
+            java.util.Collections.sort(s, (x, y) -> Double.compare(x[0], y[0]));
+            List<double[]> clean = new ArrayList<double[]>();
+            for (double[] x : s) if (clean.isEmpty() || x[0] >= clean.get(clean.size() - 1)[1]) clean.add(x);
+            db.putScreen(clean);
+            db.putScreenRead(t0 - 365 * 86400L, end);
+            Analyzer.runAll(c, null);
+            got[k] = String.join("\n", results139(db));
+            StringBuilder pv = new StringBuilder();
+            nights = 0;
+            for (String js : db.nightsJson("0000-01-01", "9999-12-31", true)) {
+                JSONObject n = Json.parse(js);
+                if (n.has("phone_min")) nights++;
+                pv.append(java.util.Arrays.toString(Analyzer.preview(db, true, n, 1))).append('\n');
+            }
+            preview[k] = pv.toString();
+            db.close();
+        }
+        setBounded(true);
+        check("#223: the analysis saw phone use in the nights", nights >= 10, nights);
+        check("#223: nights and days byte for byte the same as with the old screen query (sync path)", got[0].equals(got[1]) && got[0].length() > 1000, got[0].length() + " / " + got[1].length());
+        check("#223: the stage preview the same", preview[0].equals(preview[1]) && preview[0].length() > 100, null);
     }
 
     /** The zone history: rows extend and open, a gap counts for the later zone. */
