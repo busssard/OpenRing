@@ -3240,6 +3240,11 @@ public class CoreTest {
         eq("settings blocks: short model not known", SettingsBlocks.shortModel(null), "Oura ring");
         eq("settings blocks: ring synced", SettingsBlocks.ringStatus(false, "ORE_07", 1700000000L, "2 hours ago"), "Ring 4, last sync 2 hours ago");
         eq("settings blocks: ring never synced", SettingsBlocks.ringStatus(false, "ORE_07", 0, "--"), "Ring 4, not synced yet");
+        eq("settings blocks: ring synced but its time not worded yet", SettingsBlocks.ringStatus(false, "ORE_07", 1700000000L, null), "Ring 4, not synced yet");
+        check("settings blocks: first build jumps to its card", SettingsBlocks.jumpOnBuild("period", false, false));
+        check("settings blocks: a rebuild keeps the scroll (review of #330)", !SettingsBlocks.jumpOnBuild("period", false, true));
+        check("settings blocks: a turned phone keeps the scroll", !SettingsBlocks.jumpOnBuild("period", true, false));
+        check("settings blocks: no extra, no jump", !SettingsBlocks.jumpOnBuild(null, false, false));
         eq("settings blocks: ring demo", SettingsBlocks.ringStatus(true, "ORE_07", 1700000000L, "2 hours ago"), "Made up Ring 4, demo data");
         eq("settings blocks: no watch", SettingsBlocks.watchStatus(false, false, null, 0, null, false, false), "No watch added yet");
         eq("settings blocks: watch synced", SettingsBlocks.watchStatus(false, true, "Steel HR", 1700000000L, "5 minutes ago", false, false), "Steel HR, last sync 5 minutes ago");
