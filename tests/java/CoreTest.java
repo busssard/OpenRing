@@ -940,6 +940,7 @@ public class CoreTest {
         permissionSettings();
         keyState199();
         inputLimit();
+        monthGrid();
         protocol();
         history();
         bundles();
@@ -8093,6 +8094,70 @@ public class CoreTest {
         } catch (NumberFormatException x) {
             return def;
         }
+    }
+
+    /** The day under a point, as both month calendars worked it out before MonthGrid (BadgeCalendar and PeriodCalendar). */
+    static java.time.LocalDate dayAtBefore(java.time.YearMonth month, java.time.DayOfWeek firstDay, int width, float head, float cellH, float x, float y) {
+        float cw = width / 7f;
+        int col = (int) Math.max(0, Math.min(6, Math.floor(x / cw)));
+        int row = (int) Math.floor((y - head) / cellH);
+        if (row < 0 || row >= 6) return null;
+        int off = (month.atDay(1).getDayOfWeek().getValue() - firstDay.getValue() + 7) % 7;
+        int dom = row * 7 + col - off + 1;
+        return dom >= 1 && dom <= month.lengthOfMonth() ? month.atDay(dom) : null;
+    }
+
+    /** The month calendars' grid and touch decision give exactly what the two copies in the views gave. */
+    static void monthGrid() {
+        int same = 0, all = 0, sameOff = 0, offs = 0;
+        int[] widths = {0, 1, 700, 1080, 1439};
+        float[][] sizes = {{22, 42}, {57.75f, 110.25f}, {66, 126}};
+        for (java.time.DayOfWeek first : java.time.DayOfWeek.values()) {
+            for (int m = 0; m < 30; m++) {
+                java.time.YearMonth month = java.time.YearMonth.of(2023, 11).plusMonths(m); // includes February 2024 (29 days)
+                offs++;
+                if (MonthGrid.offset(month, first) == (month.atDay(1).getDayOfWeek().getValue() - first.getValue() + 7) % 7) sameOff++;
+                for (int width : widths) {
+                    for (float[] hc : sizes) {
+                        float head = hc[0], cellH = hc[1];
+                        for (float x = -40; x <= width + 40; x += Math.max(1, width / 37f)) {
+                            for (float y = -10; y <= head + 7 * cellH; y += cellH / 5.5f) {
+                                all++;
+                                java.time.LocalDate a = MonthGrid.dayAt(month, first, width, head, cellH, x, y), b = dayAtBefore(month, first, width, head, cellH, x, y);
+                                if (a == null ? b == null : a.equals(b)) same++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eq("month grid: the first of the month in the same column for every first weekday", sameOff, offs);
+        eq("month grid: every point gives the same day as before", same, all);
+        check("month grid: enough points compared", all > 100000, all);
+        java.time.YearMonth nov = java.time.YearMonth.of(2026, 11); // 1 November 2026 is a Sunday
+        eq("month grid: Monday first puts Sunday the 1st last", MonthGrid.offset(nov, java.time.DayOfWeek.MONDAY), 6);
+        eq("month grid: Sunday first puts it first", MonthGrid.offset(nov, java.time.DayOfWeek.SUNDAY), 0);
+        eq("month grid: first cell, Sunday first", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, 5, 30), java.time.LocalDate.of(2026, 11, 1));
+        eq("month grid: first cell before the 1st is no day", MonthGrid.dayAt(nov, java.time.DayOfWeek.MONDAY, 700, 22, 42, 5, 30), null);
+        eq("month grid: left of the grid counts as the first column", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, -50, 30), java.time.LocalDate.of(2026, 11, 1));
+        eq("month grid: above the rows is no day", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, 5, 21.9f), null);
+        eq("month grid: below the sixth row is no day", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, 5, 22 + 6 * 42), null);
+        eq("month grid: the 30th in the fifth row", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, 150, 22 + 4 * 42 + 1), java.time.LocalDate.of(2026, 11, 30));
+        int sameG = 0, gs = 0;
+        float[] ds = {0, 1, 7.5f, 8, 8.01f, 9, 15, 16, 16.5f, 40};
+        for (int slop : new int[] {0, 8, 16, 24}) {
+            for (float dx : ds) {
+                for (float dy : ds) {
+                    gs++;
+                    int before = dx > slop && dx > dy ? MonthGrid.SLIDE : dy > slop ? MonthGrid.SCROLL : MonthGrid.WAIT;
+                    if (MonthGrid.gesture(dx, dy, slop) == before) sameG++;
+                }
+            }
+        }
+        eq("month grid: every move is a slide, a scroll or undecided as before", sameG, gs);
+        eq("month grid: sideways past the slop slides", MonthGrid.gesture(9, 3, 8), MonthGrid.SLIDE);
+        eq("month grid: as much down as sideways scrolls", MonthGrid.gesture(9, 9, 8), MonthGrid.SCROLL);
+        eq("month grid: within the slop waits", MonthGrid.gesture(8, 8, 8), MonthGrid.WAIT);
     }
 
     /** The named profile and screen goal limits give exactly the numbers that were typed in Setup, Settings and the restore. */
