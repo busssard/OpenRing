@@ -182,7 +182,20 @@ public final class Backups {
     }
 
     public static final String FOLDER_PREFIX = "openring-backup-", ZIP = ".zip", PART = ".partial";
-    private static final Pattern FOLDER = Pattern.compile("openring-backup-\\d{4}-\\d{2}-\\d{2}-\\d{4}(-before-[0-9A-Za-z.]+)?\\.zip");
+    private static final Pattern FOLDER = Pattern.compile("openring-backup-\\d{4}-\\d{2}-\\d{2}-\\d{4}(-before-[0-9A-Za-z.]+)?(-nokey)?\\.zip");
+    /** The end of a copy written without the ring key (issue #288): {@code openring-backup-2026-11-04-0312-nokey.zip}. */
+    public static final String NO_KEY = "-nokey";
+
+    /** {@code name} (a folder file name) as the name of a copy without the key. */
+    public static String withoutKey(String name) {
+        if (name == null || keyless(name) || !name.endsWith(ZIP)) return name;
+        return name.substring(0, name.length() - ZIP.length()) + NO_KEY + ZIP;
+    }
+
+    /** Whether a folder file holds no ring key, by its name (every copy without the key is named so). */
+    public static boolean keyless(String name) {
+        return name != null && name.endsWith(NO_KEY + ZIP);
+    }
 
     /** The folder file of a copy made at {@code t}: {@code openring-backup-2026-10-29-0312.zip}, with {@code -before-1.42} for an update copy. */
     public static String folderName(LocalDateTime t, String beforeVersion) {
@@ -200,6 +213,9 @@ public final class Backups {
      * match the name pattern and are listed as written by the app ({@code listed}), the newest {@code keep} complete
      * ones stay, {@code newFile} always among them; listed {@code .partial} files left by a stop go too. Nothing complete
      * is deleted unless {@code newFile} is there. Other files are never touched, also when their name looks like ours.
+     * The newest copy that holds the ring key is never deleted for copies without it (issue #288, review of #340): while
+     * this phone cannot read the key, each run writes a copy without it, and the last copy with the key may be the only
+     * place the key is left. It then stays beside the {@code keep} newest, until a copy with the key is written again.
      */
     public static List<String> folderToDelete(Collection<String> present, Collection<String> listed, String newFile, int keep) {
         Set<String> mine = new HashSet<String>(listed);
@@ -216,7 +232,16 @@ public final class Backups {
         }
         if (newFile == null || !present.contains(newFile)) return out;
         Collections.sort(complete, Collections.reverseOrder());
-        for (int i = Math.max(0, keep - 1); i < complete.size(); i++) out.add(complete.get(i));
+        String keyed = null;
+        if (keyless(newFile)) {
+            for (String n : complete) {
+                if (!keyless(n)) {
+                    keyed = n;
+                    break;
+                }
+            }
+        }
+        for (int i = Math.max(0, keep - 1); i < complete.size(); i++) if (!complete.get(i).equals(keyed)) out.add(complete.get(i));
         return out;
     }
 
