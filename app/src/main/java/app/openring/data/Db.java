@@ -1068,7 +1068,10 @@ public final class Db extends SQLiteOpenHelper {
     static final int LONG_S = 86400;
     /** The long rows; the same text in the indexes and the queries, so SQLite can use the partial indexes. */
     private static final String LONG = "stop - start > " + LONG_S;
-    /** Tests only: false reads screen and app rows as before issue #223 (every row from the first one), to compare. */
+    /**
+     * Tests only: false reads screen and app rows with the single query from before issue #223 (every row from the first
+     * one, ordered as now), to compare.
+     */
     static volatile boolean boundedReads = true;
 
     /**

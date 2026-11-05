@@ -131,6 +131,7 @@ share a row and together are exactly the rows of `stop > from AND start < to`. `
 `appsStart` one index step. The indexes are made in `Db.onOpen` with `IF NOT EXISTS` (no version step, no row changes), so any
 file gets them at its next open, also a restored or older one; SQLite keeps them up to date with every write, so nothing can
 go stale, and without them (a file opened read only) the reads are the same, only slower.
+
 A failed shrink is noted for the Data check (issue #299): one kv row `DataCheck.SHRINK_ERROR` written after the delete
 committed, with the step, the time and the error's class and place (never its message), gone with the next delete and
 removed from a restored file in `Db.replaceWith` (the restored file is compact). The Data check never names the period tables,
