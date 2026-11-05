@@ -76,6 +76,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
     private boolean ringOpen, watchOpen;
     /** Whether this screen already jumped to its {@code section} card, or came back from a turn with its own scroll. */
     private boolean sectionDone;
+    /** The Profile card, where the watch setup leads when the watch needs a sex or a profile (review of #332). */
+    private LinearLayout profCard;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -400,7 +402,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         root.addView(watchBlock.card);
 
         // ---- profile ----
-        LinearLayout prof = Ui.card(this);
+        LinearLayout prof = profCard = Ui.card(this);
         prof.addView(Ui.caption(this, "Profile and goals"));
         prof.addView(Ui.text(this, "Used for calories, goals and the sleep you need at your age.", 12, Ui.TEXT_3, Ui.REGULAR));
         LinearLayout body = Ui.hbox(this);
@@ -1852,14 +1854,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Opens at a card when started with the extra {@code section} ("blocks", "period", "stages", "watch", "screen", "games",
+     * Opens at a card when started with the extra {@code section} ("blocks", "profile" (from the watch setup), "period", "stages", "watch", "screen", "games",
      * "backups" or "advanced"), used by the screen test. A card inside the Ring or Watch block was opened with its block in
      * onCreate ({@link app.openring.core.SettingsBlocks#startsOpen}); "blocks" shows both blocks closed at the top.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "blocks".equals(section) ? ringBlock.card : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
+        final View card = "blocks".equals(section) ? ringBlock.card : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
                 : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;

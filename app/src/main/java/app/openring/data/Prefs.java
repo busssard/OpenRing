@@ -205,8 +205,8 @@ public final class Prefs {
      * open hand calibration of the old watch are cleared. The same address again (a restore, a new name) keeps them.
      */
     public void setWatch(String address, String name) {
+        String before = watchAddress(); // read before the editor: the test phone's editor writes at once
         SharedPreferences.Editor e = sp.edit().putString("watch_address", address).putString("watch_name", name).remove("watch_error");
-        String before = watchAddress();
         if (before == null || !before.equalsIgnoreCase(address)) e.remove("watch_setup_at").remove("watch_calibrating");
         e.apply();
     }
