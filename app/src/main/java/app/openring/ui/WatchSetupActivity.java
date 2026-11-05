@@ -15,9 +15,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
 import android.os.SystemClock;
-import android.text.InputType;
 import android.view.View;
-import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -35,7 +33,6 @@ import java.util.concurrent.TimeUnit;
 
 import app.openring.ble.RingScanner;
 import app.openring.ble.WatchSync;
-import app.openring.core.InputLimit;
 import app.openring.core.withings.Proto;
 import app.openring.core.withings.Session;
 import app.openring.core.withings.WatchDemo;
@@ -395,33 +392,21 @@ public final class WatchSetupActivity extends Activity {
         for (String line : WatchSetup.shown(who, java.time.ZoneId.systemDefault().getId(), p.watchAlarm())) {
             card.addView(Ui.text(this, "• " + line, 13, Ui.TEXT_2, Ui.REGULAR));
         }
-        // what is missing is asked here and saved to the profile
-        if (!who.complete()) {
+        // what is missing is set in Settings, Profile: its save re analyses the history and shows the period tracker's switch
+        // (review of #332), so a change here never leaves results of the old profile behind
+        if (!demo && (!who.complete() || !p.profileSet())) {
             card.addView(Ui.gap(this, 8));
-            card.addView(Ui.text(this, "The watch needs to know male or female to count calories:", 13, Ui.TEXT, Ui.REGULAR));
-            LinearLayout chips = Ui.hbox(this);
-            String[] names = {"Male", "Female"};
-            for (int k = 0; k < 2; k++) {
-                final int sex = k;
-                TextView c = Ui.smallButton(this, names[k], Ui.OXY);
-                c.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        if (demo) {
-                            say("Demo mode: nothing is saved.");
-                            return;
-                        }
-                        p.setProfile(p.age(), sex, p.weightKg(), p.heightCm(), p.targetKcal());
-                        render();
-                    }
-                });
-                LinearLayout.LayoutParams l = Ui.weight(1);
-                l.setMargins(0, 0, Ui.dp(this, 6), 0);
-                chips.addView(c, l);
-            }
-            card.addView(chips, Ui.matchWrap());
+            card.addView(Ui.text(this, !who.complete() ? "The watch needs to know male or female to count calories. Set it in Settings, Profile, then come back here."
+                    : "Your profile was never entered, so the app's defaults would be sent. Enter yours in Settings, Profile, then come back here.", 13, Ui.TEXT, Ui.REGULAR));
+            addButton(card, "Open Settings, Profile", Ui.OXY, false, new Runnable() {
+                @Override
+                public void run() {
+                    // the Settings screen below is built anew at its Profile card, so it never shows the old numbers
+                    startActivity(new Intent(WatchSetupActivity.this, SettingsActivity.class).putExtra("section", "profile")
+                            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+                }
+            });
         }
-        if (!p.profileSet() && !demo) profileInputs(card, p);
         // the step goal and the distance unit, the watch's own choices
         card.addView(Ui.gap(this, 8));
         card.addView(Ui.text(this, "Daily step goal (the activity hand shows how much of it you reached)", 12, Ui.TEXT_3, Ui.REGULAR));
@@ -470,35 +455,6 @@ public final class WatchSetupActivity extends Activity {
         root.addView(card);
     }
 
-    void profileInputs(LinearLayout card, final Prefs p) {
-        card.addView(Ui.gap(this, 8));
-        card.addView(Ui.text(this, "Your profile was never entered, so these are the app's defaults. Change them here or in Settings, Profile:", 13, Ui.TEXT, Ui.REGULAR));
-        final EditText age = num(card, "Age", p.age()), height = num(card, "Height (cm)", p.heightCm()), weight = num(card, "Weight (kg)", p.weightKg());
-        addButton(card, "Save the profile", Ui.OXY, false, new Runnable() {
-            @Override
-            public void run() {
-                p.setProfile(InputLimit.AGE.parse(age.getText().toString()), p.sex(), InputLimit.WEIGHT_KG.parse(weight.getText().toString()),
-                        InputLimit.HEIGHT_CM.parse(height.getText().toString()), p.targetKcal());
-                p.setProfileSet();
-                render();
-            }
-        });
-    }
-
-    EditText num(LinearLayout parent, String label, int value) {
-        parent.addView(Ui.gap(this, 6));
-        parent.addView(Ui.text(this, label, 12, Ui.TEXT_3, Ui.REGULAR));
-        EditText e = new EditText(this);
-        e.setText(String.valueOf(value));
-        e.setTextColor(Ui.TEXT);
-        e.setInputType(InputType.TYPE_CLASS_NUMBER);
-        e.setBackground(Ui.input(this));
-        int pd = Ui.dp(this, 10);
-        e.setPadding(pd, pd, pd, pd);
-        parent.addView(e, Ui.matchWrap());
-        return e;
-    }
-
     void doneCard() {
         LinearLayout card = header(DONE, "6. Done");
         card.addView(Ui.gap(this, 4));
@@ -524,7 +480,8 @@ public final class WatchSetupActivity extends Activity {
         card.addView(Ui.caption(this, "Alarm"));
         card.addView(Ui.gap(this, 4));
         card.addView(Ui.text(this, a.on ? WatchSetup.clock(a.hour, a.minute) : "Off", 28, a.on ? Ui.TEXT : Ui.TEXT_3, Ui.LIGHT));
-        card.addView(Ui.text(this, a.on ? WatchSetup.days(a.days) + (a.smart > 0 ? ", smart wake up to " + a.smart + " min before" : "") : "The watch does not vibrate to wake you.",
+        card.addView(Ui.text(this, a.on && !a.active() ? "No day picked, so the watch is told the alarm is off." : a.on ? WatchSetup.days(a.days)
+                + (a.smart > 0 ? ", smart wake up to " + a.smart + " min before" : "") : "The watch does not vibrate to wake you.",
                 13, Ui.TEXT_2, Ui.REGULAR));
         LinearLayout onOff = Ui.hbox(this);
         String[] oo = {"On", "Off"};

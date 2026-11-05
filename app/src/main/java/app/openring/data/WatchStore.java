@@ -117,9 +117,20 @@ public final class WatchStore {
         into.unknown += one.unknown;
     }
 
+    /**
+     * The value bound at {@code ?n} for {@code col}, or, when it is 0, the one already stored for the same device ({@code ?1})
+     * and start ({@code ?2}). A record can come in the activity answer and again in the movement answer, each with only some
+     * of its parts (the movement answer may lack the calories part): the second must not wipe what the first had (review of
+     * #332). A record that comes again whole has the same or larger counts, so a non zero value always wins.
+     */
+    private static String kept(String table, String col, int n) {
+        return "CASE WHEN ?" + n + " <> 0 THEN ?" + n + " ELSE COALESCE((SELECT " + col + " FROM " + table + " WHERE device = ?1 AND start = ?2), 0) END";
+    }
+
     private static void write(SQLiteDatabase d, String device, Records.Decoded r) {
         if (!r.steps.isEmpty()) {
-            SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO watch_steps(device, start, dur, steps, metres, kcal) VALUES (?,?,?,?,?,?)");
+            SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO watch_steps(device, start, dur, steps, metres, kcal) VALUES (?1, ?2, "
+                    + kept("watch_steps", "dur", 3) + ", " + kept("watch_steps", "steps", 4) + ", " + kept("watch_steps", "metres", 5) + ", " + kept("watch_steps", "kcal", 6) + ")");
             for (Records.Steps s : r.steps) {
                 st.bindString(1, device);
                 st.bindLong(2, s.start);
@@ -179,7 +190,8 @@ public final class WatchStore {
             st.close();
         }
         if (!r.moves.isEmpty()) {
-            SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO watch_moves(device, start, met, up, down) VALUES (?,?,?,?,?)");
+            SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO watch_moves(device, start, met, up, down) VALUES (?1, ?2, "
+                    + kept("watch_moves", "met", 3) + ", " + kept("watch_moves", "up", 4) + ", " + kept("watch_moves", "down", 5) + ")");
             for (Records.Moves m : r.moves) {
                 st.bindString(1, device);
                 st.bindLong(2, m.start);

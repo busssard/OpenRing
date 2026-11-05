@@ -877,6 +877,7 @@ public class PipelineTest {
         upgrade251();
         upgradeSetup251();
         store251();
+        fixes332();
         restore251();
         large251();
         demo251();
@@ -11214,7 +11215,7 @@ public class PipelineTest {
         a.days = 0x60;
         a.smart = 15;
         p.setWatchAlarm(a);
-        p.setWatchAlarmSent();
+        p.setWatchAlarmSent(p.watchAlarmChange());
         byte[] full = backup252(c);
         p.setWatchGoal(12000);
         p.setWatchMetric(true);
@@ -11258,6 +11259,72 @@ public class PipelineTest {
      * where the next request starts; a new decoder works everything out again in one transaction, and a stop half way keeps the
      * old rows; pairing another ring keeps the watch rows, Delete all empties them; the ring's data is never touched.
      */
+    /**
+     * Review of #332: a record in both the activity and the movement answer keeps every part (the movement answer may lack
+     * the calories part); where the next request starts the first time; another watch is never taken as set up; an alarm
+     * changed during a session stays pending. Raw messages are never changed.
+     */
+    static void fixes332() throws Exception {
+        Context c = phone254("openring332-fixes");
+        Db db = Db.get(c);
+        long now = T251 + 40 * 86400L;
+        check("#332 since: nothing stored yet, the first request asks 30 days back", app.openring.data.WatchStore.since(db, DEV251, false, now) == now - 30 * 86400L
+                && app.openring.data.WatchStore.since(db, DEV251, true, now) == now - 30 * 86400L, app.openring.data.WatchStore.since(db, DEV251, false, now));
+        check("#332 since: a clock before the month: never below 0", app.openring.data.WatchStore.since(db, DEV251, true, 1000) == 0, null);
+        // the activity answer: steps with calories and intensity; the movement answer: the same record, steps with climb, no calories
+        List<byte[][]> act = new ArrayList<byte[][]>(), mov = new ArrayList<byte[][]>();
+        act.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(500, 360), app.openring.core.withings.WatchDemo.calories(21, 35)});
+        mov.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(500, 360, 6, 4)});
+        List<byte[]> msgs = new ArrayList<byte[]>();
+        msgs.addAll(app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.ACTIVITY, act, 5));
+        msgs.addAll(app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.MOVEMENT, mov, 5));
+        session251(db, 3000, msgs, T251 + 3600);
+        String rows = watchRows251(db);
+        check("#332 merge: the movement answer without calories keeps the activity answer's calories", rows.contains(DEV251 + " " + T251 + " 900 500 360 21\n"), rows);
+        check("#332 merge: intensity from the activity answer and the climb from the movement answer, in one row", rows.contains(DEV251 + " " + T251 + " 35 6 4\n")
+                && watchCount251(db, "watch_moves") == 1 && watchCount251(db, "watch_steps") == 1, rows);
+        check("#332 since: after a sync, 2 hours before the newest record", app.openring.data.WatchStore.since(db, DEV251, false, now) == T251 - 7200, null);
+        // decoding everything again (a new decoder) gives the same rows, the raw messages unchanged
+        String raw = rows.substring(0, rows.indexOf("--\n"));
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#332 merge: decoding all again gives the same rows, raw messages untouched", watchRows251(db).equals(rows) && watchRows251(db).startsWith(raw), watchRows251(db));
+        // a later activity answer with the record grown: the larger counts win
+        List<byte[][]> later = new ArrayList<byte[][]>();
+        later.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(640, 460), app.openring.core.withings.WatchDemo.calories(27, 40)});
+        session251(db, 4000, app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.ACTIVITY, later, 5), T251 + 7200);
+        rows = watchRows251(db);
+        check("#332 merge: a record that came again grown takes the new counts, the climb stays", rows.contains(DEV251 + " " + T251 + " 900 640 460 27\n")
+                && rows.contains(DEV251 + " " + T251 + " 40 6 4\n"), rows);
+
+        // another watch: never taken as set up (review of #332)
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setWatch(DEV251, "Steel HR test");
+        p.setWatchSetupAt(T251);
+        p.setWatchCalibrating(true);
+        p.setWatch(DEV251.toLowerCase(java.util.Locale.ROOT), "Steel HR renamed");
+        check("#332 the same watch again (a restore, a new name): still set up", p.watchSetupAt() == T251 && p.watchCalibrating(), p.watchSetupAt());
+        p.setWatch("00:00:5E:00:53:AA", "Steel HR other");
+        check("#332 another watch: not set up, no open calibration of the old one", p.watchSetupAt() == 0 && !p.watchCalibrating() && "00:00:5E:00:53:AA".equals(p.watchAddress()),
+                p.watchSetupAt());
+        p.setWatchSetupAt(T251);
+        p.forgetWatch();
+        p.setWatch(DEV251, "Steel HR test");
+        check("#332 forgotten, then added again: not set up", p.watchSetupAt() == 0, p.watchSetupAt());
+
+        // an alarm changed while a session sends the one it read: the new one stays pending (review of #332)
+        app.openring.core.withings.WatchSetup.Alarm a = new app.openring.core.withings.WatchSetup.Alarm();
+        a.on = true;
+        p.setWatchAlarm(a);
+        int read = p.watchAlarmChange();
+        a.hour = 6;
+        p.setWatchAlarm(a);
+        check("#332 alarm: the watch took an older alarm, the newer one stays pending", !p.setWatchAlarmSent(read) && p.watchAlarmPending(), null);
+        check("#332 alarm: the watch took the current alarm, nothing pending", p.setWatchAlarmSent(p.watchAlarmChange()) && !p.watchAlarmPending(), null);
+    }
+
     static void store251() throws Exception {
         Context c = phone254("openring251-store");
         Db db = Db.get(c);

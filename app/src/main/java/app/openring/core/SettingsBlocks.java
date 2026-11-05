@@ -31,6 +31,14 @@ public final class SettingsBlocks {
         return block != NONE && of(section) == block;
     }
 
+    /**
+     * Whether a build of the page scrolls to the card named by the {@code settings} extra: only the first build of a fresh
+     * screen. A rebuild (a ring action, Go back, Delete all) or a turned phone keeps where the person scrolled to (review of #330).
+     */
+    public static boolean jumpOnBuild(String section, boolean restored, boolean jumpedBefore) {
+        return section != null && !restored && !jumpedBefore;
+    }
+
     /** The ring's model as Settings' Model line shows it, for example "Ring 4 (ORE_07)"; "--" when not known. */
     public static String model(String hw) {
         if (hw == null) return "--";

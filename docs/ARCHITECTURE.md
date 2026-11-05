@@ -720,8 +720,9 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   below), and always "sync done" last while the link is up. Each request waits for its
   answer (5 s; a data answer 20 s between messages, until a message with the end part), at most 2 minutes in all. The
   watch asks for a sign in right after the hello; `core/withings/SignIn` answers it and the session goes on (see the sign in
-  below). The watch's own messages on the way
-  are stored and skipped. Every message is stored as it arrives (`WatchStore.addRaw`), so an early end keeps what came.
+  below). When the sign in comes as the answer to a request other than the hello, that request is not sent again: the
+  session waits for its answer once more, and a watch that dropped it ends the session with "did not answer" (a known
+  limit). The watch's own messages on the way are stored and skipped. Every message is stored as it arrives (`WatchStore.addRaw`), so an early end keeps what came.
 * **Storage (schema 9, only adds; schema 10 adds `watch_moves`, see the watch setup below):** `watch_raw` (session start in ms, place in the session, device, type, the whole
   message, captured) keeps every message as it came, also two equal ones; `watch_devices`; and the rows worked out from
   the messages by `core/withings/Records` (`watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery`,
@@ -786,7 +787,9 @@ read, no Device Information or Battery service, silent until asked).
   1 walking, 2 running, 3 hiking, 6 cycling, 7 swimming and 30 more), running `0x0605` and swimming `0x060d` marks, heart
   rate `0x0929` (the first byte). Sleep heart rate comes as records with only a heart rate.
 * `0x0506` "movement samples" is asked too since the watch setup (below); its records go through the same decoder and are
-  keyed by device and start, so a record in two answers counts once.
+  keyed by device and start, so a record in two answers counts once. Each answer may carry only some parts of a record
+  (the movement answer may lack the calories part), so a later answer replaces a stored value only with a non zero one
+  (`WatchStore.kept`): steps and calories of the activity answer and the climb of the movement answer end in one row.
 * The watch drops a write that comes while it is busy, so each request waits for its answer.
 * **Sign in** (`core/withings/SignIn`). The owner's watch (Steel HR, nightly 1.99, 3 November) answered our hello at once
   with a challenge instead of the hello answer: message `0x0128`, 44 bytes, one part `0x0122`. So the sign in is needed for
@@ -853,12 +856,16 @@ read, no Device Information or Battery service, silent until asked).
     `0x80`), day of month, month and year (0 for a repeating alarm), the smart wake window in minutes (Gadgetbridge always 15),
     one byte each; an optional name part `0x0514`. Then `0x091b` with part `0x0919` (1 byte, 1 on, 0 off); off alone switches
     it off. Gadgetbridge offers 3 alarm slots, but whether a second `0x0145` adds or replaces is not documented, so the app has
-    one alarm. It is sent from the setup screen or with the next sync after a change.
+    one alarm. It is sent from the setup screen or with the next sync after a change; a change made while a session sends the
+    older one stays pending (a change counter, `Prefs.watchAlarmChange`). On without any day is sent as off.
   * **Hands** `0x011e` starts the calibration (the hands go to their home), `0x011c` with part `0x050c` moves one: the hand
     (1 byte: 0 minutes, 1 hours, 2 the activity hand) and the amount (2 bytes, signed, plus is clockwise), `0x011f` ends it.
     Gadgetbridge's guide: hour hand to 12, minute hand to 12, activity hand to 100 % (it only moves clockwise). The size of one
     step and whether a move is answered are not documented: our session waits 1.5 s for an answer and goes on without. The
-    end (off, then set time) is also sent when the session ends early while the link is up (`Session.Plan.last`).
+    end (off, then set time) is also sent when the session ends early while the link is up (`Session.Plan.last`). Its time
+    is made when it is sent (`Session.Plan.clock` and `zone`), not when the session began, since a calibration can last
+    5 minutes. When the link is lost before the end, Prefs `watch_calibrating` stays set and the next session of any kind
+    sends calibration off and the time right after connect (`WatchSetup.closeCalibrationFirst`).
   * **Time and zone:** set time carries now, the offset now, the next clock change and the offset after it, so the hands
     follow a daylight saving change without a sync; every sync and the end of a calibration send it again.
   * **Not built (a later phase):** phone notifications on the watch (the phone must serve Apple's notification service),
@@ -868,8 +875,9 @@ read, no Device Information or Battery service, silent until asked).
     no "setup finished"), the movement request, a positive first "since"; and removing the watch from the Withings app likely
     reset it, so it may have held nothing yet. The log now names, per data answer, the part types and how often each came.
   * **The flow** (`ui/WatchSetupActivity`, Settings, Watch, Set up the watch): find (a 10 s scan, Withings watches first),
-    pair (Android's bond, its dialog), sign in, send the setup (the screen lists every value sent and asks for a missing sex,
-    and for age, height and weight when the profile was never entered), the first sync, done; each with its state and Retry.
+    pair (Android's bond, its dialog), sign in, send the setup (the screen lists every value sent; a missing sex or a profile
+    never entered leads to Settings, Profile, whose save re analyses the history like any profile change), the first sync,
+    done; each with its state and Retry. A watch with another address than the saved one is never taken as set up.
     Below: the alarm and the hand calibration. All sessions go through `WatchSync` with the ring's rules (the ring always wins).
 * Heart rate outside workouts seems to be one reading every 30 minutes by default, continuous during workouts.
 * Unknown: whether the watch drops records once one app synced them (requests ask "since a time", which suggests it keeps

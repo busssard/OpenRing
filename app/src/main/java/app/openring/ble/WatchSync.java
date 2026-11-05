@@ -51,11 +51,15 @@ public final class WatchSync {
 
     public static final String RUNNING = "Watch sync running, the ring gets Bluetooth back at once when it needs it";
     public static final String BUSY = "The ring is busy right now. The watch syncs once it is free, or try again in a minute.";
-    public static final String NO_WATCH = "No watch added yet. Check a Withings watch in Settings, Watch, then tap Use this watch for syncing.";
+    public static final String NO_WATCH = "No watch added yet. Settings, Watch, Set up the watch finds it.";
     public static final String DEMO = "Demo mode: syncing is off";
     public static final String BLUETOOTH_OFF = "Bluetooth is off. Switch it on to sync the watch.";
     public static final String ALREADY = "A watch sync is already running.";
     public static final String LONG_RUN = "Re analysing your history, the watch syncs after it.";
+    /** The alarm and the hands do not retry by themselves (review of #332). */
+    public static final String LONG_RUN_ALARM = "Re analysing your history. The alarm goes to the watch with the next sync after it.";
+    public static final String LONG_RUN_HANDS = "Re analysing your history. Set the hands when it is done.";
+    public static final String BUSY_HANDS = "The ring is busy right now. Try again in a minute.";
     public static final String NO_SERVICE = "This device did not show the Withings service. Check the watch again in Settings, Watch.";
     public static final String NOT_CONNECTED = "The watch did not connect. Keep it next to the phone, press its button and try again.";
     public static final String FAILED = "The watch sync failed. Settings, Help, Data check and log shows why.";
@@ -151,7 +155,7 @@ public final class WatchSync {
             }, RUNNING, false);
             if (!ran) {
                 ring.log("watch: not synced, the ring is busy");
-                return BUSY;
+                return mode == HANDS ? BUSY_HANDS : BUSY;
             }
             boolean ok = out[0] == null;
             // a sync or the setup (which ends with the first sync) counts as a sync; the alarm and the hands do not
@@ -168,7 +172,7 @@ public final class WatchSync {
         final Db db = Db.get(ctx);
         // demo mode was turned on meanwhile: never into the demo file (the ring's rule, issue #185)
         if (Db.DEMO.equals(db.fileName) || Prefs.of(ctx).demo()) return DEMO;
-        if (!db.holdForRing()) return LONG_RUN;
+        if (!db.holdForRing()) return mode == HANDS ? LONG_RUN_HANDS : mode == ALARM ? LONG_RUN_ALARM : LONG_RUN;
         Link link = new Link(ring);
         try {
             if (WatchStore.ensureDecoded(db)) ring.log("watch: a new decoder, every stored message decoded again");
@@ -181,9 +185,22 @@ public final class WatchSync {
             long now = session / 1000;
             Session.Plan plan = plan(now, WatchStore.since(db, address, false, now), WatchStore.since(db, address, true, now));
             plan.address = address;
-            plan.progress = progress;
             final Prefs prefs = Prefs.of(ctx);
+            // the hands: from the moment calibration mode is asked for until it is switched off, the watch may be in it
+            final boolean[] handsStarted = {false};
+            plan.progress = mode != HANDS ? progress : new Session.Progress() {
+                @Override
+                public void step(String key, int state) {
+                    if (WatchSetup.HANDS_START.equals(key) && state == Session.STARTED) {
+                        handsStarted[0] = true;
+                        prefs.setWatchCalibrating(true);
+                    }
+                    if (progress != null) progress.step(key, state);
+                }
+            };
             WatchSetup.Profile who = profile(ctx);
+            // the counter first: a change made while this session runs stays pending (review of #332)
+            int alarmChange = prefs.watchAlarmChange();
             WatchSetup.Alarm alarm = prefs.watchAlarm();
             if (mode == SETUP) {
                 plan.steps = WatchSetup.setup(plan, who, alarm, plan.activitySince);
@@ -198,8 +215,11 @@ public final class WatchSync {
             } else {
                 plan.steps = WatchSetup.sync(plan, who, prefs.watchAlarmPending() ? alarm : null, plan.activitySince);
             }
+            // a calibration whose link was lost: calibration mode off and the time first (review of #332)
+            boolean closing = mode != HANDS && prefs.watchCalibrating();
+            if (closing) plan.steps = WatchSetup.closeCalibrationFirst(plan.steps, plan);
             ring.log("watch: " + (mode == SETUP ? "setup" : mode == ALARM ? "alarm" : mode == HANDS ? "hand calibration" : "sync") + ", " + plan.steps.size() + " steps"
-                    + (who.complete() ? "" : ", the user is not sent (sex not given)"));
+                    + (who.complete() ? "" : ", the user is not sent (sex not given)") + (closing ? ", hand setting left open last time is ended first" : ""));
             final int[] seq = {0};
             Session.Result r = Session.run(link, plan, new Session.Gate() {
                 @Override
@@ -227,8 +247,9 @@ public final class WatchSync {
                 }
             });
             link.close();
-            if (r.done.contains(WatchSetup.ALARM_ON)) prefs.setWatchAlarmSent();
+            if (r.done.contains(WatchSetup.ALARM_ON) && !prefs.setWatchAlarmSent(alarmChange)) ring.log("watch: the alarm changed during the session, it goes with the next sync");
             if (r.done.contains(WatchSetup.FINISHED)) prefs.setWatchSetupAt(now);
+            if (r.done.contains(WatchSetup.HANDS_STOP)) prefs.setWatchCalibrating(false);
             if (seq[0] > 0) {
                 Records.Decoded d = WatchStore.decodeSession(db, session);
                 WatchStore.noteDevice(db, address, d.name, d.firmware >= 0 ? String.valueOf(d.firmware) : null, captured);
@@ -237,6 +258,7 @@ public final class WatchSync {
                         + d.sleep.size() + " sleep pieces, " + d.workouts.size() + " workouts, " + d.battery.size() + " charge readings, " + d.moves.size() + " intensity and climb records"
                         + (d.unknown > 0 ? ", " + d.unknown + " records not known yet" : ""));
             }
+            if (mode == HANDS) return WatchSetup.handsResult(r.ended, handsStarted[0], r.done.contains(WatchSetup.HANDS_STOP));
             return r.ended;
         } finally {
             link.close();
@@ -244,19 +266,19 @@ public final class WatchSync {
         }
     }
 
-    /** What to ask for, with the phone's clock and zone now. */
+    /** What to ask for, with the phone's clock and zone (read again when the time is sent). */
     static Session.Plan plan(long now, long activitySince, long heartSince) {
         Session.Plan plan = new Session.Plan();
         plan.androidSdk = Build.VERSION.SDK_INT;
-        plan.now = now;
-        java.time.ZoneId zone = java.time.ZoneId.systemDefault();
-        java.time.Instant at = java.time.Instant.ofEpochSecond(now);
-        plan.offset = zone.getRules().getOffset(at).getTotalSeconds();
-        java.time.zone.ZoneOffsetTransition next = zone.getRules().nextTransition(at);
-        if (next != null) {
-            plan.nextChange = next.getInstant().getEpochSecond();
-            plan.offsetAfter = next.getOffsetAfter().getTotalSeconds();
-        }
+        plan.zone = java.time.ZoneId.systemDefault();
+        plan.at(now, plan.zone);
+        // the time is made again when it is sent: a hand calibration can last minutes (review of #332)
+        plan.clock = new Session.Clock() {
+            @Override
+            public long now() {
+                return System.currentTimeMillis() / 1000;
+            }
+        };
         plan.activitySince = activitySince;
         plan.heartSince = heartSince;
         return plan;

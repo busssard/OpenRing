@@ -81,6 +81,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
     private TextView saveNote, exportNote, reanalyseNote;
     private LinearLayout saveRow, exportRow;
     private View reanalyseButton;
+    /** Whether this screen already jumped to its {@code section} card, or came back from a turn with its own scroll. */
+    private boolean sectionDone;
+    /** The Profile card, where the watch setup leads when the watch needs a sex or a profile (review of #332). */
+    private LinearLayout profCard;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -100,6 +104,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         String section = getIntent().getStringExtra("section");
         ringOpen = app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.RING, section);
         watchOpen = app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.WATCH, section);
+        sectionDone = !app.openring.core.SettingsBlocks.jumpOnBuild(section, b != null, false);
         if (b != null) { // the phone was turned: typed numbers and choices come back (issue #133)
             ringOpen = b.getBoolean("ring_open", ringOpen);
             watchOpen = b.getBoolean("watch_open", watchOpen);
@@ -405,7 +410,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         root.addView(watchBlock.card);
 
         // ---- profile ----
-        LinearLayout prof = Ui.card(this);
+        LinearLayout prof = profCard = Ui.card(this);
         prof.addView(Ui.caption(this, "Profile and goals"));
         prof.addView(Ui.text(this, "Used for calories, goals and the sleep you need at your age.", 12, Ui.TEXT_3, Ui.REGULAR));
         LinearLayout body = Ui.hbox(this);
@@ -1881,19 +1886,23 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Opens at a card when started with the extra {@code section} ("blocks", "period", "stages", "watch", "screen", "games",
+     * Opens at a card when started with the extra {@code section} ("blocks", "profile" (from the watch setup), "period", "stages", "watch", "screen", "games",
      * "backups" or "advanced"), used by the screen test. A card inside the Ring or Watch block was opened with its block in
      * onCreate ({@link app.openring.core.SettingsBlocks#startsOpen}); "blocks" shows both blocks closed at the top.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "blocks".equals(section) ? ringBlock.card : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
+        final View card = "blocks".equals(section) ? ringBlock.card : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
                 : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
-        // the demo page is short: room below the last card, so every card can reach the top (issue #160)
+        // the demo page is short: room below the last card, so every card can reach the top (issue #160); kept on every
+        // build, so a restored scroll position finds the same page height
         root.addView(new View(this), new LinearLayout.LayoutParams(1, getResources().getDisplayMetrics().heightPixels));
+        // only the first build jumps: a rebuild or a turn keeps where the person scrolled to (review of #330)
+        if (sectionDone) return;
+        sectionDone = true;
         jumpTo(card, false);
     }
 
@@ -1902,14 +1911,15 @@ public final class SettingsActivity extends Activity implements RingManager.List
     /** One device block: a card with a header (title, a one line status, a chevron) that opens and closes its sections. */
     static final class Block {
         final int which;
-        final LinearLayout card, body;
+        final LinearLayout card, head, body;
         final TextView status;
         final android.widget.ImageView chevron;
         boolean open;
 
-        Block(int which, LinearLayout card, LinearLayout body, TextView status, android.widget.ImageView chevron) {
+        Block(int which, LinearLayout card, LinearLayout head, LinearLayout body, TextView status, android.widget.ImageView chevron) {
             this.which = which;
             this.card = card;
+            this.head = head;
             this.body = body;
             this.status = status;
             this.chevron = chevron;
@@ -1948,7 +1958,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout body = Ui.vbox(this);
         body.setPadding(0, Ui.dp(this, 14), 0, 0);
         card.addView(body, Ui.matchWrap());
-        final Block b = new Block(which, card, body, st, chev);
+        final Block b = new Block(which, card, head, body, st, chev);
         show(b, ringOne ? ringOpen : watchOpen);
         head.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -1964,7 +1974,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         b.open = open;
         b.body.setVisibility(open ? View.VISIBLE : View.GONE);
         b.chevron.setRotation(open ? 270 : 90); // down when closed, up when open
-        b.card.setContentDescription((b.which == app.openring.core.SettingsBlocks.RING ? "Ring" : "Watch") + (open ? ", open, tap to close" : ", closed, tap to open"));
+        b.head.setContentDescription((b.which == app.openring.core.SettingsBlocks.RING ? "Ring" : "Watch") + (open ? ", open, tap to close" : ", closed, tap to open"));
         if (b.which == app.openring.core.SettingsBlocks.RING) ringOpen = open;
         else watchOpen = open;
     }
