@@ -7839,6 +7839,12 @@ public class CoreTest {
         String openBody = rm.substring(o, oe), dlBody = rm.substring(d, de);
         check("#195 open() types no timeout of its own", !openBody.contains("12000") && !openBody.contains("20000") && !openBody.contains("40000") && !openBody.contains("sleep(1500)"));
         check("#195 download() types no round count of its own", !dlBody.contains("attempt <= 3") && !dlBody.contains("attempt < 3"));
+        String sc = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ble/RingScanner.java").toPath()), "UTF-8");
+        check("#195 the filtered only scan also matches the saved ring's address (review of a1fa895)",
+                sc.contains("if (!widen && preferred != null && BluetoothAdapter.checkBluetoothAddress(preferred))")
+                && sc.contains("filters.add(new ScanFilter.Builder().setDeviceAddress(preferred).build());")
+                && sc.contains("if (!addr.equals(preferred) && !isOura(r)) return;"));
+        check("#195 one find left, every caller chooses the plan", sc.split("public static BluetoothDevice find\\(", -1).length == 2);
     }
 
     /** Issue #194: the rule for skipping a sync shortly after the last one, and screen sessions read again unchanged. */

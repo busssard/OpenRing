@@ -55,17 +55,10 @@ public final class RingScanner {
      * Scan up to {@code timeoutMs}. Returns the preferred address as soon as it is seen, otherwise
      * the Oura ring with the strongest plausible signal after a short settle time ({@link Proximity#strongest}), or at
      * the end of the scan when one was heard too late to settle (issue #195).
-     * Addresses in {@code exclude} are skipped.
-     */
-    public static BluetoothDevice find(final Context c, final String preferred, final Set<String> exclude, long timeoutMs, GattLink.Log log)
-            throws IOException, InterruptedException {
-        return find(c, preferred, exclude, timeoutMs, true, true, log);
-    }
-
-    /**
-     * As {@link #find(Context, String, Set, long, GattLink.Log)}, with the scan's duty and its second half chosen
+     * Addresses in {@code exclude} are skipped. The scan's duty and its second half are chosen by the caller
      * (issue #195): {@code lowLatency} false uses Android's balanced mode, {@code widen} false keeps the filter for the
-     * whole scan (the background job, where an unfiltered scan hears nothing with the screen off).
+     * whole scan (the background job, where an unfiltered scan hears nothing with the screen off), and then the
+     * preferred address is one of the filters, so a saved ring that only advertises its name is still heard.
      */
     public static BluetoothDevice find(final Context c, final String preferred, final Set<String> exclude, long timeoutMs,
             boolean lowLatency, boolean widen, GattLink.Log log) throws IOException, InterruptedException {
@@ -85,8 +78,8 @@ public final class RingScanner {
 
             @Override
             public void onScanResult(int type, ScanResult r) {
-                if (!isOura(r)) return;
                 String addr = r.getDevice().getAddress();
+                if (!addr.equals(preferred) && !isOura(r)) return;
                 if (addr.equals(saved)) heard(c, addr);
                 if (exclude != null && exclude.contains(addr)) return;
                 synchronized (seen) {
@@ -102,6 +95,9 @@ public final class RingScanner {
         List<ScanFilter> filters = new ArrayList<ScanFilter>();
         filters.add(new ScanFilter.Builder().setManufacturerData(Protocol.COMPANY_ID, new byte[0]).build());
         filters.add(new ScanFilter.Builder().setServiceUuid(new ParcelUuid(Protocol.SERVICE)).build());
+        // the filtered only scan never widens, so the saved ring is also matched by its address, as watch() does
+        if (!widen && preferred != null && BluetoothAdapter.checkBluetoothAddress(preferred))
+            filters.add(new ScanFilter.Builder().setDeviceAddress(preferred).build());
         log.log("scanning for a ring" + (lowLatency ? "" : " (balanced)") + (widen ? "" : " (filtered only)"));
         waitForStart();
         start(a, s, filters, settings, cb);
