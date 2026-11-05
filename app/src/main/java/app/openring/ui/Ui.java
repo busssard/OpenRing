@@ -216,7 +216,7 @@ public final class Ui {
         LinearLayout box = vbox(c);
         box.addView(divider(c));
         final LinearLayout row = hbox(c);
-        row.setMinimumHeight(dp(c, 44));
+        row.setMinimumHeight(dp(c, 48));
         row.addView(text(c, "How it works", 14, TEXT_2, MEDIUM), weight(1));
         final android.widget.ImageView chevron = new android.widget.ImageView(c);
         chevron.setImageResource(app.openring.R.drawable.ic_chevron_right);
@@ -229,9 +229,9 @@ public final class Ui {
         final LinearLayout body = vbox(c);
         for (String s : texts) {
             if (s == null || s.isEmpty()) continue;
-            TextView t = text(c, s, 13, TEXT_2, REGULAR);
-            t.setLineSpacing(0, 1.15f);
-            t.setPadding(0, dp(c, 4), 0, dp(c, 6));
+            // the style of the notes under numbers (PeriodCard.note): the section reads as secondary
+            TextView t = text(c, s, 12, TEXT_3, REGULAR);
+            t.setPadding(0, dp(c, 2), 0, dp(c, 8));
             body.addView(t);
         }
         box.addView(body, matchWrap());
@@ -249,7 +249,7 @@ public final class Ui {
     private static void showHow(View row, View chevron, View body, boolean open) {
         body.setVisibility(open ? View.VISIBLE : View.GONE);
         chevron.setRotation(open ? -90 : 90);
-        row.setContentDescription(open ? "How it works, open. Tap to close." : "How it works, closed. Tap to open.");
+        row.setContentDescription(open ? "How it works, expanded" : "How it works, collapsed");
     }
 
     /** Label over a big value with a unit, for stat tiles. */

@@ -134,9 +134,9 @@ public final class Explain {
      * {@code cycles} is the number the estimate rests on, {@code sd} their spread in days.
      */
     public static String periodRange(int cycles, int length, int range, double sd) {
-        String from = cycles == 0 ? "Typical cycle " + length + " days, the average in a large study of real cycles, until you have your own. "
-                : cycles < app.openring.core.analysis.Cycles.TRIM_FROM ? "Typical cycle " + length + " days, the middle value of " + yourCycles(cycles) + ". "
-                : "Typical cycle " + length + " days, the average of " + yourCycles(cycles) + " without the shortest and the longest. ";
+        String from = cycles == 0 ? "Next period: typical cycle " + length + " days, the average in a large study of real cycles, until you have your own. "
+                : cycles < app.openring.core.analysis.Cycles.TRIM_FROM ? "Next period: typical cycle " + length + " days, the middle value of " + yourCycles(cycles) + ". "
+                : "Next period: typical cycle " + length + " days, the average of " + yourCycles(cycles) + " without the shortest and the longest. ";
         if (cycles < app.openring.core.analysis.Cycles.FEW) return from + "The next start is your last start plus that, give or take " + range + " days while there are fewer than "
                 + app.openring.core.analysis.Cycles.FEW + " cycles.";
         return from + "About 4 in 5: the range is give or take 1.28 times how much your cycles vary (" + String.format(java.util.Locale.getDefault(), "%.1f", sd)
@@ -147,7 +147,7 @@ public final class Explain {
     public static String periodOvulation(int cycles, int range) {
         String spread = cycles < app.openring.core.analysis.Cycles.FEW ? "a typical spread of 2.6 days (in place of your own until you have "
                 + app.openring.core.analysis.Cycles.FEW + " cycles)" : "how much " + yourCycles(cycles) + " vary";
-        return "Give or take " + range + " days: " + spread + ", together with how much the time from ovulation to the next period varies "
+        return "Ovulation day: give or take " + range + " days, from " + spread + ", together with how much the time from ovulation to the next period varies "
                 + "(about 2.4 days in a large study), times 1.28 for about 4 in 5. At least 3 days.";
     }
 
@@ -217,7 +217,7 @@ public final class Explain {
         java.util.Locale l = java.util.Locale.getDefault();
         String third = String.format(l, "%.2f °C for your ring", app.openring.core.analysis.TempRise.thirdNeed(ringNoise));
         if (!Double.isNaN(mouthNoise)) third += String.format(l, ", %.2f °C by mouth", app.openring.core.analysis.TempRise.thirdNeed(mouthNoise));
-        return "Three over six, the classic rule: the baseline is the highest of 6 nights, then 3 nights in a row must lie above it, "
+        return "Ovulation from your temperature: three over six, the classic rule. The baseline is the highest of 6 nights, then 3 nights in a row must lie above it, "
                 + "the third at least " + third + " (0.2 °C for a steady signal, less for one that varies more from night to night: yours "
                 + "varies by about " + String.format(l, "%.2f", ringNoise) + " °C). A night may be missing, and one night that dips or a third "
                 + "that falls short needs a fourth high night. The rise must last until the next period, and nights far from the ones around "
@@ -249,12 +249,12 @@ public final class Explain {
     public static String periodOvulation(app.openring.core.analysis.Cycles cy) {
         if (cy.method == app.openring.core.analysis.Cycles.MEASURED) {
             boolean clear = cy.rise.current.confidence == app.openring.core.analysis.TempRise.CLEAR;
-            return "Give or take " + cy.ovulationRange + (cy.ovulationRange == 1 ? " day" : " days") + ": " + (clear ? "a clear rise" : "a weaker rise")
+            return "Ovulation day: give or take " + cy.ovulationRange + (cy.ovulationRange == 1 ? " day" : " days") + ", from " + (clear ? "a clear rise" : "a weaker rise")
                     + ", found within that many days of the real day about 4 times in 5 in made up cycles. Measured means the day before the "
                     + "temperature rose, not a test. How it is found is under How it works in Your cycles.";
         }
         if (cy.method == app.openring.core.analysis.Cycles.OWN_LUTEAL) {
-            return "Give or take " + cy.ovulationRange + " days: how much " + yourCycles(cy.used.size()) + " vary, together with how much your own "
+            return "Ovulation day: give or take " + cy.ovulationRange + " days, from how much " + yourCycles(cy.used.size()) + " vary, together with how much your own "
                     + "time from ovulation to the period varies, times 1.28 for about 4 in 5. At least 3 days.";
         }
         return periodOvulation(cy.used.size(), cy.ovulationRange);
@@ -264,7 +264,7 @@ public final class Explain {
     public static String periodRange(app.openring.core.analysis.Cycles cy) {
         if (cy.method != app.openring.core.analysis.Cycles.MEASURED) return periodRange(cy.used.size(), cy.length, cy.range, cy.sd);
         boolean own = cy.rise.ownLuteal();
-        return "Measured: the ovulation day plus " + cy.luteal + " days, " + (own ? "your own time from ovulation to the period" : "the usual time from ovulation to the period")
+        return "Next period: measured, the ovulation day plus " + cy.luteal + " days, " + (own ? "your own time from ovulation to the period" : "the usual time from ovulation to the period")
                 + ". Give or take " + cy.range + (cy.range == 1 ? " day" : " days") + ": how much " + (own ? "your own time varies" : "that time varies (about 2.4 days in a large study)")
                 + " together with the error of the measured day, times 1.28 for about 4 in 5. The calendar estimate from your typical cycle is shown for comparison.";
     }

@@ -1354,13 +1354,13 @@ public class CoreTest {
         for (String t : tx) plain &= t != null && plain252(t);
         check("#252e texts use no dashes as punctuation", plain);
         String rule = app.openring.ui.Explain.periodRise(0.12, 0.08);
-        check("#252e explain: the rule with its numbers, the limits, not birth control", rule.contains("Three over six") && rule.contains("the third at least 0.12 °C for your ring, 0.10 °C by mouth")
+        check("#252e explain: the rule with its numbers, the limits, not birth control", rule.startsWith("Ovulation from your temperature: three over six, the classic rule.") && rule.contains("the third at least 0.12 °C for your ring, 0.10 °C by mouth")
                 && rule.contains("varies by about 0.12 °C") && rule.contains("Illness, alcohol, travel and a warm room move the temperature too")
                 && rule.contains("not birth control and not a medical diagnosis"), rule);
         check("#252e explain: the own luteal length and how many cycles", app.openring.ui.Explain.periodLuteal(6, 12, 0.8).contains("your 6 newest cycles with a rise, which vary by about 0.8 days")
                 && app.openring.ui.Explain.periodLuteal(2, 14, Double.NaN).contains("(2 so far), the estimate uses the usual 14 days."));
-        check("#252e explain: the measured ranges", app.openring.ui.Explain.periodOvulation(m).startsWith("Give or take 1 day: a clear rise")
-                && app.openring.ui.Explain.periodRange(m).startsWith("Measured: the ovulation day plus 13 days, your own time")
+        check("#252e explain: the measured ranges", app.openring.ui.Explain.periodOvulation(m).startsWith("Ovulation day: give or take 1 day, from a clear rise")
+                && app.openring.ui.Explain.periodRange(m).startsWith("Next period: measured, the ovulation day plus 13 days, your own time")
                 && app.openring.ui.Explain.periodRange(cal).equals(app.openring.ui.Explain.periodRange(cal.used.size(), cal.length, cal.range, cal.sd))
                 && app.openring.ui.Explain.periodOvulation(cal).equals(app.openring.ui.Explain.periodOvulation(cal.used.size(), cal.ovulationRange)));
         m = Cycles.of(log, null, last.plusDays(14)).measured(ring, null);
@@ -1391,9 +1391,18 @@ public class CoreTest {
         card = app.openring.ui.Explain.periodCardHow(m);
         cyc = app.openring.ui.Explain.periodCyclesHow(m);
         check("#252h measured: the card explains the measured range, Your cycles holds the rule with the mouth's noise",
-                m.method == Cycles.MEASURED && card.get(0).startsWith("Measured: the ovulation day plus") && card.get(1).startsWith("Give or take")
+                m.method == Cycles.MEASURED && card.get(0).startsWith("Next period: measured, the ovulation day plus") && card.get(1).startsWith("Ovulation day: give or take")
                         && cyc.contains(app.openring.ui.Explain.periodRise(m.rise.ringNoise, m.rise.mouthNoise)) && cyc.indexOf(app.openring.ui.Explain.PERIOD_WINDOW) < cyc.indexOf(app.openring.ui.Explain.PERIOD_DOTS_PERIODS)
                         && cyc.get(cyc.size() - 1).equals(Cycles.NOT_ADVICE), String.valueOf(cyc));
+        boolean labelled = true;
+        for (Cycles x : new Cycles[] {demo, m}) {
+            List<String> k = app.openring.ui.Explain.periodCardHow(x);
+            labelled &= k.get(0).startsWith("Next period: ") && k.get(1).startsWith("Ovulation day: ") && k.get(2).startsWith("Vary by: ");
+        }
+        check("#252h every paragraph says what it is about: Next period, Ovulation day, Vary by, Ovulation from your temperature", labelled
+                && app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN).startsWith("Next period: typical cycle 29 days")
+                && app.openring.ui.Explain.periodOvulation(2, 5).startsWith("Ovulation day: give or take 5 days, from a typical spread")
+                && app.openring.ui.Explain.periodRise(0.12, Double.NaN).startsWith("Ovulation from your temperature: "));
         // nothing logged: Your cycles shows only its empty line, so no How it works there
         Cycles none = Cycles.of(new HashMap<java.time.LocalDate, Integer>(), null, dt);
         check("#252h nothing logged: no How it works in Your cycles", app.openring.ui.Explain.periodCyclesHow(none).isEmpty()
@@ -2518,7 +2527,7 @@ public class CoreTest {
                         && app.openring.ui.Explain.periodRange(4, 28, 3, 2.2).contains("the middle value of your 4 cycles")
                         && app.openring.ui.Explain.periodRange(1, 28, 5, Double.NaN).contains("the middle value of your 1 cycle")
                         && app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN).contains("give or take 5 days while there are fewer than 3 cycles"));
-        check("#252 explain: give or take and vary by", app.openring.ui.Explain.periodOvulation(8, 4).startsWith("Give or take 4 days: how much your last 8 cycles vary")
+        check("#252 explain: give or take and vary by", app.openring.ui.Explain.periodOvulation(8, 4).startsWith("Ovulation day: give or take 4 days, from how much your last 8 cycles vary")
                 && app.openring.ui.Explain.periodOvulation(2, 5).contains("a typical spread of 2.6 days")
                 && app.openring.ui.Explain.periodVary(4).startsWith("Vary by: the standard deviation of your 4 cycles"));
     }

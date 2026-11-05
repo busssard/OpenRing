@@ -306,7 +306,7 @@ public final class DripImportActivity extends Activity {
         for (DripImport.Short s : pv.shorts) if (!ignored.contains(s.period.start)) open++;
         if (!pv.shorts.isEmpty()) {
             LinearLayout sh = Ui.card(this);
-            sh.addView(Ui.caption(this, "Short periods"));
+            sh.addView(Ui.caption(this, "Short periods, maybe a missed day"));
             sh.addView(Ui.gap(this, 4));
             for (final DripImport.Short s : pv.shorts) {
                 if (ignored.contains(s.period.start)) continue;
