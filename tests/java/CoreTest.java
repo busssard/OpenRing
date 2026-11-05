@@ -948,6 +948,10 @@ public class CoreTest {
         }
         eq("#329 without reading the key: nothing stored", KeyState.ofStored(false), KeyState.NONE);
         eq("#329 without reading the key: a stored key", KeyState.ofStored(true), KeyState.READABLE);
+        for (boolean stored : new boolean[] {false, true}) {
+            int st = KeyState.ofStored(stored);
+            check("#329 without reading the key: never unreadable or no ring (" + stored + ")", st != KeyState.UNREADABLE && st != KeyState.NO_RING);
+        }
         // the main screen (MainActivity.onResume): never Setup in a loop
         for (boolean done : new boolean[] {false, true}) {
             for (boolean unseen : new boolean[] {false, true}) {

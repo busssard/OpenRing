@@ -390,9 +390,10 @@ public final class Prefs {
     }
 
     /**
-     * {@code core/KeyState} without reading the key (no decrypt, issue #329): {@code NONE}, or {@code READABLE} for any
-     * stored key. For Settings and Find my ring, which only ask whether a ring is set up ({@code KeyState.needsSetup},
-     * {@code KeyState.hasRing}).
+     * {@code core/KeyState} without reading the key (issue #329): it never decrypts, so a stored key this phone cannot
+     * read also gives {@code READABLE} (never {@code UNREADABLE}). Only for {@code KeyState.needsSetup} and
+     * {@code KeyState.hasRing} (Settings, Find my ring, the main screen after a failed demo); never for
+     * {@code KeyState.opensSetup} or {@code KeyState.syncs}, which need {@link #keyState}.
      */
     public int ringState() {
         return app.openring.core.KeyState.ofStored(hasKey());

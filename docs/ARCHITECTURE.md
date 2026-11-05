@@ -40,7 +40,7 @@ Nothing leaves the phone: the app has no internet permission.
   key the ring accepted, a restore or "Use a different key or ring" replace it. `KeyState.NO_RING` is "no ring by choice"
   (issue #329, set by nothing before its phase 1b): it never opens Setup and never syncs. Every place that sends a person
   to Setup or needs a paired ring asks `KeyState` (`opensSetup` on the main screen, `needsSetup` in Settings and after a
-  failed demo, `hasRing` in Find my ring; `Prefs.ringState` answers without reading the key), so none can loop.
+  failed demo, `hasRing` in Find my ring; `Prefs.ringState` answers without reading the key, so it serves only `needsSetup` and `hasRing`), so none can loop.
   Pairing (`core/Pairing`, issue #218) stores a key on the phone (the kept key, `Prefs.keepPendingKey`, written with
   `commit`, with the serial of the ring it goes to) before it writes it to the ring, and nothing goes to the ring when that
   fails. A kept key is never overwritten: "Pair and create a new key" uses it again (also on another ring, which then shares
@@ -758,7 +758,7 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   first, then the watch when the newest of those times passed after its last good sync and no attempt was made since that
   time or in the last 2.5 hours. The job is scheduled when the ring's background sync is on or a watch syncs on its own.
   What one run does is decided by `core/BackgroundJob.due` (issue #329): nothing while the ring is busy, the ring part
-  when background sync is on, the key can be read and the last sync is over 30 minutes ago (else the skip is logged), the
+  when background sync is on, the key can be read and the last sync or attempt is over 30 minutes ago (one that lies in the future, after the clock was set back, counts as not recent; a skipped ring part is logged), the
   watch part outside demo mode when it is due; `SyncJob` only reads the settings and asks it.
 * **Screens:** Settings, Watch (the watch, paired with this phone or not, last sync, battery, last problem, "Sync the watch
   now", the chips, "Open the watch page", "Forget the watch": syncing stops, nothing is deleted); the

@@ -26,9 +26,10 @@ public final class KeyState {
     }
 
     /**
-     * The state as far as it is known without reading the key (no decrypt): {@link #NONE}, or {@link #READABLE} for any
-     * stored key. Only for the decisions that treat a readable and an unreadable key alike ({@link #needsSetup},
-     * {@link #hasRing}), which Settings and Find my ring make often.
+     * The state as far as it is known without reading the key: it never decrypts, so it gives {@link #NONE} or
+     * {@link #READABLE}, also for a stored key this phone cannot read (never {@link #UNREADABLE} or {@link #NO_RING}).
+     * Use it only for {@link #needsSetup} and {@link #hasRing}, which treat a readable and an unreadable key alike; never
+     * for {@link #opensSetup} or {@link #syncs}, which need {@link #of} with the key actually read.
      */
     public static int ofStored(boolean stored) {
         return of(stored, true);

@@ -1864,7 +1864,20 @@ public class WatchTest {
         check("#329 codes: ring 0, watch 1, phone 2 reserved", MainDevice.RING == 0 && MainDevice.WATCH == 1 && MainDevice.PHONE == 2);
         check("#329 codes: the phone is not a choice yet, a stored 2 is the ring", MainDevice.valid(MainDevice.PHONE) == MainDevice.RING && !MainDevice.known(MainDevice.PHONE)
                 && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(-1) && !MainDevice.known(7));
-        check("#329 codes: Settings offers ring and watch, in that order", Arrays.equals(MainDevice.CHOICES, new int[] {MainDevice.RING, MainDevice.WATCH}));
+        check("#329 codes: Settings offers ring and watch, in that order", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH}));
+        int[] mine = MainDevice.choices();
+        mine[0] = MainDevice.PHONE;
+        mine[1] = 7;
+        check("#329 codes: changing a copy changes neither the choices nor known()", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH})
+                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(7) && !MainDevice.known(MainDevice.PHONE));
+        Set<String> labels = new HashSet<String>();
+        boolean labelled = true;
+        for (int c : MainDevice.choices()) {
+            String l = MainDevice.label(c);
+            labelled &= l != null && !l.isEmpty() && plain(l) && labels.add(l);
+        }
+        check("#329 codes: every choice has its own label", labelled && labels.equals(new HashSet<String>(Arrays.asList("Ring", "Watch"))), labels);
+        check("#329 codes: the reserved phone has its label ready", "Phone".equals(MainDevice.label(MainDevice.PHONE)));
         MainDevice.Day asPhone = MainDevice.of(MainDevice.PHONE, day, from, to, z, ring, srcWatch(day, 99, 99));
         MainDevice.Day asRing = MainDevice.of(MainDevice.RING, day, from, to, z, ring, srcWatch(day, 99, 99));
         check("#329 codes: a day asked for with 2 is the ring's day", asPhone.main == MainDevice.RING && srcPrint(asPhone).equals(srcPrint(asRing)));

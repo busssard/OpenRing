@@ -41,8 +41,22 @@ public final class MainDevice {
     public static final int RING = 0, WATCH = 1;
     /** Reserved for the phone's own step counter (issue #329, phase 1b); not a choice yet, {@link #valid} still makes it the ring. */
     public static final int PHONE = 2;
-    /** The devices that can be picked as main device, in the order Settings shows them. */
-    public static final int[] CHOICES = {RING, WATCH};
+    /** The devices that can be picked as main device, in the order Settings shows them (a copy: {@link #choices}). */
+    private static final int[] CHOICES = {RING, WATCH};
+
+    /** The devices that can be picked as main device, in the order Settings shows them; a new array on each call. */
+    public static int[] choices() {
+        return CHOICES.clone();
+    }
+
+    /** The name on a device's chip in Settings ("Ring", "Watch"; "Phone" for the reserved code, not shown yet). */
+    public static String label(int device) {
+        switch (device) {
+            case WATCH: return "Watch";
+            case PHONE: return "Phone";
+            default: return "Ring";
+        }
+    }
     /** Width of one quarter hour, the unit gaps are found in. */
     public static final double SLOT_S = 900;
     /** A watch record counts the watch as worn this long before and after it (its heart rate comes about every 30 minutes). */
@@ -53,7 +67,7 @@ public final class MainDevice {
         return main == WATCH ? WATCH : RING;
     }
 
-    /** A value that is one of {@link #CHOICES} (a restore takes only such a value from a backup). */
+    /** A value that is one of the choices (a restore takes only such a value from a backup); reads the private array, so no caller can change it. */
     public static boolean known(int main) {
         for (int c : CHOICES) if (c == main) return true;
         return false;

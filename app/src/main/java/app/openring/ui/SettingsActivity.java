@@ -1124,12 +1124,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.addView(Ui.text(this, "Main device", 14, Ui.TEXT, Ui.MEDIUM));
         final int main = p.mainDevice();
         LinearLayout r = Ui.hbox(this);
-        String[] labels = {"Ring", "Watch"};
-        int[] values = app.openring.core.MainDevice.CHOICES;
+        int[] values = app.openring.core.MainDevice.choices();
         for (int k = 0; k < values.length; k++) {
             final int value = values[k];
             boolean on = value == main;
-            TextView chip = Ui.smallButton(this, labels[k], on ? Ui.OXY : Ui.TEXT_3);
+            TextView chip = Ui.smallButton(this, app.openring.core.MainDevice.label(value), on ? Ui.OXY : Ui.TEXT_3);
             if (on) chip.setBackground(Ui.rounded(Ui.alpha(Ui.OXY, 0.18f), Ui.dp(this, 24)));
             chip.setOnClickListener(new View.OnClickListener() {
                 @Override
