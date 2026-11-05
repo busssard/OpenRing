@@ -11920,11 +11920,6 @@ public class PipelineTest {
     }
 
     /**
-     * Issue #251, main device: the demo's ring is on its charger yesterday 14:00 to 16:00, and its made up watch fills that
-     * time when the day is shown; the stored results stay the ring's (no watch steps in them), and switching the main
-     * device changes only what is worked out on load. An older backup without the choice keeps the phone's.
-     */
-    /**
      * Issue #334: a sync whose start fails on the database (here a database file that cannot be opened, the SQLite stand in
      * throws) stores the safe text, gives the ring lock back and leaves no sync counted. {@code ble/RingManager} needs Android
      * and is not compiled here, so this runs its start steps' shape through {@code core/SyncStart} with the real Db and Prefs.
@@ -11988,6 +11983,11 @@ public class PipelineTest {
         check(name, got == want, got);
     }
 
+    /**
+     * Issue #251, main device: the demo's ring is on its charger yesterday 14:00 to 16:00, and its made up watch fills that
+     * time when the day is shown; the stored results stay the ring's (no watch steps in them), and switching the main
+     * device changes only what is worked out on load. An older backup without the choice keeps the phone's.
+     */
     static void mainDevice251() throws Exception {
         Context c = phone254("openring251-main");
         LocalDate today = LocalDate.now();

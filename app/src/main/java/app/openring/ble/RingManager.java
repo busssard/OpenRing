@@ -511,14 +511,23 @@ public final class RingManager {
             if (begun.error != null) {
                 // the class and place only are stored and shown (issue #289), the whole stack trace goes to the log
                 res.message = begun.message;
-                log("sync could not start: " + android.util.Log.getStackTraceString(begun.error));
+                // the outer finally shows it and lowers the count, so busy() drops back
+                own = SyncError.plain(res.message);
+                // stored first, so a failing log (out of memory) never skips it (issue #91)
                 try {
                     prefs.setLastSyncError(SyncError.stored(false, res.message));
                 } catch (Throwable e) {
-                    log("sync error not stored: " + app.openring.core.LoadNote.error(e));
+                    try {
+                        log("sync error not stored: " + app.openring.core.LoadNote.error(e));
+                    } catch (Throwable ignored) {
+                        // nothing more can be done
+                    }
                 }
-                // the outer finally shows it and lowers the count, so busy() drops back
-                own = SyncError.plain(res.message);
+                try {
+                    log("sync could not start: " + android.util.Log.getStackTraceString(begun.error));
+                } catch (Throwable e) {
+                    android.util.Log.e("OpenRing", "sync could not start", begun.error);
+                }
                 return res;
             }
             if (begun.message != null) {
