@@ -443,7 +443,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
             demoRun.refused = null;
             android.widget.Toast.makeText(this, why, android.widget.Toast.LENGTH_LONG).show();
             Prefs prefs = Prefs.of(this);
-            if (!prefs.setupDone() || !prefs.hasKey()) {
+            if (app.openring.core.KeyState.needsSetup(prefs.setupDone(), prefs.ringState())) {
                 startActivity(new Intent(this, SetupActivity.class));
                 return;
             }

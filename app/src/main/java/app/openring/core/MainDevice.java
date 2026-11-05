@@ -1,4 +1,4 @@
-package app.openring.core.withings;
+package app.openring.core;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -13,6 +13,8 @@ import java.util.Locale;
 import app.openring.core.analysis.DayHeart;
 import app.openring.core.analysis.TS;
 import app.openring.core.analysis.Wellness;
+import app.openring.core.withings.Records;
+import app.openring.core.withings.WatchDays;
 
 /**
  * One set of numbers from the ring and the watch (issue #251, the owner's decision of 3 November): the person picks the
@@ -28,19 +30,33 @@ import app.openring.core.analysis.Wellness;
  * quarter hour when any of its records lies within {@link #WATCH_REACH_S} of it.
  *
  * <p>With only one device the numbers are that device's, exactly as stored (the same doubles, the same line).
+ *
+ * <p>Each device is one {@link Source} (issue #329, phase 1a, moved here from {@code core/withings}): the step sum and the
+ * gap filling exist once, in {@link #numbers}, for whichever device is the main one.
  */
 public final class MainDevice {
     private MainDevice() {}
 
+    /** The stored codes (Prefs and backups): never change them. */
     public static final int RING = 0, WATCH = 1;
+    /** Reserved for the phone's own step counter (issue #329, phase 1b); not a choice yet, {@link #valid} still makes it the ring. */
+    public static final int PHONE = 2;
+    /** The devices that can be picked as main device, in the order Settings shows them. */
+    public static final int[] CHOICES = {RING, WATCH};
     /** Width of one quarter hour, the unit gaps are found in. */
     public static final double SLOT_S = 900;
     /** A watch record counts the watch as worn this long before and after it (its heart rate comes about every 30 minutes). */
     public static final long WATCH_REACH_S = 1800;
 
-    /** A stored choice that is not one of the two is the ring, the default. */
+    /** A stored choice that is not one of the two is the ring, the default (also {@link #PHONE} while it is reserved). */
     public static int valid(int main) {
         return main == WATCH ? WATCH : RING;
+    }
+
+    /** A value that is one of {@link #CHOICES} (a restore takes only such a value from a backup). */
+    public static boolean known(int main) {
+        for (int c : CHOICES) if (c == main) return true;
+        return false;
     }
 
     /** The other device's name in a sentence ("your watch"). */
@@ -183,6 +199,101 @@ public final class MainDevice {
     }
 
     /**
+     * One device's day as the merge sees it (issue #329, phase 1a): which quarter hours it covers, its own day total, the
+     * steps it can lend to another device's gaps (per quarter hour) and its heart rate. The ring and the watch are made by
+     * {@link #ring} and {@link #watch}; {@link #numbers} merges any main device with the other one, so a new device is a
+     * new source, not a third copy of the step sum and the gap filling.
+     */
+    public static final class Source {
+        /** {@link #RING}, {@link #WATCH} (and {@link #PHONE} once it exists). */
+        public final int kind;
+        /** The quarter hours of the day it covers (was worn). */
+        public final boolean[] worn;
+        /** It has anything on this day. */
+        public final boolean present;
+        /** Its own day total when it is the main device, NaN for none. */
+        public final double steps, metres;
+        /** The steps it lends to the main device's gaps, each {quarter hour, steps, metres}, in the order they are summed. */
+        public final List<double[]> parts = new ArrayList<double[]>();
+        /**
+         * Its parts are an estimate (the ring's per minute rule): their sum is rounded to tens, the distance follows from
+         * the steps, and only a sum above 0 counts. A main device with nothing on the day then shows this device's own day
+         * as stored instead of the estimate.
+         */
+        public final boolean estimate;
+        /** Its heart rate points: the ring's line as stored, or the watch's readings of the day (made a line by {@link #curve}). */
+        final TS heart;
+        /** {@link #heart} holds single readings that become a line with {@code DayHeart.curve}. */
+        final boolean curve;
+        private final double from, to;
+
+        Source(int kind, boolean[] worn, boolean present, double steps, double metres, boolean estimate, TS heart, boolean curve, double from, double to) {
+            this.kind = kind;
+            this.worn = worn;
+            this.present = present;
+            this.steps = steps;
+            this.metres = metres;
+            this.estimate = estimate;
+            this.heart = heart;
+            this.curve = curve;
+            this.from = from;
+            this.to = to;
+        }
+
+        /** The heart rate line it shows as the main device (the ring's own line object, unchanged). */
+        public TS line() {
+            return curve ? heartIn(null) : heart;
+        }
+
+        /** Its heart rate in the quarter hours {@code skip} leaves free (null: all), as a line. */
+        public TS heartIn(boolean[] skip) {
+            int n = slots(from, to);
+            TS out = new TS();
+            for (int i = 0; i < heart.size(); i++) {
+                int k = slot(heart.t(i), from);
+                if (k >= 0 && k < n && (skip == null || !skip[k]) && !Double.isNaN(heart.v(i))) out.add(heart.t(i), heart.v(i));
+            }
+            return curve ? DayHeart.curve(out, from, to) : out;
+        }
+    }
+
+    /** The ring as a source: worn by its movement, heart rate and nights; it lends its movement estimate outside its nights. */
+    public static Source ring(Ring r, double from, double to, ZoneId zone) {
+        boolean[] rw = ringWorn(r, from, to, zone);
+        Source s = new Source(RING, rw, any(rw), r.steps, r.metres, true, r.hr, false, from, to);
+        for (int k = 0; k < rw.length; k++) {
+            if (!rw[k]) continue;
+            double a = from + k * SLOT_S, mid = a + SLOT_S / 2;
+            boolean asleep = false;
+            for (double[] sl : r.sleeps) if (mid >= sl[0] && mid < sl[1]) asleep = true;
+            if (asleep) continue;
+            double add = ringSlotSteps(r.met[clockQuarter(a, zone)]);
+            if (add > 0) s.parts.add(new double[] {k, add, 0});
+        }
+        return s;
+    }
+
+    /** The watch as a source: worn near its records; it lends its step records, its total is their sum (NaN without any). */
+    public static Source watch(Watch w, double from, double to) {
+        boolean[] ww = watchWorn(w, from, to);
+        double steps = 0, metres = 0;
+        boolean got = false;
+        List<double[]> parts = new ArrayList<double[]>();
+        for (Records.Steps s : w.steps) {
+            if (s.start < from || s.start >= to) continue;
+            steps += s.steps;
+            metres += s.metres;
+            parts.add(new double[] {slot(s.start, from), s.steps, s.metres});
+            got = true;
+        }
+        TS readings = new TS();
+        for (Records.Heart h : w.heart) if (h.t >= from && h.t < to) readings.add(h.t, h.bpm);
+        Source s = new Source(WATCH, ww, anyWatchIn(w, from, to) && any(ww), got ? steps : Double.NaN, got ? metres : Double.NaN, false, readings, true, from, to);
+        s.parts.addAll(parts);
+        return s;
+    }
+
+    /**
      * The day {@code date} from {@code from} to {@code to} (its midnights in {@code zone}) as shown with {@code main} as the
      * main device. {@code watch} null or empty: the ring's numbers exactly as given.
      */
@@ -192,8 +303,6 @@ public final class MainDevice {
         d.ringNight = ring.night;
         if (watch == null) watch = new Watch();
         d.watchRows = !watch.isEmpty();
-        int n = slots(from, to);
-        boolean[] rw = ringWorn(ring, from, to, zone), ww = watchWorn(watch, from, to);
         WatchDays.Zones z = new WatchDays.Zones() {
             @Override
             public ZoneId at(double unix) {
@@ -208,97 +317,65 @@ public final class MainDevice {
             }
         });
         WatchDays.Night wn = watch.sleep.isEmpty() ? null : WatchDays.nightFor(watch.sleep, date, z);
-        if (d.main == RING) {
-            if (!ring.night) d.watchNight = wn;
-            ringMain(d, ring, watch, rw, from, to, n);
-        } else {
-            d.watchNight = wn;
-            watchMain(d, ring, watch, rw, ww, from, to, n, zone);
-        }
+        if (d.main == WATCH || !ring.night) d.watchNight = wn;
+        List<Source> sources = new ArrayList<Source>();
+        sources.add(ring(ring, from, to, zone));
+        sources.add(watch(watch, from, to));
+        numbers(d, sources, from, to);
         return d;
     }
 
-    private static void ringMain(Day d, Ring ring, Watch watch, boolean[] rw, double from, double to, int n) {
-        d.whole = !any(rw) && !watch.isEmpty() && anyWatchIn(watch, from, to);
-        d.steps = ring.steps;
-        d.metres = ring.metres;
-        d.hr = ring.hr;
-        boolean[] stepSlots = new boolean[n];
+    /**
+     * Steps, distance and the heart rate line of {@code d} (its {@code main} and {@code watchRows} set): the main device's
+     * own numbers, and the other device's only in the quarter hours the main one did not cover. One path for every pair
+     * of devices. {@code sources} holds one source per device, the main one among them; until the phone arrives (issue
+     * #329, phase 1b) at most one other.
+     */
+    public static void numbers(Day d, List<Source> sources, double from, double to) {
+        Source main = null, other = null;
+        for (Source s : sources) {
+            if (s.kind == d.main && main == null) main = s;
+            else if (other == null) other = s;
+            else throw new IllegalArgumentException("one other device only, the phone comes with phase 1b of #329");
+        }
+        if (main == null || other == null) throw new IllegalArgumentException("the main device and one other are needed");
+        int n = slots(from, to);
+        // named only when the watch has rows at all (a day before it was added, a day off the wrist)
+        d.whole = !main.present && other.present && d.watchRows;
+        if (!main.present && other.estimate) {
+            // the main device has nothing on this day: the other's day as stored, not its estimate
+            d.steps = other.steps;
+            d.metres = other.metres;
+            d.hr = other.line();
+            return;
+        }
+        d.steps = main.steps;
+        d.metres = main.metres;
+        boolean[] used = new boolean[n];
         double steps = 0, metres = 0;
         boolean got = false;
-        for (Records.Steps s : watch.steps) {
-            if (s.start < from || s.start >= to) continue;
-            int k = slot(s.start, from);
-            if (rw[k]) continue;
-            steps += s.steps;
-            metres += s.metres;
-            stepSlots[k] = true;
+        for (double[] p : other.parts) {
+            int k = (int) p[0];
+            if (main.worn[k]) continue;
+            steps += p[1];
+            metres += p[2];
+            used[k] = true;
             got = true;
+        }
+        if (other.estimate) {
+            steps = Math.round(steps / 10.0) * 10;
+            metres = Wellness.stepsToMeters(steps);
+            got = steps > 0;
         }
         if (got) {
             d.fillSteps = steps;
-            d.steps = (Double.isNaN(ring.steps) ? 0 : ring.steps) + steps;
-            d.metres = (Double.isNaN(ring.metres) ? 0 : ring.metres) + metres;
-            d.stepFill.addAll(stretches(not(rw), stepSlots, from, to));
+            d.steps = (Double.isNaN(main.steps) ? 0 : main.steps) + steps;
+            d.metres = (Double.isNaN(main.metres) ? 0 : main.metres) + metres;
+            d.stepFill.addAll(stretches(not(main.worn), used, from, to));
         }
-        TS add = gapLine(watch, rw, from, to, n);
-        if (add.size() > 0) {
-            d.hr = joined(ring.hr, add);
-            d.hrFill.addAll(stretches(not(rw), slotsOf(add, from, n), from, to));
-        }
-    }
-
-    private static void watchMain(Day d, Ring ring, Watch watch, boolean[] rw, boolean[] ww, double from, double to, int n, ZoneId zone) {
-        if (!any(ww) || !anyWatchIn(watch, from, to)) {
-            // the watch has nothing on this day: the ring's day as stored
-            d.steps = ring.steps;
-            d.metres = ring.metres;
-            d.hr = ring.hr;
-            // named only when the watch has rows at all (a day before it was added, a day off the wrist)
-            d.whole = any(rw) && !watch.isEmpty();
-            return;
-        }
-        double steps = 0, metres = 0;
-        boolean got = false;
-        for (Records.Steps s : watch.steps) {
-            if (s.start < from || s.start >= to) continue;
-            steps += s.steps;
-            metres += s.metres;
-            got = true;
-        }
-        boolean[] stepSlots = new boolean[n];
-        double fill = 0;
-        for (int k = 0; k < n; k++) {
-            if (ww[k] || !rw[k]) continue;
-            double a = from + k * SLOT_S, mid = a + SLOT_S / 2;
-            boolean asleep = false;
-            for (double[] sl : ring.sleeps) if (mid >= sl[0] && mid < sl[1]) asleep = true;
-            if (asleep) continue;
-            double add = ringSlotSteps(ring.met[clockQuarter(a, zone)]);
-            if (add > 0) {
-                fill += add;
-                stepSlots[k] = true;
-            }
-        }
-        fill = Math.round(fill / 10.0) * 10;
-        if (fill > 0) {
-            d.fillSteps = fill;
-            d.stepFill.addAll(stretches(not(ww), stepSlots, from, to));
-        }
-        if (got || fill > 0) {
-            d.steps = steps + fill;
-            d.metres = metres + Wellness.stepsToMeters(fill);
-        }
-        TS readings = new TS();
-        for (Records.Heart h : watch.heart) if (h.t >= from && h.t < to) readings.add(h.t, h.bpm);
-        TS line = DayHeart.curve(readings, from, to);
-        TS add = new TS();
-        for (int i = 0; i < ring.hr.size(); i++) {
-            int k = slot(ring.hr.t(i), from);
-            if (k >= 0 && k < n && !ww[k] && !Double.isNaN(ring.hr.v(i))) add.add(ring.hr.t(i), ring.hr.v(i));
-        }
+        TS line = main.line(), add = other.heartIn(main.worn);
         d.hr = add.size() > 0 ? joined(line, add) : line;
-        if (add.size() > 0) d.hrFill.addAll(stretches(not(ww), slotsOf(add, from, n), from, to));
+        if (add.size() > 0) d.hrFill.addAll(stretches(not(main.worn), slotsOf(add, from, n), from, to));
     }
 
     private static boolean anyWatchIn(Watch w, double from, double to) {
@@ -307,16 +384,6 @@ public final class MainDevice {
         for (Records.Sleep s : w.sleep) if (s.start + s.dur > from && s.start < to) return true;
         for (Records.Workout x : w.workouts) if (x.start >= from && x.start < to) return true;
         return false;
-    }
-
-    /** The watch's heart rate in quarter hours without the ring, one average per quarter hour at its middle. */
-    private static TS gapLine(Watch w, boolean[] rw, double from, double to, int n) {
-        TS readings = new TS();
-        for (Records.Heart h : w.heart) {
-            if (h.t < from || h.t >= to) continue;
-            if (!rw[slot(h.t, from)]) readings.add(h.t, h.bpm);
-        }
-        return DayHeart.curve(readings, from, to);
     }
 
     private static boolean[] slotsOf(TS ts, double from, int n) {

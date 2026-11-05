@@ -637,7 +637,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
     // ------------------------------------------------------------------ on a finger now (issue #192)
 
     boolean paired() {
-        return address != null && Prefs.of(this).hasKey();
+        return address != null && app.openring.core.KeyState.hasRing(Prefs.of(this).ringState());
     }
 
     /** Asks the ring (or, with {@code blink}, makes it blink); demo mode only pretends, it never connects. */

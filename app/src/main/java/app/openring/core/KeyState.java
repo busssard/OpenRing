@@ -11,6 +11,13 @@ public final class KeyState {
 
     /** No key stored; a stored key this phone can read; a stored key this phone cannot read. */
     public static final int NONE = 0, READABLE = 1, UNREADABLE = 2;
+    /**
+     * No ring by choice (issue #329): the person uses Open Ring without a ring (phone steps, screen time, the period
+     * tracker). Not a missing key, so it never opens Setup and never syncs. Nothing sets it before phase 1b; every place
+     * that decides about Setup or a paired ring asks {@link #needsSetup} or {@link #hasRing}, so none can send the person
+     * back to Setup in a loop.
+     */
+    public static final int NO_RING = 3;
 
     /** The state from whether a key is stored and whether it could be read. */
     public static int of(boolean stored, boolean read) {
@@ -19,13 +26,36 @@ public final class KeyState {
     }
 
     /**
+     * The state as far as it is known without reading the key (no decrypt): {@link #NONE}, or {@link #READABLE} for any
+     * stored key. Only for the decisions that treat a readable and an unreadable key alike ({@link #needsSetup},
+     * {@link #hasRing}), which Settings and Find my ring make often.
+     */
+    public static int ofStored(boolean stored) {
+        return of(stored, true);
+    }
+
+    /**
+     * Setup is not finished or there is no ring key (Settings and the main screen then go to Setup, as before). No ring
+     * by choice ({@link #NO_RING}) never needs Setup.
+     */
+    public static boolean needsSetup(boolean setupDone, int state) {
+        if (state == NO_RING) return false;
+        return !setupDone || state == NONE;
+    }
+
+    /** A ring is set up on this phone: a key is stored, readable or not (Find my ring talks to it only then). */
+    public static boolean hasRing(int state) {
+        return state == READABLE || state == UNREADABLE;
+    }
+
+    /**
      * Whether the main screen opens Setup by itself: no ring set up or no key, as before, and a pairing whose key page
      * was not left yet (issue #218) only when that key can be shown. An unreadable key keeps the main screen, which
-     * says so and leads to Setup on a tap.
+     * says so and leads to Setup on a tap; no ring by choice keeps it too.
      */
     public static boolean opensSetup(boolean demo, boolean setupDone, int state, boolean pairUnseen) {
         if (demo) return false;
-        return !setupDone || state == NONE || pairUnseen && state == READABLE;
+        return needsSetup(setupDone, state) || pairUnseen && state == READABLE;
     }
 
     /** Whether a sync can start, also the background one: only with a key this phone can read. */

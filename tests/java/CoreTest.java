@@ -938,9 +938,149 @@ public class CoreTest {
                 && KeyState.SETUP_TEXT.contains("saved key stays") && KeyState.SYNC_TEXT.contains("saved key stays"));
     }
 
+    /** Issue #329, phase 1a: one "no ring by choice" state decides every place that sends a person to Setup. */
+    static void keyStateNoRing329() {
+        int[] all = {KeyState.NONE, KeyState.READABLE, KeyState.UNREADABLE, KeyState.NO_RING};
+        check("#329 no ring: a state of its own", KeyState.NO_RING != KeyState.NONE && KeyState.NO_RING != KeyState.READABLE && KeyState.NO_RING != KeyState.UNREADABLE);
+        // nothing sets it in phase 1a: of() never gives it
+        for (boolean stored : new boolean[] {false, true}) {
+            for (boolean read : new boolean[] {false, true}) check("#329 no ring: not from a stored key " + stored + " " + read, KeyState.of(stored, read) != KeyState.NO_RING);
+        }
+        eq("#329 without reading the key: nothing stored", KeyState.ofStored(false), KeyState.NONE);
+        eq("#329 without reading the key: a stored key", KeyState.ofStored(true), KeyState.READABLE);
+        // the main screen (MainActivity.onResume): never Setup in a loop
+        for (boolean done : new boolean[] {false, true}) {
+            for (boolean unseen : new boolean[] {false, true}) {
+                check("#329 no ring: the main screen never opens Setup (set up " + done + ", key page " + unseen + ")", !KeyState.opensSetup(false, done, KeyState.NO_RING, unseen));
+                check("#329 no ring: demo neither", !KeyState.opensSetup(true, done, KeyState.NO_RING, unseen));
+            }
+        }
+        // Settings.onResume and the main screen after a failed demo: Setup only when not set up or no key, as before
+        for (int st : all) {
+            for (boolean done : new boolean[] {false, true}) {
+                boolean before = !done || st == KeyState.NONE; // !setupDone() || !hasKey(), the old test
+                boolean want = st == KeyState.NO_RING ? false : before;
+                eq("#329 needs Setup: state " + st + ", set up " + done, KeyState.needsSetup(done, st), want);
+            }
+        }
+        // the old checks of the two screens read hasKey(): a stored key, readable or not; ofStored keeps them exact
+        for (boolean stored : new boolean[] {false, true}) {
+            for (boolean done : new boolean[] {false, true}) {
+                eq("#329 needs Setup as before: stored " + stored + ", set up " + done, KeyState.needsSetup(done, KeyState.ofStored(stored)), !done || !stored);
+                eq("#329 needs Setup as before, read state: stored " + stored + ", set up " + done, KeyState.needsSetup(done, KeyState.of(stored, false)), !done || !stored);
+            }
+        }
+        // opensSetup is unchanged for the old states
+        for (int st : new int[] {KeyState.NONE, KeyState.READABLE, KeyState.UNREADABLE}) {
+            for (boolean demo : new boolean[] {false, true}) {
+                for (boolean done : new boolean[] {false, true}) {
+                    for (boolean unseen : new boolean[] {false, true}) {
+                        boolean old = !demo && (!done || st == KeyState.NONE || unseen && st == KeyState.READABLE);
+                        eq("#329 opens Setup as before: " + st + " " + demo + " " + done + " " + unseen, KeyState.opensSetup(demo, done, st, unseen), old);
+                    }
+                }
+            }
+        }
+        // Find my ring talks to a paired ring only with a stored key (was hasKey())
+        check("#329 has a ring: only with a stored key", KeyState.hasRing(KeyState.READABLE) && KeyState.hasRing(KeyState.UNREADABLE) && !KeyState.hasRing(KeyState.NONE)
+                && !KeyState.hasRing(KeyState.NO_RING));
+        check("#329 has a ring as before: hasKey()", KeyState.hasRing(KeyState.ofStored(true)) && !KeyState.hasRing(KeyState.ofStored(false)));
+        check("#329 no ring: never syncs", !KeyState.syncs(KeyState.NO_RING));
+    }
+
+    /** Issue #329, phase 1a: the background job's decision, as SyncJob made it before (busy, ring part, watch part, recent). */
+    static void backgroundJobDue329() {
+        java.time.ZoneId zone = java.time.ZoneId.of("Europe/Zurich");
+        long now = java.time.ZonedDateTime.of(2026, 11, 5, 15, 0, 0, 0, zone).toEpochSecond();
+        int count = 0;
+        for (boolean busy : new boolean[] {false, true}) {
+            for (boolean bg : new boolean[] {false, true}) {
+                for (int ks : new int[] {KeyState.NONE, KeyState.READABLE, KeyState.UNREADABLE, KeyState.NO_RING}) {
+                    for (boolean demo : new boolean[] {false, true}) {
+                        for (boolean added : new boolean[] {false, true}) {
+                            for (boolean watchDue : new boolean[] {false, true}) {
+                                for (long last : new long[] {0, now - 10 * 60, now - 30 * 60, now - 31 * 60, now + 3600}) {
+                                    BackgroundJob.Inputs in = new BackgroundJob.Inputs();
+                                    in.ringBusy = busy;
+                                    in.backgroundSync = bg;
+                                    in.keyState = ks;
+                                    in.demo = demo;
+                                    in.watchAdded = added;
+                                    in.watchPerDay = 1;
+                                    // once a day: due when the last good sync is before today's clock time
+                                    in.watchLastOk = watchDue ? now - 3 * 86400 : now - 60;
+                                    in.watchLastAttempt = 0;
+                                    in.lastSync = last;
+                                    in.lastAttempt = 0;
+                                    in.now = now;
+                                    in.zone = zone;
+                                    BackgroundJob.Due d = BackgroundJob.due(in);
+                                    // the old SyncJob.onStartJob, line by line
+                                    boolean oRun, oRing, oWatch;
+                                    String oLog = null;
+                                    if (busy) {
+                                        oRun = oRing = oWatch = false;
+                                    } else {
+                                        boolean ringPart = bg && KeyState.syncs(ks);
+                                        boolean watchPart = !demo && added && app.openring.core.withings.WatchDue.due(now, 1, in.watchLastOk, 0, zone);
+                                        boolean ringRecent = BackgroundJob.recent(now, last, 0);
+                                        if (ringPart && ringRecent) oLog = "background sync skipped: the last sync was less than 30 minutes ago";
+                                        oRun = !((!ringPart || ringRecent) && !watchPart);
+                                        oRing = oRun && ringPart && !ringRecent;
+                                        oWatch = oRun && watchPart;
+                                    }
+                                    String name = "#329 job due: busy " + busy + ", on " + bg + ", key " + ks + ", demo " + demo + ", watch " + added + " due " + watchDue
+                                            + ", last " + (now - last) + " s ago";
+                                    check(name, d.run() == oRun && d.ring == oRing && d.watch == oWatch && (oLog == null ? d.log == null : oLog.equals(d.log)));
+                                    count++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eq("#329 job due: every combination", count, 2 * 2 * 4 * 2 * 2 * 2 * 5);
+        // the cases by name
+        BackgroundJob.Inputs in = new BackgroundJob.Inputs();
+        in.now = now;
+        in.zone = zone;
+        in.backgroundSync = true;
+        in.keyState = KeyState.READABLE;
+        BackgroundJob.Due d = BackgroundJob.due(in);
+        check("#329 job due: the ring on, nothing recent: the ring syncs", d.run() && d.ring && !d.watch && d.log == null);
+        in.lastSync = now - 5 * 60;
+        d = BackgroundJob.due(in);
+        check("#329 job due: a sync 5 minutes ago: nothing runs, the skip is logged", !d.run() && !d.ring && BackgroundJob.SKIPPED_RECENT.equals(d.log));
+        in.watchAdded = true;
+        in.watchPerDay = 1;
+        d = BackgroundJob.due(in);
+        check("#329 job due: recent ring, a watch due: only the watch, the skip logged", d.run() && !d.ring && d.watch && d.log != null);
+        in.demo = true;
+        d = BackgroundJob.due(in);
+        check("#329 job due: demo: never the watch", !d.watch && !d.run());
+        in.demo = false;
+        in.ringBusy = true;
+        d = BackgroundJob.due(in);
+        check("#329 job due: the ring busy: nothing, not even the watch, nothing logged", !d.run() && !d.ring && !d.watch && d.log == null);
+        in.ringBusy = false;
+        in.lastSync = 0;
+        in.keyState = KeyState.UNREADABLE;
+        in.watchAdded = false;
+        d = BackgroundJob.due(in);
+        check("#329 job due: an unreadable key: no ring part, no skip line", !d.run() && d.log == null);
+        in.keyState = KeyState.NO_RING;
+        d = BackgroundJob.due(in);
+        check("#329 job due: no ring by choice: no ring part", !d.run() && !d.ring);
+        check("#329 job due: the skip line is the one SyncJob logged", BackgroundJob.SKIPPED_RECENT.equals("background sync skipped: the last sync was less than 30 minutes ago"));
+        BackgroundJob.Inputs fresh = new BackgroundJob.Inputs();
+        check("#329 job due: by default nothing is due", !BackgroundJob.due(fresh).run() && fresh.keyState == KeyState.NONE && fresh.zone != null);
+    }
+
     public static void main(String[] args) throws Exception {
         permissionSettings();
         keyState199();
+        keyStateNoRing329();
         inputLimit();
         protocol();
         history();
@@ -992,6 +1132,7 @@ public class CoreTest {
         demoRing();
         liveScreen();
         backgroundJob();
+        backgroundJobDue329();
         dating220();
         recent194();
         demoLive();
