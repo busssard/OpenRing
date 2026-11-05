@@ -290,7 +290,7 @@ public final class NightFinder {
     }
 
     /**
-     * Ring stages for two pieces joined across a night wake: the first piece's codes, awake (4) in
+     * Ring stages for two pieces joined across a night wake or a short break (issue #189): the first piece's codes, awake (4) in
      * the gap where the ring says awake, the second piece's codes, 0 (unknown) where a piece has
      * none. Each piece's codes end at that piece's {@link Period#codesEnd} (issue #110), and the
      * result ends at the joined end, so every code keeps its real time.

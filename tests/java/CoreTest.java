@@ -5892,6 +5892,37 @@ public class CoreTest {
         far.add(new NightFinder.RingRun(a1 + 3700, a1 + 3700 + 12600, fill(420, 1)));
         eq("#189 a break of over an hour without a night wake: still two sleeps", NightFinder.find(new ArrayList<double[]>(), far, new TS(), new TS()).size(), 2);
 
+        // the edges of the join: a break of exactly an hour is joined, a 20 s overlap is stitched, a 60 s overlap keeps the first run only
+        List<NightFinder.RingRun> hour = new ArrayList<NightFinder.RingRun>();
+        hour.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        hour.add(new NightFinder.RingRun(a1 + 3600, a1 + 3600 + 12600, fill(420, 1)));
+        List<NightFinder.Period> hs = NightFinder.find(new ArrayList<double[]>(), hour, new TS(), new TS());
+        eq("#189 a break of exactly an hour: one night", hs.size(), 1);
+        if (hs.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(hs.get(0).ringRun(), hs.get(0).start, hs.get(0).end));
+            check("#189 a break of exactly an hour: both runs kept, the hour without data", n[2] == 360 && n[1] == 420 && n[0] == 120,
+                    java.util.Arrays.toString(n));
+        }
+        List<NightFinder.RingRun> touch = new ArrayList<NightFinder.RingRun>();
+        touch.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        touch.add(new NightFinder.RingRun(a1 - 20, a1 - 20 + 12600, fill(420, 1)));
+        List<NightFinder.Period> tc = NightFinder.find(new ArrayList<double[]>(), touch, new TS(), new TS());
+        eq("#189 a 20 s overlap: one night", tc.size(), 1);
+        if (tc.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(tc.get(0).ringRun(), tc.get(0).start, tc.get(0).end));
+            check("#189 a 20 s overlap: stitched, both runs kept (the second wins the shared step)", n[1] == 420 && n[2] >= 359 && n[0] == 0,
+                    java.util.Arrays.toString(n));
+        }
+        List<NightFinder.RingRun> over = new ArrayList<NightFinder.RingRun>();
+        over.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        over.add(new NightFinder.RingRun(a1 - 60, a1 - 60 + 12600, fill(420, 1)));
+        List<NightFinder.Period> ov = NightFinder.find(new ArrayList<double[]>(), over, new TS(), new TS());
+        eq("#189 a 60 s overlap: one night", ov.size(), 1);
+        if (ov.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(ov.get(0).ringRun(), ov.get(0).start, ov.get(0).end));
+            check("#189 a 60 s overlap: sent again, the first run's stages only (#68)", n[2] == 360 && n[1] == 0, java.util.Arrays.toString(n));
+        }
+
         // the awake parts from the ring's sleep state: samples cover up to the next one, at most 5 minutes
         TS s2 = new TS();
         s2.add(100, 1);
@@ -5903,6 +5934,16 @@ public class CoreTest {
         check("#189 state awake: 400 to 1000 and 2000 to 2100", aw.size() == 2 && near(aw.get(0)[0], 400) && near(aw.get(0)[1], 1000)
                 && near(aw.get(1)[0], 2000) && near(aw.get(1)[1], 2100), aw.size());
         check("#189 state awake: clipped to the break", NightFinder.stateAwake(s2, 500, 600).size() == 1 && near(NightFinder.stateAwake(s2, 500, 600).get(0)[0], 500));
+        TS lone = new TS();
+        lone.add(1000, 0);
+        lone.add(2200, 1);
+        List<double[]> la = NightFinder.stateAwake(lone, 0, 3000);
+        check("#189 state awake: an awake sample with the next one 20 min later covers exactly 5 min", la.size() == 1 && near(la.get(0)[0], 1000)
+                && near(la.get(0)[1], 1300), la.isEmpty() ? "none" : la.get(0)[0] + " " + la.get(0)[1]);
+        TS last = new TS();
+        last.add(1000, 0);
+        List<double[]> ll = NightFinder.stateAwake(last, 0, 3000);
+        check("#189 state awake: the last sample covers 5 min", ll.size() == 1 && near(ll.get(0)[1], 1300), ll.size());
         check("#189 state awake: none without state or in an empty break", NightFinder.stateAwake(new TS(), 0, 100).isEmpty() && NightFinder.stateAwake(s2, 600, 600).isEmpty());
     }
 
