@@ -4137,12 +4137,12 @@ public class CoreTest {
         SQLiteDiskIOException io = new SQLiteDiskIOException("disk I/O error (code 266)");
         io.setStackTrace(dbTrace334());
         eq("#334 storage: a disk error is its kind", SyncError.kind(SyncError.startFailed(io)), SyncError.Kind.STORAGE);
-        String sentence = "This phone's storage is full or could not be written, so the sync could not start. Free some storage and sync again.";
+        String sentence = "This phone's storage is full or could not be written, so the sync could not start. Free some storage or restart the phone, then sync again.";
         eq("#334 storage: the sentence", SyncError.plain(fullRaw), sentence);
         eq("#334 storage: the notice", SyncError.failureNotice(false, fullRaw), sentence);
         eq("#334 storage: stored as it is", SyncError.stored(false, fullRaw), fullRaw);
         eq("#334 storage: other tasks", SyncError.plain(fullRaw, SyncError.Task.ACTION),
-                "This phone's storage is full or could not be written. Free some storage and try again.");
+                "This phone's storage is full or could not be written. Free some storage or restart the phone, then try again.");
         check("#334 storage: not tried again at once", !SyncError.retryable(fullRaw, true));
         check("#334 storage: no dashes as punctuation", !sentence.contains(" - ") && !sentence.contains("\u2013") && !sentence.contains("\u2014"), sentence);
         check("#334 storage: a ring text is not storage", SyncError.kind("storage failed: no space") != SyncError.Kind.STORAGE);

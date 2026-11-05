@@ -214,8 +214,8 @@ public final class SyncError {
             case NOT_SAVED: return "The ring did not save the change. Keep it close to the phone and try again.";
             case SERIAL_MISMATCH: return serialMismatch(raw);
             case OTHER_RING: return otherRing(raw);
-            case STORAGE: return sync ? "This phone's storage is full or could not be written, so the sync could not start. Free some storage and sync again."
-                    : "This phone's storage is full or could not be written. Free some storage and try again.";
+            case STORAGE: return sync ? "This phone's storage is full or could not be written, so the sync could not start. Free some storage or restart the phone, then sync again."
+                    : "This phone's storage is full or could not be written. Free some storage or restart the phone, then try again.";
             default:
                 if (sync) return "The sync did not finish because of an unexpected problem. Sync again. " + DETAILS;
                 if (pair) return "Pairing did not finish because of an unexpected problem. Try again.";
