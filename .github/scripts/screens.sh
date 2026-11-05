@@ -245,6 +245,11 @@ shot body-period-measured 1
 launch --ei tab 4 --ez period_rise true; sleep 3
 scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 40 || echo "::warning::issue #252 phase 2 step: the night temperature card was not found on Body"
 shot body-period-rise 1
+# How it works at the bottom of the Period card, opened (extra period_how, demo mode only): the shots above show it
+# closed, as everyone sees it first (owner's feedback of 3 November, issue #252)
+launch --ei tab 4 --ez period_how true; sleep 3
+scroll_to "How it works" 12 || echo "::warning::issue #252 step: How it works was not found on the Period card"
+shot body-period-how 1
 # the gentle question "Have your periods stopped?" (extra period_ask, demo mode only; nothing is saved without a tap)
 launch --ei tab 4 --ez period_ask true;    shot period-ask 3
 # Import from drip (phase 1b of #252): in demo mode the preview of a made up drip file against the demo's log (extra drip;

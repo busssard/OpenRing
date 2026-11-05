@@ -34,6 +34,8 @@ final class PeriodAnalysis {
     static final int LIST = 6;
     /** "Show all" was tapped, kept while the page is rebuilt. */
     static boolean listAll;
+    /** The How it works of Your cycles and of the night temperature card are open, kept while the page is rebuilt. */
+    static final boolean[] howOpen = {false}, tempHowOpen = {false};
 
     static View cycles(final Context c, DayData d) {
         final Cycles cy = d.periods;
@@ -66,7 +68,6 @@ final class PeriodAnalysis {
         String vary = cy.regularityLine();
         if (vary != null) {
             card.addView(Ui.text(c, vary, 14, Ui.TEXT, Ui.REGULAR));
-            card.addView(PeriodCard.note(c, Explain.periodVary(cy.used.size())));
         }
 
         // cycle length over time
@@ -131,8 +132,9 @@ final class PeriodAnalysis {
                     Ui.stat(c, "Highest", String.valueOf(as.max), "", 0)));
             card.addView(PeriodCard.note(c, Explain.PERIOD_AMOUNT));
         }
-        card.addView(Ui.gap(c, 10));
-        card.addView(PeriodCard.note(c, Cycles.NOT_ADVICE));
+        // how the numbers and charts are worked out, and that they are not birth control: one tap away (owner, 3 November)
+        card.addView(Ui.gap(c, 6));
+        card.addView(Ui.howItWorks(c, howOpen, Explain.periodCyclesHow(cy)), Ui.matchWrap());
         return card;
     }
 
@@ -193,9 +195,7 @@ final class PeriodAnalysis {
                 Ui.stat(c, "Rise found", over == 0 ? "--" : found + " of " + over, "cycles", Ui.PERIOD, Explain.periodFound(over, found)),
                 Ui.stat(c, "Ovulation to period", a.ownLuteal() ? String.valueOf(a.lutealDays()) : "--", "days", Ui.PERIOD,
                         Explain.periodLuteal(a.lutealN, a.lutealDays(), a.lutealSd))));
-        boolean mouth = false;
-        for (app.openring.core.analysis.TempRise.Result r : a.cycles) mouth |= r.mouth.nights > 0;
-        card.addView(PeriodCard.note(c, Explain.periodRise(a.ringNoise, mouth ? a.mouthNoise : Double.NaN)));
+        // how the rise is found: in How it works at the end of the card (Explain.periodCyclesHow)
     }
 
     // ------------------------------------------------------------------- temperature
@@ -224,8 +224,8 @@ final class PeriodAnalysis {
             kl.setMargins(0, Ui.dp(c, 4), 0, 0);
             card.addView(keys, kl);
         }
-        card.addView(PeriodCard.note(c, Explain.PERIOD_TEMP));
-        if (mouth) card.addView(PeriodCard.note(c, Explain.PERIOD_MOUTH));
+        card.addView(PeriodCard.note(c, Explain.PERIOD_TEMP_LINE));
+        card.addView(Ui.howItWorks(c, tempHowOpen, Explain.periodTempHow(mouth)), Ui.matchWrap());
         return card;
     }
 

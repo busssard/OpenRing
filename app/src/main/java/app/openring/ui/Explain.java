@@ -170,31 +170,35 @@ public final class Explain {
         return "Days to the expected day of the estimate above, the middle of its range.";
     }
 
-    /** Under the cycle length numbers: what they count, from how many cycles, and what is left out. */
+    /**
+     * Under the cycle length numbers, in view: what they count, from how many cycles, what Spread is, and how many are left
+     * out (about the person's own numbers, so not hidden). How the estimate uses them is in {@link #periodCyclesHow}.
+     */
     public static String periodCycles(int cycles, int leftOut) {
         String s = "From one period start to the next, over " + (cycles == 1 ? "your 1 cycle" : "all your " + cycles + " cycles") + ". "
-                + "Average and spread (the standard deviation, how far a cycle usually lies from the average), shortest and longest. ";
-        if (leftOut > 0) s += (leftOut == 1 ? "1 cycle" : leftOut + " cycles") + " more than 10 days from the middle value "
-                + (leftOut == 1 ? "is" : "are") + " left out, maybe a period was not logged. ";
-        return s + "The estimate above uses only your newest " + app.openring.core.analysis.Cycles.WINDOW + " cycles.";
+                + "Spread: how far a cycle usually lies from the average.";
+        if (leftOut > 0) s += " " + (leftOut == 1 ? "1 cycle" : leftOut + " cycles") + " more than 10 days from the middle value "
+                + (leftOut == 1 ? "is" : "are") + " left out, maybe a period was not logged.";
+        return s;
     }
 
-    /** Under the period length numbers. */
+    /** Under the period length numbers, in view. */
     public static String periodLengths(int periods) {
         return "From the first to the last bleeding day of each period, both counted, over " + (periods == 1 ? "your 1 period" : "your " + periods + " periods")
-                + " that are over. Days without a log inside a period count, spotting does not.";
+                + " that are over.";
     }
 
     /** Under the amount numbers: a relative score, not millilitres (the issue's wording). */
     public static final String PERIOD_AMOUNT = "Light 1, medium 2, heavy 3 for each logged day, added up for each period. "
             + "A relative number from what you logged, not a measured amount, so it only compares your own periods.";
 
-    /** Under the cycle length dots ({@code cycles}) or the period length and amount dots. */
+    /** Under the cycle length dots ({@code cycles}) or the period length and amount dots, in view. */
     public static String periodDots(boolean cycles) {
-        if (cycles) return "Each dot is one cycle at the day it started, touch it to read. The line is your typical length, the band the "
-                + "range the estimate gives. A faded dot is left out of the estimate.";
-        return "Each dot is one period at the day it started, touch it to read. The line is the average.";
+        return cycles ? "Each dot is one cycle, touch it to read." : "Each dot is one period, touch it to read.";
     }
+
+    /** Under the night temperature line, in view; the rest is in its How it works ({@link #periodTempHow}). */
+    public static final String PERIOD_TEMP_LINE = "Your ring's skin temperature each night, compared with your usual. Touch the line to read a night.";
 
     /** Under the night temperature line (the plan's text, with the marked rise of phase 2). */
     public static final String PERIOD_TEMP = "Your ring's nightly skin temperature compared with your usual. In many people it rises a little "
@@ -247,7 +251,7 @@ public final class Explain {
             boolean clear = cy.rise.current.confidence == app.openring.core.analysis.TempRise.CLEAR;
             return "Give or take " + cy.ovulationRange + (cy.ovulationRange == 1 ? " day" : " days") + ": " + (clear ? "a clear rise" : "a weaker rise")
                     + ", found within that many days of the real day about 4 times in 5 in made up cycles. Measured means the day before the "
-                    + "temperature rose, not a test. How it is found is under Your cycles.";
+                    + "temperature rose, not a test. How it is found is under How it works in Your cycles.";
         }
         if (cy.method == app.openring.core.analysis.Cycles.OWN_LUTEAL) {
             return "Give or take " + cy.ovulationRange + " days: how much " + yourCycles(cy.used.size()) + " vary, together with how much your own "
@@ -323,6 +327,73 @@ public final class Explain {
     public static final String PERIOD_MOUTH = "Mouth: the morning temperatures imported from drip, in °C on the right scale. They are a "
             + "different measurement from the ring's skin temperature at night, so each line has its own scale. A hollow dot is a "
             + "reading drip left out.";
+
+    // ------------------------------------- period tracker, "How it works" (issue #252, owner's feedback of 3 November)
+
+    /** How it works, Your cycles: the dot charts' lines and bands. */
+    public static final String PERIOD_DOTS_CYCLES = "Cycle length chart: each dot sits at the day its cycle started. The dashed line is your "
+            + "typical length, the band the range the estimate gives. A faded dot is left out of the estimate.";
+    /** How it works, Your cycles: the period length and amount charts. */
+    public static final String PERIOD_DOTS_PERIODS = "Period length and amount charts: each dot sits at the day its period started, the dashed line is the average.";
+    /** How it works, Your cycles: which cycles the estimate uses. */
+    public static final String PERIOD_WINDOW = "The numbers here count all your cycles; the estimate on the Period card uses only your newest "
+            + app.openring.core.analysis.Cycles.WINDOW + " cycles, so it follows how your cycles are now.";
+    /** How it works, Your cycles: what a period's length counts. */
+    public static final String PERIOD_LENGTH_DAYS = "Period length: days without a log inside a period count, spotting does not.";
+
+    /**
+     * The Period card's How it works: how the expected range, the ovulation range and "vary by" are worked out, each only
+     * when its line is on the card. Empty when the card shows no estimate.
+     */
+    public static java.util.List<String> periodCardHow(app.openring.core.analysis.Cycles cy) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        if (cy == null) return out;
+        if (cy.nextLine() != null) {
+            out.add(periodRange(cy));
+            out.add(periodOvulation(cy));
+        }
+        if (cy.regularityLine() != null) out.add(periodVary(cy.used.size()));
+        return out;
+    }
+
+    /** Your cycles' How it works: the texts for the parts the card shows, then that it is not birth control. Empty without a period. */
+    public static java.util.List<String> periodCyclesHow(app.openring.core.analysis.Cycles cy) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        if (cy == null || cy.periods.isEmpty()) return out;
+        if (cy.regularityLine() != null) out.add(periodVary(cy.used.size()));
+        if (!cy.cycles.isEmpty()) {
+            out.add(PERIOD_DOTS_CYCLES);
+            if (cy.cycleSummary().n > 0) out.add(PERIOD_WINDOW);
+        }
+        if (cy.rise != null) {
+            boolean mouth = false;
+            for (app.openring.core.analysis.TempRise.Result r : cy.rise.cycles) mouth |= r.mouth.nights > 0;
+            out.add(periodRise(cy.rise.ringNoise, mouth ? cy.rise.mouthNoise : Double.NaN));
+        }
+        if (!cy.finished().isEmpty()) {
+            out.add(PERIOD_DOTS_PERIODS);
+            out.add(PERIOD_LENGTH_DAYS);
+        }
+        out.add(app.openring.core.analysis.Cycles.NOT_ADVICE);
+        return out;
+    }
+
+    /** The night temperature card's How it works; the drip line only when drip temperatures are on it. */
+    public static java.util.List<String> periodTempHow(boolean mouth) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        out.add(PERIOD_TEMP);
+        if (mouth) out.add(PERIOD_MOUTH);
+        return out;
+    }
+
+    /** Import from drip's How it works: how periods are counted, then the parts the screen shows. */
+    public static java.util.List<String> dripHow(boolean other, boolean shorts) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        out.add(DRIP_COUNTS);
+        if (other) out.add(DRIP_OTHER);
+        if (shorts) out.add(DRIP_SHORT);
+        return out;
+    }
 
     // ---------------------------------------------------------------- badges (issue #265)
 

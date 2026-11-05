@@ -64,6 +64,8 @@ public final class DripImportActivity extends Activity {
     /** Flagged periods kept as they are (by start). */
     private final Set<LocalDate> ignored = new HashSet<LocalDate>();
     private boolean takeFile, correctPending;
+    /** How it works at the bottom is open, kept while this screen lives (it is rebuilt on every change). */
+    private final boolean[] howOpen = {false};
     /** The message instead of a preview (refused file, failed read), or the result after Import. */
     private String problem, done;
 
@@ -289,12 +291,10 @@ public final class DripImportActivity extends Activity {
         sum.addView(Ui.text(this, pv.summary(Locale.getDefault()), 16, Ui.TEXT, Ui.MEDIUM));
         String spot = pv.spottingLine(file.excludedBleeding);
         if (spot != null) sum.addView(Ui.text(this, spot, 13, Ui.TEXT_2, Ui.REGULAR));
-        sum.addView(PeriodCard.note(this, Explain.DRIP_COUNTS));
         String other = DripCsv.notImported(file);
         if (other != null) {
             sum.addView(Ui.gap(this, 8));
             sum.addView(Ui.text(this, other, 13, Ui.TEXT_2, Ui.REGULAR));
-            sum.addView(PeriodCard.note(this, Explain.DRIP_OTHER));
         }
         List<String> notes = DripCsv.notes(file);
         if (!notes.isEmpty()) sum.addView(Ui.gap(this, 8));
@@ -348,7 +348,6 @@ public final class DripImportActivity extends Activity {
                 sh.addView(Ui.gap(this, 6));
                 sh.addView(Ui.text(this, (kept == 1 ? "1 short period is" : kept + " short periods are") + " imported as they are.", 13, Ui.TEXT_2, Ui.REGULAR));
             }
-            sh.addView(PeriodCard.note(this, Explain.DRIP_SHORT));
             content.addView(sh);
         }
 
@@ -417,6 +416,8 @@ public final class DripImportActivity extends Activity {
         cl.setMargins(0, Ui.dp(this, 8), 0, 0);
         act.addView(cancel, cl);
         act.addView(PeriodCard.note(this, "Nothing is saved until you tap Import. You can undo an import later in Settings, Period tracker."));
+        // how periods are counted, what is not imported and why short periods are flagged: one tap away (owner, 3 November)
+        act.addView(Ui.howItWorks(this, howOpen, Explain.dripHow(other != null, !pv.shorts.isEmpty())), Ui.matchWrap());
         content.addView(act);
     }
 
