@@ -248,12 +248,19 @@ check "version: two notes later the nightly is 2.0.2, the code counts on" '[ "$(
 check "version: the next stable is 2.1 with the same code" '[ "$(ver stable)" = "34 2.1" ]'
 ( cd "$vr" && git tag v2.1 ); note 12
 check "version: after 2.1 the nightly is 2.1.1" '[ "$(ver nightly)" = "35 2.1.1" ]'
+( cd "$vr" && git checkout -q v2.0 )
+check "version: a stable rebuild of the v2.0 commit after v2.1 exists is 2.0 again" '[ "$(ver stable)" = "32 2.0" ]'
+( cd "$vr" && git checkout -q - )
+check "version: back on the newest commit the stable is 2.2 (it has a note after v2.1)" '[ "$(ver stable)" = "35 2.2" ]'
 ( cd "$vr" && git tag v2.x-test && git tag v2.1.5 )
 check "version: odd tags are ignored" '[ "$(ver nightly)" = "35 2.1.1" ]'
 check "version: no channel set means nightly" '[ "$( cd "$vr" && ./tools/version.sh )" = "35 2.1.1" ]'
 mkdir -p "$vr/nogit"; cp -r "$vr/tools" "$vr/changes" "$vr/nogit/"
 check "version: a copy without git or tags counts as no 2.x yet" '[ "$( cd "$vr/nogit" && GIT_DIR=/nonexistent ./tools/version.sh )" = "35 1.34" ]'
 rm -rf "$vr"
+chan=$(grep -h 'VERSION_CHANNEL: ' .github/workflows/build.yml | sed 's/^ *//')
+check "version: the emulator build reads the tags and the channel as build.yml does (its screenshots show the version)" \
+  '[ -n "$chan" ] && grep -qF "$chan" .github/workflows/emulator.yml && grep -q "fetch-depth: 0" .github/workflows/emulator.yml'
 # ---- branch cleanup (.github/scripts/stale_branches.py): which branches go, which stay ----
 bc=$(mktemp -d)
 cat > "$bc/plan.json" <<'JSON'

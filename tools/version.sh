@@ -24,6 +24,11 @@ if [ -z "$last" ]; then
   if [ "${VERSION_CHANNEL:-nightly}" = stable ]; then echo "$code 2.0"; exit 0; fi
   echo "$code 1.$((BASE_MINOR + n))"; exit 0
 fi
+# a stable build of a commit that carries a release tag (a rebuild of v2.0 after v2.1 exists) is that release
+if [ "${VERSION_CHANNEL:-nightly}" = stable ]; then
+  here=$(git tag --points-at HEAD 'v2.*' 2>/dev/null | sed -n 's/^v2\.\([0-9][0-9]*\)$/\1/p' | sort -n | tail -1)
+  if [ -n "$here" ]; then echo "$code 2.$here"; exit 0; fi
+fi
 at=$(git ls-tree --name-only "v2.$last:changes" 2>/dev/null | count)
 new=$((n - at)); [ "$new" -lt 0 ] && new=0
 if [ "${VERSION_CHANNEL:-nightly}" = stable ]; then
