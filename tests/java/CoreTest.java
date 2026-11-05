@@ -1014,6 +1014,7 @@ public class CoreTest {
         badges265();
         badgeScreens265();
         recent265();
+        connectPlan195();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -8119,6 +8120,74 @@ public class CoreTest {
         check("#220 a stored date ahead of the phone clock now: everything again", st.changesAt(1_799_978_400L) != null && st.changesAt(1_799_978_401L) == null);
         eq("#220 dates before 2015 are cleared", Double.isNaN(Dating.limit(1_419_999_999.9, 1_800_000_000L)), true);
         eq("#220 a date 6 hours ahead is kept", Dating.limit(1_800_021_600.0, 1_800_000_000L), 1_800_021_600.0);
+    }
+
+    /**
+     * Issue #195: the background job connects with a short, filtered, balanced scan and one round fewer; everything else
+     * keeps the plan it had before, and the app's code uses the plan, not numbers of its own.
+     */
+    static void connectPlan195() throws IOException {
+        ConnectPlan p = ConnectPlan.of(false), b = ConnectPlan.of(true);
+        check("#195 a person's sync uses the person plan", p == ConnectPlan.PERSON && !p.background);
+        check("#195 the background job uses the background plan", b == ConnectPlan.BACKGROUND && b.background);
+        // the person plan is exactly the one before #195
+        eq("#195 person: 2 direct connects", p.directTries, 2);
+        eq("#195 person: 12 s each", p.directMs, 12000L);
+        eq("#195 person: 1.5 s between them", p.directGapMs, 1500L);
+        eq("#195 person: 40 s scan", p.scanMs, 40000L);
+        check("#195 person: low latency, unfiltered second half", p.lowLatency && p.widen);
+        eq("#195 person: 20 s connect after a scan hit", p.connectMs, 20000L);
+        eq("#195 person: 3 rounds", p.rounds, 3);
+        eq("#195 person: 2.5 s between rounds", p.roundGapMs, 2500L);
+        // the background plan
+        eq("#195 background: 2 direct connects", b.directTries, 2);
+        eq("#195 background: 12 s each", b.directMs, 12000L);
+        eq("#195 background: 10 s scan", b.scanMs, 10000L);
+        check("#195 background: balanced and filtered only (an unfiltered scan hears nothing with the screen off)", !b.lowLatency && !b.widen);
+        eq("#195 background: 20 s connect after a scan hit", b.connectMs, 20000L);
+        eq("#195 background: 2 rounds", b.rounds, 2);
+        // rounds: a ring not reached gets the plan's rounds, a link that broke off after connecting keeps 3 (#157)
+        eq("#195 both plans: 3 rounds after connecting", b.connectedRounds + "," + p.connectedRounds, "3,3");
+        eq("#195 most rounds: 3 in both plans", b.maxRounds() + "," + p.maxRounds(), "3,3");
+        check("#195 person, not reached: rounds 2 and 3, then no more", p.another(1, false) && p.another(2, false) && !p.another(3, false));
+        check("#195 person, broke off after connecting: rounds 2 and 3, then no more", p.another(1, true) && p.another(2, true) && !p.another(3, true));
+        check("#195 background, not reached: round 2, then no more", b.another(1, false) && !b.another(2, false));
+        check("#195 background, broke off after connecting: rounds 2 and 3 as before #195", b.another(1, true) && b.another(2, true) && !b.another(3, true));
+        check("#195 background: a round not reached after one that connected ends the sync", !b.another(2, false) && !b.another(3, false));
+        // radio time with the ring away and in the worst case
+        eq("#195 person: ring away 65.5 s", p.awayMs(), 65500L);
+        eq("#195 background: ring away 35.5 s", b.awayMs(), 35500L);
+        eq("#195 person: worst case 261.5 s", p.worstMs(), 261500L);
+        eq("#195 background: worst case 113.5 s", b.worstMs(), 113500L);
+        check("#195 background: no part longer than the person's", b.directTries <= p.directTries && b.directMs <= p.directMs && b.scanMs <= p.scanMs
+                && b.connectMs <= p.connectMs && b.rounds <= p.rounds && (p.lowLatency || !b.lowLatency) && (p.widen || !b.widen));
+        eq("#195 one direct connect: no gap counted", new ConnectPlan(true, 1, 12000, 1500, 10000, false, false, 20000, 1, 2500).awayMs(), 22000L);
+        eq("#195 log line names the background plan", b.toString(), "direct 2 x 12 s, scan 10 s balanced filtered, 2 rounds");
+        eq("#195 log line names the person plan", p.toString(), "direct 2 x 12 s, scan 40 s low latency then unfiltered, 3 rounds");
+        // the app uses the plan: the job asks for it, the connection and the rounds read it, no old numbers remain
+        String root = "app/src/main/java/app/openring/";
+        String job = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "sync/SyncJob.java").toPath()), "UTF-8");
+        String svc = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "sync/SyncService.java").toPath()), "UTF-8");
+        String rm = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ble/RingManager.java").toPath()), "UTF-8");
+        check("#195 the background job syncs with a background ticket", job.contains("RingManager.SyncTicket.background()") && !job.contains("new RingManager.SyncTicket()"));
+        check("#195 the sync the person starts keeps the person plan", svc.contains(".syncBlocking()") && !svc.contains("background()"));
+        check("#195 the sync passes the ticket's plan", rm.contains("download(res, key, prefs, ConnectPlan.of(ticket.background))") && rm.contains("s = open(false, exclude, plan);"));
+        check("#195 every other connection keeps the person plan", rm.contains("return open(anyRing, exclude, ConnectPlan.PERSON);"));
+        check("#195 the connection reads the plan", rm.contains("plan.scanMs, plan.lowLatency, plan.widen") && rm.contains("GattLink.open(ctx, d, glog, plan.directMs)")
+                && rm.contains("GattLink.open(ctx, d, glog, plan.connectMs)") && rm.contains("attempt <= plan.maxRounds()"));
+        check("#195 both retried failures ask the plan whether another round runs", rm.split("if \\(!plan.another\\(attempt, s != null\\)\\) break;", -1).length == 3);
+        int o = rm.indexOf("private Session open(boolean anyRing, Set<String> exclude, ConnectPlan plan)"), oe = rm.indexOf("private void close(Session s)", o);
+        int d = rm.indexOf("private void download(SyncResult res"), de = rm.indexOf("private boolean bluetoothOn()", d);
+        check("#195 open() and download() found", o > 0 && oe > o && d > 0 && de > d);
+        String openBody = rm.substring(o, oe), dlBody = rm.substring(d, de);
+        check("#195 open() types no timeout of its own", !openBody.contains("12000") && !openBody.contains("20000") && !openBody.contains("40000") && !openBody.contains("sleep(1500)"));
+        check("#195 download() types no round count of its own", !dlBody.contains("attempt <= 3") && !dlBody.contains("attempt < 3"));
+        String sc = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ble/RingScanner.java").toPath()), "UTF-8");
+        check("#195 the filtered only scan also matches the saved ring's address (review of a1fa895)",
+                sc.contains("if (!widen && preferred != null && BluetoothAdapter.checkBluetoothAddress(preferred))")
+                && sc.contains("filters.add(new ScanFilter.Builder().setDeviceAddress(preferred).build());")
+                && sc.contains("if (!addr.equals(preferred) && !isOura(r)) return;"));
+        check("#195 one find left, every caller chooses the plan", sc.split("public static BluetoothDevice find\\(", -1).length == 2);
     }
 
     /** Issue #194: the rule for skipping a sync shortly after the last one, and screen sessions read again unchanged. */

@@ -1,0 +1,1 @@
+* Less battery while your ring is away from the phone: the sync in the background now looks for the ring for about 35 seconds instead of about 65, and gives up sooner when the ring is at the edge of reach. A sync you start yourself still searches as long as before.
