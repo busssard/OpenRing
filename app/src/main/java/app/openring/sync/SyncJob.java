@@ -90,24 +90,48 @@ public final class SyncJob extends JobService {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                RingManager.SyncResult res = new RingManager.SyncResult();
-                if (ringPart && !ringRecent) res = RingManager.get(SyncJob.this).syncBlocking(t);
-                if (watchPart && !t.stopped()) {
-                    String w = app.openring.ble.WatchSync.run(SyncJob.this);
-                    RingManager.get(SyncJob.this).log("background watch sync: " + (w == null ? "done" : w));
-                }
-                // a background sync that worked removes the notice of an earlier failed one (issue #91)
-                if (res.ok) {
+                // any error ends this run with a line in the log, never the app, and the job is always finished (issue #334)
+                try {
+                    RingManager.SyncResult res = new RingManager.SyncResult();
                     try {
-                        ((android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(SyncService.FAILED_ID);
-                    } catch (RuntimeException e) {
-                        RingManager.get(SyncJob.this).log("old sync notice not removed: " + e);
+                        if (ringPart && !ringRecent) res = RingManager.get(SyncJob.this).syncBlocking(t);
+                    } catch (Throwable e) {
+                        // the watch part still runs
+                        log("background sync failed: ", e);
                     }
+                    if (watchPart && !t.stopped()) {
+                        try {
+                            String w = app.openring.ble.WatchSync.run(SyncJob.this);
+                            RingManager.get(SyncJob.this).log("background watch sync: " + (w == null ? "done" : w));
+                        } catch (Throwable e) {
+                            log("background watch sync failed: ", e);
+                        }
+                    }
+                    // a background sync that worked removes the notice of an earlier failed one (issue #91)
+                    if (res != null && res.ok) {
+                        try {
+                            ((android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(SyncService.FAILED_ID);
+                        } catch (RuntimeException e) {
+                            RingManager.get(SyncJob.this).log("old sync notice not removed: " + e);
+                        }
+                    }
+                } catch (Throwable e) {
+                    log("background job failed: ", e);
+                } finally {
+                    jobFinished(params, false);
                 }
-                jobFinished(params, false);
             }
         }, "ring-job").start();
         return true;
+    }
+
+    /** Logs {@code e} with its stack trace; when even that fails, Android's own log keeps it (issue #334). */
+    private void log(String what, Throwable e) {
+        try {
+            RingManager.get(this).log(what + android.util.Log.getStackTraceString(e));
+        } catch (Throwable ignored) {
+            android.util.Log.e("OpenRing", what, e);
+        }
     }
 
     @Override

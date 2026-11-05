@@ -967,6 +967,7 @@ public class CoreTest {
         stageShare();
         sleepMinutes();
         syncError();
+        syncStart334();
         texts();
         unitTexts();
         scoreLadder();
@@ -3952,6 +3953,175 @@ public class CoreTest {
         eq("fit: too wide, shrinks by the same factor", Texts.fitSize(11, 70, 56, 8), 8.8f);
         eq("fit: never below the minimum", Texts.fitSize(11, 140, 56, 8), 8f);
         eq("fit: nothing measured, size kept", Texts.fitSize(11, 0, 56, 8), 11f);
+    }
+
+    /** Stand ins with Android's class names: LoadNote keeps only the simple name (issue #334). */
+    static final class SQLiteFullException extends RuntimeException {
+        SQLiteFullException(String m) { super(m); }
+    }
+
+    static final class SQLiteDiskIOException extends RuntimeException {
+        SQLiteDiskIOException(String m) { super(m); }
+    }
+
+    static StackTraceElement[] dbTrace334() {
+        return new StackTraceElement[] {new StackTraceElement("android.database.sqlite.SQLiteConnection", "nativeExecute", "SQLiteConnection.java", 1),
+            new StackTraceElement("app.openring.data.Db", "get", "Db.java", 45),
+            new StackTraceElement("app.openring.ble.RingManager", "syncBlocking", "RingManager.java", 480)};
+    }
+
+    /** A sync whose start fails ends with a safe text, the ring lock free and the database released once (issue #334). */
+    static void syncStart334() {
+        // the stored text: class and place, never the message (issue #289)
+        IllegalStateException ise = new IllegalStateException("cannot open file at line 41234 of [a1b2c3]");
+        ise.setStackTrace(dbTrace334());
+        String raw = SyncError.startFailed(ise);
+        eq("#334 start failed: class and place", raw, "Sync could not start: IllegalStateException at Db.java:45");
+        check("#334 start failed: the message and its numbers are dropped", !raw.contains("41234") && !raw.contains("cannot open"), raw);
+        check("#334 start failed: the part after the prefix is a safe load note", LoadNote.safe(raw.substring(SyncError.START_FAILED.length())), raw);
+        eq("#334 start failed: no error", SyncError.startFailed(null), "Sync could not start: unknown error");
+        eq("#334 start failed: stored as it is", SyncError.stored(false, raw), raw);
+        eq("#334 start failed: an other error is unexpected", SyncError.kind(raw), SyncError.Kind.UNKNOWN);
+        eq("#334 start failed: the unexpected sentence with the details", SyncError.plain(raw),
+                "The sync did not finish because of an unexpected problem. Sync again. " + SyncError.DETAILS);
+        eq("#334 start failed: the notice says the same", SyncError.failureNotice(false, raw), SyncError.plain(raw));
+
+        // full or unwritable storage: a sentence that says what to do
+        SQLiteFullException full = new SQLiteFullException("database or disk is full (code 13 SQLITE_FULL)");
+        full.setStackTrace(dbTrace334());
+        String fullRaw = SyncError.startFailed(full);
+        eq("#334 storage: class and place", fullRaw, "Sync could not start: SQLiteFullException at Db.java:45");
+        check("#334 storage: the code number is dropped", !fullRaw.contains("13"), fullRaw);
+        eq("#334 storage: full is its kind", SyncError.kind(fullRaw), SyncError.Kind.STORAGE);
+        SQLiteDiskIOException io = new SQLiteDiskIOException("disk I/O error (code 266)");
+        io.setStackTrace(dbTrace334());
+        eq("#334 storage: a disk error is its kind", SyncError.kind(SyncError.startFailed(io)), SyncError.Kind.STORAGE);
+        String sentence = "This phone's storage is full or could not be written, so the sync could not start. Free some storage and sync again.";
+        eq("#334 storage: the sentence", SyncError.plain(fullRaw), sentence);
+        eq("#334 storage: the notice", SyncError.failureNotice(false, fullRaw), sentence);
+        eq("#334 storage: stored as it is", SyncError.stored(false, fullRaw), fullRaw);
+        eq("#334 storage: other tasks", SyncError.plain(fullRaw, SyncError.Task.ACTION),
+                "This phone's storage is full or could not be written. Free some storage and try again.");
+        check("#334 storage: not tried again at once", !SyncError.retryable(fullRaw, true));
+        check("#334 storage: no dashes as punctuation", !sentence.contains(" - ") && !sentence.contains("\u2013") && !sentence.contains("\u2014"), sentence);
+        check("#334 storage: a ring text is not storage", SyncError.kind("storage failed: no space") != SyncError.Kind.STORAGE);
+
+        java.util.concurrent.locks.ReentrantLock op = new java.util.concurrent.locks.ReentrantLock();
+        final int[] released = new int[1];
+        Runnable release = new Runnable() {
+            @Override
+            public void run() {
+                released[0]++;
+            }
+        };
+
+        // an error before the lock (waiting for the analysis)
+        SyncStart.Result r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                throw new SQLiteFullException("database or disk is full");
+            }
+        }, release);
+        check("#334 guard, before the lock: the error is kept", r.error instanceof SQLiteFullException, r.error);
+        check("#334 guard, before the lock: the message is set", r.message != null && r.message.startsWith(SyncError.START_FAILED), r.message);
+        check("#334 guard, before the lock: the lock is free", !op.isLocked());
+        eq("#334 guard, before the lock: nothing released", released[0], 0);
+
+        // an error after the lock, before the database was held (opening the database)
+        final java.util.concurrent.locks.ReentrantLock lock = op;
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                throw new IllegalStateException("cannot open 4711");
+            }
+        }, release);
+        check("#334 guard, after the lock: the lock is free again", !op.isLocked(), op.getHoldCount());
+        eq("#334 guard, after the lock: the database was not held, nothing released", released[0], 0);
+        check("#334 guard, after the lock: no message of the error", r.message != null && !r.message.contains("4711"), r.message);
+
+        // an error after the database was held: released once, the lock given back
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                h.ring = true;
+                throw new IllegalStateException("late");
+            }
+        }, release);
+        check("#334 guard, after the hold: the lock is free again", !op.isLocked());
+        eq("#334 guard, after the hold: released once", released[0], 1);
+
+        // an Error, not only a RuntimeException, with the lock taken twice
+        released[0] = 0;
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                lock.lock();
+                throw new OutOfMemoryError("Failed to allocate 1048576 bytes");
+            }
+        }, release);
+        check("#334 guard, an Error: caught", r.error instanceof OutOfMemoryError, r.error);
+        check("#334 guard, an Error: class and place, no message", r.message != null && r.message.startsWith("Sync could not start: OutOfMemoryError")
+                && !r.message.contains("1048576"), r.message);
+        check("#334 guard, an Error: the lock is free again", !op.isLocked(), op.getHoldCount());
+        eq("#334 guard, an Error: unexpected sentence", SyncError.plain(r.message),
+                "The sync did not finish because of an unexpected problem. Sync again. " + SyncError.DETAILS);
+
+        // a release that fails too: the lock is still given back, the first error kept
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                h.ring = true;
+                throw new IllegalStateException("first");
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                throw new IllegalArgumentException("second");
+            }
+        });
+        check("#334 guard, failed release: the lock is free again", !op.isLocked());
+        check("#334 guard, failed release: the first error kept", r.error instanceof IllegalStateException && r.error.getSuppressed().length == 1, r.error);
+
+        // a hold taken before the start stays (only the steps' holds are given back)
+        op.lock();
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                throw new IllegalStateException("x");
+            }
+        }, release);
+        eq("#334 guard: an earlier hold stays", op.getHoldCount(), 1);
+        op.unlock();
+
+        // the normal path: the lock stays held for the download, nothing released
+        released[0] = 0;
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                h.ring = true;
+                return null;
+            }
+        }, release);
+        check("#334 guard, normal: no message, no error", r.message == null && r.error == null);
+        check("#334 guard, normal: the lock is held for the download", op.isHeldByCurrentThread());
+        eq("#334 guard, normal: nothing released", released[0], 0);
+        op.unlock();
+
+        // a refusal (busy, stopped, demo) passes through unchanged, nothing held
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                return "The ring is busy with another task";
+            }
+        }, release);
+        eq("#334 guard, refusal: its text", r.message, "The ring is busy with another task");
+        check("#334 guard, refusal: no error, lock free", r.error == null && !op.isLocked());
     }
 
     /** Plain sentences for failed syncs; the raw texts come from the code (issue #47). */
