@@ -263,11 +263,24 @@ public final class Analyzer {
      * backup, a restore or a run that starts meanwhile does not hold up the day either (issue #197).
      */
     public static boolean beforeLoad(Context c) {
-        // a note left to the background failed on an earlier load: said now, so the screen's load notes it as before
+        // a note left to the background failed on an earlier load: said once this load's own note is done (so that
+        // note is not skipped), and the screen's load records it as before; kept for the next load if this one fails
         Throwable late = LATE_NOTE_ERROR.getAndSet(null);
+        boolean did;
+        try {
+            did = noteBeforeLoad(c);
+        } catch (RuntimeException | Error e) {
+            if (late != null) LATE_NOTE_ERROR.compareAndSet(null, late);
+            throw e;
+        }
         if (late instanceof RuntimeException) throw (RuntimeException) late;
         if (late instanceof Error) throw (Error) late;
         if (late != null) throw new RuntimeException(late);
+        return did;
+    }
+
+    /** The work of {@link #beforeLoad} itself. */
+    private static boolean noteBeforeLoad(Context c) {
         if (running()) return false;
         if (Prefs.of(c).demo()) return true;
         Db db = Db.get(c);
@@ -302,6 +315,8 @@ public final class Analyzer {
             });
     /** A late note is waiting to run: more loads meanwhile add none (each would only stretch the same row). */
     private static final java.util.concurrent.atomic.AtomicBoolean LATE_NOTE_QUEUED = new java.util.concurrent.atomic.AtomicBoolean();
+    /** Tests only: how many late notes were queued so far. */
+    private static final java.util.concurrent.atomic.AtomicInteger LATE_NOTES_QUEUED_COUNT = new java.util.concurrent.atomic.AtomicInteger();
     /** The failure of the last late note, said by the next {@link #beforeLoad}. */
     private static final java.util.concurrent.atomic.AtomicReference<Throwable> LATE_NOTE_ERROR =
             new java.util.concurrent.atomic.AtomicReference<Throwable>();
@@ -323,6 +338,7 @@ public final class Analyzer {
      */
     static java.util.concurrent.Future<?> noteLater(final Context c) {
         if (!LATE_NOTE_QUEUED.compareAndSet(false, true)) return null;
+        LATE_NOTES_QUEUED_COUNT.incrementAndGet();
         return LATE_NOTES.submit(new Runnable() {
             @Override
             public void run() {

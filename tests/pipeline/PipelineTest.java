@@ -6120,6 +6120,13 @@ public class PipelineTest {
         m.invoke(null);
     }
 
+    /** How many zone notes the main screen has left to the background so far (issue #197). */
+    static int queuedLateNotes() throws Exception {
+        java.lang.reflect.Field f = Analyzer.class.getDeclaredField("LATE_NOTES_QUEUED_COUNT");
+        f.setAccessible(true);
+        return ((java.util.concurrent.atomic.AtomicInteger) f.get(null)).get();
+    }
+
     /** Holds the analysis lock on its own thread (as a backup's snapshot does) until {@code go} opens. */
     static Thread holdLock197(final java.util.concurrent.CountDownLatch held, final java.util.concurrent.CountDownLatch go) {
         Thread t = new Thread(new Runnable() {
@@ -6168,7 +6175,9 @@ public class PipelineTest {
                 && dayJson != null && !nights.isEmpty(), ms + " ms");
         check("#197 the note waits for the lock: nothing stored yet", db.zones().size() == zones0.size()
                 && (Double) db.zones().get(zones0.size() - 1)[1] == stop0, null);
+        int queued0 = queuedLateNotes();
         for (int i = 0; i < 5; i++) Analyzer.beforeLoad(c);
+        check("#197 five more loads while the note waits for the lock queue no more notes", queuedLateNotes() == queued0, queuedLateNotes() - queued0);
         go.countDown();
         holder.join(60000);
         awaitLateNotes();
@@ -6245,12 +6254,17 @@ public class PipelineTest {
         awaitLateNotes();
         check("#197 set up: the failing background note was queued", queued != null, null);
         Throwable first = null, second = null;
+        double stop3 = (Double) db.zones().get(db.zones().size() - 1)[1];
+        Thread.sleep(5);
         try {
             Analyzer.beforeLoad(c);
         } catch (Throwable e) {
             first = e;
         }
         awaitLateNotes();
+        double stop4 = (Double) db.zones().get(db.zones().size() - 1)[1];
+        check("#197 the load that throws the failed note still makes its own note first (review of adc9c1e)", stop4 > stop3 && db.zones().size() == rows + 1,
+                stop3 + " to " + stop4);
         try {
             Analyzer.beforeLoad(c);
         } catch (Throwable e) {
@@ -6372,8 +6386,17 @@ public class PipelineTest {
         go.countDown();
         run.join(120000);
         check("#243 the run then ends normally", err[0] == null && !run.isAlive() && results139(db).equals(before), err[0]);
+        List<Object[]> zonesBefore = db.zones();
+        double stopBefore = (Double) zonesBefore.get(zonesBefore.size() - 1)[1];
+        Thread.sleep(5);
+        double noteFrom = System.currentTimeMillis() / 1000.0;
         check("#243 the next load notes the zone again (no analysis runs)", !Analyzer.running() && Analyzer.beforeLoad(c), "");
         awaitLateNotes();
+        List<Object[]> zonesAfter = db.zones();
+        double stopAfter = (Double) zonesAfter.get(zonesAfter.size() - 1)[1];
+        check("#243 the zone note is stored: the newest zone row is the phone's and its stop moved to now",
+                ZoneId.systemDefault().getId().equals(zonesAfter.get(zonesAfter.size() - 1)[2]) && stopAfter >= noteFrom && stopAfter > stopBefore,
+                zonesAfter.size() + " rows, stop " + stopAfter + " (from " + noteFrom + ", before " + stopBefore + ")");
 
         // 2. entering demo mode during the run waits for it; the real run is not broken
         inside = new java.util.concurrent.CountDownLatch(1);
