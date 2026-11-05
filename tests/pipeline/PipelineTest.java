@@ -6254,17 +6254,18 @@ public class PipelineTest {
         awaitLateNotes();
         check("#197 set up: the failing background note was queued", queued != null, null);
         Throwable first = null, second = null;
-        double stop3 = (Double) db.zones().get(db.zones().size() - 1)[1];
-        Thread.sleep(5);
+        // the newest row here ends a minute ahead (the zone change above was noted at now + 60), so the count of queued
+        // notes shows that this load still made its own note before throwing the earlier failure
+        int queued3 = queuedLateNotes();
         try {
             Analyzer.beforeLoad(c);
         } catch (Throwable e) {
             first = e;
         }
+        int queued4 = queuedLateNotes();
         awaitLateNotes();
-        double stop4 = (Double) db.zones().get(db.zones().size() - 1)[1];
-        check("#197 the load that throws the failed note still makes its own note first (review of adc9c1e)", stop4 > stop3 && db.zones().size() == rows + 1,
-                stop3 + " to " + stop4);
+        check("#197 the load that throws the failed note still makes its own note first (review of adc9c1e)", queued4 == queued3 + 1
+                && db.zones().size() == rows + 1, queued4 - queued3);
         try {
             Analyzer.beforeLoad(c);
         } catch (Throwable e) {
