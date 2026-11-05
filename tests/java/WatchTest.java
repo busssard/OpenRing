@@ -812,6 +812,90 @@ public class WatchTest {
 
         // the first sync asks a month back, later ones from the newest record
         check("first sync asks 30 days back", WatchSetup.FIRST_SINCE_S == 30L * 86400);
+
+        // review of #332: the time that ends the hands is made when it is sent, with a clock that moved 5 minutes meanwhile
+        final long[] clock = {1700000000L};
+        final java.time.ZoneId zurich = java.time.ZoneId.of("Europe/Zurich");
+        Session.Plan cp = plan();
+        cp.zone = zurich;
+        cp.at(clock[0], zurich);
+        cp.clock = new Session.Clock() {
+            @Override
+            public long now() {
+                return clock[0];
+            }
+        };
+        cp.steps = WatchSetup.handsStart();
+        cp.last = WatchSetup.handsEnd(cp);
+        final int[] taps = {0};
+        cp.more = new Session.More() {
+            @Override
+            public Session.Step next(long ms) {
+                clock[0] += 60; // a minute per tap
+                return ++taps[0] <= 5 ? null : Session.FINISH;
+            }
+        };
+        w = new FakeWatch();
+        r = Session.run(w, cp, new Gate(), new Store(), new Lines());
+        byte[] sentTime = null;
+        for (byte[] m : w.sent) if (Frame.type(m) == Proto.SET_TIME) sentTime = m;
+        Session.Plan want = new Session.Plan();
+        want.at(clock[0], zurich);
+        check("hands: the closing time is the phone's time when it is sent, not when the session began", r.ended == null && clock[0] == 1700000000L + 360
+                && Arrays.equals(sentTime, Proto.setTime(want.now, want.offset, want.nextChange, want.offsetAfter))
+                && !Arrays.equals(sentTime, cp.last.get(1).msg), sentTime == null ? null : Hex.encode(sentTime));
+        check("plan: the zone's offset and next clock change (Zurich in November: +1 h, to +2 h on 31 March 2024)", want.offset == 3600 && want.offsetAfter == 7200
+                && want.nextChange == 1711846800L, want.nextChange);
+        Session.Plan fixed = plan();
+        check("plan without a clock: the time step holds the plan's time", Arrays.equals(WatchSetup.handsEnd(fixed).get(1).bytes(), Proto.setTime(fixed.now, fixed.offset, 0, 0)));
+
+        // review of #332: a calibration whose link was lost is ended first at the next session
+        Session.Plan lp = plan();
+        lp.steps = WatchSetup.closeCalibrationFirst(WatchSetup.sync(lp, profile(), null, 5), lp);
+        w = new FakeWatch();
+        r = Session.run(w, lp, new Gate(), new Store(), new Lines());
+        check("calibration left open: the next sync switches it off right after connect, then goes on as always", r.ended == null && r.done.contains(WatchSetup.HANDS_STOP)
+                && w.types().subList(0, 5).equals(Arrays.asList(Proto.HELLO, Proto.CONNECT, Proto.HANDS_STOP, Proto.BATTERY, Proto.SET_TIME))
+                && Collections.frequency(w.types(), Proto.SET_TIME) == 1, w.types());
+        Session.Plan la = plan();
+        la.steps = WatchSetup.closeCalibrationFirst(WatchSetup.alarmOnly(a), la);
+        w = new FakeWatch();
+        r = Session.run(w, la, new Gate(), new Store(), new Lines());
+        check("calibration left open: the alarm alone also switches it off and sends the time first", r.ended == null && w.types().equals(Arrays.asList(Proto.HELLO,
+                Proto.CONNECT, Proto.HANDS_STOP, Proto.SET_TIME, Proto.SET_ALARM, Proto.ALARM_ON, Proto.SYNC_DONE)), w.types());
+        // the link drops while the hands are set: calibration mode was never switched off
+        Session.Plan hl = plan();
+        hl.steps = WatchSetup.handsStart();
+        hl.last = WatchSetup.handsEnd(hl);
+        final java.util.concurrent.LinkedBlockingQueue<Session.Step> q7 = new java.util.concurrent.LinkedBlockingQueue<Session.Step>();
+        q7.add(WatchSetup.move(Proto.HAND_HOURS, 1));
+        q7.add(Session.FINISH);
+        hl.more = new Session.More() {
+            @Override
+            public Session.Step next(long ms) throws InterruptedException {
+                return q7.poll(ms, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
+        };
+        w = new FakeWatch();
+        w.dropAt = Proto.MOVE_HAND;
+        r = Session.run(w, hl, new Gate(), new Store(), new Lines());
+        check("hands: the link lost while moving a hand: hands stop not done, so it stays open for the next session", Session.LINK_LOST.equals(r.ended)
+                && !r.done.contains(WatchSetup.HANDS_STOP) && r.done.contains(WatchSetup.HANDS_START), r.done);
+        check("hands texts: all well, nothing", WatchSetup.handsResult(null, true, true) == null);
+        check("hands texts: ended before the hands started: the session's own sentence", Session.NO_ANSWER.equals(WatchSetup.handsResult(Session.NO_ANSWER, false, false)));
+        check("hands texts: link lost while setting: says the next connection ends it", WatchSetup.HANDS_OPEN.equals(WatchSetup.handsResult(Session.LINK_LOST, true, false)));
+        check("hands texts: an early end that still switched calibration off", WatchSetup.HANDS_EARLY.equals(WatchSetup.handsResult(Session.FOR_RING, true, true)));
+        for (String tx : new String[] {WatchSetup.HANDS_OPEN, WatchSetup.HANDS_EARLY})
+            check("hands texts: no dash as punctuation, no next sync promise: " + tx, !tx.contains(" - ") && !tx.contains("\u2013") && !tx.contains("\u2014") && !tx.contains("next sync"));
+
+        // could improve of the review of #332: on without a day is sent as off
+        WatchSetup.Alarm noDay = new WatchSetup.Alarm();
+        noDay.on = true;
+        noDay.days = 0;
+        List<Session.Step> nd = WatchSetup.alarm(noDay);
+        check("alarm on without a day: only off is sent", !noDay.active() && nd.size() == 1 && Arrays.equals(nd.get(0).msg, Proto.alarmOn(false)));
+        check("alarm on without a day: the screen says off", String.join("\n", WatchSetup.shown(profile(), "UTC", noDay)).contains("Alarm: off (no day picked)"));
+        check("alarm on with a day is active", a.active());
     }
 
     // ---------------------------------------------------------------------------------- sign in

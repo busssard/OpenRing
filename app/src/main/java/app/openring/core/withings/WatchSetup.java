@@ -63,6 +63,11 @@ public final class WatchSetup {
     public static final class Alarm {
         public int hour = 7, minute = 0, days = 0x1f, smart = 0;
         public boolean on;
+
+        /** On with at least one day: what the watch is sent as on. On without a day is sent as off (its meaning is not documented). */
+        public boolean active() {
+            return on && (days & 0x7f) != 0;
+        }
     }
 
     private static Session.Step ask(String key, byte[] msg) {
@@ -77,8 +82,21 @@ public final class WatchSetup {
         return new Session.Step(key, Session.Step.SOFT, msg);
     }
 
-    static Session.Step time(Session.Plan plan) {
-        return ask(TIME, Proto.setTime(plan.now, plan.offset, plan.nextChange, plan.offsetAfter));
+    /**
+     * Sets the watch's time. With the plan's clock and zone the message is made again when it is sent (a hand calibration
+     * can last minutes, review of #332); without them it holds the plan's time.
+     */
+    static Session.Step time(final Session.Plan plan) {
+        byte[] first = Proto.setTime(plan.now, plan.offset, plan.nextChange, plan.offsetAfter);
+        if (plan.clock == null || plan.zone == null) return ask(TIME, first);
+        return new Session.Step(TIME, Session.Step.ASK, first, new Session.Maker() {
+            @Override
+            public byte[] make() {
+                Session.Plan t = new Session.Plan();
+                t.at(plan.clock.now(), plan.zone);
+                return Proto.setTime(t.now, t.offset, t.nextChange, t.offsetAfter);
+            }
+        });
     }
 
     /** The steps that tell the watch who wears it: the user, the step goal, distance and clock units. */
@@ -91,11 +109,11 @@ public final class WatchSetup {
         return out;
     }
 
-    /** The alarm's two steps: the alarm itself and on, or only off. */
+    /** The alarm's two steps: the alarm itself and on, or only off (also for on without a day). */
     public static List<Session.Step> alarm(Alarm a) {
         List<Session.Step> out = new ArrayList<Session.Step>();
-        if (a.on) out.add(ask(ALARM, Proto.alarm(a.hour, a.minute, a.days, a.smart)));
-        out.add(ask(ALARM_ON, Proto.alarmOn(a.on)));
+        if (a.active()) out.add(ask(ALARM, Proto.alarm(a.hour, a.minute, a.days, a.smart)));
+        out.add(ask(ALARM_ON, Proto.alarmOn(a.active())));
         return out;
     }
 
@@ -181,6 +199,35 @@ public final class WatchSetup {
         return out;
     }
 
+    /**
+     * A hand calibration whose link was lost left the watch in calibration mode (review of #332): the next session
+     * switches it off first, right after connect, and sets the time there when its steps do not already. A new list.
+     */
+    public static List<Session.Step> closeCalibrationFirst(List<Session.Step> steps, Session.Plan plan) {
+        List<Session.Step> out = new ArrayList<Session.Step>(steps);
+        int at = !out.isEmpty() && CONNECT.equals(out.get(0).key) ? 1 : 0;
+        boolean time = false;
+        for (Session.Step s : out) time |= TIME.equals(s.key);
+        out.add(at, soft(HANDS_STOP, Proto.handsStop()));
+        if (!time) out.add(at + 1, time(plan));
+        return out;
+    }
+
+    /** Hand calibration texts: an early end after calibration mode was switched off, and one where the link was lost before. */
+    public static final String HANDS_EARLY = "Setting the hands ended early. The watch left hand setting and shows the phone's time. Tap Start to go on.";
+    public static final String HANDS_OPEN = "The connection was lost while setting the hands. The next connection to the watch ends hand setting and sets its time.";
+
+    /**
+     * What the hand calibration screen says after its session: null when all went well; the session's own sentence when
+     * it ended before the hands were started (the sign in, for example); else one of the hands' own texts, since the
+     * sync's "the rest follows at the next sync" does not hold for the hands.
+     */
+    public static String handsResult(String ended, boolean started, boolean stopped) {
+        if (ended == null) return null;
+        if (!started) return ended;
+        return stopped ? HANDS_EARLY : HANDS_OPEN;
+    }
+
     // ---------------------------------------------------------------------------- what the screen shows
 
     /** Day names in our order (bit 0 Monday). */
@@ -208,11 +255,11 @@ public final class WatchSetup {
         out.add("Language: " + languageName(p.watchLanguage()));
         out.add("Time and zone: the phone's (" + zone + "), with its next clock change");
         out.add(p.complete() ? "You: " + (p.sex == 1 ? "female" : "male") + ", " + p.heightCm + " cm, " + p.weightKg + " kg, born about " + (p.year - p.age)
-                + " (from your age)" : "You: not sent until you choose male or female below");
+                + " (from your age)" : "You: not sent until your profile says male or female");
         out.add("Daily step goal: " + String.format(Locale.US, "%,d", p.goal) + " steps");
         out.add("Distance in " + (p.metric ? "km" : "miles") + ", " + (p.h24 ? "24" : "12") + " hour clock");
         out.add("The watch's screens: the same 7 Gadgetbridge sends");
-        out.add(a == null || !a.on ? "Alarm: off" : "Alarm: " + clock(a.hour, a.minute) + ", " + days(a.days) + (a.smart > 0 ? ", smart wake " + a.smart + " min" : ""));
+        out.add(a == null || !a.on ? "Alarm: off" : !a.active() ? "Alarm: off (no day picked)" : "Alarm: " + clock(a.hour, a.minute) + ", " + days(a.days) + (a.smart > 0 ? ", smart wake " + a.smart + " min" : ""));
         out.add("Then: setup finished, and the first sync");
         return out;
     }

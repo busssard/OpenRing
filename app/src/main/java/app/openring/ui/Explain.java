@@ -458,8 +458,8 @@ public final class Explain {
     public static final String WATCH_ADD = "Withings Steel HR: Settings, Watch, Set up the watch. "
             + "Open Ring then reads steps, heart rate, sleep, workouts and battery from it, without the Withings account.";
 
-    public static final String WATCH_WITHINGS_APP = "The watch stays paired with this phone, so the Withings app keeps working. "
-            + "Do not remove the watch in Android's Bluetooth settings: pairing it again may need a reset that erases the watch. "
+    public static final String WATCH_WITHINGS_APP = "Open Ring sets up and syncs the watch itself, so use only one app with it: the Withings app "
+            + "would send its own settings and take the watch's data first. Do not remove the watch in Android's Bluetooth settings: pairing it again may need a reset that erases the watch. "
             + "If a sync fails, force stop the Withings app and try again.";
 
     // ---- the watch setup (issue #251) ----

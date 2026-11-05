@@ -73,14 +73,37 @@ public final class Session {
         /** A short name for the log and the screen, for example "activity". */
         public final String key;
         public final int kind, type;
+        /** The message as it was when the step was built (what the tests compare); {@link #bytes()} is what is sent. */
         public final byte[] msg;
+        /** Makes the message again when it is sent (the time, so it is right to the second also late in a session), or null. */
+        final Maker maker;
 
         public Step(String key, int kind, byte[] msg) {
+            this(key, kind, msg, null);
+        }
+
+        public Step(String key, int kind, byte[] msg, Maker maker) {
             this.key = key;
             this.kind = kind;
             this.msg = msg;
+            this.maker = maker;
             this.type = Frame.type(msg);
         }
+
+        /** The message to send now. */
+        public byte[] bytes() {
+            return maker != null ? maker.make() : msg;
+        }
+    }
+
+    /** Builds a step's message at the moment it is sent. */
+    public interface Maker {
+        byte[] make();
+    }
+
+    /** The phone's clock in unix seconds (the tests move it). */
+    public interface Clock {
+        long now();
     }
 
     /** Handed by {@link More} to end the session (sync done follows). */
@@ -127,6 +150,22 @@ public final class Session {
         public String address;
         /** Our own challenge for the sign in ({@link SignIn#OURS} bytes); null makes a random one (the tests fix it). */
         public byte[] ours;
+        /**
+         * The phone's clock and zone: a step that sets the watch's time reads them when it is sent, so the time that ends a
+         * hand calibration of some minutes is still right (review of #332). Null: {@link #now} and the offsets above.
+         */
+        public Clock clock;
+        public java.time.ZoneId zone;
+
+        /** Sets {@link #now}, the offset now, the next clock change and the offset after it, from {@code zone}. */
+        public void at(long now, java.time.ZoneId zone) {
+            this.now = now;
+            java.time.Instant t = java.time.Instant.ofEpochSecond(now);
+            offset = zone.getRules().getOffset(t).getTotalSeconds();
+            java.time.zone.ZoneOffsetTransition next = zone.getRules().nextTransition(t);
+            nextChange = next != null ? next.getInstant().getEpochSecond() : 0;
+            offsetAfter = next != null ? next.getOffsetAfter().getTotalSeconds() : 0;
+        }
 
         List<Step> steps() {
             return steps != null ? steps : WatchSetup.basicSync(this);
@@ -409,9 +448,10 @@ public final class Session {
     }
 
     private static void send(Link link, Step s, Result r, Log log) throws IOException, InterruptedException {
-        link.send(s.msg);
+        byte[] msg = s.bytes();
+        link.send(msg);
         if (s.type != Proto.HELLO) r.wrote = true;
-        log.log("watch: sent " + Frame.hexType(s.type) + " " + s.key + ", " + s.msg.length + " bytes");
+        log.log("watch: sent " + Frame.hexType(s.type) + " " + s.key + ", " + msg.length + " bytes");
     }
 
     /** Sends {@code s} and waits for its answer of its type; other messages are stored and logged on the way. */

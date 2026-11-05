@@ -200,11 +200,26 @@ public final class Prefs {
     /** The watch this app syncs (its Bluetooth address), null for none. */
     public String watchAddress() { return sp.getString("watch_address", null); }
     public String watchName() { return sp.getString("watch_name", null); }
+    /**
+     * The watch to sync. Another address than before was never set up by this app (review of #332): its setup time and an
+     * open hand calibration of the old watch are cleared. The same address again (a restore, a new name) keeps them.
+     */
     public void setWatch(String address, String name) {
-        sp.edit().putString("watch_address", address).putString("watch_name", name).remove("watch_error").apply();
+        SharedPreferences.Editor e = sp.edit().putString("watch_address", address).putString("watch_name", name).remove("watch_error");
+        String before = watchAddress();
+        if (before == null || !before.equalsIgnoreCase(address)) e.remove("watch_setup_at").remove("watch_calibrating");
+        e.apply();
     }
     /** Forget the watch: syncing stops, its stored data stays. */
-    public void forgetWatch() { sp.edit().remove("watch_address").remove("watch_name").remove("watch_error").remove("watch_setup_at").apply(); }
+    public void forgetWatch() {
+        sp.edit().remove("watch_address").remove("watch_name").remove("watch_error").remove("watch_setup_at").remove("watch_calibrating").apply();
+    }
+    /**
+     * True while a hand calibration may have left the watch in calibration mode (its link was lost before the end): the
+     * next session switches it off first and sets the time. Not in the backup (it belongs to this phone's link).
+     */
+    public boolean watchCalibrating() { return sp.getBoolean("watch_calibrating", false); }
+    public void setWatchCalibrating(boolean b) { sp.edit().putBoolean("watch_calibrating", b).apply(); }
     /** Syncs a day in the background: 0 by hand, 1, 2 or 4 ({@code core/withings/WatchDue}). */
     public int watchPerDay() { return sp.getInt("watch_per_day", app.openring.core.withings.WatchDue.DEFAULT); }
     public void setWatchPerDay(int n) {
@@ -239,13 +254,32 @@ public final class Prefs {
         a.smart = sp.getInt("watch_alarm_smart", 0);
         return a;
     }
+    /** Guards the alarm's change counter: a change and "sent" never cross. */
+    private static final Object ALARM_LOCK = new Object();
+    /** Counts the alarm's changes; a session notes it with the alarm it sends ({@link #setWatchAlarmSent(int)}). */
+    public int watchAlarmChange() { return sp.getInt("watch_alarm_change", 0); }
     public void setWatchAlarm(app.openring.core.withings.WatchSetup.Alarm a) {
-        sp.edit().putBoolean("watch_alarm_on", a.on).putInt("watch_alarm_h", Math.max(0, Math.min(23, a.hour))).putInt("watch_alarm_m", Math.max(0, Math.min(59, a.minute)))
+        synchronized (ALARM_LOCK) {
+            setAlarm(a);
+        }
+    }
+    private void setAlarm(app.openring.core.withings.WatchSetup.Alarm a) {
+        sp.edit().putInt("watch_alarm_change", watchAlarmChange() + 1).putBoolean("watch_alarm_on", a.on).putInt("watch_alarm_h", Math.max(0, Math.min(23, a.hour))).putInt("watch_alarm_m", Math.max(0, Math.min(59, a.minute)))
                 .putInt("watch_alarm_days", a.days & 0x7f).putInt("watch_alarm_smart", Math.max(0, Math.min(60, a.smart))).putBoolean("watch_alarm_pending", true).apply();
     }
     /** True when the alarm changed and the watch has not taken it yet (the next sync sends it). */
     public boolean watchAlarmPending() { return sp.getBoolean("watch_alarm_pending", false); }
-    public void setWatchAlarmSent() { sp.edit().putBoolean("watch_alarm_pending", false).apply(); }
+    /**
+     * The watch took the alarm a session read when the counter was {@code change}: no longer pending, unless the alarm was
+     * changed meanwhile (review of #332); then the newer one stays pending for the next sync.
+     */
+    public boolean setWatchAlarmSent(int change) {
+        synchronized (ALARM_LOCK) {
+            if (change != watchAlarmChange()) return false;
+            sp.edit().putBoolean("watch_alarm_pending", false).apply();
+            return true;
+        }
+    }
 
     public long watchLastOk() { return sp.getLong("watch_last_ok", 0); }
     public long watchLastAttempt() { return sp.getLong("watch_last_try", 0); }
