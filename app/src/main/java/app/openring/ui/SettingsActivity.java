@@ -68,6 +68,23 @@ public final class SettingsActivity extends Activity implements RingManager.List
     private LinearLayout stagesCard;
     /** Where the Ring card's counts go once read (issue #198); a newer page has a newer one. */
     private LinearLayout countsBox;
+    /**
+     * The Ring and Watch blocks (owner's wish of 3 November): closed every time Settings opens, unless it is opened at one
+     * of their cards; open or closed stays while this screen is rebuilt or the phone turns, nothing is stored.
+     */
+    private Block ringBlock, watchBlock;
+    private boolean ringOpen, watchOpen;
+    /**
+     * The long jobs' lines and buttons (issue #222): saving a backup or export file (one at a time with the automatic
+     * backup), and Re analyse all (one at a time with Data check's Repair). Null on the demo page.
+     */
+    private TextView saveNote, exportNote, reanalyseNote;
+    private LinearLayout saveRow, exportRow;
+    private View reanalyseButton;
+    /** Whether this screen already jumped to its {@code section} card, or came back from a turn with its own scroll. */
+    private boolean sectionDone;
+    /** The Profile card, where the watch setup leads when the watch needs a sex or a profile (review of #332). */
+    private LinearLayout profCard;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -84,7 +101,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
         root.setPadding(p, Ui.dp(this, 8), p, p);
         s.addView(root);
         setContentView(s);
+        String section = getIntent().getStringExtra("section");
+        ringOpen = app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.RING, section);
+        watchOpen = app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.WATCH, section);
+        sectionDone = !app.openring.core.SettingsBlocks.jumpOnBuild(section, b != null, false);
         if (b != null) { // the phone was turned: typed numbers and choices come back (issue #133)
+            ringOpen = b.getBoolean("ring_open", ringOpen);
+            watchOpen = b.getBoolean("watch_open", watchOpen);
             drafts = Drafts.fromArray(b.getStringArray("drafts"));
             sexChoice = b.getInt("sex", -1);
             detailChoice = b.getInt("detail", -1);
@@ -114,6 +137,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         out.putStringArray("drafts", drafts.toArray());
         out.putInt("sex", sexChoice);
         out.putInt("detail", detailChoice);
+        out.putBoolean("ring_open", ringOpen);
+        out.putBoolean("watch_open", watchOpen);
         out.putLong("left_from", leftFrom);
         out.putLong("left_to", leftTo);
         // a switch or read still running would leave the saved states wrong: the new page shows "?" then
@@ -155,6 +180,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (screenCard != null && allowedNow != screenAllowedShown) fillScreenCard(p); // a goal being typed stays (issue #133)
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
         if (backupsCard != null) fillBackupsCard(p); // a copy made or checked meanwhile
+        showJobState(); // a backup, export or re analysis that ended while this screen was covered (issue #222)
         if (watchCard != null) fillWatchCard(); // a watch added on the Watch check, or a sync that ended meanwhile (issue #251)
         // back from Android's notification settings: the card shows whether the reminder can be shown now
         if (periodCard != null && notifyShown != notificationsOn()) fillPeriodCard();
@@ -177,6 +203,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     @Override
     public void onRingStatus() {
         if (status != null) status.setText(RingManager.get(this).status());
+        if (ringBlock != null) ringBlock.status.setText(ringStatus(Prefs.of(this))); // a sync that ended changes its last sync
     }
 
     /**
@@ -248,13 +275,21 @@ public final class SettingsActivity extends Activity implements RingManager.List
             });
             root.addView(demo);
             root.addView(updatesCard());
+            // the ring's block: the demo has no ring to sync or switch, only the stage detail (its preview is the demo's night)
+            ringBlock = block(app.openring.core.SettingsBlocks.RING);
+            LinearLayout demoRing = Ui.vbox(this);
+            demoRing.addView(Ui.body(this, "Demo mode: a made up Ring 4. Leave the demo to connect and sync your own ring."));
+            ringBlock.add(demoRing);
+            stagesCard = stageDetailCard(p);
+            ringBlock.add(stagesCard);
+            root.addView(ringBlock.card);
+            watchBlock = block(app.openring.core.SettingsBlocks.WATCH);
+            watchCard = watchCard();
+            watchBlock.add(watchCard);
+            root.addView(watchBlock.card);
             periodCard = Ui.card(this);
             fillPeriodCard();
             root.addView(periodCard);
-            watchCard = watchCard();
-            root.addView(watchCard);
-            stagesCard = stageDetailCard(p);
-            root.addView(stagesCard);
             screenCard = Ui.card(this);
             fillScreenCard(p);
             root.addView(screenCard);
@@ -278,9 +313,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout updates = updatesCard();
         root.addView(updates);
 
-        // ---- ring ----
-        LinearLayout ring = Ui.card(this);
-        ring.addView(Ui.caption(this, "Ring"));
+        // ---- the Ring block (owner's wish of 3 November): the ring, its stage detail, measurements, key and ring actions ----
+        ringBlock = block(app.openring.core.SettingsBlocks.RING);
+        LinearLayout ring = Ui.vbox(this); // the block's header says Ring
         ring.addView(line("Serial", nz(p.serial())));
         ring.addView(line("Model", model(p.hardware())));
         ring.addView(line("Firmware", nz(p.firmware())));
@@ -326,14 +361,56 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams swl = Ui.matchWrap();
         swl.setMargins(0, Ui.dp(this, 10), 0, 0);
         ring.addView(sw, swl);
-        root.addView(ring);
+        ringBlock.add(ring);
 
-        // ---- watch (issue #251, phase 1a: the Watch check only) ----
+        // ---- sleep stage detail ----
+        stagesCard = stageDetailCard(p);
+        ringBlock.add(stagesCard);
+
+        // ---- measurements ----
+        LinearLayout feat = measurementsSection();
+        ringBlock.add(feat);
+
+        // ---- the ring key ----
+        LinearLayout key = keySection(p);
+        ringBlock.add(key);
+
+        // ---- careful, with the ring ----
+        LinearLayout ringDanger = Ui.vbox(this);
+        ringDanger.addView(Ui.caption(this, "Careful"));
+        ringDanger.addView(Ui.text(this, "Each of these asks before it does anything.", 12, Ui.TEXT_3, Ui.REGULAR));
+        small(ringDanger, "Use a different key or ring", Ui.WARN, new Runnable() {
+            @Override
+            public void run() {
+                confirm("Forget this ring?", "The saved key is removed from this phone. Your synced history stays. If you restore a full backup later, the app asks before it replaces this history.", new Runnable() {
+                    @Override
+                    public void run() {
+                        p.clearKey();
+                        p.forgetPendingModes(); // modes kept for this ring no longer apply (issue #221)
+                        p.setSetupDone(false);
+                        startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
+                        finish();
+                    }
+                });
+            }
+        });
+        small(ringDanger, "Factory reset the ring", Ui.WARN, new Runnable() {
+            @Override
+            public void run() {
+                factoryReset();
+            }
+        });
+        ringBlock.add(ringDanger);
+        root.addView(ringBlock.card);
+
+        // ---- the Watch block (issue #251) ----
+        watchBlock = block(app.openring.core.SettingsBlocks.WATCH);
         watchCard = watchCard();
-        root.addView(watchCard);
+        watchBlock.add(watchCard);
+        root.addView(watchBlock.card);
 
         // ---- profile ----
-        LinearLayout prof = Ui.card(this);
+        LinearLayout prof = profCard = Ui.card(this);
         prof.addView(Ui.caption(this, "Profile and goals"));
         prof.addView(Ui.text(this, "Used for calories, goals and the sleep you need at your age.", 12, Ui.TEXT_3, Ui.REGULAR));
         LinearLayout body = Ui.hbox(this);
@@ -364,7 +441,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 target.setText(String.valueOf(p.targetKcal()));
                 // the tracker follows the saved profile until its switch is touched (issue #252)
                 periodSwitch(p);
-                reanalyse();
+                reanalyse(true);
             }
         });
         // the period tracker (issue #252): shown by itself when the profile says female; hiding deletes nothing
@@ -408,10 +485,6 @@ public final class SettingsActivity extends Activity implements RingManager.List
         fillPeriodCard();
         root.addView(periodCard);
 
-        // ---- sleep stage detail ----
-        stagesCard = stageDetailCard(p);
-        root.addView(stagesCard);
-
         // ---- screen time ----
         screenCard = Ui.card(this);
         fillScreenCard(p);
@@ -421,8 +494,141 @@ public final class SettingsActivity extends Activity implements RingManager.List
         gamesCard = app.openring.ui.games.GamesActivity.settingsCard(this);
         root.addView(gamesCard);
 
-        // ---- measurements ----
-        LinearLayout feat = Ui.card(this);
+        // ---- a backup file of the app (the key, settings, with history if wanted); its key half is in the Ring block ----
+        LinearLayout file = Ui.card(this);
+        file.addView(Ui.caption(this, "Backup file"));
+        file.addView(Ui.body(this, "A backup file restores the app on a new phone from the setup screen (Restore from a backup)."));
+        file.addView(Ui.gap(this, 10));
+        file.addView(Ui.text(this, "Save a backup file", 12, Ui.TEXT_3, Ui.REGULAR));
+        saveRow = pair(file, "Key and settings only", Ui.SLEEP, new Runnable() {
+            @Override
+            public void run() {
+                create("open-ring-backup.zip", "application/zip", BACKUP_KEY);
+            }
+        }, "Everything, with history", Ui.SLEEP, new Runnable() {
+            @Override
+            public void run() {
+                create("open-ring-full-backup.zip", "application/zip", BACKUP_FULL);
+            }
+        });
+        // while a file is saved (issue #222): what is saved, and the buttons faded
+        saveNote = Ui.text(this, "", 13, Ui.OXY, Ui.MEDIUM);
+        saveNote.setPadding(0, Ui.dp(this, 6), 0, 0);
+        file.addView(saveNote);
+        file.addView(Ui.gap(this, 6));
+        if (p.keyState() == app.openring.core.KeyState.UNREADABLE) {
+            // a saved key this phone cannot read: backups are still saved, without it (issue #288); the sentence about the
+            // key in the file would not be true then
+            file.addView(Ui.text(this, app.openring.core.KeyState.BACKUP_NO_KEY, 13, Ui.WARN, Ui.REGULAR));
+            file.addView(Ui.text(this, app.openring.core.KeyState.BACKUP_SETTINGS_ONLY, 12, Ui.TEXT_3, Ui.REGULAR));
+        } else {
+            file.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself. The full backup also holds your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
+        }
+        root.addView(file);
+
+        // ---- automatic backups (issue #242) ----
+        backupsCard = Ui.card(this);
+        fillBackupsCard(p);
+        root.addView(backupsCard);
+
+        // ---- data ----
+        LinearLayout data = Ui.card(this);
+        data.addView(Ui.caption(this, "Export"));
+        data.addView(Ui.body(this, "For spreadsheets or your own analysis. These files hold no key. The full database also holds your period log."));
+        exportRow = pair(data, "Daily summaries (CSV)", Ui.TEXT_2, new Runnable() {
+            @Override
+            public void run() {
+                create("open-ring-daily.csv", "text/csv", EXPORT_CSV);
+            }
+        }, "Full database", Ui.TEXT_2, new Runnable() {
+            @Override
+            public void run() {
+                create("open-ring.db", "application/octet-stream", EXPORT_DB);
+            }
+        });
+        exportNote = Ui.text(this, "", 13, Ui.OXY, Ui.MEDIUM);
+        exportNote.setPadding(0, Ui.dp(this, 6), 0, 0);
+        data.addView(exportNote);
+        root.addView(data);
+
+        // ---- help ----
+        LinearLayout help = Ui.card(this);
+        help.addView(Ui.caption(this, "Help and diagnostics"));
+        help.addView(Ui.body(this, "Data check follows your data from the ring to the screens and shows where it stops. Safe to share. "
+                + "Re analyse works out all nights and days again from the stored ring data. With a long history this can take a few minutes."));
+        LinearLayout helpRow = pair(help, "Data check and log", Ui.READY, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, LogActivity.class));
+            }
+        }, "Re analyse all", Ui.TEXT_2, new Runnable() {
+            @Override
+            public void run() {
+                reanalyse(false);
+            }
+        });
+        reanalyseButton = helpRow.getChildAt(1);
+        reanalyseNote = Ui.text(this, Texts.REANALYSING, 13, Ui.OXY, Ui.MEDIUM);
+        reanalyseNote.setPadding(0, Ui.dp(this, 6), 0, 0);
+        help.addView(reanalyseNote);
+        root.addView(help);
+        showJobState();
+
+        // ---- advanced: a time someone else wore the ring (issue #254) ----
+        advancedCard = Ui.card(this);
+        fillAdvancedCard();
+        root.addView(advancedCard);
+
+        // ---- danger: what concerns this phone's data (the ring's own actions are in the Ring block) ----
+        LinearLayout danger = Ui.card(this);
+        danger.addView(Ui.caption(this, "Careful"));
+        danger.addView(Ui.text(this, "This asks before it does anything.", 12, Ui.TEXT_3, Ui.REGULAR));
+        small(danger, "Delete all local data", Ui.WARN, new Runnable() {
+            @Override
+            public void run() {
+                confirm("Delete everything?", "All synced events and results on this phone are erased, including your period log. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
+                    @Override
+                    public void run() {
+                        deleteAll();
+                    }
+                });
+            }
+        });
+        root.addView(danger);
+
+        LinearLayout about = Ui.card(this);
+        about.addView(Ui.caption(this, "About"));
+        about.addView(Ui.body(this, "Open Ring " + version() + ". A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
+                + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. The Screen tab follows the idea of ScreenTime by Markus Fisch. Not affiliated with Oura Health. "
+                + "Not a medical device."));
+        root.addView(about);
+        // a chip to a part of the Ring or Watch block opens that block first
+        String[] sections = {"Updates", "Ring", "Sleep stages", "Measurements", "Ring key", "Watch", "Profile", "Period", "Screen time", "Games", "Backup file", "Backups",
+            "Export", "Help", "Advanced", "Careful", "About"};
+        View[] targets = {updates, ringBlock.card, stagesCard, feat, key, watchBlock.card, prof, periodCard, screenCard, gamesCard, file, backupsCard, data, help, advancedCard,
+            danger, about};
+        for (int i = 0; i < sections.length; i++) {
+            final View t = targets[i];
+            TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
+            chip.setTextSize(13);
+            int ph = Ui.dp(this, 14), pv = Ui.dp(this, 7);
+            chip.setPadding(ph, pv, ph, pv);
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    jumpTo(t, true);
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+            lp.setMargins(0, 0, Ui.dp(this, 8), 0);
+            chips.addView(chip, lp);
+        }
+        scrollToSection();
+    }
+
+    /** Measurements on the ring: daytime heart rate, blood oxygen at night, resting heart rate, each switched on the ring. */
+    LinearLayout measurementsSection() {
+        LinearLayout feat = Ui.vbox(this);
         feat.addView(Ui.caption(this, "Measurements on the ring"));
         feat.addView(Ui.body(this, "A ring paired outside the official app starts with daytime heart rate and blood oxygen switched off. "
                 + "The button shows whether each one is on now; tap it to switch. ? means not read yet: tap it, or Read from ring."));
@@ -464,13 +670,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 readFromRing();
             }
         });
-        root.addView(feat);
+        return feat;
+    }
 
-        // ---- key ----
-        LinearLayout key = Ui.card(this);
-        key.addView(Ui.caption(this, "Key and backup"));
-        key.addView(Ui.body(this, "Keep a copy of the key. Without it you would have to factory reset the ring to connect again. "
-                + "A backup file restores the app on a new phone from the setup screen (Restore from a backup)."));
+    /** The ring key: Show key, Copy key, a saved key this phone cannot read, a key kept from a pairing that did not finish. */
+    LinearLayout keySection(final Prefs p) {
+        LinearLayout key = Ui.vbox(this);
+        key.addView(Ui.caption(this, "Ring key"));
+        key.addView(Ui.body(this, "Keep a copy of the key. Without it you would have to factory reset the ring to connect again."));
         key.addView(Ui.gap(this, 6));
         if (!p.demo() && p.keyState() == app.openring.core.KeyState.UNREADABLE) {
             // a saved key this phone cannot read shows no empty key; it stays until a new one works (issue #199)
@@ -517,132 +724,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
             });
         }
-        key.addView(Ui.gap(this, 10));
-        key.addView(Ui.text(this, "Save a backup file", 12, Ui.TEXT_3, Ui.REGULAR));
-        pair(key, "Key and settings only", Ui.SLEEP, new Runnable() {
-            @Override
-            public void run() {
-                create("open-ring-backup.zip", "application/zip", BACKUP_KEY);
-            }
-        }, "Everything, with history", Ui.SLEEP, new Runnable() {
-            @Override
-            public void run() {
-                create("open-ring-full-backup.zip", "application/zip", BACKUP_FULL);
-            }
-        });
-        key.addView(Ui.gap(this, 6));
-        key.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself. The full backup also holds your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
-        root.addView(key);
-
-        // ---- automatic backups (issue #242) ----
-        backupsCard = Ui.card(this);
-        fillBackupsCard(p);
-        root.addView(backupsCard);
-
-        // ---- data ----
-        LinearLayout data = Ui.card(this);
-        data.addView(Ui.caption(this, "Export"));
-        data.addView(Ui.body(this, "For spreadsheets or your own analysis. These files hold no key. The full database also holds your period log."));
-        pair(data, "Daily summaries (CSV)", Ui.TEXT_2, new Runnable() {
-            @Override
-            public void run() {
-                create("open-ring-daily.csv", "text/csv", EXPORT_CSV);
-            }
-        }, "Full database", Ui.TEXT_2, new Runnable() {
-            @Override
-            public void run() {
-                create("open-ring.db", "application/octet-stream", EXPORT_DB);
-            }
-        });
-        root.addView(data);
-
-        // ---- help ----
-        LinearLayout help = Ui.card(this);
-        help.addView(Ui.caption(this, "Help and diagnostics"));
-        help.addView(Ui.body(this, "Data check follows your data from the ring to the screens and shows where it stops. Safe to share. "
-                + "Re analyse works out all nights and days again from the stored ring data. With a long history this can take a few minutes."));
-        pair(help, "Data check and log", Ui.READY, new Runnable() {
-            @Override
-            public void run() {
-                startActivity(new Intent(SettingsActivity.this, LogActivity.class));
-            }
-        }, "Re analyse all", Ui.TEXT_2, new Runnable() {
-            @Override
-            public void run() {
-                reanalyse();
-            }
-        });
-        root.addView(help);
-
-        // ---- advanced: a time someone else wore the ring (issue #254) ----
-        advancedCard = Ui.card(this);
-        fillAdvancedCard();
-        root.addView(advancedCard);
-
-        // ---- danger ----
-        LinearLayout danger = Ui.card(this);
-        danger.addView(Ui.caption(this, "Careful"));
-        danger.addView(Ui.text(this, "Each of these asks before it does anything.", 12, Ui.TEXT_3, Ui.REGULAR));
-        small(danger, "Use a different key or ring", Ui.WARN, new Runnable() {
-            @Override
-            public void run() {
-                confirm("Forget this ring?", "The saved key is removed from this phone. Your synced history stays. If you restore a full backup later, the app asks before it replaces this history.", new Runnable() {
-                    @Override
-                    public void run() {
-                        p.clearKey();
-                        p.forgetPendingModes(); // modes kept for this ring no longer apply (issue #221)
-                        p.setSetupDone(false);
-                        startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
-                        finish();
-                    }
-                });
-            }
-        });
-        small(danger, "Factory reset the ring", Ui.WARN, new Runnable() {
-            @Override
-            public void run() {
-                factoryReset();
-            }
-        });
-        small(danger, "Delete all local data", Ui.WARN, new Runnable() {
-            @Override
-            public void run() {
-                confirm("Delete everything?", "All synced events and results on this phone are erased, including your period log. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
-                    @Override
-                    public void run() {
-                        deleteAll();
-                    }
-                });
-            }
-        });
-        root.addView(danger);
-
-        LinearLayout about = Ui.card(this);
-        about.addView(Ui.caption(this, "About"));
-        about.addView(Ui.body(this, "Open Ring " + version() + ". A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
-                + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. The Screen tab follows the idea of ScreenTime by Markus Fisch. Not affiliated with Oura Health. "
-                + "Not a medical device."));
-        root.addView(about);
-        String[] sections = {"Updates", "Ring", "Watch", "Profile", "Period", "Sleep stages", "Screen time", "Games", "Measurements", "Key and backup", "Backups", "Export", "Help",
-            "Advanced", "Careful", "About"};
-        View[] targets = {updates, ring, watchCard, prof, periodCard, stagesCard, screenCard, gamesCard, feat, key, backupsCard, data, help, advancedCard, danger, about};
-        for (int i = 0; i < sections.length; i++) {
-            final View t = targets[i];
-            TextView chip = Ui.button(this, sections[i], Ui.TEXT_2, false);
-            chip.setTextSize(13);
-            int ph = Ui.dp(this, 14), pv = Ui.dp(this, 7);
-            chip.setPadding(ph, pv, ph, pv);
-            chip.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    scroll.smoothScrollTo(0, t.getTop() - Ui.dp(SettingsActivity.this, 8));
-                }
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-            lp.setMargins(0, 0, Ui.dp(this, 8), 0);
-            chips.addView(chip, lp);
-        }
-        scrollToSection();
+        return key;
     }
 
     private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard, periodCard;
@@ -868,7 +950,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /** The Watch card (issue #251): the watch this app syncs, its state, Sync the watch now, how often, the Watch check. */
     LinearLayout watchCard() {
-        LinearLayout card = Ui.card(this);
+        LinearLayout card = Ui.vbox(this); // a section of the Watch block, whose header says Watch
         watchCard = card;
         fillWatchCard();
         return card;
@@ -882,8 +964,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (card == null) return;
         final Prefs p = Prefs.of(this);
         card.removeAllViews();
-        card.addView(Ui.caption(this, "Watch"));
-        card.addView(Ui.gap(this, 6));
+        if (watchBlock != null) watchBlock.status.setText(watchStatus(p)); // the header follows a sync, a forget or a new watch
+        // the watch setup (issue #251): find, pair, sign in, send the setup; the alarm and the hands
+        action(card, p.watchSetupAt() > 0 || p.demo() ? "Watch setup, alarm and hands" : "Set up the watch", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));
+            }
+        });
         // the main device (issue #251, one set of numbers): only once a watch was added
         if (p.demo() || p.watchAddress() != null) mainDeviceChoice(card, p);
         if (p.demo()) {
@@ -1191,14 +1279,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
      * scroll follows (issue #204). Nothing to keep while the card was never laid out (the page is just being built).
      */
     void keepScroll(final View card) {
-        if (card.getHeight() == 0) return;
+        if (card.getHeight() == 0 || !card.isShown()) return; // in a closed block: nothing moves on the page
         final int before = card.getHeight();
         // the new height is known once the card is laid out; the scroll then follows in post() (CLAUDE.md lesson)
         card.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
                 v.removeOnLayoutChangeListener(this);
-                final int top = t, after = b - t;
+                final int top = topOnPage(v), after = b - t; // a section inside a block: its top on the page
                 scroll.post(new Runnable() {
                     @Override
                     public void run() {
@@ -1392,6 +1480,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
             String error = demo ? null : p.autoError();
             card.addView(Ui.text(this, Backups.status(lastOk, size, kept, error, z), 14, error != null ? Ui.WARN : Ui.TEXT, Ui.REGULAR));
             if (error == null && lastOk > 0) card.addView(Ui.text(this, Backups.statusExplain(size, kept), 12, Ui.TEXT_3, Ui.REGULAR));
+            // a saved key this phone cannot read: the copies are made without it (issue #288)
+            if (!demo && p.keyState() == app.openring.core.KeyState.UNREADABLE) {
+                card.addView(Ui.gap(this, 4));
+                card.addView(Ui.text(this, app.openring.core.KeyState.BACKUP_NO_KEY, 13, Ui.WARN, Ui.REGULAR));
+            }
             if (Backups.GONE.equals(error)) {
                 small(card, Backups.CHOOSE_AGAIN, Ui.SLEEP, new Runnable() {
                     @Override
@@ -1795,22 +1888,138 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Opens at a card when started with the extra {@code section} ("period", "stages", "watch", "screen", "games", "backups" or "advanced"), used by the screen test.
+     * Opens at a card when started with the extra {@code section} ("blocks", "profile" (from the watch setup), "period", "stages", "watch", "screen", "games",
+     * "backups" or "advanced"), used by the screen test. A card inside the Ring or Watch block was opened with its block in
+     * onCreate ({@link app.openring.core.SettingsBlocks#startsOpen}); "blocks" shows both blocks closed at the top.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
+        final View card = "blocks".equals(section) ? ringBlock.card : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
+                : "watch".equals(section) ? watchCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
-        // the demo page is short: room below the last card, so every card can reach the top (issue #160)
+        // the demo page is short: room below the last card, so every card can reach the top (issue #160); kept on every
+        // build, so a restored scroll position finds the same page height
         root.addView(new View(this), new LinearLayout.LayoutParams(1, getResources().getDisplayMetrics().heightPixels));
-        scroll.post(new Runnable() {
+        // only the first build jumps: a rebuild or a turn keeps where the person scrolled to (review of #330)
+        if (sectionDone) return;
+        sectionDone = true;
+        jumpTo(card, false);
+    }
+
+    // ------------------------------------------------------------------- the Ring and Watch blocks (owner's wish, 3 November)
+
+    /** One device block: a card with a header (title, a one line status, a chevron) that opens and closes its sections. */
+    static final class Block {
+        final int which;
+        final LinearLayout card, head, body;
+        final TextView status;
+        final android.widget.ImageView chevron;
+        boolean open;
+
+        Block(int which, LinearLayout card, LinearLayout head, LinearLayout body, TextView status, android.widget.ImageView chevron) {
+            this.which = which;
+            this.card = card;
+            this.head = head;
+            this.body = body;
+            this.status = status;
+            this.chevron = chevron;
+        }
+
+        /** Adds a section below the ones there, with a line between them. */
+        void add(View section) {
+            if (body.getChildCount() > 0) body.addView(Ui.divider(card.getContext()));
+            body.addView(section, Ui.matchWrap());
+        }
+
+        /** Whether {@code v} is this block's card or inside it. */
+        boolean holds(View v) {
+            for (View c = v; c != null; c = c.getParent() instanceof View ? (View) c.getParent() : null) if (c == card) return true;
+            return false;
+        }
+    }
+
+    /** The Ring or Watch block, open or closed as this screen had it (closed when Settings opens). */
+    Block block(final int which) {
+        boolean ringOne = which == app.openring.core.SettingsBlocks.RING;
+        Prefs p = Prefs.of(this);
+        LinearLayout card = Ui.card(this);
+        LinearLayout head = Ui.hbox(this);
+        head.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout words = Ui.vbox(this);
+        words.addView(Ui.text(this, ringOne ? app.openring.core.SettingsBlocks.RING_TITLE : app.openring.core.SettingsBlocks.WATCH_TITLE, 17, Ui.TEXT, Ui.MEDIUM));
+        TextView st = Ui.text(this, ringOne ? ringStatus(p) : watchStatus(p), 13, Ui.TEXT_2, Ui.REGULAR);
+        words.addView(st);
+        head.addView(words, Ui.weight(1));
+        android.widget.ImageView chev = new android.widget.ImageView(this);
+        chev.setImageResource(app.openring.R.drawable.ic_chevron_right);
+        chev.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
+        head.addView(chev, new LinearLayout.LayoutParams(Ui.dp(this, 28), Ui.dp(this, 28)));
+        card.addView(head, Ui.matchWrap());
+        LinearLayout body = Ui.vbox(this);
+        body.setPadding(0, Ui.dp(this, 14), 0, 0);
+        card.addView(body, Ui.matchWrap());
+        final Block b = new Block(which, card, head, body, st, chev);
+        show(b, ringOne ? ringOpen : watchOpen);
+        head.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void run() {
-                scroll.scrollTo(0, card.getTop() - Ui.dp(SettingsActivity.this, 8));
+            public void onClick(View v) {
+                show(b, !b.open);
             }
         });
+        return b;
+    }
+
+    /** Opens or closes a block; only this screen remembers it (closed again the next time Settings opens). */
+    void show(Block b, boolean open) {
+        b.open = open;
+        b.body.setVisibility(open ? View.VISIBLE : View.GONE);
+        b.chevron.setRotation(open ? 270 : 90); // down when closed, up when open
+        b.head.setContentDescription((b.which == app.openring.core.SettingsBlocks.RING ? "Ring" : "Watch") + (open ? ", open, tap to close" : ", closed, tap to open"));
+        if (b.which == app.openring.core.SettingsBlocks.RING) ringOpen = open;
+        else watchOpen = open;
+    }
+
+    String ringStatus(Prefs p) {
+        return app.openring.core.SettingsBlocks.ringStatus(p.demo(), p.hardware(), p.lastSync(), p.lastSync() == 0 ? null : ago(p.lastSync()));
+    }
+
+    String watchStatus(Prefs p) {
+        boolean syncing = watchSyncing || app.openring.ble.WatchSync.running();
+        return app.openring.core.SettingsBlocks.watchStatus(p.demo(), p.watchAddress() != null, p.watchName(), p.watchLastOk(),
+                p.watchLastOk() == 0 ? null : ago(p.watchLastOk()), syncing, p.watchError() != null);
+    }
+
+    /**
+     * Scrolls to {@code target} (a card, or a section inside a block, which opens first). After the next layout, so the
+     * opened block has its height (CLAUDE.md lesson: restore the scroll in post(), after layout).
+     */
+    void jumpTo(final View target, final boolean smooth) {
+        for (Block b : new Block[] {ringBlock, watchBlock}) if (b != null && !b.open && b.holds(target) && target != b.card) show(b, true);
+        final android.view.ViewTreeObserver vto = scroll.getViewTreeObserver();
+        vto.addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                scroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                scroll.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        int y = topOnPage(target) - Ui.dp(SettingsActivity.this, 8);
+                        if (smooth) scroll.smoothScrollTo(0, y);
+                        else scroll.scrollTo(0, y);
+                    }
+                });
+            }
+        });
+        scroll.requestLayout();
+    }
+
+    /** Where {@code v} starts on the page (in the scrolled content), also for a section inside a block's card. */
+    int topOnPage(View v) {
+        int y = 0;
+        for (View c = v; c != null && c != root; c = c.getParent() instanceof View ? (View) c.getParent() : null) y += c.getTop();
+        return y;
     }
 
     /**
@@ -1818,7 +2027,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
      * (from the unfiltered stages kept with each night) and a button that saves and re analyses.
      */
     LinearLayout stageDetailCard(final Prefs p) {
-        LinearLayout card = Ui.card(this);
+        LinearLayout card = Ui.vbox(this); // a section of the Ring block
         if (detailChoice < 0) detailChoice = p.stageDetail();
         fillStageDetail(card, p);
         return card;
@@ -1888,7 +2097,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 if (detailChoice == p.stageDetail()) return;
                 p.setStageDetail(detailChoice);
                 refreshStageDetail(p);
-                reanalyse();
+                reanalyse(true);
             }
         });
     }
@@ -2111,8 +2320,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         parent.addView(b, lp);
     }
 
-    /** Two small buttons side by side with equal widths; long labels wrap instead of overlapping. */
-    void pair(LinearLayout parent, String l1, int c1, final Runnable r1, String l2, int c2, final Runnable r2) {
+    /** Two small buttons side by side with equal widths; long labels wrap instead of overlapping. Returns their row. */
+    LinearLayout pair(LinearLayout parent, String l1, int c1, final Runnable r1, String l2, int c2, final Runnable r2) {
         LinearLayout row = Ui.hbox(this);
         row.setGravity(android.view.Gravity.TOP);
         TextView a = Ui.smallButton(this, l1, c1), b = Ui.smallButton(this, l2, c2);
@@ -2137,6 +2346,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams lp = Ui.matchWrap();
         lp.setMargins(0, Ui.dp(this, 8), 0, 0);
         parent.addView(row, lp);
+        return row;
     }
 
     static String nz(String s) {
@@ -2144,11 +2354,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     static String model(String hw) {
-        if (hw == null) return "--";
-        if (hw.startsWith("BLB")) return "Gen 3 Horizon (" + hw + ")";
-        if (hw.startsWith("ORE") || hw.endsWith("_04") || hw.endsWith("_06")) return "Ring 4 (" + hw + ")";
-        if (hw.endsWith("_05")) return "Ring 5 (" + hw + ")";
-        return hw;
+        return app.openring.core.SettingsBlocks.model(hw);
     }
 
     static String ago(long unix) {
@@ -2269,29 +2475,53 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
-    void reanalyse() {
+    /**
+     * Re analyse all (issue #222): the same job as Data check's Repair, one at a time through {@link LogActivity#REPAIR},
+     * holding only the application; its result goes to the Settings screen shown now. {@code setting}: a saved setting
+     * that needs it (profile, stage detail); when the job runs already it runs once more after that, instead of a
+     * second run beside it. A tap on Re analyse all while it runs starts nothing.
+     */
+    void reanalyse(boolean setting) {
+        boolean started = setting ? LogActivity.REPAIR.startOrAgain() : LogActivity.REPAIR.start();
+        if (!started) {
+            say(setting ? Texts.REANALYSE_AGAIN : Texts.REANALYSE_RUNS);
+            showJobState();
+            return;
+        }
         // a sync or Live storing data finishes first (issue #230); say so instead of waiting without a word, in full (issue #274)
-        say(RingManager.get(this).busy() ? Texts.REANALYSE_WAITS : "Re analysing all nights, this can take a few minutes.");
-        new AsyncTask<Void, Void, Boolean>() {
-            @Override
-            protected Boolean doInBackground(Void... v) {
-                try {
-                    Analyzer.runAll(SettingsActivity.this, null);
-                    return true;
-                } catch (Throwable e) {
-                    // rolled back, also out of memory; the analysis stores its own error for the data check (issue #230),
-                    // the full text goes to the Log tab (issue #289)
-                    logFailure("re analyse all failed", e);
-                    return false;
-                }
-            }
+        say(RingManager.get(this).busy() ? Texts.REANALYSE_WAITS : Texts.REANALYSING);
+        showJobState();
+        LogActivity.analyseAll(getApplicationContext(), true);
+    }
 
-            @Override
-            protected void onPostExecute(Boolean ok) {
-                if (ok) toast("Analysis updated");
-                else problem(Texts.ANALYSIS_FAILED);
-            }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    /**
+     * The lines and buttons of the long jobs as they are now (issue #222): a backup or export being saved (by this screen
+     * or the automatic backup) fades the four file buttons and says what is saved; Re analyse all (also a Repair started
+     * in Data check) fades its button and says it runs. The buttons still answer a tap, with why nothing starts.
+     */
+    void showJobState() {
+        boolean saving = AutoBackup.RUN.running();
+        String line = saving ? (savingLine != null ? savingLine : Texts.SAVING_AUTO) : null;
+        for (TextView note : new TextView[] {saveNote, exportNote}) {
+            if (note == null) continue;
+            note.setText(line == null ? "" : line);
+            note.setVisibility(line == null ? View.GONE : View.VISIBLE);
+        }
+        for (View row : new View[] {saveRow, exportRow}) if (row != null) row.setAlpha(saving ? 0.4f : 1f);
+        // the automatic backup does not tell this screen when it ends: look again every few seconds while it holds the lock
+        if (saving && savingLine == null && saveNote != null && !recheckPosted) {
+            recheckPosted = true;
+            saveNote.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    recheckPosted = false;
+                    if (!isFinishing() && !isDestroyed()) showJobState();
+                }
+            }, 5000);
+        }
+        boolean analysing = LogActivity.REPAIR.running();
+        if (reanalyseNote != null) reanalyseNote.setVisibility(analysing ? View.VISIBLE : View.GONE);
+        if (reanalyseButton != null) reanalyseButton.setAlpha(analysing ? 0.4f : 1f);
     }
 
     void factoryReset() {
@@ -2366,6 +2596,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     void create(String name, String mime, int code) {
+        // one file at a time, also with the automatic backup (issue #222): asked before Android makes a file
+        if (AutoBackup.RUN.running()) {
+            say(Texts.SAVE_BUSY);
+            showJobState();
+            return;
+        }
         Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType(mime);
@@ -2380,76 +2616,154 @@ public final class SettingsActivity extends Activity implements RingManager.List
             folderPicked(data.getData(), data.getFlags());
             return;
         }
-        final Uri uri = data.getData();
-        final boolean backup = code == BACKUP_KEY || code == BACKUP_FULL;
-        // set when the copy of the history did not pass its check (issue #115): the file got nothing
-        final boolean[] notChecked = {false};
-        final boolean[] keyUnreadable = {false};
-        // bytes that reached the chosen file; a failure before the first one leaves an empty file
-        final long[] written = {0};
-        new AsyncTask<Void, Void, String>() {
-            @Override
-            protected String doInBackground(Void... v) {
-                boolean opened = false;
-                try {
-                    OutputStream raw = getContentResolver().openOutputStream(uri);
-                    if (raw == null) throw new java.io.IOException("Android gave no file to write to");
-                    opened = true;
-                    OutputStream os = new java.io.FilterOutputStream(raw) {
-                        @Override
-                        public void write(int b) throws java.io.IOException {
-                            out.write(b);
-                            written[0]++;
-                        }
+        Uri uri = data.getData();
+        boolean backup = code == BACKUP_KEY || code == BACKUP_FULL;
+        // the automatic backup may have started while the file was picked: the empty file goes, nothing else starts
+        boolean free = AutoBackup.RUN.start();
+        if (free) savingLine = backup ? Texts.SAVING_BACKUP : Texts.SAVING_EXPORT;
+        showJobState();
+        new SaveTask(getApplicationContext(), uri, code, !free).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
 
-                        @Override
-                        public void write(byte[] b, int off, int len) throws java.io.IOException {
-                            out.write(b, off, len);
-                            written[0] += len;
-                        }
-                    };
-                    try {
-                        if (code == EXPORT_CSV) Exporter.dailyCsv(SettingsActivity.this, os);
-                        else if (code == BACKUP_KEY || code == BACKUP_FULL) app.openring.data.Backup.write(SettingsActivity.this, os, code == BACKUP_FULL);
-                        else Exporter.database(SettingsActivity.this, os);
-                    } finally {
-                        os.close();
+    /** A look again at the automatic backup's line is waiting (see {@link #showJobState}). */
+    private boolean recheckPosted;
+
+    /** What the running save of this screen writes, for its line; null when the automatic backup holds {@link AutoBackup#RUN}. */
+    static volatile String savingLine;
+
+    /**
+     * Saving a backup or export file (issue #222). Holds only the application, never a screen, so turning the phone or
+     * leaving Settings does not cut it, and its result goes to the Settings screen shown now. It holds
+     * {@link AutoBackup#RUN} (started by the screen), so a second save or the automatic backup waits. A file that fails on
+     * the way is removed ({@link app.openring.core.FileSave}), or called incomplete when it cannot be.
+     */
+    private static final class SaveTask extends AsyncTask<Void, Void, String> {
+        private final Context ctx;
+        private final Uri uri;
+        private final int code;
+        private final boolean backup;
+        /** The automatic backup ran when the file came back: only the empty file is removed. */
+        private final boolean busy;
+        private boolean failed;
+        private String shortText;
+
+        SaveTask(Context ctx, Uri uri, int code, boolean busy) {
+            this.ctx = ctx;
+            this.uri = uri;
+            this.code = code;
+            this.backup = code == BACKUP_KEY || code == BACKUP_FULL;
+            this.busy = busy;
+        }
+
+        @Override
+        protected String doInBackground(Void... v) {
+            if (busy) {
+                // only a new, empty file goes: a file the person picked to replace is not opened and stays as it was
+                removeIfEmpty();
+                return Texts.SAVE_BUSY;
+            }
+            try {
+                return save();
+            } finally {
+                savingLine = null;
+                AutoBackup.RUN.finish();
+            }
+        }
+
+        /**
+         * Removes the picked file only when it is empty (the new file Android made for the picker): a file the person
+         * picked to replace, which was never opened, stays as it was (review of #340).
+         */
+        private void removeIfEmpty() {
+            android.database.Cursor cur = null;
+            try {
+                cur = ctx.getContentResolver().query(uri, new String[] {android.provider.DocumentsContract.Document.COLUMN_SIZE}, null, null, null);
+                if (cur == null || !cur.moveToFirst() || cur.isNull(0) || cur.getLong(0) != 0) {
+                    RingManager.get(ctx).log("the picked file was not opened and stays as it was");
+                    return;
+                }
+                android.provider.DocumentsContract.deleteDocument(ctx.getContentResolver(), uri);
+            } catch (Exception x) {
+                RingManager.get(ctx).log("the empty file could not be removed: " + x);
+            } finally {
+                if (cur != null) cur.close();
+            }
+        }
+
+        private String save() {
+            String what = backup ? "backup" : "export";
+            // the checked copy of the history first, before the picked file is opened (review of #340): a copy that fails
+            // its check leaves that file as it was
+            Backup.Begun begun = null;
+            java.io.File snap = null;
+            try {
+                if (backup) begun = Backup.begin(ctx, code == BACKUP_FULL);
+                else if (code == EXPORT_DB) snap = Exporter.snapshot(ctx);
+            } catch (Exception e) {
+                Backup.release(begun);
+                failed = true;
+                removeIfEmpty();
+                if (e instanceof Exporter.NotSaved) {
+                    // the copy of the history did not pass its check (issue #115): nothing was written
+                    RingManager.get(ctx).log(what + " not saved: " + e.getMessage());
+                    shortText = Texts.saveFailedToast(backup, false);
+                    return Texts.notChecked(backup);
+                }
+                RingManager.get(ctx).log(what + " failed before the file was opened: " + android.util.Log.getStackTraceString(e));
+                shortText = Texts.saveFailedToast(backup, false);
+                return Texts.saveFailed(backup, false);
+            }
+            final Backup.Begun b = begun;
+            final java.io.File copy = snap;
+            final boolean[] withKey = {true};
+            app.openring.core.FileSave.Outcome o;
+            try {
+                o = app.openring.core.FileSave.save(new app.openring.core.FileSave.Target() {
+                    @Override
+                    public OutputStream open() throws Exception {
+                        return ctx.getContentResolver().openOutputStream(uri);
                     }
-                    return backup ? "Backup saved" : "Exported";
-                } catch (app.openring.data.Backup.KeyUnreadable e) {
-                    // its own sentence: every backup holds the key (issue #199, review of #281)
-                    RingManager.get(SettingsActivity.this).log("backup not saved: " + e.getMessage() + " (" + app.openring.data.Prefs.keyError() + ")");
-                    keyUnreadable[0] = true;
-                    removeEmpty(opened);
-                    return null;
-                } catch (Exporter.NotSaved e) {
-                    RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " not saved: " + e.getMessage());
-                    notChecked[0] = true;
-                    removeEmpty(opened);
-                    return null;
-                } catch (Exception e) {
-                    // the raw reason goes to the log, the screen gets a sentence that says what to do (issue #89)
-                    RingManager.get(SettingsActivity.this).log((backup ? "backup" : "export") + " failed: " + android.util.Log.getStackTraceString(e));
-                    removeEmpty(opened);
-                    return null;
-                }
-            }
 
-            /** Nothing reached the file: remove the empty file Android created, so it is not taken for a backup later. */
-            void removeEmpty(boolean opened) {
-                if (!opened || written[0] > 0) return;
-                try {
-                    android.provider.DocumentsContract.deleteDocument(getContentResolver(), uri);
-                } catch (Exception x) {
-                    RingManager.get(SettingsActivity.this).log("the empty file could not be removed: " + x);
-                }
+                    @Override
+                    public boolean delete() throws Exception {
+                        return android.provider.DocumentsContract.deleteDocument(ctx.getContentResolver(), uri);
+                    }
+                }, new app.openring.core.FileSave.Body() {
+                    @Override
+                    public void write(OutputStream os) throws Exception {
+                        if (code == EXPORT_CSV) Exporter.dailyCsv(ctx, os);
+                        else if (b != null) withKey[0] = Backup.write(b, os);
+                        else Exporter.stream(copy, os);
+                    }
+                });
+            } finally {
+                Backup.release(b);
+                Exporter.release(copy);
             }
+            if (o.ok()) {
+                if (!withKey[0]) RingManager.get(ctx).log("backup saved without the ring key: this phone cannot read it (" + Prefs.keyError() + ")");
+                return backup ? (withKey[0] ? "Backup saved" : app.openring.core.KeyState.BACKUP_SAVED_NO_KEY) : "Exported";
+            }
+            failed = true;
+            if (o.removeError != null) RingManager.get(ctx).log("the " + what + " file that was started could not be removed: " + o.removeError);
+            // the raw reason goes to the log, the screen gets a sentence that says what to do (issue #89)
+            RingManager.get(ctx).log(what + " failed after " + o.bytes + " bytes" + (o.removed ? ", the file was removed" : o.leftOver ? ", the incomplete file stays" : "")
+                    + ": " + android.util.Log.getStackTraceString(o.error));
+            shortText = Texts.saveFailedToast(backup, o.leftOver);
+            return Texts.saveFailed(backup, o.leftOver);
+        }
 
-            @Override
-            protected void onPostExecute(String r) {
-                if (r == null) problem(keyUnreadable[0] ? app.openring.core.KeyState.BACKUP_TEXT : notChecked[0] ? Texts.notChecked(backup) : Texts.saveFailed(backup));
-                else say(r);
+        @Override
+        protected void onPostExecute(String m) {
+            SettingsActivity s = shownNow();
+            if (s == null) {
+                // Settings was closed or is being rebuilt: a toast, cut after two lines, so the short text (issue #89)
+                Toast.makeText(ctx, shortText != null ? shortText : m, Toast.LENGTH_LONG).show();
+                return;
             }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+            s.showJobState();
+            if (failed) s.problem(m);
+            else s.say(m);
+        }
     }
 }

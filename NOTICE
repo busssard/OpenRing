@@ -21,3 +21,8 @@ Withings projects is included.
 The Withings watch sign in (core/withings/SignIn) uses the challenge secret and message layout
 from Gadgetbridge's public Withings support (AGPL, https://codeberg.org/Freeyourgadget/Gadgetbridge);
 no code taken.
+
+The Withings watch setup, sync, alarm and hand calibration (core/withings/Proto, WatchSetup,
+Records) use message and part numbers, field layouts and the order of messages read in the same
+Gadgetbridge Withings Steel HR support (AGPL); facts only, written down in our own words in
+docs/ARCHITECTURE.md and implemented anew. No code taken.
