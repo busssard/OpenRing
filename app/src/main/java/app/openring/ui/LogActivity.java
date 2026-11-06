@@ -32,7 +32,8 @@ import app.openring.data.Db;
 public final class LogActivity extends Activity {
     /**
      * The repair runs on after the phone is turned or the screen is left, and only once at a time
-     * (issue #130). Static, so a turned or reopened screen sees it; it ends with the app.
+     * (issue #130). Static, so a turned or reopened screen sees it; it ends with the app. Settings' Re analyse all is
+     * the same job and runs through it too (issue #222, {@link #analyseAll}).
      */
     static final OneRun<LogActivity> REPAIR = new OneRun<LogActivity>();
     /** Shown while a repair runs, as a toast when it starts and as a line above Repair. */
@@ -195,48 +196,74 @@ public final class LogActivity extends Activity {
 
     void repair() {
         if (!REPAIR.start()) {
-            // one repair at a time (issue #130); this screen was covered while another one started it
-            Toast.makeText(this, "A repair is already running.", Toast.LENGTH_LONG).show();
+            // one at a time (issue #130); this screen was covered while another one started it, or Settings' Re analyse
+            // all runs (the same job, issue #222)
+            Toast.makeText(this, Texts.REANALYSE_RUNS, Toast.LENGTH_LONG).show();
             showRepairState();
             return;
         }
         Toast.makeText(this, REPAIRING, Toast.LENGTH_LONG).show();
         showRepairState();
-        new RepairTask(getApplicationContext()).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        analyseAll(getApplicationContext(), false);
+    }
+
+    /**
+     * Runs the job {@link #REPAIR} that the caller has started: Repair here, or Re analyse all in Settings
+     * ({@code fromSettings}, issue #222). A setting saved meanwhile runs it once more ({@link OneRun#finishUnlessAgain}).
+     */
+    static void analyseAll(Context app, boolean fromSettings) {
+        new RepairTask(app, fromSettings).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /** Holds only the application, never a screen, so a turned screen can go (issue #130). */
-    private static final class RepairTask extends AsyncTask<Void, Void, String> {
+    private static final class RepairTask extends AsyncTask<Void, Void, Boolean> {
         private final Context ctx;
+        private final boolean fromSettings;
 
-        RepairTask(Context ctx) {
+        RepairTask(Context ctx, boolean fromSettings) {
             this.ctx = ctx;
+            this.fromSettings = fromSettings;
         }
 
         @Override
-        protected String doInBackground(Void... v) {
-            try {
-                Analyzer.runAll(ctx, new Analyzer.Log() {
-                    @Override
-                    public void log(String m) {
-                        RingManager.get(ctx).log(m);
-                    }
-                });
-                return "Repair done.";
-            } catch (Throwable e) {
-                // also out of memory: the analysis rolled back to the old nights and stored its error (issue #230)
-                RingManager.get(ctx).log("repair failed: " + android.util.Log.getStackTraceString(e));
-                return Texts.REPAIR_FAILED; // raw text logged above (issue #89); may show on any screen
+        protected Boolean doInBackground(Void... v) {
+            boolean ok;
+            do {
+                try {
+                    Analyzer.runAll(ctx, new Analyzer.Log() {
+                        @Override
+                        public void log(String m) {
+                            RingManager.get(ctx).log(m);
+                        }
+                    });
+                    ok = true;
+                } catch (Throwable e) {
+                    // also out of memory: the analysis rolled back to the old nights and stored its error (issue #230)
+                    RingManager.get(ctx).log((fromSettings ? "re analyse all" : "repair") + " failed: " + android.util.Log.getStackTraceString(e));
+                    ok = false;
+                }
+                // one lock with the start: a setting saved after this point starts a new run of its own
+            } while (!REPAIR.finishUnlessAgain());
+            return ok;
+        }
+
+        @Override
+        protected void onPostExecute(Boolean ok) {
+            // the job ended in doInBackground; the screens shown now are told
+            LogActivity a = REPAIR.attached();
+            SettingsActivity s = SettingsActivity.shownNow();
+            if (s != null) s.showJobState();
+            if (fromSettings) {
+                // Settings shown: its own sentence in full; else the application's toast, short (issue #89)
+                if (s != null && ok) s.toast(Texts.ANALYSIS_UPDATED);
+                else if (s != null) s.problem(Texts.ANALYSIS_FAILED);
+                else Toast.makeText(ctx, ok ? Texts.ANALYSIS_UPDATED : Texts.ANALYSIS_FAILED_TOAST, Toast.LENGTH_LONG).show();
+            } else {
+                // the application's toast shows on whatever screen is open now; raw text logged above (issue #89)
+                Toast.makeText(ctx, ok ? "Repair done." : Texts.REPAIR_FAILED, Toast.LENGTH_LONG).show();
             }
-        }
-
-        @Override
-        protected void onPostExecute(String s) {
-            LogActivity a = REPAIR.finish();
-            // the application's toast shows on whatever screen is open now
-            Toast.makeText(ctx, s, Toast.LENGTH_LONG).show();
             if (a == null || a.isDestroyed()) return;
-            a.view = s == Texts.REPAIR_FAILED ? 1 : 0; // after a failure show the Log the toast points to
+            a.view = ok ? 0 : 1; // after a failure show the Log the toast points to
             a.refresh();
         }
     }

@@ -41,6 +41,36 @@ public final class Texts {
     /** Settings, Re analyse all while a sync or Live uses the ring: it waits for that task first (review of #243). */
     public static final String REANALYSE_WAITS = "Waiting for the ring to finish its current task, then re analysing all nights. This can take a few minutes.";
 
+    /**
+     * Re analyse all and Data check's Repair are one job, run one at a time (issue #222): the toast when it starts, and
+     * the line under Re analyse all while it runs (also one started in Data check).
+     */
+    public static final String REANALYSING = "Re analysing all nights, this can take a few minutes.";
+
+    /** Re analyse all tapped while that job runs: no second run is started (issue #222). */
+    public static final String REANALYSE_RUNS = "Re analysing already, please wait.";
+
+    /**
+     * A setting that needs a new analysis was saved while one runs (issue #222): that run may have read the old setting,
+     * so the job runs once more after it instead of a second run beside it.
+     */
+    public static final String REANALYSE_AGAIN = "Saved. Re analysing already runs, it runs once more after that to use your change.";
+
+    /** Re analyse all ended. */
+    public static final String ANALYSIS_UPDATED = "Analysis updated";
+
+    /** Re analyse all failed while Settings was not shown: a toast, so it must fit (issue #222). */
+    public static final String ANALYSIS_FAILED_TOAST = "The analysis failed. Data check and log shows why.";
+
+    /** Settings, the line under the backup and export buttons while a file is saved (issue #222). */
+    public static final String SAVING_BACKUP = "Saving the backup, this can take a minute.";
+    public static final String SAVING_EXPORT = "Saving the export, this can take a minute.";
+    /** The same while the automatic backup writes its copy (one file at a time, issue #222). */
+    public static final String SAVING_AUTO = "An automatic backup is being saved, this can take a minute.";
+
+    /** A backup or export asked for while another one, or the automatic backup, is saved (issue #222). */
+    public static final String SAVE_BUSY = "A file is being saved. Try again when it is done.";
+
     /** Live could not get the ring within 10 seconds: a sync, a game or Delete all local data holds it (issue #43). */
     public static final String LIVE_BUSY = "The ring is busy right now (a sync or another task). Try again in a moment.";
 
@@ -173,8 +203,23 @@ public final class Texts {
 
     /** The sentence after an export or backup file could not be written; the raw reason goes to the log. */
     public static String saveFailed(boolean backup) {
-        return "The " + (backup ? "backup" : "export") + " could not be saved. Pick another place, or free some space, and try again. "
-                + SyncError.DETAILS;
+        return saveFailed(backup, false);
+    }
+
+    /**
+     * As above; {@code leftOver}: the file that was started could not be removed and holds part of it (issue #222), so
+     * the person knows not to keep it as a backup.
+     */
+    public static String saveFailed(boolean backup, boolean leftOver) {
+        return "The " + (backup ? "backup" : "export") + " could not be saved. "
+                + (leftOver ? "The file it started is incomplete, delete it. " : "")
+                + "Pick another place, or free some space, and try again. " + SyncError.DETAILS;
+    }
+
+    /** The short form of a failed save for a toast, when Settings was closed meanwhile (issue #222). */
+    public static String saveFailedToast(boolean backup, boolean leftOver) {
+        String what = backup ? "The backup" : "The export";
+        return leftOver ? what + " was not saved, delete the incomplete file." : what + " was not saved. Data check and log shows why.";
     }
 
     /**

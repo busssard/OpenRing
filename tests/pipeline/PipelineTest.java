@@ -844,6 +844,9 @@ public class PipelineTest {
         settingsCounts198();
         pairingPrefs218();
         keyUnreadable199();
+        backupNoKey288();
+        rotationNoKey288();
+        backupSpeed222();
         swapDuringSync219(full.toByteArray());
         syncDating220();
         datingRandom220();
@@ -7138,35 +7141,27 @@ public class PipelineTest {
         check("#199 keeping a pending key", p.keepPendingKey(fresh, "2X0001"), null);
         check("#199 a pending key leaves the stored key", enc.equals(sp.getString("key_enc", null)) && iv.equals(sp.getString("key_iv", null)), null);
         p.forgetPendingKey();
-        // a backup needs the key: it fails and changes nothing
-        String failed = null;
-        try {
-            app.openring.data.Backup.write(c, new java.io.ByteArrayOutputStream(), false);
-        } catch (java.io.IOException e) {
-            failed = e.getMessage();
-        }
-        check("#199 a backup fails with the reason", failed != null && failed.contains("cannot read"), failed);
-        check("#199 a failed backup leaves the stored key", enc.equals(sp.getString("key_enc", null)) && p.setupDone() && "2X0001".equals(p.serial()), null);
-        boolean ownType = false;
-        try {
-            app.openring.data.Backup.write(c, new java.io.ByteArrayOutputStream(), true);
-        } catch (app.openring.data.Backup.KeyUnreadable e) {
-            ownType = true;
-        }
-        check("#199 a full backup is refused with its own reason, Settings shows its own sentence (review of #281)", ownType, null);
-        // the automatic backup names the key as the reason, not the folder, and writes nothing (review of #281)
+        // a backup is still saved, without the key (issue #288; before it, #199 refused it), and changes nothing
+        java.io.ByteArrayOutputStream nk = new java.io.ByteArrayOutputStream();
+        boolean withKey = app.openring.data.Backup.write(c, nk, false);
+        check("#288 a backup with an unreadable key is saved, without the key", !withKey && nk.size() > 0, nk.size());
+        check("#288 a backup leaves the stored key", enc.equals(sp.getString("key_enc", null)) && p.setupDone() && "2X0001".equals(p.serial()), null);
+        // the automatic backup makes its copy too, without the key (issue #288)
         java.io.File fdir = Files.createTempDirectory("folder199").toFile();
         Folder242 folder = new Folder242(fdir);
         app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/B199", "B199");
         StringBuilder alog = new StringBuilder();
         app.openring.data.AutoBackup.Outcome ao = app.openring.data.AutoBackup.run(c, folder, 1780000000L, false, collect(alog));
-        check("#199 automatic backup: the reason is the key", app.openring.core.Backups.KEY.equals(ao.error) && app.openring.core.Backups.KEY.equals(p.autoError()), ao.error);
-        check("#199 automatic backup: nothing written to the folder", folder.list().isEmpty() && ao.written.isEmpty(), folder.list().toString());
-        check("#199 automatic backup: the log says why", alog.toString().contains("cannot read the saved ring key"), alog.toString());
-        check("#199 automatic backup: Settings says it in plain words", app.openring.core.Backups.status(0, 0, 0, p.autoError(), java.time.ZoneId.of("UTC"))
-                .equals("The last copy failed: this phone cannot read the saved ring key, enter it again in Setup."), p.autoError());
+        check("#288 automatic backup: written, no error", ao.error == null && p.autoError() == null && ao.written.size() == 1 && folder.list().equals(ao.written),
+                ao.error + " " + folder.list());
+        check("#288 automatic backup: the log says the key is left out and why", alog.toString().contains("without the ring key"), alog.toString());
+        check("#288 automatic backup: the copy has no key and says so", !zipJson288(Files.readAllBytes(new java.io.File(fdir, ao.written.get(0)).toPath())).has("key")
+                && zipJson288(Files.readAllBytes(new java.io.File(fdir, ao.written.get(0)).toPath())).optBoolean("no_key"), null);
+        check("#199 the reason older versions stored still reads in plain words", app.openring.core.Backups.status(0, 0, 0, app.openring.core.Backups.KEY, java.time.ZoneId.of("UTC"))
+                .equals("The last copy failed: this phone cannot read the saved ring key, enter it again in Setup."), null);
         check("#199 automatic backup: the stored key stays", enc.equals(sp.getString("key_enc", null)) && iv.equals(sp.getString("key_iv", null)), null);
         p.setBackupFolder(null, null);
+        rmTree(fdir);
         // the ring accepted a key entered again: it replaces the stored one, now readable
         check("#199 pairing done", p.pairDone(fresh, null, "2X0001", "Paired with 2X0001", true), null);
         check("#199 after pairing the key reads", p.keyState() == app.openring.core.KeyState.READABLE && Arrays.equals(p.loadKey(), fresh), p.keyState());
@@ -7187,6 +7182,285 @@ public class PipelineTest {
         // a key kept in plain text (the Keystore failed when it was saved) reads
         p.saveKey(fresh);
         check("#199 a plain stored key reads", p.keyState() == app.openring.core.KeyState.READABLE, p.keyState());
+    }
+
+    static JSONObject zipJson288(byte[] zip) throws Exception {
+        return Json.parse(new String(zipEntry(zip, "openring-backup.json"), "UTF-8"));
+    }
+
+    /** The JSON of a backup changed by {@code edit}, the history entry as it was (an older version's view, a made up file). */
+    static byte[] editJson288(byte[] zip, java.util.function.Consumer<JSONObject> edit) throws Exception {
+        JSONObject o = zipJson288(zip);
+        edit.accept(o);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(o.toString().getBytes("UTF-8"));
+            z.closeEntry();
+            byte[] db = zipEntry(zip, "openring.db");
+            if (db != null) {
+                z.putNextEntry(new java.util.zip.ZipEntry("openring.db"));
+                z.write(db);
+                z.closeEntry();
+            }
+        }
+        return out.toByteArray();
+    }
+
+    static final String ENC288 = "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQ", IV288 = "AAECAwQFBgcICQoL";
+
+    static void unreadable288(Context c) {
+        c.getSharedPreferences("openring", 0).edit().putString("key_enc", ENC288).putString("key_iv", IV288).commit();
+    }
+
+    static boolean stillUnreadable288(Context c) {
+        android.content.SharedPreferences sp = c.getSharedPreferences("openring", 0);
+        return ENC288.equals(sp.getString("key_enc", null)) && IV288.equals(sp.getString("key_iv", null));
+    }
+
+    /**
+     * Issue #288: while the saved key cannot be read, a backup holds everything but the key and is marked so. Restoring
+     * it brings back settings and history and never touches a key on the phone; an older version refuses it whole.
+     */
+    static void backupNoKey288() throws Exception {
+        // a phone with history from the version before (schema upgrade on first open), moved to a new phone: key unreadable
+        Context a = oldPhone242("openring288-a", 20);
+        try {
+            app.openring.data.Prefs pa = app.openring.data.Prefs.of(a);
+            pa.setSerial("2X0288");
+            pa.setAddress("A0:38:F8:00:02:88");
+            pa.setFinderSound(false);
+            pa.setStageDetail(app.openring.core.analysis.StageFilter.CALM);
+            Db da = Db.get(a);
+            Analyzer.runAll(a, null);
+            da = Db.get(a);
+            List<String> events = events58(da), results = results139(da);
+            check("#288 the old phone has history", events.size() > 1000 && results.size() > 10, events.size());
+            unreadable288(a);
+            check("#288 the key cannot be read", pa.keyState() == app.openring.core.KeyState.UNREADABLE, pa.keyState());
+            java.io.ByteArrayOutputStream fullOut = new java.io.ByteArrayOutputStream(), smallOut = new java.io.ByteArrayOutputStream();
+            check("#288 a full backup is written without the key", !app.openring.data.Backup.write(a, fullOut, true), null);
+            check("#288 a key and settings backup is written without the key", !app.openring.data.Backup.write(a, smallOut, false), null);
+            byte[] full = fullOut.toByteArray(), small = smallOut.toByteArray();
+            JSONObject jo = zipJson288(full);
+            check("#288 the file has no key and its mark", !jo.has("key") && jo.optBoolean("no_key") && "2X0288".equals(jo.optString("serial"))
+                    && zipEntry(full, "openring.db") != null, jo.toString().length());
+            check("#288 writing changed nothing on the phone", stillUnreadable288(a) && events58(Db.get(a)).equals(events) && results139(Db.get(a)).equals(results)
+                    && pa.setupDone(), null);
+
+            // ---- restored on a new phone without a key: settings and history, no key, Setup asks for it ----
+            Context b = freshDb("openring288-b");
+            app.openring.data.Backup.Result rb = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(full));
+            app.openring.data.Prefs pb = app.openring.data.Prefs.of(b);
+            check("#288 restored: settings and history", rb.ok && rb.history && rb.noKey
+                    && rb.message.equals("Restored your settings and history. " + app.openring.data.Backup.NO_KEY_ENTER), rb.message);
+            check("#288 restored: the same events and nights, byte for byte", events58(Db.get(b)).equals(events) && results139(Db.get(b)).equals(results),
+                    events58(Db.get(b)).size() + " of " + events.size());
+            check("#288 restored: no key, so the main screen opens Setup", !pb.hasKey() && pb.keyState() == app.openring.core.KeyState.NONE
+                    && app.openring.core.KeyState.opensSetup(false, pb.setupDone(), pb.keyState(), false), pb.setupDone());
+            check("#288 restored: settings and the ring it belonged to", !pb.finderSound() && pb.screenGoalMin() == 45 && "2X0288".equals(pb.serial())
+                    && "A0:38:F8:00:02:88".equals(pb.address()), pb.serial());
+            check("#288 restored: the history's own detail level came along", pb.stageDetail() == app.openring.core.analysis.StageFilter.CALM, pb.stageDetail());
+            // entering the key afterwards (as Setup's pairing does) makes it a full setup, history kept
+            pb.pairDone(KEY242, null, "2X0288", "Paired with 2X0288", true);
+            check("#288 the key entered after the restore: readable, history kept", pb.keyState() == app.openring.core.KeyState.READABLE
+                    && events58(Db.get(b)).equals(events), null);
+            app.openring.data.Backup.Result rs = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(small));
+            check("#288 a key and settings only file without a key over a phone with a key: the key stays", rs.ok && !rs.history && rs.noKey
+                    && Arrays.equals(pb.loadKey(), KEY242) && rs.message.equals("Restored your settings. " + app.openring.data.Backup.NO_KEY_KEPT), rs.message);
+
+            // ---- restored on a phone with its own readable key and ring: key and ring stay, the rest comes along ----
+            Context k = freshDb("openring288-k");
+            app.openring.data.Prefs pk = app.openring.data.Prefs.of(k);
+            byte[] own = app.openring.core.Hex.parseKey("00112233445566778899aabbccddeeff");
+            pk.pairDone(own, "C0:FF:EE:00:00:01", "2X9999", "Paired with 2X9999", true);
+            pk.clearPairUnseen();
+            pk.setHardware("ORE_07");
+            app.openring.data.Backup.Result rk = app.openring.data.Backup.read(k, new java.io.ByteArrayInputStream(full));
+            check("#288 over a phone with a key: restored, the message says the key stays", rk.ok && rk.history && rk.noKey
+                    && rk.message.endsWith(app.openring.data.Backup.NO_KEY_KEPT), rk.message);
+            check("#288 over a phone with a key: its key is the same", Arrays.equals(pk.loadKey(), own) && pk.keyState() == app.openring.core.KeyState.READABLE, null);
+            check("#288 over a phone with a key: its ring stays (a ring only comes with its key)", "2X9999".equals(pk.serial())
+                    && "C0:FF:EE:00:00:01".equals(pk.address()) && "ORE_07".equals(pk.hardware()) && pk.setupDone(), pk.serial());
+            check("#288 over a phone with a key: the history and settings came", events58(Db.get(k)).equals(events) && !pk.finderSound(), null);
+
+            // ---- restored on a phone whose own key is unreadable too: that stored key stays byte for byte ----
+            Context u = freshDb("openring288-u");
+            unreadable288(u);
+            app.openring.data.Prefs pu = app.openring.data.Prefs.of(u);
+            pu.setSetupDone(true);
+            pu.setSerial("2X0777");
+            app.openring.data.Backup.Result ru = app.openring.data.Backup.read(u, new java.io.ByteArrayInputStream(full));
+            check("#288 over an unreadable key: restored, the stored key is untouched, asks to enter it", ru.ok && ru.history && stillUnreadable288(u)
+                    && "2X0777".equals(pu.serial()) && ru.message.endsWith(app.openring.data.Backup.NO_KEY_ENTER), ru.message);
+
+            // ---- an older version: it ignores the mark, finds no key, and refuses the whole file before changing anything ----
+            Context o = freshDb("openring288-old");
+            app.openring.data.Prefs po = app.openring.data.Prefs.of(o);
+            po.saveKey(own);
+            po.setSetupDone(true);
+            po.setSerial("2X9999");
+            po.setScreenGoalMin(77);
+            add58(Db.get(o), 1, T58, 2, 0);
+            long oEvents = Db.get(o).eventCount();
+            byte[] asOld = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                    j.remove("no_key");
+                }
+            });
+            app.openring.data.Backup.Result ro = app.openring.data.Backup.read(o, new java.io.ByteArrayInputStream(asOld));
+            check("#288 an older version refuses the file with its own sentence", !ro.ok && "The backup holds no valid ring key.".equals(ro.message), ro.message);
+            check("#288 ... and changes nothing: key, ring, settings and history", Arrays.equals(po.loadKey(), own) && "2X9999".equals(po.serial())
+                    && po.screenGoalMin() == 77 && Db.get(o).eventCount() == oEvents, null);
+            // a mark next to a key, or a mark that is not true: the key rules, as before
+            byte[] markAndKey = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                    Json.put(j, "key", "4431967d8bacc2659743142b68391d9a");
+                }
+            });
+            app.openring.data.Backup.Plan pm = app.openring.data.Backup.prepare(freshDb("openring288-mk"), new java.io.ByteArrayInputStream(markAndKey));
+            check("#288 a file with a key is a backup with a key, mark or not", pm.error == null && !pm.noKey, pm.error == null ? null : pm.error.message);
+            app.openring.data.Backup.cancel(a, pm);
+            byte[] badKey = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                    Json.put(j, "key", "not a key");
+                }
+            });
+            app.openring.data.Backup.Result rbk = app.openring.data.Backup.read(freshDb("openring288-bk"), new java.io.ByteArrayInputStream(badKey));
+            check("#288 a broken key next to the mark is refused as before", !rbk.ok && "The backup holds no valid ring key.".equals(rbk.message), rbk.message);
+            byte[] falseMark = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                    Json.put(j, "no_key", false);
+                }
+            });
+            app.openring.data.Backup.Result rfm = app.openring.data.Backup.read(freshDb("openring288-fm"), new java.io.ByteArrayInputStream(falseMark));
+            check("#288 a file without key whose mark is not true is refused", !rfm.ok, rfm.message);
+
+            // ---- backups from this version with a key, and from an older version, restore as before ----
+            Context w = freshDb("openring288-w");
+            app.openring.data.Backup.read(w, new java.io.ByteArrayInputStream(full));
+            app.openring.data.Prefs.of(w).saveKey(KEY242);
+            java.io.ByteArrayOutputStream withKeyOut = new java.io.ByteArrayOutputStream();
+            check("#288 with a readable key the file holds it, as before", app.openring.data.Backup.write(w, withKeyOut, true)
+                    && "0102030405060708090a0b0c0d0e0f10".equals(zipJson288(withKeyOut.toByteArray()).optString("key"))
+                    && !zipJson288(withKeyOut.toByteArray()).has("no_key"), null);
+            Context w2 = freshDb("openring288-w2");
+            unreadable288(w2);
+            app.openring.data.Backup.Result rw = app.openring.data.Backup.read(w2, new java.io.ByteArrayInputStream(withKeyOut.toByteArray()));
+            check("#288 a backup with a key over an unreadable key: the key is restored (the person picked the file)", rw.ok && rw.history && !rw.noKey
+                    && Arrays.equals(app.openring.data.Prefs.of(w2).loadKey(), KEY242) && events58(Db.get(w2)).equals(events)
+                    && rw.message.equals("Restored your key, settings and history"), rw.message);
+            // an older version's file: the default zip level, no mark (made here from this one's content)
+            byte[] older = editJson288(withKeyOut.toByteArray(), new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                }
+            });
+            Context w3 = freshDb("openring288-w3");
+            app.openring.data.Backup.Result r3 = app.openring.data.Backup.read(w3, new java.io.ByteArrayInputStream(older));
+            check("#288 an older version's backup restores key, settings and history", r3.ok && r3.history && !r3.noKey
+                    && Arrays.equals(app.openring.data.Prefs.of(w3).loadKey(), KEY242) && events58(Db.get(w3)).equals(events) && results139(Db.get(w3)).equals(results), r3.message);
+            // an interrupted restore (a cut file) changes nothing, also for a file without a key
+            Context x = freshDb("openring288-x");
+            unreadable288(x);
+            app.openring.data.Backup.Result rx = app.openring.data.Backup.read(x, new java.io.ByteArrayInputStream(Arrays.copyOf(full, full.length / 2)));
+            check("#288 a cut file without a key: refused, nothing changed", !rx.ok && stillUnreadable288(x)
+                    && Db.get(x).eventCount() == 0, rx.message);
+        } finally {
+            version242(0);
+            restart242();
+            rmTree(a.dir);
+        }
+    }
+
+    /**
+     * Review of #340: while the key cannot be read every automatic run writes a copy without it; the rotation must never
+     * delete the last copy that still holds the key, or the person could lose the only place the key is left.
+     */
+    static void rotationNoKey288() throws Exception {
+        Context c = freshDb("openring288-rot");
+        java.io.File fdir = Files.createTempDirectory("folder288").toFile();
+        try {
+            add58(Db.get(c), 1, T58, 3, 0);
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            p.saveKey(KEY242);
+            p.setSetupDone(true);
+            Folder242 folder = new Folder242(fdir);
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/R288", "R288");
+            p.setBackupDays(1);
+            p.setBackupKeep(3);
+            long day = 86400L, now = 1780000000L;
+            List<String> keyed = new ArrayList<String>();
+            for (int i = 0; i < 4; i++, now += 2 * day) {
+                app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+                check("#288 rotation: a copy with the key, run " + i, o.error == null && o.written.size() == 1 && !app.openring.core.Backups.keyless(o.written.get(0)), o.error);
+                keyed.add(o.written.get(0));
+            }
+            check("#288 rotation: 3 copies with the key kept", folder.list().size() == 3 && !folder.list().contains(keyed.get(0)), folder.list().toString());
+            String lastKeyed = keyed.get(keyed.size() - 1);
+            unreadable288(c);
+            List<String> keyless = new ArrayList<String>();
+            for (int i = 0; i < 5; i++, now += 2 * day) {
+                app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+                check("#288 rotation: a copy without the key, named so, run " + i, o.error == null && o.written.size() == 1
+                        && app.openring.core.Backups.keyless(o.written.get(0)) && !zipJson288(Files.readAllBytes(new java.io.File(fdir, o.written.get(0)).toPath())).has("key"),
+                        o.error + " " + o.written);
+                keyless.add(o.written.get(0));
+            }
+            List<String> left = new ArrayList<String>(folder.list());
+            java.util.Collections.sort(left);
+            check("#288 rotation: after more runs than kept copies the newest copy with the key is still there", left.contains(lastKeyed), left.toString());
+            check("#288 rotation: beside it the 3 newest without the key, the rest went", left.size() == 4 && left.containsAll(keyless.subList(2, 5)), left.toString());
+            Context fresh = freshDb("openring288-rot-restore");
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(fresh, new java.io.ByteArrayInputStream(Files.readAllBytes(new java.io.File(fdir, lastKeyed).toPath())));
+            check("#288 rotation: the kept copy gives the key back", r.ok && Arrays.equals(app.openring.data.Prefs.of(fresh).loadKey(), KEY242), r.message);
+            rmTree(fresh.dir);
+            // the key is entered again: copies with the key, the rotation as before (the old copy with the key may go now)
+            Db.get(c);
+            app.openring.data.Prefs.of(c).saveKey(KEY242);
+            app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+            check("#288 rotation: with the key readable again a copy with the key, 3 kept, the old one with the key gone",
+                    o.error == null && !app.openring.core.Backups.keyless(o.written.get(0)) && folder.list().size() == 3 && !folder.list().contains(lastKeyed), folder.list().toString());
+        } finally {
+            rmTree(fdir);
+            rmTree(c.dir);
+        }
+    }
+
+    /**
+     * Issue #222: the backup's zip at the fastest level holds the same history, restores the same events and nights,
+     * also for a long history, and is written faster.
+     */
+    static void backupSpeed222() throws Exception {
+        Context a = freshDb("openring222-long");
+        Db db = Db.get(a);
+        add58(db, 1, T58 - 240 * 86400L, 240, 0);
+        Analyzer.run(a, null);
+        app.openring.data.Prefs.of(a).saveKey(KEY242);
+        List<String> events = events58(Db.get(a)), results = results139(Db.get(a));
+        long t0 = System.nanoTime();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(a, out, true);
+        long fast = System.nanoTime() - t0;
+        byte[] zip = out.toByteArray();
+        byte[] dbBytes = zipEntry(zip, "openring.db");
+        // the same content at the default level, as older versions wrote it
+        java.io.ByteArrayOutputStream def = new java.io.ByteArrayOutputStream();
+        t0 = System.nanoTime();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(def)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring.db"));
+            z.write(dbBytes);
+            z.closeEntry();
+        }
+        long slow = System.nanoTime() - t0;
+        System.out.println(String.format(java.util.Locale.ROOT, "    #222 a %d day history, %.1f MB: fastest level %.1f MB in %.2f s (with the copy), default %.1f MB in %.2f s (zip only)",
+                240, dbBytes.length / 1e6, zip.length / 1e6, fast / 1e9, def.size() / 1e6, slow / 1e9));
+        check("#222 the fastest level costs at most a fifth more space", zip.length < def.size() * 1.2, zip.length + " vs " + def.size());
+        Context b = freshDb("openring222-restore");
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(zip));
+        check("#222 a backup at the fastest level restores the same events and nights", r.ok && r.history && events58(Db.get(b)).equals(events)
+                && results139(Db.get(b)).equals(results), r.message + " " + events.size());
+        rmTree(a.dir);
+        rmTree(b.dir);
     }
 
     /**
@@ -9090,6 +9364,23 @@ public class PipelineTest {
             for (app.openring.data.BeforeUpdate.Entry e : app.openring.data.BeforeUpdate.list(c)) if (e.copy.back) backs++;
             check("#242 back to the copy before going back: the newer history returns, one copy before going back stays", r.ok
                     && Db.get(c).eventCount() == newer && backs == 1, r.message + " " + backs);
+
+            // a saved key this phone cannot read (issue #288): going back needs no key, it works and the key stays as stored
+            Thread.sleep(1100);
+            android.content.SharedPreferences sp288 = c.getSharedPreferences("openring", 0);
+            sp288.edit().putString("key_enc", "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQ").putString("key_iv", "AAECAwQFBgcICQoL").commit();
+            String to288 = app.openring.data.BeforeUpdate.list(c).get(0).copy.file;
+            r = app.openring.data.AutoBackup.goBack(c, to288, null);
+            check("#288 go back with an unreadable key: works, the stored key is untouched", r.ok && r.history
+                    && "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQ".equals(sp288.getString("key_enc", null)) && "AAECAwQFBgcICQoL".equals(sp288.getString("key_iv", null))
+                    && p.setupDone(), r.message);
+            p.saveKey(KEY242);
+            // and back to the history before that (its copy before going back is the newest of its kind)
+            app.openring.data.BeforeUpdate.Entry newest288 = null;
+            for (app.openring.data.BeforeUpdate.Entry e : app.openring.data.BeforeUpdate.list(c)) if (e.copy.back && (newest288 == null || e.time > newest288.time)) newest288 = e;
+            Thread.sleep(1100);
+            r = app.openring.data.AutoBackup.goBack(c, newest288.copy.file, null);
+            check("#288 back again: the newer history returns", r.ok && Db.get(c).eventCount() == newer, r.message);
 
             // the current history cannot be kept first (its file name is taken by a folder): nothing is replaced
             java.io.File dir = copies242(c);
