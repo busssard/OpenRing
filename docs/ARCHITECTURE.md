@@ -126,6 +126,15 @@ test fills every table that really is in the file (`sqlite_master`, not `SCHEMA`
 After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(TRUNCATE)` (in WAL mode a checkpoint
 before VACUUM leaves the file at full size), so the file gives the history's space back; an error there never reaches
 the person because the delete is already complete, and a read open at that moment only delays the shrink to the next checkpoint.
+
+Reading phone use (`Db.screen`, `Db.apps`) stays bounded by the time asked for, not by the history since install (issue
+#223): rows up to a day long are read from the index on start, from one day and a second before the window, and rows longer
+than a day through their own partial indexes (`screen_long`, `apps_long`, `WHERE stop - start > 86400`); the two parts never
+share a row and together are exactly the rows of `stop > from AND start < to`. `apps_start` (start, pkg) also makes
+`appsStart` one index step. The indexes are made in `Db.onOpen` with `IF NOT EXISTS` (no version step, no row changes), so any
+file gets them at its next open, also a restored or older one; SQLite keeps them up to date with every write, so nothing can
+go stale, and without them (a file opened read only) the reads are the same, only slower.
+
 A failed shrink is noted for the Data check (issue #299): one kv row `DataCheck.SHRINK_ERROR` written after the delete
 committed, with the step, the time and the error's class and place (never its message), gone with the next delete and
 removed from a restored file in `Db.replaceWith` (the restored file is compact). The Data check never names the period tables,
@@ -344,7 +353,10 @@ not know the `-nokey` name and leave those files alone.
    through gaps of up to 3 hours (`NightFinder.nightEnds`), never in the phone's zone now, so a trip does not split nights
    analysed again later (issue #161). A period keeps where the ring's own hypnogram ends (`Period.codesEnd`), so
    a bedtime period that makes a ring staged run longer leaves the stages at their clock times and the extra time
-   without stage data (issue #110). kv `night_finder` holds the rules version. `Analyzer` then
+   without stage data (issue #110). Two ring stage runs with a break of up to an hour are one night with both
+   runs' stages at their own times; the break is awake where the ring's own sleep state says awake
+   (`NightFinder.stateAwake`, kept as the ring's own wake up) and has no stage data otherwise (issue #189). Runs
+   that overlap (pages sent again) keep the first run's stages. kv `night_finder` holds the rules version (3 since #189). `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
    When "Count phone use as awake" is on (default), phone use of a minute or more that overlaps the first or
    last 10 minutes of a period moves its edge past it, and a period of under 15 minutes left is dropped.

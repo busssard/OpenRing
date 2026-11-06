@@ -120,8 +120,7 @@ public final class DayData {
             else d.naps.add(o);
         }
         java.time.ZoneId phone = java.time.ZoneId.systemDefault();
-        java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(date.atTime(12, 0).atZone(phone).toEpochSecond()));
-        d.zone = Json.zone(d.night, noted == null ? phone : noted);
+        d.zone = Json.dayZone(d.night, db.zoneAt(Json.noon(date, phone)), phone);
         try {
             double ds = d.dayStart(), de = d.dayEnd();
             for (double[] r : db.leftOut().ranges()) if (r[1] > ds - 2 * 86400 && r[0] < de + 86400) d.leftOut.add(r);
