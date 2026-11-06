@@ -29,7 +29,7 @@ import app.openring.data.Json;
 public class PipelineTest {
     static int passed, failed;
     /** The schema version of this app (issue #251 made it 9). */
-    static final int CUR = 9;
+    static final int CUR = 10;
 
     static void check(String name, boolean ok, Object info) {
         if (ok) passed++;
@@ -872,7 +872,9 @@ public class PipelineTest {
         largeLog252();
         tracker252();
         upgrade251();
+        upgradeSetup251();
         store251();
+        fixes332();
         restore251();
         large251();
         demo251();
@@ -9248,6 +9250,8 @@ public class PipelineTest {
     /** The tables schema 9 added (the watch, issue #251). */
     static final String[] DROP9 = {"DROP TABLE watch_raw", "DROP TABLE watch_devices", "DROP TABLE watch_steps", "DROP TABLE watch_hr", "DROP TABLE watch_sleep",
         "DROP TABLE watch_workouts", "DROP TABLE watch_battery"};
+    /** The table schema 10 added (the watch setup, issue #251). */
+    static final String[] DROP10 = {"DROP TABLE watch_moves"};
 
     /**
      * Issue #252, data safety: a history of schema 7 or 6 (with nights) upgrades to 8 with the same events, nights and days and
@@ -10765,7 +10769,7 @@ public class PipelineTest {
             "SELECT device, start, dur, steps, metres, kcal FROM watch_steps ORDER BY device, start", "SELECT device, t, bpm FROM watch_hr ORDER BY device, t",
             "SELECT device, start, dur, stage FROM watch_sleep ORDER BY device, start",
             "SELECT device, start, dur, kind, steps, metres, kcal FROM watch_workouts ORDER BY device, start",
-            "SELECT device, t, pct, state, mv FROM watch_battery ORDER BY device, t"};
+            "SELECT device, t, pct, state, mv FROM watch_battery ORDER BY device, t", "SELECT device, start, met, up, down FROM watch_moves ORDER BY device, start"};
         for (String sql : q) {
             android.database.Cursor c = db.getReadableDatabase().rawQuery(sql, null);
             try {
@@ -10799,7 +10803,7 @@ public class PipelineTest {
         List<byte[][]> recs = new ArrayList<byte[][]>();
         for (int i = 0; i < 40; i++) {
             recs.add(new byte[][] {app.openring.core.withings.WatchDemo.time(t0 + i * 900), app.openring.core.withings.WatchDemo.duration(900),
-                app.openring.core.withings.WatchDemo.steps(100 + i, 70 + i)});
+                app.openring.core.withings.WatchDemo.steps(100 + i, 70 + i, i % 3, i % 2)});
         }
         recs.add(new byte[][] {app.openring.core.withings.WatchDemo.time(t0 - 6 * 3600), app.openring.core.withings.WatchDemo.duration(1800),
             app.openring.core.withings.WatchDemo.sleep(app.openring.core.withings.Records.DEEP)});
@@ -10828,14 +10832,15 @@ public class PipelineTest {
             restart242();
             java.io.File file = c.getDatabasePath(Db.REAL);
             try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+                for (String x : DROP10) st.execute(x);
                 for (String x : DROP9) st.execute(x);
                 if (from <= 7) for (String x : DROP8) st.execute(x);
                 if (from <= 6) st.execute("DROP TABLE excluded");
                 st.execute("PRAGMA user_version = " + from);
             }
             db = Db.get(c);
-            check("#251 upgrade from schema " + from + ": version 9 with empty watch tables, every event, night and day the same",
-                    db.getReadableDatabase().getVersion() == 9 && watchCount251(db, "watch_raw") == 0 && events58(db).equals(ev) && results139(db).equals(before)
+            check("#251 upgrade from schema " + from + ": version " + CUR + " with empty watch tables, every event, night and day the same",
+                    db.getReadableDatabase().getVersion() == CUR && watchCount251(db, "watch_raw") == 0 && events58(db).equals(ev) && results139(db).equals(before)
                             && periodRows252(db).equals(periods), db.getReadableDatabase().getVersion());
             check("#251 upgrade from schema " + from + ": the schema check of this version passes", schemaProblem251(db) == null, schemaProblem251(db));
             check("#251 upgrade from schema " + from + ": nothing to analyse again", Analyzer.upToDate(c), null);
@@ -10847,15 +10852,16 @@ public class PipelineTest {
                     st.execute("PRAGMA user_version = 8");
                 }
                 db = Db.get(c);
-                check("#251 the upgrade run twice keeps every watch row and the history", db.getReadableDatabase().getVersion() == 9 && watchRows251(db).equals(rows)
+                check("#251 the upgrade run twice keeps every watch row and the history", db.getReadableDatabase().getVersion() == CUR && watchRows251(db).equals(rows)
                         && events58(db).equals(ev) && results139(db).equals(before), null);
                 restart242();
                 try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
                     for (int i = 1; i < DROP9.length; i++) st.execute(DROP9[i]);
+                    for (String x : DROP10) st.execute(x);
                     st.execute("PRAGMA user_version = 8");
                 }
                 db = Db.get(c);
-                check("#251 an upgrade stopped after the first table goes on: every table there, the raw messages kept", db.getReadableDatabase().getVersion() == 9
+                check("#251 an upgrade stopped after the first table goes on: every table there, the raw messages kept", db.getReadableDatabase().getVersion() == CUR
                         && schemaProblem251(db) == null && watchCount251(db, "watch_raw") == made251(T251, 80).size() && watchCount251(db, "watch_steps") == 0
                         && events58(db).equals(ev), schemaProblem251(db));
                 // the decoded rows come back from the raw messages: the same as before the cut
@@ -10868,10 +10874,93 @@ public class PipelineTest {
         clean254();
     }
 
+    /**
+     * Issue #251, watch setup, data safety: a schema 9 history with watch rows (decoder 1) upgrades to 10 with every event,
+     * night, day, raw message and decoded row as before and an empty {@code watch_moves}; the new decoder then works the
+     * rows out again in one transaction and fills it, the rows of the other tables unchanged; the upgrade run twice keeps
+     * everything. The watch setup choices travel with a backup, and an older backup keeps the phone's.
+     */
+    static void upgradeSetup251() throws Exception {
+        Context c = phone254("openring251-setup-up");
+        Db db = Db.get(c);
+        session251(db, 1000, made251(T251, 80), T251 + 86400);
+        List<String> before = results139(db), ev = events58(db);
+        String periods = periodRows252(db);
+        String rows = watchRows251(db);
+        long moves = watchCount251(db, "watch_moves");
+        check("#251 setup: the made up session has intensity and climb rows", moves > 0, moves);
+        String withoutMoves = rows.replaceFirst("(?s)--\n[^-]*--\n$", "--\n--\n");
+        restart242();
+        java.io.File file = c.getDatabasePath(Db.REAL);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+            for (String x : DROP10) st.execute(x);
+            st.execute("UPDATE kv SET v = '1' WHERE k = 'watch_decoder'");
+            st.execute("PRAGMA user_version = 9");
+        }
+        db = Db.get(c);
+        check("#251 setup: upgrade from schema 9: version 10, every event, night, day, period day and watch row the same, watch_moves empty",
+                db.getReadableDatabase().getVersion() == CUR && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods)
+                        && watchRows251(db).equals(withoutMoves) && watchCount251(db, "watch_moves") == 0, watchRows251(db));
+        check("#251 setup: the schema check of version 10 passes", schemaProblem251(db) == null, schemaProblem251(db));
+        check("#251 setup: nothing of the ring to analyse again", Analyzer.upToDate(c), null);
+        check("#251 setup: the stored rows are from decoder 1, so they are worked out again", !app.openring.data.WatchStore.decoderCurrent(db), null);
+        check("#251 setup: decoding again fills watch_moves, every other row as before", app.openring.data.WatchStore.ensureDecoded(db) && watchRows251(db).equals(rows)
+                && events58(db).equals(ev), watchRows251(db));
+        restart242();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+            st.execute("PRAGMA user_version = 9");
+        }
+        db = Db.get(c);
+        check("#251 setup: the upgrade run twice keeps every row", db.getReadableDatabase().getVersion() == CUR && watchRows251(db).equals(rows) && events58(db).equals(ev), null);
+
+        // the setup choices in the backup
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setWatchGoal(8000);
+        p.setWatchMetric(false);
+        app.openring.core.withings.WatchSetup.Alarm a = new app.openring.core.withings.WatchSetup.Alarm();
+        a.on = true;
+        a.hour = 6;
+        a.minute = 40;
+        a.days = 0x60;
+        a.smart = 15;
+        p.setWatchAlarm(a);
+        p.setWatchAlarmSent(p.watchAlarmChange());
+        byte[] full = backup252(c);
+        p.setWatchGoal(12000);
+        p.setWatchMetric(true);
+        a.on = false;
+        p.setWatchAlarm(a);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        app.openring.core.withings.WatchSetup.Alarm got = p.watchAlarm();
+        check("#251 setup: goal, unit and alarm come back from the backup, the alarm to be sent again", r.ok && p.watchGoal() == 8000 && !p.watchMetric() && got.on
+                && got.hour == 6 && got.minute == 40 && got.days == 0x60 && got.smart == 15 && p.watchAlarmPending(), r.message);
+        // an older backup has none of them: the phone's stay
+        org.json.JSONObject o = new org.json.JSONObject(new String(zipEntry(full, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
+        for (String k : new String[] {"watch_goal", "watch_metric", "watch_alarm_on", "watch_alarm_h", "watch_alarm_m", "watch_alarm_days", "watch_alarm_smart"}) o.remove(k);
+        p.setWatchGoal(6000);
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(withJson251(full, o.toString())));
+        check("#251 setup: an older backup without the setup choices keeps the phone's", r.ok && p.watchGoal() == 6000 && p.watchAlarm().hour == 6, r.message);
+        clean254();
+    }
+
+    /** The backup with another JSON, the same history file. */
+    static byte[] withJson251(byte[] zip, String json) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(json.getBytes("UTF-8"));
+            z.closeEntry();
+            z.putNextEntry(new java.util.zip.ZipEntry("openring.db"));
+            z.write(zipEntry(zip, "openring.db"));
+            z.closeEntry();
+        }
+        return out.toByteArray();
+    }
+
     static String schemaProblem251(Db db) throws Exception {
         java.lang.reflect.Method m = Db.class.getDeclaredMethod("schemaProblem", android.database.sqlite.SQLiteDatabase.class, int.class);
         m.setAccessible(true);
-        return (String) m.invoke(null, db.getReadableDatabase(), 9);
+        return (String) m.invoke(null, db.getReadableDatabase(), CUR);
     }
 
     /**
@@ -10879,6 +10968,72 @@ public class PipelineTest {
      * where the next request starts; a new decoder works everything out again in one transaction, and a stop half way keeps the
      * old rows; pairing another ring keeps the watch rows, Delete all empties them; the ring's data is never touched.
      */
+    /**
+     * Review of #332: a record in both the activity and the movement answer keeps every part (the movement answer may lack
+     * the calories part); where the next request starts the first time; another watch is never taken as set up; an alarm
+     * changed during a session stays pending. Raw messages are never changed.
+     */
+    static void fixes332() throws Exception {
+        Context c = phone254("openring332-fixes");
+        Db db = Db.get(c);
+        long now = T251 + 40 * 86400L;
+        check("#332 since: nothing stored yet, the first request asks 30 days back", app.openring.data.WatchStore.since(db, DEV251, false, now) == now - 30 * 86400L
+                && app.openring.data.WatchStore.since(db, DEV251, true, now) == now - 30 * 86400L, app.openring.data.WatchStore.since(db, DEV251, false, now));
+        check("#332 since: a clock before the month: never below 0", app.openring.data.WatchStore.since(db, DEV251, true, 1000) == 0, null);
+        // the activity answer: steps with calories and intensity; the movement answer: the same record, steps with climb, no calories
+        List<byte[][]> act = new ArrayList<byte[][]>(), mov = new ArrayList<byte[][]>();
+        act.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(500, 360), app.openring.core.withings.WatchDemo.calories(21, 35)});
+        mov.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(500, 360, 6, 4)});
+        List<byte[]> msgs = new ArrayList<byte[]>();
+        msgs.addAll(app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.ACTIVITY, act, 5));
+        msgs.addAll(app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.MOVEMENT, mov, 5));
+        session251(db, 3000, msgs, T251 + 3600);
+        String rows = watchRows251(db);
+        check("#332 merge: the movement answer without calories keeps the activity answer's calories", rows.contains(DEV251 + " " + T251 + " 900 500 360 21\n"), rows);
+        check("#332 merge: intensity from the activity answer and the climb from the movement answer, in one row", rows.contains(DEV251 + " " + T251 + " 35 6 4\n")
+                && watchCount251(db, "watch_moves") == 1 && watchCount251(db, "watch_steps") == 1, rows);
+        check("#332 since: after a sync, 2 hours before the newest record", app.openring.data.WatchStore.since(db, DEV251, false, now) == T251 - 7200, null);
+        // decoding everything again (a new decoder) gives the same rows, the raw messages unchanged
+        String raw = rows.substring(0, rows.indexOf("--\n"));
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#332 merge: decoding all again gives the same rows, raw messages untouched", watchRows251(db).equals(rows) && watchRows251(db).startsWith(raw), watchRows251(db));
+        // a later activity answer with the record grown: the larger counts win
+        List<byte[][]> later = new ArrayList<byte[][]>();
+        later.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(640, 460), app.openring.core.withings.WatchDemo.calories(27, 40)});
+        session251(db, 4000, app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.ACTIVITY, later, 5), T251 + 7200);
+        rows = watchRows251(db);
+        check("#332 merge: a record that came again grown takes the new counts, the climb stays", rows.contains(DEV251 + " " + T251 + " 900 640 460 27\n")
+                && rows.contains(DEV251 + " " + T251 + " 40 6 4\n"), rows);
+
+        // another watch: never taken as set up (review of #332)
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setWatch(DEV251, "Steel HR test");
+        p.setWatchSetupAt(T251);
+        p.setWatchCalibrating(true);
+        p.setWatch(DEV251.toLowerCase(java.util.Locale.ROOT), "Steel HR renamed");
+        check("#332 the same watch again (a restore, a new name): still set up", p.watchSetupAt() == T251 && p.watchCalibrating(), p.watchSetupAt());
+        p.setWatch("00:00:5E:00:53:AA", "Steel HR other");
+        check("#332 another watch: not set up, no open calibration of the old one", p.watchSetupAt() == 0 && !p.watchCalibrating() && "00:00:5E:00:53:AA".equals(p.watchAddress()),
+                p.watchSetupAt());
+        p.setWatchSetupAt(T251);
+        p.forgetWatch();
+        p.setWatch(DEV251, "Steel HR test");
+        check("#332 forgotten, then added again: not set up", p.watchSetupAt() == 0, p.watchSetupAt());
+
+        // an alarm changed while a session sends the one it read: the new one stays pending (review of #332)
+        app.openring.core.withings.WatchSetup.Alarm a = new app.openring.core.withings.WatchSetup.Alarm();
+        a.on = true;
+        p.setWatchAlarm(a);
+        int read = p.watchAlarmChange();
+        a.hour = 6;
+        p.setWatchAlarm(a);
+        check("#332 alarm: the watch took an older alarm, the newer one stays pending", !p.setWatchAlarmSent(read) && p.watchAlarmPending(), null);
+        check("#332 alarm: the watch took the current alarm, nothing pending", p.setWatchAlarmSent(p.watchAlarmChange()) && !p.watchAlarmPending(), null);
+    }
+
     static void store251() throws Exception {
         Context c = phone254("openring251-store");
         Db db = Db.get(c);
@@ -10955,7 +11110,7 @@ public class PipelineTest {
         check("#251 pairing another ring keeps every watch row", watchRows251(db).equals(rows) && db.eventCount() == 0, null);
         Analyzer.deleteAll(c);
         boolean empty = true;
-        for (String t : new String[] {"watch_raw", "watch_devices", "watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery"}) empty &= watchCount251(db, t) == 0;
+        for (String t : new String[] {"watch_raw", "watch_devices", "watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery", "watch_moves"}) empty &= watchCount251(db, t) == 0;
         check("#251 Delete all local data empties every watch table", empty, watchRows251(db));
         clean254();
     }
@@ -10999,14 +11154,15 @@ public class PipelineTest {
         db = Db.get(c);
         check("#251 restore: the backup's messages come back next to the phone's, the rows worked out from all", r.ok && watchRows251(db).equals(phone), null);
         // older backups: no watch tables; the upgrade makes them, then the phone's watch goes in
-        for (int v : new int[] {8, 7}) {
-            List<String> sql = new ArrayList<String>(Arrays.asList(DROP9));
+        for (int v : new int[] {9, 8, 7}) {
+            List<String> sql = new ArrayList<String>(Arrays.asList(DROP10));
+            if (v <= 8) sql.addAll(Arrays.asList(DROP9));
             if (v == 7) sql.addAll(Arrays.asList(DROP8));
             byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), v, sql.toArray(new String[0])));
             r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
             db = Db.get(c);
-            check("#251 a backup of schema " + v + " restores at version 9 with the phone's watch row for row", r.ok && r.history
-                    && db.getReadableDatabase().getVersion() == 9 && watchRows251(db).equals(phone) && db.eventCount() == events, r.message);
+            check("#251 a backup of schema " + v + " restores at version " + CUR + " with the phone's watch row for row", r.ok && r.history
+                    && db.getReadableDatabase().getVersion() == CUR && watchRows251(db).equals(phone) && db.eventCount() == events, r.message);
         }
         // a stop at each step of the merge: nothing restored, the phone's watch as it was
         for (String step : new String[] {"read", "write", "done"}) {

@@ -62,15 +62,28 @@ public final class WatchDemo {
     }
 
     public static byte[] steps(int steps, int metres) {
+        return steps(steps, metres, 0, 0);
+    }
+
+    /** A movement part: steps (2 bytes), distance, metres climbed and descended (4 bytes each). */
+    public static byte[] steps(int steps, int metres, int up, int down) {
         byte[] v = new byte[14];
         Frame.put16(v, 0, steps);
         Frame.put32(v, 2, metres);
+        Frame.put32(v, 6, up);
+        Frame.put32(v, 10, down);
         return Frame.part(Proto.REC_STEPS, v);
     }
 
     public static byte[] calories(int kcal) {
+        return calories(kcal, 0);
+    }
+
+    /** A calories part: calories, then the intensity (2 bytes each). */
+    public static byte[] calories(int kcal, int met) {
         byte[] v = new byte[4];
         Frame.put16(v, 0, kcal);
+        Frame.put16(v, 2, met);
         return Frame.part(Proto.REC_CALORIES, v);
     }
 
@@ -164,7 +177,8 @@ public final class WatchDemo {
                 if (workout && h >= 18 && h < 18.75) continue;
                 int base = h >= 8 && h < 8.5 || h >= 17.25 && h < 17.75 ? 700 : h >= 12 && h < 12.5 ? 450 : 120;
                 int st = Math.max(0, base + r.nextInt(250) - 100);
-                recs.add(new byte[][] {time(s), duration(900), steps(st, (int) (st * 0.72)), calories(st / 25)});
+                // made up climb and intensity from the steps (no new random number, so every other made up value stays)
+                recs.add(new byte[][] {time(s), duration(900), steps(st, (int) (st * 0.72), st / 150, st / 170), calories(st / 25, 10 + st / 40)});
                 idx.add(new long[] {s});
             }
             if (workout) {
