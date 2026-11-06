@@ -67,7 +67,7 @@ Android 8.0 or newer.
 
 Updates install over the old version and keep your data.
 
-**Stable or nightly:** the [latest release](https://github.com/busssard/OpenRing/releases/latest) is the tested, stable version (about weekly). The [nightly](https://github.com/busssard/OpenRing/releases/tag/nightly) has every change as soon as it is merged, for people who want to try new things first. Either installs over the other.
+**Stable or nightly:** the [latest release](https://github.com/busssard/OpenRing/releases/latest) is the tested, stable version (about weekly). The [nightly](https://github.com/busssard/OpenRing/releases/tag/nightly) has every change as soon as it is merged, for people who want to try new things first. Stable versions are numbered 2.0, 2.1 and so on, a nightly after 2.1 is 2.1.1, 2.1.2 and so on. Either installs over the other.
 
 <details>
 <summary>Android says "unverified developer"</summary>
