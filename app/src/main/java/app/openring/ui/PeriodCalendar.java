@@ -3,17 +3,9 @@ package app.openring.ui;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
-import android.graphics.RectF;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.ViewConfiguration;
 
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.time.format.TextStyle;
-import java.time.temporal.WeekFields;
-import java.util.Locale;
 
 import app.openring.core.analysis.Cycles;
 
@@ -26,134 +18,31 @@ import app.openring.core.analysis.Cycles;
  * of the cycle and why the day is in a band. A tap without movement opens the day editor; lifting after a slide does
  * nothing. A move that starts upwards or downwards scrolls the page, as on the other charts ({@link Charts.Scrub}).
  */
-final class PeriodCalendar extends View {
-    interface Listener {
-        /** A day read by sliding over it. */
-        void read(LocalDate day);
-
-        /** A day tapped without moving: open the editor. */
-        void tap(LocalDate day);
+final class PeriodCalendar extends MonthView {
+    interface Listener extends MonthView.Listener {
     }
 
-    static final int ROWS = 6;
     private final Cycles cy;
-    private final Listener listener;
     /** The estimate's bands and their legend; off in the drip import's preview, which shows only the file's days. */
     boolean bands = true;
-    private final DayOfWeek firstDay = WeekFields.of(Locale.getDefault()).getFirstDayOfWeek();
-    private YearMonth month;
-    private LocalDate readDay;
-    private final int slop;
-    private float downX, downY;
-    private boolean dragging;
-    private final float head, cellH, legendH;
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final RectF r = new RectF();
+    private final float legendH;
 
     PeriodCalendar(Context c, Cycles cy, YearMonth month, Listener listener) {
-        super(c);
+        super(c, month, listener, false, "Period calendar, touch and slide to read the days, tap a day to change it");
         this.cy = cy;
-        this.month = month;
-        this.listener = listener;
-        slop = ViewConfiguration.get(c).getScaledTouchSlop();
-        head = Ui.dp(c, 22);
-        cellH = Ui.dp(c, 42);
         legendH = Ui.dp(c, 44);
-        stroke.setStyle(Paint.Style.STROKE);
-        txt.setTextAlign(Paint.Align.CENTER);
-        txt.setTypeface(Ui.REGULAR);
-        setContentDescription("Period calendar, touch and slide to read the days, tap a day to change it");
-    }
-
-    void month(YearMonth m) {
-        month = m;
-        readDay = null;
-        invalidate();
     }
 
     @Override
-    protected void onMeasure(int widthSpec, int heightSpec) {
-        setMeasuredDimension(MeasureSpec.getSize(widthSpec), (int) Math.ceil(head + ROWS * cellH + legendH));
-    }
-
-    /** The place of the first of the month in the first row. */
-    int offset() {
-        return (month.atDay(1).getDayOfWeek().getValue() - firstDay.getValue() + 7) % 7;
-    }
-
-    /** The day at a point of the grid, or null outside this month's days. */
-    LocalDate dayAt(float x, float y) {
-        float cw = getWidth() / 7f;
-        int col = (int) Math.max(0, Math.min(6, Math.floor(x / cw)));
-        int row = (int) Math.floor((y - head) / cellH);
-        if (row < 0 || row >= ROWS) return null;
-        int dom = row * 7 + col - offset() + 1;
-        return dom >= 1 && dom <= month.lengthOfMonth() ? month.atDay(dom) : null;
-    }
-
-    @Override
-    public boolean onTouchEvent(MotionEvent e) {
-        if (!isEnabled()) return false;
-        switch (e.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
-                downX = e.getX();
-                downY = e.getY();
-                dragging = false;
-                return true;
-            case MotionEvent.ACTION_MOVE:
-                if (!dragging) {
-                    float dx = Math.abs(e.getX() - downX), dy = Math.abs(e.getY() - downY);
-                    if (dx > slop && dx > dy) {
-                        dragging = true;
-                        if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
-                    } else if (dy > slop) {
-                        return false; // the page scrolls
-                    }
-                }
-                if (dragging) {
-                    LocalDate d = dayAt(e.getX(), e.getY());
-                    if (d != null && !d.equals(readDay)) {
-                        readDay = d;
-                        invalidate();
-                        listener.read(d);
-                    }
-                }
-                return true;
-            case MotionEvent.ACTION_UP:
-                if (!dragging) {
-                    LocalDate d = dayAt(e.getX(), e.getY());
-                    if (d != null) {
-                        readDay = d;
-                        invalidate();
-                        performClick();
-                        listener.tap(d);
-                    }
-                }
-                dragging = false;
-                return true;
-            default:
-                dragging = false;
-                return true;
-        }
-    }
-
-    @Override
-    public boolean performClick() {
-        return super.performClick();
+    protected float below() {
+        return legendH;
     }
 
     @Override
     protected void onDraw(Canvas cv) {
         Context c = getContext();
         float w = getWidth(), cw = w / 7f;
-        Locale loc = Locale.getDefault();
-        // weekday letters
-        txt.setTextSize(Ui.dp(c, 11));
-        txt.setColor(Ui.TEXT_3);
-        for (int i = 0; i < 7; i++) {
-            String n = firstDay.plus(i).getDisplayName(TextStyle.NARROW, loc);
-            cv.drawText(n, cw * (i + 0.5f), head - Ui.dp(c, 8), txt);
-        }
+        drawWeekdays(cv, cw);
         int off = offset(), len = month.lengthOfMonth();
         float rad = Math.min(cw, cellH) * 0.36f;
         // bands behind the days: the ovulation range, then the expected period on top
