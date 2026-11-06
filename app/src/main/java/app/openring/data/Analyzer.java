@@ -85,7 +85,7 @@ public final class Analyzer {
 
     /**
      * Incremental: re analyse from a little before the last analysed point up to now. Any failure, also running out
-     * of memory, rolls the results back to the old ones and stores its text in {@code analysis_error} (issue #230).
+     * of memory, rolls the results back to the old ones and stores its class and place in {@code analysis_error} (issues #230, #289).
      */
     public static void run(Context c, Log log) {
         RUNS.incrementAndGet();
@@ -384,10 +384,19 @@ public final class Analyzer {
         }
     }
 
-    /** Stores the error of a failed run (after its roll back); never throws, also when the database cannot be written. */
+    /**
+     * Stores the error of a failed run (after its roll back) for the data check as {@link app.openring.core.LoadNote#error}:
+     * its class and first place in Open Ring's code, never its message, which can carry a stored value (issue #289). The
+     * full error goes to Android's log; the callers put it in the Log tab. Never throws, also when the database cannot be written.
+     */
     private void failed(Throwable e) {
         try {
-            db.put("analysis_error", e.toString());
+            android.util.Log.w("OpenRing", "analysis failed", e);
+        } catch (Throwable ignored) {
+            // the stored note below matters more
+        }
+        try {
+            db.put("analysis_error", app.openring.core.LoadNote.error(e));
         } catch (Throwable ignored) {
             // nothing more can be done here; the caller gets the error itself
         }
