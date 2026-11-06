@@ -61,8 +61,7 @@ public final class Exporter {
         try {
             java.time.LocalDate d = java.time.LocalDate.parse(day);
             java.util.List<String> main = db.nightsJson(day, day, true);
-            java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(d.atTime(12, 0).atZone(phone).toEpochSecond()));
-            return Json.zone(main.isEmpty() ? null : Json.parse(main.get(main.size() - 1)), noted == null ? phone : noted);
+            return Json.dayZone(main.isEmpty() ? null : Json.parse(main.get(main.size() - 1)), db.zoneAt(Json.noon(d, phone)), phone);
         } catch (RuntimeException e) {
             return phone;
         }
