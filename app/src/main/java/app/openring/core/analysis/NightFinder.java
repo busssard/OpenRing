@@ -31,8 +31,8 @@ public final class NightFinder {
      * at 21:00 or later (clock minutes): a sofa sleep in the evening or a nap after getting up stays apart.
      */
     static final int WAKE_FROM_MIN = 22 * 60, WAKE_TO_MIN = 6 * 60 + 30, SLEEP_FROM_MIN = 21 * 60;
-    /** Version of these rules; a new one makes the app analyse all nights again. */
-    public static final int VERSION = 2;
+    /** Version of these rules; a new one makes the app analyse all nights again (3: two ring stage runs, issue #189). */
+    public static final int VERSION = 3;
 
     /** A local clock, so the finder can tell night from day without Android. */
     public interface LocalClock {
@@ -212,7 +212,15 @@ public final class NightFinder {
             }
             if (join) {
                 prev.awake.addAll(p.awake);
-                if (p.staged && !prev.staged) {
+                RingRun ra = prev.staged ? prev.ringRun() : null, rb = p.staged ? p.ringRun() : null;
+                if (ra != null && rb != null && rb.start >= ra.end - 30) {
+                    // two ring stage runs with a short break (issue #189): both keep their stages at their own times,
+                    // the break is awake where the ring's sleep state says awake and has no stage data otherwise
+                    List<double[]> breakAwake = stateAwake(state, ra.end, rb.start);
+                    prev.codes = stitch(prev, p, breakAwake);
+                    prev.codesEnd = Math.max(prev.end, p.end); // stitch ends its grid at the joined end
+                    prev.awake.addAll(breakAwake);
+                } else if (p.staged && !prev.staged) {
                     // the codes keep their own end, the period may grow past it (issue #110)
                     prev.codes = p.codes;
                     prev.codesEnd = p.codesEnd;
@@ -282,7 +290,7 @@ public final class NightFinder {
     }
 
     /**
-     * Ring stages for two pieces joined across a night wake: the first piece's codes, awake (4) in
+     * Ring stages for two pieces joined across a night wake or a short break (issue #189): the first piece's codes, awake (4) in
      * the gap where the ring says awake, the second piece's codes, 0 (unknown) where a piece has
      * none. Each piece's codes end at that piece's {@link Period#codesEnd} (issue #110), and the
      * result ends at the joined end, so every code keeps its real time.
@@ -310,6 +318,27 @@ public final class NightFinder {
             int idx = (int) Math.round((runStart + i * 30.0 - base) / 30);
             if (idx >= 0 && idx < out.length) out[idx] = p.codes[i];
         }
+    }
+
+    /**
+     * The parts of {@code [a, b]} the ring's own sleep state calls awake (issue #189): each awake sample covers the time
+     * up to the next sample, at most 5 minutes (the ring reports about every 5 minutes), so time without samples stays
+     * unknown. Unsmoothed: within an hour the asleep regions bridge a break, so {@link #awakeParts} finds nothing there.
+     */
+    public static List<double[]> stateAwake(TS state, double a, double b) {
+        List<double[]> out = new ArrayList<double[]>();
+        int n = state.size();
+        for (int i = 0; i < n; i++) {
+            if (state.v(i) >= 1) continue;
+            double t = state.t(i), until = t + 300;
+            if (i + 1 < n) until = Math.min(until, state.t(i + 1));
+            double s = Math.max(a, t), e = Math.min(b, until);
+            if (e <= s) continue;
+            double[] last = out.isEmpty() ? null : out.get(out.size() - 1);
+            if (last != null && s <= last[1] + 1e-9) last[1] = Math.max(last[1], e);
+            else out.add(new double[] {s, e});
+        }
+        return out;
     }
 
     /** The parts of {@code [a, b]} outside the ring's asleep regions. */
