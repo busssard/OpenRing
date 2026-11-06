@@ -279,12 +279,21 @@ swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 launch --ez badges true;                    shot badges 4
 swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
 launch --es settings top;                   shot settings
+# the Ring and Watch blocks closed, as every time Settings opens (owner's wish of 3 November); stages and watch below open
+# their own block first
+launch --es settings blocks;                shot settings-blocks
 launch --es settings stages;                shot settings-stage-detail
 # Count phone use as awake switched off and on (issue #204): when the nights are analysed again the
 # preview above redraws, its phone line goes away and comes back without leaving the page. The card
-# opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view.
+# opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view,
+# and short ones after it while the switch is still below (the closed Watch block sits in between).
 adb shell input swipe 30 1700 30 900 1500; sleep 1
 phone_line() { ui_dump | grep -q "on the phone, shown as awake"; }
+switch_shown() { ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tail -1 | { read b; [ -n "$b" ] && [ "$b" -lt "${SCREEN_H:-2400}" ]; }; }
+for i in 1 2 3; do
+  switch_shown && break
+  adb shell input swipe 30 1500 30 1250 1000; sleep 1
+done
 tap_phone_switch() {  # fails when the switch is not listed or its middle is off the screen
   local b
   b=$(ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')

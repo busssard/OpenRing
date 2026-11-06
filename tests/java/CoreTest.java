@@ -974,6 +974,7 @@ public class CoreTest {
         backups242();
         keptHeight();
         scrollKeep();
+        settingsBlocks();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -3212,6 +3213,49 @@ public class CoreTest {
         k.remember(portrait, 1500);
         eq("kept height: newer result replaces older", k.get(portrait), 1500);
         eq("kept height: other layout untouched", k.get(landscape), 1100);
+    }
+
+    /** Owner's wish of 3 November: the ring and the watch each in one block of Settings, closed until tapped. */
+    static void settingsBlocks() {
+        eq("settings blocks: stages is in the Ring block", SettingsBlocks.of("stages"), SettingsBlocks.RING);
+        eq("settings blocks: watch is in the Watch block", SettingsBlocks.of("watch"), SettingsBlocks.WATCH);
+        for (String s : new String[] {"top", "blocks", "period", "screen", "games", "backups", "advanced", "nonsense", ""})
+            eq("settings blocks: " + s + " is outside the blocks", SettingsBlocks.of(s), SettingsBlocks.NONE);
+        eq("settings blocks: no extra is outside the blocks", SettingsBlocks.of(null), SettingsBlocks.NONE);
+        check("settings blocks: both closed without an extra", !SettingsBlocks.startsOpen(SettingsBlocks.RING, null) && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, null));
+        check("settings blocks: both closed at the top", !SettingsBlocks.startsOpen(SettingsBlocks.RING, "top") && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "top"));
+        check("settings blocks: both closed for the blocks shot", !SettingsBlocks.startsOpen(SettingsBlocks.RING, "blocks") && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "blocks"));
+        check("settings blocks: stages opens the Ring block only", SettingsBlocks.startsOpen(SettingsBlocks.RING, "stages") && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "stages"));
+        check("settings blocks: watch opens the Watch block only", SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "watch") && !SettingsBlocks.startsOpen(SettingsBlocks.RING, "watch"));
+        check("settings blocks: NONE never starts open", !SettingsBlocks.startsOpen(SettingsBlocks.NONE, "period") && !SettingsBlocks.startsOpen(SettingsBlocks.NONE, null));
+        // the Model line is as before the move from SettingsActivity
+        eq("settings blocks: model Ring 4", SettingsBlocks.model("ORE_07"), "Ring 4 (ORE_07)");
+        eq("settings blocks: model Ring 4 by suffix", SettingsBlocks.model("XYZ_06"), "Ring 4 (XYZ_06)");
+        eq("settings blocks: model Ring 5", SettingsBlocks.model("XYZ_05"), "Ring 5 (XYZ_05)");
+        eq("settings blocks: model Gen 3", SettingsBlocks.model("BLB_02"), "Gen 3 Horizon (BLB_02)");
+        eq("settings blocks: model unknown code kept", SettingsBlocks.model("ABC"), "ABC");
+        eq("settings blocks: model not known", SettingsBlocks.model(null), "--");
+        eq("settings blocks: short model", SettingsBlocks.shortModel("ORE_07"), "Ring 4");
+        eq("settings blocks: short model unknown code kept", SettingsBlocks.shortModel("ABC"), "ABC");
+        eq("settings blocks: short model not known", SettingsBlocks.shortModel(null), "Oura ring");
+        eq("settings blocks: ring synced", SettingsBlocks.ringStatus(false, "ORE_07", 1700000000L, "2 hours ago"), "Ring 4, last sync 2 hours ago");
+        eq("settings blocks: ring never synced", SettingsBlocks.ringStatus(false, "ORE_07", 0, "--"), "Ring 4, not synced yet");
+        eq("settings blocks: ring synced but its time not worded yet", SettingsBlocks.ringStatus(false, "ORE_07", 1700000000L, null), "Ring 4, not synced yet");
+        check("settings blocks: first build jumps to its card", SettingsBlocks.jumpOnBuild("period", false, false));
+        check("settings blocks: a rebuild keeps the scroll (review of #330)", !SettingsBlocks.jumpOnBuild("period", false, true));
+        check("settings blocks: a turned phone keeps the scroll", !SettingsBlocks.jumpOnBuild("period", true, false));
+        check("settings blocks: no extra, no jump", !SettingsBlocks.jumpOnBuild(null, false, false));
+        eq("settings blocks: ring demo", SettingsBlocks.ringStatus(true, "ORE_07", 1700000000L, "2 hours ago"), "Made up Ring 4, demo data");
+        eq("settings blocks: no watch", SettingsBlocks.watchStatus(false, false, null, 0, null, false, false), "No watch added yet");
+        eq("settings blocks: watch synced", SettingsBlocks.watchStatus(false, true, "Steel HR", 1700000000L, "5 minutes ago", false, false), "Steel HR, last sync 5 minutes ago");
+        eq("settings blocks: watch never synced", SettingsBlocks.watchStatus(false, true, "Steel HR", 0, "--", false, false), "Steel HR, not synced yet");
+        eq("settings blocks: watch syncing", SettingsBlocks.watchStatus(false, true, "Steel HR", 1700000000L, "5 minutes ago", true, true), "Steel HR, syncing now");
+        eq("settings blocks: watch failed", SettingsBlocks.watchStatus(false, true, "Steel HR", 1700000000L, "5 minutes ago", false, true), "Steel HR, the last sync did not work");
+        eq("settings blocks: watch without name", SettingsBlocks.watchStatus(false, true, null, 0, null, false, false), "Withings watch, not synced yet");
+        eq("settings blocks: watch demo", SettingsBlocks.watchStatus(true, false, null, 0, null, false, false), "Made up Steel HR, demo data");
+        for (String t : new String[] {SettingsBlocks.ringStatus(false, "ORE_07", 1, "1 minute ago"), SettingsBlocks.watchStatus(false, true, "Steel HR", 0, null, false, true),
+                SettingsBlocks.ringStatus(true, null, 0, null), SettingsBlocks.watchStatus(true, true, null, 0, null, false, false)})
+            check("settings blocks: no dash as punctuation in " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
     }
 
     /** Issue #204: the page stays still when the stage detail card above the switch is redrawn. */
