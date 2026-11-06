@@ -1,0 +1,29 @@
+# Deletes branches nobody needs any more (owner's wish, 3 November): merged ones, and ones closed without merging
+# more than 14 days ago. Keeps main, dev, the screenshot and badge branches, every branch an open pull request
+# uses, and branches without a pull request. The rules and why: .github/scripts/stale_branches.py.
+name: Branch cleanup
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: read
+concurrency:
+  group: branch-cleanup
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Delete stale branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/stale_branches.py

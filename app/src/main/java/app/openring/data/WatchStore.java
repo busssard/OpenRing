@@ -13,7 +13,7 @@ import app.openring.core.withings.Frame;
 import app.openring.core.withings.Records;
 
 /**
- * The watch's stored data (issue #251, phase 1b, schema 9). Raw first, like the ring: every message the watch sends is
+ * The watch's stored data (issue #251, phase 1b, schema 9; {@code watch_moves} schema 10, watch setup). Raw first, like the ring: every message the watch sends is
  * kept as it came in {@code watch_raw} (session start in ms and place in the session as its key, so two equal messages
  * are both kept) and never changed. The rows the screens read ({@code watch_steps}, {@code watch_hr},
  * {@code watch_sleep}, {@code watch_workouts}, {@code watch_battery}) are worked out from it by {@code core/withings/Records}
@@ -26,9 +26,9 @@ public final class WatchStore {
     private WatchStore() {}
 
     /** Every watch table: kept when another ring is paired ({@code Db.RING_TABLES} leaves them out). */
-    static final String[] TABLES = {"watch_raw", "watch_devices", "watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery"};
+    static final String[] TABLES = {"watch_raw", "watch_devices", "watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery", "watch_moves"};
     /** The tables worked out from {@code watch_raw}. */
-    static final String[] DECODED = {"watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery"};
+    static final String[] DECODED = {"watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery", "watch_moves"};
     /** kv: the decoder version the stored rows come from. */
     static final String DECODER = "watch_decoder";
     /** Tests only: decoding throws after this many messages, as a stop half way would. */
@@ -48,6 +48,15 @@ public final class WatchStore {
                 + " kind INTEGER NOT NULL, steps INTEGER NOT NULL, metres INTEGER NOT NULL, kcal INTEGER NOT NULL, PRIMARY KEY(device, start))");
         db.execSQL("CREATE TABLE IF NOT EXISTS watch_battery (device TEXT NOT NULL, t INTEGER NOT NULL, pct INTEGER NOT NULL,"
                 + " state INTEGER NOT NULL, mv INTEGER NOT NULL, PRIMARY KEY(device, t))");
+    }
+
+    /**
+     * Schema 10 (watch setup): per record its intensity and metres climbed and descended. Only adds one table, safe to run
+     * twice; older files get it empty and the next decode fills it from their raw messages.
+     */
+    static void create10(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS watch_moves (device TEXT NOT NULL, start INTEGER NOT NULL, met INTEGER NOT NULL,"
+                + " up INTEGER NOT NULL, down INTEGER NOT NULL, PRIMARY KEY(device, start))");
     }
 
     // ------------------------------------------------------------------------------------- writing
@@ -102,14 +111,26 @@ public final class WatchStore {
         into.sleep.addAll(one.sleep);
         into.workouts.addAll(one.workouts);
         into.battery.addAll(one.battery);
+        into.moves.addAll(one.moves);
         if (one.name != null) into.name = one.name;
         if (one.firmware >= 0) into.firmware = one.firmware;
         into.unknown += one.unknown;
     }
 
+    /**
+     * The value bound at {@code ?n} for {@code col}, or, when it is 0, the one already stored for the same device ({@code ?1})
+     * and start ({@code ?2}). A record can come in the activity answer and again in the movement answer, each with only some
+     * of its parts (the movement answer may lack the calories part): the second must not wipe what the first had (review of
+     * #332). A record that comes again whole has the same or larger counts, so a non zero value always wins.
+     */
+    private static String kept(String table, String col, int n) {
+        return "CASE WHEN ?" + n + " <> 0 THEN ?" + n + " ELSE COALESCE((SELECT " + col + " FROM " + table + " WHERE device = ?1 AND start = ?2), 0) END";
+    }
+
     private static void write(SQLiteDatabase d, String device, Records.Decoded r) {
         if (!r.steps.isEmpty()) {
-            SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO watch_steps(device, start, dur, steps, metres, kcal) VALUES (?,?,?,?,?,?)");
+            SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO watch_steps(device, start, dur, steps, metres, kcal) VALUES (?1, ?2, "
+                    + kept("watch_steps", "dur", 3) + ", " + kept("watch_steps", "steps", 4) + ", " + kept("watch_steps", "metres", 5) + ", " + kept("watch_steps", "kcal", 6) + ")");
             for (Records.Steps s : r.steps) {
                 st.bindString(1, device);
                 st.bindLong(2, s.start);
@@ -164,6 +185,19 @@ public final class WatchStore {
                 st.bindLong(3, b.pct);
                 st.bindLong(4, b.state);
                 st.bindLong(5, b.mv);
+                st.executeInsert();
+            }
+            st.close();
+        }
+        if (!r.moves.isEmpty()) {
+            SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO watch_moves(device, start, met, up, down) VALUES (?1, ?2, "
+                    + kept("watch_moves", "met", 3) + ", " + kept("watch_moves", "up", 4) + ", " + kept("watch_moves", "down", 5) + ")");
+            for (Records.Moves m : r.moves) {
+                st.bindString(1, device);
+                st.bindLong(2, m.start);
+                st.bindLong(3, m.met);
+                st.bindLong(4, m.up);
+                st.bindLong(5, m.down);
                 st.executeInsert();
             }
             st.close();
@@ -229,7 +263,8 @@ public final class WatchStore {
 
     /**
      * Where the next request starts (unix seconds): the newest stored record of that kind of this watch minus 2 hours,
-     * so a record still running at the last sync comes again whole (its key replaces it); 0 for none.
+     * so a record still running at the last sync comes again whole (its key replaces it); 0 for none (the sync then asks
+     * {@code WatchSetup.FIRST_SINCE_S} back, see {@link #since(Db, String, boolean, long)}).
      */
     public static long since(Db db, String device, boolean heart) {
         String q = heart ? "SELECT MAX(t) FROM watch_hr WHERE device = ?"
@@ -245,6 +280,12 @@ public final class WatchStore {
 
     public static final long OVERLAP_S = 2 * 3600;
 
+    /** {@link #since(Db, String, boolean)}, or {@code now} minus a month when nothing of that kind is stored yet. */
+    public static long since(Db db, String device, boolean heart, long now) {
+        long s = since(db, device, heart);
+        return s > 0 ? s : Math.max(0, now - app.openring.core.withings.WatchSetup.FIRST_SINCE_S);
+    }
+
     // ------------------------------------------------------------------------------------- reading
 
     /** Every stored row of every watch, for the Watch page (a year is some 20,000 heart rates, read in a moment). */
@@ -254,6 +295,7 @@ public final class WatchStore {
         public final List<Records.Sleep> sleep = new ArrayList<Records.Sleep>();
         public final List<Records.Workout> workouts = new ArrayList<Records.Workout>();
         public final List<Records.Battery> battery = new ArrayList<Records.Battery>();
+        public final List<Records.Moves> moves = new ArrayList<Records.Moves>();
         public String name, firmware;
         public long messages;
     }
@@ -291,6 +333,12 @@ public final class WatchStore {
         } finally {
             c.close();
         }
+        c = d.rawQuery("SELECT start, met, up, down FROM watch_moves ORDER BY start", null);
+        try {
+            while (c.moveToNext()) out.moves.add(new Records.Moves(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3)));
+        } finally {
+            c.close();
+        }
         c = d.rawQuery("SELECT name, firmware FROM watch_devices ORDER BY added DESC LIMIT 1", null);
         try {
             if (c.moveToFirst()) {
@@ -302,6 +350,65 @@ public final class WatchStore {
         }
         out.messages = db.count("SELECT COUNT(*) FROM watch_raw");
         return out;
+    }
+
+    /**
+     * The watch's rows from {@code from} to {@code to} (unix seconds) for one day's main device rule (issue #251,
+     * {@code core/withings/MainDevice}): records that start in it, sleep pieces that reach into it. Read on each day load.
+     */
+    public static app.openring.core.withings.MainDevice.Watch window(Db db, double from, double to) {
+        app.openring.core.withings.MainDevice.Watch w = new app.openring.core.withings.MainDevice.Watch();
+        SQLiteDatabase d = db.getReadableDatabase();
+        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+        Cursor c = d.rawQuery("SELECT start, dur, steps, metres, kcal FROM watch_steps WHERE start >= ? AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.steps.add(new Records.Steps(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4)));
+        } finally {
+            c.close();
+        }
+        c = d.rawQuery("SELECT t, bpm FROM watch_hr WHERE t >= ? AND t < ? ORDER BY t", a);
+        try {
+            while (c.moveToNext()) w.heart.add(new Records.Heart(c.getLong(0), c.getInt(1)));
+        } finally {
+            c.close();
+        }
+        // a night's pieces start the evening before; the day load asks from a day earlier. The cast: an expression has no
+        // column affinity, so a text parameter would never compare as a number
+        c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.sleep.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
+        } finally {
+            c.close();
+        }
+        c = d.rawQuery("SELECT start, dur, kind, steps, metres, kcal FROM watch_workouts WHERE start >= ? AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.workouts.add(new Records.Workout(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4), c.getInt(5)));
+        } finally {
+            c.close();
+        }
+        return w;
+    }
+
+    /**
+     * What the ring's stored results give for the main device rule: the day summary's steps, distance, movement per
+     * quarter hour and heart rate line, and every night or nap in {@code nights} that reaches the day ({@code from} to
+     * {@code to}). Reads only; a missing summary gives NaN and empty values.
+     */
+    public static app.openring.core.withings.MainDevice.Ring ringDay(org.json.JSONObject day, org.json.JSONObject night, List<org.json.JSONObject> nights,
+            double from, double to) {
+        app.openring.core.withings.MainDevice.Ring r = new app.openring.core.withings.MainDevice.Ring();
+        r.steps = Json.d(day, "steps");
+        r.metres = Json.d(day, "distance_m");
+        org.json.JSONArray prof = day == null ? null : day.optJSONArray("met_profile");
+        for (int i = 0; prof != null && i < Math.min(96, prof.length()); i++) r.met[i] = prof.isNull(i) ? Double.NaN : prof.optDouble(i, Double.NaN);
+        r.hr = Json.series(day == null ? null : day.optJSONArray("hr_day"));
+        r.night = night != null;
+        for (org.json.JSONObject n : nights) {
+            if (n == null) continue;
+            double s = Json.d(n, "start"), e = Json.d(n, "end");
+            if (!Double.isNaN(s) && !Double.isNaN(e) && e > from && s < to) r.sleeps.add(new double[] {s, e});
+        }
+        return r;
     }
 
     /** The newest battery reading as {percent, unix seconds}, null for none (Settings, Watch). */
@@ -350,7 +457,8 @@ public final class WatchStore {
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_hr"), "heart rate", "heart rates")).append(", ")
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_sleep"), "sleep piece", "sleep pieces")).append(", ")
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_workouts"), "workout", "workouts")).append(", ")
-                .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_battery"), "charge reading", "charge readings")).append('\n');
+                .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_battery"), "charge reading", "charge readings")).append(", ")
+                .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_moves"), "intensity and climb record", "intensity and climb records")).append('\n');
         return b.toString();
     }
 

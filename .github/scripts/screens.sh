@@ -260,7 +260,9 @@ adb shell input swipe 30 1700 30 900 1500; shot screen-numbers 1   # slow, no fl
 # line coloured pixels on a circle through the use lines, not the night band (dial_touch.py, issue #229).
 # The circle comes from the clock's bounds in the screen dump (content-desc "Phone use clock", issue #261),
 # else 13:00 on it. Without the bounds (clock cut off or not listed) the fixed middle 540 1047 measured on an
-# earlier run, else a fixed tap near 13:00.
+# earlier run, else a fixed tap at 13:00 on that fixed circle (dial_touch.py's point(540, 1047, 300, 195),
+# checked by tests/test_ci_scripts.sh).
+DIAL_FALLBACK="462 1336"
 DIAL_VIEW=$(ui_dump | grep -o 'content-desc="Phone use clock[^"]*"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
 adb exec-out screencap > "$OUT/.dial.raw"
 xy=""
@@ -269,20 +271,29 @@ if [ "$(echo $DIAL_VIEW | wc -w)" = 4 ]; then
 fi
 [ -n "$xy" ] || { log "clock bounds not usable (${DIAL_VIEW:-not listed}), fixed middle"; xy=$(python3 -I .github/scripts/dial_touch.py "$OUT/.dial.raw" 2>/dev/null); }
 rm -f "$OUT/.dial.raw"
-log "clock touch at ${xy:-464 1331}"
-adb shell input tap ${xy:-464 1331};       shot screen-touch 1
+log "clock touch at ${xy:-$DIAL_FALLBACK}"
+adb shell input tap ${xy:-$DIAL_FALLBACK}; shot screen-touch 1
 swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 # the Badges page (issue #265): calendar with a dot on each day with a badge, then each kind with how often and its rule
 launch --ez badges true;                    shot badges 4
 swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
 launch --es settings top;                   shot settings
+# the Ring and Watch blocks closed, as every time Settings opens (owner's wish of 3 November); stages and watch below open
+# their own block first
+launch --es settings blocks;                shot settings-blocks
 launch --es settings stages;                shot settings-stage-detail
 # Count phone use as awake switched off and on (issue #204): when the nights are analysed again the
 # preview above redraws, its phone line goes away and comes back without leaving the page. The card
-# opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view.
+# opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view,
+# and short ones after it while the switch is still below (the closed Watch block sits in between).
 adb shell input swipe 30 1700 30 900 1500; sleep 1
 phone_line() { ui_dump | grep -q "on the phone, shown as awake"; }
+switch_shown() { ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tail -1 | { read b; [ -n "$b" ] && [ "$b" -lt "${SCREEN_H:-2400}" ]; }; }
+for i in 1 2 3; do
+  switch_shown && break
+  adb shell input swipe 30 1500 30 1250 1000; sleep 1
+done
 tap_phone_switch() {  # fails when the switch is not listed or its middle is off the screen
   local b
   b=$(ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
@@ -322,6 +333,11 @@ launch --ez watch true;                     shot watch 3
 launch --ez watch true --ez watch_report true; shot watch-report 3   # scrolls to the report itself: copy buttons, Use this watch for syncing (phase 1b)
 # The Watch page (issue #251, phase 1b): the demo's made up watch, decoded by the same code as a real one: steps per
 # day, workouts, heart rate, Withings' own sleep and the battery
+# The watch setup (issue #251): every step with its state, what is sent from the profile, then the alarm, then the hand
+# calibration's controls (demo mode: a made up watch, every step done, nothing sent)
+launch --ez watch_setup true;               shot watch-setup 3
+launch --ez watch_setup true --ei watch_setup_part 1; shot watch-setup-alarm 3
+launch --ez watch_setup true --ei watch_setup_part 2 --ez watch_setup_hands true; shot watch-setup-hands 3
 launch --ez watch_data true;                shot watch-data 4
 swipe_up;                                   shot watch-data-heart 1   # the heart rate curve
 swipe_up; swipe_up;                         shot watch-data-sleep 1   # sleep and battery at the end of the page
@@ -343,6 +359,22 @@ swipe_up; swipe_up;                         shot live-charts 1
 # A saved ring key this phone cannot read (issue #199): the status line says so and leads to Setup. key_unreadable
 # only shows the line in demo mode, nothing is stored or sent to a ring
 launch --ez key_unreadable true --ei tab 0; shot today-key-unreadable
+# One set of numbers (issue #251, main device): the demo's ring is on its charger yesterday 14:00 to 16:00 and the made up
+# watch fills that time. Activity names the steps from the watch (with the watch's workouts below), Body the heart rate
+# from the watch; settings-watch above shows the Main device chips with Ring picked. Then with the watch as main device
+# (extra main_device, demo mode only): Settings with Watch picked, and Sleep with Withings' own night and the line naming
+# the ring's night. Back to Ring after, so the shots below stay as they were
+FILL_DAY=$(date -d '1 day ago' +%F)
+launch --ei tab 3 --es day "$FILL_DAY"; sleep 3
+scroll_to "GOAL PROGRESS" 6 || echo "::warning::issue #251 step: the Goal progress card was not found on Activity"
+shot activity-watch-fill 1
+launch --ei tab 4 --es day "$FILL_DAY"; sleep 3
+scroll_to "HEART RATE TODAY" 12 || echo "::warning::issue #251 step: the Heart rate today card was not found on Body"
+shot body-watch-fill 1
+launch --es settings watch --ei main_device 1; shot settings-main-watch
+launch --ei tab 1 --ei main_device 1;       shot sleep-watch-main
+swipe_up;                                   shot sleep-watch-main-stages 1
+launch --ei tab 0 --ei main_device 0;       sleep 3
 # A time left out because someone else wore the ring (issue #254), last: the example changes the demo's results for
 # every shot after it. left_out leaves out the day before yesterday 13:00 to 17:00, only in demo mode (the demo file),
 # then the analysis runs again: the Body tab shows the grey band on Heart rate today, Today the Left out card, and

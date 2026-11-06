@@ -189,6 +189,12 @@ out=$(python3 -I "$DIAL" "$t/card.raw" --view 10 20 190 180 85 2>&1); a=$(angle 
 check "dial: --view with no line touches 13:00" '[ "$a" = 195 ]'
 out=$(python3 -I "$DIAL" "$t/line.raw" --view 10 20 190 120 85 2>&1); code=$?
 check "dial: --view with a clock cut off at the screen edge prints nothing" '[ $code = 0 ] && [ -z "$out" ]'
+# the fixed tap in screens.sh when dial_touch.py prints nothing is 13:00 on its fixed circle (issue #300)
+fallback=$(sed -n 's/^DIAL_FALLBACK="\(.*\)"$/\1/p' "$here/.github/scripts/screens.sh")
+expected=$(python3 -I -B -c 'import importlib.util, sys
+s = importlib.util.spec_from_file_location("dial_touch", sys.argv[1]); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+print(*m.point(540, 1047, 300, 195))' "$DIAL")
+check "dial: the fallback tap in screens.sh ($fallback) is 13:00 on the fixed circle ($expected)" '[ -n "$fallback" ] && [ "$fallback" = "$expected" ]'
 
 # screens.sh with an adb stand in that gets stuck (issue #278): the run must stop within its limits,
 # with a line that says what happened, instead of waiting for the job timeout.
@@ -223,6 +229,69 @@ stuck_run quiet
 check "screens: a stuck call with its output sent away still prints its line" '[ $code != 0 ] && [ $took -lt 15 ] && echo "$out" | grep -q "adb shell am broadcast -a com.android.systemui.demo -e command enter did not answer within 2 s"'
 stuck_run offline
 check "screens: adb failing at once while starting says so, not a time limit" '[ $code != 0 ] && [ $took -lt 5 ] && echo "$out" | grep -q "could not reach the emulator while it was starting (adb shell ended with code 1"'
+
+# ---- version names (tools/version.sh): stable 2.y, nightlies 2.y.x, the code always counted ----
+vr=$(mktemp -d)
+mkdir -p "$vr/tools" "$vr/changes"; cp tools/version.sh "$vr/tools/"
+( cd "$vr" && git init -q && git config user.email t@t && git config user.name t
+  for i in 1 2 3; do echo "* x" > "changes/2026-01-0$i-n$i.md"; done; echo "x" > changes/README.md
+  git add -A && git commit -qm base )
+ver() { ( cd "$vr" && env VERSION_CHANNEL="$1" ./tools/version.sh ); }
+note() { ( cd "$vr" && echo "* y" > "changes/2026-02-$1-m$1.md" && git add -A && git commit -qm "note $1" ); }
+check "version: before 2.x a nightly keeps 1.(28 + notes)" '[ "$(ver nightly)" = "32 1.31" ]'
+check "version: the first stable is 2.0" '[ "$(ver stable)" = "32 2.0" ]'
+( cd "$vr" && git tag v1.31 && git tag v2.0 )
+check "version: the nightly at the stable is 2.0.0" '[ "$(ver nightly)" = "32 2.0.0" ]'
+check "version: main without new notes keeps 2.0 (nothing to publish)" '[ "$(ver stable)" = "32 2.0" ]'
+note 10; note 11
+check "version: two notes later the nightly is 2.0.2, the code counts on" '[ "$(ver nightly)" = "34 2.0.2" ]'
+check "version: the next stable is 2.1 with the same code" '[ "$(ver stable)" = "34 2.1" ]'
+( cd "$vr" && git tag v2.1 ); note 12
+check "version: after 2.1 the nightly is 2.1.1" '[ "$(ver nightly)" = "35 2.1.1" ]'
+( cd "$vr" && git checkout -q v2.0 )
+check "version: a stable rebuild of the v2.0 commit after v2.1 exists is 2.0 again" '[ "$(ver stable)" = "32 2.0" ]'
+( cd "$vr" && git checkout -q - )
+check "version: back on the newest commit the stable is 2.2 (it has a note after v2.1)" '[ "$(ver stable)" = "35 2.2" ]'
+( cd "$vr" && git tag v2.x-test && git tag v2.1.5 )
+check "version: odd tags are ignored" '[ "$(ver nightly)" = "35 2.1.1" ]'
+check "version: no channel set means nightly" '[ "$( cd "$vr" && ./tools/version.sh )" = "35 2.1.1" ]'
+mkdir -p "$vr/nogit"; cp -r "$vr/tools" "$vr/changes" "$vr/nogit/"
+check "version: a copy without git or tags counts as no 2.x yet" '[ "$( cd "$vr/nogit" && GIT_DIR=/nonexistent ./tools/version.sh )" = "35 1.34" ]'
+rm -rf "$vr"
+chan=$(grep -h 'VERSION_CHANNEL: ' .github/workflows/build.yml | sed 's/^ *//')
+check "version: the emulator build reads the tags and the channel as build.yml does (its screenshots show the version)" \
+  '[ -n "$chan" ] && grep -qF "$chan" .github/workflows/emulator.yml && grep -q "fetch-depth: 0" .github/workflows/emulator.yml'
+# ---- branch cleanup (.github/scripts/stale_branches.py): which branches go, which stay ----
+bc=$(mktemp -d)
+cat > "$bc/plan.json" <<'JSON'
+{"now": "2026-11-03T20:00:00Z",
+ "branches": {"main": "m1", "dev": "d1", "screenshots-preview": "s1", "badges": "b1",
+   "feat/merged": "a1", "feat/moved": "a2", "feat/base-of-open": "c1", "feat/open": "o1",
+   "feat/closed-old": "x1", "feat/closed-new": "y1", "feat/closed-moved": "z2", "wip/no-pr": "w1"},
+ "prs": [
+   {"head": "feat/merged", "head_sha": "a1", "base": "dev", "state": "closed", "merged_at": "2026-11-01T10:00:00Z", "closed_at": "2026-11-01T10:00:00Z"},
+   {"head": "feat/moved", "head_sha": "a1x", "base": "dev", "state": "closed", "merged_at": "2026-11-01T10:00:00Z", "closed_at": "2026-11-01T10:00:00Z"},
+   {"head": "feat/base-of-open", "head_sha": "c1", "base": "dev", "state": "closed", "merged_at": "2026-11-02T10:00:00Z", "closed_at": "2026-11-02T10:00:00Z"},
+   {"head": "feat/open", "head_sha": "o1", "base": "feat/base-of-open", "state": "open", "merged_at": null, "closed_at": null},
+   {"head": "feat/closed-old", "head_sha": "x1", "base": "dev", "state": "closed", "merged_at": null, "closed_at": "2026-10-01T10:00:00Z"},
+   {"head": "feat/closed-new", "head_sha": "y1", "base": "dev", "state": "closed", "merged_at": null, "closed_at": "2026-10-30T10:00:00Z"},
+   {"head": "feat/closed-moved", "head_sha": "z1", "base": "dev", "state": "closed", "merged_at": null, "closed_at": "2026-10-01T10:00:00Z"},
+   {"head": "dev", "head_sha": "d0", "base": "main", "state": "closed", "merged_at": "2026-11-03T10:00:00Z", "closed_at": "2026-11-03T10:00:00Z"},
+   {"head": "main", "head_sha": "zz", "base": "dev", "state": "closed", "merged_at": null, "closed_at": "2026-09-01T10:00:00Z", "same_repo": false}
+ ]}
+JSON
+out=$(python3 .github/scripts/stale_branches.py --plan "$bc/plan.json")
+check "branches: a merged branch is deleted" 'echo "$out" | grep -qx "delete feat/merged (merged)"'
+check "branches: commits after the merge keep it" 'echo "$out" | grep -qx "keep feat/moved (commits after the merge)"'
+check "branches: the base of an open pull request stays (stacked)" 'echo "$out" | grep -qx "keep feat/base-of-open (an open pull request uses it)"'
+check "branches: an open pull request keeps its branch" 'echo "$out" | grep -qx "keep feat/open (an open pull request uses it)"'
+check "branches: closed without merging over 14 days ago is deleted" 'echo "$out" | grep -qx "delete feat/closed-old (closed without merging)"'
+check "branches: closed without merging lately stays" 'echo "$out" | grep -q "^keep feat/closed-new (closed without merging less than"'
+check "branches: commits after closing keep it" 'echo "$out" | grep -qx "keep feat/closed-moved (commits after it was closed)"'
+check "branches: no pull request yet stays" 'echo "$out" | grep -qx "keep wip/no-pr (no pull request yet)"'
+check "branches: main, dev, screenshots and badges always stay" '[ "$(echo "$out" | grep -c "(always kept)")" = 4 ] && ! echo "$out" | grep -q "^delete \(main\|dev\|badges\|screenshots-preview\) "'
+check "branches: exactly two deleted" '[ "$(echo "$out" | grep -c "^delete ")" = 2 ]'
+rm -rf "$bc"
 
 echo "CI scripts: $passes passed, $fails failed"
 [ "$fails" = 0 ]

@@ -974,6 +974,7 @@ public class CoreTest {
         backups242();
         keptHeight();
         scrollKeep();
+        settingsBlocks();
         screenTime();
         screenAwakeGrid();
         screenApps();
@@ -1476,11 +1477,11 @@ public class CoreTest {
         DripImport.Preview pv = DripImport.preview(file, temps, none, noT, noG, today);
         check("#252d preview: 4 periods by Cycles' rules, 12 bleeding days, 1 spotting day, 2 temperatures", pv.cycles.periods.size() == 4
                 && pv.bleedingDays == 12 && pv.spottingDays == 1 && pv.tempCount == 2);
-        eq("#252d preview summary: the range runs from the first to the last day with an entry or a temperature", pv.summary(),
-                "From 2025-01-01 to 2025-04-20: 4 periods, 12 bleeding days, 2 temperatures.");
+        eq("#252d preview summary: the range runs from the first to the last day with an entry or a temperature", pv.summary(EN),
+                "From 1 Jan 2025 to 20 Apr 2025: 4 periods, 12 bleeding days, 2 temperatures.");
         check("#252d preview: the 1 and the 2 day period are flagged, each on its own line", pv.shorts.size() == 2);
-        eq("#252d the 1 day line", pv.shorts.get(0).line(), "Period of 1 day starting 2025-02-02 (medium)");
-        eq("#252d the 2 day line, as the owner wrote it", pv.shorts.get(1).line(), "Period of 2 days starting 2025-03-11 (light, light)");
+        eq("#252d the 1 day line", pv.shorts.get(0).line(EN), "Period of 1 day starting 2 Feb 2025 (medium)");
+        eq("#252d the 2 day line, as the owner wrote it", pv.shorts.get(1).line(EN), "Period of 2 days starting 11 Mar 2025 (light, light)");
         eq("#252d spotting line", pv.spottingLine(0), "Also 1 spotting day.");
         eq("#252d spotting line with bleeding drip did not count", pv.spottingLine(1), "Also 1 spotting day (1 of them bleeding drip did not count as a period).");
         check("#252d nothing on the phone: every day and temperature is added", pv.addDays == 13 && pv.addTemps == 2 && pv.differ.isEmpty() && pv.anything(false)
@@ -1495,17 +1496,40 @@ public class CoreTest {
                 && pf.shorts.get(0).period.start.equals(ld("2025-02-02")) && pf.cycles.periods.size() == 4);
         fixed.remove(ld("2025-02-02"));
         check("#252d Correct: Nothing on the single day takes it out of the import, no flag left", DripImport.preview(fixed, temps, none, noT, noG, today).shorts.isEmpty());
-        eq("#252d Correct names the nearest period, here the next one", DripImport.nearestLine(pv.cycles, pv.shorts.get(1).period),
-                "The next period starts 2025-04-08, 26 days after this one. Fill the days between to join them.");
-        eq("#252d Correct names the period before when it is nearer", DripImport.nearestLine(pv.cycles, pv.shorts.get(0).period),
-                "The period before ends 2025-01-09, 23 days before this one. Fill the days between to join them.");
+        eq("#252d Correct names the nearest period, here the next one", DripImport.nearestLine(pv.cycles, pv.shorts.get(1).period, EN),
+                "The next period starts 8 Apr 2025, 26 days after this one. Fill the days between to join them.");
+        eq("#252d Correct names the period before when it is nearer", DripImport.nearestLine(pv.cycles, pv.shorts.get(0).period, EN),
+                "The period before ends 9 Jan 2025, 23 days before this one. Fill the days between to join them.");
         java.util.TreeMap<java.time.LocalDate, Integer> two = new java.util.TreeMap<java.time.LocalDate, Integer>();
         two.put(ld("2025-06-01"), 1);
         two.put(ld("2025-06-06"), 2);
         DripImport.Preview p2 = DripImport.preview(two, noT, none, noT, noG, today);
-        eq("#252d Correct: the next period, the days between", DripImport.nearestLine(p2.cycles, p2.cycles.periods.get(0)),
-                "The next period starts 2025-06-06, 4 days after this one. Fill the days between to join them.");
-        check("#252d no other period: no line", DripImport.nearestLine(Cycles.of(two.headMap(ld("2025-06-02")), null, today), p2.cycles.periods.get(0)) == null);
+        eq("#252d Correct: the next period, the days between", DripImport.nearestLine(p2.cycles, p2.cycles.periods.get(0), EN),
+                "The next period starts 6 Jun 2025, 4 days after this one. Fill the days between to join them.");
+        check("#252d no other period: no line", DripImport.nearestLine(Cycles.of(two.headMap(ld("2025-06-02")), null, today), p2.cycles.periods.get(0), EN) == null);
+        // #320: dates like the period cards, the year only when it is not the year of today (2026)
+        java.util.TreeMap<java.time.LocalDate, Integer> span = new java.util.TreeMap<java.time.LocalDate, Integer>();
+        span.put(ld("2025-12-30"), 2); // a 1 day period in the year before
+        span.put(ld("2026-01-27"), 2);
+        span.put(ld("2026-01-28"), 1); // a 2 day period this year
+        span.put(ld("2026-03-02"), 2); // a 1 day period this year
+        java.util.Map<java.time.LocalDate, Integer> haveS = new java.util.HashMap<java.time.LocalDate, Integer>();
+        haveS.put(ld("2026-01-27"), 3);
+        DripImport.Preview ps = DripImport.preview(span, noT, haveS, noT, noG, today);
+        eq("#320 summary across two years: the year only on the date of the other year", ps.summary(EN),
+                "From 30 Dec 2025 to 2 Mar: 3 periods, 4 bleeding days, 0 temperatures.");
+        eq("#320 a short period this year has no year", ps.shorts.get(1).line(EN), "Period of 2 days starting 27 Jan (medium, light)");
+        eq("#320 a short period of the year before has its year", ps.shorts.get(0).line(EN), "Period of 1 day starting 30 Dec 2025 (medium)");
+        eq("#320 a differing day this year has no year", ps.differ.get(0).line(EN), "27 Jan: Open Ring Heavy, file Medium");
+        eq("#320 Correct: the next period this year, no year", DripImport.nearestLine(ps.cycles, ps.shorts.get(0).period, EN),
+                "The next period starts 27 Jan, 27 days after this one. Fill the days between to join them.");
+        eq("#320 Correct: the period before ends in the other year, with its year", DripImport.nearestLine(ps.cycles, ps.shorts.get(1).period, EN),
+                "The period before ends 30 Dec 2025, 27 days before this one. Fill the days between to join them.");
+        eq("#320 Correct: the period before ends this year, no year", DripImport.nearestLine(ps.cycles, ps.shorts.get(2).period, EN),
+                "The period before ends 28 Jan, 32 days before this one. Fill the days between to join them.");
+        for (String t : Arrays.asList(ps.summary(EN), ps.shorts.get(0).line(EN), ps.differ.get(0).line(EN))) {
+            check("#320 no ISO date left in the import lines: " + t, !t.matches(".*\\d{4}-\\d{2}-\\d{2}.*"));
+        }
 
         // ---- against the phone's log: Open Ring wins, differences listed, the same file twice ----
         java.util.Map<java.time.LocalDate, Integer> have = new java.util.HashMap<java.time.LocalDate, Integer>();
@@ -1518,8 +1542,8 @@ public class CoreTest {
         haveT.put(ld("2025-04-20"), new DripCsv.Temp(36.9, null, true)); // differs, from an earlier import
         DripImport.Preview ph = DripImport.preview(file, temps, have, haveT, noG, today);
         check("#252d against the log: 1 the same, 2 differ, 10 added", ph.sameDays == 1 && ph.differ.size() == 2 && ph.addDays == 10);
-        eq("#252d the differences in order", ph.differ.get(0).line() + " / " + ph.differ.get(1).line(),
-                "2025-01-06: Open Ring Light, file Heavy / 2025-04-11: Open Ring Spotting, file Medium");
+        eq("#252d the differences in order", ph.differ.get(0).line(EN) + " / " + ph.differ.get(1).line(EN),
+                "6 Jan 2025: Open Ring Light, file Heavy / 11 Apr 2025: Open Ring Spotting, file Medium");
         eq("#252d differ line, Open Ring kept", ph.differLine(false), "2 days differ, Open Ring's entries are kept.");
         eq("#252d differ line, the file's values taken", ph.differLine(true), "2 days differ, the file's values replace Open Ring's. Undoing the import puts Open Ring's back.");
         check("#252d with the file's values 12 days are written, without 10", ph.writes(true) == 12 && ph.writes(false) == 10);
@@ -1540,7 +1564,7 @@ public class CoreTest {
         check("#252d a temperature with another time or exclude mark differs", !new DripCsv.Temp(36.4, "07:00", false).same(new DripCsv.Temp(36.4, "07:01", false))
                 && !new DripCsv.Temp(36.4, null, false).same(new DripCsv.Temp(36.4, null, true)) && new DripCsv.Temp(36.4, null, false).same(new DripCsv.Temp(36.401, null, false))
                 && !new DripCsv.Temp(36.4, null, false).same(null));
-        check("#252d an empty file previews as empty", DripImport.preview(none, noT, none, noT, noG, today).summary().equals("This file holds no bleeding day and no temperature."));
+        check("#252d an empty file previews as empty", DripImport.preview(none, noT, none, noT, noG, today).summary(EN).equals("This file holds no bleeding day and no temperature."));
         java.util.Map<java.time.LocalDate, Integer> odd = new java.util.HashMap<java.time.LocalDate, Integer>();
         odd.put(ld("2025-01-01"), 9);
         odd.put(ld("2025-01-02"), null);
@@ -1592,8 +1616,8 @@ public class CoreTest {
                 && tp.bleedingDays == ten.flows.size() && sec < 10);
 
         // ---- plain texts ----
-        List<String> tx = new ArrayList<String>(Arrays.asList(DripCsv.EMPTY, DripCsv.NOT_TEXT, DripCsv.NOT_DRIP, DripImport.NOTHING_NEW, pv.summary(), ph.differLine(true),
-                ph.differLine(false), ph.tempsLine(), ph.willDo(true), pv.shorts.get(1).line(), DripCsv.notImported(f), tip,
+        List<String> tx = new ArrayList<String>(Arrays.asList(DripCsv.EMPTY, DripCsv.NOT_TEXT, DripCsv.NOT_DRIP, DripImport.NOTHING_NEW, pv.summary(EN), ph.differLine(true),
+                ph.differLine(false), ph.tempsLine(), ph.willDo(true), pv.shorts.get(1).line(EN), DripCsv.notImported(f), tip,
                 app.openring.ui.Explain.DRIP_SETTINGS, app.openring.ui.Explain.DRIP_INTRO, app.openring.ui.Explain.DRIP_DEMO, app.openring.ui.Explain.DRIP_COUNTS,
                 app.openring.ui.Explain.DRIP_OTHER, app.openring.ui.Explain.DRIP_SHORT, app.openring.ui.Explain.DRIP_DIFFER, app.openring.ui.Explain.DRIP_CORRECT,
                 app.openring.ui.Explain.DRIP_UNDO, app.openring.ui.Explain.PERIOD_MOUTH, app.openring.ui.Explain.dripAdded(1, 1), app.openring.ui.Explain.dripAdded(186, 312)));
@@ -1602,8 +1626,7 @@ public class CoreTest {
         for (String t : tx) plain &= t != null && plain252(t);
         check("#252d texts use no dashes as punctuation", plain);
         eq("#252d the Settings line", app.openring.ui.Explain.dripAdded(1, 186), "Added 1 day and 186 temperatures.");
-        check("#252d the texts say it is not birth control and nothing is saved before Import", Cycles.NOT_ADVICE.contains("not birth control")
-                && app.openring.ui.Explain.DRIP_INTRO.contains("Nothing is saved until you tap Import"));
+        check("#252d the intro says nothing is saved before Import (#320: the note about estimates stays on the period cards)", app.openring.ui.Explain.DRIP_INTRO.contains("Nothing is saved until you tap Import"));
     }
 
     // ---------------------------------------------------------------- issue #265: badges
@@ -3190,6 +3213,49 @@ public class CoreTest {
         k.remember(portrait, 1500);
         eq("kept height: newer result replaces older", k.get(portrait), 1500);
         eq("kept height: other layout untouched", k.get(landscape), 1100);
+    }
+
+    /** Owner's wish of 3 November: the ring and the watch each in one block of Settings, closed until tapped. */
+    static void settingsBlocks() {
+        eq("settings blocks: stages is in the Ring block", SettingsBlocks.of("stages"), SettingsBlocks.RING);
+        eq("settings blocks: watch is in the Watch block", SettingsBlocks.of("watch"), SettingsBlocks.WATCH);
+        for (String s : new String[] {"top", "blocks", "period", "screen", "games", "backups", "advanced", "nonsense", ""})
+            eq("settings blocks: " + s + " is outside the blocks", SettingsBlocks.of(s), SettingsBlocks.NONE);
+        eq("settings blocks: no extra is outside the blocks", SettingsBlocks.of(null), SettingsBlocks.NONE);
+        check("settings blocks: both closed without an extra", !SettingsBlocks.startsOpen(SettingsBlocks.RING, null) && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, null));
+        check("settings blocks: both closed at the top", !SettingsBlocks.startsOpen(SettingsBlocks.RING, "top") && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "top"));
+        check("settings blocks: both closed for the blocks shot", !SettingsBlocks.startsOpen(SettingsBlocks.RING, "blocks") && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "blocks"));
+        check("settings blocks: stages opens the Ring block only", SettingsBlocks.startsOpen(SettingsBlocks.RING, "stages") && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "stages"));
+        check("settings blocks: watch opens the Watch block only", SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "watch") && !SettingsBlocks.startsOpen(SettingsBlocks.RING, "watch"));
+        check("settings blocks: NONE never starts open", !SettingsBlocks.startsOpen(SettingsBlocks.NONE, "period") && !SettingsBlocks.startsOpen(SettingsBlocks.NONE, null));
+        // the Model line is as before the move from SettingsActivity
+        eq("settings blocks: model Ring 4", SettingsBlocks.model("ORE_07"), "Ring 4 (ORE_07)");
+        eq("settings blocks: model Ring 4 by suffix", SettingsBlocks.model("XYZ_06"), "Ring 4 (XYZ_06)");
+        eq("settings blocks: model Ring 5", SettingsBlocks.model("XYZ_05"), "Ring 5 (XYZ_05)");
+        eq("settings blocks: model Gen 3", SettingsBlocks.model("BLB_02"), "Gen 3 Horizon (BLB_02)");
+        eq("settings blocks: model unknown code kept", SettingsBlocks.model("ABC"), "ABC");
+        eq("settings blocks: model not known", SettingsBlocks.model(null), "--");
+        eq("settings blocks: short model", SettingsBlocks.shortModel("ORE_07"), "Ring 4");
+        eq("settings blocks: short model unknown code kept", SettingsBlocks.shortModel("ABC"), "ABC");
+        eq("settings blocks: short model not known", SettingsBlocks.shortModel(null), "Oura ring");
+        eq("settings blocks: ring synced", SettingsBlocks.ringStatus(false, "ORE_07", 1700000000L, "2 hours ago"), "Ring 4, last sync 2 hours ago");
+        eq("settings blocks: ring never synced", SettingsBlocks.ringStatus(false, "ORE_07", 0, "--"), "Ring 4, not synced yet");
+        eq("settings blocks: ring synced but its time not worded yet", SettingsBlocks.ringStatus(false, "ORE_07", 1700000000L, null), "Ring 4, not synced yet");
+        check("settings blocks: first build jumps to its card", SettingsBlocks.jumpOnBuild("period", false, false));
+        check("settings blocks: a rebuild keeps the scroll (review of #330)", !SettingsBlocks.jumpOnBuild("period", false, true));
+        check("settings blocks: a turned phone keeps the scroll", !SettingsBlocks.jumpOnBuild("period", true, false));
+        check("settings blocks: no extra, no jump", !SettingsBlocks.jumpOnBuild(null, false, false));
+        eq("settings blocks: ring demo", SettingsBlocks.ringStatus(true, "ORE_07", 1700000000L, "2 hours ago"), "Made up Ring 4, demo data");
+        eq("settings blocks: no watch", SettingsBlocks.watchStatus(false, false, null, 0, null, false, false), "No watch added yet");
+        eq("settings blocks: watch synced", SettingsBlocks.watchStatus(false, true, "Steel HR", 1700000000L, "5 minutes ago", false, false), "Steel HR, last sync 5 minutes ago");
+        eq("settings blocks: watch never synced", SettingsBlocks.watchStatus(false, true, "Steel HR", 0, "--", false, false), "Steel HR, not synced yet");
+        eq("settings blocks: watch syncing", SettingsBlocks.watchStatus(false, true, "Steel HR", 1700000000L, "5 minutes ago", true, true), "Steel HR, syncing now");
+        eq("settings blocks: watch failed", SettingsBlocks.watchStatus(false, true, "Steel HR", 1700000000L, "5 minutes ago", false, true), "Steel HR, the last sync did not work");
+        eq("settings blocks: watch without name", SettingsBlocks.watchStatus(false, true, null, 0, null, false, false), "Withings watch, not synced yet");
+        eq("settings blocks: watch demo", SettingsBlocks.watchStatus(true, false, null, 0, null, false, false), "Made up Steel HR, demo data");
+        for (String t : new String[] {SettingsBlocks.ringStatus(false, "ORE_07", 1, "1 minute ago"), SettingsBlocks.watchStatus(false, true, "Steel HR", 0, null, false, true),
+                SettingsBlocks.ringStatus(true, null, 0, null), SettingsBlocks.watchStatus(true, true, null, 0, null, false, false)})
+            check("settings blocks: no dash as punctuation in " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
     }
 
     /** Issue #204: the page stays still when the stage detail card above the switch is redrawn. */

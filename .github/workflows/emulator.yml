@@ -16,8 +16,13 @@ jobs:
   screens:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # a normal run takes about 8 minutes; screens.sh limits every adb call (issue #278)
+    env:
+      # tools/version.sh, as in build.yml: the Settings screenshot shows the same version as the release
+      VERSION_CHANNEL: ${{ (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && 'stable' || 'nightly' }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tools/version.sh reads the release tags v2.<y>
       - name: Screenshots badge, generating
         if: github.ref == 'refs/heads/main'
         env:

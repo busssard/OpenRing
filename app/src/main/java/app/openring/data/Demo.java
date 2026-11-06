@@ -40,8 +40,7 @@ public final class Demo {
      * least one wake up a night), the last week is easy (no long wake up, and none of the late nights that
      * otherwise come about one night in eight, so its bedtimes are a little earlier). Otherwise bed and wake times follow
      * the same rule as before, so the clock change checks keep their meaning. A short cold {@code COLD_BACK} days before the end (two nights {@code COLD_C} °C warmer with
-     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower; with the period tracker's cycle only the heart rate and HRV, so
-     * the made up temperature rise stays clear) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
+     * {@code COLD_BPM} beats more, HRV {@code COLD_HRV} ms lower) is followed by a calm night; the night {@code GREAT_BACK} days before the end is
      * the best (heart rate {@code GREAT_BPM} lower, HRV {@code GREAT_HRV} ms higher, 16 minutes to fall asleep). The phone
      * free evenings and quiet days: {@link #phoneFree} and {@link #quiet}.
      */
@@ -154,13 +153,15 @@ public final class Demo {
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
         if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db)) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
-        db.resetAll();
+        db.resetAll(Db.DEMO_BUILD);
         ZoneId zone = ZoneId.systemDefault();
         int days = 35;
         long t0 = today.minusDays(days).atStartOfDay(zone).toEpochSecond();
         List<double[]> screen = new ArrayList<double[]>();
         java.util.Map<String, List<double[]>> apps = new java.util.LinkedHashMap<String, List<double[]>>();
         List<RingEvent> ev = warmNights(history(t0, days, now, zone, new Random(7), screen, apps, true), t0, zone, app.openring.core.analysis.Cycles.demoWarmNights(today));
+        // the ring on its charger yesterday afternoon, so the made up watch fills that time (issue #251, main device)
+        ev = charging(ev, t0, at(today.minusDays(1), CHARGE_FROM_H, zone), at(today.minusDays(1), CHARGE_TO_H, zone));
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
@@ -174,6 +175,26 @@ public final class Demo {
         Analyzer.runAll(c, null);
         db.put(BUILT, today.toString());
         return true;
+    }
+
+    /** The demo ring's charging time yesterday, clock hours (issue #251): no movement, no heart rate, no temperature. */
+    public static final double CHARGE_FROM_H = 14, CHARGE_TO_H = 16;
+
+    /**
+     * Leaves out the daytime readings (movement, heart beats, temperature) from {@code from} to {@code to}, as a ring on its
+     * charger has none (issue #251: the demo's gap the made up watch fills). Time records and every other event stay, so the
+     * dating is the same. Only for {@link #enter}; {@link #history} itself stays as it is.
+     */
+    static List<RingEvent> charging(List<RingEvent> ev, long t0, double from, double to) {
+        List<RingEvent> out = new ArrayList<RingEvent>(ev.size());
+        for (RingEvent e : ev) {
+            boolean reading = e.tag == EventCodec.ACTIVITY_INFO || e.tag == EventCodec.GREEN_IBI_QUALITY || e.tag == EventCodec.TEMP_EVENT;
+            double unix = t0 + (e.ds - DS0) / 10.0;
+            // a movement or heart beat event spans the 10 minutes after its time
+            if (reading && unix + 600 > from && unix < to) continue;
+            out.add(e);
+        }
+        return out;
     }
 
     /**
@@ -339,7 +360,7 @@ public final class Demo {
             double g = r.nextGaussian();
             if (cycle) g = cycleNoise.nextGaussian(); // its own draws, so the story's extra draws (issue #265) do not move the rise
             double tempOffset = (cycle ? g * 0.07 + (d == days - 9 ? 0.6 : 0) : g * 0.12 + (d > days - 4 && d < days - 1 ? 0.35 : 0)) // a warm spell lately
-                    + (cold && !cycle ? COLD_C : 0); // with the cycle the cold shows in heart rate only, so the rise stays clear
+                    + (cold ? COLD_C : 0); // the cold's fever also with the cycle: the badge Recovered needs readiness to dip (#265)
             int sick = cold ? COLD_BPM : great ? -GREAT_BPM : 0;
             double fitness = d * 0.06; // resting HR slowly improves
             // a few wake ups per night, longer on restless nights

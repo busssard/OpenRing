@@ -29,7 +29,7 @@ import app.openring.data.Json;
 public class PipelineTest {
     static int passed, failed;
     /** The schema version of this app (issue #251 made it 9). */
-    static final int CUR = 9;
+    static final int CUR = 10;
 
     static void check(String name, boolean ok, Object info) {
         if (ok) passed++;
@@ -872,10 +872,13 @@ public class PipelineTest {
         largeLog252();
         tracker252();
         upgrade251();
+        upgradeSetup251();
         store251();
+        fixes332();
         restore251();
         large251();
         demo251();
+        mainDevice251();
         badges265();
         phase1a2_252();
         rise252();
@@ -2102,6 +2105,7 @@ public class PipelineTest {
             java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"));
             Analyzer.runAll(c, null);
             tripChecks(db, homeNights, "with the phone in New York");
+            dayZones263(c, db, "with the phone in New York");
             // #45: back home, Re analyse all again; nothing moves
             java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/Zurich"));
             Analyzer.runAll(c, null);
@@ -2130,6 +2134,67 @@ public class PipelineTest {
         } finally {
             java.util.TimeZone.setDefault(keep);
         }
+    }
+
+    /**
+     * Review of #263: the analysis ({@code Analyzer.dayZone}) and the export ({@code Exporter.dayZone}) give every day of a
+     * trip the same zone, the rule written out here: its main night's, else the zone noted at its noon (in the phone's zone),
+     * else the phone's. Also with no night, and with a night whose zone this phone does not know.
+     */
+    static void dayZones263(Context c, Db db, String how) throws Exception {
+        ZoneId phone = ZoneId.systemDefault();
+        java.lang.reflect.Constructor<Analyzer> make = Analyzer.class.getDeclaredConstructor(Context.class, app.openring.data.Analyzer.Log.class);
+        make.setAccessible(true);
+        Analyzer an = make.newInstance(c, null);
+        java.lang.reflect.Method az = Analyzer.class.getDeclaredMethod("dayZone", LocalDate.class, JSONObject.class);
+        az.setAccessible(true);
+        java.lang.reflect.Method ez = app.openring.data.Exporter.class.getDeclaredMethod("dayZone", Db.class, String.class, ZoneId.class);
+        ez.setAccessible(true);
+        JSONObject unknown = new JSONObject().put("zone", "Mars/Olympus");
+        int days = 0, wrong = 0, fromNight = 0, fromNote = 0, fromPhone = 0;
+        StringBuilder first = new StringBuilder();
+        for (LocalDate d = LocalDate.parse("2026-08-29"); !d.isAfter(LocalDate.parse("2026-09-22")); d = d.plusDays(1)) {
+            java.util.List<String> mains = db.nightsJson(d.toString(), d.toString(), true);
+            JSONObject main = mains.isEmpty() ? null : Json.parse(mains.get(mains.size() - 1));
+            ZoneId nightZ = main == null ? null : app.openring.core.analysis.ClockChange.zone(main.optString("zone", null));
+            ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(d.atTime(12, 0).atZone(phone).toEpochSecond()));
+            ZoneId want = nightZ != null ? nightZ : noted != null ? noted : phone;
+            ZoneId wantNoNight = noted != null ? noted : phone;
+            if (nightZ != null) fromNight++;
+            else if (noted != null) fromNote++;
+            else fromPhone++;
+            Object[][] got = {{"analysis", az.invoke(an, d, main), want}, {"export", ez.invoke(null, db, d.toString(), phone), want},
+                    {"analysis without a night", az.invoke(an, d, null), wantNoNight},
+                    {"analysis with an unknown zone", az.invoke(an, d, unknown), wantNoNight},
+                    {"the shared rule", Json.dayZone(main, db.zoneAt(Json.noon(d, phone)), phone), want}};
+            for (Object[] g : got) {
+                if (g[1].equals(g[2])) continue;
+                wrong++;
+                if (first.length() == 0) first.append(d).append(' ').append(g[0]).append(": ").append(g[1]).append(" not ").append(g[2]);
+            }
+            days++;
+        }
+        check("#263 every day of the trip has the same zone in the analysis and the export, " + how, wrong == 0 && days == 25,
+                days + " days, " + wrong + " wrong " + first);
+        check("#263 the trip reaches each part of the rule (night, noted zone), " + how, fromNight >= 10 && fromNote >= 1,
+                fromNight + " from the night, " + fromNote + " noted, " + fromPhone + " the phone's");
+        // the shared rule on its own: noon in the phone's zone (also on the day the clocks change), unknown ids fall through
+        ZoneId zh = ZoneId.of("Europe/Zurich"), ny = ZoneId.of("America/New_York");
+        JSONObject inNy = new JSONObject().put("zone", "America/New_York");
+        check("#263 the shared rule: the night's zone first, else the noted one, else the phone's",
+                ny.equals(Json.dayZone(inNy, "Asia/Tokyo", zh)) && ZoneId.of("Asia/Tokyo").equals(Json.dayZone(null, "Asia/Tokyo", zh))
+                        && ZoneId.of("Asia/Tokyo").equals(Json.dayZone(unknown, "Asia/Tokyo", zh)) && zh.equals(Json.dayZone(unknown, "Mars/Olympus", zh))
+                        && zh.equals(Json.dayZone(null, null, zh)) && zh.equals(Json.dayZone(null, "", zh)), null);
+        check("#263 noon is 12:00 in the phone's zone, also on the day the clocks change",
+                Json.noon(LocalDate.parse("2026-10-25"), zh) == java.time.ZonedDateTime.of(2026, 10, 25, 12, 0, 0, 0, zh).toEpochSecond()
+                        && Json.noon(LocalDate.parse("2026-03-08"), ny) == java.time.ZonedDateTime.of(2026, 3, 8, 12, 0, 0, 0, ny).toEpochSecond(), null);
+        // no zone noted at all: the phone's
+        Context none = freshDb("openring-zone-none");
+        Analyzer bare = make.newInstance(none, null);
+        Db ndb = Db.get(none);
+        check("#263 with no zone noted and no night a day is in the phone's zone, " + how,
+                phone.equals(az.invoke(bare, LocalDate.parse("2026-09-05"), null)) && phone.equals(ez.invoke(null, ndb, "2026-09-05", phone))
+                        && phone.equals(ez.invoke(null, ndb, "not a date", phone)), null);
     }
 
     /** Hours after midnight starting {@code d} in zone {@code z} (negative: the evening before). */
@@ -3652,11 +3717,6 @@ public class PipelineTest {
         }
     }
 
-    /** A context with a database of its own ({@code Db.get} keeps one open instance). */
-    /*
-     * Known order dependence (issue #216, not changed): freshDb swaps the shared database, so a test that calls it
-     * must not run in the middle of main's own section, which keeps using the database it opened at the start.
-     */
     /**
      * The profile and screen goal defaults and the limits a restore keeps them in, pinned so the named limits
      * (core/InputLimit, shared with Setup and Settings) give exactly the numbers that were typed in each place.
@@ -3697,6 +3757,11 @@ public class PipelineTest {
         }
     }
 
+    /** A context with a database of its own ({@code Db.get} keeps one open instance). */
+    /*
+     * Known order dependence (issue #216, not changed): freshDb swaps the shared database, so a test that calls it
+     * must not run in the middle of main's own section, which keeps using the database it opened at the start.
+     */
     static Context freshDb(String name) throws Exception {
         java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
         f.setAccessible(true);
@@ -9247,6 +9312,8 @@ public class PipelineTest {
     /** The tables schema 9 added (the watch, issue #251). */
     static final String[] DROP9 = {"DROP TABLE watch_raw", "DROP TABLE watch_devices", "DROP TABLE watch_steps", "DROP TABLE watch_hr", "DROP TABLE watch_sleep",
         "DROP TABLE watch_workouts", "DROP TABLE watch_battery"};
+    /** The table schema 10 added (the watch setup, issue #251). */
+    static final String[] DROP10 = {"DROP TABLE watch_moves"};
 
     /**
      * Issue #252, data safety: a history of schema 7 or 6 (with nights) upgrades to 8 with the same events, nights and days and
@@ -9470,7 +9537,23 @@ public class PipelineTest {
         } finally {
             fail.set(null, false);
         }
-        check("#272 shrinking fails: Delete all reports no error and every table is empty", got == null && notEmpty272(db).isEmpty(), got + " " + notEmpty272(db));
+        // issue #299: the failure is noted after the delete, as the only row left (kv, one row), with the step, time and error class
+        String note = db.kv(DataCheck.SHRINK_ERROR, null);
+        check("#272 shrinking fails: Delete all reports no error and every table is empty but the note (#299)", got == null
+                && notEmpty272(db).equals(Arrays.asList("kv 1")) && note != null, got + " " + notEmpty272(db));
+        check("#299 the note names Delete all, the local time and the error's class and place in Db.java, never its message",
+                note != null && note.matches("Delete all\\|\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}\\|IllegalStateException at Db\\.java:\\d+")
+                        && !note.contains("test stop"), note);
+        String text = DataCheck.run(c).text;
+        String line = null;
+        for (String l : text.split("\n")) if (l.startsWith("[note] Making the file smaller: ")) line = l;
+        check("#299 the Data check has the line, with the step, time and error and no exception message", line != null
+                && line.equals("[note] Making the file smaller: after Delete all (" + note.split("\\|")[1] + ") the freed space could not be given back"
+                        + " to the phone (" + note.split("\\|")[2] + "). The deleted data is gone; the file stays larger until the next delete"
+                        + " (Delete all or pairing another ring), and new data reuses the space first.") && !text.contains("test stop at shrink"), line);
+        Analyzer.deleteAll(c);
+        check("#299 the next Delete all that shrinks removes the note and the line", db.kv(DataCheck.SHRINK_ERROR, null) == null
+                && notEmpty272(db).isEmpty() && !DataCheck.run(c).text.contains("Making the file smaller"), notEmpty272(db));
 
         // a read open on another connection while deleting: no error, the file shrinks at the next checkpoint once it ends
         large272(db, ev, end);
@@ -9500,6 +9583,45 @@ public class PipelineTest {
         db.resetRingData();
         check("#272 pairing another ring frees the space and keeps the period log", size272(c)[0] * 10 < big && periodRows252(db).equals(rows)
                 && db.eventCount() == 0, big + " to " + size272(c)[0]);
+        check("#299 a delete that shrinks leaves no note", db.kv(DataCheck.SHRINK_ERROR, null) == null, db.kv(DataCheck.SHRINK_ERROR, null));
+
+        // issue #299: pairing another ring and shrinking fails, the note names it, the period log still stays
+        db.insertBatch(ev.subList(0, 1000), 9, end);
+        got = null;
+        fail.set(null, true);
+        try {
+            db.resetRingData();
+        } catch (RuntimeException e) {
+            got = e;
+        } finally {
+            fail.set(null, false);
+        }
+        note = db.kv(DataCheck.SHRINK_ERROR, null);
+        check("#299 pairing another ring, shrinking fails: no error, the note names the step, the period log stays", got == null
+                && note != null && note.startsWith("pairing another ring|") && note.contains("|IllegalStateException at Db.java:")
+                && periodRows252(db).equals(rows) && db.eventCount() == 0, got + " " + note);
+        check("#299 the Data check line says after pairing another ring", DataCheck.run(c).text.contains(
+                "[note] Making the file smaller: after pairing another ring (" + note.split("\\|")[1] + ")"), note);
+
+        // issue #299: the note cannot be written either (a full disk): the delete stays done, no error reaches the person
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop299 BEFORE INSERT ON kv WHEN NEW.k = '" + DataCheck.SHRINK_ERROR
+                + "' BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        db.insertBatch(ev.subList(0, 1000), 9, end);
+        got = null;
+        fail.set(null, true);
+        try {
+            Analyzer.deleteAll(c);
+        } catch (RuntimeException e) {
+            got = e;
+        } finally {
+            fail.set(null, false);
+            db.getWritableDatabase().execSQL("DROP TRIGGER stop299");
+        }
+        check("#299 the note cannot be written: Delete all reports no error, every table is empty, no note", got == null
+                && notEmpty272(db).isEmpty(), got + " " + notEmpty272(db));
+        db.put(DataCheck.SHRINK_ERROR, "odd");
+        check("#299 a note in another form is shown as it is", DataCheck.run(c).text.contains("[note] Making the file smaller: "
+                + "the freed space could not be given back to the phone (odd). The deleted data is gone"), db.kv(DataCheck.SHRINK_ERROR, null));
 
         // a backup of this version and of schema 7, restored after Delete all: everything back
         Analyzer.deleteAll(c);
@@ -9507,6 +9629,14 @@ public class PipelineTest {
         db = Db.get(c);
         check("#272 a backup restored after Delete all brings every event and night back", r.ok && r.history && db.eventCount() == events
                 && db.count("SELECT COUNT(*) FROM nights") == nights && events > 0 && nights > 0, r.message);
+        // issue #299: a backup made while a failed shrink is noted carries the row; the restored file is compact, so it goes
+        db.put(DataCheck.SHRINK_ERROR, "Delete all|2026-11-03 21:14|IllegalStateException at Db.java:1815");
+        byte[] noted = backup252(c);
+        Analyzer.deleteAll(c);
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(noted));
+        db = Db.get(c);
+        check("#299 a backup made with the note, restored: every event back, no note and no Data check line", r.ok && db.eventCount() == events
+                && db.kv(DataCheck.SHRINK_ERROR, null) == null && !DataCheck.run(c).text.contains("Making the file smaller"), r.message);
         Analyzer.deleteAll(c);
         byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), 7, DROP8));
         r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
@@ -10701,7 +10831,7 @@ public class PipelineTest {
             "SELECT device, start, dur, steps, metres, kcal FROM watch_steps ORDER BY device, start", "SELECT device, t, bpm FROM watch_hr ORDER BY device, t",
             "SELECT device, start, dur, stage FROM watch_sleep ORDER BY device, start",
             "SELECT device, start, dur, kind, steps, metres, kcal FROM watch_workouts ORDER BY device, start",
-            "SELECT device, t, pct, state, mv FROM watch_battery ORDER BY device, t"};
+            "SELECT device, t, pct, state, mv FROM watch_battery ORDER BY device, t", "SELECT device, start, met, up, down FROM watch_moves ORDER BY device, start"};
         for (String sql : q) {
             android.database.Cursor c = db.getReadableDatabase().rawQuery(sql, null);
             try {
@@ -10735,7 +10865,7 @@ public class PipelineTest {
         List<byte[][]> recs = new ArrayList<byte[][]>();
         for (int i = 0; i < 40; i++) {
             recs.add(new byte[][] {app.openring.core.withings.WatchDemo.time(t0 + i * 900), app.openring.core.withings.WatchDemo.duration(900),
-                app.openring.core.withings.WatchDemo.steps(100 + i, 70 + i)});
+                app.openring.core.withings.WatchDemo.steps(100 + i, 70 + i, i % 3, i % 2)});
         }
         recs.add(new byte[][] {app.openring.core.withings.WatchDemo.time(t0 - 6 * 3600), app.openring.core.withings.WatchDemo.duration(1800),
             app.openring.core.withings.WatchDemo.sleep(app.openring.core.withings.Records.DEEP)});
@@ -10764,14 +10894,15 @@ public class PipelineTest {
             restart242();
             java.io.File file = c.getDatabasePath(Db.REAL);
             try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+                for (String x : DROP10) st.execute(x);
                 for (String x : DROP9) st.execute(x);
                 if (from <= 7) for (String x : DROP8) st.execute(x);
                 if (from <= 6) st.execute("DROP TABLE excluded");
                 st.execute("PRAGMA user_version = " + from);
             }
             db = Db.get(c);
-            check("#251 upgrade from schema " + from + ": version 9 with empty watch tables, every event, night and day the same",
-                    db.getReadableDatabase().getVersion() == 9 && watchCount251(db, "watch_raw") == 0 && events58(db).equals(ev) && results139(db).equals(before)
+            check("#251 upgrade from schema " + from + ": version " + CUR + " with empty watch tables, every event, night and day the same",
+                    db.getReadableDatabase().getVersion() == CUR && watchCount251(db, "watch_raw") == 0 && events58(db).equals(ev) && results139(db).equals(before)
                             && periodRows252(db).equals(periods), db.getReadableDatabase().getVersion());
             check("#251 upgrade from schema " + from + ": the schema check of this version passes", schemaProblem251(db) == null, schemaProblem251(db));
             check("#251 upgrade from schema " + from + ": nothing to analyse again", Analyzer.upToDate(c), null);
@@ -10783,15 +10914,16 @@ public class PipelineTest {
                     st.execute("PRAGMA user_version = 8");
                 }
                 db = Db.get(c);
-                check("#251 the upgrade run twice keeps every watch row and the history", db.getReadableDatabase().getVersion() == 9 && watchRows251(db).equals(rows)
+                check("#251 the upgrade run twice keeps every watch row and the history", db.getReadableDatabase().getVersion() == CUR && watchRows251(db).equals(rows)
                         && events58(db).equals(ev) && results139(db).equals(before), null);
                 restart242();
                 try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
                     for (int i = 1; i < DROP9.length; i++) st.execute(DROP9[i]);
+                    for (String x : DROP10) st.execute(x);
                     st.execute("PRAGMA user_version = 8");
                 }
                 db = Db.get(c);
-                check("#251 an upgrade stopped after the first table goes on: every table there, the raw messages kept", db.getReadableDatabase().getVersion() == 9
+                check("#251 an upgrade stopped after the first table goes on: every table there, the raw messages kept", db.getReadableDatabase().getVersion() == CUR
                         && schemaProblem251(db) == null && watchCount251(db, "watch_raw") == made251(T251, 80).size() && watchCount251(db, "watch_steps") == 0
                         && events58(db).equals(ev), schemaProblem251(db));
                 // the decoded rows come back from the raw messages: the same as before the cut
@@ -10804,10 +10936,93 @@ public class PipelineTest {
         clean254();
     }
 
+    /**
+     * Issue #251, watch setup, data safety: a schema 9 history with watch rows (decoder 1) upgrades to 10 with every event,
+     * night, day, raw message and decoded row as before and an empty {@code watch_moves}; the new decoder then works the
+     * rows out again in one transaction and fills it, the rows of the other tables unchanged; the upgrade run twice keeps
+     * everything. The watch setup choices travel with a backup, and an older backup keeps the phone's.
+     */
+    static void upgradeSetup251() throws Exception {
+        Context c = phone254("openring251-setup-up");
+        Db db = Db.get(c);
+        session251(db, 1000, made251(T251, 80), T251 + 86400);
+        List<String> before = results139(db), ev = events58(db);
+        String periods = periodRows252(db);
+        String rows = watchRows251(db);
+        long moves = watchCount251(db, "watch_moves");
+        check("#251 setup: the made up session has intensity and climb rows", moves > 0, moves);
+        String withoutMoves = rows.replaceFirst("(?s)--\n[^-]*--\n$", "--\n--\n");
+        restart242();
+        java.io.File file = c.getDatabasePath(Db.REAL);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+            for (String x : DROP10) st.execute(x);
+            st.execute("UPDATE kv SET v = '1' WHERE k = 'watch_decoder'");
+            st.execute("PRAGMA user_version = 9");
+        }
+        db = Db.get(c);
+        check("#251 setup: upgrade from schema 9: version 10, every event, night, day, period day and watch row the same, watch_moves empty",
+                db.getReadableDatabase().getVersion() == CUR && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods)
+                        && watchRows251(db).equals(withoutMoves) && watchCount251(db, "watch_moves") == 0, watchRows251(db));
+        check("#251 setup: the schema check of version 10 passes", schemaProblem251(db) == null, schemaProblem251(db));
+        check("#251 setup: nothing of the ring to analyse again", Analyzer.upToDate(c), null);
+        check("#251 setup: the stored rows are from decoder 1, so they are worked out again", !app.openring.data.WatchStore.decoderCurrent(db), null);
+        check("#251 setup: decoding again fills watch_moves, every other row as before", app.openring.data.WatchStore.ensureDecoded(db) && watchRows251(db).equals(rows)
+                && events58(db).equals(ev), watchRows251(db));
+        restart242();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+            st.execute("PRAGMA user_version = 9");
+        }
+        db = Db.get(c);
+        check("#251 setup: the upgrade run twice keeps every row", db.getReadableDatabase().getVersion() == CUR && watchRows251(db).equals(rows) && events58(db).equals(ev), null);
+
+        // the setup choices in the backup
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setWatchGoal(8000);
+        p.setWatchMetric(false);
+        app.openring.core.withings.WatchSetup.Alarm a = new app.openring.core.withings.WatchSetup.Alarm();
+        a.on = true;
+        a.hour = 6;
+        a.minute = 40;
+        a.days = 0x60;
+        a.smart = 15;
+        p.setWatchAlarm(a);
+        p.setWatchAlarmSent(p.watchAlarmChange());
+        byte[] full = backup252(c);
+        p.setWatchGoal(12000);
+        p.setWatchMetric(true);
+        a.on = false;
+        p.setWatchAlarm(a);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        app.openring.core.withings.WatchSetup.Alarm got = p.watchAlarm();
+        check("#251 setup: goal, unit and alarm come back from the backup, the alarm to be sent again", r.ok && p.watchGoal() == 8000 && !p.watchMetric() && got.on
+                && got.hour == 6 && got.minute == 40 && got.days == 0x60 && got.smart == 15 && p.watchAlarmPending(), r.message);
+        // an older backup has none of them: the phone's stay
+        org.json.JSONObject o = new org.json.JSONObject(new String(zipEntry(full, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
+        for (String k : new String[] {"watch_goal", "watch_metric", "watch_alarm_on", "watch_alarm_h", "watch_alarm_m", "watch_alarm_days", "watch_alarm_smart"}) o.remove(k);
+        p.setWatchGoal(6000);
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(withJson251(full, o.toString())));
+        check("#251 setup: an older backup without the setup choices keeps the phone's", r.ok && p.watchGoal() == 6000 && p.watchAlarm().hour == 6, r.message);
+        clean254();
+    }
+
+    /** The backup with another JSON, the same history file. */
+    static byte[] withJson251(byte[] zip, String json) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(json.getBytes("UTF-8"));
+            z.closeEntry();
+            z.putNextEntry(new java.util.zip.ZipEntry("openring.db"));
+            z.write(zipEntry(zip, "openring.db"));
+            z.closeEntry();
+        }
+        return out.toByteArray();
+    }
+
     static String schemaProblem251(Db db) throws Exception {
         java.lang.reflect.Method m = Db.class.getDeclaredMethod("schemaProblem", android.database.sqlite.SQLiteDatabase.class, int.class);
         m.setAccessible(true);
-        return (String) m.invoke(null, db.getReadableDatabase(), 9);
+        return (String) m.invoke(null, db.getReadableDatabase(), CUR);
     }
 
     /**
@@ -10815,6 +11030,72 @@ public class PipelineTest {
      * where the next request starts; a new decoder works everything out again in one transaction, and a stop half way keeps the
      * old rows; pairing another ring keeps the watch rows, Delete all empties them; the ring's data is never touched.
      */
+    /**
+     * Review of #332: a record in both the activity and the movement answer keeps every part (the movement answer may lack
+     * the calories part); where the next request starts the first time; another watch is never taken as set up; an alarm
+     * changed during a session stays pending. Raw messages are never changed.
+     */
+    static void fixes332() throws Exception {
+        Context c = phone254("openring332-fixes");
+        Db db = Db.get(c);
+        long now = T251 + 40 * 86400L;
+        check("#332 since: nothing stored yet, the first request asks 30 days back", app.openring.data.WatchStore.since(db, DEV251, false, now) == now - 30 * 86400L
+                && app.openring.data.WatchStore.since(db, DEV251, true, now) == now - 30 * 86400L, app.openring.data.WatchStore.since(db, DEV251, false, now));
+        check("#332 since: a clock before the month: never below 0", app.openring.data.WatchStore.since(db, DEV251, true, 1000) == 0, null);
+        // the activity answer: steps with calories and intensity; the movement answer: the same record, steps with climb, no calories
+        List<byte[][]> act = new ArrayList<byte[][]>(), mov = new ArrayList<byte[][]>();
+        act.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(500, 360), app.openring.core.withings.WatchDemo.calories(21, 35)});
+        mov.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(500, 360, 6, 4)});
+        List<byte[]> msgs = new ArrayList<byte[]>();
+        msgs.addAll(app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.ACTIVITY, act, 5));
+        msgs.addAll(app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.MOVEMENT, mov, 5));
+        session251(db, 3000, msgs, T251 + 3600);
+        String rows = watchRows251(db);
+        check("#332 merge: the movement answer without calories keeps the activity answer's calories", rows.contains(DEV251 + " " + T251 + " 900 500 360 21\n"), rows);
+        check("#332 merge: intensity from the activity answer and the climb from the movement answer, in one row", rows.contains(DEV251 + " " + T251 + " 35 6 4\n")
+                && watchCount251(db, "watch_moves") == 1 && watchCount251(db, "watch_steps") == 1, rows);
+        check("#332 since: after a sync, 2 hours before the newest record", app.openring.data.WatchStore.since(db, DEV251, false, now) == T251 - 7200, null);
+        // decoding everything again (a new decoder) gives the same rows, the raw messages unchanged
+        String raw = rows.substring(0, rows.indexOf("--\n"));
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#332 merge: decoding all again gives the same rows, raw messages untouched", watchRows251(db).equals(rows) && watchRows251(db).startsWith(raw), watchRows251(db));
+        // a later activity answer with the record grown: the larger counts win
+        List<byte[][]> later = new ArrayList<byte[][]>();
+        later.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(640, 460), app.openring.core.withings.WatchDemo.calories(27, 40)});
+        session251(db, 4000, app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.ACTIVITY, later, 5), T251 + 7200);
+        rows = watchRows251(db);
+        check("#332 merge: a record that came again grown takes the new counts, the climb stays", rows.contains(DEV251 + " " + T251 + " 900 640 460 27\n")
+                && rows.contains(DEV251 + " " + T251 + " 40 6 4\n"), rows);
+
+        // another watch: never taken as set up (review of #332)
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setWatch(DEV251, "Steel HR test");
+        p.setWatchSetupAt(T251);
+        p.setWatchCalibrating(true);
+        p.setWatch(DEV251.toLowerCase(java.util.Locale.ROOT), "Steel HR renamed");
+        check("#332 the same watch again (a restore, a new name): still set up", p.watchSetupAt() == T251 && p.watchCalibrating(), p.watchSetupAt());
+        p.setWatch("00:00:5E:00:53:AA", "Steel HR other");
+        check("#332 another watch: not set up, no open calibration of the old one", p.watchSetupAt() == 0 && !p.watchCalibrating() && "00:00:5E:00:53:AA".equals(p.watchAddress()),
+                p.watchSetupAt());
+        p.setWatchSetupAt(T251);
+        p.forgetWatch();
+        p.setWatch(DEV251, "Steel HR test");
+        check("#332 forgotten, then added again: not set up", p.watchSetupAt() == 0, p.watchSetupAt());
+
+        // an alarm changed while a session sends the one it read: the new one stays pending (review of #332)
+        app.openring.core.withings.WatchSetup.Alarm a = new app.openring.core.withings.WatchSetup.Alarm();
+        a.on = true;
+        p.setWatchAlarm(a);
+        int read = p.watchAlarmChange();
+        a.hour = 6;
+        p.setWatchAlarm(a);
+        check("#332 alarm: the watch took an older alarm, the newer one stays pending", !p.setWatchAlarmSent(read) && p.watchAlarmPending(), null);
+        check("#332 alarm: the watch took the current alarm, nothing pending", p.setWatchAlarmSent(p.watchAlarmChange()) && !p.watchAlarmPending(), null);
+    }
+
     static void store251() throws Exception {
         Context c = phone254("openring251-store");
         Db db = Db.get(c);
@@ -10891,7 +11172,7 @@ public class PipelineTest {
         check("#251 pairing another ring keeps every watch row", watchRows251(db).equals(rows) && db.eventCount() == 0, null);
         Analyzer.deleteAll(c);
         boolean empty = true;
-        for (String t : new String[] {"watch_raw", "watch_devices", "watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery"}) empty &= watchCount251(db, t) == 0;
+        for (String t : new String[] {"watch_raw", "watch_devices", "watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery", "watch_moves"}) empty &= watchCount251(db, t) == 0;
         check("#251 Delete all local data empties every watch table", empty, watchRows251(db));
         clean254();
     }
@@ -10909,7 +11190,9 @@ public class PipelineTest {
         app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         p.setWatch(DEV251, "Steel HR test");
         p.setWatchPerDay(4);
+        p.setMainDevice(app.openring.core.withings.MainDevice.WATCH);
         byte[] full = backup252(c);
+        p.setMainDevice(app.openring.core.withings.MainDevice.RING);
         // after the backup: two more syncs only the phone has
         session251(db, 2000, made251(T251 + 86400, 87), T251 + 2 * 86400);
         session251(db, 3000, made251(T251 + 2 * 86400, 84), T251 + 3 * 86400);
@@ -10922,6 +11205,7 @@ public class PipelineTest {
         check("#251 restore: the ring history is the backup's", r.ok && r.history && db.eventCount() == events && results139(db).equals(results), r.message);
         check("#251 restore: every watch row of the phone is there, the newer syncs too", watchRows251(db).equals(phone), watchRows251(db));
         check("#251 restore: the watch's settings come from the backup", DEV251.equals(p.watchAddress()) && p.watchPerDay() == 4, p.watchPerDay());
+        check("#251 restore: the main device comes from the backup", p.mainDevice() == app.openring.core.withings.MainDevice.WATCH, p.mainDevice());
         app.openring.data.Backup.Result again = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
         db = Db.get(c);
         check("#251 the same restore twice gives the same watch rows", again.ok && watchRows251(db).equals(phone), null);
@@ -10932,14 +11216,15 @@ public class PipelineTest {
         db = Db.get(c);
         check("#251 restore: the backup's messages come back next to the phone's, the rows worked out from all", r.ok && watchRows251(db).equals(phone), null);
         // older backups: no watch tables; the upgrade makes them, then the phone's watch goes in
-        for (int v : new int[] {8, 7}) {
-            List<String> sql = new ArrayList<String>(Arrays.asList(DROP9));
+        for (int v : new int[] {9, 8, 7}) {
+            List<String> sql = new ArrayList<String>(Arrays.asList(DROP10));
+            if (v <= 8) sql.addAll(Arrays.asList(DROP9));
             if (v == 7) sql.addAll(Arrays.asList(DROP8));
             byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), v, sql.toArray(new String[0])));
             r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
             db = Db.get(c);
-            check("#251 a backup of schema " + v + " restores at version 9 with the phone's watch row for row", r.ok && r.history
-                    && db.getReadableDatabase().getVersion() == 9 && watchRows251(db).equals(phone) && db.eventCount() == events, r.message);
+            check("#251 a backup of schema " + v + " restores at version " + CUR + " with the phone's watch row for row", r.ok && r.history
+                    && db.getReadableDatabase().getVersion() == CUR && watchRows251(db).equals(phone) && db.eventCount() == events, r.message);
         }
         // a stop at each step of the merge: nothing restored, the phone's watch as it was
         for (String step : new String[] {"read", "write", "done"}) {
@@ -11004,8 +11289,19 @@ public class PipelineTest {
         session251(real, 1000, made251(T251, 80), T251 + 86400);
         String realRows = watchRows251(real);
         LocalDate today = LocalDate.now();
-        app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        // issue #299: a failed shrink while building the demo names that step, in the demo file only
+        java.lang.reflect.Field fail = Db.class.getDeclaredField("failShrink");
+        fail.setAccessible(true);
+        fail.set(null, true);
+        try {
+            app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        } finally {
+            fail.set(null, false);
+        }
         Db demo = Db.get(c);
+        String note = demo.kv(DataCheck.SHRINK_ERROR, null);
+        check("#299 demo mode: a failed shrink names building the demo, not Delete all", Db.DEMO.equals(demo.fileName) && note != null
+                && note.startsWith("building the demo|"), note);
         app.openring.data.WatchStore.Data d = app.openring.data.WatchStore.load(demo);
         check("#251 demo mode: the made up watch is in the demo file", Db.DEMO.equals(demo.fileName) && d.steps.size() > 35 * 50 && d.heart.size() > 35 * 40
                 && d.workouts.size() >= 10 && app.openring.core.withings.WatchDemo.NAME.equals(d.name), d.steps.size());
@@ -11014,6 +11310,93 @@ public class PipelineTest {
         Db back = Db.get(c);
         check("#251 demo mode never touches the real watch rows", Db.REAL.equals(back.fileName) && watchRows251(back).equals(realRows)
                 && back.count("SELECT COUNT(*) FROM watch_raw WHERE device = '" + app.openring.core.withings.WatchDemo.ADDRESS + "'") == 0, null);
+        check("#299 the demo's note stays in the demo file, the real one has none", back.kv(DataCheck.SHRINK_ERROR, null) == null, null);
         clean254();
+    }
+
+    /**
+     * Issue #251, main device: the demo's ring is on its charger yesterday 14:00 to 16:00, and its made up watch fills that
+     * time when the day is shown; the stored results stay the ring's (no watch steps in them), and switching the main
+     * device changes only what is worked out on load. An older backup without the choice keeps the phone's.
+     */
+    static void mainDevice251() throws Exception {
+        Context c = phone254("openring251-main");
+        LocalDate today = LocalDate.now();
+        app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        Db db = Db.get(c);
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        LocalDate y = today.minusDays(1);
+        double from = y.atStartOfDay(z).toEpochSecond(), to = y.plusDays(1).atStartOfDay(z).toEpochSecond();
+        org.json.JSONObject day = app.openring.data.Json.parse(db.dayJson(y.toString()));
+        List<org.json.JSONObject> nights = new ArrayList<org.json.JSONObject>();
+        org.json.JSONObject main = null;
+        for (String js : db.recentNights(y, today)) {
+            org.json.JSONObject o = app.openring.data.Json.parse(js);
+            if (o == null) continue;
+            nights.add(o);
+            if (o.optBoolean("main") && y.toString().equals(o.optString("day"))) main = o;
+        }
+        String stored = db.dayJson(y.toString());
+        double charge = app.openring.data.Demo.CHARGE_TO_H - app.openring.data.Demo.CHARGE_FROM_H;
+        check("#251 main device: the demo ring has no movement yesterday 14:00 to 16:00 (on its charger)", day != null
+                && day.optDouble("non_wear_min", 0) >= charge * 60 && day.optJSONArray("met_profile").isNull((int) (app.openring.data.Demo.CHARGE_FROM_H * 4))
+                && day.optJSONArray("met_profile").isNull((int) (app.openring.data.Demo.CHARGE_TO_H * 4) - 1), day == null ? null : day.optDouble("non_wear_min"));
+        app.openring.core.withings.MainDevice.Ring ring = app.openring.data.WatchStore.ringDay(day, main, nights, from, to);
+        app.openring.core.withings.MainDevice.Watch watch = app.openring.data.WatchStore.window(db, from - 86400, to);
+        check("#251 main device: the day's watch rows are read for the day and the night before", !watch.steps.isEmpty() && !watch.heart.isEmpty() && !watch.sleep.isEmpty(),
+                watch.steps.size());
+        app.openring.core.withings.MainDevice.Day d = app.openring.core.withings.MainDevice.of(app.openring.core.withings.MainDevice.RING, y, from, to, z, ring, watch);
+        double cf = from + app.openring.data.Demo.CHARGE_FROM_H * 3600, ct = from + app.openring.data.Demo.CHARGE_TO_H * 3600;
+        boolean covered = false;
+        for (double[] r : d.stepFill) covered |= r[0] <= cf && r[1] >= ct;
+        boolean hrCovered = false;
+        for (double[] r : d.hrFill) hrCovered |= r[0] <= cf && r[1] >= ct;
+        check("#251 main device: the watch fills the charging time, steps and heart rate", d.fillSteps > 0 && covered && hrCovered
+                && d.steps == day.optDouble("steps") + d.fillSteps, app.openring.core.withings.MainDevice.clockRanges(d.stepFill, z));
+        String line = app.openring.core.withings.MainDevice.stepsLine(d, z, java.util.Locale.US);
+        check("#251 main device: the line names the watch and 14:00 to 16:00", line != null && line.contains("from your watch") && line.contains("14:00 to 16:00"), line);
+        check("#251 main device: the ring's own night is shown, not the watch's", main == null || d.watchNight == null, null);
+        app.openring.core.withings.MainDevice.Day w = app.openring.core.withings.MainDevice.of(app.openring.core.withings.MainDevice.WATCH, y, from, to, z, ring, watch);
+        check("#251 main device: the watch as main device shows its own steps and night", w.watchNight != null && w.steps != d.steps, w.steps);
+        check("#251 main device: showing the day stores nothing, the ring's summary is as it was", stored.equals(db.dayJson(y.toString())), null);
+        check("#251 main device: the ring's summary holds only the ring's steps", day.optDouble("steps") < d.steps, null);
+        // reading it with the watch rows of a whole day before the watch: nothing named
+        app.openring.core.withings.MainDevice.Day none = app.openring.core.withings.MainDevice.of(app.openring.core.withings.MainDevice.RING, y, from, to, z, ring,
+                app.openring.data.WatchStore.window(db, from - 400 * 86400.0, from - 300 * 86400.0));
+        check("#251 main device: without watch rows the day is the ring's, byte for byte", none.steps == day.optDouble("steps") && none.stepFill.isEmpty()
+                && none.hr == ring.hr && !none.filled(), none.steps);
+        // an older backup has no choice: the phone's stays
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setDemo(false);
+        p.setMainDevice(app.openring.core.withings.MainDevice.WATCH);
+        byte[] full = backup252(c);
+        java.util.zip.ZipInputStream zin = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(full));
+        java.io.ByteArrayOutputStream rebuilt = new java.io.ByteArrayOutputStream();
+        java.util.zip.ZipOutputStream zout = new java.util.zip.ZipOutputStream(rebuilt);
+        boolean had = false;
+        for (java.util.zip.ZipEntry e = zin.getNextEntry(); e != null; e = zin.getNextEntry()) {
+            byte[] b = readAll251(zin);
+            if (e.getName().endsWith(".json")) {
+                org.json.JSONObject o = new org.json.JSONObject(new String(b, java.nio.charset.StandardCharsets.UTF_8));
+                had = o.has("main_device");
+                o.remove("main_device");
+                b = o.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            }
+            zout.putNextEntry(new java.util.zip.ZipEntry(e.getName()));
+            zout.write(b);
+            zout.closeEntry();
+        }
+        zout.close();
+        p.setMainDevice(app.openring.core.withings.MainDevice.RING);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(rebuilt.toByteArray()));
+        check("#251 main device: the backup holds the choice, an older one without it keeps the phone's", had && r.ok && p.mainDevice() == app.openring.core.withings.MainDevice.RING, r.message);
+        clean254();
+    }
+
+    static byte[] readAll251(java.io.InputStream in) throws java.io.IOException {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        for (int n; (n = in.read(buf)) > 0; ) b.write(buf, 0, n);
+        return b.toByteArray();
     }
 }

@@ -19,7 +19,7 @@ Nothing leaves the phone: the app has no internet permission.
 | Package | Responsibility |
 | --- | --- |
 | `core/` | Pure Java, no Android imports, unit tested on the JVM. `Protocol` (request bytes), `Packet` (framing), `Auth` (key handshake), `RingClient` (requests, history drain, live parsing), `HistoryBatch` and `ExtEnvelopeParser` (history batches), `EventCodec` (event decoders), `TimeLine` (ring counter to wall clock), `Dating` (every event's boot segment and date: all at once, or after a sync only the new part, with the state that needs, issue #220), `Tilt` (games), `SyncError` (plain sentences for failed syncs, pairing, Settings actions on the ring, live heart rate and game motion; which failed sync attempts are tried again, only Bluetooth off, no ring found or a stop end a sync at once, issue #157; a failed sync always stores an error text, issue #91), `Texts` (a number with its word in singular or plural, the toast length limit, the sentence for a failed export), `RingTasks` (which sync a stop reaches, when Live rejoins a session, which sync shows the final status line, that demo mode never uses the ring; issues #43, #153 and #185), `LiveSessions` (the live session tokens: start or rejoin, stop, a queued session that became stale, a session that ends clears only its own mark; issue #153), `LiveScreen` (Live measures only while in front, and in demo mode only made up readings; issues #185 and #187), `DemoLive` (the made up Live readings of demo mode), `FingerCheck` (Find my ring: when it asks the ring whether it is on a finger, its strip line and chip, the 30 s blink; issue #192), `PermissionAsk` (whether Android still shows the permission dialog), `BackgroundJob` (whether the background sync job is scheduled, kept or cancelled, issue #193; a sync or attempt under 30 minutes ago makes the job and the main screen skip theirs, issue #194), `Pairing` (the order of the pairing steps so a key written to a ring is never lost, and the hand over of the result to the Setup screen shown now, issue #218), `RingGate` (the ring lock and the count of syncs under way, shared with the code that swaps the database file, issue #219; `takeIfFree` for the Watch check, which never waits for the ring), `WatchCheck` (the Watch check's report: UUID and property names, the 2 byte rule, the copy limit, the demo example; issue #251), `SetupTasks` (Setup never restores and pairs at once, review of #248), `ModeRestore` (the measurement modes Live and the finder put back, also at the next connection after a lost link; issue #221), `Backups` (the automatic backups' rules and texts: when a new version copies the history first, the names of the copies, which copies may go, when a folder copy is due; issue #242), `PeriodRemind` (the reminder before the expected period: when, for which cycle, why none, its texts; issue #252), `DripCsv` (reads drip's export by column name, its made up demo file and mouth temperatures; issue #252) and `DripImport` (the drip import's preview and the one decision per day and temperature the import applies), `Hex` |
-| `core/withings/` | The Withings watch sync (issue #251, phase 1b): `Frame` (message frame, parts, pieces and joining them), `Proto` (message and part types, the requests, the hello's and battery's answers, workout names), `Records` (the decoder, versioned), `Session` (the message order over a link, the ring always wins), `WatchDays` (per day sums, the night, battery drop, zones), `WatchDue` (when a background sync is due), `WatchDemo` (made up messages for demo mode and tests) |
+| `core/withings/` | The Withings watch sync (issue #251, phase 1b): `Frame` (message frame, parts, pieces and joining them), `Proto` (message and part types, the requests, the hello's and battery's answers, workout names), `Records` (the decoder, versioned), `Session` (the message order over a link, the ring always wins), `WatchDays` (per day sums, the night, battery drop, zones), `WatchDue` (when a background sync is due), `WatchDemo` (made up messages for demo mode and tests), `MainDevice` (one set of numbers: the main device, the other one only in its gaps) |
 | `core/analysis/` | `NightFinder` (where the sleeps are), `Stager` (sleep stages), `ScreenTime` (phone screen sessions, apps in front, their effect on a night), `ScreenScore` (screen score), `NightAnalyzer` (night metrics), `WakeUps` (the one definition of a wake up, a minute or more awake inside the night, used by the Sleep page, the timeline and the Settings preview; issue #70), `Scores` (Sleep, Readiness, Activity), `Wellness` (activity, calories, sleep debt, radar, VO2 max), `SleepPattern` (average night), `StageShare` (stage percentages that add up to 100), `LiveFeed` (sorts a live refresh: real beats apart from always on heart rate, issue #152), `FinderLayout` (how Find my ring shares the screen's height, issue #191), `FingerNow` (on a finger now, from what the finder just downloaded, issue #192), `LiveHrv`, `LeftOut` (the times left out because someone else wore the ring, merged; the sleep window without them; their texts; issue #254), `Cycles` (the period tracker's estimates from the logged days: periods, cycles, the next start and its range, late, the calendar ovulation estimate and fertile window, unusual cycles, the cycles over time, "My periods have stopped" and its question, their texts, the demo's made up log and warmer nights; issue #252; with `measured` the estimate from the temperature rise), `TempRise` (phase 2 of #252: the three over six rule on one cycle of one signal, each cycle with the ring and the mouth, the own time from ovulation to the period, their texts), `Badges` (issue #265: badges for days and nights that were good compared with the person's own history, their rules, evidence numbers and texts; one pass over the dates, nothing stored; shown from phase 1b), `Stats`, `TS` (time series) |
 | `data/` | `Db` (SQLite; real and demo files), `Analyzer` (runs analysis after each sync), `Json` (night and day JSON), `Prefs` (settings, encrypted ring key), `DataCheck`, `RightNow`, `SleepHistory`, `Backup`, `BeforeUpdate` (the copy of the history before an update, its check, going back; issue #242), `AutoBackup` (the automatic backup job's run and going back to a copy), `Demo`, `Exporter`, `Periods` (the period log: days, ends, the restore merge; issue #252), `WatchStore` (the watch's raw messages, the rows worked out from them, the restore merge, the Data check lines; issue #251), `ScreenUse` (copies Android's screen on and off log and which app was in front), `ScreenDays` (screen time per day for the Screen tab, with apps left out), `BadgeDays` (issue #265: what the badges need for a range of dates with one read per table; the Today row reads back until its badges are exactly the whole history's, `Badges.recent` and `exactFrom`, since "at most once in 7 days" chains back through a streak; screen minutes and the evening counted with the Screen tab's own code, `ScreenDays.counted`, `span`, `nightRead`, `bedMin`) |
 | `ble/` | `GattLink` (connection, MTU, bonding, notifications), `RingScanner` (also the unfiltered scan of the Watch check, in the same start budget), `WatchLink` (one short look at a watch without bonding, issue #251), `WatchSync` (one sync with the watch: its own link and lock, the ring lock taken without waiting, issue #251 phase 1b), `RingManager` (sync, live, motion, pairing; one worker thread and one lock so only one task uses the ring) |
@@ -121,8 +121,11 @@ rest. Both lists come from `Db.SCHEMA` (issue #272): `Db.ALL_TABLES` is every ta
 the keep list `Db.KEPT_TABLES` (`Periods.TABLES` and the watch's `WatchStore.TABLES`, issue #251), so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
 test fills every table that really is in the file (`sqlite_master`, not `SCHEMA`) and checks Delete all empties each.
 After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(TRUNCATE)` (in WAL mode a checkpoint
-before VACUUM leaves the file at full size), so the file gives the history's space back; an error there is ignored
-because the delete is already complete, and a read open at that moment only delays the shrink to the next checkpoint. The Data check never names the period tables,
+before VACUUM leaves the file at full size), so the file gives the history's space back; an error there never reaches
+the person because the delete is already complete, and a read open at that moment only delays the shrink to the next checkpoint.
+A failed shrink is noted for the Data check (issue #299): one kv row `DataCheck.SHRINK_ERROR` written after the delete
+committed, with the step, the time and the error's class and place (never its message), gone with the next delete and
+removed from a restored file in `Db.replaceWith` (the restored file is compact). The Data check never names the period tables,
 their dates or their counts.
 
 **The period tracker (issue #252, phase 1a1).** Shown when the profile says female, when the Settings switch "Show the
@@ -689,12 +692,15 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   (the Withings app made it; no bond is asked for), `CONNECTION_PRIORITY_HIGH` only for this session, MTU 119 asked
   (pieces follow what the watch gives), notifications on `0x24`, every request written to `0x24` in pieces of MTU minus 3,
   each piece waiting for its write confirmation; `Frame.Assembler` joins the answer's pieces.
-* **Session** (`core/withings/Session`, JVM tested against a made up watch): hello, connect, battery, set time, activity
-  records since T, heart rate records since T, and always "sync done" last while the link is up. Each request waits for its
-  answer (5 s; a data answer 20 s between messages, until a message with the end part), at most 2 minutes in all. A
-  challenge from the watch ends the session with a plain sentence (see the flag below). The watch's own messages on the way
-  are stored and skipped. Every message is stored as it arrives (`WatchStore.addRaw`), so an early end keeps what came.
-* **Storage (schema 9, only adds):** `watch_raw` (session start in ms, place in the session, device, type, the whole
+* **Session** (`core/withings/Session`, JVM tested against a made up watch): the hello, then a list of steps
+  (`core/withings/WatchSetup` builds them: the first setup, each sync, the alarm, the hand calibration; see the watch setup
+  below), and always "sync done" last while the link is up. Each request waits for its
+  answer (5 s; a data answer 20 s between messages, until a message with the end part), at most 2 minutes in all. The
+  watch asks for a sign in right after the hello; `core/withings/SignIn` answers it and the session goes on (see the sign in
+  below). When the sign in comes as the answer to a request other than the hello, that request is not sent again: the
+  session waits for its answer once more, and a watch that dropped it ends the session with "did not answer" (a known
+  limit). The watch's own messages on the way are stored and skipped. Every message is stored as it arrives (`WatchStore.addRaw`), so an early end keeps what came.
+* **Storage (schema 9, only adds; schema 10 adds `watch_moves`, see the watch setup below):** `watch_raw` (session start in ms, place in the session, device, type, the whole
   message, captured) keeps every message as it came, also two equal ones; `watch_devices`; and the rows worked out from
   the messages by `core/withings/Records` (`watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery`,
   keyed by device and time, UTC seconds), so the same message twice adds nothing. kv `watch_decoder` holds
@@ -710,14 +716,28 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   first, then the watch when the newest of those times passed after its last good sync and no attempt was made since that
   time or in the last 2.5 hours. The job is scheduled when the ring's background sync is on or a watch syncs on its own.
 * **Screens:** Settings, Watch (the watch, paired with this phone or not, last sync, battery, last problem, "Sync the watch
-  now", the chips, "Open the watch page", "Forget the watch": syncing stops, nothing is deleted); Today's Watch card; the
+  now", the chips, "Open the watch page", "Forget the watch": syncing stops, nothing is deleted); the
   Watch page with steps per day (30 days as dots), the day's workouts, the heart rate curve, Withings' own sleep as a
   timeline (per minute, codes not known yet as no data) and the battery per day with its drop per day (falls added up,
   charges left out, over 7 days). Nothing on the page is stored: `core/withings/WatchDays` works it out on each load.
 * **Log and Data check:** every step, message type and length, never a value (the JVM test checks the session's lines);
   the Data check names counts, dates and message types only (no step, heart rate or battery value).
 * **Demo mode:** `core/withings/WatchDemo` makes up five weeks of messages, stored and decoded like a real watch's, in the
-  demo file only.
+  demo file only. The demo's ring is on its charger yesterday 14:00 to 16:00 (`Demo.charging`), so the watch fills that time.
+* **Main device, one set of numbers** (`core/withings/MainDevice`, the owner's decision of 3 November): Settings, Watch,
+  Main device (Ring or Watch, shown once a watch was added, default Ring, `Prefs.mainDevice`, in the backup). The other
+  device only fills the quarter hours the main one was not worn. Ring worn: its day summary has movement there
+  (`met_profile`, by clock time), a heart rate point (`hr_day`) or one of its nights or naps covers it; so charging, off the
+  finger and a left out time (#254) count as not worn. Watch worn: any of its records within 30 minutes (it has no wear
+  signal and measures heart rate about every 30 minutes). Filled: steps and distance (main ring: the watch's step records
+  that start in the ring's gaps; main watch: the ring's estimate per quarter hour from its movement, the per minute rule of
+  `Wellness.day`), the heart rate line of Body (the other device's readings as quarter hour averages), the night when the
+  main device has none (a watch night is Withings' own stages, `WatchDays.nightFor`, shown on Sleep without a score). The
+  watch's workouts are listed on Activity. A day the main device has nothing on takes the other's whole day. Each filled part
+  gets one line naming the device and the clock times. Worked out on each day load (`DayData.merge`, `WatchStore.window`,
+  `WatchStore.ringDay`); nothing is stored or analysed again. Readiness, the sleep score, HRV, breathing, blood oxygen,
+  temperature, burn, movement minutes and the 7 and 30 day charts stay the ring's. With only a ring every number is the
+  stored one, byte for byte (JVM test).
 
 Protocol facts, in our own words, not confirmed with a real watch yet. Sources: the public pairing recording and notes in
 Gadgetbridge issue 854 and pull request 2831 on Codeberg, the Gadgetbridge Withings device page, and the message and part
@@ -743,15 +763,99 @@ read, no Device Information or Battery service, silent until asked).
   bytes, then an intensity), sleep stage `0x0607` (0 light, 2 deep, 3 REM; 1 not documented), workout type `0x0969` (codes:
   1 walking, 2 running, 3 hiking, 6 cycling, 7 swimming and 30 more), running `0x0605` and swimming `0x060d` marks, heart
   rate `0x0929` (the first byte). Sleep heart rate comes as records with only a heart rate.
-* The notes also name `0x0506` "movement samples", nearly the same as `0x0978` without sleep; it is not asked for (it could
-  count steps twice).
+* `0x0506` "movement samples" is asked too since the watch setup (below); its records go through the same decoder and are
+  keyed by device and start, so a record in two answers counts once. Each answer may carry only some parts of a record
+  (the movement answer may lack the calories part), so a later answer replaces a stored value only with a non zero one
+  (`WatchStore.kept`): steps and calories of the activity answer and the climb of the movement answer end in one row.
 * The watch drops a write that comes while it is busy, so each request waits for its answer.
-* **Flagged for the owner:** the watch can send a challenge (`0x0128`, part `0x0122`: address and 16 random bytes). The
-  answer is SHA-1 over the challenge, the address and a fixed secret. The secret is public only as a string constant in
-  Gadgetbridge's `AuthenticationHandler.java` (AGPL). A single constant is most likely a protocol fact rather than code, but
-  it is not in this build until the owner decides. Gadgetbridge's normal sync never answers a challenge (its handler is
-  never reached), so a sync most likely works without it; if the watch asks, the session ends with "The watch asked for a
-  sign in that this version cannot answer yet".
+* **Sign in** (`core/withings/SignIn`). The owner's watch (Steel HR, nightly 1.99, 3 November) answered our hello at once
+  with a challenge instead of the hello answer: message `0x0128`, 44 bytes, one part `0x0122`. So the sign in is needed for
+  every sync. Facts (the owner decided on 3 November to use the public secret as a protocol fact, see NOTICE):
+  * Part `0x0122` (challenge): a length byte and the watch's Bluetooth address as text (`XX:XX:XX:XX:XX:XX`, 17
+    characters), then a length byte and 16 random bytes. That is 4 + 35 bytes, exactly the 44 byte message seen.
+  * The proof is SHA-1 over the challenge bytes, then the address text as the watch sent it, then the fixed secret
+    `2EM5zNP37QzM00hmP6BFTD92nG15XwNd` (32 ASCII characters), simply one after the other.
+  * The answer is again message `0x0128` with two parts: `0x0123` (a length byte, 20, then the proof) and `0x0122` with
+    the watch's address text and 16 random bytes of our own (69 bytes in all with a 17 character address).
+  * The watch then sends the answer to the hello (`0x0101`), which may hold part `0x0123` with its own proof for our
+    challenge (SHA-1 over our bytes, the address and the same secret). When it is there and wrong, the session ends ("The
+    watch answered the sign in wrongly"); when it is missing, the session goes on, as Gadgetbridge does.
+  * What a refusal looks like is not documented. The session counts as refused (plain sentence "The watch did not accept the
+    sign in") when, after our answer, the hello answer does not come within 5 s, the watch asks again, or it closes the
+    link. A challenge of another layout ends the session as before ("a sign in of a kind this version does not know").
+  * Sources: Gadgetbridge's Withings Steel HR support (AGPL), files `AuthenticationHandler.java` (the secret, what is
+    hashed in which order, our own challenge back, the check of the watch's proof), `Challenge.java` and
+    `ChallengeResponse.java` (the part layouts), `WithingsStructureType.java` (parts 290 = `0x0122`, 291 = `0x0123`) and
+    `WithingsMessageType.java` (296 = `0x0128`), read on the GitHub mirror of `Freeyourgadget/Gadgetbridge` (master, 3
+    November 2026). Gadgetbridge answers the challenge after its hello on every connection that is not the first pairing,
+    then syncs. No code was copied or translated; `SignIn` is our own. No public example pair (challenge with its proof)
+    was found, so the JVM test checks against values worked out outside this repository.
+  * The log names only that a sign in was answered, its length, whether the address in the challenge is the connected one,
+    and whether the watch's proof was right; never the address, the bytes or the secret. The challenge itself is stored in
+    `watch_raw` like every message from the watch (it holds no health value); our answer is not stored.
+* **Watch setup and full sync** (`core/withings/WatchSetup`, `ui/WatchSetupActivity`, the owner's report of 4 November: the
+  watch signed in but only the battery came). Facts read in Gadgetbridge's Steel HR support (AGPL, GitHub mirror
+  `Freeyourgadget/Gadgetbridge`, master, files `WithingsSteelHRDeviceSupport.java`, `WithingsMessageType.java`,
+  `WithingsStructureType.java`, `UserUnitConstants.java`, the data structures `User`, `UserUnit`, `ActivityTarget`, `Locale`,
+  `Time`, `ScreenSettings`, `GetActivitySamples`, `TypeVersion`, `ActivitySample*`, `AlarmSettings`, `AlarmStatus`,
+  `MoveHand`, `EndOfTransmission`, the handlers `ActivitySampleHandler`, `SyncRequestHandler`, `SetupFinishedHandler`, and
+  `WithingsCalibrationActivity`; read 4 November 2026). Facts only, in our own words; no code copied or translated.
+  * **First setup** (Gadgetbridge's first connection): connect `0x0111`, language `0x011a` (part `0x0121`: a length byte
+    and two letters; the watch knows de, en, es, fr, it), start and stop of the hand calibration, set time, distance unit and
+    clock `0x0112` (part `0x0119`: two zero bytes, what (2 distance, 4 clock), the value (24 km, 25 miles, 26 for 24 hours,
+    27 for 12 hours), 2 bytes each), the daily step goal `0x050a` (part `0x0511`, 8 bytes), notifications on (`0x0929` with
+    part `0x092a`, 1 byte; needs the phone to serve the notification service, not sent here), battery, the display screens
+    `0x050c` and "setup finished" `0x0113`, answered with the same type. We send the same, without the calibration and the
+    notifications, plus the user (below) and the alarm, then the first sync's data requests in the same connection.
+  * **The display screens** `0x050c`: one part `0x0516` per screen (id 4 bytes, a user number 4, two zero numbers 4 each, its
+    place 1 byte, then 1), the end part `0x0100` last. The 7 screens Gadgetbridge sends (id, place): `0xff` 6, `0x3d` 1,
+    `0x33` 4, `0x2d` 2, `0x2a` 3, `0x26` 7, `0x39` 9. Which id is which screen is not documented.
+  * **Each sync** (Gadgetbridge, after the sign in): connect, battery, set time, the user `0x0502`, the step goal, the two
+    units, some reads of the alarm and screens (not sent here), then three data requests, each until the end part: activity
+    `0x0978` (part `0x0506`: from, unix seconds 4 bytes, count 2 bytes, 0 for all; no version part), movement `0x0506` (the
+    same, plus part `0x0961` version 1) and heart rate `0x0928` (the same as movement), then sync done `0x0115` ("must be
+    sent in all cases"). Gadgetbridge's "from" is the last sync time, the first time now minus 10 hours; we ask from the newest
+    stored record of the kind minus 2 hours, and 30 days back the first time. Nothing says the watch drops records once they
+    are sent or that an answer must be acknowledged; both requests ask "since a time".
+  * **The user** `0x0502`, part `0x0503`: a user number (4 bytes; any number, Gadgetbridge sends 123456), weight (4, whole
+    kg), height (4, whole cm), sex (1 byte: 0 male, 1 female), birth date (4, unix seconds), then the name with a length byte
+    (we send none). The app's profile has an age, not a birth date: we send 1 July of the year it points to. A profile without a
+    sex sends no user until the setup screen asks for it.
+  * **Records** (answers of all three requests): a time part `0x0601` starts each record; duration `0x0602` (2 bytes);
+    movement `0x0603` (steps 2, distance 4, climbed 4, descended 4); walking `0x0604` (a level, 2 bytes), running `0x0605`,
+    swimming `0x060d` (marks); sleep `0x0607` (2 bytes: 0 light, 2 deep, 3 REM); calories `0x0608` and `0x060a` (calories 2,
+    then an intensity 2); `0x060b` unknown; workout type `0x0969` (2 bytes); heart rate `0x0929` (1 byte). Decoder version 2
+    stores the intensity and the climb in `watch_moves`.
+  * **The watch's own messages** have `0x41` or `0x81` as the type's first byte. A sync ask `0x0141` from the watch is
+    answered with an empty `0x4141` (the answer to one of the watch's own messages carries `0x4000`), as Gadgetbridge does.
+    Live workout messages (`0x013d`, `0x013e`, `0x0140`) and notification requests are only stored here.
+  * **Alarm** `0x0145`, part `0x0512`: hour, minute, days (Sunday `0x01`, Monday `0x02` up to Saturday `0x40`, always plus
+    `0x80`), day of month, month and year (0 for a repeating alarm), the smart wake window in minutes (Gadgetbridge always 15),
+    one byte each; an optional name part `0x0514`. Then `0x091b` with part `0x0919` (1 byte, 1 on, 0 off); off alone switches
+    it off. Gadgetbridge offers 3 alarm slots, but whether a second `0x0145` adds or replaces is not documented, so the app has
+    one alarm. It is sent from the setup screen or with the next sync after a change; a change made while a session sends the
+    older one stays pending (a change counter, `Prefs.watchAlarmChange`). On without any day is sent as off.
+  * **Hands** `0x011e` starts the calibration (the hands go to their home), `0x011c` with part `0x050c` moves one: the hand
+    (1 byte: 0 minutes, 1 hours, 2 the activity hand) and the amount (2 bytes, signed, plus is clockwise), `0x011f` ends it.
+    Gadgetbridge's guide: hour hand to 12, minute hand to 12, activity hand to 100 % (it only moves clockwise). The size of one
+    step and whether a move is answered are not documented: our session waits 1.5 s for an answer and goes on without. The
+    end (off, then set time) is also sent when the session ends early while the link is up (`Session.Plan.last`). Its time
+    is made when it is sent (`Session.Plan.clock` and `zone`), not when the session began, since a calibration can last
+    5 minutes. When the link is lost before the end, Prefs `watch_calibrating` stays set and the next session of any kind
+    sends calibration off and the time right after connect (`WatchSetup.closeCalibrationFirst`).
+  * **Time and zone:** set time carries now, the offset now, the next clock change and the offset after it, so the hands
+    follow a daylight saving change without a sync; every sync and the end of a calibration send it again.
+  * **Not built (a later phase):** phone notifications on the watch (the phone must serve Apple's notification service),
+    workout screens with icons (`0x013c`, image parts), live heart rate (`0x0927`), the heart rate measuring interval and
+    the wrist side (no message known in Gadgetbridge), more than one alarm.
+  * **Why the owner's sync brought only the battery** is not known without his log. Missing were: the whole setup (no user,
+    no "setup finished"), the movement request, a positive first "since"; and removing the watch from the Withings app likely
+    reset it, so it may have held nothing yet. The log now names, per data answer, the part types and how often each came.
+  * **The flow** (`ui/WatchSetupActivity`, Settings, Watch, Set up the watch): find (a 10 s scan, Withings watches first),
+    pair (Android's bond, its dialog), sign in, send the setup (the screen lists every value sent; a missing sex or a profile
+    never entered leads to Settings, Profile, whose save re analyses the history like any profile change), the first sync,
+    done; each with its state and Retry. A watch with another address than the saved one is never taken as set up.
+    Below: the alarm and the hand calibration. All sessions go through `WatchSync` with the ring's rules (the ring always wins).
 * Heart rate outside workouts seems to be one reading every 30 minutes by default, continuous during workouts.
 * Unknown: whether the watch drops records once one app synced them (requests ask "since a time", which suggests it keeps
   them for both apps), whether a workout's steps are also in the normal records, and the distance unit (shown as metres).

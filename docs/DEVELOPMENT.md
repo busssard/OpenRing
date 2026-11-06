@@ -98,8 +98,8 @@ add a screen or a state worth seeing, add it to `.github/scripts/screens.sh`. Th
 these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
 (boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd),
-`settings` (opens Settings at a card: `top`, `period`, `stages`, `watch`, `screen`, `games`, `backups` or `advanced`; with a card the page gets
-an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened), `finder_blink` (boolean, with `finder`: the demo's Make it blink counting down), `live` (boolean, demo mode only: opens Live with its made up readings), `live_spo2` (boolean, with `live`: blood oxygen on), `left_out` (boolean, demo mode only: leaves out the day before yesterday 13:00 to 17:00 in the demo file, issue #254), `watch` (boolean, demo mode only: opens the Watch check with its made up scan, issue #251), `watch_report` (boolean, with `watch`: picks the made up watch and shows its made up report), `key_unreadable` (boolean, demo mode only: the main screen's status line for a saved ring key this phone cannot read, issue #199), `period_edit` (boolean, demo mode only, with `tab` 4: opens the period tracker's day editor on Body for a day of the newest made up period; nothing is saved without a tap, issue #252), `badges` (boolean: opens the Badges page, issue #265), `period_ask` (boolean, demo mode only: the period cards show the question "Have your periods stopped?" with the demo's own numbers until it is answered; nothing is saved without a tap, issue #252), `period_rise` (boolean, demo mode only: Body's night temperature line opens touched on the first high night of the rise it marks, phase 2 of #252), `drip` (boolean, demo mode only: opens Import from drip with a made up drip file, `core/DripCsv.demo`, compared with the demo's log; the preview only, demo mode never imports, issue #252), `drip_correct` (boolean, with `drip`: opens Correct on the file's first short period), `watch_data` (boolean, demo mode only: opens the Watch page with the made up watch's data, issue #251 phase 1b).
+`settings` (opens Settings at a card: `top`, `blocks`, `profile`, `period`, `stages`, `watch`, `screen`, `games`, `backups` or `advanced`; `stages` and `watch` open their Ring or Watch block first, `blocks` shows both blocks closed at the top; with a card the page gets
+an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened), `finder_blink` (boolean, with `finder`: the demo's Make it blink counting down), `live` (boolean, demo mode only: opens Live with its made up readings), `live_spo2` (boolean, with `live`: blood oxygen on), `left_out` (boolean, demo mode only: leaves out the day before yesterday 13:00 to 17:00 in the demo file, issue #254), `watch` (boolean, demo mode only: opens the Watch check with its made up scan, issue #251), `watch_report` (boolean, with `watch`: picks the made up watch and shows its made up report), `key_unreadable` (boolean, demo mode only: the main screen's status line for a saved ring key this phone cannot read, issue #199), `period_edit` (boolean, demo mode only, with `tab` 4: opens the period tracker's day editor on Body for a day of the newest made up period; nothing is saved without a tap, issue #252), `badges` (boolean: opens the Badges page, issue #265), `period_ask` (boolean, demo mode only: the period cards show the question "Have your periods stopped?" with the demo's own numbers until it is answered; nothing is saved without a tap, issue #252), `period_rise` (boolean, demo mode only: Body's night temperature line opens touched on the first high night of the rise it marks, phase 2 of #252), `drip` (boolean, demo mode only: opens Import from drip with a made up drip file, `core/DripCsv.demo`, compared with the demo's log; the preview only, demo mode never imports, issue #252), `drip_correct` (boolean, with `drip`: opens Correct on the file's first short period), `watch_data` (boolean, demo mode only: opens the Watch page with the made up watch's data, issue #251 phase 1b), `main_device` (int, demo mode only: 0 ring, 1 watch, the main device as Settings, Watch picks it; it stays picked, issue #251), `watch_setup` (boolean, demo mode only: opens the Watch setup with every step done, issue #251), `watch_setup_part` (int, with `watch_setup`: 1 scrolls to the alarm, 2 to the hands), `watch_setup_hands` (boolean, with `watch_setup`: the hand calibration's controls, nothing sent).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.
@@ -138,9 +138,12 @@ Nobody types a version number, so pull requests never conflict over one.
 1. A pull request with a change people will notice adds **one** new file `changes/YYYY-MM-DD-short-name.md`
    with one to five bullets written for users (details in `changes/README.md`). Do not edit
    `CHANGELOG.md`, `build_apk.sh` or the version in `app/build.gradle`.
-2. The version is counted: `tools/version.sh` gives `VERSION_CODE = 29 + notes` and
-   `VERSION_NAME = 1.(28 + notes)`. `build_apk.sh` and `app/build.gradle` use the same rule
-   (`tests/check_version.sh` fails otherwise). The About screen reads the installed version. Notes are
+2. The version is counted: `tools/version.sh` gives `VERSION_CODE = 29 + notes`. The name (owner's
+   decision, 3 November 2026): a stable release is 2.y (2.0, 2.1 ...: one up for each release with new
+   notes, read from the release tags `v2.<y>`, `VERSION_CHANNEL=stable` on `main`), a nightly is 2.y.x
+   (x the notes since the stable 2.y). Before the first 2.x release the old rule 1.(28 + notes) stays.
+   `build_apk.sh` and `app/build.gradle` both call `tools/version.sh` (`tests/check_version.sh` fails
+   otherwise). The About screen reads the installed version. Notes are
    never deleted or renamed, so the code only grows (Android refuses lower codes).
 3. **Two channels.** Pull requests are merged into `dev`. Every push to `dev` replaces the pre-release
    **nightly** with a new APK signed with the release key, named "<version> nightly <commit>"; its notes
@@ -154,6 +157,12 @@ Nobody types a version number, so pull requests never conflict over one.
    change notes added since the last stable release, plus checksum and certificate. Versions that
    already have a release are skipped. A nightly and the stable release after it share the version
    code, so either can be installed over the other.
+
+**Old branches are deleted by themselves.** `branch-cleanup.yml` runs after every closed pull request
+and once a day (`.github/scripts/stale_branches.py`): it deletes a branch whose pull request was merged,
+or closed without merging more than 14 days ago, as long as the branch still points at that pull
+request's commit. It keeps `main`, `dev`, the screenshot and badge branches, every branch an open pull
+request comes from or goes into (stacked pull requests), and branches without a pull request.
 
 Changes without a note (docs, CI, a refactor nobody notices) publish nothing. Because a PR does not know
 its final number, write "next version" in PR texts, not a number.

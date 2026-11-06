@@ -12,6 +12,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import app.openring.core.Dating;
@@ -25,7 +26,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 9;
+    static final int VERSION = 10;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -96,6 +97,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo7(db);
         upgradeTo8(db);
         upgradeTo9(db);
+        upgradeTo10(db);
     }
 
     @Override
@@ -108,6 +110,16 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 7) upgradeTo7(db);
         if (oldV < 8) upgradeTo8(db);
         if (oldV < 9) upgradeTo9(db);
+        if (oldV < 10) upgradeTo10(db);
+    }
+
+    /**
+     * v10: the watch setup (issue #251): {@code watch_moves}, per watch record its intensity and metres climbed and
+     * descended, see {@link WatchStore#create10}. Only adds one table ({@code IF NOT EXISTS}): safe to run twice. Older
+     * files get it empty; the new decoder version works it out from their raw messages before the next sync.
+     */
+    private static void upgradeTo10(SQLiteDatabase db) {
+        WatchStore.create10(db);
     }
 
     /**
@@ -1435,6 +1447,7 @@ public final class Db extends SQLiteOpenHelper {
         {"watch_sleep", 9, new String[] {"device", "start", "dur", "stage"}},
         {"watch_workouts", 9, new String[] {"device", "start", "dur", "kind", "steps", "metres", "kcal"}},
         {"watch_battery", 9, new String[] {"device", "t", "pct", "state", "mv"}},
+        {"watch_moves", 10, new String[] {"device", "start", "met", "up", "down"}},
     };
 
     /**
@@ -1656,6 +1669,8 @@ public final class Db extends SQLiteOpenHelper {
             if (phoneLog != null) Periods.merge(instance.getWritableDatabase(), phoneLog);
             // the phone's watch messages and devices too, then every watch row worked out again from all of them (issue #251)
             if (phoneWatch != null) WatchStore.merge(instance.getWritableDatabase(), phoneWatch);
+            // a failed shrink noted in the backup's file (issue #299) is not true here: the restored file is compact
+            instance.getWritableDatabase().delete("kv", "k = ?", new String[] {DataCheck.SHRINK_ERROR});
             mergeStep(MERGE_DONE);
         } catch (java.io.IOException | RuntimeException e) {
             if (instance != null) {
@@ -1774,7 +1789,12 @@ public final class Db extends SQLiteOpenHelper {
      * was. Then the file shrinks ({@link #shrink}).
      */
     public void resetAll() {
-        delete(ALL_TABLES);
+        resetAll(DELETE_ALL);
+    }
+
+    /** As {@link #resetAll}, with the step a failed shrink's note names ({@link #DEMO_BUILD} for the demo, issue #299). */
+    void resetAll(String step) {
+        delete(ALL_TABLES, step);
     }
 
     /**
@@ -1783,10 +1803,19 @@ public final class Db extends SQLiteOpenHelper {
      * transaction, like {@link #resetAll}, and the file shrinks too: the old ring's history is gone, what is left is small.
      */
     public void resetRingData() {
-        delete(RING_TABLES);
+        delete(RING_TABLES, NEW_RING);
     }
 
-    private void delete(String[] tables) {
+    /** The steps a {@link DataCheck#SHRINK_ERROR} note names (issue #299), as the Data check line says them. */
+    static final String DELETE_ALL = "Delete all", NEW_RING = "pairing another ring", DEMO_BUILD = "building the demo";
+
+    /**
+     * Empties {@code tables} in one transaction, then shrinks the file. When shrinking fails, one note
+     * ({@link DataCheck#SHRINK_ERROR}: {@code step}, the local time and the error's class and place, never its message)
+     * is written after the delete committed, as its own write (issue #299). The delete emptied the kv table (both lists
+     * hold it), so a note of an earlier failure is gone after any delete, and a shrink that works leaves none.
+     */
+    private void delete(String[] tables, String step) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -1795,7 +1824,14 @@ public final class Db extends SQLiteOpenHelper {
         } finally {
             db.endTransaction();
         }
-        shrink();
+        RuntimeException e = shrink();
+        if (e == null) return;
+        try {
+            put(DataCheck.SHRINK_ERROR, DataCheck.shrinkNote(step,
+                    java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.US)), e));
+        } catch (RuntimeException noted) {
+            // a full disk is likely here: the delete is done, the note is only for the Data check, nothing for the person
+        }
     }
 
     /** Tests only: {@link #shrink} fails, as an error there would (issue #272). */
@@ -1807,10 +1843,10 @@ public final class Db extends SQLiteOpenHelper {
      * matters: {@code VACUUM} writes the new small file into the WAL, and only the checkpoint after it shrinks the main
      * file and empties the WAL (a checkpoint before VACUUM leaves the file at full size). When another connection is in
      * the middle of a read, the checkpoint reports busy without an error and the file shrinks at the next checkpoint.
-     * Any error here is ignored: the delete is already committed and complete, the file only stays larger for now.
-     * Returns whether it ran without an error.
+     * An error here never reaches the person: the delete is already committed and complete, the file only stays larger
+     * for now. Returns the error (null when it ran without one), so the caller notes it for the Data check (issue #299).
      */
-    boolean shrink() {
+    RuntimeException shrink() {
         try {
             if (failShrink) throw new IllegalStateException("test stop at shrink");
             SQLiteDatabase db = getWritableDatabase();
@@ -1821,10 +1857,10 @@ public final class Db extends SQLiteOpenHelper {
             } finally {
                 c.close();
             }
-            return true;
+            return null;
         } catch (RuntimeException e) {
-            // the delete is done; a larger file is no failure for the person
-            return false;
+            // the delete is done; a larger file is no failure for the person, the caller notes it for the Data check
+            return e;
         }
     }
 

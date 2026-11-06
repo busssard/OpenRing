@@ -223,7 +223,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
      * rise it marks (phase 2),
      * drip (boolean, demo mode only) opens Import from drip with a made up drip file (the preview only, nothing is imported in
-     * demo mode) and drip_correct (boolean) with it opens Correct on its first short period.
+     * demo mode) and drip_correct (boolean) with it opens Correct on its first short period,
+     * main_device (int, demo mode only: 0 ring, 1 watch) picks the main device as Settings, Watch does (issue #251).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -263,6 +264,14 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
         // demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch_data", false) && Prefs.of(this).demo()) startActivity(new Intent(this, WatchPageActivity.class));
+        // screen test: the main device (issue #251), demo mode only; the same choice as the chips in Settings, Watch
+        if (i.hasExtra("main_device") && Prefs.of(this).demo()) Prefs.of(this).setMainDevice(i.getIntExtra("main_device", 0));
+        // screen test: the watch setup (issue #251), demo mode only: watch_setup_part 1 scrolls to the alarm, watch_setup_hands
+        // shows the hand calibration's controls
+        if (i.getBooleanExtra("watch_setup", false) && Prefs.of(this).demo()) {
+            startActivity(new Intent(this, WatchSetupActivity.class).putExtra("part", i.getIntExtra("watch_setup_part", 0))
+                    .putExtra("demo_hands", i.getBooleanExtra("watch_setup_hands", false)));
+        }
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false)));
         }

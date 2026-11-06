@@ -58,6 +58,9 @@
         <activity android:name="app.openring.ui.WatchActivity" android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name="app.openring.ui.WatchPageActivity" android:exported="false" />
+        <!-- the watch setup (issue #251): a turn must not stop a running setup or calibration, so the screen is not rebuilt -->
+        <activity android:name="app.openring.ui.WatchSetupActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <!-- Import from drip (issue #252): a turn keeps the preview and its corrections, so the screen is not rebuilt -->
         <activity android:name="app.openring.ui.DripImportActivity" android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
