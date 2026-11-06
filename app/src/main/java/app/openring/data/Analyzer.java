@@ -497,13 +497,16 @@ public final class Analyzer {
 
     /** Midnight starting {@code d} in the zone valid around that day. */
     double dayStartThen(LocalDate d) {
-        return d.atStartOfDay(zoneAt(d.atTime(12, 0).atZone(zone).toEpochSecond())).toEpochSecond();
+        return d.atStartOfDay(zoneAt(Json.noon(d, zone))).toEpochSecond();
     }
 
-    /** A day's zone: its main night's ({@code main}, null when none), else the zone history's, else the phone's. */
+    /**
+     * A day's zone by {@link Json#dayZone}: its main night's ({@code main}, null when none), else the zone history's, else
+     * the phone's. The zone history is read only when the night gives no zone, as it is once per day of a long run.
+     */
     ZoneId dayZone(LocalDate d, JSONObject main) {
-        ZoneId z = main == null ? null : ClockChange.zone(main.optString("zone", null));
-        return z != null ? z : zoneAt(d.atTime(12, 0).atZone(zone).toEpochSecond());
+        ZoneId z = Json.zone(main, null);
+        return z != null ? z : Json.dayZone(null, db.zoneAt(Json.noon(d, zone)), zone);
     }
 
     // ------------------------------------------------------------------------------ main
