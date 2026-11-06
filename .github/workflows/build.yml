@@ -5,8 +5,9 @@ name: Build APK
 #   signed with the release key, named "<version> nightly <commit>"; its notes list the change notes
 #   on dev that main does not have yet.
 # * Push to main (only from dev, see release-gate.yml) with a version that has no release yet: the
-#   stable GitHub Release vX.Y. The version is counted from the change notes in changes/
-#   (tools/version.sh), so a release from dev that adds a note is all it takes.
+#   stable GitHub Release v2.y (2.0, 2.1 ...; nightlies in between are 2.y.x). The version is counted
+#   from the change notes in changes/ and the release tags (tools/version.sh), so a release from dev that
+#   adds a note is all it takes.
 # A tag vX.Y made by hand (or by "Draft a new release" on GitHub) gets the signed APK attached.
 on:
   push:
@@ -21,10 +22,13 @@ permissions:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    env:
+      # tools/version.sh: main (and a release tag) builds the stable 2.y, everything else a nightly 2.y.x
+      VERSION_CHANNEL: ${{ (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && 'stable' || 'nightly' }}
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0   # the release notes collect the change notes since the last release tag
+          fetch-depth: 0   # the release notes and tools/version.sh read the release tags v2.<y>
       - uses: actions/setup-java@v5
         with:
           distribution: temurin

@@ -230,6 +230,37 @@ check "screens: a stuck call with its output sent away still prints its line" '[
 stuck_run offline
 check "screens: adb failing at once while starting says so, not a time limit" '[ $code != 0 ] && [ $took -lt 5 ] && echo "$out" | grep -q "could not reach the emulator while it was starting (adb shell ended with code 1"'
 
+# ---- version names (tools/version.sh): stable 2.y, nightlies 2.y.x, the code always counted ----
+vr=$(mktemp -d)
+mkdir -p "$vr/tools" "$vr/changes"; cp tools/version.sh "$vr/tools/"
+( cd "$vr" && git init -q && git config user.email t@t && git config user.name t
+  for i in 1 2 3; do echo "* x" > "changes/2026-01-0$i-n$i.md"; done; echo "x" > changes/README.md
+  git add -A && git commit -qm base )
+ver() { ( cd "$vr" && env VERSION_CHANNEL="$1" ./tools/version.sh ); }
+note() { ( cd "$vr" && echo "* y" > "changes/2026-02-$1-m$1.md" && git add -A && git commit -qm "note $1" ); }
+check "version: before 2.x a nightly keeps 1.(28 + notes)" '[ "$(ver nightly)" = "32 1.31" ]'
+check "version: the first stable is 2.0" '[ "$(ver stable)" = "32 2.0" ]'
+( cd "$vr" && git tag v1.31 && git tag v2.0 )
+check "version: the nightly at the stable is 2.0.0" '[ "$(ver nightly)" = "32 2.0.0" ]'
+check "version: main without new notes keeps 2.0 (nothing to publish)" '[ "$(ver stable)" = "32 2.0" ]'
+note 10; note 11
+check "version: two notes later the nightly is 2.0.2, the code counts on" '[ "$(ver nightly)" = "34 2.0.2" ]'
+check "version: the next stable is 2.1 with the same code" '[ "$(ver stable)" = "34 2.1" ]'
+( cd "$vr" && git tag v2.1 ); note 12
+check "version: after 2.1 the nightly is 2.1.1" '[ "$(ver nightly)" = "35 2.1.1" ]'
+( cd "$vr" && git checkout -q v2.0 )
+check "version: a stable rebuild of the v2.0 commit after v2.1 exists is 2.0 again" '[ "$(ver stable)" = "32 2.0" ]'
+( cd "$vr" && git checkout -q - )
+check "version: back on the newest commit the stable is 2.2 (it has a note after v2.1)" '[ "$(ver stable)" = "35 2.2" ]'
+( cd "$vr" && git tag v2.x-test && git tag v2.1.5 )
+check "version: odd tags are ignored" '[ "$(ver nightly)" = "35 2.1.1" ]'
+check "version: no channel set means nightly" '[ "$( cd "$vr" && ./tools/version.sh )" = "35 2.1.1" ]'
+mkdir -p "$vr/nogit"; cp -r "$vr/tools" "$vr/changes" "$vr/nogit/"
+check "version: a copy without git or tags counts as no 2.x yet" '[ "$( cd "$vr/nogit" && GIT_DIR=/nonexistent ./tools/version.sh )" = "35 1.34" ]'
+rm -rf "$vr"
+chan=$(grep -h 'VERSION_CHANNEL: ' .github/workflows/build.yml | sed 's/^ *//')
+check "version: the emulator build reads the tags and the channel as build.yml does (its screenshots show the version)" \
+  '[ -n "$chan" ] && grep -qF "$chan" .github/workflows/emulator.yml && grep -q "fetch-depth: 0" .github/workflows/emulator.yml'
 # ---- branch cleanup (.github/scripts/stale_branches.py): which branches go, which stay ----
 bc=$(mktemp -d)
 cat > "$bc/plan.json" <<'JSON'

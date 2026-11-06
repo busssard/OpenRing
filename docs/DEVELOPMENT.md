@@ -138,9 +138,12 @@ Nobody types a version number, so pull requests never conflict over one.
 1. A pull request with a change people will notice adds **one** new file `changes/YYYY-MM-DD-short-name.md`
    with one to five bullets written for users (details in `changes/README.md`). Do not edit
    `CHANGELOG.md`, `build_apk.sh` or the version in `app/build.gradle`.
-2. The version is counted: `tools/version.sh` gives `VERSION_CODE = 29 + notes` and
-   `VERSION_NAME = 1.(28 + notes)`. `build_apk.sh` and `app/build.gradle` use the same rule
-   (`tests/check_version.sh` fails otherwise). The About screen reads the installed version. Notes are
+2. The version is counted: `tools/version.sh` gives `VERSION_CODE = 29 + notes`. The name (owner's
+   decision, 3 November 2026): a stable release is 2.y (2.0, 2.1 ...: one up for each release with new
+   notes, read from the release tags `v2.<y>`, `VERSION_CHANNEL=stable` on `main`), a nightly is 2.y.x
+   (x the notes since the stable 2.y). Before the first 2.x release the old rule 1.(28 + notes) stays.
+   `build_apk.sh` and `app/build.gradle` both call `tools/version.sh` (`tests/check_version.sh` fails
+   otherwise). The About screen reads the installed version. Notes are
    never deleted or renamed, so the code only grows (Android refuses lower codes).
 3. **Two channels.** Pull requests are merged into `dev`. Every push to `dev` replaces the pre-release
    **nightly** with a new APK signed with the release key, named "<version> nightly <commit>"; its notes
