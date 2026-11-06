@@ -1008,6 +1008,7 @@ public class CoreTest {
         remind252();
         drip252();
         rise252();
+        how252();
         badges265();
         badgeScreens265();
         recent265();
@@ -1356,17 +1357,95 @@ public class CoreTest {
         for (String t : tx) plain &= t != null && plain252(t);
         check("#252e texts use no dashes as punctuation", plain);
         String rule = app.openring.ui.Explain.periodRise(0.12, 0.08);
-        check("#252e explain: the rule with its numbers, the limits, not birth control", rule.contains("Three over six") && rule.contains("the third at least 0.12 °C for your ring, 0.10 °C by mouth")
+        check("#252e explain: the rule with its numbers, the limits, not birth control", rule.startsWith("Ovulation from your temperature: three over six, the classic rule.") && rule.contains("the third at least 0.12 °C for your ring, 0.10 °C by mouth")
                 && rule.contains("varies by about 0.12 °C") && rule.contains("Illness, alcohol, travel and a warm room move the temperature too")
                 && rule.contains("not birth control and not a medical diagnosis"), rule);
         check("#252e explain: the own luteal length and how many cycles", app.openring.ui.Explain.periodLuteal(6, 12, 0.8).contains("your 6 newest cycles with a rise, which vary by about 0.8 days")
                 && app.openring.ui.Explain.periodLuteal(2, 14, Double.NaN).contains("(2 so far), the estimate uses the usual 14 days."));
-        check("#252e explain: the measured ranges", app.openring.ui.Explain.periodOvulation(m).startsWith("Give or take 1 day: a clear rise")
-                && app.openring.ui.Explain.periodRange(m).startsWith("Measured: the ovulation day plus 13 days, your own time")
+        check("#252e explain: the measured ranges", app.openring.ui.Explain.periodOvulation(m).startsWith("Ovulation day: give or take 1 day, from a clear rise")
+                && app.openring.ui.Explain.periodRange(m).startsWith("Next period: measured, the ovulation day plus 13 days, your own time")
                 && app.openring.ui.Explain.periodRange(cal).equals(app.openring.ui.Explain.periodRange(cal.used.size(), cal.length, cal.range, cal.sd))
                 && app.openring.ui.Explain.periodOvulation(cal).equals(app.openring.ui.Explain.periodOvulation(cal.used.size(), cal.ovulationRange)));
         m = Cycles.of(log, null, last.plusDays(14)).measured(ring, null);
         check("#252e explain: the calendar with the own time", app.openring.ui.Explain.periodOvulation(m).contains("together with how much your own time from ovulation"));
+    }
+
+    /**
+     * Issue #252, owner's feedback of 3 November: the texts on how it works move into a closed "How it works" at the bottom
+     * of each period screen. Each list holds exactly the texts that left the screen, for the parts the screen shows; the
+     * short lines that stay are one or two sentences with the person's own counts.
+     */
+    static void how252() {
+        java.time.LocalDate dt = java.time.LocalDate.of(2026, 11, 2);
+        Cycles demo = Cycles.of(Cycles.demo(dt), null, dt);
+        List<String> card = app.openring.ui.Explain.periodCardHow(demo);
+        check("#252h Period card: how the range, the ovulation range and vary by are worked out, in the card's order",
+                card.equals(Arrays.asList(app.openring.ui.Explain.periodRange(demo), app.openring.ui.Explain.periodOvulation(demo),
+                        app.openring.ui.Explain.periodVary(demo.used.size()))), String.valueOf(card));
+        List<String> cyc = app.openring.ui.Explain.periodCyclesHow(demo);
+        check("#252h Your cycles: vary by, the cycle chart, the estimate's window, the period charts, then not birth control; no rise without temperatures",
+                cyc.equals(Arrays.asList(app.openring.ui.Explain.periodVary(demo.used.size()), app.openring.ui.Explain.PERIOD_DOTS_CYCLES,
+                        app.openring.ui.Explain.PERIOD_WINDOW, app.openring.ui.Explain.PERIOD_DOTS_PERIODS, app.openring.ui.Explain.PERIOD_LENGTH_DAYS,
+                        Cycles.NOT_ADVICE)), String.valueOf(cyc));
+        // with the demo's mouth temperatures: the measured texts and the rule with both noises
+        TreeMap<java.time.LocalDate, Double> dm = new TreeMap<java.time.LocalDate, Double>();
+        for (Map.Entry<java.time.LocalDate, DripCsv.Temp> e : DripCsv.demoMouth(dt, Cycles.demoWarmNights(dt)).entrySet()) if (!e.getValue().excluded) dm.put(e.getKey(), e.getValue().c);
+        Cycles m = demo.measured(null, dm);
+        card = app.openring.ui.Explain.periodCardHow(m);
+        cyc = app.openring.ui.Explain.periodCyclesHow(m);
+        check("#252h measured: the card explains the measured range, Your cycles holds the rule with the mouth's noise",
+                m.method == Cycles.MEASURED && card.get(0).startsWith("Next period: measured, the ovulation day plus") && card.get(1).startsWith("Ovulation day: give or take")
+                        && cyc.contains(app.openring.ui.Explain.periodRise(m.rise.ringNoise, m.rise.mouthNoise)) && cyc.indexOf(app.openring.ui.Explain.PERIOD_WINDOW) < cyc.indexOf(app.openring.ui.Explain.PERIOD_DOTS_PERIODS)
+                        && cyc.get(cyc.size() - 1).equals(Cycles.NOT_ADVICE), String.valueOf(cyc));
+        boolean labelled = true;
+        for (Cycles x : new Cycles[] {demo, m}) {
+            List<String> k = app.openring.ui.Explain.periodCardHow(x);
+            labelled &= k.get(0).startsWith("Next period: ") && k.get(1).startsWith("Ovulation day: ") && k.get(2).startsWith("Vary by: ");
+        }
+        check("#252h every paragraph says what it is about: Next period, Ovulation day, Vary by, Ovulation from your temperature", labelled
+                && app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN).startsWith("Next period: typical cycle 29 days")
+                && app.openring.ui.Explain.periodOvulation(2, 5).startsWith("Ovulation day: give or take 5 days, from a typical spread")
+                && app.openring.ui.Explain.periodRise(0.12, Double.NaN).startsWith("Ovulation from your temperature: "));
+        // nothing logged: Your cycles shows only its empty line, so no How it works there
+        Cycles none = Cycles.of(new HashMap<java.time.LocalDate, Integer>(), null, dt);
+        check("#252h nothing logged: no How it works in Your cycles", app.openring.ui.Explain.periodCyclesHow(none).isEmpty()
+                && app.openring.ui.Explain.periodCyclesHow(null).isEmpty() && app.openring.ui.Explain.periodCardHow(null).isEmpty());
+        check("#252h nothing logged: the card explains only what it shows", app.openring.ui.Explain.periodCardHow(none).contains(app.openring.ui.Explain.periodRange(none)) == (none.nextLine() != null)
+                && !app.openring.ui.Explain.periodCardHow(none).contains(app.openring.ui.Explain.periodVary(0)));
+        // one period that is over: no cycle yet, so no cycle chart texts; its length is explained
+        Cycles one = Cycles.of(log252(5), null, C0.plusDays(12));
+        cyc = app.openring.ui.Explain.periodCyclesHow(one);
+        check("#252h one period: the period charts only, then not birth control", one.cycles.isEmpty() && !cyc.contains(app.openring.ui.Explain.PERIOD_DOTS_CYCLES)
+                && !cyc.contains(app.openring.ui.Explain.PERIOD_WINDOW) && cyc.contains(app.openring.ui.Explain.PERIOD_DOTS_PERIODS) && cyc.contains(app.openring.ui.Explain.PERIOD_LENGTH_DAYS)
+                && cyc.get(cyc.size() - 1).equals(Cycles.NOT_ADVICE), String.valueOf(cyc));
+        // periods stopped: no next period line on the card, so its range is not explained
+        Map<java.time.LocalDate, Integer> log = log252(5, 28, 28, 28, 28);
+        java.time.LocalDate today = lastStart252(28, 28, 28, 28).plusDays(10);
+        Cycles stopped = Cycles.of(log, null, today, today.minusDays(1));
+        check("#252h periods stopped: no range or ovulation text", stopped.nextLine() == null && !app.openring.ui.Explain.periodCardHow(stopped).contains(app.openring.ui.Explain.periodRange(stopped)));
+        // the temperature card and the drip import
+        check("#252h night temperature: the long text, the mouth line only with drip temperatures",
+                app.openring.ui.Explain.periodTempHow(false).equals(Arrays.asList(app.openring.ui.Explain.PERIOD_TEMP))
+                        && app.openring.ui.Explain.periodTempHow(true).equals(Arrays.asList(app.openring.ui.Explain.PERIOD_TEMP, app.openring.ui.Explain.PERIOD_MOUTH)));
+        check("#252h drip: how periods are counted, then the parts shown",
+                app.openring.ui.Explain.dripHow(false, false).equals(Arrays.asList(app.openring.ui.Explain.DRIP_COUNTS))
+                        && app.openring.ui.Explain.dripHow(true, true).equals(Arrays.asList(app.openring.ui.Explain.DRIP_COUNTS, app.openring.ui.Explain.DRIP_OTHER, app.openring.ui.Explain.DRIP_SHORT)));
+        // what stays in view: short, with the person's own counts
+        String[] stay = {app.openring.ui.Explain.periodDots(true), app.openring.ui.Explain.periodDots(false), app.openring.ui.Explain.PERIOD_TEMP_LINE,
+                app.openring.ui.Explain.periodCycles(8, 0), app.openring.ui.Explain.periodLengths(7)};
+        boolean shortLines = true;
+        for (String x : stay) shortLines &= x.length() <= 120 && x.split("\\. ").length <= 2;
+        check("#252h the lines in view are one or two short sentences", shortLines);
+        check("#252h the lines in view keep the counts", app.openring.ui.Explain.periodCycles(8, 0).contains("all your 8 cycles")
+                && app.openring.ui.Explain.periodLengths(7).contains("your 7 periods that are over") && app.openring.ui.Explain.periodCycles(9, 2).contains("2 cycles more than 10 days"));
+        List<String> all = new ArrayList<String>(Arrays.asList(stay));
+        all.addAll(app.openring.ui.Explain.periodCyclesHow(m));
+        all.addAll(app.openring.ui.Explain.periodCardHow(m));
+        all.addAll(app.openring.ui.Explain.periodTempHow(true));
+        all.addAll(app.openring.ui.Explain.dripHow(true, true));
+        boolean plain = true;
+        for (String x : all) plain &= x != null && !x.isEmpty() && plain252(x);
+        check("#252h texts use no dashes as punctuation", plain);
     }
 
     // ---------------------------------------------------------------- issue #252, phase 1b: import from drip
@@ -2451,7 +2530,7 @@ public class CoreTest {
                         && app.openring.ui.Explain.periodRange(4, 28, 3, 2.2).contains("the middle value of your 4 cycles")
                         && app.openring.ui.Explain.periodRange(1, 28, 5, Double.NaN).contains("the middle value of your 1 cycle")
                         && app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN).contains("give or take 5 days while there are fewer than 3 cycles"));
-        check("#252 explain: give or take and vary by", app.openring.ui.Explain.periodOvulation(8, 4).startsWith("Give or take 4 days: how much your last 8 cycles vary")
+        check("#252 explain: give or take and vary by", app.openring.ui.Explain.periodOvulation(8, 4).startsWith("Ovulation day: give or take 4 days, from how much your last 8 cycles vary")
                 && app.openring.ui.Explain.periodOvulation(2, 5).contains("a typical spread of 2.6 days")
                 && app.openring.ui.Explain.periodVary(4).startsWith("Vary by: the standard deviation of your 4 cycles"));
     }
@@ -2619,7 +2698,8 @@ public class CoreTest {
         check("#252b explain: from how many cycles, what is left out, the window of the estimate",
                 app.openring.ui.Explain.periodCycles(9, 2).contains("over all your 9 cycles") && app.openring.ui.Explain.periodCycles(9, 2).contains("2 cycles more than 10 days from the middle value are left out")
                         && app.openring.ui.Explain.periodCycles(1, 1).contains("your 1 cycle") && app.openring.ui.Explain.periodCycles(1, 1).contains("1 cycle more than 10 days from the middle value is left out")
-                        && app.openring.ui.Explain.periodCycles(8, 0).endsWith("uses only your newest 12 cycles.") && !app.openring.ui.Explain.periodCycles(8, 0).contains("left out"));
+                        && app.openring.ui.Explain.periodCycles(8, 0).endsWith("Spread: how far a cycle usually lies from the average.") && !app.openring.ui.Explain.periodCycles(8, 0).contains("left out")
+                        && app.openring.ui.Explain.PERIOD_WINDOW.contains("uses only your newest 12 cycles"));
         check("#252b explain: the amount is a relative score, not millilitres", app.openring.ui.Explain.PERIOD_AMOUNT.contains("not a measured amount")
                 && app.openring.ui.Explain.PERIOD_TEMP.contains("the likely ovulation, the day before the first high night") && app.openring.ui.Explain.periodLengths(1).contains("your 1 period ")
                 && app.openring.ui.Explain.periodNext(null, true, 0).contains("stopped"));
