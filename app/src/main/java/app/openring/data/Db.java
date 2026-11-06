@@ -204,6 +204,33 @@ public final class Db extends SQLiteOpenHelper {
         db.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES ('analyzed_until', '0')");
     }
 
+    /**
+     * Every open: the indexes that keep reading phone use bounded by the time asked for, not by the history since install
+     * (issue #223), see {@link #screen} and {@link #appRows}. Only adds indexes ({@code IF NOT EXISTS}), no table and no row
+     * changes: safe to run twice, a no op once they exist. Being here and not in an upgrade step, a file of any version gets them
+     * at its next open, also a restored backup and a file made by an older version. SQLite keeps them up to date with every
+     * write, whichever code path writes, so nothing about them can go stale. If they cannot be made (a file opened read only
+     * because the disk is full) the reads stay exactly right, only slower; the next open tries again.
+     */
+    @Override
+    public void onOpen(SQLiteDatabase db) {
+        super.onOpen(db);
+        try {
+            createReadIndexes(db);
+        } catch (RuntimeException e) {
+            // read only: the queries below do not need the indexes to be right (no INDEXED BY), only to be fast
+        }
+    }
+
+    /** The indexes of {@link #onOpen}; partial indexes came with SQLite 3.8, older than any Android version the app runs on. */
+    static void createReadIndexes(SQLiteDatabase db) {
+        // sessions longer than a day (rare), the second part of each read
+        db.execSQL("CREATE INDEX IF NOT EXISTS screen_long ON screen(start, stop) WHERE " + LONG);
+        // app ranges by start: the first part of each read, and MIN(start) in appsStart without reading every row
+        db.execSQL("CREATE INDEX IF NOT EXISTS apps_start ON apps(start, pkg)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS apps_long ON apps(start, pkg, stop) WHERE " + LONG);
+    }
+
     // ------------------------------------------------------------------------------- kv
 
     public String kv(String k, String def) {
@@ -1057,11 +1084,46 @@ public final class Db extends SQLiteOpenHelper {
         return sessions.size();
     }
 
+    /**
+     * Rows longer than this (one day, in seconds) are read on their own (issue #223). Every other row that overlaps a time from
+     * {@code from} on starts after {@code from - LONG_S}, so the read can look at the index on start from there, not from the
+     * first row ever stored. The second part finds the long rows through their own small index ({@link #createReadIndexes}).
+     */
+    static final int LONG_S = 86400;
+    /** The long rows; the same text in the indexes and the queries, so SQLite can use the partial indexes. */
+    private static final String LONG = "stop - start > " + LONG_S;
+    /**
+     * Tests only: false reads screen and app rows with the single query from before issue #223 (every row from the first
+     * one, ordered as now), to compare.
+     */
+    static volatile boolean boundedReads = true;
+
+    /**
+     * The rows of {@code cols} from {@code table} that overlap [from, to) ({@code stop > from AND start < to}), ordered by
+     * {@code order}, read in two parts that never share a row (issue #223): rows up to a day long, which all start at or after
+     * {@code from - LONG_S - 1} (one second more than needed, so no rounding of {@code stop - start} can leave one out), and rows
+     * longer than a day. Together exactly the rows of the single query before, without walking the whole history.
+     */
+    private Cursor overlapping(String table, String cols, String order, double from, double to) {
+        double low = from - LONG_S - 1;
+        if (!boundedReads || Double.isNaN(low) || Double.isInfinite(low)) {
+            return getReadableDatabase().rawQuery("SELECT " + cols + " FROM " + table + " WHERE stop > ? AND start < ? ORDER BY " + order,
+                    new String[] {String.valueOf(from), String.valueOf(to)});
+        }
+        return getReadableDatabase().rawQuery(boundedSql(table, cols, order),
+                new String[] {String.valueOf(low), String.valueOf(to), String.valueOf(from), String.valueOf(from), String.valueOf(to)});
+    }
+
+    /** The SQL of {@link #overlapping}'s two parts (the tests read its query plan). */
+    static String boundedSql(String table, String cols, String order) {
+        return "SELECT " + cols + " FROM " + table + " WHERE start >= ? AND start < ? AND stop > ? AND NOT (" + LONG + ")"
+                + " UNION ALL SELECT " + cols + " FROM " + table + " WHERE " + LONG + " AND stop > ? AND start < ? ORDER BY " + order;
+    }
+
     /** Screen sessions that overlap [from, to), oldest first. */
     public List<double[]> screen(double from, double to) {
         List<double[]> out = new ArrayList<double[]>();
-        Cursor c = getReadableDatabase().rawQuery("SELECT start, stop FROM screen WHERE stop > ? AND start < ? ORDER BY start",
-                new String[] {String.valueOf(from), String.valueOf(to)});
+        Cursor c = overlapping("screen", "start, stop", "start", from, to);
         try {
             while (c.moveToNext()) out.add(new double[] {c.getDouble(0), c.getDouble(1)});
         } finally {
@@ -1131,8 +1193,8 @@ public final class Db extends SQLiteOpenHelper {
     /** The stored rows as they are, for {@link #apps} and the tests. */
     java.util.Map<String, List<double[]>> appRows(double from, double to) {
         java.util.Map<String, List<double[]>> out = new java.util.LinkedHashMap<String, List<double[]>>();
-        Cursor c = getReadableDatabase().rawQuery("SELECT pkg, start, stop FROM apps WHERE stop > ? AND start < ? ORDER BY start",
-                new String[] {String.valueOf(from), String.valueOf(to)});
+        // by start, then by app for rows of two apps that start at the same moment (before #223 their order was left to SQLite)
+        Cursor c = overlapping("apps", "pkg, start, stop", "start, pkg", from, to);
         try {
             while (c.moveToNext()) {
                 List<double[]> l = out.get(c.getString(0));
@@ -1151,7 +1213,7 @@ public final class Db extends SQLiteOpenHelper {
         getWritableDatabase().execSQL("DELETE FROM apps WHERE stop > ?", new Object[] {unix});
     }
 
-    /** Start of the oldest stored app range, or -1 (days before it have screen time but no app split). */
+    /** Start of the oldest stored app range, or -1 (days before it have screen time but no app split); one step in the index on start. */
     public double appsStart() {
         Cursor c = getReadableDatabase().rawQuery("SELECT MIN(start) FROM apps", null);
         try {

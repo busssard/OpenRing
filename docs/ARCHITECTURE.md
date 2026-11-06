@@ -123,6 +123,15 @@ test fills every table that really is in the file (`sqlite_master`, not `SCHEMA`
 After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(TRUNCATE)` (in WAL mode a checkpoint
 before VACUUM leaves the file at full size), so the file gives the history's space back; an error there never reaches
 the person because the delete is already complete, and a read open at that moment only delays the shrink to the next checkpoint.
+
+Reading phone use (`Db.screen`, `Db.apps`) stays bounded by the time asked for, not by the history since install (issue
+#223): rows up to a day long are read from the index on start, from one day and a second before the window, and rows longer
+than a day through their own partial indexes (`screen_long`, `apps_long`, `WHERE stop - start > 86400`); the two parts never
+share a row and together are exactly the rows of `stop > from AND start < to`. `apps_start` (start, pkg) also makes
+`appsStart` one index step. The indexes are made in `Db.onOpen` with `IF NOT EXISTS` (no version step, no row changes), so any
+file gets them at its next open, also a restored or older one; SQLite keeps them up to date with every write, so nothing can
+go stale, and without them (a file opened read only) the reads are the same, only slower.
+
 A failed shrink is noted for the Data check (issue #299): one kv row `DataCheck.SHRINK_ERROR` written after the delete
 committed, with the step, the time and the error's class and place (never its message), gone with the next delete and
 removed from a restored file in `Db.replaceWith` (the restored file is compact). The Data check never names the period tables,
