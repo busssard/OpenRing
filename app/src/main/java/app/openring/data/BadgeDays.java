@@ -14,7 +14,6 @@ import java.util.Map;
 import java.util.Set;
 
 import app.openring.core.analysis.Badges;
-import app.openring.core.analysis.ClockChange;
 import app.openring.core.analysis.LeftOut;
 import app.openring.core.analysis.ScreenScore;
 import app.openring.core.analysis.ScreenTime;
@@ -124,8 +123,7 @@ public final class BadgeDays {
             String key = d.toString();
             Badges.Day b = new Badges.Day(d);
             JSONObject day = days.get(key), night = nights.get(key);
-            ZoneId noted = ClockChange.zone(Db.zoneIn(zones, d.atTime(12, 0).atZone(phone).toEpochSecond()));
-            ZoneId zone = Json.zone(night, noted == null ? phone : noted);
+            ZoneId zone = Json.dayZone(night, Db.zoneIn(zones, Json.noon(d, phone)), phone);
             double[] edges = ScreenDays.hourEdges(d, zone);
             double ds = edges[0], de = edges[edges.length - 1];
             if (day != null) {

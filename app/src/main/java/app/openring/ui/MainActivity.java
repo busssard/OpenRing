@@ -567,7 +567,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
             @Override
             protected void onPostExecute(DayData result) {
-                if (token != loadToken || isFinishing()) return;
+                // a screen gone with a turn of the phone is not finished: its load must not render or start another
+                if (token != loadToken || isFinishing() || isDestroyed()) return;
                 if (result == null) {
                     data = null;
                     showProblem(problem);
