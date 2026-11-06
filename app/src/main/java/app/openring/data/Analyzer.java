@@ -259,13 +259,104 @@ public final class Analyzer {
      * What the main screen does before it loads a day (review of #243): note the phone's zone and, when a new zone
      * opened, analyse the nights since. While an analysis runs it does nothing and returns false at once, so the
      * screen shows the stored (old) nights instead of waiting for the run; the running analysis notes the zone itself.
+     * When the zone is the one noted last (nearly always) the note goes to the background ({@link #noteLater}), so a
+     * backup, a restore or a run that starts meanwhile does not hold up the day either (issue #197).
      */
     public static boolean beforeLoad(Context c) {
+        // a note left to the background failed on an earlier load: said once this load's own note is done (so that
+        // note is not skipped), and the screen's load records it as before; kept for the next load if this one fails
+        Throwable late = LATE_NOTE_ERROR.getAndSet(null);
+        boolean did;
+        try {
+            did = noteBeforeLoad(c);
+        } catch (RuntimeException | Error e) {
+            if (late != null) LATE_NOTE_ERROR.compareAndSet(null, late);
+            throw e;
+        }
+        if (late instanceof RuntimeException) throw (RuntimeException) late;
+        if (late instanceof Error) throw (Error) late;
+        if (late != null) throw new RuntimeException(late);
+        return did;
+    }
+
+    /** The work of {@link #beforeLoad} itself. */
+    private static boolean noteBeforeLoad(Context c) {
         if (running()) return false;
         if (Prefs.of(c).demo()) return true;
         Db db = Db.get(c);
-        if (noteZone(db, System.currentTimeMillis() / 1000.0, ZoneId.systemDefault(), Double.NaN) && db.eventCount() > 0) run(c, null);
+        ZoneId zone = ZoneId.systemDefault();
+        if (sameZone(db, zone)) {
+            // the usual case (issue #197): the note would only stretch the newest row to now, so it waits for the
+            // analysis lock in the background and the day loads at once, also while a backup or another holder has it
+            noteLater(c.getApplicationContext());
+            return true;
+        }
+        if (noteZone(db, System.currentTimeMillis() / 1000.0, zone, Double.NaN) && db.eventCount() > 0) run(c, null);
         return true;
+    }
+
+    /**
+     * True when the newest row of the zone history is {@code zone}, read without the analysis lock (issue #197): then
+     * {@link #noteZone} would only extend that row, never open one or analyse anything again. False without any row.
+     */
+    static boolean sameZone(Db db, ZoneId zone) {
+        return zone.getId().equals(db.zoneAt(Double.MAX_VALUE));
+    }
+
+    /** One thread for the zone notes the main screen leaves to the background (issue #197); it never keeps the app alive. */
+    private static final java.util.concurrent.ExecutorService LATE_NOTES = java.util.concurrent.Executors.newSingleThreadExecutor(
+            new java.util.concurrent.ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "zone note");
+                    t.setDaemon(true);
+                    return t;
+                }
+            });
+    /** A late note is waiting to run: more loads meanwhile add none (each would only stretch the same row). */
+    private static final java.util.concurrent.atomic.AtomicBoolean LATE_NOTE_QUEUED = new java.util.concurrent.atomic.AtomicBoolean();
+    /** Tests only: how many late notes were queued so far. */
+    private static final java.util.concurrent.atomic.AtomicInteger LATE_NOTES_QUEUED_COUNT = new java.util.concurrent.atomic.AtomicInteger();
+    /** The failure of the last late note, said by the next {@link #beforeLoad}. */
+    private static final java.util.concurrent.atomic.AtomicReference<Throwable> LATE_NOTE_ERROR =
+            new java.util.concurrent.atomic.AtomicReference<Throwable>();
+
+    /** Tests only: waits until the late zone notes queued so far are done. */
+    static void awaitLateNotes() throws Exception {
+        LATE_NOTES.submit(new Runnable() {
+            @Override
+            public void run() {}
+        }).get(120, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    /**
+     * The zone note of {@link #beforeLoad} for an unchanged zone, done on its own thread (issue #197): the same call as
+     * before, holding the analysis lock, only later. Skipped like before while an analysis runs or waits (it notes the
+     * zone itself) and in demo mode. A zone that changed between the check in {@link #beforeLoad} and this note is noted
+     * and analysed here, so the stored data is the same as before; the screen shows it with its next load. A failure is
+     * kept and thrown by the next {@link #beforeLoad}, so that load records it (lost if the app closes before).
+     */
+    static java.util.concurrent.Future<?> noteLater(final Context c) {
+        if (!LATE_NOTE_QUEUED.compareAndSet(false, true)) return null;
+        LATE_NOTES_QUEUED_COUNT.incrementAndGet();
+        return LATE_NOTES.submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    synchronized (Analyzer.class) {
+                        // cleared once the lock is held, so loads while it waits for the lock queue no second note;
+                        // a load from now on queues the next one (it would note a later time)
+                        LATE_NOTE_QUEUED.set(false);
+                        // under the lock, so the switch into demo mode cannot happen between the check and the note
+                        if (running() || Prefs.of(c).demo()) return;
+                        Db db = Db.get(c);
+                        if (noteZone(db, System.currentTimeMillis() / 1000.0, ZoneId.systemDefault(), Double.NaN) && db.eventCount() > 0) Analyzer.run(c, null);
+                    }
+                } catch (Throwable e) {
+                    LATE_NOTE_ERROR.set(e);
+                }
+            }
+        });
     }
 
     /**

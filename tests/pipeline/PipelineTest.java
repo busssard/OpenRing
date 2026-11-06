@@ -169,6 +169,11 @@ public class PipelineTest {
     }
 
     public static void main(String[] args) throws Exception {
+        // a second JVM with a small heap for the All time load of issue #196 (see allTimeHeap196)
+        if (args.length == 3 && "alltime196".equals(args[0])) {
+            allTimeChild196(args[1], args[2]);
+            return;
+        }
         LocalDate day0 = LocalDate.of(2026, 10, 7);
         T0 = day0.atStartOfDay(ZONE).toEpochSecond();
         long now = T0 + 3 * 86400 + 7 * 3600 + 1800; // day 3, 07:30
@@ -511,6 +516,10 @@ public class PipelineTest {
         // ---- sleep history: average night over all analysed nights ----
         app.openring.data.SleepHistory sh = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", java.time.ZoneId.of("Europe/Zurich"));
         check("history finds the nights", sh.nights >= 1, sh.nights + " nights");
+        List<JSONObject> shList = new ArrayList<JSONObject>();
+        for (String js : db.nightsJson("2000-01-01", "2100-01-01", true)) shList.add(Json.parse(js));
+        String shDiff = historyDiff(sh, app.openring.data.SleepHistory.of(shList, java.time.ZoneId.of("Europe/Zurich")));
+        check("#196 history read night by night equals the one from the whole list", shDiff == null, shDiff);
         double peak = 0;
         for (int i = 0; i < app.openring.core.analysis.SleepPattern.BINS; i++) peak = Math.max(peak, sh.pattern.inBed(i));
         check("average night has an in bed peak", peak > 0.5 && peak <= 1.0001, peak);
@@ -750,6 +759,9 @@ public class PipelineTest {
         dstChecks(Db.get(phone3), "back", "2025-10-26", "2025-10-26T01:00:00Z", -60, "03:00", "02:00");
         dayHeartLine(Db.get(phone3), "2025-10-26", 25);
         List<String> fallMain = Db.get(phone3).nightsJson("2000-01-01", "2100-01-01", true);
+        String fallDiff = historyDiff(app.openring.data.SleepHistory.load(Db.get(phone3), "2000-01-01", "2100-01-01", zz),
+                app.openring.data.SleepHistory.of(parsed(fallMain), zz));
+        check("#196 history over clocks going back: night by night equals the whole list", fallDiff == null, fallDiff);
         JSONObject fallNewest = Json.parse(fallMain.get(fallMain.size() - 1));
         check("newest demo night has a phone check at 00:30", Json.d(fallNewest, "phone_min") >= 1, fallNewest.optString("day"));
         check("at 00:30 the newest demo night is last night", "2025-11-08".equals(fallNewest.optString("day")), fallNewest.optString("day"));
@@ -767,6 +779,9 @@ public class PipelineTest {
         app.openring.data.Demo.enter(phone3, null, LocalDate.parse("2026-04-12"), springNow);
         dstChecks(Db.get(phone3), "forward", "2026-03-29", "2026-03-29T01:00:00Z", 60, "02:00", "03:00");
         List<String> springMain = Db.get(phone3).nightsJson("2000-01-01", "2100-01-01", true);
+        String springDiff = historyDiff(app.openring.data.SleepHistory.load(Db.get(phone3), "2000-01-01", "2100-01-01", zz),
+                app.openring.data.SleepHistory.of(parsed(springMain), zz));
+        check("#196 history over clocks going forward: night by night equals the whole list", springDiff == null, springDiff);
         JSONObject springNewest = Json.parse(springMain.get(springMain.size() - 1));
         check("newest demo night has a phone check at noon", Json.d(springNewest, "phone_min") >= 1
                 && "2026-04-12".equals(springNewest.optString("day")), springNewest.optString("day"));
@@ -776,6 +791,7 @@ public class PipelineTest {
         longWakeChecks();
         previewRingWake();
         ringStagesInLongerPeriod();
+        stageRuns189();
         freshDb("openring30-done");
         nightTwice();
         nightAcrossChecks();
@@ -795,6 +811,8 @@ public class PipelineTest {
         longHistoryTiming();
         dialClockChange();
         appRowsStored();
+        screenReads223();
+        screenAnalysis223();
         activityGap();
         activityClockChange();
         totalBurnSoFar();
@@ -813,6 +831,8 @@ public class PipelineTest {
         ringGate230();
         ringWriters260();
         loadDuringRun243();
+        zoneNoteLater197();
+        longHistory196();
         recentWindow();
         aohrHistory();
         rightNowAohr();
@@ -2025,6 +2045,329 @@ public class PipelineTest {
                 && b2.excludedMin == b.excludedMin && a2.score.value == a.score.value && b2.score.value == b.score.value
                 && a2.rawMin == a.rawMin, b.day.totalMin + " / " + b2.day.totalMin);
         check("with no app left out the total is all phone use", Math.abs(a.day.totalMin - a.rawMin) < 1e-9 && Math.abs(a.day.totalMin - 291 / 60.0) < 1e-9, a.day.totalMin);
+    }
+
+    /** Sets {@code Db.boundedReads} (tests only): false reads screen and app rows as before issue #223. */
+    static void setBounded(boolean on) throws Exception {
+        java.lang.reflect.Field f = Db.class.getDeclaredField("boundedReads");
+        f.setAccessible(true);
+        f.set(null, on);
+    }
+
+    /** The query plan of {@code sql}, all lines in one string. */
+    static String plan223(Db db, String sql, String[] args) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("EXPLAIN QUERY PLAN " + sql, args);
+        StringBuilder b = new StringBuilder();
+        try {
+            while (c.moveToNext()) b.append(c.getString(3)).append(" | ");
+        } finally {
+            c.close();
+        }
+        return b.toString();
+    }
+
+    /** Sessions as exact bits, so "the same" means the same doubles. */
+    static String rows223(List<double[]> rows) {
+        StringBuilder b = new StringBuilder();
+        for (double[] r : rows) b.append(Double.doubleToLongBits(r[0])).append(',').append(Double.doubleToLongBits(r[1])).append(';');
+        return b.toString();
+    }
+
+    static String apps223(java.util.Map<String, List<double[]>> m) {
+        StringBuilder b = new StringBuilder();
+        for (java.util.Map.Entry<String, List<double[]>> e : m.entrySet()) b.append(e.getKey()).append('=').append(rows223(e.getValue())).append(' ');
+        return b.toString();
+    }
+
+    /** Every field of a result, deep, doubles by their bits (for "row for row the same"). */
+    static String dump223(Object o) throws Exception {
+        if (o == null) return "null";
+        if (o instanceof Double) return "d" + Double.doubleToLongBits((Double) o);
+        if (o instanceof Float) return "f" + Float.floatToIntBits((Float) o);
+        if (o instanceof Number || o instanceof Boolean || o instanceof CharSequence || o instanceof Enum || o instanceof Character
+                || o instanceof java.time.temporal.Temporal || o instanceof ZoneId) return String.valueOf(o);
+        if (o.getClass().isArray()) {
+            StringBuilder b = new StringBuilder("[");
+            for (int i = 0; i < java.lang.reflect.Array.getLength(o); i++) b.append(dump223(java.lang.reflect.Array.get(o, i))).append(',');
+            return b.append(']').toString();
+        }
+        if (o instanceof java.util.Collection) {
+            StringBuilder b = new StringBuilder("(");
+            for (Object x : (java.util.Collection<?>) o) b.append(dump223(x)).append(',');
+            return b.append(')').toString();
+        }
+        if (o instanceof java.util.Map) {
+            StringBuilder b = new StringBuilder("{");
+            for (java.util.Map.Entry<?, ?> e : ((java.util.Map<?, ?>) o).entrySet()) b.append(dump223(e.getKey())).append(':').append(dump223(e.getValue())).append(',');
+            return b.append('}').toString();
+        }
+        if (o instanceof java.util.Map.Entry) {
+            java.util.Map.Entry<?, ?> e = (java.util.Map.Entry<?, ?>) o;
+            return dump223(e.getKey()) + "=" + dump223(e.getValue());
+        }
+        if (o instanceof JSONObject || o instanceof org.json.JSONArray) return o.toString();
+        StringBuilder b = new StringBuilder(o.getClass().getSimpleName()).append('<');
+        for (Class<?> k = o.getClass(); k != null && k != Object.class; k = k.getSuperclass()) {
+            for (java.lang.reflect.Field f : k.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.isSynthetic()) continue;
+                f.setAccessible(true);
+                b.append(f.getName()).append('=').append(dump223(f.get(o))).append(' ');
+            }
+        }
+        return b.append('>').toString();
+    }
+
+    /** {@code Db.appRows} (package private): the stored app rows as they are. */
+    @SuppressWarnings("unchecked")
+    static java.util.Map<String, List<double[]>> appRows223(Db db, double from, double to) throws Exception {
+        java.lang.reflect.Method m = Db.class.getDeclaredMethod("appRows", double.class, double.class);
+        m.setAccessible(true);
+        return (java.util.Map<String, List<double[]>>) m.invoke(db, from, to);
+    }
+
+    static long indexes223(Db db) {
+        return db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('screen_long', 'apps_start', 'apps_long')");
+    }
+
+    /**
+     * Issue #223: screen and app rows are read from the index on start near the time asked for (plus the few rows longer than a
+     * day), not from the first row ever stored, and give exactly the rows, apps and Screen tab of the single query before:
+     * for today, a year back, windows inside rows longer than a day, ties, edges and a row written around the app's code.
+     */
+    static void screenReads223() throws Exception {
+        Context c = freshDb("openring-screen-223");
+        Db db = Db.get(c);
+        ZoneId z = ZONE;
+        check("#223: the read indexes exist on a new file", indexes223(db) == 3, indexes223(db));
+        LocalDate last = LocalDate.of(2026, 10, 30), first = last.minusDays(420);
+        Random r = new Random(223);
+        String[] pkgs = {"com.chat", "com.maps", "com.mail", "com.video", "com.news", "com.bank", "com.game", "com.camera"};
+        android.database.sqlite.SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        int sessions = 0;
+        for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1)) {
+            double t = d.atStartOfDay(z).toEpochSecond() + 6 * 3600 + r.nextInt(1800);
+            for (int i = 0; i < 30; i++) {
+                double len = 10 + r.nextInt(900) + r.nextDouble();
+                w.execSQL("INSERT INTO screen (start, stop) VALUES (?, ?)", new Object[] {t, t + len});
+                // one or two apps in front during the session
+                String a = pkgs[r.nextInt(pkgs.length)];
+                w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {a, t, t + len / 2});
+                w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {pkgs[(r.nextInt(pkgs.length - 1) + 1 + java.util.Arrays.asList(pkgs).indexOf(a)) % pkgs.length], t + len / 2, t + len});
+                sessions++;
+                t += len + 120 + r.nextInt(2400);
+            }
+        }
+        w.setTransactionSuccessful();
+        w.endTransaction();
+        db.putScreenRead(first.atStartOfDay(z).toEpochSecond(), last.plusDays(1).atStartOfDay(z).toEpochSecond());
+        // the edges: rows of exactly a day, just over and just under it, long rows across midnight a year and a half year back
+        double year = last.minusDays(365).atStartOfDay(z).toEpochSecond(), half = last.minusDays(180).atStartOfDay(z).toEpochSecond();
+        double[][] edges = {
+            {year - 3 * 86400 + 0.25, year + 2 * 3600},      // 3 days and 2 hours, over midnight a year back
+            {half - 20 * 3600 + 0.5, half + 10 * 3600 + 0.5}, // 30 hours, over midnight half a year back
+            {half - 5 * 86400, half - 5 * 86400 + 86400},     // exactly a day
+            {half - 7 * 86400 + 0.1, half - 6 * 86400 + 0.6}, // half a second over a day
+            {half - 9 * 86400 + 0.7, half - 8 * 86400 + 0.2}, // half a second under a day
+            {half - 11 * 86400 + 1e-6, half - 10 * 86400 + 1.5e-6}, // a millionth over a day, with fractions
+        };
+        List<double[]> long1 = new ArrayList<double[]>();
+        for (double[] e : edges) long1.add(e);
+        db.putScreen(long1);
+        // a long row written around putScreen (as a restore or an older version would), after the file was opened
+        w.execSQL("INSERT INTO screen (start, stop) VALUES (?, ?)", new Object[] {year + 100 * 86400 + 0.5, year + 102 * 86400});
+        for (double[] e : edges) {
+            java.util.Map<String, List<double[]>> m = new java.util.LinkedHashMap<String, List<double[]>>();
+            m.put("com.maps", new ArrayList<double[]>(java.util.Arrays.asList(new double[] {e[0], e[1]})));
+            db.putApps(m);
+        }
+        w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {"com.tv", year + 100 * 86400 + 0.5, year + 102 * 86400});
+        // two apps starting at the same moment, written in the order that sorts last first
+        w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {"zz.second", half + 3 * 3600, half + 3 * 3600 + 60});
+        w.execSQL("INSERT OR REPLACE INTO apps (pkg, start, stop) VALUES (?, ?, ?)", new Object[] {"aa.first", half + 3 * 3600, half + 3 * 3600 + 90});
+
+        // the windows: today, the 14 days of the Screen tab, a year back, inside the long rows, at their edges, all, random
+        List<double[]> win = new ArrayList<double[]>();
+        double today = last.atStartOfDay(z).toEpochSecond(), end = last.plusDays(1).atStartOfDay(z).toEpochSecond();
+        win.add(new double[] {today, end});
+        win.add(new double[] {today - 13 * 86400 - 2 * 3600, end});
+        win.add(new double[] {year, year + 86400});
+        win.add(new double[] {year - 86400, year});
+        win.add(new double[] {half, half + 86400});
+        win.add(new double[] {half - 86400, half});
+        win.add(new double[] {half + 3 * 3600, half + 3 * 3600 + 30});
+        win.add(new double[] {year + 101 * 86400, year + 101 * 86400 + 60});
+        for (double[] e : edges) {
+            win.add(new double[] {e[1] - 1, e[1] + 1});
+            win.add(new double[] {e[1], e[1] + 10});
+            win.add(new double[] {e[0] - 10, e[0]});
+            win.add(new double[] {(e[0] + e[1]) / 2, (e[0] + e[1]) / 2 + 1});
+        }
+        win.add(new double[] {0, Double.MAX_VALUE});
+        win.add(new double[] {-Double.MAX_VALUE, Double.MAX_VALUE});
+        win.add(new double[] {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY});
+        win.add(new double[] {end, end + 86400});
+        win.add(new double[] {today + 5000, today + 4000});
+        for (int i = 0; i < 300; i++) {
+            double a = first.atStartOfDay(z).toEpochSecond() + r.nextDouble() * 422 * 86400;
+            win.add(new double[] {a, a + r.nextDouble() * (i % 3 == 0 ? 14 : 1) * 86400});
+        }
+        int same = 0, rowsSeen = 0;
+        List<String> diff = new ArrayList<String>();
+        for (double[] x : win) {
+            setBounded(false);
+            String s0 = rows223(db.screen(x[0], x[1])), a0 = apps223(appRows223(db, x[0], x[1])), m0 = apps223(db.apps(x[0], x[1]));
+            setBounded(true);
+            List<double[]> sNew = db.screen(x[0], x[1]);
+            String s1 = rows223(sNew), a1 = apps223(appRows223(db, x[0], x[1])), m1 = apps223(db.apps(x[0], x[1]));
+            rowsSeen += sNew.size();
+            if (s0.equals(s1) && a0.equals(a1) && m0.equals(m1)) same++;
+            else diff.add(x[0] + ".." + x[1]);
+        }
+        check("#223: screen, app rows and apps read row for row the same as before (" + win.size() + " windows, " + sessions + " sessions)",
+                same == win.size() && rowsSeen > 1000, diff);
+        java.util.Map<String, List<double[]>> tie = appRows223(db, half + 3 * 3600, half + 3 * 3600 + 30);
+        List<String> tieKeys = new ArrayList<String>(tie.keySet());
+        check("#223: two apps starting at the same moment come in a fixed order", tieKeys.indexOf("aa.first") >= 0
+                && tieKeys.indexOf("aa.first") < tieKeys.indexOf("zz.second"), tieKeys);
+        List<double[]> inLong = db.screen(year + 101 * 86400, year + 101 * 86400 + 60);
+        check("#223: a row longer than a day written around putScreen is found inside it", inLong.size() == 1 && inLong.get(0)[0] == year + 100 * 86400 + 0.5, rows223(inLong));
+        check("#223: the oldest app start is the same", db.appsStart() == minStart223(db) && minStart223(db) > 0, db.appsStart());
+
+        // the query plans: the index on start from near the window, the small index for long rows, never the whole table
+        String[] args = {"1", "2", "3", "4", "5"};
+        java.lang.reflect.Method sql = Db.class.getDeclaredMethod("boundedSql", String.class, String.class, String.class);
+        sql.setAccessible(true);
+        String ps = plan223(db, (String) sql.invoke(null, "screen", "start, stop", "start"), args);
+        String pa = plan223(db, (String) sql.invoke(null, "apps", "pkg, start, stop", "start, pkg"), args);
+        check("#223: screen read from the window on (start>? AND start<?) and long rows from their own index", ps.contains("start>? AND start<?")
+                && ps.contains("screen_long") && !ps.contains("SCAN screen"), ps);
+        check("#223: app rows read the same way", pa.contains("apps_start (start>? AND start<?)") && pa.contains("apps_long") && !pa.contains("SCAN apps") && !pa.contains("TEMP B-TREE"), pa);
+        String pm = plan223(db, "SELECT MIN(start) FROM apps", null);
+        check("#223: the oldest app start is one step in the index on start", pm.contains("apps_start") && !pm.contains("SCAN"), pm);
+
+        // the Screen tab, for today, a year back, the days of the long rows, with and without an app left out
+        java.util.Set<String> none = new java.util.HashSet<String>(), maps = new java.util.HashSet<String>(java.util.Arrays.asList("com.maps"));
+        LocalDate[] days = {last, last.minusDays(365), LocalDate.ofInstant(java.time.Instant.ofEpochSecond((long) half), z),
+            LocalDate.ofInstant(java.time.Instant.ofEpochSecond((long) year), z), LocalDate.ofInstant(java.time.Instant.ofEpochSecond((long) year + 101 * 86400), z)};
+        double now = end - 600;
+        int infoSame = 0;
+        String example = "";
+        for (LocalDate d : days) {
+            for (java.util.Set<String> ex : java.util.Arrays.asList(none, maps)) {
+                setBounded(false);
+                String i0 = dump223(app.openring.data.ScreenDays.info(db, d, z, 180, ex, 300, now));
+                setBounded(true);
+                String i1 = dump223(app.openring.data.ScreenDays.info(db, d, z, 180, ex, 300, now));
+                if (i0.equals(i1)) infoSame++;
+                else example = d + " " + ex;
+                if (d.equals(last) && ex == none) check("#223: the compared Screen tab has phone use", i1.contains("totalMin") && i1.length() > 2000, i1.length());
+            }
+        }
+        check("#223: the Screen tab is the same in every field (today, a year back, days of rows longer than a day)", infoSame == days.length * 2, example);
+
+        // timing on 420 days: printed only (machines differ); the plans above are the check
+        long t = System.nanoTime();
+        for (int i = 0; i < 20; i++) db.screen(today - 13 * 86400, end);
+        long fast = System.nanoTime() - t;
+        setBounded(false);
+        t = System.nanoTime();
+        for (int i = 0; i < 20; i++) db.screen(today - 13 * 86400, end);
+        long slow = System.nanoTime() - t;
+        setBounded(true);
+        System.out.println("#223 timing, 14 days of screen rows from 420 days: " + slow / 20000 + " us before, " + fast / 20000 + " us now");
+
+        // an older file without the indexes (an older version, a restored backup): they come at the next open, twice is a no op
+        long rows = db.count("SELECT COUNT(*) FROM screen") + db.count("SELECT COUNT(*) FROM apps");
+        String all = rows223(db.screen(0, Double.MAX_VALUE)) + apps223(appRows223(db, 0, Double.MAX_VALUE));
+        for (String ix : new String[] {"screen_long", "apps_start", "apps_long"}) w.execSQL("DROP INDEX " + ix);
+        check("#223: the indexes are gone as in an older file", indexes223(db) == 0, indexes223(db));
+        check("#223: without the indexes the reads are still the same", (rows223(db.screen(0, Double.MAX_VALUE)) + apps223(appRows223(db, 0, Double.MAX_VALUE))).equals(all), null);
+        for (int i = 0; i < 2; i++) {
+            java.lang.reflect.Field f = Db.class.getDeclaredField("instance");
+            f.setAccessible(true);
+            ((Db) f.get(null)).close();
+            f.set(null, null);
+            db = Db.get(c);
+        }
+        check("#223: reopened (twice) the file has the indexes again, every row kept", indexes223(db) == 3
+                && db.count("SELECT COUNT(*) FROM screen") + db.count("SELECT COUNT(*) FROM apps") == rows
+                && (rows223(db.screen(0, Double.MAX_VALUE)) + apps223(appRows223(db, 0, Double.MAX_VALUE))).equals(all), indexes223(db));
+        long schema = db.count("SELECT COUNT(*) FROM sqlite_master");
+        java.lang.reflect.Method again2 = Db.class.getDeclaredMethod("createReadIndexes", android.database.sqlite.SQLiteDatabase.class);
+        again2.setAccessible(true);
+        again2.invoke(null, db.getWritableDatabase());
+        check("#223: making the indexes again changes nothing", db.count("SELECT COUNT(*) FROM sqlite_master") == schema, schema);
+        // Delete all: new rows after it, long ones too, are read
+        Analyzer.deleteAll(db);
+        List<double[]> again = new ArrayList<double[]>();
+        again.add(new double[] {today - 2 * 86400, today + 600});
+        again.add(new double[] {today + 3600, today + 3700});
+        db.putScreen(again);
+        check("#223: after Delete all new rows are read, also one longer than a day", rows223(db.screen(today, end)).equals(rows223(again)), rows223(db.screen(today, end)));
+        db.close();
+    }
+
+    static double minStart223(Db db) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start FROM apps NOT INDEXED ORDER BY start LIMIT 1", null);
+        try {
+            return c.moveToFirst() ? c.getDouble(0) : -1;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
+     * Issue #223, the sync path: the analysis (Analyzer.analyzeNights, once per week of nights) and the Settings stage preview
+     * read phone use through the same bounded query; nights and days come out byte for byte as with the old query.
+     */
+    static void screenAnalysis223() throws Exception {
+        String[] got = new String[2];
+        String[] preview = new String[2];
+        int nights = 0;
+        for (int k = 0; k < 2; k++) {
+            setBounded(k == 1);
+            Context c = freshDb("openring-screen-223-" + k);
+            Db db = Db.get(c);
+            ZoneId z = ZoneId.systemDefault();
+            long t0 = LocalDate.parse("2026-03-02").atStartOfDay(z).toEpochSecond(), end = t0 + 29 * 86400L + 12 * 3600;
+            putBoot(db, app.openring.data.Demo.history(t0, 28, end, z, new Random(223)), 1, t0, end);
+            // a year of phone use before the ring, then phone checks at night, an evening on the phone, a row over a day
+            List<double[]> s = new ArrayList<double[]>();
+            Random r = new Random(2230);
+            for (long d = t0 - 365 * 86400L; d < end; d += 86400) {
+                for (int i = 0; i < 12; i++) {
+                    double a = d + 7 * 3600 + i * 3600 + r.nextInt(1800);
+                    s.add(new double[] {a, a + 30 + r.nextInt(600)});
+                }
+                double night = d + 26 * 3600 + r.nextInt(7200);
+                s.add(new double[] {night, night + 120 + r.nextInt(300)});
+                double eve = d + 22 * 3600 + 1800;
+                s.add(new double[] {eve, eve + 1200 + r.nextInt(1800)});
+            }
+            double lng = t0 + 10 * 86400L + 9 * 3600;
+            s.add(new double[] {lng, lng + 30 * 3600}); // left on for 30 hours over a night
+            java.util.Collections.sort(s, (x, y) -> Double.compare(x[0], y[0]));
+            List<double[]> clean = new ArrayList<double[]>();
+            for (double[] x : s) if (clean.isEmpty() || x[0] >= clean.get(clean.size() - 1)[1]) clean.add(x);
+            db.putScreen(clean);
+            db.putScreenRead(t0 - 365 * 86400L, end);
+            Analyzer.runAll(c, null);
+            got[k] = String.join("\n", results139(db));
+            StringBuilder pv = new StringBuilder();
+            nights = 0;
+            for (String js : db.nightsJson("0000-01-01", "9999-12-31", true)) {
+                JSONObject n = Json.parse(js);
+                if (n.has("phone_min")) nights++;
+                pv.append(java.util.Arrays.toString(Analyzer.preview(db, true, n, 1))).append('\n');
+            }
+            preview[k] = pv.toString();
+            db.close();
+        }
+        setBounded(true);
+        check("#223: the analysis saw phone use in the nights", nights >= 10, nights);
+        check("#223: nights and days byte for byte the same as with the old screen query (sync path)", got[0].equals(got[1]) && got[0].length() > 1000, got[0].length() + " / " + got[1].length());
+        check("#223: the stage preview the same", preview[0].equals(preview[1]) && preview[0].length() > 100, null);
     }
 
     /** The zone history: rows extend and open, a gap counts for the later zone. */
@@ -4274,6 +4617,190 @@ public class PipelineTest {
         }
     }
 
+    /** The ring's hypnogram {@code codes} (1 deep, 2 light, 3 REM, 4 awake) as 0x5a pages of 240 steps, sent at {@code end}. */
+    static void sleepPages(List<RingEvent> ev, int[] codes, double end, long t0, long ds0) {
+        for (int pg = 0; pg * 240 < codes.length; pg++) {
+            byte[] b = new byte[61];
+            b[0] = (byte) pg;
+            for (int j = 0; j < 60; j++) {
+                int v = 0;
+                for (int q = 0; q < 4; q++) v = (v << 2) | (codes[pg * 240 + j * 4 + q] - 1);
+                b[1 + j] = (byte) v;
+            }
+            ev.add(new RingEvent(EventCodec.SLEEP_PHASE_DATA, ds0 + Math.round((end - t0) * 10) + pg, b));
+        }
+    }
+
+    /** {@code cells} steps of 30 s from {@code from}: deep for the first 20 minutes, REM from {@code remFrom} for 30 minutes, light otherwise. */
+    static int[] runCodes(double from, int cells, double remFrom) {
+        int[] c = new int[cells];
+        for (int i = 0; i < cells; i++) {
+            double t = from + i * 30.0;
+            c[i] = i < 40 ? 1 : (t >= remFrom && t < remFrom + 1800 ? 3 : 2);
+        }
+        return c;
+    }
+
+    /**
+     * Three nights: the night to {@code d} with two ring stage runs (23:00 to 03:00 and 03:30 to 07:30) and the ring's sleep
+     * state awake 03:05 to 03:20 inside the break, the next night one ring run 23:00 to 07:00, the third night no ring stages.
+     */
+    static Db history189(LocalDate d) throws Exception {
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        List<double[]> brk = new ArrayList<double[]>();
+        brk.add(new double[] {at(d, 3 + 5 / 60.0), at(d, 3 + 20 / 60.0)});
+        wornSleep(ev, at(d, -1 - 10 / 60.0), at(d, 7.5 + 10 / 60.0), brk, t0, ds0);
+        sleepPages(ev, runCodes(at(d, -1), 480, at(d, 1)), at(d, 3), t0, ds0);
+        sleepPages(ev, runCodes(at(d, 3.5), 480, at(d, 5)), at(d, 7.5), t0, ds0);
+        wornSleep(ev, at(d, 23 - 10 / 60.0), at(d, 31 + 10 / 60.0), new ArrayList<double[]>(), t0, ds0);
+        sleepPages(ev, runCodes(at(d, 23), 960, at(d, 27)), at(d, 31), t0, ds0);
+        wornSleep(ev, at(d, 47), at(d, 55), new ArrayList<double[]>(), t0, ds0);
+        return runSynthetic(ev, t0, ds0, at(d, 56));
+    }
+
+    /** The stored stage at {@code t} in the stored night {@code n} (its raw stages, before the detail filter). */
+    static int stageAt(JSONObject n, double t) {
+        int[] raw = Json.stagesRaw(n);
+        double s = n.optDouble("start"), step = (n.optDouble("end") - s) / raw.length;
+        int i = (int) ((t - s) / step);
+        return i >= 0 && i < raw.length ? raw[i] : -1;
+    }
+
+    /**
+     * Issue #189: two ring stage runs with a short break are one night with both runs' stages at their own times, through
+     * the real Db and Analyzer. Data safety: a database the version before left (its rules version 2, the night of two runs
+     * stored with only the first run) is analysed again once by the existing mechanism (kv {@code night_finder}, issue #42;
+     * one transaction, issue #230): every event stays, the same number of nights, the other nights byte for byte as they
+     * were; safe twice; a stop part way keeps every old result; a restored backup of this version and of the version before
+     * gives the same; a long history without ring stages keeps every night and day byte for byte.
+     */
+    static void stageRuns189() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        Db db = history189(d);
+        Context c = lastSynthetic;
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a")); // for the backups
+        List<String> ref = results139(db);
+        List<String> refEvents = events58(db);
+        JSONObject n = mainNight(db, d);
+        check("#189 two runs: one main night from the ring's stages", n != null && "ring".equals(n.optString("source")) && db.nightsJson(d.toString(), d.toString(), false).size() == 1,
+                n == null ? null : n.optString("source"));
+        if (n == null) return;
+        check("#189 two runs: deep at 23:05 and REM at 01:10 from the first run", stageAt(n, at(d, -1 + 5 / 60.0)) == 1 && stageAt(n, at(d, 1 + 10 / 60.0)) == 3,
+                stageAt(n, at(d, -1 + 5 / 60.0)) + " " + stageAt(n, at(d, 1 + 10 / 60.0)));
+        check("#189 two runs: deep at 03:35 and REM at 05:10 from the second run", stageAt(n, at(d, 3.5 + 5 / 60.0)) == 1 && stageAt(n, at(d, 5 + 10 / 60.0)) == 3,
+                stageAt(n, at(d, 3.5 + 5 / 60.0)) + " " + stageAt(n, at(d, 5 + 10 / 60.0)));
+        check("#189 two runs: the ring's awake in the break is awake, the rest of the break has no stage", stageAt(n, at(d, 3 + 10 / 60.0)) == 4
+                && stageAt(n, at(d, 3 + 2 / 60.0)) == 0 && stageAt(n, at(d, 3 + 25 / 60.0)) == 0, stageAt(n, at(d, 3 + 10 / 60.0)) + " " + stageAt(n, at(d, 3 + 2 / 60.0)));
+        check("#189 two runs: the wake up in the break is the ring's own and counted", !Json.ringAwake(n).isEmpty() && n.optInt("awakenings") >= 1, n.opt("ring_awake"));
+        check("#189 two runs: 40 min deep and 60 min REM (20 and 30 from each run)", Math.abs(n.optDouble("deep_min") - 40) <= 1 && Math.abs(n.optDouble("rem_min") - 60) <= 1,
+                n.opt("deep_min") + " " + n.opt("rem_min"));
+        JSONObject n2 = mainNight(db, d.plusDays(1)), n3 = mainNight(db, d.plusDays(2));
+        check("#189 one ring run: its stages, as before", n2 != null && "ring".equals(n2.optString("source")) && stageAt(n2, at(d, 27 + 10 / 60.0)) == 3, n2 == null ? null : n2.opt("source"));
+        check("#189 no ring stages: staged from the signals, as before", n3 != null && !"ring".equals(n3.optString("source")), n3 == null ? null : n3.opt("source"));
+        long nights = nightRows(ref);
+
+        // the database the version before leaves: rules version 2, the night of two runs as it stored it (stand in: staged
+        // from the signals, no wake up of its own), and the inputs it noted
+        String inputs = db.kv("analysis_inputs", null);
+        check("#189 set up: up to date after the analysis", Analyzer.upToDate(c), inputs);
+        List<String> old = olderResults189(db, n, inputs);
+        check("#189 older database: one night differs, the same number of nights", nightRows(old) == nights && !old.equals(ref), nightRows(old) + " vs " + nights);
+        check("#189 older database: the new rules are not taken as analysed", !Analyzer.upToDate(c), db.kv("analysis_inputs", null));
+        Backup189 oldBackup = new Backup189(c);
+
+        // a stop part way through (the phone ends the app): every old result stays, the rules version too
+        Throwable got = null;
+        try {
+            Analyzer.run(c, stopAt(" sleep periods"));
+        } catch (Throwable t) {
+            got = t;
+        }
+        check("#189 stopped part way: every old night and day is still there, byte for byte", got instanceof Stop && results139(db).equals(old)
+                && db.kvLong("night_finder", 0) == 2, firstDiff(results139(db), old));
+        check("#189 stopped part way: every event kept", events58(db).equals(refEvents), null);
+
+        // the next analysis (and one more): analysed again once, the same as a new analysis
+        for (int run = 1; run <= 2; run++) {
+            Analyzer.run(c, null);
+            List<String> now = results139(db);
+            check("#189 upgrade, analysis " + run + ": every event kept", events58(db).equals(refEvents), null);
+            check("#189 upgrade, analysis " + run + ": the same nights and days as a new analysis, byte for byte", now.equals(ref), firstDiff(now, ref));
+            check("#189 upgrade, analysis " + run + ": the same number of nights, rules version noted", nightRows(now) == nights
+                    && db.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION && db.kv("analysis_error", null) == null, nightRows(now));
+        }
+        check("#189 upgrade: the other nights byte for byte as the version before stored them", sameExcept(old, ref, (long) n.optDouble("start")), firstDiff(old, ref));
+
+        // restoring a backup of this version and of the version before: every event, then the same nights
+        Backup189 newBackup = new Backup189(c);
+        for (int k = 0; k < 2; k++) {
+            String which = k == 0 ? "this version" : "the version before";
+            Context ph = freshDb("openring189-restore" + k);
+            app.openring.data.Backup.Result res = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream((k == 0 ? newBackup : oldBackup).zip));
+            Db rdb = Db.get(ph);
+            check("#189 restore of a backup from " + which + ": every event and the nights it held", res.ok && events58(rdb).equals(refEvents)
+                    && results139(rdb).equals(k == 0 ? ref : old), res.message);
+            Analyzer.run(ph, null);
+            check("#189 restored from " + which + ", the next analysis: the same nights and days as a new analysis", results139(rdb).equals(ref)
+                    && events58(rdb).equals(refEvents), firstDiff(results139(rdb), ref));
+        }
+
+        // a long history without ring stages (120 days of demo history): the new rules change no night or day
+        Context y = history230("openring189-long", T230, 120);
+        Db ydb = Db.get(y);
+        Analyzer.run(y, null);
+        List<String> yBefore = results139(ydb);
+        List<String> yEvents = events58(ydb);
+        ydb.put("night_finder", 2);
+        long t = System.nanoTime();
+        Analyzer.run(y, null);
+        System.out.println("  #189: 120 days (" + nightRows(yBefore) + " nights) analysed again for the new rules in " + (System.nanoTime() - t) / 1000000 + " ms");
+        check("#189 120 days without ring stages: analysed again, every event, night and day byte for byte", nightRows(yBefore) >= 100
+                && results139(ydb).equals(yBefore) && events58(ydb).equals(yEvents) && ydb.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION,
+                firstDiff(results139(ydb), yBefore));
+        freshDb("openring189-done");
+    }
+
+    /** A backup with history of the phone {@code c} as it is now. */
+    static final class Backup189 {
+        final byte[] zip;
+
+        Backup189(Context c) throws Exception {
+            java.io.ByteArrayOutputStream os = new java.io.ByteArrayOutputStream();
+            app.openring.data.Backup.write(c, os, true);
+            zip = os.toByteArray();
+        }
+    }
+
+    /**
+     * Turns {@code db} into what the version before leaves: rules version 2 in kv and in the noted inputs, and the night
+     * {@code n} stored as it had it (stand in: staged from the signals, without a wake up of its own). Returns the results.
+     */
+    static List<String> olderResults189(Db db, JSONObject n, String inputs) {
+        String[] parts = inputs.split(" ");
+        parts[5] = "2"; // lastId until detail screenAwake stageFilter nightFinder ... (Analyzer.inputs)
+        db.put("analysis_inputs", String.join(" ", parts));
+        db.put("night_finder", 2);
+        JSONObject o = Json.parse(n.toString());
+        o.put("source", "signals");
+        o.remove("ring_awake");
+        db.getWritableDatabase().execSQL("UPDATE nights SET json = ? WHERE start = ?", new Object[] {o.toString(), n.optDouble("start")});
+        return results139(db);
+    }
+
+    /** True when {@code a} and {@code b} have the same rows except the night starting at {@code start} (whole seconds). */
+    static boolean sameExcept(List<String> a, List<String> b, long start) {
+        if (a.size() != b.size()) return false;
+        int differ = 0;
+        for (int i = 0; i < a.size(); i++) {
+            if (a.get(i).equals(b.get(i))) continue;
+            if (a.get(i).startsWith("night ") && Math.abs(Double.longBitsToDouble(Long.parseLong(a.get(i).split(" ")[1])) - start) < 1) differ++;
+            else return false;
+        }
+        return differ == 1;
+    }
+
     /** Each stored sleep as start, stop, day, stages and raw stages, for before and after comparisons. */
     static List<String> nightRows(Db db) {
         List<String> out = new ArrayList<String>();
@@ -6131,6 +6658,283 @@ public class PipelineTest {
         return t;
     }
 
+    /** The parsed JSON of {@code nights}. */
+    static List<JSONObject> parsed(List<String> nights) {
+        List<JSONObject> out = new ArrayList<JSONObject>();
+        for (String js : nights) out.add(Json.parse(js));
+        return out;
+    }
+
+    /** Null when both histories hold exactly the same values (bit for bit, NaN equal to NaN), else the first difference (issue #196). */
+    static String historyDiff(app.openring.data.SleepHistory a, app.openring.data.SleepHistory b) {
+        if (a.nights != b.nights) return "nights " + a.nights + " / " + b.nights;
+        if (!String.valueOf(a.firstDay).equals(String.valueOf(b.firstDay)) || !String.valueOf(a.lastDay).equals(String.valueOf(b.lastDay))) {
+            return "days " + a.firstDay + ".." + a.lastDay + " / " + b.firstDay + ".." + b.lastDay;
+        }
+        if (a.stageDetail != b.stageDetail) return "stage detail " + a.stageDetail + " / " + b.stageDetail;
+        double[] x = {a.asleepMin, a.inBedMin, a.deepMin, a.remMin, a.lightMin, a.awakeMin, a.efficiency, a.score, a.lowestHr, a.hrv, a.wakeUps,
+                a.bedtimeMin, a.wakeMin, a.bedtimeSdMin};
+        double[] y = {b.asleepMin, b.inBedMin, b.deepMin, b.remMin, b.lightMin, b.awakeMin, b.efficiency, b.score, b.lowestHr, b.hrv, b.wakeUps,
+                b.bedtimeMin, b.wakeMin, b.bedtimeSdMin};
+        for (int i = 0; i < x.length; i++) if (Double.doubleToLongBits(x[i]) != Double.doubleToLongBits(y[i])) return "value " + i + ": " + x[i] + " / " + y[i];
+        if (a.pattern.nights() != b.pattern.nights()) return "pattern nights " + a.pattern.nights() + " / " + b.pattern.nights();
+        for (int bin = 0; bin < app.openring.core.analysis.SleepPattern.BINS; bin++) {
+            if (Double.doubleToLongBits(a.pattern.inBed(bin)) != Double.doubleToLongBits(b.pattern.inBed(bin))) return "in bed at bin " + bin;
+            for (int st = 0; st < 5; st++) {
+                if (Double.doubleToLongBits(a.pattern.share(bin, st)) != Double.doubleToLongBits(b.pattern.share(bin, st))) return "stage " + st + " at bin " + bin;
+            }
+        }
+        return null;
+    }
+
+    /** Waits until the zone notes the main screen left to the background are done (issue #197). */
+    static void awaitLateNotes() throws Exception {
+        java.lang.reflect.Method m = Analyzer.class.getDeclaredMethod("awaitLateNotes");
+        m.setAccessible(true);
+        m.invoke(null);
+    }
+
+    /** How many zone notes the main screen has left to the background so far (issue #197). */
+    static int queuedLateNotes() throws Exception {
+        java.lang.reflect.Field f = Analyzer.class.getDeclaredField("LATE_NOTES_QUEUED_COUNT");
+        f.setAccessible(true);
+        return ((java.util.concurrent.atomic.AtomicInteger) f.get(null)).get();
+    }
+
+    /** Holds the analysis lock on its own thread (as a backup's snapshot does) until {@code go} opens. */
+    static Thread holdLock197(final java.util.concurrent.CountDownLatch held, final java.util.concurrent.CountDownLatch go) {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                synchronized (Analyzer.class) {
+                    held.countDown();
+                    try {
+                        go.await(120, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            }
+        });
+        t.start();
+        return t;
+    }
+
+    /**
+     * Issue #197: the main screen's zone note no longer waits for the analysis lock when the zone is unchanged. While
+     * another thread holds the lock (as a backup's snapshot or a restore does, without counting as a run), the zone
+     * check and the day's reads return at once; the note itself follows once the lock is free and stores what it
+     * stored before (the newest row stretched to now). A new zone still waits for the lock and opens its row as before.
+     */
+    static void zoneNoteLater197() throws Exception {
+        Context c = history230("openring197", T230, 14);
+        Analyzer.run(c, null);
+        Db db = Db.get(c);
+        ZoneId phone = ZoneId.systemDefault();
+        long now = System.currentTimeMillis() / 1000;
+        db.noteZone(now - 3600, phone.getId());
+        List<Object[]> zones0 = db.zones();
+        double stop0 = (Double) zones0.get(zones0.size() - 1)[1];
+        String day = db.latestDay();
+
+        java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1), go = new java.util.concurrent.CountDownLatch(1);
+        Thread holder = holdLock197(held, go);
+        check("#197 set up: another thread holds the analysis lock", held.await(60, java.util.concurrent.TimeUnit.SECONDS) && !Analyzer.running(), "");
+        long t = System.nanoTime();
+        boolean did = Analyzer.beforeLoad(c);
+        String dayJson = db.dayJson(day);
+        List<String> nights = db.nightsJson(day, day, false);
+        long ms = (System.nanoTime() - t) / 1000000;
+        check("#197 zone unchanged: the zone check and the day's reads return at once while the lock is held", did && ms < 2000
+                && dayJson != null && !nights.isEmpty(), ms + " ms");
+        check("#197 the note waits for the lock: nothing stored yet", db.zones().size() == zones0.size()
+                && (Double) db.zones().get(zones0.size() - 1)[1] == stop0, null);
+        int queued0 = queuedLateNotes();
+        for (int i = 0; i < 5; i++) Analyzer.beforeLoad(c);
+        check("#197 five more loads while the note waits for the lock queue no more notes", queuedLateNotes() == queued0, queuedLateNotes() - queued0);
+        go.countDown();
+        holder.join(60000);
+        awaitLateNotes();
+        List<Object[]> zones1 = db.zones();
+        double stop1 = (Double) zones1.get(zones1.size() - 1)[1];
+        check("#197 once the lock is free the note stretches the newest row to now, as the load did before (no new row)",
+                zones1.size() == zones0.size() && phone.getId().equals(zones1.get(zones1.size() - 1)[2]) && stop1 >= now && stop1 > stop0,
+                zones1.size() + " rows, stop " + (long) stop1 + " (now " + now + ")");
+
+        // a new zone (the phone's zone differs from the newest row): the note is made before the day loads, as before
+        db.noteZone(now + 60, "America/New_York");
+        int rows = db.zones().size();
+        held = new java.util.concurrent.CountDownLatch(1);
+        go = new java.util.concurrent.CountDownLatch(1);
+        holder = holdLock197(held, go);
+        check("#197 set up: the lock is held again", held.await(60, java.util.concurrent.TimeUnit.SECONDS), "");
+        final Context fc = c;
+        final boolean[] done = new boolean[1];
+        final Throwable[] err = new Throwable[1];
+        Thread load = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    done[0] = Analyzer.beforeLoad(fc);
+                } catch (Throwable e) {
+                    err[0] = e;
+                }
+            }
+        });
+        load.start();
+        load.join(500);
+        boolean waited = load.isAlive();
+        go.countDown();
+        holder.join(60000);
+        load.join(120000);
+        List<Object[]> zones2 = db.zones();
+        check("#197 a new zone still waits for the lock, then opens its row as before", waited && done[0] && err[0] == null
+                && zones2.size() == rows + 1 && phone.getId().equals(zones2.get(zones2.size() - 1)[2]), zones2.size() + " rows, " + err[0]);
+        awaitLateNotes();
+
+        // the background note is skipped while a run runs or waits (that run notes the zone itself) and in demo mode
+        java.lang.reflect.Method later = Analyzer.class.getDeclaredMethod("noteLater", Context.class);
+        later.setAccessible(true);
+        java.lang.reflect.Field runsField = Analyzer.class.getDeclaredField("RUNS");
+        runsField.setAccessible(true);
+        java.util.concurrent.atomic.AtomicInteger runs = (java.util.concurrent.atomic.AtomicInteger) runsField.get(null);
+        double stop2 = (Double) db.zones().get(db.zones().size() - 1)[1];
+        Object queued;
+        runs.incrementAndGet();
+        try {
+            queued = later.invoke(null, c);
+            awaitLateNotes();
+        } finally {
+            runs.decrementAndGet();
+        }
+        check("#197 the background note is skipped while a run waits: nothing stored", queued != null && db.zones().size() == rows + 1
+                && (Double) db.zones().get(db.zones().size() - 1)[1] == stop2, null);
+        Context demoCtx = new Context(c.dir);
+        app.openring.data.Prefs.of(demoCtx).setDemo(true);
+        queued = later.invoke(null, demoCtx);
+        awaitLateNotes();
+        // had the note gone on, it would have opened the demo database in place of this one
+        check("#197 the background note is skipped in demo mode: nothing stored", queued != null && Db.get(c) == db && db.zones().size() == rows + 1
+                && (Double) db.zones().get(db.zones().size() - 1)[1] == stop2, null);
+
+        // a failed background note is said by the next load once (so the screen records it for the data check, #235)
+        Context broken = new Context(c.dir) {
+            @Override
+            public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+                throw new IllegalStateException("test: settings unreadable");
+            }
+        };
+        queued = later.invoke(null, broken);
+        awaitLateNotes();
+        check("#197 set up: the failing background note was queued", queued != null, null);
+        Throwable first = null, second = null;
+        // the newest row here ends a minute ahead (the zone change above was noted at now + 60), so the count of queued
+        // notes shows that this load still made its own note before throwing the earlier failure
+        int queued3 = queuedLateNotes();
+        try {
+            Analyzer.beforeLoad(c);
+        } catch (Throwable e) {
+            first = e;
+        }
+        int queued4 = queuedLateNotes();
+        awaitLateNotes();
+        check("#197 the load that throws the failed note still makes its own note first (review of adc9c1e)", queued4 == queued3 + 1
+                && db.zones().size() == rows + 1, queued4 - queued3);
+        try {
+            Analyzer.beforeLoad(c);
+        } catch (Throwable e) {
+            second = e;
+        }
+        awaitLateNotes();
+        check("#197 a failed background note: the next load throws it once, the one after does not",
+                first instanceof IllegalStateException && "test: settings unreadable".equals(first.getMessage()) && second == null, first + " / " + second);
+    }
+
+    /**
+     * Issue #196: Further analysis over years of nights. 1500 stored nights, copies of the demo's nights a day apart
+     * (a few in another zone or at another detail level): read night by night they give exactly what the whole list
+     * gives, and a second JVM with a heap too small for all parsed nights at once still works out All time.
+     */
+    static void longHistory196() throws Exception {
+        Context src = freshDb("openring196-demo");
+        app.openring.data.Demo.enter(src, null, LocalDate.parse("2026-10-20"), java.time.LocalDateTime.parse("2026-10-20T12:00:00")
+                .atZone(ZoneId.systemDefault()).toEpochSecond());
+        List<JSONObject> demo = parsed(Db.get(src).nightsJson("2000-01-01", "2100-01-01", true));
+        app.openring.data.Demo.leave(src);
+        Context c = freshDb("openring196");
+        Db db = Db.get(c);
+        final int nights = 1500;
+        LocalDate first = LocalDate.parse("2022-01-01");
+        List<Object[]> rows = new ArrayList<Object[]>();
+        long bytes = 0;
+        for (int i = 0; i < nights; i++) {
+            JSONObject o = Json.parse(demo.get(i % demo.size()).toString());
+            // the same night i days after the first, at its own clock time
+            double shift = first.plusDays(i).atStartOfDay(ZoneId.systemDefault()).toEpochSecond()
+                    - LocalDate.parse(o.optString("day")).atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+            for (String k : new String[] {"start", "end", "sleep_start", "sleep_end"}) if (o.has(k)) Json.put(o, k, Json.d(o, k) + shift);
+            Json.put(o, "day", first.plusDays(i).toString());
+            if (i % 97 == 5) Json.put(o, "zone", "America/New_York");
+            if (i == 700) Json.put(o, "stage_detail", 2);
+            String js = o.toString();
+            bytes += js.length();
+            rows.add(new Object[] {Json.d(o, "start"), Json.d(o, "end"), first.plusDays(i).toString(), 1, o.optJSONObject("score") == null ? 0
+                    : o.optJSONObject("score").optInt("value"), js});
+            if (rows.size() == 250) {
+                db.replaceNights(0, 0, rows);
+                rows.clear();
+            }
+        }
+        db.replaceNights(0, 0, rows);
+        long t = System.nanoTime();
+        app.openring.data.SleepHistory streamed = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", ZoneId.systemDefault());
+        long ms = (System.nanoTime() - t) / 1000000;
+        String diff = historyDiff(streamed, app.openring.data.SleepHistory.of(parsed(db.nightsJson("2000-01-01", "2100-01-01", true)), ZoneId.systemDefault()));
+        check("#196 " + nights + " nights read night by night equal the whole list, field by field", streamed.nights == nights && diff == null
+                && streamed.stageDetail == -1, streamed.nights + " nights, " + diff + ", " + ms + " ms, " + bytes / 1024 + " KB of JSON");
+        // the second JVM opens the same file
+        File dir = c.dir;
+        freshDb("openring196-done");
+        String small = allTimeHeap196(dir, "stream");
+        check("#196 All time over " + nights + " nights works out in a 40 MB heap, one night at a time", ("nights " + nights).equals(small), small);
+        String list = allTimeHeap196(dir, "list");
+        check("#196 the same heap is too small for all nights parsed at once (the way before), so the test means something",
+                list.startsWith("exit ") && list.contains("OutOfMemoryError"), list);
+    }
+
+    /** Runs {@link #allTimeChild196} in a second JVM with a 40 MB heap; its last output line, or the exit code. */
+    static String allTimeHeap196(File dir, String how) throws Exception {
+        String java = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
+        ProcessBuilder pb = new ProcessBuilder(java, "-Xmx40m", "-Djava.io.tmpdir=" + System.getProperty("java.io.tmpdir"),
+                "-cp", System.getProperty("java.class.path"), "PipelineTest", "alltime196", dir.getPath(), how);
+        pb.environment().put("TZ", "Europe/Zurich");
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String last = null, error = null;
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream(), "UTF-8"))) {
+            for (String l; (l = r.readLine()) != null; ) {
+                if (l.trim().isEmpty()) continue;
+                last = l.trim();
+                if (error == null && (last.contains("Error") || last.contains("Exception"))) error = last;
+            }
+        }
+        int code = p.waitFor();
+        return code == 0 ? last : "exit " + code + ": " + (error != null ? error : last);
+    }
+
+    /** The second JVM of {@link #longHistory196}: All time from the file in {@code dir}, night by night or (before) all at once. */
+    static void allTimeChild196(String dir, String how) {
+        Context c = new Context(new File(dir));
+        Db db = Db.get(c);
+        app.openring.data.SleepHistory h;
+        if ("stream".equals(how)) {
+            h = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", ZoneId.systemDefault());
+        } else {
+            h = app.openring.data.SleepHistory.of(parsed(db.nightsJson("2000-01-01", "2100-01-01", true)), ZoneId.systemDefault());
+        }
+        System.out.println("nights " + h.nights);
+    }
+
     /**
      * Review of PR #243: while a long analysis has its transaction open, the main screen's load does not wait for it
      * (it shows the stored nights at once), entering demo mode waits for it instead of closing the database under it,
@@ -6157,7 +6961,17 @@ public class PipelineTest {
         go.countDown();
         run.join(120000);
         check("#243 the run then ends normally", err[0] == null && !run.isAlive() && results139(db).equals(before), err[0]);
+        List<Object[]> zonesBefore = db.zones();
+        double stopBefore = (Double) zonesBefore.get(zonesBefore.size() - 1)[1];
+        Thread.sleep(5);
+        double noteFrom = System.currentTimeMillis() / 1000.0;
         check("#243 the next load notes the zone again (no analysis runs)", !Analyzer.running() && Analyzer.beforeLoad(c), "");
+        awaitLateNotes();
+        List<Object[]> zonesAfter = db.zones();
+        double stopAfter = (Double) zonesAfter.get(zonesAfter.size() - 1)[1];
+        check("#243 the zone note is stored: the newest zone row is the phone's and its stop moved to now",
+                ZoneId.systemDefault().getId().equals(zonesAfter.get(zonesAfter.size() - 1)[2]) && stopAfter >= noteFrom && stopAfter > stopBefore,
+                zonesAfter.size() + " rows, stop " + stopAfter + " (from " + noteFrom + ", before " + stopBefore + ")");
 
         // 2. entering demo mode during the run waits for it; the real run is not broken
         inside = new java.util.concurrent.CountDownLatch(1);

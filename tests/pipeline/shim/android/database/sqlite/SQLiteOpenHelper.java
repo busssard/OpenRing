@@ -12,6 +12,8 @@ public abstract class SQLiteOpenHelper {
     public void setWriteAheadLoggingEnabled(boolean b) {}
     public abstract void onCreate(SQLiteDatabase db);
     public abstract void onUpgrade(SQLiteDatabase db, int o, int n);
+    /** Like Android: called on every open, after onCreate or onUpgrade. */
+    public void onOpen(SQLiteDatabase db) {}
     /** Like Android: without an override, opening a database from a newer app version fails. */
     public void onDowngrade(SQLiteDatabase db, int o, int n) {
         throw new RuntimeException("Can't downgrade database from version " + o + " to " + n);
@@ -27,6 +29,7 @@ public abstract class SQLiteOpenHelper {
             int v = d.getVersion();
             if (v == 0) onCreate(d); else if (v < version) onUpgrade(d, v, version); else if (v > version) onDowngrade(d, v, version);
             d.execSQL("PRAGMA user_version = " + version);
+            onOpen(d);
             db = d;
             return db;
         } catch (SQLException e) {
