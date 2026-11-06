@@ -5198,6 +5198,18 @@ public class CoreTest {
         m = new Mock();
         eq("probe: cursor 0 is present", probe(new RingClient(m).quiet(5), 0), "true");
         eq("probe: cursor 0 sends nothing", m.writes.size(), 0);
+
+        // GattLink.open never leaves a half open link behind: any way out but the return closes it, an
+        // unexpected RuntimeException from the Bluetooth stack too (nobody else holds the link to close it)
+        String gatt = new String(java.nio.file.Files.readAllBytes(
+                new java.io.File("app/src/main/java/app/openring/ble/GattLink.java").toPath()), "UTF-8");
+        int from = gatt.indexOf("public static GattLink open(");
+        int to = from < 0 ? -1 : gatt.indexOf("private void connect(", from);
+        check("GattLink.open found", from >= 0 && to > from);
+        String open = from >= 0 && to > from ? gatt.substring(from, to) : "";
+        int fin = open.indexOf("finally");
+        check("GattLink.open closes the link in finally, whatever was thrown", fin >= 0 && open.indexOf("l.close()", fin) > fin, open);
+        check("GattLink.open catches nothing it would not throw again", !open.contains("catch ("), open);
     }
 
     /** A link that is lost after {@code req}: once its frames are read, poll fails as {@code GattLink.poll} does. */
