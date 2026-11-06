@@ -46,9 +46,9 @@ public final class Explain {
         return "Includes " + min + " on the phone, shown as awake at every detail level.";
     }
 
-    /** The note above the readiness contributors when yesterday was not worn, so Previous day activity is left out (issue #240). */
-    public static final String READINESS_UNWORN = "Previous day activity is left out today: the ring was on for less than an hour "
-            + "yesterday, so there is no activity to compare with your goal.";
+    /** The note above the readiness contributors when the day before was not worn, so Previous day activity is left out (issue #240). */
+    public static final String READINESS_UNWORN = "Previous day activity is left out: the ring was on for less than an hour "
+            + "the day before, so there is no activity to compare with your goal.";
 
     /** The note above the activity contributors while fewer than 7 days of the last week were worn (issue #44). */
     public static String activityDays(int n) {

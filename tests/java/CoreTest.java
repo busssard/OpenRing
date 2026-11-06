@@ -5801,8 +5801,8 @@ public class CoreTest {
         check("#240 an unworn day before the 28: the same numbers", in.activityBalance == all.activityBalance && in.prevDayActivity == all.prevDayActivity, null);
 
         // texts
-        eq("#240 the note on the Readiness page", app.openring.ui.Explain.READINESS_UNWORN, "Previous day activity is left out today: the ring was "
-            + "on for less than an hour yesterday, so there is no activity to compare with your goal.");
+        eq("#240 the note on the Readiness page", app.openring.ui.Explain.READINESS_UNWORN, "Previous day activity is left out: the ring was "
+            + "on for less than an hour the day before, so there is no activity to compare with your goal.");
         check("#240 explanations name the rule", app.openring.ui.Explain.of("prev_activity").endsWith("A day with less than an hour of wear is left out.")
             && app.openring.ui.Explain.of("activity_balance").endsWith("Days with less than an hour of wear are left out."), null);
     }
