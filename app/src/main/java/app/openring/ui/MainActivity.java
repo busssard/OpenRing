@@ -249,8 +249,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("live", false) && Prefs.of(this).demo()) live(i.getBooleanExtra("live_spo2", false));
         // screen test: a left out time in the demo (issue #254); Analyzer.leaveOutDemo writes only into the demo file
         if (i.getBooleanExtra("left_out", false) && Prefs.of(this).demo()) leftOutDemo(2, 13, 0, 17, 0);
-        // screen test: yesterday off the finger (issue #240), as a left out time 00:00 to 21:30 in the demo file, so today's
-        // readiness leaves Previous day activity out
+        // screen test: the day before yesterday off the finger (issue #240), as a left out time 00:00 to 21:30 in the demo
+        // file, so yesterday's readiness leaves Previous day activity out. The demo's day ends at 22:18 (Demo dayEnd), so
+        // under an hour of ring data stays (about 57 minutes); a later demo day must keep that under Scores.WORN_DAY_MIN
         if (i.getBooleanExtra("unworn", false) && Prefs.of(this).demo()) leftOutDemo(2, 0, 0, 21, 30);
         // screen test: the status line of a saved key this phone cannot read (issue #199), demo mode only
         previewUnreadable = i.getBooleanExtra("key_unreadable", false) && Prefs.of(this).demo();
