@@ -266,6 +266,12 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("watch_data", false) && Prefs.of(this).demo()) startActivity(new Intent(this, WatchPageActivity.class));
         // screen test: the main device (issue #251), demo mode only; the same choice as the chips in Settings, Watch
         if (i.hasExtra("main_device") && Prefs.of(this).demo()) Prefs.of(this).setMainDevice(i.getIntExtra("main_device", 0));
+        // screen test: the watch setup (issue #251), demo mode only: watch_setup_part 1 scrolls to the alarm, watch_setup_hands
+        // shows the hand calibration's controls
+        if (i.getBooleanExtra("watch_setup", false) && Prefs.of(this).demo()) {
+            startActivity(new Intent(this, WatchSetupActivity.class).putExtra("part", i.getIntExtra("watch_setup_part", 0))
+                    .putExtra("demo_hands", i.getBooleanExtra("watch_setup_hands", false)));
+        }
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false)));
         }
@@ -554,7 +560,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
             @Override
             protected void onPostExecute(DayData result) {
-                if (token != loadToken || isFinishing()) return;
+                // a screen gone with a turn of the phone is not finished: its load must not render or start another
+                if (token != loadToken || isFinishing() || isDestroyed()) return;
                 if (result == null) {
                     data = null;
                     showProblem(problem);

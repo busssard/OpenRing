@@ -9,10 +9,10 @@ set -- $(./tools/version.sh)
 code=$1; name=$2
 if grep -q '^VERSION_CODE=[0-9]' build_apk.sh || grep -q 'versionCode [0-9]' app/build.gradle; then
   echo "FAIL  a version number is typed in build_apk.sh or app/build.gradle; it is counted from changes/ now"; fail=1
-elif ! grep -q 'tools/version.sh' build_apk.sh || ! grep -q '29 + changeNotes' app/build.gradle || ! grep -q "'1.' + (28 + changeNotes)" app/build.gradle; then
+elif ! grep -q '^[^#]*tools/version.sh' build_apk.sh || ! grep -q "'tools/version.sh').path].execute()" app/build.gradle || ! grep -q '29 + changeNotes' app/build.gradle; then
   echo "FAIL  build_apk.sh and app/build.gradle no longer count the version the same way as tools/version.sh"; fail=1
 else
-  echo "ok    version $name (code $code), counted from changes/"
+  echo "ok    version $name (code $code), counted from changes/ and the release tags"
 fi
 for f in changes/*.md; do
   b=$(basename "$f")

@@ -84,7 +84,8 @@ public final class SyncJob extends JobService {
         final boolean ringRecent = BackgroundJob.recent(now, prefs.lastSync(), prefs.lastAttempt());
         if (ringPart && ringRecent) RingManager.get(this).log("background sync skipped: the last sync was less than 30 minutes ago");
         if ((!ringPart || ringRecent) && !watchPart) return false;
-        final RingManager.SyncTicket t = new RingManager.SyncTicket();
+        // nobody watches this sync: it scans briefly and filtered only when the ring is away (issue #195)
+        final RingManager.SyncTicket t = RingManager.SyncTicket.background();
         ticket = t;
         new Thread(new Runnable() {
             @Override
