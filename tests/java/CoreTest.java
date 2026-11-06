@@ -931,7 +931,9 @@ public class CoreTest {
         }
         eq("key state: the backup reason (review of #281)", Backups.reason(Backups.KEY), "this phone cannot read the saved ring key, enter it again in Setup");
         check("key state: the backup reason is not the folder's", !Backups.reason(Backups.KEY).equals(Backups.reason(Backups.WRITE)));
-        check("key state: the manual backup sentence says what to do", KeyState.BACKUP_TEXT.contains("Enter the key again"));
+        check("#288 the backup cards say the key is left out and what to do", KeyState.BACKUP_NO_KEY.contains("saved without it") && KeyState.BACKUP_NO_KEY.contains("Setup"));
+        check("#288 the saved note says the key is not in it, and fits a toast", KeyState.BACKUP_SAVED_NO_KEY.startsWith("Backup saved, without the ring key")
+                && Texts.fitsToast(KeyState.BACKUP_SAVED_NO_KEY));
         check("key state: the plain sentences say what to do", KeyState.PLAIN.contains("enter the key again") && KeyState.STATUS.contains("Tap here")
                 && KeyState.SETUP_TEXT.contains("saved key stays") && KeyState.SYNC_TEXT.contains("saved key stays"));
     }
@@ -969,9 +971,11 @@ public class CoreTest {
         texts();
         unitTexts();
         scoreLadder();
+        readinessUnworn240();
         movementShares();
         drafts();
         oneRun();
+        fileSave222();
         backups242();
         keptHeight();
         scrollKeep();
@@ -3100,6 +3104,27 @@ public class CoreTest {
         eq("backups: the new file is not there, nothing complete goes", Backups.folderToDelete(Arrays.asList(a, b, c2, e), listed, nw, 3), Arrays.asList());
         eq("backups: the new file is not the newest by name (clock set back), it is kept with the 2 newest others", new java.util.TreeSet<String>(
             Backups.folderToDelete(Arrays.asList(a, b, c2, e, nw), listed, a, 3)), new java.util.TreeSet<String>(Arrays.asList(b, c2)));
+        // review of #340: copies without the key (issue #288) are named so, and never push out the last copy with the key
+        eq("backups: a copy without the key", Backups.withoutKey(Backups.folderName(t, null)), "openring-backup-2026-10-29-0312-nokey.zip");
+        eq("backups: an update copy without the key", Backups.withoutKey(Backups.folderName(t, "1.42")), "openring-backup-2026-10-29-0312-before-1.42-nokey.zip");
+        check("backups: copies without the key are ours and known as such", Backups.folderFile("openring-backup-2026-10-29-0312-nokey.zip")
+                && Backups.folderFile("openring-backup-2026-10-29-0312-before-1.42-nokey.zip") && Backups.keyless("openring-backup-2026-10-29-0312-nokey.zip")
+                && !Backups.keyless("openring-backup-2026-10-29-0312.zip") && Backups.withoutKey("openring-backup-2026-10-29-0312-nokey.zip").equals("openring-backup-2026-10-29-0312-nokey.zip"));
+        {
+            List<String> keyed = Arrays.asList("openring-backup-2026-10-01-0300.zip", "openring-backup-2026-10-02-0300.zip", "openring-backup-2026-10-03-0300-before-1.40.zip");
+            List<String> all = new ArrayList<String>(keyed);
+            for (int k = 4; k <= 9; k++) all.add("openring-backup-2026-10-0" + k + "-0300-nokey.zip");
+            String newest = "openring-backup-2026-10-09-0300-nokey.zip";
+            eq("backups: without the key the newest copy with it stays beside the 3 newest, older ones go", new java.util.TreeSet<String>(Backups.folderToDelete(all, all, newest, 3)),
+                    new java.util.TreeSet<String>(Arrays.asList("openring-backup-2026-10-01-0300.zip", "openring-backup-2026-10-02-0300.zip",
+                            "openring-backup-2026-10-04-0300-nokey.zip", "openring-backup-2026-10-05-0300-nokey.zip", "openring-backup-2026-10-06-0300-nokey.zip")));
+            List<String> back = new ArrayList<String>(all);
+            back.add("openring-backup-2026-10-10-0300.zip");
+            check("backups: a copy with the key again: the rotation is as before", Backups.folderToDelete(back, back, "openring-backup-2026-10-10-0300.zip", 3)
+                    .contains("openring-backup-2026-10-03-0300-before-1.40.zip"));
+            check("backups: a copy with the key among the newest: nothing extra kept", Backups.folderToDelete(all.subList(0, 4), all, "openring-backup-2026-10-04-0300-nokey.zip", 3)
+                    .equals(Arrays.asList("openring-backup-2026-10-01-0300.zip")));
+        }
         eq("backups: the partial of the new file itself is not ours to delete", Backups.folderToDelete(Arrays.asList(nw + ".partial", nw), listed, nw, 3), Arrays.asList());
         // the folder's permission, from the picker's result (review of #259)
         eq("backups: read and write given: both kept", Backups.keepFlags(Backups.GRANT_READ | Backups.GRANT_WRITE | 64 | 128), 3);
@@ -3157,6 +3182,118 @@ public class CoreTest {
         check("backups: short notes fit a toast", Texts.fitsToast(Backups.STOPPED) && Texts.fitsToast(Backups.NOT_IN_DEMO) && Texts.fitsToast(Backups.WENT_BACK));
     }
 
+    /** A picked file that fails on the way is removed, or called incomplete when it cannot be (issue #222). */
+    static void fileSave222() {
+        final java.io.ByteArrayOutputStream[] file = {null};
+        final boolean[] deleted = {false};
+        final int[] failAfter = {-1};
+        final boolean[] deleteWorks = {true};
+        FileSave.Target target = new FileSave.Target() {
+            @Override
+            public java.io.OutputStream open() {
+                file[0] = new java.io.ByteArrayOutputStream() {
+                    @Override
+                    public synchronized void write(byte[] b, int off, int len) {
+                        if (failAfter[0] >= 0 && size() + len > failAfter[0]) {
+                            int room = Math.max(0, failAfter[0] - size());
+                            super.write(b, off, room);
+                            throw new RuntimeException(new IOException("No space left on device"));
+                        }
+                        super.write(b, off, len);
+                    }
+                };
+                deleted[0] = false;
+                return file[0];
+            }
+
+            @Override
+            public boolean delete() {
+                if (!deleteWorks[0]) return false;
+                deleted[0] = true;
+                return true;
+            }
+        };
+        final byte[] content = new byte[100000];
+        new Random(222).nextBytes(content);
+        FileSave.Body body = new FileSave.Body() {
+            @Override
+            public void write(java.io.OutputStream os) throws IOException {
+                for (int i = 0; i < content.length; i += 8192) os.write(content, i, Math.min(8192, content.length - i));
+            }
+        };
+        FileSave.Outcome ok = FileSave.save(target, body);
+        check("#222 a save that works is complete and kept", ok.ok() && ok.bytes == content.length && !deleted[0] && Arrays.equals(file[0].toByteArray(), content));
+        failAfter[0] = 30000;
+        FileSave.Outcome cut = FileSave.save(target, body);
+        check("#222 a save that fails after 30000 bytes removes the started file", !cut.ok() && cut.bytes == 24576 && cut.removed && deleted[0] && !cut.leftOver);
+        failAfter[0] = 0;
+        FileSave.Outcome none = FileSave.save(target, body);
+        check("#222 a save that fails before the first byte removes the empty file, as before", !none.ok() && none.bytes == 0 && none.removed);
+        deleteWorks[0] = false;
+        failAfter[0] = 30000;
+        FileSave.Outcome left = FileSave.save(target, body);
+        check("#222 a cut file that cannot be removed is called incomplete", !left.ok() && left.leftOver && !left.removed && left.removeError != null);
+        failAfter[0] = 0;
+        FileSave.Outcome empty = FileSave.save(target, body);
+        check("#222 an empty file that cannot be removed is not called incomplete", !empty.ok() && !empty.leftOver);
+        deleteWorks[0] = true;
+        failAfter[0] = -1;
+        FileSave.Outcome refused = FileSave.save(target, new FileSave.Body() {
+            @Override
+            public void write(java.io.OutputStream os) throws IOException {
+                throw new IOException("the copy did not pass its check");
+            }
+        });
+        check("#222 a body that refuses before writing removes the file and keeps its reason", !refused.ok() && refused.removed
+                && "the copy did not pass its check".equals(refused.error.getMessage()));
+        // the last bytes fail at close (a file app that writes on close): not complete either
+        FileSave.Outcome atClose = FileSave.save(new FileSave.Target() {
+            @Override
+            public java.io.OutputStream open() {
+                return new java.io.ByteArrayOutputStream() {
+                    @Override
+                    public void close() throws IOException {
+                        throw new IOException("close failed");
+                    }
+                };
+            }
+
+            @Override
+            public boolean delete() {
+                deleted[0] = true;
+                return true;
+            }
+        }, body);
+        check("#222 a file that fails when it is closed is removed", !atClose.ok() && atClose.removed && "close failed".equals(atClose.error.getMessage()));
+        FileSave.Outcome noFile = FileSave.save(new FileSave.Target() {
+            @Override
+            public java.io.OutputStream open() {
+                return null;
+            }
+
+            @Override
+            public boolean delete() {
+                throw new IllegalStateException("nothing to delete");
+            }
+        }, body);
+        check("#222 no file from Android: failed, nothing to remove", !noFile.ok() && !noFile.removed && !noFile.leftOver && noFile.bytes == 0);
+        // an Error (out of memory) on the way: the started file is removed first, then the Error goes on (review of #340)
+        deleted[0] = false;
+        Error thrown = null;
+        try {
+            FileSave.save(target, new FileSave.Body() {
+                @Override
+                public void write(java.io.OutputStream os) throws IOException {
+                    os.write(content, 0, 1000);
+                    throw new OutOfMemoryError("test");
+                }
+            });
+        } catch (OutOfMemoryError e) {
+            thrown = e;
+        }
+        check("#222 an Error removes the started file and is thrown on", thrown != null && deleted[0]);
+    }
+
     static void oneRun() {
         OneRun<String> r = new OneRun<String>();
         check("one run: idle at first", !r.running());
@@ -3193,6 +3330,20 @@ public class CoreTest {
         check("shown screen: the job still runs", shown.running());
         shown.detach("turned settings");
         check("shown screen: none after Back", shown.attached() == null);
+        // issue #222: Re analyse all and Repair are one job; a second tap is refused, a saved setting runs it once more
+        OneRun<String> all = new OneRun<String>();
+        check("#222 a first start runs", all.startOrAgain() && all.running() && !all.againAsked());
+        check("#222 a second tap on Re analyse all is refused", !all.start() && !all.againAsked());
+        check("#222 Repair while it runs is refused too", !all.start());
+        check("#222 a saved setting while it runs does not start a second run", !all.startOrAgain() && all.running());
+        check("#222 ... but asks for one more pass", all.againAsked());
+        check("#222 two settings saved ask for one pass, not two", !all.startOrAgain() && all.againAsked());
+        check("#222 the pass that ends takes the request and keeps running", !all.finishUnlessAgain() && all.running() && !all.againAsked());
+        check("#222 the next pass ends the job", all.finishUnlessAgain() && !all.running());
+        check("#222 after the end a new start runs", all.start());
+        check("#222 a plain finish drops a request", !all.startOrAgain() && all.finish() == null && !all.running() && !all.againAsked());
+        check("#222 and a new start does not inherit it", all.start() && all.finishUnlessAgain() && !all.running());
+        check("#222 ending twice is harmless", all.finishUnlessAgain() && !all.running());
     }
 
     /** Issue #127: the space kept for Further analysis belongs to one screen layout. */
@@ -3431,6 +3582,17 @@ public class CoreTest {
         noLine.setStackTrace(new StackTraceElement[] {new StackTraceElement("app.openring.data.Db", "kv", "Db.java", -1)});
         eq("load note: an own frame without line", LoadNote.error(noLine), "RuntimeException at Db.java");
         eq("load note: none", LoadNote.error(null), "unknown error");
+        // issue #289: the safe form is recognised, a full text an older version stored never is
+        check("load note: the class and place are safe", LoadNote.safe(LoadNote.error(nfe)) && LoadNote.safe("NumberFormatException at Analyzer.java:412")
+                && LoadNote.safe("RuntimeException at Db.java") && LoadNote.safe("OutOfMemoryError") && LoadNote.safe(LoadNote.error(outside)));
+        check("load note: a full text is not safe", !LoadNote.safe("java.lang.NumberFormatException: For input string: \"61.5\"")
+                && !LoadNote.safe("org.json.JSONException: Value 61.5 at hr of type java.lang.Double cannot be converted to JSONObject")
+                && !LoadNote.safe("java.lang.OutOfMemoryError") && !LoadNote.safe("NumberFormatException: 61.5")
+                && !LoadNote.safe("NumberFormatException at Analyzer.java:412 61.5") && !LoadNote.safe("") && !LoadNote.safe(null)
+                && !LoadNote.safe(LoadNote.error(null)));
+        Throwable anon = new RuntimeException("61.5") {};
+        check("load note: an anonymous error class is named by its binary name, no value", LoadNote.error(anon).startsWith("CoreTest$")
+                && !LoadNote.error(anon).contains("61.5") && LoadNote.safe(LoadNote.error(anon)), LoadNote.error(anon));
         String later = LoadNote.line("2026-11-01", "screen time", nfe, "2026-11-02 09:30");
         check("load note: the same failure later is not written again", !LoadNote.differs(ln, later));
         check("load note: another part, date or error is written",
@@ -3863,6 +4025,22 @@ public class CoreTest {
         eq("re analysing: Re analyse all waits for the ring task", Texts.REANALYSE_WAITS,
                 "Waiting for the ring to finish its current task, then re analysing all nights. This can take a few minutes.");
         eq("re analysing: Re analyse all failed", Texts.ANALYSIS_FAILED, "The analysis failed, your nights and days are as before. " + SyncError.DETAILS);
+        // issue #222: the texts of the one Re analyse all job and of saving a file
+        for (String t : new String[] {Texts.REANALYSING, Texts.REANALYSE_RUNS, Texts.REANALYSE_AGAIN, Texts.ANALYSIS_UPDATED, Texts.ANALYSIS_FAILED_TOAST,
+                Texts.SAVING_BACKUP, Texts.SAVING_EXPORT, Texts.SAVING_AUTO, Texts.SAVE_BUSY, Texts.saveFailed(true, true), Texts.saveFailed(false, true)}) {
+            check("#222 plain, no dash as punctuation: " + t, !t.isEmpty() && !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
+        check("#222 the toasts fit in two lines", Texts.fitsToast(Texts.REANALYSE_RUNS) && Texts.fitsToast(Texts.ANALYSIS_UPDATED)
+                && Texts.fitsToast(Texts.ANALYSIS_FAILED_TOAST) && Texts.fitsToast(Texts.REANALYSING) && Texts.fitsToast(Texts.SAVE_BUSY));
+        eq("#222 a save that failed without a left over file reads as before", Texts.saveFailed(true, false), Texts.saveFailed(true));
+        for (boolean backup : new boolean[] {false, true}) {
+            for (boolean left : new boolean[] {false, true}) {
+                String t = Texts.saveFailedToast(backup, left);
+                check("#222 the short failure fits a toast: " + t, Texts.fitsToast(t) && !t.contains(" - ") && (left == t.contains("incomplete")));
+            }
+        }
+        check("#222 a left over file is called incomplete", Texts.saveFailed(true, true).contains("incomplete, delete it")
+                && !Texts.saveFailed(true, false).contains("incomplete"));
         ringError(cases);
     }
 
@@ -5506,6 +5684,127 @@ public class CoreTest {
     static Night.Contributor part(Night.Score s, String key) {
         for (Night.Contributor c : s.contributors) if (c.key.equals(key)) return c;
         return null;
+    }
+
+    /** The rule before issue #240: yesterday's activity and the 7 against 28 day balance, every stored day counted. */
+    static Scores.ReadinessInput oldReadinessActivity(double[] active, double[] target, boolean lastIsYesterday) {
+        Scores.ReadinessInput in = new Scores.ReadinessInput();
+        int n = active.length;
+        if (lastIsYesterday && n > 0 && target[n - 1] > 0) in.prevDayActivity = active[n - 1] / target[n - 1];
+        double[] a7 = Arrays.copyOfRange(active, Math.max(0, n - 7), n), a28 = Arrays.copyOfRange(active, Math.max(0, n - 28), n);
+        if (Stats.countFinite(a7) >= 3 && Stats.countFinite(a28) >= 7 && Stats.mean(a28) > 0) in.activityBalance = Stats.mean(a7) / Stats.mean(a28);
+        return in;
+    }
+
+    static double[] filled(int n, double v) {
+        double[] a = new double[n];
+        Arrays.fill(a, v);
+        return a;
+    }
+
+    /** Issue #240: a day without the ring is left out of readiness's activity parts, not counted as no activity. */
+    static void readinessUnworn240() {
+        eq("#240 worn day rule: 60 minutes", Scores.WORN_DAY_MIN, 60);
+        check("#240 worn: 60 minutes counts, 59 and unknown do not", Scores.worn(60) && Scores.worn(900) && !Scores.worn(59.9) && !Scores.worn(0)
+            && !Scores.worn(Double.NaN));
+        // every day worn: exactly the rule before, for many made up histories (also missing values and short lists)
+        java.util.Random r = new java.util.Random(240);
+        int same = 0;
+        for (int k = 0; k < 2000; k++) {
+            int n = r.nextInt(62);
+            double[] act = new double[n], tgt = new double[n], cov = new double[n];
+            for (int i = 0; i < n; i++) {
+                act[i] = r.nextInt(10) == 0 ? Double.NaN : r.nextInt(8) == 0 ? 0 : 50 + r.nextDouble() * 900;
+                tgt[i] = r.nextInt(12) == 0 ? Double.NaN : r.nextInt(15) == 0 ? 0 : 300 + 10 * r.nextInt(20);
+                cov[i] = 60 + r.nextInt(1380);
+            }
+            boolean y = r.nextBoolean();
+            Scores.ReadinessInput mine = new Scores.ReadinessInput();
+            boolean unworn = Scores.readinessActivity(mine, act, tgt, cov, y);
+            Scores.ReadinessInput old = oldReadinessActivity(act, tgt, y);
+            if (Double.compare(mine.prevDayActivity, old.prevDayActivity) == 0 && Double.compare(mine.activityBalance, old.activityBalance) == 0
+                && unworn == !(y && n > 0)) same++;
+        }
+        eq("#240 every day worn: the same numbers as the rule before, 2000 histories", same, 2000);
+
+        // 28 worn days of 400 kcal against a 400 goal, then yesterday on the charger (20 minutes, 0 kcal)
+        double[] act = filled(29, 400), tgt = filled(29, 400), cov = filled(29, 900);
+        act[28] = 0;
+        cov[28] = 20;
+        Scores.ReadinessInput in = new Scores.ReadinessInput();
+        check("#240 yesterday unworn: reported", Scores.readinessActivity(in, act, tgt, cov, true));
+        check("#240 yesterday unworn: previous day activity unknown", Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+        eq("#240 yesterday unworn: activity balance from the worn days only", in.activityBalance, 1.0);
+        Scores.ReadinessInput before = oldReadinessActivity(act, tgt, true);
+        eq("#240 the rule before: 55 for the charger day", Math.round(Scores.readiness(before).get("prev_activity").score), 55L);
+        check("#240 the rule before: the balance pulled down", before.activityBalance < 0.9, before.activityBalance);
+        // the readiness of such a day: the contributor is left out and the weights spread over the rest
+        in.rhr = 55;
+        in.sleepScore = 90;
+        in.hrvRecent = 100;
+        in.hrvBaseline = 100;
+        Night.Score sc = Scores.readiness(in);
+        check("#240 readiness without previous day activity", sc.get("prev_activity") == null && sc.get("activity_balance") != null, sc.contributors.size());
+        double w = 0, s = 0;
+        for (Night.Contributor c : sc.contributors) {
+            w += c.weight;
+            s += c.weight * c.score;
+        }
+        eq("#240 readiness: the other weights renormalised", (long) sc.value, Math.round(s / w));
+        eq("#240 readiness: weights without previous day activity", w, 17.0 + 15 + 15 + 8);
+
+        // yesterday worn just at the rule, missing, or not the day before
+        cov[28] = 60;
+        in = new Scores.ReadinessInput();
+        check("#240 an hour of wear counts", !Scores.readinessActivity(in, act, tgt, cov, true) && in.prevDayActivity == 0, in.prevDayActivity);
+        in = new Scores.ReadinessInput();
+        check("#240 the newest stored day is not yesterday: reported, no previous day activity", Scores.readinessActivity(in, act, tgt, cov, false)
+            && Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+        in = new Scores.ReadinessInput();
+        check("#240 no days before: reported, both unknown", Scores.readinessActivity(in, new double[0], new double[0], new double[0], true)
+            && Double.isNaN(in.prevDayActivity) && Double.isNaN(in.activityBalance), null);
+        in = new Scores.ReadinessInput();
+        check("#240 worn yesterday with no goal: not reported, unknown as before", !Scores.readinessActivity(in, new double[] {300}, new double[] {0},
+            new double[] {600}, true) && Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+
+        // the minimum counts: 3 worn of the last 7 and 7 worn of the last 28
+        act = filled(28, 400);
+        tgt = filled(28, 400);
+        cov = filled(28, 900);
+        for (int i = 21; i < 28; i++) cov[i] = i < 26 ? 0 : 900; // last 7: 2 worn
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 2 worn days of the last 7: no activity balance", Double.isNaN(in.activityBalance), in.activityBalance);
+        cov[25] = 900; // 3 worn
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        eq("#240 3 worn days of the last 7: activity balance", in.activityBalance, 1.0);
+        cov = filled(28, 0);
+        for (int i = 22; i < 28; i++) cov[i] = 900; // 6 worn in 28
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 6 worn days of the last 28: no activity balance", Double.isNaN(in.activityBalance) && !Double.isNaN(in.prevDayActivity), in.activityBalance);
+        cov[3] = 900; // 7 worn in 28
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        eq("#240 7 worn days of the last 28: activity balance", in.activityBalance, 1.0);
+        // an unworn day older than 28 days changes nothing
+        act = filled(40, 400);
+        tgt = filled(40, 400);
+        cov = filled(40, 900);
+        Scores.ReadinessInput all = new Scores.ReadinessInput();
+        Scores.readinessActivity(all, act, tgt, cov, true);
+        act[5] = 0;
+        cov[5] = 0;
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 an unworn day before the 28: the same numbers", in.activityBalance == all.activityBalance && in.prevDayActivity == all.prevDayActivity, null);
+
+        // texts
+        eq("#240 the note on the Readiness page", app.openring.ui.Explain.READINESS_UNWORN, "Previous day activity is left out: the ring was "
+            + "on for less than an hour the day before, so there is no activity to compare with your goal.");
+        check("#240 explanations name the rule", app.openring.ui.Explain.of("prev_activity").endsWith("A day with less than an hour of wear is left out.")
+            && app.openring.ui.Explain.of("activity_balance").endsWith("Days with less than an hour of wear are left out."), null);
     }
 
     static Scores.ActivityInput activityIn(int days, double met, int train, double kcal) {

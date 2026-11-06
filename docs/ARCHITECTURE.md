@@ -281,6 +281,26 @@ newer), otherwise the file and its write ahead log copied while the write lock i
 seconds). The copy is made a single file and must pass `Db.inspect` and hold at least the events the
 history had, before anything is written to the file the person picked; otherwise `Exporter.NotSaved`.
 
+Saving a backup or export from Settings (issue #222) runs in `SettingsActivity.SaveTask`, which holds only the application
+and `AutoBackup.RUN` (so one file at a time, also with the automatic backup; the buttons fade and a line says what is
+saved, a tap says why nothing starts). The checked copy of the history is made before the picked file is opened, so a copy
+that fails its check leaves a file picked to be replaced as it was; a file that comes back while the automatic backup runs
+is removed only when it is empty. `core/FileSave` writes the picked file and, after any failure (also past the first
+byte, also an Error), removes it; when it cannot be removed and holds something, the sentence calls it incomplete. A file the app does not
+live to finish (Android ended it) stays cut off; restoring it says it is damaged and changes nothing. The zip is written at
+`Deflater.BEST_SPEED`: packing is about three times faster than at the default level (the whole backup about twice), the file about a tenth larger, read the same by every version.
+
+A backup without the key (issue #288): while a key is saved that this phone cannot read (#199), `Backup.write` (manual and
+automatic) leaves the key out and writes `"no_key": true` instead; with no key saved at all it still writes nothing.
+Restoring such a file brings settings and history and never touches a key on the phone, readable or not; the ring's identity
+(address, serial, model, firmware) comes along only onto a phone without a key, since it belongs to the key. Without a key on
+the phone, Setup stays on its page and says to enter the key ("This copy has no ring key, ..."), `setup_done` is not set. An
+older version reads no key from the file and refuses it whole with "The backup holds no valid ring key." before it changes
+anything. Going back to a phone copy (`AutoBackup.goBack`) needs no key either. An automatic copy without the key is named
+`...-nokey.zip` (`Backups.withoutKey`), and `Backups.folderToDelete` never deletes the newest copy with the key for one
+without it: it stays beside the kept copies until a copy with the key is written again (review of #340). Older versions do
+not know the `-nokey` name and leave those files alone.
+
 ## Automatic backups (issue #242)
 
 * **Before an update.** Android gives no hook before it replaces the app, so the new version copies the history on its
@@ -375,7 +395,9 @@ history had, before anything is written to the file the person picked; otherwise
    age limit (a week at a time, so memory stays flat); with years of history that takes a few minutes. Each day summary reads the nights and summaries of up to 104 days before it for its baselines; during one analysis each of those is read and parsed once and kept as the few fields the summaries use (`Analyzer.History`, issue #139: before, the same night was parsed about 200 times, most of a full run). Nothing about it is stored, the results are byte for byte the same (pipeline test), and what is older than the 104 days is dropped as the days move on.
    An analysis replaces its nights and days in one transaction (`Db.inTransaction`, issue #230): the screens keep
    reading the old ones (write ahead logging) until the new ones are all stored, and any stop or failure (also out of
-   memory, a full disk or the app being ended) rolls back to them, then `analysis_error` holds the text. Re analyse all
+   memory, a full disk or the app being ended) rolls back to them, then `analysis_error` holds the error's class and
+   first place in Open Ring's code (`core/LoadNote`, never its message, which can hold a value; issue #289; the full error
+   goes to Android's log and the Log tab, and the Data check leaves out a full text an older version stored). Re analyse all
    only writes kv `full_pending` first; the delete of every night and day happens inside that transaction, and a run
    that did not commit is done again by the next analysis. `dated_count`, `event_count`, `analyzed_until` and the rule
    versions are stored in the same commit, so they always describe the stored results.
@@ -439,6 +461,12 @@ history had, before anything is written to the file the person picked; otherwise
    issue #155, as Oura's total burn grows through the day) and stores `total_until`, which the screen shows as "So far
    (up to 08:07)"; the next analysis after the day ended stores the whole day. These rules have no version of their own: stored days
    keep their numbers until they are analysed again (the last two days after each sync, or Re analyse all).
+10. A day counts as worn with 60 minutes or more of activity values (`covered_min`, `Scores.WORN_DAY_MIN`, the one name
+   for the rule of issue #44). The Activity score's weekly parts and readiness's activity parts (issue #240,
+   `Scores.readinessActivity`) leave the other days out: Previous day activity needs yesterday worn, otherwise it drops
+   out and its weight goes to the other contributors, and the day stores `prev_day_unworn` (the Readiness page says why);
+   Activity balance compares the last 7 with the last 28 stored days with the unworn ones as unknown (still 3 and 7 days
+   needed). kv `readiness_rules` holds the rules version (`Scores.READINESS_VERSION`); a change analyses everything again once.
 
 ## Threading
 
@@ -521,7 +549,10 @@ was turned on checks again once it has the ring and ends before it connects. Lea
 wipes in place with the ring held. Analysis and database reads in the UI run in AsyncTasks.
 A task that must outlive a turned phone (screens are rebuilt, no `configChanges`) holds only the
 application context and reports through a holder to the screen attached now: `DemoRun` in
-`MainActivity` (#29) and the repair in Data check (`LogActivity.REPAIR`, a `core/OneRun`, #130).
+`MainActivity` (#29) and the repair in Data check (`LogActivity.REPAIR`, a `core/OneRun`, #130), which Settings' Re analyse
+all shares (the same job, issue #222): a second tap is refused, a setting saved while it runs (profile, stage detail) makes
+it run once more (`OneRun.startOrAgain`, `finishUnlessAgain`), and both screens show it running. Saving a backup or export
+file holds `AutoBackup.RUN` the same way.
 Pairing in Setup reports through `SetupActivity.PAIR` (a `core/Pairing.Run`, #218): a static callback holds no screen,
 a result that ends while no Setup screen is attached waits for the next one (`take`, once), a rebuilt screen shows
 "Working" in the card that started it, and one listener per screen shows the ring's status line there.

@@ -46,6 +46,10 @@ public final class Explain {
         return "Includes " + min + " on the phone, shown as awake at every detail level.";
     }
 
+    /** The note above the readiness contributors when the day before was not worn, so Previous day activity is left out (issue #240). */
+    public static final String READINESS_UNWORN = "Previous day activity is left out: the ring was on for less than an hour "
+            + "the day before, so there is no activity to compare with your goal.";
+
     /** The note above the activity contributors while fewer than 7 days of the last week were worn (issue #44). */
     public static String activityDays(int n) {
         String days = n == 1 ? "1 day" : n + " days";
@@ -433,8 +437,10 @@ public final class Explain {
             case "recovery": return "When your heart rate reached its lowest point in the night. Earlier is better; a late low means your body was still busy recovering from the evening.";
             case "sleep": return "Last night's sleep score.";
             case "sleep_balance": return "Your sleep over the last two weeks compared with your sleep need. Short nights add up.";
-            case "prev_activity": return "Yesterday's activity compared with your goal. Both very little and a lot of activity lower readiness.";
-            case "activity_balance": return "Your last week of activity compared with your usual month, so sudden jumps in training load show up.";
+            case "prev_activity": return "Yesterday's activity compared with your goal. Both very little and a lot of activity lower readiness. "
+                + "A day with less than an hour of wear is left out.";
+            case "activity_balance": return "Your last week of activity compared with your usual month, so sudden jumps in training load show up. "
+                + "Days with less than an hour of wear are left out.";
             // sleep
             case "total": return "Time actually asleep. Most adults need 7 to 9 hours.";
             case "efficiency": return "Share of your time in bed spent asleep. 85% or more is good. Time without a sleep stage counts as time in bed, not as sleep.";
