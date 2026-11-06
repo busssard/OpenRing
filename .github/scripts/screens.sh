@@ -388,7 +388,8 @@ launch --es settings advanced;              shot settings-advanced
 # starts later and stays whole), then the analysis runs again. Readiness of yesterday, pinned so the shot does not depend
 # on the time CI runs, leaves Previous day activity out and says why in a card above Contributors
 launch --ez unworn true --ei tab 2 --es day "$(date -d '1 day ago' +%F)"; sleep 12
-swipe_up; swipe_up;                         shot readiness-unworn 2
+scroll_to "Previous day activity is left out" 8 || echo "::warning::issue #240 step: the unworn card was not found on Ready, readiness-unworn shows where the swipes ended"
+shot readiness-unworn 1
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then
