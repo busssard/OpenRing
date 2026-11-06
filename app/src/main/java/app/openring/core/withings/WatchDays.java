@@ -82,6 +82,29 @@ public final class WatchDays {
         return out;
     }
 
+    /** Calories of movement per day, from the same records as {@link #stepsPerDay} (workouts are listed on their own). */
+    public static TreeMap<LocalDate, Integer> kcalPerDay(List<Records.Steps> rows, Zones z) {
+        TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
+        for (Records.Steps s : rows) {
+            LocalDate d = day(s.start, z);
+            Integer v = out.get(d);
+            out.put(d, (v == null ? 0 : v) + s.kcal);
+        }
+        return out;
+    }
+
+    /** Metres climbed per day, from the records' climb ({@link Records.Moves}); days without any are missing. */
+    public static TreeMap<LocalDate, Integer> climbPerDay(List<Records.Moves> rows, Zones z) {
+        TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
+        for (Records.Moves m : rows) {
+            if (m.up <= 0) continue;
+            LocalDate d = day(m.start, z);
+            Integer v = out.get(d);
+            out.put(d, (v == null ? 0 : v) + m.up);
+        }
+        return out;
+    }
+
     /** The workouts that start on {@code day}, oldest first. */
     public static List<Records.Workout> workoutsOn(List<Records.Workout> rows, LocalDate day, Zones z) {
         List<Records.Workout> out = new ArrayList<Records.Workout>();

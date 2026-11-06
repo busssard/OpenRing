@@ -148,6 +148,21 @@ public final class Json {
         return z == null ? fallback : z;
     }
 
+    /** Noon of {@code d} in {@code phone} (unix seconds): the moment whose noted zone a day falls back on. */
+    public static long noon(java.time.LocalDate d, java.time.ZoneId phone) {
+        return d.atTime(12, 0).atZone(phone).toEpochSecond();
+    }
+
+    /**
+     * A day's zone, the one rule the analysis, the screens, the badges and the export share (review of #263): its main
+     * night's ({@code main}, null when none), else the zone noted at the day's {@link #noon} ({@code notedId}, null when
+     * none), else {@code phone}.
+     */
+    public static java.time.ZoneId dayZone(JSONObject main, String notedId, java.time.ZoneId phone) {
+        java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(notedId);
+        return zone(main, noted == null ? phone : noted);
+    }
+
     public static int[] stages(JSONObject night) {
         return digits(night.optString("stages", ""));
     }

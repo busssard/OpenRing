@@ -110,6 +110,8 @@ public final class WatchPageActivity extends Activity {
                 String err = null;
                 try {
                     Db db = Db.get(appCtx);
+                    // a newer decoder (an update) works the rows out again first, in one transaction (issue #251)
+                    if (WatchStore.ensureDecoded(db)) app.openring.ble.RingManager.get(appCtx).log("watch page: a new decoder, every stored message decoded again");
                     d = WatchStore.load(db);
                     z = db.zones();
                 } catch (RuntimeException e) {
@@ -192,6 +194,10 @@ public final class WatchPageActivity extends Activity {
         double v = WatchDays.of(per, d), m = WatchDays.of(metres, d);
         card.addView(Ui.statRow(c, Ui.stat(c, "Steps", Double.isNaN(v) ? "--" : String.format(Locale.getDefault(), "%,d", (int) v), "", Ui.ACTIVE, "Counted by the watch on this day"),
                 Ui.stat(c, "Distance", Double.isNaN(m) ? "--" : WatchDays.distance((int) m), "", Ui.ACTIVE, "The watch's own estimate from your steps")));
+        double kcal = WatchDays.of(WatchDays.kcalPerDay(data.steps, zones), d), up = WatchDays.of(WatchDays.climbPerDay(data.moves, zones), d);
+        card.addView(Ui.statRow(c, Ui.stat(c, "Calories", Double.isNaN(kcal) ? "--" : String.format(Locale.getDefault(), "%,d", (int) kcal), "kcal", Ui.ACTIVE,
+                "Burned by moving, as the watch counted it"), Ui.stat(c, "Climbed", Double.isNaN(up) ? "--" : String.valueOf((int) up), "m", Ui.ACTIVE,
+                "Metres up, the watch's own estimate")));
         TS ts = new TS();
         for (java.util.Map.Entry<LocalDate, Integer> e : per.entrySet()) {
             if (e.getKey().isAfter(d) || e.getKey().isBefore(d.minusDays(29))) continue;
@@ -201,6 +207,7 @@ public final class WatchPageActivity extends Activity {
         card.addView(Ui.text(c, "Last 30 days", 12, Ui.TEXT_3, Ui.REGULAR));
         card.addView(new Charts.LineChart(c, ts, Double.NaN, Double.NaN, Ui.ACTIVE).daily(d, 30).unit(" steps").empty("No steps synced yet"), Ui.sized(c, -1, 120));
         card.addView(Ui.text(c, Explain.WATCH_STEPS, 12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.text(c, Explain.WATCH_CALORIES + " " + Explain.WATCH_CLIMB, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
     }
 

@@ -105,6 +105,15 @@ public final class Backup {
         Json.put(o, "watch_name", p.watchName());
         Json.put(o, "watch_per_day", p.watchPerDay());
         Json.put(o, "main_device", p.mainDevice());
+        // the watch's setup choices (issue #251, watch setup): step goal, distance unit, the alarm
+        Json.put(o, "watch_goal", p.watchGoal());
+        Json.put(o, "watch_metric", p.watchMetric());
+        app.openring.core.withings.WatchSetup.Alarm al = p.watchAlarm();
+        Json.put(o, "watch_alarm_on", al.on);
+        Json.put(o, "watch_alarm_h", al.hour);
+        Json.put(o, "watch_alarm_m", al.minute);
+        Json.put(o, "watch_alarm_days", al.days);
+        Json.put(o, "watch_alarm_smart", al.smart);
         ZipOutputStream z = new ZipOutputStream(os);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
@@ -485,6 +494,19 @@ public final class Backup {
         // the main device (one set of numbers): an older backup has none and keeps the phone's
         int main = o.optInt("main_device", -1);
         if (main == app.openring.core.withings.MainDevice.RING || main == app.openring.core.withings.MainDevice.WATCH) p.setMainDevice(main);
+        // the watch's setup choices: an older backup has none and keeps the phone's; a restored alarm is sent at the next sync
+        int goal = o.optInt("watch_goal", -1);
+        if (goal >= 1000 && goal <= 50000) p.setWatchGoal(goal);
+        if (o.has("watch_metric")) p.setWatchMetric(o.optBoolean("watch_metric", true));
+        if (o.has("watch_alarm_on")) {
+            app.openring.core.withings.WatchSetup.Alarm al = new app.openring.core.withings.WatchSetup.Alarm();
+            al.on = o.optBoolean("watch_alarm_on", false);
+            al.hour = o.optInt("watch_alarm_h", 7);
+            al.minute = o.optInt("watch_alarm_m", 0);
+            al.days = o.optInt("watch_alarm_days", 0x1f);
+            al.smart = o.optInt("watch_alarm_smart", 0);
+            p.setWatchAlarm(al);
+        }
     }
 
     static boolean looksLikeSqlite(File f) throws IOException {
