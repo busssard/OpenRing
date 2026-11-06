@@ -321,7 +321,10 @@ history had, before anything is written to the file the person picked; otherwise
    through gaps of up to 3 hours (`NightFinder.nightEnds`), never in the phone's zone now, so a trip does not split nights
    analysed again later (issue #161). A period keeps where the ring's own hypnogram ends (`Period.codesEnd`), so
    a bedtime period that makes a ring staged run longer leaves the stages at their clock times and the extra time
-   without stage data (issue #110). kv `night_finder` holds the rules version. `Analyzer` then
+   without stage data (issue #110). Two ring stage runs with a break of up to an hour are one night with both
+   runs' stages at their own times; the break is awake where the ring's own sleep state says awake
+   (`NightFinder.stateAwake`, kept as the ring's own wake up) and has no stage data otherwise (issue #189). Runs
+   that overlap (pages sent again) keep the first run's stages. kv `night_finder` holds the rules version (3 since #189). `Analyzer` then
    drops periods that read room temperature or an implausible heart rate (ring lying on a table).
    When "Count phone use as awake" is on (default), phone use of a minute or more that overlaps the first or
    last 10 minutes of a period moves its edge past it, and a period of under 15 minutes left is dropped.

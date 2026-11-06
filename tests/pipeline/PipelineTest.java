@@ -776,6 +776,7 @@ public class PipelineTest {
         longWakeChecks();
         previewRingWake();
         ringStagesInLongerPeriod();
+        stageRuns189();
         freshDb("openring30-done");
         nightTwice();
         nightAcrossChecks();
@@ -4272,6 +4273,190 @@ public class PipelineTest {
             check(names[k] + ": average efficiency from the stored minutes, older nights the same", Math.abs(now.efficiency - n.optDouble("efficiency")) < 0.01
                     && Math.abs(before.efficiency - now.efficiency) < 1e-9, before.efficiency + " vs " + now.efficiency);
         }
+    }
+
+    /** The ring's hypnogram {@code codes} (1 deep, 2 light, 3 REM, 4 awake) as 0x5a pages of 240 steps, sent at {@code end}. */
+    static void sleepPages(List<RingEvent> ev, int[] codes, double end, long t0, long ds0) {
+        for (int pg = 0; pg * 240 < codes.length; pg++) {
+            byte[] b = new byte[61];
+            b[0] = (byte) pg;
+            for (int j = 0; j < 60; j++) {
+                int v = 0;
+                for (int q = 0; q < 4; q++) v = (v << 2) | (codes[pg * 240 + j * 4 + q] - 1);
+                b[1 + j] = (byte) v;
+            }
+            ev.add(new RingEvent(EventCodec.SLEEP_PHASE_DATA, ds0 + Math.round((end - t0) * 10) + pg, b));
+        }
+    }
+
+    /** {@code cells} steps of 30 s from {@code from}: deep for the first 20 minutes, REM from {@code remFrom} for 30 minutes, light otherwise. */
+    static int[] runCodes(double from, int cells, double remFrom) {
+        int[] c = new int[cells];
+        for (int i = 0; i < cells; i++) {
+            double t = from + i * 30.0;
+            c[i] = i < 40 ? 1 : (t >= remFrom && t < remFrom + 1800 ? 3 : 2);
+        }
+        return c;
+    }
+
+    /**
+     * Three nights: the night to {@code d} with two ring stage runs (23:00 to 03:00 and 03:30 to 07:30) and the ring's sleep
+     * state awake 03:05 to 03:20 inside the break, the next night one ring run 23:00 to 07:00, the third night no ring stages.
+     */
+    static Db history189(LocalDate d) throws Exception {
+        long t0 = d.atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+        long ds0 = 9L * 86400 * 10;
+        List<RingEvent> ev = new ArrayList<RingEvent>();
+        List<double[]> brk = new ArrayList<double[]>();
+        brk.add(new double[] {at(d, 3 + 5 / 60.0), at(d, 3 + 20 / 60.0)});
+        wornSleep(ev, at(d, -1 - 10 / 60.0), at(d, 7.5 + 10 / 60.0), brk, t0, ds0);
+        sleepPages(ev, runCodes(at(d, -1), 480, at(d, 1)), at(d, 3), t0, ds0);
+        sleepPages(ev, runCodes(at(d, 3.5), 480, at(d, 5)), at(d, 7.5), t0, ds0);
+        wornSleep(ev, at(d, 23 - 10 / 60.0), at(d, 31 + 10 / 60.0), new ArrayList<double[]>(), t0, ds0);
+        sleepPages(ev, runCodes(at(d, 23), 960, at(d, 27)), at(d, 31), t0, ds0);
+        wornSleep(ev, at(d, 47), at(d, 55), new ArrayList<double[]>(), t0, ds0);
+        return runSynthetic(ev, t0, ds0, at(d, 56));
+    }
+
+    /** The stored stage at {@code t} in the stored night {@code n} (its raw stages, before the detail filter). */
+    static int stageAt(JSONObject n, double t) {
+        int[] raw = Json.stagesRaw(n);
+        double s = n.optDouble("start"), step = (n.optDouble("end") - s) / raw.length;
+        int i = (int) ((t - s) / step);
+        return i >= 0 && i < raw.length ? raw[i] : -1;
+    }
+
+    /**
+     * Issue #189: two ring stage runs with a short break are one night with both runs' stages at their own times, through
+     * the real Db and Analyzer. Data safety: a database the version before left (its rules version 2, the night of two runs
+     * stored with only the first run) is analysed again once by the existing mechanism (kv {@code night_finder}, issue #42;
+     * one transaction, issue #230): every event stays, the same number of nights, the other nights byte for byte as they
+     * were; safe twice; a stop part way keeps every old result; a restored backup of this version and of the version before
+     * gives the same; a long history without ring stages keeps every night and day byte for byte.
+     */
+    static void stageRuns189() throws Exception {
+        LocalDate d = LocalDate.of(2026, 10, 12);
+        Db db = history189(d);
+        Context c = lastSynthetic;
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a")); // for the backups
+        List<String> ref = results139(db);
+        List<String> refEvents = events58(db);
+        JSONObject n = mainNight(db, d);
+        check("#189 two runs: one main night from the ring's stages", n != null && "ring".equals(n.optString("source")) && db.nightsJson(d.toString(), d.toString(), false).size() == 1,
+                n == null ? null : n.optString("source"));
+        if (n == null) return;
+        check("#189 two runs: deep at 23:05 and REM at 01:10 from the first run", stageAt(n, at(d, -1 + 5 / 60.0)) == 1 && stageAt(n, at(d, 1 + 10 / 60.0)) == 3,
+                stageAt(n, at(d, -1 + 5 / 60.0)) + " " + stageAt(n, at(d, 1 + 10 / 60.0)));
+        check("#189 two runs: deep at 03:35 and REM at 05:10 from the second run", stageAt(n, at(d, 3.5 + 5 / 60.0)) == 1 && stageAt(n, at(d, 5 + 10 / 60.0)) == 3,
+                stageAt(n, at(d, 3.5 + 5 / 60.0)) + " " + stageAt(n, at(d, 5 + 10 / 60.0)));
+        check("#189 two runs: the ring's awake in the break is awake, the rest of the break has no stage", stageAt(n, at(d, 3 + 10 / 60.0)) == 4
+                && stageAt(n, at(d, 3 + 2 / 60.0)) == 0 && stageAt(n, at(d, 3 + 25 / 60.0)) == 0, stageAt(n, at(d, 3 + 10 / 60.0)) + " " + stageAt(n, at(d, 3 + 2 / 60.0)));
+        check("#189 two runs: the wake up in the break is the ring's own and counted", !Json.ringAwake(n).isEmpty() && n.optInt("awakenings") >= 1, n.opt("ring_awake"));
+        check("#189 two runs: 40 min deep and 60 min REM (20 and 30 from each run)", Math.abs(n.optDouble("deep_min") - 40) <= 1 && Math.abs(n.optDouble("rem_min") - 60) <= 1,
+                n.opt("deep_min") + " " + n.opt("rem_min"));
+        JSONObject n2 = mainNight(db, d.plusDays(1)), n3 = mainNight(db, d.plusDays(2));
+        check("#189 one ring run: its stages, as before", n2 != null && "ring".equals(n2.optString("source")) && stageAt(n2, at(d, 27 + 10 / 60.0)) == 3, n2 == null ? null : n2.opt("source"));
+        check("#189 no ring stages: staged from the signals, as before", n3 != null && !"ring".equals(n3.optString("source")), n3 == null ? null : n3.opt("source"));
+        long nights = nightRows(ref);
+
+        // the database the version before leaves: rules version 2, the night of two runs as it stored it (stand in: staged
+        // from the signals, no wake up of its own), and the inputs it noted
+        String inputs = db.kv("analysis_inputs", null);
+        check("#189 set up: up to date after the analysis", Analyzer.upToDate(c), inputs);
+        List<String> old = olderResults189(db, n, inputs);
+        check("#189 older database: one night differs, the same number of nights", nightRows(old) == nights && !old.equals(ref), nightRows(old) + " vs " + nights);
+        check("#189 older database: the new rules are not taken as analysed", !Analyzer.upToDate(c), db.kv("analysis_inputs", null));
+        Backup189 oldBackup = new Backup189(c);
+
+        // a stop part way through (the phone ends the app): every old result stays, the rules version too
+        Throwable got = null;
+        try {
+            Analyzer.run(c, stopAt(" sleep periods"));
+        } catch (Throwable t) {
+            got = t;
+        }
+        check("#189 stopped part way: every old night and day is still there, byte for byte", got instanceof Stop && results139(db).equals(old)
+                && db.kvLong("night_finder", 0) == 2, firstDiff(results139(db), old));
+        check("#189 stopped part way: every event kept", events58(db).equals(refEvents), null);
+
+        // the next analysis (and one more): analysed again once, the same as a new analysis
+        for (int run = 1; run <= 2; run++) {
+            Analyzer.run(c, null);
+            List<String> now = results139(db);
+            check("#189 upgrade, analysis " + run + ": every event kept", events58(db).equals(refEvents), null);
+            check("#189 upgrade, analysis " + run + ": the same nights and days as a new analysis, byte for byte", now.equals(ref), firstDiff(now, ref));
+            check("#189 upgrade, analysis " + run + ": the same number of nights, rules version noted", nightRows(now) == nights
+                    && db.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION && db.kv("analysis_error", null) == null, nightRows(now));
+        }
+        check("#189 upgrade: the other nights byte for byte as the version before stored them", sameExcept(old, ref, (long) n.optDouble("start")), firstDiff(old, ref));
+
+        // restoring a backup of this version and of the version before: every event, then the same nights
+        Backup189 newBackup = new Backup189(c);
+        for (int k = 0; k < 2; k++) {
+            String which = k == 0 ? "this version" : "the version before";
+            Context ph = freshDb("openring189-restore" + k);
+            app.openring.data.Backup.Result res = app.openring.data.Backup.read(ph, new java.io.ByteArrayInputStream((k == 0 ? newBackup : oldBackup).zip));
+            Db rdb = Db.get(ph);
+            check("#189 restore of a backup from " + which + ": every event and the nights it held", res.ok && events58(rdb).equals(refEvents)
+                    && results139(rdb).equals(k == 0 ? ref : old), res.message);
+            Analyzer.run(ph, null);
+            check("#189 restored from " + which + ", the next analysis: the same nights and days as a new analysis", results139(rdb).equals(ref)
+                    && events58(rdb).equals(refEvents), firstDiff(results139(rdb), ref));
+        }
+
+        // a long history without ring stages (120 days of demo history): the new rules change no night or day
+        Context y = history230("openring189-long", T230, 120);
+        Db ydb = Db.get(y);
+        Analyzer.run(y, null);
+        List<String> yBefore = results139(ydb);
+        List<String> yEvents = events58(ydb);
+        ydb.put("night_finder", 2);
+        long t = System.nanoTime();
+        Analyzer.run(y, null);
+        System.out.println("  #189: 120 days (" + nightRows(yBefore) + " nights) analysed again for the new rules in " + (System.nanoTime() - t) / 1000000 + " ms");
+        check("#189 120 days without ring stages: analysed again, every event, night and day byte for byte", nightRows(yBefore) >= 100
+                && results139(ydb).equals(yBefore) && events58(ydb).equals(yEvents) && ydb.kvLong("night_finder", 0) == app.openring.core.analysis.NightFinder.VERSION,
+                firstDiff(results139(ydb), yBefore));
+        freshDb("openring189-done");
+    }
+
+    /** A backup with history of the phone {@code c} as it is now. */
+    static final class Backup189 {
+        final byte[] zip;
+
+        Backup189(Context c) throws Exception {
+            java.io.ByteArrayOutputStream os = new java.io.ByteArrayOutputStream();
+            app.openring.data.Backup.write(c, os, true);
+            zip = os.toByteArray();
+        }
+    }
+
+    /**
+     * Turns {@code db} into what the version before leaves: rules version 2 in kv and in the noted inputs, and the night
+     * {@code n} stored as it had it (stand in: staged from the signals, without a wake up of its own). Returns the results.
+     */
+    static List<String> olderResults189(Db db, JSONObject n, String inputs) {
+        String[] parts = inputs.split(" ");
+        parts[5] = "2"; // lastId until detail screenAwake stageFilter nightFinder ... (Analyzer.inputs)
+        db.put("analysis_inputs", String.join(" ", parts));
+        db.put("night_finder", 2);
+        JSONObject o = Json.parse(n.toString());
+        o.put("source", "signals");
+        o.remove("ring_awake");
+        db.getWritableDatabase().execSQL("UPDATE nights SET json = ? WHERE start = ?", new Object[] {o.toString(), n.optDouble("start")});
+        return results139(db);
+    }
+
+    /** True when {@code a} and {@code b} have the same rows except the night starting at {@code start} (whole seconds). */
+    static boolean sameExcept(List<String> a, List<String> b, long start) {
+        if (a.size() != b.size()) return false;
+        int differ = 0;
+        for (int i = 0; i < a.size(); i++) {
+            if (a.get(i).equals(b.get(i))) continue;
+            if (a.get(i).startsWith("night ") && Math.abs(Double.longBitsToDouble(Long.parseLong(a.get(i).split(" ")[1])) - start) < 1) differ++;
+            else return false;
+        }
+        return differ == 1;
     }
 
     /** Each stored sleep as start, stop, day, stages and raw stages, for before and after comparisons. */
