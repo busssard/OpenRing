@@ -354,10 +354,10 @@ public final class WatchStore {
 
     /**
      * The watch's rows from {@code from} to {@code to} (unix seconds) for one day's main device rule (issue #251,
-     * {@code core/withings/MainDevice}): records that start in it, sleep pieces that reach into it. Read on each day load.
+     * {@code core/MainDevice}): records that start in it, sleep pieces that reach into it. Read on each day load.
      */
-    public static app.openring.core.withings.MainDevice.Watch window(Db db, double from, double to) {
-        app.openring.core.withings.MainDevice.Watch w = new app.openring.core.withings.MainDevice.Watch();
+    public static app.openring.core.MainDevice.Watch window(Db db, double from, double to) {
+        app.openring.core.MainDevice.Watch w = new app.openring.core.MainDevice.Watch();
         SQLiteDatabase d = db.getReadableDatabase();
         String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
         Cursor c = d.rawQuery("SELECT start, dur, steps, metres, kcal FROM watch_steps WHERE start >= ? AND start < ? ORDER BY start", a);
@@ -394,9 +394,9 @@ public final class WatchStore {
      * quarter hour and heart rate line, and every night or nap in {@code nights} that reaches the day ({@code from} to
      * {@code to}). Reads only; a missing summary gives NaN and empty values.
      */
-    public static app.openring.core.withings.MainDevice.Ring ringDay(org.json.JSONObject day, org.json.JSONObject night, List<org.json.JSONObject> nights,
+    public static app.openring.core.MainDevice.Ring ringDay(org.json.JSONObject day, org.json.JSONObject night, List<org.json.JSONObject> nights,
             double from, double to) {
-        app.openring.core.withings.MainDevice.Ring r = new app.openring.core.withings.MainDevice.Ring();
+        app.openring.core.MainDevice.Ring r = new app.openring.core.MainDevice.Ring();
         r.steps = Json.d(day, "steps");
         r.metres = Json.d(day, "distance_m");
         org.json.JSONArray prof = day == null ? null : day.optJSONArray("met_profile");
