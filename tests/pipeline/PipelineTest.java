@@ -844,6 +844,9 @@ public class PipelineTest {
         settingsCounts198();
         pairingPrefs218();
         keyUnreadable199();
+        backupNoKey288();
+        rotationNoKey288();
+        backupSpeed222();
         swapDuringSync219(full.toByteArray());
         syncDating220();
         datingRandom220();
@@ -879,6 +882,11 @@ public class PipelineTest {
         interrupted254();
         upgradeBackup254();
         largeHistory254();
+        unwornDay240();
+        upgrade240();
+        interrupted240();
+        restore240();
+        largeHistory240();
         rightNow254();
         demoOnly254();
         damaged255();
@@ -904,6 +912,7 @@ public class PipelineTest {
         rise252();
         drip252();
         dripLarge252();
+        syncStart334();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -4395,6 +4404,7 @@ public class PipelineTest {
         db.put("night_finder", app.openring.core.analysis.NightFinder.VERSION);
         db.put("phone_awake", app.openring.core.analysis.ScreenTime.AWAKE_RULE);
         db.put("day_heart", app.openring.core.analysis.DayHeart.VERSION);
+        db.put("readiness_rules", app.openring.core.analysis.Scores.READINESS_VERSION);
         t = System.nanoTime();
         Analyzer.run(c, null);
         long incMs = (System.nanoTime() - t) / 1000000;
@@ -5296,6 +5306,48 @@ public class PipelineTest {
         }
     }
 
+    /**
+     * Issue #289: a failed analysis stores the error's class and place, never its message (which can hold a stored value),
+     * and the data check never shows a full text an older version stored. Leaves no error behind.
+     */
+    static void analysisError289(Context c, Db db) {
+        final String value = "61.537";
+        java.util.TreeMap<String, String> days = days58(db);
+        Throwable got = null;
+        try {
+            Analyzer.run(c, new Analyzer.Log() {
+                @Override
+                public void log(String m) {
+                    throw new NumberFormatException("For input string: \"" + value + "\"");
+                }
+            });
+        } catch (NumberFormatException e) {
+            got = e;
+        }
+        String stored = db.kv("analysis_error", null);
+        check("#289 a failed analysis reaches the caller with its full message", got != null && got.getMessage().contains(value), got);
+        check("#289 the stored error is the class and its place in the analysis, without the value",
+                stored != null && stored.matches("NumberFormatException at Analyzer\\.java:[0-9]+") && app.openring.core.LoadNote.safe(stored), stored);
+        String text = DataCheck.run(c).text;
+        check("#289 the data check names the class and place, never the value", text.contains("Analysis error: " + stored) && !text.contains(value), text);
+        check("#289 the stored error still means the next sync analyses again", !Analyzer.upToDate(c) && days58(db).equals(days), null);
+
+        // a full text stored by an older version: kept as it is (nothing deleted), but never shown
+        String old = "org.json.JSONException: Value " + value + " at hr of type java.lang.Double cannot be converted to JSONObject";
+        db.put("analysis_error", old);
+        text = DataCheck.run(c).text;
+        check("#289 an older version's text: the data check says so and leaves the text out", text.contains("Analysis error: noted by an older version of the app "
+                + "(its text is left out, it can hold a measured value). The next sync analyses again") && !text.contains(value), text);
+        check("#289 an older version's text is not deleted and still means the next sync analyses again",
+                old.equals(db.kv("analysis_error", null)) && !Analyzer.upToDate(c), db.kv("analysis_error", null));
+        db.put("analysis_error", "java.lang.OutOfMemoryError");
+        check("#289 an older version's text without a message is left out too", DataCheck.run(c).text.contains("Analysis error: noted by an older version"), null);
+
+        Analyzer.run(c, null);
+        check("#289 the next good analysis clears the error, the data check has none", db.kv("analysis_error", null) == null
+                && !DataCheck.run(c).text.contains("Analysis error"), db.kv("analysis_error", null));
+    }
+
     static Analyzer.Log stopAt(final String text) {
         return new Analyzer.Log() {
             @Override
@@ -5381,6 +5433,7 @@ public class PipelineTest {
         // until the stop stayed)
         check("#58 stopped after removing the first stale day: every day as before the run (rolled back)", stopped && mid.equals(before), keys(mid));
         check("#58 the stop is recorded as an analysis error", db.kv("analysis_error", null) != null, db.kv("analysis_error", null));
+        analysisError289(c, db);
         Analyzer.run(c, null);
         check("#58 run again after the stop: the same days and nights as dated right at once",
                 days58(db).equals(refDays) && nights58(db).equals(refNights), diff(days58(db), refDays));
@@ -6117,8 +6170,9 @@ public class PipelineTest {
         check("#230 stopped in week 3: a screen reading meanwhile never sees fewer nights or days", r.looks > 20
                 && r.minNights >= nights0 && r.minDays >= days0, seen230(r, nights0, days0));
         check("#230 stopped in week 3: every old night and day is still there, byte for byte", results139(db).equals(before), firstDiff(results139(db), before));
-        check("#230 stopped in week 3: the error text is stored", String.valueOf(db.kv("analysis_error", null)).contains("stopped for the test"),
-                db.kv("analysis_error", null));
+        check("#230 stopped in week 3: the error's class and place are stored, not its message (#289)",
+                String.valueOf(db.kv("analysis_error", null)).startsWith("Stop")
+                        && !String.valueOf(db.kv("analysis_error", null)).contains("stopped for the test"), db.kv("analysis_error", null));
         check("#230 stopped in week 3: the analysis progress is the one of the stored results", db.kvLong("analyzed_until", -1) == until0,
                 db.kvLong("analyzed_until", -1) + ", before " + until0);
         r.reset();
@@ -6148,7 +6202,7 @@ public class PipelineTest {
         check("#230 out of memory: a screen never sees fewer nights or days", r2.looks > 20 && r2.minNights >= nights0 && r2.minDays >= days0,
                 seen230(r2, nights0, days0));
         check("#230 out of memory: every old night and day is still there", results139(db2).equals(before2), firstDiff(results139(db2), before2));
-        check("#230 out of memory: the error text is stored", String.valueOf(db2.kv("analysis_error", null)).contains("OutOfMemoryError"),
+        check("#230 out of memory: the error's class is stored", String.valueOf(db2.kv("analysis_error", null)).startsWith("OutOfMemoryError"),
                 db2.kv("analysis_error", null));
         check("#230 out of memory: the detail level is still marked as not analysed", db2.kvLong("stage_detail", -1) == detail + 1, db2.kvLong("stage_detail", -1));
         r2.reset();
@@ -7138,35 +7192,27 @@ public class PipelineTest {
         check("#199 keeping a pending key", p.keepPendingKey(fresh, "2X0001"), null);
         check("#199 a pending key leaves the stored key", enc.equals(sp.getString("key_enc", null)) && iv.equals(sp.getString("key_iv", null)), null);
         p.forgetPendingKey();
-        // a backup needs the key: it fails and changes nothing
-        String failed = null;
-        try {
-            app.openring.data.Backup.write(c, new java.io.ByteArrayOutputStream(), false);
-        } catch (java.io.IOException e) {
-            failed = e.getMessage();
-        }
-        check("#199 a backup fails with the reason", failed != null && failed.contains("cannot read"), failed);
-        check("#199 a failed backup leaves the stored key", enc.equals(sp.getString("key_enc", null)) && p.setupDone() && "2X0001".equals(p.serial()), null);
-        boolean ownType = false;
-        try {
-            app.openring.data.Backup.write(c, new java.io.ByteArrayOutputStream(), true);
-        } catch (app.openring.data.Backup.KeyUnreadable e) {
-            ownType = true;
-        }
-        check("#199 a full backup is refused with its own reason, Settings shows its own sentence (review of #281)", ownType, null);
-        // the automatic backup names the key as the reason, not the folder, and writes nothing (review of #281)
+        // a backup is still saved, without the key (issue #288; before it, #199 refused it), and changes nothing
+        java.io.ByteArrayOutputStream nk = new java.io.ByteArrayOutputStream();
+        boolean withKey = app.openring.data.Backup.write(c, nk, false);
+        check("#288 a backup with an unreadable key is saved, without the key", !withKey && nk.size() > 0, nk.size());
+        check("#288 a backup leaves the stored key", enc.equals(sp.getString("key_enc", null)) && p.setupDone() && "2X0001".equals(p.serial()), null);
+        // the automatic backup makes its copy too, without the key (issue #288)
         java.io.File fdir = Files.createTempDirectory("folder199").toFile();
         Folder242 folder = new Folder242(fdir);
         app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/B199", "B199");
         StringBuilder alog = new StringBuilder();
         app.openring.data.AutoBackup.Outcome ao = app.openring.data.AutoBackup.run(c, folder, 1780000000L, false, collect(alog));
-        check("#199 automatic backup: the reason is the key", app.openring.core.Backups.KEY.equals(ao.error) && app.openring.core.Backups.KEY.equals(p.autoError()), ao.error);
-        check("#199 automatic backup: nothing written to the folder", folder.list().isEmpty() && ao.written.isEmpty(), folder.list().toString());
-        check("#199 automatic backup: the log says why", alog.toString().contains("cannot read the saved ring key"), alog.toString());
-        check("#199 automatic backup: Settings says it in plain words", app.openring.core.Backups.status(0, 0, 0, p.autoError(), java.time.ZoneId.of("UTC"))
-                .equals("The last copy failed: this phone cannot read the saved ring key, enter it again in Setup."), p.autoError());
+        check("#288 automatic backup: written, no error", ao.error == null && p.autoError() == null && ao.written.size() == 1 && folder.list().equals(ao.written),
+                ao.error + " " + folder.list());
+        check("#288 automatic backup: the log says the key is left out and why", alog.toString().contains("without the ring key"), alog.toString());
+        check("#288 automatic backup: the copy has no key and says so", !zipJson288(Files.readAllBytes(new java.io.File(fdir, ao.written.get(0)).toPath())).has("key")
+                && zipJson288(Files.readAllBytes(new java.io.File(fdir, ao.written.get(0)).toPath())).optBoolean("no_key"), null);
+        check("#199 the reason older versions stored still reads in plain words", app.openring.core.Backups.status(0, 0, 0, app.openring.core.Backups.KEY, java.time.ZoneId.of("UTC"))
+                .equals("The last copy failed: this phone cannot read the saved ring key, enter it again in Setup."), null);
         check("#199 automatic backup: the stored key stays", enc.equals(sp.getString("key_enc", null)) && iv.equals(sp.getString("key_iv", null)), null);
         p.setBackupFolder(null, null);
+        rmTree(fdir);
         // the ring accepted a key entered again: it replaces the stored one, now readable
         check("#199 pairing done", p.pairDone(fresh, null, "2X0001", "Paired with 2X0001", true), null);
         check("#199 after pairing the key reads", p.keyState() == app.openring.core.KeyState.READABLE && Arrays.equals(p.loadKey(), fresh), p.keyState());
@@ -7187,6 +7233,285 @@ public class PipelineTest {
         // a key kept in plain text (the Keystore failed when it was saved) reads
         p.saveKey(fresh);
         check("#199 a plain stored key reads", p.keyState() == app.openring.core.KeyState.READABLE, p.keyState());
+    }
+
+    static JSONObject zipJson288(byte[] zip) throws Exception {
+        return Json.parse(new String(zipEntry(zip, "openring-backup.json"), "UTF-8"));
+    }
+
+    /** The JSON of a backup changed by {@code edit}, the history entry as it was (an older version's view, a made up file). */
+    static byte[] editJson288(byte[] zip, java.util.function.Consumer<JSONObject> edit) throws Exception {
+        JSONObject o = zipJson288(zip);
+        edit.accept(o);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(o.toString().getBytes("UTF-8"));
+            z.closeEntry();
+            byte[] db = zipEntry(zip, "openring.db");
+            if (db != null) {
+                z.putNextEntry(new java.util.zip.ZipEntry("openring.db"));
+                z.write(db);
+                z.closeEntry();
+            }
+        }
+        return out.toByteArray();
+    }
+
+    static final String ENC288 = "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQ", IV288 = "AAECAwQFBgcICQoL";
+
+    static void unreadable288(Context c) {
+        c.getSharedPreferences("openring", 0).edit().putString("key_enc", ENC288).putString("key_iv", IV288).commit();
+    }
+
+    static boolean stillUnreadable288(Context c) {
+        android.content.SharedPreferences sp = c.getSharedPreferences("openring", 0);
+        return ENC288.equals(sp.getString("key_enc", null)) && IV288.equals(sp.getString("key_iv", null));
+    }
+
+    /**
+     * Issue #288: while the saved key cannot be read, a backup holds everything but the key and is marked so. Restoring
+     * it brings back settings and history and never touches a key on the phone; an older version refuses it whole.
+     */
+    static void backupNoKey288() throws Exception {
+        // a phone with history from the version before (schema upgrade on first open), moved to a new phone: key unreadable
+        Context a = oldPhone242("openring288-a", 20);
+        try {
+            app.openring.data.Prefs pa = app.openring.data.Prefs.of(a);
+            pa.setSerial("2X0288");
+            pa.setAddress("A0:38:F8:00:02:88");
+            pa.setFinderSound(false);
+            pa.setStageDetail(app.openring.core.analysis.StageFilter.CALM);
+            Db da = Db.get(a);
+            Analyzer.runAll(a, null);
+            da = Db.get(a);
+            List<String> events = events58(da), results = results139(da);
+            check("#288 the old phone has history", events.size() > 1000 && results.size() > 10, events.size());
+            unreadable288(a);
+            check("#288 the key cannot be read", pa.keyState() == app.openring.core.KeyState.UNREADABLE, pa.keyState());
+            java.io.ByteArrayOutputStream fullOut = new java.io.ByteArrayOutputStream(), smallOut = new java.io.ByteArrayOutputStream();
+            check("#288 a full backup is written without the key", !app.openring.data.Backup.write(a, fullOut, true), null);
+            check("#288 a key and settings backup is written without the key", !app.openring.data.Backup.write(a, smallOut, false), null);
+            byte[] full = fullOut.toByteArray(), small = smallOut.toByteArray();
+            JSONObject jo = zipJson288(full);
+            check("#288 the file has no key and its mark", !jo.has("key") && jo.optBoolean("no_key") && "2X0288".equals(jo.optString("serial"))
+                    && zipEntry(full, "openring.db") != null, jo.toString().length());
+            check("#288 writing changed nothing on the phone", stillUnreadable288(a) && events58(Db.get(a)).equals(events) && results139(Db.get(a)).equals(results)
+                    && pa.setupDone(), null);
+
+            // ---- restored on a new phone without a key: settings and history, no key, Setup asks for it ----
+            Context b = freshDb("openring288-b");
+            app.openring.data.Backup.Result rb = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(full));
+            app.openring.data.Prefs pb = app.openring.data.Prefs.of(b);
+            check("#288 restored: settings and history", rb.ok && rb.history && rb.noKey
+                    && rb.message.equals("Restored your settings and history. " + app.openring.data.Backup.NO_KEY_ENTER), rb.message);
+            check("#288 restored: the same events and nights, byte for byte", events58(Db.get(b)).equals(events) && results139(Db.get(b)).equals(results),
+                    events58(Db.get(b)).size() + " of " + events.size());
+            check("#288 restored: no key, so the main screen opens Setup", !pb.hasKey() && pb.keyState() == app.openring.core.KeyState.NONE
+                    && app.openring.core.KeyState.opensSetup(false, pb.setupDone(), pb.keyState(), false), pb.setupDone());
+            check("#288 restored: settings and the ring it belonged to", !pb.finderSound() && pb.screenGoalMin() == 45 && "2X0288".equals(pb.serial())
+                    && "A0:38:F8:00:02:88".equals(pb.address()), pb.serial());
+            check("#288 restored: the history's own detail level came along", pb.stageDetail() == app.openring.core.analysis.StageFilter.CALM, pb.stageDetail());
+            // entering the key afterwards (as Setup's pairing does) makes it a full setup, history kept
+            pb.pairDone(KEY242, null, "2X0288", "Paired with 2X0288", true);
+            check("#288 the key entered after the restore: readable, history kept", pb.keyState() == app.openring.core.KeyState.READABLE
+                    && events58(Db.get(b)).equals(events), null);
+            app.openring.data.Backup.Result rs = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(small));
+            check("#288 a key and settings only file without a key over a phone with a key: the key stays", rs.ok && !rs.history && rs.noKey
+                    && Arrays.equals(pb.loadKey(), KEY242) && rs.message.equals("Restored your settings. " + app.openring.data.Backup.NO_KEY_KEPT), rs.message);
+
+            // ---- restored on a phone with its own readable key and ring: key and ring stay, the rest comes along ----
+            Context k = freshDb("openring288-k");
+            app.openring.data.Prefs pk = app.openring.data.Prefs.of(k);
+            byte[] own = app.openring.core.Hex.parseKey("00112233445566778899aabbccddeeff");
+            pk.pairDone(own, "C0:FF:EE:00:00:01", "2X9999", "Paired with 2X9999", true);
+            pk.clearPairUnseen();
+            pk.setHardware("ORE_07");
+            app.openring.data.Backup.Result rk = app.openring.data.Backup.read(k, new java.io.ByteArrayInputStream(full));
+            check("#288 over a phone with a key: restored, the message says the key stays", rk.ok && rk.history && rk.noKey
+                    && rk.message.endsWith(app.openring.data.Backup.NO_KEY_KEPT), rk.message);
+            check("#288 over a phone with a key: its key is the same", Arrays.equals(pk.loadKey(), own) && pk.keyState() == app.openring.core.KeyState.READABLE, null);
+            check("#288 over a phone with a key: its ring stays (a ring only comes with its key)", "2X9999".equals(pk.serial())
+                    && "C0:FF:EE:00:00:01".equals(pk.address()) && "ORE_07".equals(pk.hardware()) && pk.setupDone(), pk.serial());
+            check("#288 over a phone with a key: the history and settings came", events58(Db.get(k)).equals(events) && !pk.finderSound(), null);
+
+            // ---- restored on a phone whose own key is unreadable too: that stored key stays byte for byte ----
+            Context u = freshDb("openring288-u");
+            unreadable288(u);
+            app.openring.data.Prefs pu = app.openring.data.Prefs.of(u);
+            pu.setSetupDone(true);
+            pu.setSerial("2X0777");
+            app.openring.data.Backup.Result ru = app.openring.data.Backup.read(u, new java.io.ByteArrayInputStream(full));
+            check("#288 over an unreadable key: restored, the stored key is untouched, asks to enter it", ru.ok && ru.history && stillUnreadable288(u)
+                    && "2X0777".equals(pu.serial()) && ru.message.endsWith(app.openring.data.Backup.NO_KEY_ENTER), ru.message);
+
+            // ---- an older version: it ignores the mark, finds no key, and refuses the whole file before changing anything ----
+            Context o = freshDb("openring288-old");
+            app.openring.data.Prefs po = app.openring.data.Prefs.of(o);
+            po.saveKey(own);
+            po.setSetupDone(true);
+            po.setSerial("2X9999");
+            po.setScreenGoalMin(77);
+            add58(Db.get(o), 1, T58, 2, 0);
+            long oEvents = Db.get(o).eventCount();
+            byte[] asOld = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                    j.remove("no_key");
+                }
+            });
+            app.openring.data.Backup.Result ro = app.openring.data.Backup.read(o, new java.io.ByteArrayInputStream(asOld));
+            check("#288 an older version refuses the file with its own sentence", !ro.ok && "The backup holds no valid ring key.".equals(ro.message), ro.message);
+            check("#288 ... and changes nothing: key, ring, settings and history", Arrays.equals(po.loadKey(), own) && "2X9999".equals(po.serial())
+                    && po.screenGoalMin() == 77 && Db.get(o).eventCount() == oEvents, null);
+            // a mark next to a key, or a mark that is not true: the key rules, as before
+            byte[] markAndKey = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                    Json.put(j, "key", "4431967d8bacc2659743142b68391d9a");
+                }
+            });
+            app.openring.data.Backup.Plan pm = app.openring.data.Backup.prepare(freshDb("openring288-mk"), new java.io.ByteArrayInputStream(markAndKey));
+            check("#288 a file with a key is a backup with a key, mark or not", pm.error == null && !pm.noKey, pm.error == null ? null : pm.error.message);
+            app.openring.data.Backup.cancel(a, pm);
+            byte[] badKey = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                    Json.put(j, "key", "not a key");
+                }
+            });
+            app.openring.data.Backup.Result rbk = app.openring.data.Backup.read(freshDb("openring288-bk"), new java.io.ByteArrayInputStream(badKey));
+            check("#288 a broken key next to the mark is refused as before", !rbk.ok && "The backup holds no valid ring key.".equals(rbk.message), rbk.message);
+            byte[] falseMark = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                    Json.put(j, "no_key", false);
+                }
+            });
+            app.openring.data.Backup.Result rfm = app.openring.data.Backup.read(freshDb("openring288-fm"), new java.io.ByteArrayInputStream(falseMark));
+            check("#288 a file without key whose mark is not true is refused", !rfm.ok, rfm.message);
+
+            // ---- backups from this version with a key, and from an older version, restore as before ----
+            Context w = freshDb("openring288-w");
+            app.openring.data.Backup.read(w, new java.io.ByteArrayInputStream(full));
+            app.openring.data.Prefs.of(w).saveKey(KEY242);
+            java.io.ByteArrayOutputStream withKeyOut = new java.io.ByteArrayOutputStream();
+            check("#288 with a readable key the file holds it, as before", app.openring.data.Backup.write(w, withKeyOut, true)
+                    && "0102030405060708090a0b0c0d0e0f10".equals(zipJson288(withKeyOut.toByteArray()).optString("key"))
+                    && !zipJson288(withKeyOut.toByteArray()).has("no_key"), null);
+            Context w2 = freshDb("openring288-w2");
+            unreadable288(w2);
+            app.openring.data.Backup.Result rw = app.openring.data.Backup.read(w2, new java.io.ByteArrayInputStream(withKeyOut.toByteArray()));
+            check("#288 a backup with a key over an unreadable key: the key is restored (the person picked the file)", rw.ok && rw.history && !rw.noKey
+                    && Arrays.equals(app.openring.data.Prefs.of(w2).loadKey(), KEY242) && events58(Db.get(w2)).equals(events)
+                    && rw.message.equals("Restored your key, settings and history"), rw.message);
+            // an older version's file: the default zip level, no mark (made here from this one's content)
+            byte[] older = editJson288(withKeyOut.toByteArray(), new java.util.function.Consumer<JSONObject>() {
+                public void accept(JSONObject j) {
+                }
+            });
+            Context w3 = freshDb("openring288-w3");
+            app.openring.data.Backup.Result r3 = app.openring.data.Backup.read(w3, new java.io.ByteArrayInputStream(older));
+            check("#288 an older version's backup restores key, settings and history", r3.ok && r3.history && !r3.noKey
+                    && Arrays.equals(app.openring.data.Prefs.of(w3).loadKey(), KEY242) && events58(Db.get(w3)).equals(events) && results139(Db.get(w3)).equals(results), r3.message);
+            // an interrupted restore (a cut file) changes nothing, also for a file without a key
+            Context x = freshDb("openring288-x");
+            unreadable288(x);
+            app.openring.data.Backup.Result rx = app.openring.data.Backup.read(x, new java.io.ByteArrayInputStream(Arrays.copyOf(full, full.length / 2)));
+            check("#288 a cut file without a key: refused, nothing changed", !rx.ok && stillUnreadable288(x)
+                    && Db.get(x).eventCount() == 0, rx.message);
+        } finally {
+            version242(0);
+            restart242();
+            rmTree(a.dir);
+        }
+    }
+
+    /**
+     * Review of #340: while the key cannot be read every automatic run writes a copy without it; the rotation must never
+     * delete the last copy that still holds the key, or the person could lose the only place the key is left.
+     */
+    static void rotationNoKey288() throws Exception {
+        Context c = freshDb("openring288-rot");
+        java.io.File fdir = Files.createTempDirectory("folder288").toFile();
+        try {
+            add58(Db.get(c), 1, T58, 3, 0);
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            p.saveKey(KEY242);
+            p.setSetupDone(true);
+            Folder242 folder = new Folder242(fdir);
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/R288", "R288");
+            p.setBackupDays(1);
+            p.setBackupKeep(3);
+            long day = 86400L, now = 1780000000L;
+            List<String> keyed = new ArrayList<String>();
+            for (int i = 0; i < 4; i++, now += 2 * day) {
+                app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+                check("#288 rotation: a copy with the key, run " + i, o.error == null && o.written.size() == 1 && !app.openring.core.Backups.keyless(o.written.get(0)), o.error);
+                keyed.add(o.written.get(0));
+            }
+            check("#288 rotation: 3 copies with the key kept", folder.list().size() == 3 && !folder.list().contains(keyed.get(0)), folder.list().toString());
+            String lastKeyed = keyed.get(keyed.size() - 1);
+            unreadable288(c);
+            List<String> keyless = new ArrayList<String>();
+            for (int i = 0; i < 5; i++, now += 2 * day) {
+                app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+                check("#288 rotation: a copy without the key, named so, run " + i, o.error == null && o.written.size() == 1
+                        && app.openring.core.Backups.keyless(o.written.get(0)) && !zipJson288(Files.readAllBytes(new java.io.File(fdir, o.written.get(0)).toPath())).has("key"),
+                        o.error + " " + o.written);
+                keyless.add(o.written.get(0));
+            }
+            List<String> left = new ArrayList<String>(folder.list());
+            java.util.Collections.sort(left);
+            check("#288 rotation: after more runs than kept copies the newest copy with the key is still there", left.contains(lastKeyed), left.toString());
+            check("#288 rotation: beside it the 3 newest without the key, the rest went", left.size() == 4 && left.containsAll(keyless.subList(2, 5)), left.toString());
+            Context fresh = freshDb("openring288-rot-restore");
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(fresh, new java.io.ByteArrayInputStream(Files.readAllBytes(new java.io.File(fdir, lastKeyed).toPath())));
+            check("#288 rotation: the kept copy gives the key back", r.ok && Arrays.equals(app.openring.data.Prefs.of(fresh).loadKey(), KEY242), r.message);
+            rmTree(fresh.dir);
+            // the key is entered again: copies with the key, the rotation as before (the old copy with the key may go now)
+            Db.get(c);
+            app.openring.data.Prefs.of(c).saveKey(KEY242);
+            app.openring.data.AutoBackup.Outcome o = app.openring.data.AutoBackup.run(c, folder, now, false, null);
+            check("#288 rotation: with the key readable again a copy with the key, 3 kept, the old one with the key gone",
+                    o.error == null && !app.openring.core.Backups.keyless(o.written.get(0)) && folder.list().size() == 3 && !folder.list().contains(lastKeyed), folder.list().toString());
+        } finally {
+            rmTree(fdir);
+            rmTree(c.dir);
+        }
+    }
+
+    /**
+     * Issue #222: the backup's zip at the fastest level holds the same history, restores the same events and nights,
+     * also for a long history, and is written faster.
+     */
+    static void backupSpeed222() throws Exception {
+        Context a = freshDb("openring222-long");
+        Db db = Db.get(a);
+        add58(db, 1, T58 - 240 * 86400L, 240, 0);
+        Analyzer.run(a, null);
+        app.openring.data.Prefs.of(a).saveKey(KEY242);
+        List<String> events = events58(Db.get(a)), results = results139(Db.get(a));
+        long t0 = System.nanoTime();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(a, out, true);
+        long fast = System.nanoTime() - t0;
+        byte[] zip = out.toByteArray();
+        byte[] dbBytes = zipEntry(zip, "openring.db");
+        // the same content at the default level, as older versions wrote it
+        java.io.ByteArrayOutputStream def = new java.io.ByteArrayOutputStream();
+        t0 = System.nanoTime();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(def)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring.db"));
+            z.write(dbBytes);
+            z.closeEntry();
+        }
+        long slow = System.nanoTime() - t0;
+        System.out.println(String.format(java.util.Locale.ROOT, "    #222 a %d day history, %.1f MB: fastest level %.1f MB in %.2f s (with the copy), default %.1f MB in %.2f s (zip only)",
+                240, dbBytes.length / 1e6, zip.length / 1e6, fast / 1e9, def.size() / 1e6, slow / 1e9));
+        check("#222 the fastest level costs at most a fifth more space", zip.length < def.size() * 1.2, zip.length + " vs " + def.size());
+        Context b = freshDb("openring222-restore");
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(zip));
+        check("#222 a backup at the fastest level restores the same events and nights", r.ok && r.history && events58(Db.get(b)).equals(events)
+                && results139(Db.get(b)).equals(results), r.message + " " + events.size());
+        rmTree(a.dir);
+        rmTree(b.dir);
     }
 
     /**
@@ -8945,6 +9270,8 @@ public class PipelineTest {
             check("#242 the copy fails: the history opens, the reason is kept, the version noted", fo > 0 && fp.beforeUpdateNote() != null
                     && fp.beforeUpdateNote().startsWith("error: ") && fp.beforeUpdateUnseen() && fp.notedVersion() == 43, fp.beforeUpdateNote());
             check("#242 the copy fails: the data check gives the reason", DataCheck.run(fc).text.contains("Last update: no copy, error: "), null);
+            check("#289 the copy fails: the reason is the error's class and place, never its message",
+                    app.openring.core.LoadNote.safe(fp.beforeUpdateNote().substring("error: ".length())), fp.beforeUpdateNote());
             fp.clearBeforeUpdateUnseen();
             check("#242 OK on the main screen's note: it is not shown again, the reason stays for Data check", !fp.beforeUpdateUnseen() && fp.beforeUpdateNote() != null, null);
 
@@ -9090,6 +9417,23 @@ public class PipelineTest {
             for (app.openring.data.BeforeUpdate.Entry e : app.openring.data.BeforeUpdate.list(c)) if (e.copy.back) backs++;
             check("#242 back to the copy before going back: the newer history returns, one copy before going back stays", r.ok
                     && Db.get(c).eventCount() == newer && backs == 1, r.message + " " + backs);
+
+            // a saved key this phone cannot read (issue #288): going back needs no key, it works and the key stays as stored
+            Thread.sleep(1100);
+            android.content.SharedPreferences sp288 = c.getSharedPreferences("openring", 0);
+            sp288.edit().putString("key_enc", "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQ").putString("key_iv", "AAECAwQFBgcICQoL").commit();
+            String to288 = app.openring.data.BeforeUpdate.list(c).get(0).copy.file;
+            r = app.openring.data.AutoBackup.goBack(c, to288, null);
+            check("#288 go back with an unreadable key: works, the stored key is untouched", r.ok && r.history
+                    && "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQ".equals(sp288.getString("key_enc", null)) && "AAECAwQFBgcICQoL".equals(sp288.getString("key_iv", null))
+                    && p.setupDone(), r.message);
+            p.saveKey(KEY242);
+            // and back to the history before that (its copy before going back is the newest of its kind)
+            app.openring.data.BeforeUpdate.Entry newest288 = null;
+            for (app.openring.data.BeforeUpdate.Entry e : app.openring.data.BeforeUpdate.list(c)) if (e.copy.back && (newest288 == null || e.time > newest288.time)) newest288 = e;
+            Thread.sleep(1100);
+            r = app.openring.data.AutoBackup.goBack(c, newest288.copy.file, null);
+            check("#288 back again: the newer history returns", r.ok && Db.get(c).eventCount() == newer, r.message);
 
             // the current history cannot be kept first (its file name is taken by a folder): nothing is replaced
             java.io.File dir = copies242(c);
@@ -9500,9 +9844,11 @@ public class PipelineTest {
      * The nights and days of {@link #boots188} as the version before this one stored them (main 3b3b317 with #242, run
      * with TZ Europe/Zurich as this script runs): their number and the SHA-256 of {@link #results139}, one row per line.
      * With nothing left out this version must store exactly these (issue #254). A later change of the analysis rules
-     * changes this on purpose; then the new value goes here with that change.
+     * changes this on purpose; then the new value goes here with that change. Issue #240 changed the readiness of 5 days
+     * and nothing else: the 3 days after a day under an hour of wear lost Previous day activity (55) and are marked
+     * {@code prev_day_unworn}, and Activity balance of 3 days left those days out (before: 64220af7...).
      */
-    static final String MAIN_254 = "71 64220af7be5ac2b09881a00084ebddbcf57c982a3d32582fe22758c20862922a";
+    static final String MAIN_254 = "71 3195c3718a99164ef684299d95748478edeff09634578f99c214d5a1c3929d73";
 
     static String digest254(List<String> rows) throws Exception {
         java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
@@ -9902,6 +10248,327 @@ public class PipelineTest {
         Analyzer.bringBack(c, made254(db, a), null);
         check("#254 a year, brought back: byte for byte as before", results139(db).equals(before), firstDiff(results139(db), before));
         clean254();
+    }
+
+    // ------------------------------------------- issue #240, a day without the ring in readiness
+
+    static final long T240 = LocalDate.parse("2026-03-02").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+    static final int DAYS240 = 60, OFF240 = 20;
+
+    /**
+     * {@code days} days of demo history from {@link #T240}; on the days in {@code off} (counted from the first) the ring
+     * was on the charger from 07:30 to midnight: their activity events are left out, the nights stay as they are.
+     */
+    static List<RingEvent> history240(int days, java.util.Set<Integer> off, long seed) {
+        ZoneId z = ZoneId.systemDefault();
+        List<RingEvent> ev = app.openring.data.Demo.history(T240, days, T240 + (days + 1) * 86400L, z, new Random(seed));
+        if (off.isEmpty()) return ev;
+        LocalDate d0 = LocalDate.parse("2026-03-02");
+        List<double[]> cut = new ArrayList<double[]>();
+        for (int o : off) cut.add(new double[] {d0.plusDays(o).atTime(7, 30).atZone(z).toEpochSecond(), d0.plusDays(o + 1).atStartOfDay(z).toEpochSecond()});
+        List<RingEvent> keep = new ArrayList<RingEvent>(ev.size());
+        for (RingEvent e : ev) {
+            double u = T240 + (e.ds - app.openring.data.Demo.DS0) / 10.0;
+            boolean drop = false;
+            if (e.tag == EventCodec.ACTIVITY_INFO) for (double[] c : cut) if (u >= c[0] && u < c[1]) drop = true;
+            if (!drop) keep.add(e);
+        }
+        return keep;
+    }
+
+    /** A phone of its own with {@code ev} synced and analysed; left open. */
+    static Context phone240(String name, List<RingEvent> ev) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        long now = T240 + (DAYS240 + 1) * 86400L;
+        for (int i = 0; i < ev.size(); i += 4096) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4096)), 1, now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, T240 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        Analyzer.run(c, null);
+        return c;
+    }
+
+    static String day240(int i) {
+        return LocalDate.parse("2026-03-02").plusDays(i).toString();
+    }
+
+    static JSONObject readiness240(Db db, int i) {
+        JSONObject o = Json.parse(db.dayJson(day240(i)));
+        return o == null ? null : o.optJSONObject("readiness");
+    }
+
+    static JSONObject part240(JSONObject score, String key) {
+        org.json.JSONArray cs = score == null ? null : score.optJSONArray("contributors");
+        for (int i = 0; cs != null && i < cs.length(); i++) if (key.equals(cs.optJSONObject(i).optString("key"))) return cs.optJSONObject(i);
+        return null;
+    }
+
+    /** Nights only, or days only, of {@link #results139}. */
+    static List<String> rows240(List<String> rows, String kind) {
+        List<String> out = new ArrayList<String>();
+        for (String r : rows) if (r.startsWith(kind + " ")) out.add(r);
+        return out;
+    }
+
+    /** The results of the reference history (worn every day) and of the same history with day OFF240 on the charger. */
+    static List<String> ref240, off240;
+    static List<String> offEvents240;
+
+    /**
+     * Issue #240: one day on the charger in 60 days of demo history. That day has no activity score (as since #44); the
+     * day after has no Previous day activity (no 55 for "no activity"), says why, and counts one worn day less; Activity
+     * balance leaves the day out; every night and every day before it stays byte for byte as with the ring worn.
+     */
+    static void unwornDay240() throws Exception {
+        Context rc = phone240("openring240-ref", history240(DAYS240, new java.util.HashSet<Integer>(), 2400));
+        Db rdb = Db.get(rc);
+        ref240 = results139(rdb);
+        JSONObject[] refR = new JSONObject[DAYS240];
+        int[] refDays = new int[DAYS240];
+        int refUnworn = 0, refMarked = 0;
+        for (int i = 0; i < DAYS240; i++) {
+            refR[i] = readiness240(rdb, i);
+            JSONObject o = Json.parse(rdb.dayJson(day240(i)));
+            refDays[i] = o == null ? -1 : o.optInt("activity_days", -1);
+            if (o != null && o.optDouble("covered_min", 0) < 60) refUnworn += i == 0 ? 1 : 100;
+            if (o != null && o.has("prev_day_unworn")) refMarked += i == 1 ? 1 : 100;
+        }
+        // the demo's first day holds only the end of its first night (no activity yet), so its second day is marked
+        check("#240 reference: the demo history is worn every day after the first, only the second day marked", refUnworn == 1 && refMarked == 1, refUnworn + " unworn, " + refMarked + " marked");
+        Context oc = phone240("openring240-off", history240(DAYS240, new java.util.HashSet<Integer>(Arrays.asList(OFF240)), 2400));
+        Db db = Db.get(oc);
+        off240 = results139(db);
+        offEvents240 = events58(db);
+        JSONObject off = Json.parse(db.dayJson(day240(OFF240))), next = Json.parse(db.dayJson(day240(OFF240 + 1)));
+        check("#240 the charger day keeps a summary, under an hour of wear, no activity score (#44)", off != null && off.optDouble("covered_min", -1) < 60
+                && !off.has("activity_score") && off.optDouble("active_kcal", -1) < 50, off == null ? null : off.opt("covered_min") + " min, " + off.opt("active_kcal") + " kcal");
+        check("#240 the same nights as with the ring worn, byte for byte", rows240(off240, "night").equals(rows240(ref240, "night")),
+                firstDiff(rows240(off240, "night"), rows240(ref240, "night")));
+        List<String> dRef = rows240(ref240, "day"), dOff = rows240(off240, "day");
+        boolean before = dRef.size() == dOff.size();
+        for (int i = 0; before && i < dRef.size(); i++) if (dRef.get(i).compareTo("day " + day240(OFF240)) < 0) before &= dRef.get(i).equals(dOff.get(i));
+        check("#240 every day before the charger day the same, byte for byte", before, firstDiff(dOff, dRef));
+        check("#240 the charger day's own readiness the same", String.valueOf(refR[OFF240]).equals(String.valueOf(readiness240(db, OFF240))), null);
+        JSONObject r = next == null ? null : next.optJSONObject("readiness");
+        System.out.println("  #240 the day after the charger day: readiness " + (r == null ? "-" : r.opt("value")) + " (worn: " + refR[OFF240 + 1].opt("value")
+                + "), previous day activity before: " + part240(refR[OFF240 + 1], "prev_activity"));
+        check("#240 the day after: no Previous day activity", r != null && part240(r, "prev_activity") == null && part240(refR[OFF240 + 1], "prev_activity") != null, r);
+        check("#240 the day after: marked for the Readiness page", next != null && next.optBoolean("prev_day_unworn"), null);
+        check("#240 the day after: one worn day less for the activity score (#44)", next != null && next.optInt("activity_days") == refDays[OFF240 + 1] - 1,
+                next == null ? null : next.opt("activity_days") + " / " + refDays[OFF240 + 1]);
+        boolean others = true;
+        for (String k : new String[] {"rhr", "hrv", "temperature", "recovery", "sleep", "sleep_balance"}) {
+            others &= String.valueOf(part240(r, k)).equals(String.valueOf(part240(refR[OFF240 + 1], k)));
+        }
+        check("#240 the day after: the other contributors the same", others, r);
+        int marked = 0;
+        for (int i = 0; i < DAYS240; i++) if (Json.parse(db.dayJson(day240(i))) != null && Json.parse(db.dayJson(day240(i))).has("prev_day_unworn")) marked++;
+        check("#240 only the day after the charger day is marked (and the second day, as in the reference)", marked == 2
+                && Json.parse(db.dayJson(day240(1))).optBoolean("prev_day_unworn"), marked);
+        // Activity balance from the stored days, worked out here: the last 7 and 28 days, the charger day left out
+        int balanceChecked = 0, balanceWrong = 0, sameAfter = 0, after = 0;
+        for (int i = 1; i < DAYS240; i++) {
+            JSONObject ri = readiness240(db, i);
+            if (ri == null) continue;
+            double s7 = 0, s28 = 0;
+            int n7 = 0, n28 = 0, seen = 0;
+            for (int k = i - 1; k >= 0 && seen < 28; k--) {
+                JSONObject o = Json.parse(db.dayJson(day240(k)));
+                if (o == null) continue;
+                seen++;
+                if (o.optDouble("covered_min", 0) < 60) continue;
+                double a = o.optDouble("active_kcal");
+                if (seen <= 7) {
+                    s7 += a;
+                    n7++;
+                }
+                s28 += a;
+                n28++;
+            }
+            JSONObject bal = part240(ri, "activity_balance");
+            if (n7 >= 3 && n28 >= 7 && s28 > 0) {
+                double want = app.openring.core.analysis.Stats.curve((s7 / n7) / (s28 / n28),
+                        new double[][] {{0.3, 55}, {0.6, 80}, {0.85, 100}, {1.25, 100}, {1.6, 75}, {2.2, 45}});
+                if (i > OFF240 && i <= OFF240 + 28) balanceChecked++;
+                if (bal == null || bal.optLong("score") != Math.round(want)) balanceWrong++;
+            } else if (bal != null) balanceWrong++;
+            if (i > OFF240 + 28) {
+                after++;
+                if (ri.toString().equals(String.valueOf(refR[i]))) sameAfter++;
+            }
+        }
+        check("#240 Activity balance of every day from its 7 and 28 days before, the charger day left out", balanceWrong == 0 && balanceChecked >= 27,
+                balanceWrong + " wrong, " + balanceChecked + " after the charger day");
+        System.out.println("  #240 days more than 28 days after the charger day with the same readiness as worn: " + sameAfter + " of " + after);
+        check("#240 days more than 28 days after the charger day: the same readiness as worn", after > 0 && sameAfter == after, sameAfter + " of " + after);
+        db.close();
+    }
+
+    /** Write the results of the reference (ring worn every day) into the days on and after the charger day, as stale results. */
+    static void stale240(Db db) {
+        for (String r : rows240(ref240, "day")) {
+            String day = r.substring(4, 14);
+            if (day.compareTo(day240(OFF240)) >= 0) db.putDay(day, r.substring(15));
+        }
+    }
+
+    /**
+     * Issue #240, data safety: a database of the version before (no readiness rules stored, stale readiness after the
+     * charger day) keeps every event and night and gets, in the first analysis, the days a fresh analysis gives, byte for
+     * byte; with the rules already stored, a normal sync leaves those days alone (the version is what analyses them again).
+     */
+    static void upgrade240() throws Exception {
+        Context c = phone240("openring240-upgrade", history240(DAYS240, new java.util.HashSet<Integer>(Arrays.asList(OFF240)), 2400));
+        Db db = Db.get(c);
+        check("#240 upgrade: set up as the history before", results139(db).equals(off240) && db.kvLong("readiness_rules", 0) == 2, null);
+        stale240(db);
+        List<String> stale = results139(db);
+        Analyzer.run(c, null);
+        check("#240 the rules stored: a normal analysis leaves the older days alone", results139(db).equals(stale), firstDiff(results139(db), stale));
+        db.put("readiness_rules", null);
+        db.put("analysis_inputs", null);
+        check("#240 upgrade: not up to date without the rules", !Analyzer.upToDate(c), null);
+        StringBuilder log = new StringBuilder();
+        Analyzer.run(c, collect(log));
+        check("#240 upgrade: every event the same", events58(db).equals(offEvents240), firstDiff(events58(db), offEvents240));
+        check("#240 upgrade: every night and day as a fresh analysis, byte for byte", results139(db).equals(off240), firstDiff(results139(db), off240));
+        check("#240 upgrade: the rules stored, the next sync up to date", db.kvLong("readiness_rules", 0) == 2 && Analyzer.upToDate(c), db.kvLong("readiness_rules", 0));
+        // an older database with the inputs (#194) kept: the version in the inputs still makes the first sync analyse
+        stale240(db);
+        String inputs = db.kv("analysis_inputs", null);
+        db.put("analysis_inputs", inputs.replace(" " + app.openring.core.analysis.DayHeart.VERSION + " 2 ", " " + app.openring.core.analysis.DayHeart.VERSION + " "));
+        db.put("readiness_rules", null);
+        check("#240 upgrade with the inputs of the version before: not up to date", !Analyzer.upToDate(c) && !inputs.equals(db.kv("analysis_inputs", null)), inputs);
+        Analyzer.run(c, null);
+        check("#240 upgrade with the inputs of the version before: the same days, byte for byte", results139(db).equals(off240), firstDiff(results139(db), off240));
+        // safe twice: the next run changes nothing
+        Analyzer.run(c, null);
+        check("#240 upgrade run again: nothing changes", results139(db).equals(off240) && events58(db).equals(offEvents240), null);
+        db.close();
+    }
+
+    /** A log that stops the analysis at its {@code n}th line containing {@code text}. */
+    static Analyzer.Log stopAtNth(final String text, final int n) {
+        return new Analyzer.Log() {
+            int seen;
+
+            @Override
+            public void log(String m) {
+                if (m.contains(text) && ++seen == n) throw new Stop();
+            }
+        };
+    }
+
+    /** Issue #240, data safety: the analysis after the update stopped part way keeps the old results and the old version; the next one finishes. */
+    static void interrupted240() throws Exception {
+        Context c = phone240("openring240-stop", history240(DAYS240, new java.util.HashSet<Integer>(Arrays.asList(OFF240)), 2400));
+        Db db = Db.get(c);
+        stale240(db);
+        db.put("readiness_rules", null);
+        List<String> stale = results139(db), ev = events58(db);
+        boolean stopped = false;
+        try {
+            Analyzer.run(c, stopAtNth("sleep periods", 5));
+        } catch (Stop e) {
+            stopped = true;
+        }
+        check("#240 analysis after the update stopped: every night and day as before, byte for byte", stopped && results139(db).equals(stale),
+                firstDiff(results139(db), stale));
+        check("#240 stopped: the rules not stored, the error stored, every event kept", db.kv("readiness_rules", null) == null
+                && db.kv("analysis_error", null) != null && events58(db).equals(ev), db.kv("readiness_rules", null));
+        Analyzer.run(c, null);
+        check("#240 the next analysis after the stop: as a fresh analysis, byte for byte", results139(db).equals(off240) && db.kvLong("readiness_rules", 0) == 2
+                && db.kv("analysis_error", null) == null, firstDiff(results139(db), off240));
+        db.close();
+    }
+
+    /** Issue #240, data safety: a backup of this version restores with nothing to analyse again; one of the version before is analysed again once. */
+    static void restore240() throws Exception {
+        Context c = phone240("openring240-backup", history240(DAYS240, new java.util.HashSet<Integer>(Arrays.asList(OFF240)), 2400));
+        Db db = Db.get(c);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, bo, true);
+        byte[] mine = bo.toByteArray();
+        stale240(db);
+        db.put("readiness_rules", null);
+        db.put("analysis_inputs", null);
+        List<String> stale = results139(db);
+        bo = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, bo, true);
+        byte[] older = bo.toByteArray();
+        for (int v = 0; v < 2; v++) {
+            String which = v == 0 ? "this version" : "the version before";
+            Context b = freshDb("openring240-restored");
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(v == 0 ? mine : older));
+            Db rd = Db.get(b);
+            check("#240 a backup of " + which + " restores every event, night and day as it was", r.ok && r.history && events58(rd).equals(offEvents240)
+                    && results139(rd).equals(v == 0 ? off240 : stale), r.message);
+            if (v == 0) check("#240 a backup of this version: nothing to analyse again", Analyzer.upToDate(b), null);
+            Analyzer.run(b, null);
+            check("#240 a backup of " + which + " after the next analysis: as a fresh analysis, byte for byte", results139(rd).equals(off240)
+                    && rd.kvLong("readiness_rules", 0) == 2, firstDiff(results139(rd), off240));
+            rd.close();
+        }
+    }
+
+    /**
+     * Issue #240: a year of demo history with a day on the charger every 9 days and no readiness rules stored (as the
+     * version before left it): the first analysis after the update analyses the whole year again (timed) and gives what Re
+     * analyse all gives, byte for byte; every event and night stays; every day after a day under an hour of wear is marked
+     * and has no Previous day activity, every other day has it.
+     */
+    static void largeHistory240() throws Exception {
+        java.util.Set<Integer> off = new java.util.HashSet<Integer>();
+        for (int d = 5; d < 365; d += 9) off.add(d);
+        ZoneId z = ZoneId.systemDefault();
+        Context c = freshDb("openring240-year");
+        Db db = Db.get(c);
+        // a year that ended before today (the dating ignores events in the future)
+        LocalDate d0 = LocalDate.parse("2025-10-01");
+        long t0 = d0.atStartOfDay(z).toEpochSecond();
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, 365, t0 + 366 * 86400L, z, new Random(2401));
+        List<RingEvent> keep = new ArrayList<RingEvent>(ev.size());
+        for (RingEvent e : ev) {
+            double u = t0 + (e.ds - app.openring.data.Demo.DS0) / 10.0;
+            LocalDate d = java.time.Instant.ofEpochSecond((long) u).atZone(z).toLocalDate();
+            int i = (int) (d.toEpochDay() - d0.toEpochDay());
+            boolean drop = e.tag == EventCodec.ACTIVITY_INFO && off.contains(i) && u >= d.atTime(7, 30).atZone(z).toEpochSecond();
+            if (!drop) keep.add(e);
+        }
+        ev = null;
+        for (int i = 0; i < keep.size(); i += 4096) db.insertBatch(keep.subList(i, Math.min(keep.size(), i + 4096)), 1, t0 + 366 * 86400L);
+        long lastDs = keep.get(keep.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        keep = null;
+        Analyzer.run(c, null);
+        List<String> ev0 = events58(db), nights0 = rows240(results139(db), "night");
+        db.put("readiness_rules", null);
+        long t = System.nanoTime();
+        Analyzer.run(c, null);
+        long ms = (System.nanoTime() - t) / 1000000;
+        List<String> up = results139(db);
+        t = System.nanoTime();
+        Analyzer.runAll(c, null);
+        long allMs = (System.nanoTime() - t) / 1000000;
+        System.out.println("  #240 a year (" + db.eventCount() + " events), " + off.size() + " charger days: the analysis after the update " + ms
+                + " ms, Re analyse all " + allMs + " ms");
+        check("#240 a year: after the update what Re analyse all gives, byte for byte", up.equals(results139(db)), firstDiff(up, results139(db)));
+        check("#240 a year: every event and night the same", events58(db).equals(ev0) && rows240(up, "night").equals(nights0) && nights0.size() >= 350,
+                nights0.size() + " nights");
+        int marked = 0, wrong = 0;
+        for (int i = 1; i < 365; i++) {
+            JSONObject o = Json.parse(db.dayJson(d0.plusDays(i).toString()));
+            if (o == null || o.optJSONObject("readiness") == null) continue;
+            // a charger day with an early morning keeps an hour of wear before 07:30 and counts as worn
+            JSONObject y = Json.parse(db.dayJson(d0.plusDays(i - 1).toString()));
+            boolean after = y == null || y.optDouble("covered_min", 0) < 60;
+            if (o.optBoolean("prev_day_unworn")) marked++;
+            if (after != o.optBoolean("prev_day_unworn") || after == (part240(o.optJSONObject("readiness"), "prev_activity") != null)) wrong++;
+        }
+        check("#240 a year: exactly the days after a day under an hour of wear lack Previous day activity and are marked", wrong == 0
+                && marked >= off.size() - 10, wrong + " wrong, " + marked + " marked, " + off.size() + " charger days");
+        db.close();
     }
 
     /** Issue #254: Today's "Right now" skips readings in a left out time; the newest one outside it counts. */
@@ -12126,6 +12793,70 @@ public class PipelineTest {
                 && back.count("SELECT COUNT(*) FROM watch_raw WHERE device = '" + app.openring.core.withings.WatchDemo.ADDRESS + "'") == 0, null);
         check("#299 the demo's note stays in the demo file, the real one has none", back.kv(DataCheck.SHRINK_ERROR, null) == null, null);
         clean254();
+    }
+
+    /**
+     * Issue #334: a sync whose start fails on the database (here a database file that cannot be opened, the SQLite stand in
+     * throws) stores the safe text, gives the ring lock back and leaves no sync counted. {@code ble/RingManager} needs Android
+     * and is not compiled here, so this runs its start steps' shape through {@code core/SyncStart} with the real Db and Prefs.
+     */
+    static void syncStart334() throws Exception {
+        final Context c = freshDb("openring334");
+        java.io.File dbPath = c.getDatabasePath(Db.REAL);
+        check("#334 the database path is blocked by a folder", dbPath.mkdirs(), dbPath);
+        final app.openring.core.RingGate gate = app.openring.core.RingGate.RING;
+        final Db[] start = new Db[1];
+        final int[] released = new int[1];
+        gate.syncs.incrementAndGet();
+        app.openring.core.SyncStart.Result r;
+        try {
+            r = app.openring.core.SyncStart.run(gate.op, new app.openring.core.SyncStart.Steps() {
+                @Override
+                public String run(app.openring.core.SyncStart.Held h) throws Exception {
+                    if (Db.get(c).longRun()) return "Sync stopped";
+                    if (!gate.op.tryLock(1, java.util.concurrent.TimeUnit.SECONDS)) return "The ring is busy with another task";
+                    Db db = Db.get(c);
+                    // the first step that reads the file
+                    db.hasEvents();
+                    if (db.holdForRing()) {
+                        start[0] = db;
+                        h.ring = true;
+                    }
+                    return null;
+                }
+            }, new Runnable() {
+                @Override
+                public void run() {
+                    released[0]++;
+                    if (start[0] != null) start[0].releaseForRing();
+                }
+            });
+            if (r.error != null) app.openring.data.Prefs.of(c).setLastSyncError(app.openring.core.SyncError.stored(false, r.message));
+        } finally {
+            gate.syncs.decrementAndGet();
+        }
+        check("#334 the start failed with an error", r.error != null, r.error);
+        String stored = app.openring.data.Prefs.of(c).lastSyncError();
+        check("#334 the stored error is the safe text", stored != null && stored.startsWith(app.openring.core.SyncError.START_FAILED)
+                && app.openring.core.LoadNote.safe(stored.substring(app.openring.core.SyncError.START_FAILED.length())), stored);
+        String msg = r.error == null ? null : r.error.getMessage();
+        check("#334 the error's message is not stored", msg == null || msg.isEmpty() || !stored.contains(msg), stored);
+        check("#334 the ring lock is free again", !gate.op.isLocked(), null);
+        eq334("#334 no sync counted", gate.syncs.get(), 0);
+        eq334("#334 the database was never held, nothing released", released[0], 0);
+        check("#334 the screen gets a sentence", app.openring.core.SyncError.plain(stored).startsWith("The sync did not finish because of an unexpected problem."),
+                app.openring.core.SyncError.plain(stored));
+        // the data check shows the stored text once the file opens again, still without the message
+        rmTree(dbPath);
+        String text = DataCheck.run(c).text;
+        check("#334 the data check names the start error", text.contains("last error: " + stored), null);
+        check("#334 a later sync can take the ring", gate.op.tryLock(), null);
+        gate.op.unlock();
+        freshDb("openring334-after");
+    }
+
+    static void eq334(String name, int got, int want) {
+        check(name, got == want, got);
     }
 
     /**

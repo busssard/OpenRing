@@ -459,40 +459,82 @@ public final class RingManager {
         boolean analysingRaised = false;
         String own = null;
         try {
-            Db held;
-            while (true) {
-                // a long analysis replaces the results (issue #230): wait for it without the ring, every write of the
-                // download would wait for it with the ring held
-                if (!waitForLongRun(ticket)) {
-                    res.message = "Sync stopped";
-                    log("sync stopped while it waited for the analysis");
-                    return res;
+            final Db[] start = new Db[1];
+            final SyncTicket tk = ticket;
+            // any error before the download (a database that cannot be opened, full storage, out of memory) gives back what
+            // it took and ends this sync with a text, instead of ending the app with the ring lock held (issue #334)
+            app.openring.core.SyncStart.Result begun = app.openring.core.SyncStart.run(op, new app.openring.core.SyncStart.Steps() {
+                @Override
+                public String run(app.openring.core.SyncStart.Held h) {
+                    while (true) {
+                        // a long analysis replaces the results (issue #230): wait for it without the ring, every write of the
+                        // download would wait for it with the ring held
+                        if (!waitForLongRun(tk)) {
+                            log("sync stopped while it waited for the analysis");
+                            return "Sync stopped";
+                        }
+                        // a game or live session that just ended may still be closing its link
+                        boolean locked;
+                        try {
+                            locked = op.tryLock(15, java.util.concurrent.TimeUnit.SECONDS);
+                        } catch (InterruptedException e) {
+                            locked = false;
+                        }
+                        if (!locked) {
+                            log("sync skipped: the ring is busy with another task");
+                            return "The ring is busy with another task";
+                        }
+                        Db db = Db.get(ctx);
+                        // demo mode turned on between the check above and this sync's count (issue #219): end before connecting,
+                        // so neither the download nor the screen log and analysis after it reach the demo file
+                        if (demoRefusal(db) != null) {
+                            op.unlock();
+                            log("sync not started: demo mode was turned on");
+                            return "Demo mode: syncing is off";
+                        }
+                        if (db.holdForRing()) {
+                            start[0] = db;
+                            h.ring = true;
+                            return null;
+                        }
+                        // a long analysis began meanwhile: give the ring back and wait for it
+                        op.unlock();
+                    }
                 }
-                // a game or live session that just ended may still be closing its link
-                boolean locked;
+            }, new Runnable() {
+                @Override
+                public void run() {
+                    Db db = start[0];
+                    if (db != null) db.releaseForRing();
+                }
+            });
+            if (begun.error != null) {
+                // the class and place only are stored and shown (issue #289), the whole stack trace goes to the log
+                res.message = begun.message;
+                // the outer finally shows it and lowers the count, so busy() drops back
+                own = SyncError.plain(res.message);
+                // stored first, so a failing log (out of memory) never skips it (issue #91)
                 try {
-                    locked = op.tryLock(15, java.util.concurrent.TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    locked = false;
+                    prefs.setLastSyncError(SyncError.stored(false, res.message));
+                } catch (Throwable e) {
+                    try {
+                        log("sync error not stored: " + app.openring.core.LoadNote.error(e));
+                    } catch (Throwable ignored) {
+                        // nothing more can be done
+                    }
                 }
-                if (!locked) {
-                    res.message = "The ring is busy with another task";
-                    log("sync skipped: the ring is busy with another task");
-                    return res;
+                try {
+                    log("sync could not start: " + android.util.Log.getStackTraceString(begun.error));
+                } catch (Throwable e) {
+                    android.util.Log.e("OpenRing", "sync could not start", begun.error);
                 }
-                held = Db.get(ctx);
-                // demo mode turned on between the check above and this sync's count (issue #219): end before connecting,
-                // so neither the download nor the screen log and analysis after it reach the demo file
-                if (demoRefusal(held) != null) {
-                    op.unlock();
-                    res.message = "Demo mode: syncing is off";
-                    log("sync not started: demo mode was turned on");
-                    return res;
-                }
-                if (held.holdForRing()) break;
-                // a long analysis began meanwhile: give the ring back and wait for it
-                op.unlock();
+                return res;
             }
+            if (begun.message != null) {
+                res.message = begun.message;
+                return res;
+            }
+            final Db held = start[0];
             boolean stopped = false;
             try {
                 downloader.take(ticket);
@@ -649,7 +691,9 @@ public final class RingManager {
         } catch (InterruptedException e) {
             res.message = "Interrupted";
         } catch (RuntimeException e) {
-            res.message = "Unexpected error: " + e;
+            // the class and place only: the stored text is in the data check, which is safe to share, and a message
+            // can carry a value (issue #289); the full stack trace goes to the Log tab below
+            res.message = "Unexpected error: " + app.openring.core.LoadNote.error(e);
             log(android.util.Log.getStackTraceString(e));
         }
     }

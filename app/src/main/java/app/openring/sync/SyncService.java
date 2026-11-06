@@ -104,6 +104,15 @@ public final class SyncService extends Service implements RingManager.Listener {
                     RingManager.SyncResult res = null;
                     try {
                         res = RingManager.get(SyncService.this).syncBlocking();
+                    } catch (Throwable e) {
+                        // the app goes on and the failure notice says it (issue #334); the class and place only, as syncBlocking stores it
+                        res = new RingManager.SyncResult();
+                        res.message = app.openring.core.SyncError.startFailed(e);
+                        try {
+                            RingManager.get(SyncService.this).log("sync failed: " + android.util.Log.getStackTraceString(e));
+                        } catch (Throwable ignored) {
+                            android.util.Log.e("OpenRing", "sync failed", e);
+                        }
                     } finally {
                         if (wl.isHeld()) wl.release();
                         running = false;

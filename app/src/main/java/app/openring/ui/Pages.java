@@ -871,6 +871,12 @@ public final class Pages {
             root.addView(note);
         }
         root.addView(signals(c, d));
+        if (d.day != null && d.day.optBoolean("prev_day_unworn")) {
+            // yesterday had less than an hour of ring data: its activity is left out, not counted as none (issue #240)
+            LinearLayout note = Ui.card(c);
+            note.addView(Ui.body(c, Explain.READINESS_UNWORN));
+            root.addView(note);
+        }
         root.addView(contributors(c, sc, Ui.READY, "Contributors", d.day));
 
         LinearLayout t = Ui.card(c);
