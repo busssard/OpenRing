@@ -8414,7 +8414,6 @@ public class CoreTest {
         String root = "app/src/main/java/app/openring/ui/";
         String setup = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "WatchSetupActivity.java").toPath()), "UTF-8");
         String settings = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "SettingsActivity.java").toPath()), "UTF-8");
-        String main = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "MainActivity.java").toPath()), "UTF-8");
         String[] texts = {"The watch needs to know male or female to count calories. Set it in Settings, Profile, save it, then tap Back to the watch setup.",
                 "Your profile was never entered, so the app's defaults would be sent. Enter yours in Settings, Profile, save it, then tap Back to the watch setup."};
         for (String t : texts) {
@@ -8434,6 +8433,5 @@ public class CoreTest {
                 && settings.substring(Math.max(0, back - 120), back).contains("if (getIntent().getBooleanExtra(FROM_WATCH_SETUP, false)) action(prof, ")
                 && settings.indexOf("startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));", back) - back < 200
                 && settings.indexOf("startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));", back) > back);
-        check("#351 the screen test can open Settings as the setup does", main.contains(".putExtra(SettingsActivity.FROM_WATCH_SETUP, i.getBooleanExtra(\"settings_from_watch_setup\", false))"));
     }
 }

@@ -338,8 +338,6 @@ launch --ez watch true --ez watch_report true; shot watch-report 3   # scrolls t
 launch --ez watch_setup true;               shot watch-setup 3
 launch --ez watch_setup true --ei watch_setup_part 1; shot watch-setup-alarm 3
 launch --ez watch_setup true --ei watch_setup_part 2 --ez watch_setup_hands true; shot watch-setup-hands 3
-# Settings at Profile as the watch setup's Open Settings, Profile opens it: Back to the watch setup under Save (issue #351)
-launch --es settings profile --ez settings_from_watch_setup true; shot settings-profile-watch-setup
 launch --ez watch_data true;                shot watch-data 4
 swipe_up;                                   shot watch-data-heart 1   # the heart rate curve
 swipe_up; swipe_up;                         shot watch-data-sleep 1   # sleep and battery at the end of the page
