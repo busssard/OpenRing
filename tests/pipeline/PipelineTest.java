@@ -3275,13 +3275,20 @@ public class PipelineTest {
     /**
      * Issue #72: on every demo day the Body tab's Lowest, Average and Highest are the stored line's own lowest point,
      * mean and highest point, with every stored point inside the day the chart draws, and the day's lowest stays near
-     * the night's lowest (5 minute averages). That holds for whole nights only: a night the demo cut short at its
+     * the night's lowest (5 minute averages); the line also holds the next night from bedtime to midnight, so an early
+     * bedtime before a calmer night (the story's best night, for example) may bring it down to that night's lowest, never
+     * lower. That holds for whole nights only: a night the demo cut short at its
      * {@code now} falls and rises within minutes, so a quarter hour sits above its 5 minute low (issue #123). Such days
      * are left out of the second check; {@code wantCut} is how many there must be.
      */
     static void dayHeartChecks(Db db, long now, String label, int wantCut) {
         int days = 0, matched = 0, nearNight = 0, withNight = 0, cut = 0;
-        String bad = "";
+        String bad = "", bad72 = "";
+        java.util.Map<String, Double> nightLow = new java.util.HashMap<String, Double>();
+        for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o != null) nightLow.put(r[0], Json.d(o, "rhr"));
+        }
         for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
             if (o == null || o.optJSONArray("hr_day") == null) continue;
@@ -3304,12 +3311,17 @@ public class PipelineTest {
                 continue;
             }
             withNight++;
-            if (Math.abs(low - night) <= 3) nearNight++;
+            // the day's line also holds the start of the next night (from bedtime to midnight): an early bedtime before a
+            // calmer night can dip below this day's own night, never below the lower of the two nights
+            Double next = nightLow.get(day.plusDays(1).toString());
+            double floor = next == null || Double.isNaN(next) ? night : Math.min(night, next);
+            if (low >= floor - 3 && low <= night + 3) nearNight++;
+            else bad72 += r[0] + " (lowest " + low + ", night " + night + ", next " + next + ") ";
         }
         check(label + ": Highest and Lowest are the drawn line's highest and lowest point, Average its mean (#72)",
                 days >= 28 && matched == days, matched + " of " + days + " " + bad);
-        check(label + ": the day's lowest within 3 bpm of the night's lowest (#72)", withNight >= 28 && nearNight == withNight && cut == wantCut,
-                nearNight + " of " + withNight + ", " + cut + " night cut short left out");
+        check(label + ": the day's lowest within 3 bpm of the night's lowest, or of the next night's when that starts lower before midnight (#72)",
+                withNight >= 28 && nearNight == withNight && cut == wantCut, nearNight + " of " + withNight + ", " + cut + " night cut short left out " + bad72);
     }
 
     /**
