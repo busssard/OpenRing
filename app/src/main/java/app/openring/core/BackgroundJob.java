@@ -27,6 +27,68 @@ public final class BackgroundJob {
         return since >= 0 && since <= RECENT_S;
     }
 
+    /** The job's log line when it leaves the ring out because it synced a short while ago (issue #194). */
+    public static final String SKIPPED_RECENT = "background sync skipped: the last sync was less than 30 minutes ago";
+
+    /** What one run of the job sees (issue #329, phase 1a): read by {@code sync/SyncJob}, decided by {@link #due}. */
+    public static final class Inputs {
+        /** The ring is in use by another task (a sync, Live, a game): the job ends at once and reads nothing else. */
+        public boolean ringBusy;
+        /** Background sync switched on in Settings. */
+        public boolean backgroundSync;
+        /** {@link KeyState} of the saved ring key. */
+        public int keyState = KeyState.NONE;
+        /** Demo mode is shown: the watch never syncs then. */
+        public boolean demo;
+        /** A watch is added (its address is saved). */
+        public boolean watchAdded;
+        /** The watch's syncs per day and its last good sync and last attempt (unix seconds, 0 none), as {@code WatchDue} reads them. */
+        public int watchPerDay;
+        public long watchLastOk, watchLastAttempt;
+        /** The ring's last sync and last attempt (unix seconds, 0 none). */
+        public long lastSync, lastAttempt;
+        /** Now, unix seconds, and the phone's zone (the watch's clock times). */
+        public long now;
+        public java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+    }
+
+    /** What the job does in one run. */
+    public static final class Due {
+        /** Sync the ring (first, as before). */
+        public final boolean ring;
+        /** Sync the watch after the ring. */
+        public final boolean watch;
+        /** The line to log ({@link #SKIPPED_RECENT}), null for none. */
+        public final String log;
+
+        Due(boolean ring, boolean watch, String log) {
+            this.ring = ring;
+            this.watch = watch;
+            this.log = log;
+        }
+
+        /** Anything to do; when not, the job ends at once. */
+        public boolean run() {
+            return ring || watch;
+        }
+    }
+
+    /**
+     * The job's decision, kept apart from Android so the JVM tests cover it (issue #329, phase 1a, as {@code SyncJob} decided
+     * it before). While the ring is busy nothing runs. The ring part runs when background sync is on, the key can be read
+     * and the last sync or attempt is not {@link #recent}; a recent one is logged ({@link #SKIPPED_RECENT}) when the ring
+     * part was on. The watch part runs outside demo mode when a watch is added and one of its clock times passed
+     * ({@code WatchDue}), also when the ring part is skipped.
+     */
+    public static Due due(Inputs in) {
+        if (in.ringBusy) return new Due(false, false, null);
+        boolean ringPart = in.backgroundSync && KeyState.syncs(in.keyState);
+        boolean watchPart = !in.demo && in.watchAdded
+                && app.openring.core.withings.WatchDue.due(in.now, in.watchPerDay, in.watchLastOk, in.watchLastAttempt, in.zone);
+        boolean ringRecent = recent(in.now, in.lastSync, in.lastAttempt);
+        return new Due(ringPart && !ringRecent, watchPart, ringPart && ringRecent ? SKIPPED_RECENT : null);
+    }
+
     /** The parts of a job this app sets; a pending job is compared with the wanted one by these. */
     public static final class Spec {
         public final String service;

@@ -561,7 +561,7 @@ public final class Backup {
         if (app.openring.core.withings.WatchDue.valid(o.optInt("watch_per_day", -1))) p.setWatchPerDay(o.optInt("watch_per_day"));
         // the main device (one set of numbers): an older backup has none and keeps the phone's
         int main = o.optInt("main_device", -1);
-        if (main == app.openring.core.withings.MainDevice.RING || main == app.openring.core.withings.MainDevice.WATCH) p.setMainDevice(main);
+        if (app.openring.core.MainDevice.known(main)) p.setMainDevice(main);
         // the watch's setup choices: an older backup has none and keeps the phone's; a restored alarm is sent at the next sync
         int goal = o.optInt("watch_goal", -1);
         if (goal >= 1000 && goal <= 50000) p.setWatchGoal(goal);

@@ -226,11 +226,11 @@ public final class Prefs {
         if (app.openring.core.withings.WatchDue.valid(n)) sp.edit().putInt("watch_per_day", n).apply();
     }
     /**
-     * The main device ({@code core/withings/MainDevice}): {@code RING} (the default) or {@code WATCH}. Only what is shown
+     * The main device ({@code core/MainDevice}): {@code RING} (the default) or {@code WATCH}. Only what is shown
      * follows it; nothing stored changes. In the backup.
      */
-    public int mainDevice() { return app.openring.core.withings.MainDevice.valid(sp.getInt("main_device", app.openring.core.withings.MainDevice.RING)); }
-    public void setMainDevice(int d) { sp.edit().putInt("main_device", app.openring.core.withings.MainDevice.valid(d)).apply(); }
+    public int mainDevice() { return app.openring.core.MainDevice.valid(sp.getInt("main_device", app.openring.core.MainDevice.RING)); }
+    public void setMainDevice(int d) { sp.edit().putInt("main_device", app.openring.core.MainDevice.valid(d)).apply(); }
     // ---- the watch's setup (issue #251, watch setup): what the watch is told, in the backup ----
     /** When the first setup was sent completely (unix seconds), 0 never. */
     public long watchSetupAt() { return sp.getLong("watch_setup_at", 0); }
@@ -387,6 +387,16 @@ public final class Prefs {
      */
     public int keyState() {
         return app.openring.core.KeyState.of(hasKey(), loadKey() != null);
+    }
+
+    /**
+     * {@code core/KeyState} without reading the key (issue #329): it never decrypts, so a stored key this phone cannot
+     * read also gives {@code READABLE} (never {@code UNREADABLE}). Only for {@code KeyState.needsSetup} and
+     * {@code KeyState.hasRing} (Settings, Find my ring, the main screen after a failed demo); never for
+     * {@code KeyState.opensSetup} or {@code KeyState.syncs}, which need {@link #keyState}.
+     */
+    public int ringState() {
+        return app.openring.core.KeyState.ofStored(hasKey());
     }
 
     /** Why the last stored key could not be read (exception and message, for the Bluetooth log), null when none failed. */
