@@ -238,9 +238,14 @@ public final class LogActivity extends Activity {
                     });
                     ok = true;
                 } catch (Throwable e) {
-                    // also out of memory: the analysis rolled back to the old nights and stored its error (issue #230)
-                    RingManager.get(ctx).log((fromSettings ? "re analyse all" : "repair") + " failed: " + android.util.Log.getStackTraceString(e));
+                    // also out of memory: the analysis rolled back to the old nights and stored its class and place for the
+                    // data check (issues #230, #289); the full text goes only to the Log tab, and logging never stops the job
                     ok = false;
+                    try {
+                        RingManager.get(ctx).log((fromSettings ? "re analyse all" : "repair") + " failed: " + android.util.Log.getStackTraceString(e));
+                    } catch (Throwable ignored) {
+                        // the stored note for the data check is written anyway
+                    }
                 }
                 // one lock with the start: a setting saved after this point starts a new run of its own
             } while (!REPAIR.finishUnlessAgain());

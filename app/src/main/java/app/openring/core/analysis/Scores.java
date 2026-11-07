@@ -157,6 +157,51 @@ public final class Scores {
         return finish(sc);
     }
 
+    /**
+     * A day counts as worn with at least this many minutes of ring data ({@code covered_min}, issue #44). The Activity
+     * score's weekly parts and readiness's activity parts leave the other days out (issue #240).
+     */
+    public static final int WORN_DAY_MIN = 60;
+
+    /**
+     * Version of the readiness rules stored with the results (kv {@code readiness_rules}); a database from before it
+     * reads as 1. 2: days without the ring are left out of the activity parts (issue #240). Raising it analyses every
+     * day again once.
+     */
+    public static final int READINESS_VERSION = 2;
+
+    /** True for a day with at least {@link #WORN_DAY_MIN} minutes of ring data; NaN (unknown) is not worn. */
+    public static boolean worn(double coveredMin) {
+        return coveredMin >= WORN_DAY_MIN;
+    }
+
+    /**
+     * Readiness's two activity inputs from the stored days before the day, oldest first (issue #240): their active and
+     * target kcal and minutes of ring data; {@code lastIsYesterday} when the newest of them is the day right before.
+     * Previous day activity needs yesterday worn ({@link #worn}); Activity balance compares the last 7 with the last 28
+     * of these days, with each unworn day as unknown and the same minimum counts as before (3 of the 7, 7 of the 28).
+     * With every day worn this gives exactly the numbers of the rule before. Returns true when the day before has no
+     * worn summary (missing or under an hour), so Previous day activity is left out for that reason.
+     */
+    public static boolean readinessActivity(ReadinessInput in, double[] activeKcal, double[] targetKcal, double[] coveredMin, boolean lastIsYesterday) {
+        int n = activeKcal.length;
+        boolean yesterdayWorn = lastIsYesterday && n > 0 && worn(coveredMin[n - 1]);
+        if (yesterdayWorn && targetKcal[n - 1] > 0) in.prevDayActivity = activeKcal[n - 1] / targetKcal[n - 1];
+        double[] act7 = wornValues(activeKcal, coveredMin, 7), act28 = wornValues(activeKcal, coveredMin, 28);
+        if (Stats.countFinite(act7) >= 3 && Stats.countFinite(act28) >= 7 && Stats.mean(act28) > 0) {
+            in.activityBalance = Stats.mean(act7) / Stats.mean(act28);
+        }
+        return !yesterdayWorn;
+    }
+
+    /** The last {@code n} values, NaN for a day that was not worn. */
+    private static double[] wornValues(double[] values, double[] coveredMin, int n) {
+        int from = Math.max(0, values.length - n);
+        double[] out = new double[values.length - from];
+        for (int i = from; i < values.length; i++) out[i - from] = worn(coveredMin[i]) ? values[i] : Double.NaN;
+        return out;
+    }
+
     // ---------------------------------------------------------------------------- activity
 
     public static final class ActivityInput {

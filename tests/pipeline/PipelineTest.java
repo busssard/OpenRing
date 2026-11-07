@@ -882,6 +882,11 @@ public class PipelineTest {
         interrupted254();
         upgradeBackup254();
         largeHistory254();
+        unwornDay240();
+        upgrade240();
+        interrupted240();
+        restore240();
+        largeHistory240();
         rightNow254();
         demoOnly254();
         damaged255();
@@ -4398,6 +4403,7 @@ public class PipelineTest {
         db.put("night_finder", app.openring.core.analysis.NightFinder.VERSION);
         db.put("phone_awake", app.openring.core.analysis.ScreenTime.AWAKE_RULE);
         db.put("day_heart", app.openring.core.analysis.DayHeart.VERSION);
+        db.put("readiness_rules", app.openring.core.analysis.Scores.READINESS_VERSION);
         t = System.nanoTime();
         Analyzer.run(c, null);
         long incMs = (System.nanoTime() - t) / 1000000;
@@ -5299,6 +5305,48 @@ public class PipelineTest {
         }
     }
 
+    /**
+     * Issue #289: a failed analysis stores the error's class and place, never its message (which can hold a stored value),
+     * and the data check never shows a full text an older version stored. Leaves no error behind.
+     */
+    static void analysisError289(Context c, Db db) {
+        final String value = "61.537";
+        java.util.TreeMap<String, String> days = days58(db);
+        Throwable got = null;
+        try {
+            Analyzer.run(c, new Analyzer.Log() {
+                @Override
+                public void log(String m) {
+                    throw new NumberFormatException("For input string: \"" + value + "\"");
+                }
+            });
+        } catch (NumberFormatException e) {
+            got = e;
+        }
+        String stored = db.kv("analysis_error", null);
+        check("#289 a failed analysis reaches the caller with its full message", got != null && got.getMessage().contains(value), got);
+        check("#289 the stored error is the class and its place in the analysis, without the value",
+                stored != null && stored.matches("NumberFormatException at Analyzer\\.java:[0-9]+") && app.openring.core.LoadNote.safe(stored), stored);
+        String text = DataCheck.run(c).text;
+        check("#289 the data check names the class and place, never the value", text.contains("Analysis error: " + stored) && !text.contains(value), text);
+        check("#289 the stored error still means the next sync analyses again", !Analyzer.upToDate(c) && days58(db).equals(days), null);
+
+        // a full text stored by an older version: kept as it is (nothing deleted), but never shown
+        String old = "org.json.JSONException: Value " + value + " at hr of type java.lang.Double cannot be converted to JSONObject";
+        db.put("analysis_error", old);
+        text = DataCheck.run(c).text;
+        check("#289 an older version's text: the data check says so and leaves the text out", text.contains("Analysis error: noted by an older version of the app "
+                + "(its text is left out, it can hold a measured value). The next sync analyses again") && !text.contains(value), text);
+        check("#289 an older version's text is not deleted and still means the next sync analyses again",
+                old.equals(db.kv("analysis_error", null)) && !Analyzer.upToDate(c), db.kv("analysis_error", null));
+        db.put("analysis_error", "java.lang.OutOfMemoryError");
+        check("#289 an older version's text without a message is left out too", DataCheck.run(c).text.contains("Analysis error: noted by an older version"), null);
+
+        Analyzer.run(c, null);
+        check("#289 the next good analysis clears the error, the data check has none", db.kv("analysis_error", null) == null
+                && !DataCheck.run(c).text.contains("Analysis error"), db.kv("analysis_error", null));
+    }
+
     static Analyzer.Log stopAt(final String text) {
         return new Analyzer.Log() {
             @Override
@@ -5384,6 +5432,7 @@ public class PipelineTest {
         // until the stop stayed)
         check("#58 stopped after removing the first stale day: every day as before the run (rolled back)", stopped && mid.equals(before), keys(mid));
         check("#58 the stop is recorded as an analysis error", db.kv("analysis_error", null) != null, db.kv("analysis_error", null));
+        analysisError289(c, db);
         Analyzer.run(c, null);
         check("#58 run again after the stop: the same days and nights as dated right at once",
                 days58(db).equals(refDays) && nights58(db).equals(refNights), diff(days58(db), refDays));
@@ -6120,8 +6169,9 @@ public class PipelineTest {
         check("#230 stopped in week 3: a screen reading meanwhile never sees fewer nights or days", r.looks > 20
                 && r.minNights >= nights0 && r.minDays >= days0, seen230(r, nights0, days0));
         check("#230 stopped in week 3: every old night and day is still there, byte for byte", results139(db).equals(before), firstDiff(results139(db), before));
-        check("#230 stopped in week 3: the error text is stored", String.valueOf(db.kv("analysis_error", null)).contains("stopped for the test"),
-                db.kv("analysis_error", null));
+        check("#230 stopped in week 3: the error's class and place are stored, not its message (#289)",
+                String.valueOf(db.kv("analysis_error", null)).startsWith("Stop")
+                        && !String.valueOf(db.kv("analysis_error", null)).contains("stopped for the test"), db.kv("analysis_error", null));
         check("#230 stopped in week 3: the analysis progress is the one of the stored results", db.kvLong("analyzed_until", -1) == until0,
                 db.kvLong("analyzed_until", -1) + ", before " + until0);
         r.reset();
@@ -6151,7 +6201,7 @@ public class PipelineTest {
         check("#230 out of memory: a screen never sees fewer nights or days", r2.looks > 20 && r2.minNights >= nights0 && r2.minDays >= days0,
                 seen230(r2, nights0, days0));
         check("#230 out of memory: every old night and day is still there", results139(db2).equals(before2), firstDiff(results139(db2), before2));
-        check("#230 out of memory: the error text is stored", String.valueOf(db2.kv("analysis_error", null)).contains("OutOfMemoryError"),
+        check("#230 out of memory: the error's class is stored", String.valueOf(db2.kv("analysis_error", null)).startsWith("OutOfMemoryError"),
                 db2.kv("analysis_error", null));
         check("#230 out of memory: the detail level is still marked as not analysed", db2.kvLong("stage_detail", -1) == detail + 1, db2.kvLong("stage_detail", -1));
         r2.reset();
@@ -9219,6 +9269,8 @@ public class PipelineTest {
             check("#242 the copy fails: the history opens, the reason is kept, the version noted", fo > 0 && fp.beforeUpdateNote() != null
                     && fp.beforeUpdateNote().startsWith("error: ") && fp.beforeUpdateUnseen() && fp.notedVersion() == 43, fp.beforeUpdateNote());
             check("#242 the copy fails: the data check gives the reason", DataCheck.run(fc).text.contains("Last update: no copy, error: "), null);
+            check("#289 the copy fails: the reason is the error's class and place, never its message",
+                    app.openring.core.LoadNote.safe(fp.beforeUpdateNote().substring("error: ".length())), fp.beforeUpdateNote());
             fp.clearBeforeUpdateUnseen();
             check("#242 OK on the main screen's note: it is not shown again, the reason stays for Data check", !fp.beforeUpdateUnseen() && fp.beforeUpdateNote() != null, null);
 
@@ -9791,9 +9843,11 @@ public class PipelineTest {
      * The nights and days of {@link #boots188} as the version before this one stored them (main 3b3b317 with #242, run
      * with TZ Europe/Zurich as this script runs): their number and the SHA-256 of {@link #results139}, one row per line.
      * With nothing left out this version must store exactly these (issue #254). A later change of the analysis rules
-     * changes this on purpose; then the new value goes here with that change.
+     * changes this on purpose; then the new value goes here with that change. Issue #240 changed the readiness of 5 days
+     * and nothing else: the 3 days after a day under an hour of wear lost Previous day activity (55) and are marked
+     * {@code prev_day_unworn}, and Activity balance of 3 days left those days out (before: 64220af7...).
      */
-    static final String MAIN_254 = "71 64220af7be5ac2b09881a00084ebddbcf57c982a3d32582fe22758c20862922a";
+    static final String MAIN_254 = "71 3195c3718a99164ef684299d95748478edeff09634578f99c214d5a1c3929d73";
 
     static String digest254(List<String> rows) throws Exception {
         java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
@@ -10193,6 +10247,327 @@ public class PipelineTest {
         Analyzer.bringBack(c, made254(db, a), null);
         check("#254 a year, brought back: byte for byte as before", results139(db).equals(before), firstDiff(results139(db), before));
         clean254();
+    }
+
+    // ------------------------------------------- issue #240, a day without the ring in readiness
+
+    static final long T240 = LocalDate.parse("2026-03-02").atStartOfDay(ZoneId.systemDefault()).toEpochSecond();
+    static final int DAYS240 = 60, OFF240 = 20;
+
+    /**
+     * {@code days} days of demo history from {@link #T240}; on the days in {@code off} (counted from the first) the ring
+     * was on the charger from 07:30 to midnight: their activity events are left out, the nights stay as they are.
+     */
+    static List<RingEvent> history240(int days, java.util.Set<Integer> off, long seed) {
+        ZoneId z = ZoneId.systemDefault();
+        List<RingEvent> ev = app.openring.data.Demo.history(T240, days, T240 + (days + 1) * 86400L, z, new Random(seed));
+        if (off.isEmpty()) return ev;
+        LocalDate d0 = LocalDate.parse("2026-03-02");
+        List<double[]> cut = new ArrayList<double[]>();
+        for (int o : off) cut.add(new double[] {d0.plusDays(o).atTime(7, 30).atZone(z).toEpochSecond(), d0.plusDays(o + 1).atStartOfDay(z).toEpochSecond()});
+        List<RingEvent> keep = new ArrayList<RingEvent>(ev.size());
+        for (RingEvent e : ev) {
+            double u = T240 + (e.ds - app.openring.data.Demo.DS0) / 10.0;
+            boolean drop = false;
+            if (e.tag == EventCodec.ACTIVITY_INFO) for (double[] c : cut) if (u >= c[0] && u < c[1]) drop = true;
+            if (!drop) keep.add(e);
+        }
+        return keep;
+    }
+
+    /** A phone of its own with {@code ev} synced and analysed; left open. */
+    static Context phone240(String name, List<RingEvent> ev) throws Exception {
+        Context c = freshDb(name);
+        Db db = Db.get(c);
+        long now = T240 + (DAYS240 + 1) * 86400L;
+        for (int i = 0; i < ev.size(); i += 4096) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4096)), 1, now);
+        long lastDs = ev.get(ev.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, T240 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        Analyzer.run(c, null);
+        return c;
+    }
+
+    static String day240(int i) {
+        return LocalDate.parse("2026-03-02").plusDays(i).toString();
+    }
+
+    static JSONObject readiness240(Db db, int i) {
+        JSONObject o = Json.parse(db.dayJson(day240(i)));
+        return o == null ? null : o.optJSONObject("readiness");
+    }
+
+    static JSONObject part240(JSONObject score, String key) {
+        org.json.JSONArray cs = score == null ? null : score.optJSONArray("contributors");
+        for (int i = 0; cs != null && i < cs.length(); i++) if (key.equals(cs.optJSONObject(i).optString("key"))) return cs.optJSONObject(i);
+        return null;
+    }
+
+    /** Nights only, or days only, of {@link #results139}. */
+    static List<String> rows240(List<String> rows, String kind) {
+        List<String> out = new ArrayList<String>();
+        for (String r : rows) if (r.startsWith(kind + " ")) out.add(r);
+        return out;
+    }
+
+    /** The results of the reference history (worn every day) and of the same history with day OFF240 on the charger. */
+    static List<String> ref240, off240;
+    static List<String> offEvents240;
+
+    /**
+     * Issue #240: one day on the charger in 60 days of demo history. That day has no activity score (as since #44); the
+     * day after has no Previous day activity (no 55 for "no activity"), says why, and counts one worn day less; Activity
+     * balance leaves the day out; every night and every day before it stays byte for byte as with the ring worn.
+     */
+    static void unwornDay240() throws Exception {
+        Context rc = phone240("openring240-ref", history240(DAYS240, new java.util.HashSet<Integer>(), 2400));
+        Db rdb = Db.get(rc);
+        ref240 = results139(rdb);
+        JSONObject[] refR = new JSONObject[DAYS240];
+        int[] refDays = new int[DAYS240];
+        int refUnworn = 0, refMarked = 0;
+        for (int i = 0; i < DAYS240; i++) {
+            refR[i] = readiness240(rdb, i);
+            JSONObject o = Json.parse(rdb.dayJson(day240(i)));
+            refDays[i] = o == null ? -1 : o.optInt("activity_days", -1);
+            if (o != null && o.optDouble("covered_min", 0) < 60) refUnworn += i == 0 ? 1 : 100;
+            if (o != null && o.has("prev_day_unworn")) refMarked += i == 1 ? 1 : 100;
+        }
+        // the demo's first day holds only the end of its first night (no activity yet), so its second day is marked
+        check("#240 reference: the demo history is worn every day after the first, only the second day marked", refUnworn == 1 && refMarked == 1, refUnworn + " unworn, " + refMarked + " marked");
+        Context oc = phone240("openring240-off", history240(DAYS240, new java.util.HashSet<Integer>(Arrays.asList(OFF240)), 2400));
+        Db db = Db.get(oc);
+        off240 = results139(db);
+        offEvents240 = events58(db);
+        JSONObject off = Json.parse(db.dayJson(day240(OFF240))), next = Json.parse(db.dayJson(day240(OFF240 + 1)));
+        check("#240 the charger day keeps a summary, under an hour of wear, no activity score (#44)", off != null && off.optDouble("covered_min", -1) < 60
+                && !off.has("activity_score") && off.optDouble("active_kcal", -1) < 50, off == null ? null : off.opt("covered_min") + " min, " + off.opt("active_kcal") + " kcal");
+        check("#240 the same nights as with the ring worn, byte for byte", rows240(off240, "night").equals(rows240(ref240, "night")),
+                firstDiff(rows240(off240, "night"), rows240(ref240, "night")));
+        List<String> dRef = rows240(ref240, "day"), dOff = rows240(off240, "day");
+        boolean before = dRef.size() == dOff.size();
+        for (int i = 0; before && i < dRef.size(); i++) if (dRef.get(i).compareTo("day " + day240(OFF240)) < 0) before &= dRef.get(i).equals(dOff.get(i));
+        check("#240 every day before the charger day the same, byte for byte", before, firstDiff(dOff, dRef));
+        check("#240 the charger day's own readiness the same", String.valueOf(refR[OFF240]).equals(String.valueOf(readiness240(db, OFF240))), null);
+        JSONObject r = next == null ? null : next.optJSONObject("readiness");
+        System.out.println("  #240 the day after the charger day: readiness " + (r == null ? "-" : r.opt("value")) + " (worn: " + refR[OFF240 + 1].opt("value")
+                + "), previous day activity before: " + part240(refR[OFF240 + 1], "prev_activity"));
+        check("#240 the day after: no Previous day activity", r != null && part240(r, "prev_activity") == null && part240(refR[OFF240 + 1], "prev_activity") != null, r);
+        check("#240 the day after: marked for the Readiness page", next != null && next.optBoolean("prev_day_unworn"), null);
+        check("#240 the day after: one worn day less for the activity score (#44)", next != null && next.optInt("activity_days") == refDays[OFF240 + 1] - 1,
+                next == null ? null : next.opt("activity_days") + " / " + refDays[OFF240 + 1]);
+        boolean others = true;
+        for (String k : new String[] {"rhr", "hrv", "temperature", "recovery", "sleep", "sleep_balance"}) {
+            others &= String.valueOf(part240(r, k)).equals(String.valueOf(part240(refR[OFF240 + 1], k)));
+        }
+        check("#240 the day after: the other contributors the same", others, r);
+        int marked = 0;
+        for (int i = 0; i < DAYS240; i++) if (Json.parse(db.dayJson(day240(i))) != null && Json.parse(db.dayJson(day240(i))).has("prev_day_unworn")) marked++;
+        check("#240 only the day after the charger day is marked (and the second day, as in the reference)", marked == 2
+                && Json.parse(db.dayJson(day240(1))).optBoolean("prev_day_unworn"), marked);
+        // Activity balance from the stored days, worked out here: the last 7 and 28 days, the charger day left out
+        int balanceChecked = 0, balanceWrong = 0, sameAfter = 0, after = 0;
+        for (int i = 1; i < DAYS240; i++) {
+            JSONObject ri = readiness240(db, i);
+            if (ri == null) continue;
+            double s7 = 0, s28 = 0;
+            int n7 = 0, n28 = 0, seen = 0;
+            for (int k = i - 1; k >= 0 && seen < 28; k--) {
+                JSONObject o = Json.parse(db.dayJson(day240(k)));
+                if (o == null) continue;
+                seen++;
+                if (o.optDouble("covered_min", 0) < 60) continue;
+                double a = o.optDouble("active_kcal");
+                if (seen <= 7) {
+                    s7 += a;
+                    n7++;
+                }
+                s28 += a;
+                n28++;
+            }
+            JSONObject bal = part240(ri, "activity_balance");
+            if (n7 >= 3 && n28 >= 7 && s28 > 0) {
+                double want = app.openring.core.analysis.Stats.curve((s7 / n7) / (s28 / n28),
+                        new double[][] {{0.3, 55}, {0.6, 80}, {0.85, 100}, {1.25, 100}, {1.6, 75}, {2.2, 45}});
+                if (i > OFF240 && i <= OFF240 + 28) balanceChecked++;
+                if (bal == null || bal.optLong("score") != Math.round(want)) balanceWrong++;
+            } else if (bal != null) balanceWrong++;
+            if (i > OFF240 + 28) {
+                after++;
+                if (ri.toString().equals(String.valueOf(refR[i]))) sameAfter++;
+            }
+        }
+        check("#240 Activity balance of every day from its 7 and 28 days before, the charger day left out", balanceWrong == 0 && balanceChecked >= 27,
+                balanceWrong + " wrong, " + balanceChecked + " after the charger day");
+        System.out.println("  #240 days more than 28 days after the charger day with the same readiness as worn: " + sameAfter + " of " + after);
+        check("#240 days more than 28 days after the charger day: the same readiness as worn", after > 0 && sameAfter == after, sameAfter + " of " + after);
+        db.close();
+    }
+
+    /** Write the results of the reference (ring worn every day) into the days on and after the charger day, as stale results. */
+    static void stale240(Db db) {
+        for (String r : rows240(ref240, "day")) {
+            String day = r.substring(4, 14);
+            if (day.compareTo(day240(OFF240)) >= 0) db.putDay(day, r.substring(15));
+        }
+    }
+
+    /**
+     * Issue #240, data safety: a database of the version before (no readiness rules stored, stale readiness after the
+     * charger day) keeps every event and night and gets, in the first analysis, the days a fresh analysis gives, byte for
+     * byte; with the rules already stored, a normal sync leaves those days alone (the version is what analyses them again).
+     */
+    static void upgrade240() throws Exception {
+        Context c = phone240("openring240-upgrade", history240(DAYS240, new java.util.HashSet<Integer>(Arrays.asList(OFF240)), 2400));
+        Db db = Db.get(c);
+        check("#240 upgrade: set up as the history before", results139(db).equals(off240) && db.kvLong("readiness_rules", 0) == 2, null);
+        stale240(db);
+        List<String> stale = results139(db);
+        Analyzer.run(c, null);
+        check("#240 the rules stored: a normal analysis leaves the older days alone", results139(db).equals(stale), firstDiff(results139(db), stale));
+        db.put("readiness_rules", null);
+        db.put("analysis_inputs", null);
+        check("#240 upgrade: not up to date without the rules", !Analyzer.upToDate(c), null);
+        StringBuilder log = new StringBuilder();
+        Analyzer.run(c, collect(log));
+        check("#240 upgrade: every event the same", events58(db).equals(offEvents240), firstDiff(events58(db), offEvents240));
+        check("#240 upgrade: every night and day as a fresh analysis, byte for byte", results139(db).equals(off240), firstDiff(results139(db), off240));
+        check("#240 upgrade: the rules stored, the next sync up to date", db.kvLong("readiness_rules", 0) == 2 && Analyzer.upToDate(c), db.kvLong("readiness_rules", 0));
+        // an older database with the inputs (#194) kept: the version in the inputs still makes the first sync analyse
+        stale240(db);
+        String inputs = db.kv("analysis_inputs", null);
+        db.put("analysis_inputs", inputs.replace(" " + app.openring.core.analysis.DayHeart.VERSION + " 2 ", " " + app.openring.core.analysis.DayHeart.VERSION + " "));
+        db.put("readiness_rules", null);
+        check("#240 upgrade with the inputs of the version before: not up to date", !Analyzer.upToDate(c) && !inputs.equals(db.kv("analysis_inputs", null)), inputs);
+        Analyzer.run(c, null);
+        check("#240 upgrade with the inputs of the version before: the same days, byte for byte", results139(db).equals(off240), firstDiff(results139(db), off240));
+        // safe twice: the next run changes nothing
+        Analyzer.run(c, null);
+        check("#240 upgrade run again: nothing changes", results139(db).equals(off240) && events58(db).equals(offEvents240), null);
+        db.close();
+    }
+
+    /** A log that stops the analysis at its {@code n}th line containing {@code text}. */
+    static Analyzer.Log stopAtNth(final String text, final int n) {
+        return new Analyzer.Log() {
+            int seen;
+
+            @Override
+            public void log(String m) {
+                if (m.contains(text) && ++seen == n) throw new Stop();
+            }
+        };
+    }
+
+    /** Issue #240, data safety: the analysis after the update stopped part way keeps the old results and the old version; the next one finishes. */
+    static void interrupted240() throws Exception {
+        Context c = phone240("openring240-stop", history240(DAYS240, new java.util.HashSet<Integer>(Arrays.asList(OFF240)), 2400));
+        Db db = Db.get(c);
+        stale240(db);
+        db.put("readiness_rules", null);
+        List<String> stale = results139(db), ev = events58(db);
+        boolean stopped = false;
+        try {
+            Analyzer.run(c, stopAtNth("sleep periods", 5));
+        } catch (Stop e) {
+            stopped = true;
+        }
+        check("#240 analysis after the update stopped: every night and day as before, byte for byte", stopped && results139(db).equals(stale),
+                firstDiff(results139(db), stale));
+        check("#240 stopped: the rules not stored, the error stored, every event kept", db.kv("readiness_rules", null) == null
+                && db.kv("analysis_error", null) != null && events58(db).equals(ev), db.kv("readiness_rules", null));
+        Analyzer.run(c, null);
+        check("#240 the next analysis after the stop: as a fresh analysis, byte for byte", results139(db).equals(off240) && db.kvLong("readiness_rules", 0) == 2
+                && db.kv("analysis_error", null) == null, firstDiff(results139(db), off240));
+        db.close();
+    }
+
+    /** Issue #240, data safety: a backup of this version restores with nothing to analyse again; one of the version before is analysed again once. */
+    static void restore240() throws Exception {
+        Context c = phone240("openring240-backup", history240(DAYS240, new java.util.HashSet<Integer>(Arrays.asList(OFF240)), 2400));
+        Db db = Db.get(c);
+        app.openring.data.Prefs.of(c).saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, bo, true);
+        byte[] mine = bo.toByteArray();
+        stale240(db);
+        db.put("readiness_rules", null);
+        db.put("analysis_inputs", null);
+        List<String> stale = results139(db);
+        bo = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, bo, true);
+        byte[] older = bo.toByteArray();
+        for (int v = 0; v < 2; v++) {
+            String which = v == 0 ? "this version" : "the version before";
+            Context b = freshDb("openring240-restored");
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(v == 0 ? mine : older));
+            Db rd = Db.get(b);
+            check("#240 a backup of " + which + " restores every event, night and day as it was", r.ok && r.history && events58(rd).equals(offEvents240)
+                    && results139(rd).equals(v == 0 ? off240 : stale), r.message);
+            if (v == 0) check("#240 a backup of this version: nothing to analyse again", Analyzer.upToDate(b), null);
+            Analyzer.run(b, null);
+            check("#240 a backup of " + which + " after the next analysis: as a fresh analysis, byte for byte", results139(rd).equals(off240)
+                    && rd.kvLong("readiness_rules", 0) == 2, firstDiff(results139(rd), off240));
+            rd.close();
+        }
+    }
+
+    /**
+     * Issue #240: a year of demo history with a day on the charger every 9 days and no readiness rules stored (as the
+     * version before left it): the first analysis after the update analyses the whole year again (timed) and gives what Re
+     * analyse all gives, byte for byte; every event and night stays; every day after a day under an hour of wear is marked
+     * and has no Previous day activity, every other day has it.
+     */
+    static void largeHistory240() throws Exception {
+        java.util.Set<Integer> off = new java.util.HashSet<Integer>();
+        for (int d = 5; d < 365; d += 9) off.add(d);
+        ZoneId z = ZoneId.systemDefault();
+        Context c = freshDb("openring240-year");
+        Db db = Db.get(c);
+        // a year that ended before today (the dating ignores events in the future)
+        LocalDate d0 = LocalDate.parse("2025-10-01");
+        long t0 = d0.atStartOfDay(z).toEpochSecond();
+        List<RingEvent> ev = app.openring.data.Demo.history(t0, 365, t0 + 366 * 86400L, z, new Random(2401));
+        List<RingEvent> keep = new ArrayList<RingEvent>(ev.size());
+        for (RingEvent e : ev) {
+            double u = t0 + (e.ds - app.openring.data.Demo.DS0) / 10.0;
+            LocalDate d = java.time.Instant.ofEpochSecond((long) u).atZone(z).toLocalDate();
+            int i = (int) (d.toEpochDay() - d0.toEpochDay());
+            boolean drop = e.tag == EventCodec.ACTIVITY_INFO && off.contains(i) && u >= d.atTime(7, 30).atZone(z).toEpochSecond();
+            if (!drop) keep.add(e);
+        }
+        ev = null;
+        for (int i = 0; i < keep.size(); i += 4096) db.insertBatch(keep.subList(i, Math.min(keep.size(), i + 4096)), 1, t0 + 366 * 86400L);
+        long lastDs = keep.get(keep.size() - 1).ds;
+        db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - app.openring.data.Demo.DS0) / 10);
+        keep = null;
+        Analyzer.run(c, null);
+        List<String> ev0 = events58(db), nights0 = rows240(results139(db), "night");
+        db.put("readiness_rules", null);
+        long t = System.nanoTime();
+        Analyzer.run(c, null);
+        long ms = (System.nanoTime() - t) / 1000000;
+        List<String> up = results139(db);
+        t = System.nanoTime();
+        Analyzer.runAll(c, null);
+        long allMs = (System.nanoTime() - t) / 1000000;
+        System.out.println("  #240 a year (" + db.eventCount() + " events), " + off.size() + " charger days: the analysis after the update " + ms
+                + " ms, Re analyse all " + allMs + " ms");
+        check("#240 a year: after the update what Re analyse all gives, byte for byte", up.equals(results139(db)), firstDiff(up, results139(db)));
+        check("#240 a year: every event and night the same", events58(db).equals(ev0) && rows240(up, "night").equals(nights0) && nights0.size() >= 350,
+                nights0.size() + " nights");
+        int marked = 0, wrong = 0;
+        for (int i = 1; i < 365; i++) {
+            JSONObject o = Json.parse(db.dayJson(d0.plusDays(i).toString()));
+            if (o == null || o.optJSONObject("readiness") == null) continue;
+            // a charger day with an early morning keeps an hour of wear before 07:30 and counts as worn
+            JSONObject y = Json.parse(db.dayJson(d0.plusDays(i - 1).toString()));
+            boolean after = y == null || y.optDouble("covered_min", 0) < 60;
+            if (o.optBoolean("prev_day_unworn")) marked++;
+            if (after != o.optBoolean("prev_day_unworn") || after == (part240(o.optJSONObject("readiness"), "prev_activity") != null)) wrong++;
+        }
+        check("#240 a year: exactly the days after a day under an hour of wear lack Previous day activity and are marked", wrong == 0
+                && marked >= off.size() - 10, wrong + " wrong, " + marked + " marked, " + off.size() + " charger days");
+        db.close();
     }
 
     /** Issue #254: Today's "Right now" skips readings in a left out time; the newest one outside it counts. */

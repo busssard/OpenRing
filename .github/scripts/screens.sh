@@ -383,6 +383,13 @@ LEFT_DAY=$(date -d '2 days ago' +%F)
 launch --ez left_out true --ei tab 4 --es day "$LEFT_DAY"; shot body-left-out 10
 launch --ei tab 0 --es day "$LEFT_DAY";     shot today-left-out
 launch --es settings advanced;              shot settings-advanced
+# A day off the finger (issue #240), after the left out example for the same reason: unworn leaves out the day before
+# yesterday 00:00 to 21:30 in the demo file (under an hour of ring data is left; the night that ends yesterday morning
+# starts later and stays whole), then the analysis runs again. Readiness of yesterday, pinned so the shot does not depend
+# on the time CI runs, leaves Previous day activity out and says why in a card above Contributors
+launch --ez unworn true --ei tab 2 --es day "$(date -d '1 day ago' +%F)"; sleep 12
+scroll_to "Previous day activity is left out" 8 || echo "::warning::issue #240 step: the unworn card was not found on Ready, readiness-unworn shows where the swipes ended"
+shot readiness-unworn 1
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then

@@ -649,7 +649,9 @@ public final class RingManager {
         } catch (InterruptedException e) {
             res.message = "Interrupted";
         } catch (RuntimeException e) {
-            res.message = "Unexpected error: " + e;
+            // the class and place only: the stored text is in the data check, which is safe to share, and a message
+            // can carry a value (issue #289); the full stack trace goes to the Log tab below
+            res.message = "Unexpected error: " + app.openring.core.LoadNote.error(e);
             log(android.util.Log.getStackTraceString(e));
         }
     }
