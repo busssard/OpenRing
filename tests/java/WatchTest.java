@@ -40,6 +40,7 @@ public class WatchTest {
         setupMessages();
         setupSession();
         days();
+        dayIndex();
         due();
         demo();
         gate();
@@ -1202,6 +1203,143 @@ public class WatchTest {
         check("days: too few readings for a drop", Double.isNaN(WatchDays.dropPerDay(bat.subList(0, 1), 0))
                 && Double.isNaN(WatchDays.dropPerDay(Arrays.asList(bat.get(0), new Records.Battery(bat.get(0).t + 3600, 89, 2, 0)), 0)));
         check("days: the newest battery reading", WatchDays.newestBattery(bat).pct == 98 && WatchDays.newestBattery(new ArrayList<Records.Battery>()) == null);
+    }
+
+    // -------------------------------------------------------------------------------- day index
+
+    /** One night's sleep, written out so two can be compared field by field. */
+    static String nightText(WatchDays.Night n) {
+        return n == null ? "none" : n.start + "-" + n.end + " " + Arrays.toString(n.stages) + " " + n.deepMin + "/" + n.lightMin + "/" + n.remMin + "/" + n.otherMin;
+    }
+
+    static String heartText(List<long[]> l) {
+        StringBuilder b = new StringBuilder();
+        for (long[] x : l) b.append(x[0]).append(':').append(x[1]).append(' ');
+        return b.toString();
+    }
+
+    static String workoutText(List<Records.Workout> l) {
+        StringBuilder b = new StringBuilder();
+        for (Records.Workout w : l) b.append(System.identityHashCode(w)).append(' ');
+        return b.toString();
+    }
+
+    /**
+     * Synthetic watch rows (no real data): {@code days} days with a heart rate every 10 minutes, a steps and a moves row
+     * every 15 minutes, a night of sleep pieces, two workouts and a few battery readings a day, in the order a merge of
+     * syncs could leave them (some rows out of order, some times twice), and a trip: Zurich, then New York, then Tokyo.
+     */
+    static Object[] watchHistory(int days, long seed) {
+        Random r = new Random(seed);
+        long t0 = ZonedDateTime.of(2025, 3, 20, 0, 0, 0, 0, ZoneId.of("Europe/Zurich")).toEpochSecond();
+        List<Records.Steps> st = new ArrayList<Records.Steps>();
+        List<Records.Moves> mv = new ArrayList<Records.Moves>();
+        List<Records.Heart> hr = new ArrayList<Records.Heart>();
+        List<Records.Workout> wo = new ArrayList<Records.Workout>();
+        List<Records.Sleep> sl = new ArrayList<Records.Sleep>();
+        List<Records.Battery> bt = new ArrayList<Records.Battery>();
+        for (int d = 0; d < days; d++) {
+            long day = t0 + d * 86400L;
+            for (long t = day; t < day + 86400; t += 600) hr.add(new Records.Heart(t + r.nextInt(60), 45 + r.nextInt(90)));
+            if (d % 7 == 3) Collections.swap(hr, hr.size() - 1, hr.size() - 30);
+            hr.add(new Records.Heart(day + 12 * 3600, 70 + r.nextInt(5)));
+            for (long t = day; t < day + 86400; t += 900) {
+                st.add(new Records.Steps(t, 900, r.nextInt(300), r.nextInt(250), r.nextInt(20)));
+                mv.add(new Records.Moves(t, r.nextInt(40), r.nextInt(4), r.nextInt(3)));
+            }
+            wo.add(new Records.Workout(day + 18 * 3600 + r.nextInt(3600), 1800 + r.nextInt(3000), 2, r.nextInt(6000), r.nextInt(5000), r.nextInt(400)));
+            wo.add(new Records.Workout(day + 7 * 3600 + r.nextInt(3600), 600, 6, 0, 0, 50));
+            long bed = day + 22 * 3600 + r.nextInt(5400);
+            int[] codes = {Records.LIGHT, Records.DEEP, Records.REM, 1};
+            for (long t = bed; t < bed + 7 * 3600; t += 1200) sl.add(new Records.Sleep(t, 1200, codes[r.nextInt(4)]));
+            for (int k = 0; k < 4; k++) bt.add(new Records.Battery(day + k * 6 * 3600 + r.nextInt(600), 100 - (d * 3 + k) % 90, 2, 0));
+        }
+        Collections.reverse(bt);
+        Collections.swap(wo, 0, wo.size() - 1);
+        double mid = t0 + days / 2 * 86400.0, late = t0 + (days - 10) * 86400.0;
+        List<Object[]> zoneRows = Arrays.asList(new Object[] {(double) t0, mid, "Europe/Zurich"}, new Object[] {mid + 3600, late, "America/New_York"},
+                new Object[] {late + 3600, late + 86400.0 * 30, "Asia/Tokyo"});
+        return new Object[] {st, mv, hr, wo, sl, bt, WatchDays.zones(zoneRows, ZoneId.of("Europe/Zurich")), LocalDate.of(2025, 3, 19)};
+    }
+
+    /**
+     * The Watch page's per day answers worked out once ({@code WatchDays.Index}) are exactly the ones the functions gave on
+     * each tap before: every day of a synthetic history with a trip, every card's numbers, the same rows in the same order.
+     */
+    @SuppressWarnings("unchecked")
+    static void dayIndex() {
+        int days = 120;
+        Object[] h = watchHistory(days, 7);
+        List<Records.Steps> st = (List<Records.Steps>) h[0];
+        List<Records.Moves> mv = (List<Records.Moves>) h[1];
+        List<Records.Heart> hr = (List<Records.Heart>) h[2];
+        List<Records.Workout> wo = (List<Records.Workout>) h[3];
+        List<Records.Sleep> sl = (List<Records.Sleep>) h[4];
+        List<Records.Battery> bt = (List<Records.Battery>) h[5];
+        WatchDays.Zones z = (WatchDays.Zones) h[6];
+        LocalDate first = (LocalDate) h[7];
+        WatchDays.Index ix = new WatchDays.Index(st, mv, hr, wo, sl, bt, z);
+        check("index: steps, distance, calories, climb and battery per day are the functions' maps", ix.steps.equals(WatchDays.stepsPerDay(st, z))
+                && ix.metres.equals(WatchDays.metresPerDay(st, z)) && ix.kcal.equals(WatchDays.kcalPerDay(st, z))
+                && ix.climb.equals(WatchDays.climbPerDay(mv, z)) && ix.battery.equals(WatchDays.batteryPerDay(bt, z)));
+        check("index: the newest battery reading is the same row", ix.newestBattery == WatchDays.newestBattery(bt));
+        int same = 0, withHeart = 0, withNight = 0, withWorkout = 0;
+        for (int i = 0; i < days + 4; i++) {
+            LocalDate d = first.plusDays(i);
+            long upTo = WatchDays.dayStart(d.plusDays(1), z);
+            boolean ok = heartText(ix.heartOn(d)).equals(heartText(WatchDays.heartOn(hr, d, z)))
+                    && workoutText(ix.workoutsOn(d)).equals(workoutText(WatchDays.workoutsOn(wo, d, z)))
+                    && nightText(ix.nightFor(d)).equals(nightText(WatchDays.nightFor(sl, d, z)))
+                    && Double.compare(ix.dropPerDay(upTo - 7 * 86400L), WatchDays.dropPerDay(bt, upTo - 7 * 86400L)) == 0;
+            if (ok) same++;
+            else System.out.println("  index differs on " + d);
+            if (!ix.heartOn(d).isEmpty()) withHeart++;
+            if (ix.nightFor(d) != null) withNight++;
+            if (!ix.workoutsOn(d).isEmpty()) withWorkout++;
+        }
+        check("index: heart rates, workouts, the night and the battery drop of every day are the same, in the same order", same == days + 4, same);
+        check("index: the history really has heart rates, nights and workouts on most days (a test with data)", withHeart >= days && withNight >= days - 2 && withWorkout >= days, withHeart + " " + withNight + " " + withWorkout);
+        // the lists handed out are copies: the page cannot change the index by accident
+        LocalDate busy = first.plusDays(10);
+        ix.heartOn(busy).clear();
+        ix.workoutsOn(busy).clear();
+        check("index: a day's lists are copies", !ix.heartOn(busy).isEmpty() && !ix.workoutsOn(busy).isEmpty());
+        WatchDays.Index none = new WatchDays.Index(new ArrayList<Records.Steps>(), new ArrayList<Records.Moves>(), new ArrayList<Records.Heart>(),
+                new ArrayList<Records.Workout>(), new ArrayList<Records.Sleep>(), new ArrayList<Records.Battery>(), z);
+        check("index: no rows, empty answers as the functions give", none.steps.isEmpty() && none.newestBattery == null && none.heartOn(busy).isEmpty()
+                && none.workoutsOn(busy).isEmpty() && none.nightFor(busy) == null && Double.isNaN(none.dropPerDay(0)));
+
+        // the cost of a tap on another day: before, the functions over the whole history; now, a look up (one year of rows)
+        Object[] y = watchHistory(365, 11);
+        List<Records.Steps> yst = (List<Records.Steps>) y[0];
+        List<Records.Moves> ymv = (List<Records.Moves>) y[1];
+        List<Records.Heart> yhr = (List<Records.Heart>) y[2];
+        List<Records.Workout> ywo = (List<Records.Workout>) y[3];
+        List<Records.Sleep> ysl = (List<Records.Sleep>) y[4];
+        List<Records.Battery> ybt = (List<Records.Battery>) y[5];
+        WatchDays.Zones yz = (WatchDays.Zones) y[6];
+        LocalDate yd = ((LocalDate) y[7]).plusDays(200);
+        int taps = 5;
+        long a = System.nanoTime();
+        int sink = 0;
+        for (int k = 0; k < taps; k++) {
+            LocalDate d = yd.plusDays(k);
+            sink += WatchDays.stepsPerDay(yst, yz).size() + WatchDays.metresPerDay(yst, yz).size() + WatchDays.kcalPerDay(yst, yz).size() + WatchDays.climbPerDay(ymv, yz).size()
+                    + WatchDays.workoutsOn(ywo, d, yz).size() + WatchDays.heartOn(yhr, d, yz).size() + (WatchDays.nightFor(ysl, d, yz) == null ? 0 : 1)
+                    + WatchDays.batteryPerDay(ybt, yz).size() + (WatchDays.newestBattery(ybt) == null ? 0 : 1) + (int) WatchDays.dropPerDay(ybt, 0);
+        }
+        long b = System.nanoTime();
+        WatchDays.Index yix = new WatchDays.Index(yst, ymv, yhr, ywo, ysl, ybt, yz);
+        long c = System.nanoTime();
+        for (int k = 0; k < taps; k++) {
+            LocalDate d = yd.plusDays(k);
+            sink += yix.steps.size() + yix.metres.size() + yix.kcal.size() + yix.climb.size() + yix.workoutsOn(d).size() + yix.heartOn(d).size()
+                    + (yix.nightFor(d) == null ? 0 : 1) + yix.battery.size() + (yix.newestBattery == null ? 0 : 1) + (int) yix.dropPerDay(0);
+        }
+        long e = System.nanoTime();
+        System.out.println(String.format(Locale.US, "    index: one year (%d heart, %d steps rows): a tap took %.1f ms before, %.2f ms now; built once in %.1f ms on the loading thread (%d)",
+                yhr.size(), yst.size(), (b - a) / 1e6 / taps, (e - c) / 1e6 / taps, (c - b) / 1e6, sink % 10));
+        check("index: a tap on another day no longer goes through the whole history (at least 5 times faster on one year)", (e - c) * 5 < (b - a));
     }
 
     // -------------------------------------------------------------------------------------- due

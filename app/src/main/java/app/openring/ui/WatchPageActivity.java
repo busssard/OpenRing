@@ -36,6 +36,8 @@ public final class WatchPageActivity extends Activity {
     private TextView dayLabel;
     private WatchStore.Data data;
     private WatchDays.Zones zones;
+    /** The per day answers, worked out once on the loading thread (the taps on another day only look them up). */
+    private WatchDays.Index index;
     private LocalDate day;
     private ScrollView scroll;
 
@@ -106,20 +108,22 @@ public final class WatchPageActivity extends Activity {
             @Override
             public void run() {
                 WatchStore.Data d = null;
-                List<Object[]> z = null;
+                List<Object[]> zoneRows = null;
                 String err = null;
                 try {
                     Db db = Db.get(appCtx);
                     // a newer decoder (an update) works the rows out again first, in one transaction (issue #251)
                     if (WatchStore.ensureDecoded(db)) app.openring.ble.RingManager.get(appCtx).log("watch page: a new decoder, every stored message decoded again");
                     d = WatchStore.load(db);
-                    z = db.zones();
+                    zoneRows = db.zones();
                 } catch (RuntimeException e) {
                     err = e.getClass().getSimpleName();
                     app.openring.ble.RingManager.get(appCtx).log("watch page: not read (" + err + ")");
                 }
                 final WatchStore.Data got = d;
-                final List<Object[]> zs = z;
+                // the zones and the per day answers once, here and not on each tap (without zone rows: the phone's zone)
+                final WatchDays.Zones zs = got == null ? null : zonesOf(zoneRows);
+                final WatchDays.Index gotIndex = got == null ? null : new WatchDays.Index(got.steps, got.moves, got.heart, got.workouts, got.sleep, got.battery, zs);
                 h.post(new Runnable() {
                     @Override
                     public void run() {
@@ -130,7 +134,8 @@ public final class WatchPageActivity extends Activity {
                             return;
                         }
                         data = got;
-                        zones = zonesOf(zs);
+                        zones = zs;
+                        index = gotIndex;
                         show(newestDay());
                     }
                 });
@@ -189,12 +194,12 @@ public final class WatchPageActivity extends Activity {
     View steps(Context c, LocalDate d) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Steps"));
-        TreeMap<LocalDate, Integer> per = WatchDays.stepsPerDay(data.steps, zones);
-        TreeMap<LocalDate, Integer> metres = WatchDays.metresPerDay(data.steps, zones);
+        TreeMap<LocalDate, Integer> per = index.steps;
+        TreeMap<LocalDate, Integer> metres = index.metres;
         double v = WatchDays.of(per, d), m = WatchDays.of(metres, d);
         card.addView(Ui.statRow(c, Ui.stat(c, "Steps", Double.isNaN(v) ? "--" : String.format(Locale.getDefault(), "%,d", (int) v), "", Ui.ACTIVE, "Counted by the watch on this day"),
                 Ui.stat(c, "Distance", Double.isNaN(m) ? "--" : WatchDays.distance((int) m), "", Ui.ACTIVE, "The watch's own estimate from your steps")));
-        double kcal = WatchDays.of(WatchDays.kcalPerDay(data.steps, zones), d), up = WatchDays.of(WatchDays.climbPerDay(data.moves, zones), d);
+        double kcal = WatchDays.of(index.kcal, d), up = WatchDays.of(index.climb, d);
         card.addView(Ui.statRow(c, Ui.stat(c, "Calories", Double.isNaN(kcal) ? "--" : String.format(Locale.getDefault(), "%,d", (int) kcal), "kcal", Ui.ACTIVE,
                 "Burned by moving, as the watch counted it"), Ui.stat(c, "Climbed", Double.isNaN(up) ? "--" : String.valueOf((int) up), "m", Ui.ACTIVE,
                 "Metres up, the watch's own estimate")));
@@ -214,7 +219,7 @@ public final class WatchPageActivity extends Activity {
     View workouts(Context c, LocalDate d) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Workouts"));
-        List<Records.Workout> ws = WatchDays.workoutsOn(data.workouts, d, zones);
+        List<Records.Workout> ws = index.workoutsOn(d);
         if (ws.isEmpty()) card.addView(Ui.text(c, "No workout on this day.", 14, Ui.TEXT_2, Ui.REGULAR));
         for (Records.Workout w : ws) card.addView(Ui.text(c, WatchDays.workoutLine(w, zones), 14, Ui.TEXT, Ui.REGULAR));
         card.addView(Ui.gap(c, 4));
@@ -225,7 +230,7 @@ public final class WatchPageActivity extends Activity {
     View heart(Context c, LocalDate d) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Heart rate"));
-        List<long[]> hr = WatchDays.heartOn(data.heart, d, zones);
+        List<long[]> hr = index.heartOn(d);
         TS ts = new TS();
         int lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
         for (long[] x : hr) {
@@ -246,7 +251,7 @@ public final class WatchPageActivity extends Activity {
     View sleep(Context c, LocalDate d) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Sleep, as Withings sees it"));
-        WatchDays.Night n = WatchDays.nightFor(data.sleep, d, zones);
+        WatchDays.Night n = index.nightFor(d);
         if (n == null) {
             card.addView(Ui.text(c, "No sleep ended on this day.", 14, Ui.TEXT_2, Ui.REGULAR));
         } else {
@@ -265,13 +270,13 @@ public final class WatchPageActivity extends Activity {
     View battery(Context c, LocalDate d) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Battery"));
-        Records.Battery now = WatchDays.newestBattery(data.battery);
+        Records.Battery now = index.newestBattery;
         long upTo = WatchDays.dayStart(d.plusDays(1), zones);
-        double drop = WatchDays.dropPerDay(data.battery, upTo - 7 * 86400L);
+        double drop = index.dropPerDay(upTo - 7 * 86400L);
         card.addView(Ui.statRow(c, Ui.stat(c, "Now", now == null ? "--" : String.valueOf(now.pct), "%", Ui.READY, "At the last sync"),
                 Ui.stat(c, "Per day", Double.isNaN(drop) ? "--" : Ui.fmt(drop, 1), "%", Ui.READY, "How much it fell per day in the last 7 days")));
         TS ts = new TS();
-        for (java.util.Map.Entry<LocalDate, Integer> e : WatchDays.batteryPerDay(data.battery, zones).entrySet()) {
+        for (java.util.Map.Entry<LocalDate, Integer> e : index.battery.entrySet()) {
             if (e.getKey().isAfter(d) || e.getKey().isBefore(d.minusDays(29))) continue;
             ts.add(e.getKey().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + 43200, e.getValue());
         }
