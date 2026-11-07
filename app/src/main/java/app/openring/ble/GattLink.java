@@ -66,10 +66,6 @@ public final class GattLink implements RingClient.Link {
         return connected;
     }
 
-    public int mtu() {
-        return mtu;
-    }
-
     private final BluetoothGattCallback cb = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
@@ -140,15 +136,15 @@ public final class GattLink implements RingClient.Link {
     /** Connect, raise the MTU, discover services and subscribe (bonding if the ring asks). */
     public static GattLink open(Context ctx, BluetoothDevice device, Log log, long timeoutMs) throws IOException, InterruptedException {
         GattLink l = new GattLink(ctx, device, log);
+        boolean opened = false;
         try {
             l.connect(timeoutMs);
+            opened = true;
             return l;
-        } catch (IOException e) {
-            l.close();
-            throw e;
-        } catch (InterruptedException e) {
-            l.close();
-            throw e;
+        } finally {
+            // any way out but the return (an IOException, an interrupt, or a RuntimeException from the
+            // Bluetooth stack) closes the link: nobody else holds it, so it would stay connected
+            if (!opened) l.close();
         }
     }
 
