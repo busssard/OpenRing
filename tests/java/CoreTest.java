@@ -1012,6 +1012,7 @@ public class CoreTest {
         badgeScreens265();
         recent265();
         connectPlan195();
+        watchSetupWayBack351();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -8403,5 +8404,36 @@ public class CoreTest {
         eq("input limit: a number too long for an int is the default", InputLimit.WEIGHT_KG.parse("99999999999"), 72);
         eq("input limit: a decimal height is the default", InputLimit.HEIGHT_CM.parse("180.5"), 175);
         eq("input limit: a screen goal over a day is a whole day", InputLimit.SCREEN_GOAL_MIN.parse("2000"), 1440);
+    }
+
+    /**
+     * Issue #351: the watch setup's Open Settings, Profile closes the setup (FLAG_ACTIVITY_CLEAR_TOP), so its texts name the
+     * way back that Settings offers, and Settings offers it only when the setup opened it (the extra).
+     */
+    static void watchSetupWayBack351() throws IOException {
+        String root = "app/src/main/java/app/openring/ui/";
+        String setup = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "WatchSetupActivity.java").toPath()), "UTF-8");
+        String settings = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "SettingsActivity.java").toPath()), "UTF-8");
+        String main = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "MainActivity.java").toPath()), "UTF-8");
+        String[] texts = {"The watch needs to know male or female to count calories. Set it in Settings, Profile, save it, then tap Back to the watch setup.",
+                "Your profile was never entered, so the app's defaults would be sent. Enter yours in Settings, Profile, save it, then tap Back to the watch setup."};
+        for (String t : texts) {
+            check("#351 the watch setup shows: " + t.substring(0, 40), setup.contains("\"" + t + "\""));
+            check("#351 names the way back, no dash as punctuation: " + t.substring(0, 40), t.contains("tap Back to the watch setup.")
+                    && !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
+        check("#351 the promise without a way back is gone", !setup.contains("then come back here"));
+        int open = setup.indexOf("\"Open Settings, Profile\"");
+        check("#351 Open Settings, Profile tells Settings it came from the setup and keeps CLEAR_TOP", open > 0
+                && setup.indexOf(".putExtra(SettingsActivity.FROM_WATCH_SETUP, true).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)", open) > open);
+        check("#351 the extra's name", settings.contains("static final String FROM_WATCH_SETUP = \"from_watch_setup\";"));
+        int save = settings.indexOf("action(prof, \"Save and re analyse\""), back = settings.indexOf("\"Back to the watch setup\"");
+        check("#351 Settings shows Back to the watch setup once, under Save and re analyse", save > 0 && back > save
+                && settings.split("\"Back to the watch setup\"", -1).length == 2);
+        check("#351 only with the extra, and it opens the setup on top of Settings", back > 0
+                && settings.substring(Math.max(0, back - 120), back).contains("if (getIntent().getBooleanExtra(FROM_WATCH_SETUP, false)) action(prof, ")
+                && settings.indexOf("startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));", back) - back < 200
+                && settings.indexOf("startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));", back) > back);
+        check("#351 the screen test can open Settings as the setup does", main.contains(".putExtra(SettingsActivity.FROM_WATCH_SETUP, i.getBooleanExtra(\"settings_from_watch_setup\", false))"));
     }
 }

@@ -240,9 +240,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
             }
         }
         if (i.getBooleanExtra("demo", false)) startDemo(true);
-        // screen test: open Settings at a card ("stages")
+        // screen test: open Settings at a card ("stages"); settings_from_watch_setup as if the watch setup opened it (issue #351)
         String section = i.getStringExtra("settings");
-        if (section != null) startActivity(new Intent(this, SettingsActivity.class).putExtra("section", section));
+        if (section != null) startActivity(new Intent(this, SettingsActivity.class).putExtra("section", section)
+                .putExtra(SettingsActivity.FROM_WATCH_SETUP, i.getBooleanExtra("settings_from_watch_setup", false)));
         // screen test: open Live with its made up readings (issue #185); only in demo mode, so no other app can start a
         // ring session this way
         if (i.getBooleanExtra("live", false) && Prefs.of(this).demo()) live(i.getBooleanExtra("live_spo2", false));
