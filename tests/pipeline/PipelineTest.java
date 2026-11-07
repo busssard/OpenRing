@@ -2443,6 +2443,10 @@ public class PipelineTest {
             // is the morning of the 14th, after the first night there
             for (int d = 2; d <= 12; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(zh).toEpochSecond(), "Europe/Zurich");
             for (int d = 14; d <= 19; d++) db.noteZone(LocalDate.parse("2026-09-01").plusDays(d - 1).atTime(8, 0).atZone(ny).toEpochSecond(), "America/New_York");
+            // review of #352: on 21 September, after the ring's last night, the phone notes New York at 08:00 (12:00 UTC) and
+            // Chicago from 11:00, so that day's zone noted at noon in the phone's zone differs from the one at 12:00 UTC
+            db.noteZone(LocalDate.parse("2026-09-21").atTime(8, 0).atZone(ny).toEpochSecond(), "America/New_York");
+            db.noteZone(LocalDate.parse("2026-09-21").atTime(11, 0).atZone(ny).toEpochSecond(), "America/Chicago");
             putBoot(db, home, 1, t0, end0);
             putBoot(db, away, 2, t1, end1);
             java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"));
@@ -2493,7 +2497,7 @@ public class PipelineTest {
         az.setAccessible(true);
         java.lang.reflect.Method ez = app.openring.data.Exporter.class.getDeclaredMethod("dayZone", Db.class, String.class, ZoneId.class);
         ez.setAccessible(true);
-        JSONObject unknown = new JSONObject().put("zone", "Mars/Olympus");
+        JSONObject unknown = new JSONObject().put("zone", "Mars/Olympus"), inTokyo = new JSONObject().put("zone", "Asia/Tokyo");
         int days = 0, wrong = 0, fromNight = 0, fromNote = 0, fromPhone = 0;
         StringBuilder first = new StringBuilder();
         for (LocalDate d = LocalDate.parse("2026-08-29"); !d.isAfter(LocalDate.parse("2026-09-22")); d = d.plusDays(1)) {
@@ -2509,6 +2513,8 @@ public class PipelineTest {
             Object[][] got = {{"analysis", az.invoke(an, d, main), want}, {"export", ez.invoke(null, db, d.toString(), phone), want},
                     {"analysis without a night", az.invoke(an, d, null), wantNoNight},
                     {"analysis with an unknown zone", az.invoke(an, d, unknown), wantNoNight},
+                    // review of #352: a night slept elsewhere than the zone noted that day keeps its own zone
+                    {"analysis with a night in Tokyo", az.invoke(an, d, inTokyo), ZoneId.of("Asia/Tokyo")},
                     {"the shared rule", Json.dayZone(main, db.zoneAt(Json.noon(d, phone)), phone), want}};
             for (Object[] g : got) {
                 if (g[1].equals(g[2])) continue;
@@ -2519,15 +2525,45 @@ public class PipelineTest {
         }
         check("#263 every day of the trip has the same zone in the analysis and the export, " + how, wrong == 0 && days == 25,
                 days + " days, " + wrong + " wrong " + first);
-        check("#263 the trip reaches each part of the rule (night, noted zone), " + how, fromNight >= 10 && fromNote >= 1,
+        check("#263 the trip reaches each part of the rule (night, noted zone), " + how, fromNight >= 10 && fromNote >= 10,
                 fromNight + " from the night, " + fromNote + " noted, " + fromPhone + " the phone's");
+        // review of #352: the day whose noted zone at noon differs between the phone's zone and UTC counts by the phone's noon
+        LocalDate split = LocalDate.parse("2026-09-21");
+        ZoneId atPhoneNoon = app.openring.core.analysis.ClockChange.zone(db.zoneAt(Json.noon(split, phone)));
+        ZoneId atUtcNoon = app.openring.core.analysis.ClockChange.zone(db.zoneAt(Json.noon(split, java.time.ZoneOffset.UTC)));
+        check("#352 21 September: the noted zone at noon in the phone's zone is not the one at 12:00 UTC, " + how,
+                atPhoneNoon != null && atUtcNoon != null && !atPhoneNoon.equals(atUtcNoon), atPhoneNoon + " and " + atUtcNoon);
+        check("#352 21 September: the analysis and the export take the zone noted at the phone's noon, " + how,
+                atPhoneNoon != null && atPhoneNoon.equals(az.invoke(an, split, null)) && atPhoneNoon.equals(ez.invoke(null, db, split.toString(), phone)),
+                az.invoke(an, split, null) + ", " + ez.invoke(null, db, split.toString(), phone));
         // the shared rule on its own: noon in the phone's zone (also on the day the clocks change), unknown ids fall through
         ZoneId zh = ZoneId.of("Europe/Zurich"), ny = ZoneId.of("America/New_York");
         JSONObject inNy = new JSONObject().put("zone", "America/New_York");
         check("#263 the shared rule: the night's zone first, else the noted one, else the phone's",
                 ny.equals(Json.dayZone(inNy, "Asia/Tokyo", zh)) && ZoneId.of("Asia/Tokyo").equals(Json.dayZone(null, "Asia/Tokyo", zh))
                         && ZoneId.of("Asia/Tokyo").equals(Json.dayZone(unknown, "Asia/Tokyo", zh)) && zh.equals(Json.dayZone(unknown, "Mars/Olympus", zh))
-                        && zh.equals(Json.dayZone(null, null, zh)) && zh.equals(Json.dayZone(null, "", zh)), null);
+                        && zh.equals(Json.dayZone(null, (String) null, zh)) && zh.equals(Json.dayZone(null, "", zh)), null);
+        // review of #352: the noted zone is asked for only when the night gives no zone this phone knows
+        final int[] asked = {0};
+        java.util.function.Supplier<String> tokyo = new java.util.function.Supplier<String>() {
+            @Override
+            public String get() {
+                asked[0]++;
+                return "Asia/Tokyo";
+            }
+        };
+        boolean nightFirst = ny.equals(Json.dayZone(inNy, tokyo, zh)) && asked[0] == 0;
+        boolean noNight = ZoneId.of("Asia/Tokyo").equals(Json.dayZone(null, tokyo, zh)) && asked[0] == 1;
+        boolean unknownNight = ZoneId.of("Asia/Tokyo").equals(Json.dayZone(unknown, tokyo, zh)) && asked[0] == 2;
+        check("#352 the noted zone is not asked for when the night has a zone, once when it has none or an unknown one",
+                nightFirst && noNight && unknownNight, asked[0] + " asked");
+        check("#352 no noted zone (no supplier, or null) falls back on the phone's",
+                zh.equals(Json.dayZone(null, (java.util.function.Supplier<String>) null, zh)) && zh.equals(Json.dayZone(unknown, new java.util.function.Supplier<String>() {
+                    @Override
+                    public String get() {
+                        return null;
+                    }
+                }, zh)), null);
         check("#263 noon is 12:00 in the phone's zone, also on the day the clocks change",
                 Json.noon(LocalDate.parse("2026-10-25"), zh) == java.time.ZonedDateTime.of(2026, 10, 25, 12, 0, 0, 0, zh).toEpochSecond()
                         && Json.noon(LocalDate.parse("2026-03-08"), ny) == java.time.ZonedDateTime.of(2026, 3, 8, 12, 0, 0, 0, ny).toEpochSecond(), null);
