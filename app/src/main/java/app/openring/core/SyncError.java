@@ -13,7 +13,7 @@ public final class SyncError {
     private SyncError() {}
 
     public enum Kind { BLUETOOTH_OFF, NO_BLUETOOTH, NOT_FOUND, NOT_REACHED, BROKE_OFF, CONNECTION_SETUP, PAIRING, NOT_A_RING,
-        KEY_REFUSED, RING_RESET, NO_KEY, KEY_UNREADABLE, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, KEY_NOT_KEPT, KEY_NOT_SAVED, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, REANALYSING, UNKNOWN }
+        KEY_REFUSED, RING_RESET, NO_KEY, KEY_UNREADABLE, BUSY, STOPPED, DEMO, KEY_EXISTS, KEY_NOT_TAKEN, KEY_NOT_KEPT, KEY_NOT_SAVED, NOT_SAVED, SERIAL_MISMATCH, OTHER_RING, REANALYSING, STORAGE, UNKNOWN }
 
     /** What the ring was doing: a sync, pairing in Setup, an action in Settings, live heart rate or game motion. */
     public enum Task { SYNC, PAIR, ACTION, LIVE }
@@ -45,6 +45,18 @@ public final class SyncError {
     public static String stored(boolean ok, String raw) {
         if (ok) return null;
         return raw == null || raw.trim().isEmpty() ? NO_REASON : raw;
+    }
+
+    /** Start of the raw text of a sync whose start failed with an error (issue #334). */
+    public static final String START_FAILED = "Sync could not start: ";
+
+    /**
+     * The raw text of a sync whose start (before the download) failed with {@code e} (issue #334): the error's class and
+     * its first place in Open Ring's code ({@link LoadNote#error}), never its message, which can carry a value (issue #289),
+     * so the stored error and the data check stay safe to share. The full stack trace goes only to the log.
+     */
+    public static String startFailed(Throwable e) {
+        return START_FAILED + LoadNote.error(e);
     }
 
     /**
@@ -111,6 +123,7 @@ public final class SyncError {
             case NO_KEY:
             case KEY_UNREADABLE:
             case DEMO:
+            case STORAGE:
                 return false;
             default:
                 return true;
@@ -122,6 +135,8 @@ public final class SyncError {
         if (raw == null) return Kind.UNKNOWN;
         String s = raw.toLowerCase(Locale.ROOT).trim();
         if (s.isEmpty() || s.startsWith("unexpected error")) return Kind.UNKNOWN;
+        // the class names LoadNote keeps for a full or unwritable storage (issue #334)
+        if (s.contains("sqlitefullexception") || s.contains("sqlitediskioexception")) return Kind.STORAGE;
         if (s.startsWith(SERIAL_PREFIX.toLowerCase(Locale.ROOT))) return Kind.SERIAL_MISMATCH;
         if (s.startsWith(OTHER_RING_PREFIX.toLowerCase(Locale.ROOT))) return Kind.OTHER_RING;
         if (s.startsWith("the ring already has a key")) return Kind.KEY_EXISTS;
@@ -199,6 +214,8 @@ public final class SyncError {
             case NOT_SAVED: return "The ring did not save the change. Keep it close to the phone and try again.";
             case SERIAL_MISMATCH: return serialMismatch(raw);
             case OTHER_RING: return otherRing(raw);
+            case STORAGE: return sync ? "This phone's storage is full or could not be written, so the sync could not start. Free some storage or restart the phone, then sync again."
+                    : "This phone's storage is full or could not be written. Free some storage or restart the phone, then try again.";
             default:
                 if (sync) return "The sync did not finish because of an unexpected problem. Sync again. " + DETAILS;
                 if (pair) return "Pairing did not finish because of an unexpected problem. Try again.";

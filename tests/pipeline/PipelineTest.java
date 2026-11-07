@@ -912,6 +912,7 @@ public class PipelineTest {
         rise252();
         drip252();
         dripLarge252();
+        syncStart334();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -12792,6 +12793,70 @@ public class PipelineTest {
                 && back.count("SELECT COUNT(*) FROM watch_raw WHERE device = '" + app.openring.core.withings.WatchDemo.ADDRESS + "'") == 0, null);
         check("#299 the demo's note stays in the demo file, the real one has none", back.kv(DataCheck.SHRINK_ERROR, null) == null, null);
         clean254();
+    }
+
+    /**
+     * Issue #334: a sync whose start fails on the database (here a database file that cannot be opened, the SQLite stand in
+     * throws) stores the safe text, gives the ring lock back and leaves no sync counted. {@code ble/RingManager} needs Android
+     * and is not compiled here, so this runs its start steps' shape through {@code core/SyncStart} with the real Db and Prefs.
+     */
+    static void syncStart334() throws Exception {
+        final Context c = freshDb("openring334");
+        java.io.File dbPath = c.getDatabasePath(Db.REAL);
+        check("#334 the database path is blocked by a folder", dbPath.mkdirs(), dbPath);
+        final app.openring.core.RingGate gate = app.openring.core.RingGate.RING;
+        final Db[] start = new Db[1];
+        final int[] released = new int[1];
+        gate.syncs.incrementAndGet();
+        app.openring.core.SyncStart.Result r;
+        try {
+            r = app.openring.core.SyncStart.run(gate.op, new app.openring.core.SyncStart.Steps() {
+                @Override
+                public String run(app.openring.core.SyncStart.Held h) throws Exception {
+                    if (Db.get(c).longRun()) return "Sync stopped";
+                    if (!gate.op.tryLock(1, java.util.concurrent.TimeUnit.SECONDS)) return "The ring is busy with another task";
+                    Db db = Db.get(c);
+                    // the first step that reads the file
+                    db.hasEvents();
+                    if (db.holdForRing()) {
+                        start[0] = db;
+                        h.ring = true;
+                    }
+                    return null;
+                }
+            }, new Runnable() {
+                @Override
+                public void run() {
+                    released[0]++;
+                    if (start[0] != null) start[0].releaseForRing();
+                }
+            });
+            if (r.error != null) app.openring.data.Prefs.of(c).setLastSyncError(app.openring.core.SyncError.stored(false, r.message));
+        } finally {
+            gate.syncs.decrementAndGet();
+        }
+        check("#334 the start failed with an error", r.error != null, r.error);
+        String stored = app.openring.data.Prefs.of(c).lastSyncError();
+        check("#334 the stored error is the safe text", stored != null && stored.startsWith(app.openring.core.SyncError.START_FAILED)
+                && app.openring.core.LoadNote.safe(stored.substring(app.openring.core.SyncError.START_FAILED.length())), stored);
+        String msg = r.error == null ? null : r.error.getMessage();
+        check("#334 the error's message is not stored", msg == null || msg.isEmpty() || !stored.contains(msg), stored);
+        check("#334 the ring lock is free again", !gate.op.isLocked(), null);
+        eq334("#334 no sync counted", gate.syncs.get(), 0);
+        eq334("#334 the database was never held, nothing released", released[0], 0);
+        check("#334 the screen gets a sentence", app.openring.core.SyncError.plain(stored).startsWith("The sync did not finish because of an unexpected problem."),
+                app.openring.core.SyncError.plain(stored));
+        // the data check shows the stored text once the file opens again, still without the message
+        rmTree(dbPath);
+        String text = DataCheck.run(c).text;
+        check("#334 the data check names the start error", text.contains("last error: " + stored), null);
+        check("#334 a later sync can take the ring", gate.op.tryLock(), null);
+        gate.op.unlock();
+        freshDb("openring334-after");
+    }
+
+    static void eq334(String name, int got, int want) {
+        check(name, got == want, got);
     }
 
     /**
