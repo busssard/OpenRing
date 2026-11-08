@@ -380,6 +380,31 @@ launch --es settings watch --ei main_device 1; shot settings-main-watch
 launch --ei tab 1 --ei main_device 1;       shot sleep-watch-main
 swipe_up;                                   shot sleep-watch-main-stages 1
 launch --ei tab 0 --ei main_device 0;       sleep 3
+# Steps from this phone (issue #329, phase 1b): the demo's made up phone readings (in the demo file only) as light bars under
+# the ring's steps per hour on Activity, then touched in the afternoon (the readout names the ring's hour and the phone's
+# interval there); Activity's card that asks for Physical activity (extra phone_ask, demo mode only, nothing is asked); the
+# Phone block in Settings with the Main device chips (Ring, Watch, Phone); the phone as main device (extra main_device 2):
+# Activity with the phone's own steps. Back to Ring after, so the shots below stay as they were
+tap_desc_at() {  # $1 the start of a content description, $2 percent of its width from the left: taps there, in the middle
+  local b
+  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b $2
+  [ $# -eq 5 ] || return 1
+  local y=$(( ($2 + $4) / 2 ))
+  [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} - 450 )) ] || return 1
+  adb shell input tap $(( $1 + ($3 - $1) * $5 / 100 )) $y
+}
+launch --ei tab 3 --es day "$FILL_DAY"; sleep 3
+scroll_to "STEPS FROM THIS PHONE" 10 || echo "::warning::issue #329 step: the phone's card was not found on Activity"
+shot activity-phone 1
+if tap_desc_at "Steps through the day" 62; then shot activity-phone-touch 1
+else echo "::warning::issue #329 step skipped: the phone's day line was not on screen to touch it"; fi
+launch --ei tab 3 --ez phone_ask true; sleep 3
+scroll_to "STEPS FROM THIS PHONE" 10 || echo "::warning::issue #329 step: the card that asks for Physical activity was not found on Activity"
+shot activity-phone-ask 1
+launch --es settings phone;                 shot settings-phone
+launch --ei tab 3 --ei main_device 2 --es day "$FILL_DAY"; shot activity-phone-main
+launch --ei tab 0 --ei main_device 0;       sleep 3
 # A time left out because someone else wore the ring (issue #254), last: the example changes the demo's results for
 # every shot after it. left_out leaves out the day before yesterday 13:00 to 17:00, only in demo mode (the demo file),
 # then the analysis runs again: the Body tab shows the grey band on Heart rate today, Today the Left out card, and

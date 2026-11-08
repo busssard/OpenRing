@@ -350,6 +350,9 @@ public final class SetupActivity extends Activity {
         scroll.setFillViewport(true);
         setContentView(scroll);
         step = b == null ? 0 : b.getInt("step", 0);
+        // "Add a ring" from a screen without one (issue #329): straight to Bluetooth access, Back returns there
+        addRing = getIntent() != null && getIntent().getBooleanExtra(ADD_RING, false);
+        if (b == null && addRing) step = 1;
         if (b != null) {
             pairedMessage = b.getString("paired", pairedMessage);
             // a turn of the phone keeps the way to the app's settings (review of #279)
@@ -474,8 +477,18 @@ public final class SetupActivity extends Activity {
         return rekey ? 3 : 2;
     }
 
+    /** Started by "Add a ring" (issue #329): the extra, and whether this screen was. */
+    static final String ADD_RING = "add_ring";
+    private boolean addRing;
+
     @Override
     public void onBackPressed() {
+        if (addRing && step <= 2) {
+            // back to the screen without a ring that opened it (issue #329), nothing changed; from the profile too, since
+            // Bluetooth access already given would send the page straight back to it
+            finish();
+            return;
+        }
         if (step == 5) {
             Prefs.of(this).clearPairUnseen();
             startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
@@ -586,6 +599,16 @@ public final class SetupActivity extends Activity {
                 show();
             }
         });
+        // without a ring (issue #329): phone steps, screen time and the period tracker; a ring can be added later in Settings
+        secondary(l, app.openring.core.KeyState.USE_WITHOUT, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Prefs.of(SetupActivity.this).setNoRing(true);
+                startActivity(new Intent(SetupActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                finish();
+            }
+        });
+        l.addView(Ui.text(this, app.openring.core.KeyState.WITHOUT_TEXT, 12, Ui.TEXT_3, Ui.REGULAR));
         secondary(l, "Just looking? Explore with demo data", new View.OnClickListener() {
             @Override
             public void onClick(View v) {

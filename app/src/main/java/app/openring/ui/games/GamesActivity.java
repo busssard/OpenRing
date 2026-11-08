@@ -94,6 +94,21 @@ public final class GamesActivity extends Activity implements RingManager.MotionL
         final SharedPreferences sp = a.getSharedPreferences("games", Context.MODE_PRIVATE);
         final app.openring.data.Prefs p = app.openring.data.Prefs.of(a);
         card.addView(Ui.caption(a, "Ring games"));
+        if (app.openring.core.KeyState.addRingInstead(p.demo(), p.ringState())) {
+            // without a ring by choice (issue #329): the way to add one instead of games that cannot connect
+            card.addView(Ui.body(a, app.openring.core.KeyState.NO_RING_GAMES));
+            TextView add = Ui.smallButton(a, app.openring.core.KeyState.ADD_RING, Ui.OXY);
+            add.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    a.startActivity(new android.content.Intent(a, app.openring.ui.SetupActivity.class).putExtra("add_ring", true));
+                }
+            });
+            LinearLayout.LayoutParams al = Ui.matchWrap();
+            al.setMargins(0, Ui.dp(a, 10), 0, 0);
+            card.addView(add, al);
+            return;
+        }
         card.addView(Ui.body(a, "Your ring as a game controller: tilt your hand to steer. Not every ring firmware sends its "
                 + "movement live, so test it first."));
         TextView test = Ui.smallButton(a, "Test the ring's motion", Ui.OXY);
