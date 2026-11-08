@@ -1143,6 +1143,7 @@ public class CoreTest {
         phoneDays329();
         phoneJob329();
         noRingWalk329();
+        phoneEdges329();
         dating220();
         recent194();
         demoLive();
@@ -9438,5 +9439,74 @@ public class CoreTest {
         // an unreadable key is still not "no ring"
         check("#329b walk: an unreadable key wins over the choice", KeyState.of(true, false, true) == KeyState.UNREADABLE && KeyState.ofStored(true, true) == KeyState.READABLE);
         check("#329b walk: the old two argument forms never give no ring", KeyState.of(false, false) == KeyState.NONE && KeyState.ofStored(false) == KeyState.NONE);
+    }
+
+    /** Edges of the phone's step logic: empty and odd inputs. */
+    static void phoneEdges329() {
+        double w0 = 1_780_000_000;
+        PhoneSteps.Left left = new PhoneSteps.Left();
+        check("#329b edges: a first reading at elapsed 0 or with a negative counter gives nothing", PhoneSteps.intervals(Arrays.asList(rd(1, 0, 10, w0)), left).isEmpty()
+                && PhoneSteps.intervals(Arrays.asList(rd(1, 60, -5, w0)), left).isEmpty() && left.implausible == 0);
+        check("#329b edges: left out without a counter to count into", PhoneSteps.intervals(Arrays.asList(rd(1, 10, 99999, w0))).isEmpty()
+                && PhoneSteps.intervals(Arrays.asList(rd(1, 100, 0, w0), rd(1, 110, 99999, w0 + 10))).size() == 1
+                && PhoneSteps.intervals(Arrays.asList(rd(1, 100, 50, w0), rd(1, 200, 10, w0 + 100))).size() == 1);
+        check("#329b edges: a zero length interval counts where it lies", PhoneSteps.share(w0, w0, 7, w0 - 1, w0 + 1) == 7 && PhoneSteps.share(w0, w0, 7, w0 + 1, w0 + 2) == 0
+                && PhoneSteps.share(w0, w0, 7, w0 - 2, w0 - 1) == 0 && PhoneSteps.share(w0, w0 + 10, 10, w0 + 20, w0 + 30) == 0);
+        PhoneSteps.Interval in = new PhoneSteps.Interval(w0, w0 + 100, 1, 1, 1);
+        check("#329b edges: inside means both ends inside", PhoneSteps.inside(in, w0, w0 + 100) && !PhoneSteps.inside(in, w0 + 1, w0 + 200) && !PhoneSteps.inside(in, w0 - 1, w0 + 99));
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        check("#329b edges: one step, not steps", PhoneSteps.tip(in, w0 - 10, w0 + 1000, z, Locale.US).endsWith(", 1 step from your phone")
+                && PhoneSteps.tip(new PhoneSteps.Interval(w0, w0 + 100, 2, 1, 1), w0 + 50, w0 + 1000, z, Locale.US).startsWith("about 1 step (spread over "));
+        java.time.LocalDate d = java.time.Instant.ofEpochSecond((long) w0).atZone(z).toLocalDate();
+        String one = PhoneSteps.checkLines(Arrays.asList(rd(1, 7200, 100, w0)), new ArrayList<PhoneSteps.Interval>(), 0, 0, d, 14, z);
+        check("#329b edges: one reading, no day totals without intervals", one.startsWith("Phone steps: 1 reading from ") && !one.contains("Steps per day"), one);
+        String two = PhoneSteps.checkLines(Arrays.asList(rd(1, 7200, 100, w0 + 60), rd(1, 3600, 50, w0 - 3600)), PhoneSteps.intervals(Arrays.asList(rd(1, 3600, 50, w0))),
+                1, Double.NaN, d, 0, z);
+        check("#329b edges: readings in any order give first and last, no days asked, an unknown date", two.contains("2 readings from " + d.minusDays(0)) && two.contains("the last on --")
+                && !two.contains("Steps per day"), two);
+        // the main device's days without numbers worked out yet, and the phone's night lines
+        MainDevice.Day plain = new MainDevice.Day();
+        plain.main = MainDevice.WATCH;
+        check("#329b edges: a day before numbers() knows its other device as in phase 1a", plain.other() == MainDevice.RING && new MainDevice.Phone().isEmpty());
+        plain.main = MainDevice.RING;
+        check("#329b edges: the ring's other device is the watch", plain.other() == MainDevice.WATCH);
+        MainDevice.Day ph = new MainDevice.Day();
+        ph.main = MainDevice.PHONE;
+        check("#329b edges: the phone has no night: none, the ring's, the watch's", !ph.nightFromOther() && MainDevice.nightLine(ph) == null);
+        ph.ringNight = true;
+        check("#329b edges: the ring's night for a phone main device", ph.nightFromOther() && "From your ring: your phone has no night for this day.".equals(MainDevice.nightLine(ph)));
+        ph.ringNight = false;
+        ph.watchNight = new app.openring.core.withings.WatchDays.Night();
+        check("#329b edges: the watch's night for a phone main device", ph.nightFromOther() && "From your watch: your phone has no night for this day.".equals(MainDevice.nightLine(ph))
+                && ph.filled());
+        check("#329b edges: no heart rate line without a heart rate", MainDevice.heartLine(ph, z) == null);
+        check("#329b edges: shown and present for every device", MainDevice.present(false, true, false).length == 1 && MainDevice.present(true, false, false)[0] == MainDevice.RING
+                && MainDevice.mainLine(MainDevice.WATCH).equals("Watch"));
+        // whole days with a phone after them (the main ring not worn, the watch counted part, the phone the rest)
+        java.time.LocalDate day = java.time.LocalDate.of(2026, 6, 10);
+        double from = day.atStartOfDay(z).toEpochSecond(), to = day.plusDays(1).atStartOfDay(z).toEpochSecond();
+        MainDevice.Watch w = new MainDevice.Watch();
+        for (double t = from + 8 * 3600; t < from + 12 * 3600; t += 900) w.steps.add(new app.openring.core.withings.Records.Steps((long) t, 900, 100, 70, 3));
+        MainDevice.Phone p = new MainDevice.Phone();
+        p.intervals.add(new double[] {from + 14 * 3600, from + 16 * 3600, 1600});
+        MainDevice.Day whole = MainDevice.of(MainDevice.RING, day, from, to, z, new MainDevice.Ring(), w, p);
+        check("#329b edges: the ring off all day, the watch's morning and the phone's afternoon", whole.whole && whole.wholeFrom == MainDevice.WATCH && whole.phoneSteps() == 1600
+                && "Counted by your watch, some counted by your phone".equals(MainDevice.stepsNote(whole))
+                && MainDevice.stepsLine(whole, z, Locale.US).startsWith("From your watch: your ring has no data for this day. Includes about 1,600 steps from your phone"),
+                MainDevice.stepsNote(whole) + " / " + MainDevice.stepsLine(whole, z, Locale.US));
+        MainDevice.Ring r = new MainDevice.Ring();
+        r.steps = 4000;
+        r.met[40] = 3.0;
+        // a watch with rows around the day (the evening before), none on it
+        MainDevice.Watch before = new MainDevice.Watch();
+        before.heart.add(new app.openring.core.withings.Records.Heart((long) from - 7200, 60));
+        MainDevice.Day wm = MainDevice.of(MainDevice.WATCH, day, from, to, z, r, before, p);
+        check("#329b edges: the watch off all day: the ring's own day, the phone after it", wm.whole && wm.base == MainDevice.RING && wm.phoneSteps() == 1600
+                && "Estimated from your movement, some counted by your phone".equals(MainDevice.stepsNote(wm)), MainDevice.stepsNote(wm));
+        MainDevice.Phone empty = new MainDevice.Phone();
+        empty.intervals.add(new double[] {from - 7200, from - 3600, 50});
+        empty.intervals.add(new double[] {to + 10, to + 100, 50});
+        MainDevice.Day none = MainDevice.of(MainDevice.PHONE, day, from, to, z, new MainDevice.Ring(), null, empty);
+        check("#329b edges: the phone's intervals of other days are not this day's", Double.isNaN(none.steps) && none.phone.isEmpty() && MainDevice.stepsNote(none).equals("Counted by your phone"));
     }
 }

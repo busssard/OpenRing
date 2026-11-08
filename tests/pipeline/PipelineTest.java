@@ -13047,6 +13047,11 @@ public class PipelineTest {
         return b.toString();
     }
 
+    static boolean setAsked329(Context c) {
+        app.openring.data.Prefs.of(c).setPhoneAsked();
+        return true;
+    }
+
     static long phoneCount329(Db db, String table) {
         return db.count("SELECT COUNT(*) FROM " + table);
     }
@@ -13083,6 +13088,11 @@ public class PipelineTest {
         check("#329b upgrade from schema 10: the schema check of this version passes", schemaProblem251(db) == null, schemaProblem251(db));
         check("#329b upgrade from schema 10: nothing to analyse again", Analyzer.upToDate(c), null);
         double t0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        String ringLatest = db.latestDay();
+        app.openring.data.PhoneStore.addAll(db, readings329(5, t0 - 400 * 86400.0, 3, 0, 1));
+        check("#329b latestDay: phone steps older than the newest day summary leave it", ringLatest != null && ringLatest.equals(db.latestDay()), db.latestDay());
+        db.getWritableDatabase().execSQL("DELETE FROM phone_readings");
+        app.openring.data.PhoneStore.rebuild(db);
         app.openring.data.PhoneStore.addAll(db, readings329(5, t0, 48, 0, 1));
         String rows = phoneRows329(db);
         check("#329b the readings stored, their intervals worked out", phoneCount329(db, "phone_readings") == 48 && phoneCount329(db, "phone_steps") == 48, rows.length());
@@ -13115,6 +13125,8 @@ public class PipelineTest {
         LocalDate today = LocalDate.now(z);
         double start = today.atStartOfDay(z).toEpochSecond() + 6 * 3600;
         long bootMs = 3_600_000;
+        check("#329b store: an empty file has no reading, no rule to work out again", app.openring.data.PhoneStore.lastReading(db) == 0
+                && !app.openring.data.PhoneStore.ensureRule(db) && !app.openring.data.PhoneStore.any(db) && db.latestDay() == null, null);
         app.openring.core.PhoneSteps.Reading a = new app.openring.core.PhoneSteps.Reading(9, bootMs, 500, start);
         app.openring.core.PhoneSteps.Reading b = new app.openring.core.PhoneSteps.Reading(9, bootMs + 3_600_000, 1300, start + 3600);
         check("#329b store: a reading is stored, the same one again is known", app.openring.data.PhoneStore.record(c, a, 60) == app.openring.data.PhoneStore.STORED
@@ -13142,6 +13154,7 @@ public class PipelineTest {
                 && db.count("SELECT COUNT(*) FROM days") == 0, db.latestDay());
         check("#329b store: the last reading's time", app.openring.data.PhoneStore.lastReading(db) == start + 3600, null);
         app.openring.data.Prefs.of(c).notePhoneNoReading((long) start);
+        check("#329b Physical activity asked: noted once", !app.openring.data.Prefs.of(c).phoneAsked() && setAsked329(c) && app.openring.data.Prefs.of(c).phoneAsked(), null);
         String text = DataCheck.run(c, today).text;
         check("#329b Data check: the phone's lines, counts and the day total", text.contains("Phone steps: 2 readings from ") && text.contains("1 phone start, 2 intervals")
                 && text.contains("No sensor value in time: 1 time") && text.contains("    " + today + ": 1,300"), text);
@@ -13275,6 +13288,7 @@ public class PipelineTest {
         double t0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
         app.openring.data.PhoneStore.addAll(real, readings329(5, t0, 24, 0, 5));
         String realRows = phoneRows329(real);
+        byte[] full = backup252(c);
         LocalDate today = LocalDate.now();
         app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
         Db demo = Db.get(c);
@@ -13294,6 +13308,17 @@ public class PipelineTest {
         check("#329b leaving demo mode: the reading is in the real file, the demo's made up ones are not", Db.REAL.equals(back.fileName)
                 && phoneCount329(back, "phone_readings") == 25 && !phoneRows329(back).equals(realRows)
                 && back.count("SELECT COUNT(*) FROM phone_readings WHERE boot = 41 OR boot = 42") == 0, phoneCount329(back, "phone_readings"));
+        // demo mode again, a reading arrives (the real file's second helper is open), then a backup of the real file is
+        // restored: the helper is closed before the swap and every reading of the phone, the one made in demo mode too, stays
+        app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        app.openring.core.PhoneSteps.Reading later = new app.openring.core.PhoneSteps.Reading(5, Math.round((26 * 3600 + 7200) * 1000.0), 100500, t0 + 26 * 3600);
+        app.openring.core.PhoneSteps.Reading later2 = new app.openring.core.PhoneSteps.Reading(5, Math.round((27 * 3600 + 7200) * 1000.0), 100900, t0 + 27 * 3600);
+        check("#329b demo on again: two more readings are stored in the real file", app.openring.data.PhoneStore.record(c, later, 0) == app.openring.data.PhoneStore.STORED
+                && app.openring.data.PhoneStore.record(c, later2, 0) == app.openring.data.PhoneStore.STORED && Db.DEMO.equals(Db.get(c).fileName), null);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        Db restored = Db.get(c);
+        check("#329b a restore while demo mode is shown: the real file restored, both readings made in demo mode kept", r.ok && Db.REAL.equals(restored.fileName)
+                && phoneCount329(restored, "phone_readings") == 27 && phoneRows329(restored).equals(rebuilt329(restored)), r.message);
         clean254();
     }
 
