@@ -25,15 +25,24 @@ import app.openring.core.analysis.StageFilter;
  * profile) and, for a full backup, {@code openring.db} (all synced history and results).
  * Restoring it on a new phone sets the app up without pairing again. The key is in plain text
  * inside the file, so the file must be kept as private as the key itself.
+ * <p>
+ * While this phone cannot read its saved key (issue #199) a backup is still written, without the key (issue #288): the
+ * JSON then has no {@code key} and says {@code "no_key": true}. This version restores such a file (settings and
+ * history, never touching a key on the phone); an older version finds no key in it and refuses the whole file with
+ * "The backup holds no valid ring key." before it changes anything.
  */
 public final class Backup {
     private Backup() {}
 
     static final String JSON = "openring-backup.json", DB = "openring.db";
+    /** The mark of a backup written without the key (issue #288). */
+    static final String NO_KEY = "no_key";
 
     public static final class Result {
         public boolean ok;
         public boolean history;
+        /** The backup had no ring key (issue #288): the key on this phone, if any, stayed as it was. */
+        public boolean noKey;
         /** The phone's file was damaged, so its period log could not be carried into the restored history (review of #275). */
         public boolean logDamaged;
         public String message;
@@ -44,33 +53,69 @@ public final class Backup {
      * ({@link Exporter#snapshot}, issue #115), so a copy that fails its check leaves the file empty
      * ({@link Exporter.NotSaved}) instead of half a backup.
      */
-    public static void write(Context c, OutputStream os, boolean withHistory) throws IOException {
+    /**
+     * As described above. Returns whether the key is in the file: false when a key is saved that this phone cannot read
+     * (issue #288), then the file holds everything else and is marked as without a key. With no key saved at all
+     * nothing is written.
+     */
+    public static boolean write(Context c, OutputStream os, boolean withHistory) throws IOException {
+        Begun b = begin(c, withHistory);
+        try {
+            return write(b, os);
+        } finally {
+            release(b);
+        }
+    }
+
+    /**
+     * A backup's first half (review of #340): the key read and, for a full backup, the checked copy of the history made,
+     * before the file the person picked is opened. A copy that fails its check ({@link Exporter.NotSaved}) then leaves
+     * that file as it was. Released with {@link #release(Begun)}.
+     */
+    public static final class Begun {
+        final Prefs p;
+        final byte[] key;
+        File snap;
+
+        Begun(Prefs p, byte[] key) {
+            this.p = p;
+            this.key = key;
+        }
+    }
+
+    public static Begun begin(Context c, boolean withHistory) throws IOException {
         Prefs p = Prefs.of(c);
         byte[] key = p.loadKey();
-        if (key == null && p.hasKey()) throw new KeyUnreadable();
-        if (key == null) throw new IOException("no ring key saved on this phone");
-        File snap = withHistory ? Exporter.snapshot(c) : null;
-        try {
-            write(p, key, os, snap);
-        } finally {
-            Exporter.release(snap);
-        }
+        if (key == null && !p.hasKey()) throw new IOException("no ring key saved on this phone");
+        Begun b = new Begun(p, key);
+        b.snap = withHistory ? Exporter.snapshot(c) : null;
+        return b;
     }
 
-    /** A backup refused because a ring key is saved that this phone cannot read (issue #199); nothing was written. */
-    public static final class KeyUnreadable extends IOException {
-        KeyUnreadable() {
-            super("this phone cannot read the saved ring key");
-        }
+    /** The second half: the file itself. Returns whether the key is in it (see {@link #write(Context, OutputStream, boolean)}). */
+    public static boolean write(Begun b, OutputStream os) throws IOException {
+        write(b.p, b.key, os, b.snap);
+        return b.key != null;
     }
 
-    /** The backup file around a checked single file copy of the history ({@code snap}, null for key and settings only). */
+    public static void release(Begun b) {
+        if (b == null) return;
+        Exporter.release(b.snap);
+        b.snap = null;
+    }
+
+    /**
+     * The backup file around a checked single file copy of the history ({@code snap}, null for key and settings only).
+     * {@code key} null: a saved key this phone cannot read; the file says so ({@link #NO_KEY}) instead of holding it.
+     */
     static void write(Prefs p, byte[] key, OutputStream os, File snap) throws IOException {
         JSONObject o = new JSONObject();
         Json.put(o, "format", "openring-backup");
         Json.put(o, "version", 1);
         Json.put(o, "created", System.currentTimeMillis() / 1000);
-        Json.put(o, "key", Hex.encode(key));
+        // no "key" at all without one: every older version then refuses the file before it changes anything
+        if (key != null) Json.put(o, "key", Hex.encode(key));
+        else Json.put(o, NO_KEY, true);
         Json.put(o, "address", p.address());
         Json.put(o, "serial", p.serial());
         Json.put(o, "hardware", p.hardware());
@@ -115,6 +160,9 @@ public final class Backup {
         Json.put(o, "watch_alarm_days", al.days);
         Json.put(o, "watch_alarm_smart", al.smart);
         ZipOutputStream z = new ZipOutputStream(os);
+        // the fastest level (issue #222): packs about three times faster than the default for a file about a tenth larger;
+        // any zip reader, also every older version, reads it the same
+        z.setLevel(java.util.zip.Deflater.BEST_SPEED);
         z.putNextEntry(new ZipEntry(JSON));
         z.write(o.toString().getBytes(StandardCharsets.UTF_8));
         z.closeEntry();
@@ -143,7 +191,10 @@ public final class Backup {
         /** Newest dated event in the backup and on the phone, unix seconds, NaN when none. */
         public double backupNewest = Double.NaN, phoneNewest = Double.NaN;
         JSONObject o;
+        /** The backup's key; null for a backup written without one ({@link #noKey}). */
         byte[] key;
+        /** The backup holds no ring key (issue #288): a key on this phone stays as it is. */
+        public boolean noKey;
         /** This plan's own copy of the backup's history (a unique file in the cache). */
         File db;
         long backupEvents;
@@ -168,6 +219,11 @@ public final class Backup {
     }
 
     static final String NOT_KEPT = "Your history could not be kept as a copy first, nothing was changed.";
+    /** A JSON backup without a usable key; also what every older version says about a backup without a key (issue #288). */
+    static final String NO_VALID_KEY = "The backup holds no valid ring key.";
+    /** Added to the result of a restore from a backup without a key (issue #288), by whether this phone has a key it can use. */
+    public static final String NO_KEY_ENTER = "This copy has no ring key, enter your key in Setup (Use my existing key) to sync again.";
+    public static final String NO_KEY_KEPT = "This copy has no ring key, the key on this phone stays.";
 
     static final String DAMAGED = "The history in this backup is damaged, nothing was changed.";
     static final String NEWER = "This backup comes from a newer Open Ring. Update the app first, nothing was changed.";
@@ -230,7 +286,9 @@ public final class Backup {
             json = withoutBom(json).trim();
             p.o = json.startsWith("{") ? Json.parse(json) : null;
             p.key = Hex.parseKey(p.o != null ? p.o.optString("key", "") : json);
-            if (p.key == null) return fail(p, p.o == null ? "No 32 character key found in this file." : "The backup holds no valid ring key.");
+            // a backup written while its phone could not read the key (issue #288): only with its mark and no key in it
+            p.noKey = p.key == null && p.o != null && !p.o.has("key") && p.o.optBoolean(NO_KEY, false);
+            if (p.key == null && !p.noKey) return fail(p, p.o == null ? "No 32 character key found in this file." : NO_VALID_KEY);
             if (p.db != null) {
                 if (!looksLikeSqlite(p.db)) return fail(p, DAMAGED);
                 Db.Info b = Db.inspect(p.db, true);
@@ -343,13 +401,18 @@ public final class Backup {
         // its level, since another one would analyse its whole history again
         Db.Info phone = r.history ? null : Db.inspect(c.getDatabasePath(Db.REAL), false);
         // a phone history that cannot be read counts as one with nights, so its level stays
-        applySettings(Prefs.of(c), p.key, p.o, phone == null || !phone.exists || phone.ok && phone.nights == 0);
-        // the key is saved: a Setup screen closed before showing the result must not start over
-        Prefs.of(c).setSetupDone(true);
+        Prefs prefs = Prefs.of(c);
+        applySettings(prefs, p.key, p.o, phone == null || !phone.exists || phone.ok && phone.nights == 0);
+        // the key is saved: a Setup screen closed before showing the result must not start over. A backup without a key
+        // (issue #288) leaves a phone without one in Setup, where the key is entered
+        if (prefs.hasKey()) prefs.setSetupDone(true);
         r.ok = true;
-        if (r.history) r.message = "Restored your key, settings and history" + (r.logDamaged ? ". " + PERIODS_DAMAGED : "");
-        else if (p.history) r.message = "Restored your key and settings, the history on this phone stays";
-        else r.message = "Restored your key and settings";
+        r.noKey = p.noKey;
+        String what = p.noKey ? "settings" : "key and settings";
+        if (r.history) r.message = "Restored your " + (p.noKey ? "settings and history" : "key, settings and history") + (r.logDamaged ? ". " + PERIODS_DAMAGED : "");
+        else if (p.history) r.message = "Restored your " + what + ", the history on this phone stays";
+        else r.message = "Restored your " + what;
+        if (p.noKey) r.message += ". " + (prefs.loadKey() != null ? NO_KEY_KEPT : NO_KEY_ENTER);
         return r;
     }
 
@@ -439,12 +502,17 @@ public final class Backup {
      */
     private static void applySettings(Prefs p, byte[] key, JSONObject o, boolean stageDetail) {
         p.setDemo(false);
-        p.saveKey(key);
+        // without a key in the backup (issue #288, or going back to a phone copy) the phone's key, readable or not,
+        // stays exactly as it is, and so does the ring it belongs to: a ring's identity only comes along with its key
+        boolean ring = key != null || !p.hasKey();
+        if (key != null) p.saveKey(key);
         if (o == null) return;
-        if (!o.isNull("address") && o.optString("address").length() > 0) p.setAddress(o.optString("address"));
-        if (!o.isNull("serial")) p.setSerial(o.optString("serial", null));
-        if (!o.isNull("hardware")) p.setHardware(o.optString("hardware", null));
-        if (!o.isNull("firmware")) p.setFirmware(o.optString("firmware", null));
+        if (ring) {
+            if (!o.isNull("address") && o.optString("address").length() > 0) p.setAddress(o.optString("address"));
+            if (!o.isNull("serial")) p.setSerial(o.optString("serial", null));
+            if (!o.isNull("hardware")) p.setHardware(o.optString("hardware", null));
+            if (!o.isNull("firmware")) p.setFirmware(o.optString("firmware", null));
+        }
         JSONObject prof = o.optJSONObject("profile");
         if (prof != null) {
             int sex = prof.optInt("sex", p.sex());
@@ -493,7 +561,7 @@ public final class Backup {
         if (app.openring.core.withings.WatchDue.valid(o.optInt("watch_per_day", -1))) p.setWatchPerDay(o.optInt("watch_per_day"));
         // the main device (one set of numbers): an older backup has none and keeps the phone's
         int main = o.optInt("main_device", -1);
-        if (main == app.openring.core.withings.MainDevice.RING || main == app.openring.core.withings.MainDevice.WATCH) p.setMainDevice(main);
+        if (app.openring.core.MainDevice.known(main)) p.setMainDevice(main);
         // the watch's setup choices: an older backup has none and keeps the phone's; a restored alarm is sent at the next sync
         int goal = o.optInt("watch_goal", -1);
         if (goal >= 1000 && goal <= 50000) p.setWatchGoal(goal);

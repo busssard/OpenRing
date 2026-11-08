@@ -41,6 +41,8 @@ final class PeriodCard {
     static boolean editPending;
     /** Screen test (extra {@code period_ask}, demo mode only): show "Have your periods stopped?" until it is answered. */
     static boolean askPending;
+    /** The card's How it works is open, kept while the page is rebuilt (extra {@code period_how} opens it for the screen test). */
+    static final boolean[] howOpen = {false};
     /** The last change, until Undo, the next change or 10 minutes. */
     static Undo undo;
 
@@ -91,17 +93,14 @@ final class PeriodCard {
             card.addView(Ui.gap(c, 14));
             card.addView(Ui.text(c, next, 16, Ui.TEXT, Ui.MEDIUM));
             card.addView(Ui.text(c, cy.expectedLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
-            card.addView(note(c, Explain.periodRange(cy)));
             card.addView(Ui.gap(c, 10));
             card.addView(Ui.text(c, cy.ovulationLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
             card.addView(Ui.text(c, cy.fertileLine(loc), 13, Ui.TEXT_2, Ui.REGULAR));
-            card.addView(note(c, Explain.periodOvulation(cy)));
         }
         String vary = cy.regularityLine();
         if (vary != null) {
             card.addView(Ui.gap(c, 10));
             card.addView(Ui.text(c, vary, 13, Ui.TEXT_2, Ui.REGULAR));
-            card.addView(note(c, Explain.periodVary(cy.used.size())));
         }
         String odd = cy.unusualLine(loc);
         if (odd != null) {
@@ -123,6 +122,9 @@ final class PeriodCard {
         LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(-2, -2);
         sl.setMargins(0, Ui.dp(c, 8), 0, 0);
         card.addView(set, sl);
+        // how the range, the ovulation range and "vary by" are worked out: one tap away, closed by default (owner, 3 November)
+        java.util.List<String> how = Explain.periodCardHow(cy);
+        if (!how.isEmpty()) card.addView(Ui.howItWorks(c, howOpen, how), Ui.matchWrap());
         if (editPending) {
             editPending = false;
             card.post(new Runnable() {

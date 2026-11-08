@@ -245,6 +245,11 @@ shot body-period-measured 1
 launch --ei tab 4 --ez period_rise true; sleep 3
 scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 40 || echo "::warning::issue #252 phase 2 step: the night temperature card was not found on Body"
 shot body-period-rise 1
+# How it works at the bottom of the Period card, opened (extra period_how, demo mode only): the shots above show it
+# closed, as everyone sees it first (owner's feedback of 3 November, issue #252)
+launch --ei tab 4 --ez period_how true; sleep 3
+scroll_to "How it works" 12 || echo "::warning::issue #252 step: How it works was not found on the Period card"
+shot body-period-how 1
 # the gentle question "Have your periods stopped?" (extra period_ask, demo mode only; nothing is saved without a tap)
 launch --ei tab 4 --ez period_ask true;    shot period-ask 3
 # Import from drip (phase 1b of #252): in demo mode the preview of a made up drip file against the demo's log (extra drip;
@@ -383,6 +388,13 @@ LEFT_DAY=$(date -d '2 days ago' +%F)
 launch --ez left_out true --ei tab 4 --es day "$LEFT_DAY"; shot body-left-out 10
 launch --ei tab 0 --es day "$LEFT_DAY";     shot today-left-out
 launch --es settings advanced;              shot settings-advanced
+# A day off the finger (issue #240), after the left out example for the same reason: unworn leaves out the day before
+# yesterday 00:00 to 21:30 in the demo file (under an hour of ring data is left; the night that ends yesterday morning
+# starts later and stays whole), then the analysis runs again. Readiness of yesterday, pinned so the shot does not depend
+# on the time CI runs, leaves Previous day activity out and says why in a card above Contributors
+launch --ez unworn true --ei tab 2 --es day "$(date -d '1 day ago' +%F)"; sleep 12
+scroll_to "Previous day activity is left out" 8 || echo "::warning::issue #240 step: the unworn card was not found on Ready, readiness-unworn shows where the swipes ended"
+shot readiness-unworn 1
 
 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then
