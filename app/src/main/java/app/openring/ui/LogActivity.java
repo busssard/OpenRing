@@ -39,7 +39,6 @@ public final class LogActivity extends Activity {
     /** Shown while a repair runs, as a toast when it starts and as a line above Repair. */
     private static final String REPAIRING = "Repairing, this can take a few minutes.";
     /** The line above Repair while Settings' Re analyse all runs the same job: nothing is being repaired (issue #361). */
-    private static final String ANALYSING_ALL = "Analysing all nights again, this can take a few minutes.";
     /**
      * Which job {@link #REPAIR} runs now: true for Re analyse all from Settings, false for Repair (issue #361). Set by
      * {@link #analyseAll}, which both start through once {@link #REPAIR} is theirs; read only while it runs.
@@ -196,7 +195,7 @@ public final class LogActivity extends Activity {
     void showRepairState() {
         if (repairButton == null) return;
         boolean on = REPAIR.running();
-        repairNote.setText(fromSettingsNow ? ANALYSING_ALL : REPAIRING);
+        repairNote.setText(fromSettingsNow ? app.openring.core.Texts.REANALYSING : REPAIRING);
         repairNote.setVisibility(on ? View.VISIBLE : View.GONE);
         repairButton.setEnabled(!on);
         repairButton.setAlpha(on ? 0.4f : 1f);

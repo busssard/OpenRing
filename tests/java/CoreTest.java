@@ -8770,14 +8770,14 @@ public class CoreTest {
 
     /**
      * Issue #361: the Data check's line above Repair names the job that runs: Repair says Repairing, Settings' Re analyse
-     * all (the same job) says it analyses all nights again. Source checks, LogActivity is Android.
+     * all (the same job) shows the same line as Settings (Texts.REANALYSING). Source checks, LogActivity is Android.
      */
     static void jobLine361() throws Exception {
         String src = new String(java.nio.file.Files.readAllBytes(new java.io.File("app/src/main/java/app/openring/ui/LogActivity.java").toPath()), "UTF-8");
         check("#361 Repair has its own line", src.contains("REPAIRING = \"Repairing, this can take a few minutes.\";"));
-        check("#361 Re analyse all has its own line, without Repairing",
-                src.contains("ANALYSING_ALL = \"Analysing all nights again, this can take a few minutes.\";"));
-        check("#361 the line above Repair is the running job's", src.contains("repairNote.setText(fromSettingsNow ? ANALYSING_ALL : REPAIRING);")
+        check("#361 Re analyse all shows the same line as Settings, without Repairing",
+                app.openring.core.Texts.REANALYSING.equals("Re analysing all nights, this can take a few minutes.") && !src.contains("ANALYSING_ALL"));
+        check("#361 the line above Repair is the running job's", src.contains("repairNote.setText(fromSettingsNow ? app.openring.core.Texts.REANALYSING : REPAIRING);")
                 && src.split("repairNote = Ui.text\\(", -1).length == 2);
         int a = src.indexOf("static void analyseAll(Context app, boolean fromSettings) {"), b = src.indexOf("new RepairTask(", a);
         check("#361 the job notes which one it is before it starts", a > 0 && b > a && src.substring(a, b).contains("fromSettingsNow = fromSettings;"));
