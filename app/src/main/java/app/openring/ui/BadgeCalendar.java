@@ -7,6 +7,8 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.Map;
 
+import app.openring.core.MonthGrid;
+
 /**
  * The Badges page's month calendar (issue #265, phase 1b): a dot under each day with a badge, a bigger one with two or
  * more, today with an outline. Touch works like the period calendar ({@link PeriodCalendar}): slide sideways to read each
@@ -28,7 +30,7 @@ final class BadgeCalendar extends MonthView {
     @Override
     protected void onDraw(Canvas cv) {
         Context c = getContext();
-        float w = getWidth(), cw = w / 7f;
+        float w = getWidth(), cw = w / MonthGrid.COLS;
         drawWeekdays(cv, cw);
         int off = offset(), len = month.lengthOfMonth();
         float rad = Math.min(cw, cellH) * 0.36f;
@@ -36,7 +38,7 @@ final class BadgeCalendar extends MonthView {
         stroke.setStrokeWidth(Ui.dp(c, 1.4f));
         for (int dom = 1; dom <= len; dom++) {
             LocalDate d = month.atDay(dom);
-            int i = off + dom - 1, col = i % 7, row = i / 7;
+            int i = off + dom - 1, col = i % MonthGrid.COLS, row = i / MonthGrid.COLS;
             float cx = cw * (col + 0.5f), cy = head + row * cellH + cellH / 2 - Ui.dp(c, 4);
             Integer n = counts.get(d);
             if (n != null && n > 0) {

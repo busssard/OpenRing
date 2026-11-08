@@ -250,6 +250,31 @@ shot body-period-rise 1
 launch --ei tab 4 --ez period_how true; sleep 3
 scroll_to "How it works" 12 || echo "::warning::issue #252 step: How it works was not found on the Period card"
 shot body-period-how 1
+# the same launch opens How it works in Your cycles and on the night temperature card too (issue #363). Every card on
+# Body ends with a "How it works" row, so the one of Your cycles is the last such row above its list's "Cycle length
+# chart" text; slow swipes from the Your cycles caption until that row is in the upper third
+how_above() {  # $1 the start of a text in an opened list: the top of the last "How it works" row above it, when both are shown
+  local d t
+  d=$(ui_dump)
+  t=$(echo "$d" | grep -o "text=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p)
+  [ -n "$t" ] || return 0
+  echo "$d" | grep -o 'text="How it works"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' \
+    | sed 's/bounds="\[[0-9]*,\([0-9]*\)\].*/\1/' | awk -v t="$t" '$1 < t' | tail -1
+}
+cycles_how=0
+scroll_to "YOUR CYCLES" 40 || echo "::warning::issue #363 step: the Your cycles card was not found on Body"
+for i in $(seq 1 12); do
+  y=$(how_above "Cycle length chart")
+  if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 3 )) ]; then cycles_how=1; break; fi
+  adb shell input swipe 30 1500 30 900 1500; sleep 1
+done
+[ $cycles_how = 1 ] || echo "::warning::issue #363 step: How it works of Your cycles was not found, body-cycles-how shows where the swipes ended"
+shot body-cycles-how 1
+# the night temperature card is the last on Body: flings to the end of the page show its How it works opened under the line
+scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 20 || echo "::warning::issue #363 step: the night temperature card was not found on Body"
+swipe_up; swipe_up; swipe_up
+ui_dump | grep -q "In many people it rises" || echo "::warning::issue #363 step: How it works of the night temperature card is not open on screen"
+shot body-temp-how 1
 # the gentle question "Have your periods stopped?" (extra period_ask, demo mode only; nothing is saved without a tap)
 launch --ei tab 4 --ez period_ask true;    shot period-ask 3
 # Import from drip (phase 1b of #252): in demo mode the preview of a made up drip file against the demo's log (extra drip;
