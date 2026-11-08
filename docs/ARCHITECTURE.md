@@ -931,7 +931,10 @@ read, no Device Information or Battery service, silent until asked).
 ## Steps from this phone (issue #329, phase 1b)
 
 Open Ring is useful without a ring or a watch: screen time and the period tracker were phone only already, and the phone's own
-step counter (`Sensor.TYPE_STEP_COUNTER`, counted in hardware since the phone started) adds steps.
+step counter (`Sensor.TYPE_STEP_COUNTER`, the steps since the phone started) adds steps. Android's documentation says the
+counter counts only while the sensor is activated, and since Android 9 an app idle in the background gets no sensor events;
+on many phones the counter runs all the time in a low power chip, on others only while some app (often the phone's health
+app) keeps it on. Neither can be checked on the JVM; the log names each reading's source and whether a value came.
 
 * **Reading** (`sync/PhoneReader`): register for the sensor, wait at most 5 s for its first value (`flush` brings a held back
   batch), unregister. No value: nothing is stored, `Prefs.notePhoneNoReading` counts it for the Data check. The reading is the
@@ -944,12 +947,17 @@ step counter (`Sensor.TYPE_STEP_COUNTER`, counted in hardware since the phone st
   registered at run time, so on most phones the reading after the start is the one that counts). The permission is
   ACTIVITY_RECOGNITION ("Physical activity", Android 10 and newer), asked on Activity; `uses-feature ... stepcounter` is not
   required, so phones without the sensor install and say "This phone has no step counter."
-* **Storage** (`data/PhoneStore`, schema 11, only adds): `phone_readings` raw, only ever added to; `phone_steps` worked out by
-  `core/PhoneSteps.intervals`: a changed boot count is a restart (the first reading after it counts from the start's time, if the
-  counter fits that time); intervals are ordered and measured by (boot, elapsed) and end at their second reading's wall time,
+* **Storage** (`data/PhoneStore`, schema 11, only adds): `phone_readings` raw, only ever added to, keyed by `device` (a random
+  id made once on the phone, `Prefs.phoneDevice`, never in a backup, so another phone's readings from a restore are never mixed
+  with this phone's), `boot` and `elapsed`; `phone_steps` worked out by `core/PhoneSteps.intervals` per device: the very first
+  reading of a phone is a baseline without an interval (its counter may hold weeks of steps from before), a changed boot count is
+  a restart, and the first reading after a restart that was seen (an earlier boot of the same phone read before this one started,
+  both with real boot counts) counts from the start's time, if the counter fits that time; intervals are ordered and measured by (device, boot, elapsed) and end at their second reading's wall time,
   so a clock set back or forward moves an interval but never stretches, shrinks or drops it; a counter that falls without a new
   boot count, or rises faster than 4 steps a second, gives no interval (counted for the Data check). A new reading works out its
-  boot's intervals again, a new rule (`PhoneSteps.RULE`, kv `phone_rule`) all of them, each in one transaction. Readings always go
+  phone's intervals again, a new rule (`PhoneSteps.RULE`, kv `phone_rule`) all of them, each in one transaction; the schema step
+  forgets the rule, so an upgrade stopped half way gets its intervals back at the next day load (`PhoneStore.forDay`, not while
+  an analysis runs). The app opening reads only when this boot's newest reading is a minute old or more, before the sensor is on. Readings always go
   to the real file: `PhoneStore.record` holds Db's class lock (the lock of the restore's swap) and uses `Db.real`, which in demo
   mode is a second helper on the real file, taken over by `Db.get` when demo mode ends and closed before a restore; it writes
   nothing while an analysis runs (its transaction would hold the write for minutes), the next reading loses nothing.
@@ -958,8 +966,10 @@ step counter (`Sensor.TYPE_STEP_COUNTER`, counted in hardware since the phone st
   failure puts the old file back. Older backups get the tables empty first. Delete all empties both; pairing another ring keeps
   them.
 * **Days**: each day from its midnight to the next in its zone (`Json.dayZone`, as every screen), each interval's steps spread
-  evenly over it (`PhoneSteps.share`), so a 23 or 25 hour day and a trip get their own hours. `Db.latestDay` also takes the day of
-  the newest interval, so a person without a ring follows today.
+  evenly over it (`PhoneSteps.share`), so a 23 or 25 hour day and a trip get their own hours. `Db.latestDayWithPhone` (the main screen's
+  following only) also takes the day of the newest interval, so a person without a ring follows today; `Db.latestDay` stays the
+  ring's newest day for the Settings preview and the Data check. After midnight a phone reading moves the main screen to the
+  new day before the morning sync.
 * **Main device**: the phone is a `MainDevice.Source`: it covers the quarter hours its intervals reach, lends each quarter hour's
   share (rounded to whole steps, the distance from the steps), has no heart rate and no night. With the ring or the watch as main
   device it fills only where neither was worn, with the usual line ("Includes about 840 steps from your phone, 14:00 to 15:00,
