@@ -159,6 +159,8 @@ public final class DataCheck {
         t.append("Left out times: ").append(db.excluded().size()).append('\n');
         // the watch (issue #251): counts, dates and message types only, never a value
         t.append(watchLine(p)).append(WatchStore.checkLines(db));
+        // the phone's own steps (issue #329): counts, dates, gaps and the day totals to hold next to the phone's health app
+        t.append(PhoneStore.checkLines(db, p, today, ZoneId.systemDefault()));
         // the nights themselves, counts and dates only (issue #40): which day each sleep period was given
         // to is what the screens go by; times, minutes and scores are health values and stay out
         t.append(nightSummary(db.nightsJson(today.minusDays(NIGHT_DAYS - 1).toString(), "9999-12-31", false), today, NIGHT_DAYS));

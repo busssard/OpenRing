@@ -151,7 +151,7 @@ public final class Demo {
         Db db = Db.get(c);
         // built completely today: nothing to do. Not "the newest day is today", which is still
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
-        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db)) return false;
+        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db) && PhoneStore.any(db)) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll(Db.DEMO_BUILD);
         ZoneId zone = ZoneId.systemDefault();
@@ -171,6 +171,7 @@ public final class Demo {
         db.putApps(apps);
         periods(db, today, now);
         watch(db, today, now, zone);
+        phone(db, today, now, zone);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
         db.put(BUILT, today.toString());
@@ -257,6 +258,14 @@ public final class Demo {
                 WatchStore.decodeAll(db.getWritableDatabase());
             }
         });
+    }
+
+    /**
+     * The demo's made up phone steps (issue #329, phase 1b): hourly readings of a phone carried by day, one restart
+     * ({@code core/PhoneSteps.demo}), stored like real readings, in {@code db}, the demo file, never the real one.
+     */
+    static void phone(Db db, LocalDate today, long now, ZoneId zone) {
+        PhoneStore.addAll(db, app.openring.core.PhoneSteps.demo(today, 35, now, zone, new Random(329)));
     }
 
     /**

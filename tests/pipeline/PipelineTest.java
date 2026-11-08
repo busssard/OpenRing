@@ -29,7 +29,7 @@ import app.openring.data.Json;
 public class PipelineTest {
     static int passed, failed;
     /** The schema version of this app (issue #251 made it 9). */
-    static final int CUR = 10;
+    static final int CUR = 11;
 
     static void check(String name, boolean ok, Object info) {
         if (ok) passed++;
@@ -908,6 +908,12 @@ public class PipelineTest {
         demo251();
         mainDevice251();
         phoneReserved329();
+        phoneUpgrade329();
+        phoneStore329();
+        phoneRestore329();
+        phoneResets329();
+        phoneDemo329();
+        phoneLarge329();
         badges265();
         phase1a2_252();
         rise252();
@@ -12955,8 +12961,19 @@ public class PipelineTest {
         p.saveKey(kept != null ? kept : new byte[16]);
         check("#329 ring state: a stored key", p.hasKey() && p.ringState() == app.openring.core.KeyState.READABLE
                 && !app.openring.core.KeyState.needsSetup(true, p.ringState()) && app.openring.core.KeyState.hasRing(p.ringState()), p.ringState());
-        p.setMainDevice(app.openring.core.MainDevice.PHONE);
-        check("#329 main device: 2 is not stored as a choice yet, it is the ring", p.mainDevice() == app.openring.core.MainDevice.RING, p.mainDevice());
+        // phase 1b (review of #347): a raw stored 2, as phase 1b writes it, read back. It is the phone; the screens show it as the
+        // phone only while the phone counts steps (MainDevice.shown), otherwise the ring as in phase 1a
+        android.content.SharedPreferences raw = c.getSharedPreferences("openring", android.content.Context.MODE_PRIVATE);
+        raw.edit().putInt("main_device", app.openring.core.MainDevice.PHONE).commit();
+        check("#329b main device: a stored 2 reads back as the phone", p.mainDevice() == app.openring.core.MainDevice.PHONE
+                && p.mainDeviceStored() == app.openring.core.MainDevice.PHONE, p.mainDevice());
+        check("#329b main device: a stored 2 without phone steps is shown as the ring", app.openring.core.MainDevice.shown(p.mainDeviceStored(), true, false, false)
+                == app.openring.core.MainDevice.RING && app.openring.core.MainDevice.shown(p.mainDeviceStored(), true, false, true) == app.openring.core.MainDevice.PHONE, null);
+        byte[] withPhone = backup252(c);
+        org.json.JSONObject bj = new org.json.JSONObject(new String(zipEntry(withPhone, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
+        check("#329b main device: a backup carries the stored 2", bj.optInt("main_device", -1) == app.openring.core.MainDevice.PHONE, bj.opt("main_device"));
+        raw.edit().remove("main_device").commit();
+        check("#329b main device: nothing stored reads as none, the ring for the backup as before", p.mainDeviceStored() == -1 && p.mainDevice() == app.openring.core.MainDevice.RING, null);
         p.setMainDevice(app.openring.core.MainDevice.WATCH);
         byte[] full = backup252(c);
         java.util.zip.ZipInputStream zin = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(full));
@@ -12977,8 +12994,339 @@ public class PipelineTest {
         }
         zout.close();
         app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(rebuilt.toByteArray()));
-        check("#329 restore: a backup with main device 2 keeps the phone's choice", had && r.ok && p.mainDevice() == app.openring.core.MainDevice.WATCH, r.message);
+        // phase 1b: 2 is a choice now, so a backup carrying it brings it (phase 1a kept the phone's choice; an older version still does)
+        check("#329b restore: a backup with main device 2 brings the phone as main device", had && r.ok && p.mainDevice() == app.openring.core.MainDevice.PHONE, r.message);
+        // no ring by choice (phase 1b): Prefs' state, and a ring paired later ends it
+        byte[] key = p.loadKey();
+        p.clearKey();
+        p.setNoRing(true);
+        check("#329b no ring: the state without a key", p.keyState() == app.openring.core.KeyState.NO_RING && p.ringState() == app.openring.core.KeyState.NO_RING
+                && !app.openring.core.KeyState.needsSetup(false, p.ringState()) && !app.openring.core.KeyState.opensSetup(false, false, p.keyState(), false), p.keyState());
+        p.pairDone(key != null ? key : new byte[16], "AA:BB:CC:DD:EE:FF", "TESTSERIAL", "paired", false);
+        check("#329b no ring: pairing a ring ends it", !p.noRing() && p.keyState() == app.openring.core.KeyState.READABLE, p.keyState());
+        p.clearPairUnseen();
         p.setMainDevice(app.openring.core.MainDevice.RING);
+        clean254();
+    }
+
+    // ---------------------------------------------------------------- issue #329, phase 1b: steps from this phone
+
+    static final String[] DROP11 = {"DROP TABLE phone_readings", "DROP TABLE phone_steps"};
+
+    /** Hourly made up readings from {@code days} days before {@code end} (unix seconds), one boot, as a phone would give them. */
+    static List<app.openring.core.PhoneSteps.Reading> readings329(long boot, double start, int hours, long counter0, long seed) {
+        Random r = new Random(seed);
+        List<app.openring.core.PhoneSteps.Reading> out = new ArrayList<app.openring.core.PhoneSteps.Reading>();
+        long counter = counter0;
+        for (int h = 0; h < hours; h++) {
+            double wall = start + h * 3600 + r.nextInt(300);
+            counter += r.nextInt(900);
+            out.add(new app.openring.core.PhoneSteps.Reading(boot, Math.round((wall - start + 7200) * 1000), counter, wall));
+        }
+        return out;
+    }
+
+    /** Every reading and every interval, row for row. */
+    static String phoneRows329(Db db) {
+        StringBuilder b = new StringBuilder();
+        String[] qs = {"SELECT boot, elapsed, counter, wall FROM phone_readings ORDER BY boot, elapsed",
+            "SELECT boot, elapsed, start, stop, steps FROM phone_steps ORDER BY boot, elapsed"};
+        int[] cols = {4, 5};
+        for (int k = 0; k < qs.length; k++) {
+            android.database.Cursor c = db.getReadableDatabase().rawQuery(qs[k], null);
+            try {
+                while (c.moveToNext()) {
+                    for (int i = 0; i < cols[k]; i++) b.append(c.getString(i)).append(',');
+                    b.append('\n');
+                }
+            } finally {
+                c.close();
+            }
+            b.append("--\n");
+        }
+        return b.toString();
+    }
+
+    static long phoneCount329(Db db, String table) {
+        return db.count("SELECT COUNT(*) FROM " + table);
+    }
+
+    /** The intervals worked out from the readings now (what a full rebuild must give). */
+    static String rebuilt329(Db db) {
+        app.openring.data.PhoneStore.rebuild(db);
+        return phoneRows329(db);
+    }
+
+    /**
+     * Issue #329, data safety: a schema 10 history (ring, watch, period log) upgrades to 11 with every event, night, day,
+     * period day and watch row as before and two empty phone tables; run twice it keeps the readings; an upgrade stopped after
+     * the first table goes on with the rest and keeps the readings.
+     */
+    static void phoneUpgrade329() throws Exception {
+        Context c = phone254("openring329-up");
+        Db db = Db.get(c);
+        someLog252(db);
+        session251(db, 1000, made251(T251, 80), T251 + 86400);
+        List<String> before = results139(db), ev = events58(db);
+        String periods = periodRows252(db), watch = watchRows251(db);
+        restart242();
+        java.io.File file = c.getDatabasePath(Db.REAL);
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+            for (String x : DROP11) st.execute(x);
+            st.execute("PRAGMA user_version = 10");
+        }
+        db = Db.get(c);
+        check("#329b upgrade from schema 10: version " + CUR + ", empty phone tables, every event, night, day, period day and watch row the same",
+                db.getReadableDatabase().getVersion() == CUR && phoneCount329(db, "phone_readings") == 0 && phoneCount329(db, "phone_steps") == 0
+                        && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods) && watchRows251(db).equals(watch),
+                db.getReadableDatabase().getVersion());
+        check("#329b upgrade from schema 10: the schema check of this version passes", schemaProblem251(db) == null, schemaProblem251(db));
+        check("#329b upgrade from schema 10: nothing to analyse again", Analyzer.upToDate(c), null);
+        double t0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        app.openring.data.PhoneStore.addAll(db, readings329(5, t0, 48, 0, 1));
+        String rows = phoneRows329(db);
+        check("#329b the readings stored, their intervals worked out", phoneCount329(db, "phone_readings") == 48 && phoneCount329(db, "phone_steps") == 48, rows.length());
+        restart242();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+            st.execute("PRAGMA user_version = 10");
+        }
+        db = Db.get(c);
+        check("#329b the upgrade run twice keeps every reading, interval and the history", db.getReadableDatabase().getVersion() == CUR && phoneRows329(db).equals(rows)
+                && events58(db).equals(ev) && results139(db).equals(before) && watchRows251(db).equals(watch), null);
+        restart242();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
+            st.execute("DROP TABLE phone_steps");
+            st.execute("PRAGMA user_version = 10");
+        }
+        db = Db.get(c);
+        check("#329b an upgrade stopped after the first table goes on: both tables there, every reading kept", db.getReadableDatabase().getVersion() == CUR
+                && schemaProblem251(db) == null && phoneCount329(db, "phone_readings") == 48 && phoneCount329(db, "phone_steps") == 0 && events58(db).equals(ev), schemaProblem251(db));
+        check("#329b after a cut upgrade the intervals come back from the readings, as before", rebuilt329(db).equals(rows), null);
+        clean254();
+    }
+
+    /** Issue #329: storing readings (known, too soon, busy), the day window, latestDay for a phone only person, the Data check. */
+    static void phoneStore329() throws Exception {
+        Context c = freshDb("openring329-store");
+        MADE_254.add(c);
+        app.openring.data.Prefs.of(c).setDemo(false);
+        Db db = Db.get(c);
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate today = LocalDate.now(z);
+        double start = today.atStartOfDay(z).toEpochSecond() + 6 * 3600;
+        long bootMs = 3_600_000;
+        app.openring.core.PhoneSteps.Reading a = new app.openring.core.PhoneSteps.Reading(9, bootMs, 500, start);
+        app.openring.core.PhoneSteps.Reading b = new app.openring.core.PhoneSteps.Reading(9, bootMs + 3_600_000, 1300, start + 3600);
+        check("#329b store: a reading is stored, the same one again is known", app.openring.data.PhoneStore.record(c, a, 60) == app.openring.data.PhoneStore.STORED
+                && app.openring.data.PhoneStore.record(c, a, 60) == app.openring.data.PhoneStore.KNOWN, null);
+        app.openring.core.PhoneSteps.Reading soon = new app.openring.core.PhoneSteps.Reading(9, bootMs + 30_000, 520, start + 30);
+        check("#329b store: a reading half a minute later is skipped when the app opens", app.openring.data.PhoneStore.record(c, soon, 60) == app.openring.data.PhoneStore.TOO_SOON
+                && phoneCount329(db, "phone_readings") == 1, null);
+        // while an analysis runs, nothing is written (its transaction would hold the write): the next reading loses nothing
+        java.lang.reflect.Field runs = Analyzer.class.getDeclaredField("RUNS");
+        runs.setAccessible(true);
+        java.util.concurrent.atomic.AtomicInteger n = (java.util.concurrent.atomic.AtomicInteger) runs.get(null);
+        n.incrementAndGet();
+        int busy;
+        try {
+            busy = app.openring.data.PhoneStore.record(c, b, 0);
+        } finally {
+            n.decrementAndGet();
+        }
+        check("#329b store: while an analysis runs the reading waits, nothing written", busy == app.openring.data.PhoneStore.BUSY && phoneCount329(db, "phone_readings") == 1, busy);
+        check("#329b store: then it is stored", app.openring.data.PhoneStore.record(c, b, 0) == app.openring.data.PhoneStore.STORED, null);
+        app.openring.core.MainDevice.Phone w = app.openring.data.PhoneStore.window(db, today.atStartOfDay(z).toEpochSecond(), today.plusDays(1).atStartOfDay(z).toEpochSecond());
+        check("#329b store: the day's window holds both intervals (since the start, and the hour between)", w.intervals.size() == 2 && w.intervals.get(0)[2] == 500
+                && w.intervals.get(1)[2] == 800 && w.intervals.get(1)[1] - w.intervals.get(1)[0] == 3600, w.intervals.size());
+        check("#329b store: a phone only person follows today (latestDay without any day summary)", today.toString().equals(db.latestDay())
+                && db.count("SELECT COUNT(*) FROM days") == 0, db.latestDay());
+        check("#329b store: the last reading's time", app.openring.data.PhoneStore.lastReading(db) == start + 3600, null);
+        app.openring.data.Prefs.of(c).notePhoneNoReading((long) start);
+        String text = DataCheck.run(c, today).text;
+        check("#329b Data check: the phone's lines, counts and the day total", text.contains("Phone steps: 2 readings from ") && text.contains("1 phone start, 2 intervals")
+                && text.contains("No sensor value in time: 1 time") && text.contains("    " + today + ": 1,300"), text);
+        check("#329b Data check: no clock time, no minutes", !java.util.regex.Pattern.compile("\\d{1,2}:\\d{2}").matcher(text).find()
+                && !java.util.regex.Pattern.compile("\\d+ ?min\\b").matcher(text).find(), text);
+        // a reading of a falling counter without a restart: stored raw, no interval for it
+        app.openring.core.PhoneSteps.Reading fell = new app.openring.core.PhoneSteps.Reading(9, bootMs + 7_200_000, 100, start + 7200);
+        app.openring.data.PhoneStore.record(c, fell, 0);
+        check("#329b store: a falling counter is kept raw and gives no interval", phoneCount329(db, "phone_readings") == 3 && phoneCount329(db, "phone_steps") == 2, null);
+        // the rule's version is noted: a file without it works everything out again once
+        db.getWritableDatabase().execSQL("DELETE FROM kv WHERE k = 'phone_rule'");
+        String rows = phoneRows329(db);
+        check("#329b store: an unknown rule version works the intervals out again, the same", app.openring.data.PhoneStore.ensureRule(db) && phoneRows329(db).equals(rows)
+                && !app.openring.data.PhoneStore.ensureRule(db), null);
+        clean254();
+    }
+
+    /**
+     * Issue #329, data safety: a restore keeps this phone's readings the backup lacks (insert, never replace), from a backup
+     * of this version and of an older one (schema 10, no phone tables); twice gives the same; a stop in the merge restores
+     * nothing and keeps the phone's readings.
+     */
+    static void phoneRestore329() throws Exception {
+        Context c = phone254("openring329-restore");
+        Db db = Db.get(c);
+        double t0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        app.openring.data.PhoneStore.addAll(db, readings329(5, t0, 72, 0, 2));
+        byte[] full = backup252(c);
+        // after the backup: two more days, and a restart
+        List<app.openring.core.PhoneSteps.Reading> later = readings329(5, t0, 120, 0, 2).subList(72, 120);
+        app.openring.data.PhoneStore.addAll(db, later);
+        app.openring.data.PhoneStore.addAll(db, readings329(6, t0 + 130 * 3600, 10, 0, 3));
+        long events = db.eventCount();
+        String phone = phoneRows329(db);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#329b restore: every reading of the phone is there, the newer ones too, the intervals the same", r.ok && r.history && phoneRows329(db).equals(phone)
+                && db.eventCount() == events, r.message);
+        app.openring.data.Backup.Result again = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#329b the same restore twice gives the same readings", again.ok && phoneRows329(db).equals(phone), null);
+        // a reading only the backup has (gone on the phone, only a test can do that) comes back next to the phone's
+        db.getWritableDatabase().execSQL("DELETE FROM phone_readings WHERE boot = 5 AND elapsed = (SELECT MIN(elapsed) FROM phone_readings WHERE boot = 5)");
+        app.openring.data.PhoneStore.rebuild(db);
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#329b restore: the backup's readings come back next to the phone's, the intervals worked out from all", r.ok && phoneRows329(db).equals(phone), null);
+        // older backups (schema 10 and 9, no phone tables): the upgrade makes them, then the phone's readings go in
+        for (int v : new int[] {10, 9}) {
+            List<String> sql = new ArrayList<String>(Arrays.asList(DROP11));
+            if (v <= 9) sql.addAll(Arrays.asList(DROP10));
+            byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), v, sql.toArray(new String[0])));
+            r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
+            db = Db.get(c);
+            check("#329b a backup of schema " + v + " restores at version " + CUR + " with every phone reading", r.ok && r.history
+                    && db.getReadableDatabase().getVersion() == CUR && phoneRows329(db).equals(phone) && db.eventCount() == events, r.message);
+        }
+        // a stop at each step of the merge: nothing restored, the phone's readings as they were
+        for (String step : new String[] {"read", "write", "phone", "done"}) {
+            failMerge252(step);
+            try {
+                r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+            } finally {
+                failMerge252(null);
+            }
+            db = Db.get(c);
+            check("#329b a stop at the merge step " + step + ": nothing restored, the phone's readings row for row", !r.ok && phoneRows329(db).equals(phone)
+                    && db.eventCount() == events, r.message);
+        }
+        // a reading in both with another value (only a test can make that): one row per reading, never two, never changed in
+        // place; the restored file keeps the backup's row (insert, never replace), the phone adds what the backup lacks
+        long sum = db.count("SELECT SUM(counter) FROM phone_readings"), count = phoneCount329(db, "phone_readings");
+        byte[] other = withDb(full, alter(zipEntry(full, "openring.db"), CUR, "UPDATE phone_readings SET counter = counter + 1"));
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(other));
+        db = Db.get(c);
+        check("#329b restore: a reading in both stays one row (the backup's), the phone's others are added", r.ok && phoneCount329(db, "phone_readings") == count
+                && db.count("SELECT SUM(counter) FROM phone_readings") == sum + 72 && phoneRows329(db).equals(rebuilt329(db)), db.count("SELECT SUM(counter) FROM phone_readings") - sum);
+        noTemp(c, "after the #329 restores");
+        clean254();
+    }
+
+    /** Issue #329: pairing another ring keeps the phone's steps, Delete all empties them; an interrupted rebuild keeps the old rows. */
+    static void phoneResets329() throws Exception {
+        List<String> keep = Arrays.asList((String[]) field252(Db.class, "KEPT_TABLES"));
+        List<String> all = Arrays.asList((String[]) field252(Db.class, "ALL_TABLES"));
+        check("#329b the phone's tables are kept when another ring is paired, emptied by Delete all", keep.contains("phone_readings") && keep.contains("phone_steps")
+                && all.contains("phone_readings") && all.contains("phone_steps"), keep);
+        Context c = phone254("openring329-resets");
+        Db db = Db.get(c);
+        double t0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        app.openring.data.PhoneStore.addAll(db, readings329(5, t0, 200, 0, 4));
+        String rows = phoneRows329(db);
+        // a rebuild stopped half way: the old intervals stay, row for row
+        java.lang.reflect.Field fail = app.openring.data.PhoneStore.class.getDeclaredField("failRebuildAfter");
+        fail.setAccessible(true);
+        fail.set(null, 100);
+        boolean threw = false;
+        try {
+            app.openring.data.PhoneStore.rebuild(db);
+        } catch (IllegalStateException e) {
+            threw = true;
+        } finally {
+            fail.set(null, -1);
+        }
+        check("#329b a rebuild stopped half way keeps every old interval and reading", threw && phoneRows329(db).equals(rows), null);
+        // a reading stopped half way (its boot's rebuild) keeps everything as before, the reading too is not there
+        fail.set(null, 10);
+        threw = false;
+        try {
+            app.openring.data.PhoneStore.record(c, new app.openring.core.PhoneSteps.Reading(5, Long.MAX_VALUE / 4, 999999, t0 + 300 * 3600), 0);
+        } catch (IllegalStateException e) {
+            threw = true;
+        } finally {
+            fail.set(null, -1);
+        }
+        check("#329b a reading stopped while its intervals are worked out: nothing changed, not even the reading", threw && phoneRows329(db).equals(rows), null);
+        db.resetRingData();
+        check("#329b pairing another ring: the phone's readings and intervals stay row for row", phoneRows329(db).equals(rows) && db.eventCount() == 0, null);
+        Analyzer.deleteAll(c);
+        check("#329b Delete all: no reading and no interval left", phoneCount329(db, "phone_readings") == 0 && phoneCount329(db, "phone_steps") == 0, null);
+        clean254();
+    }
+
+    /**
+     * Issue #329: demo mode has its own made up phone steps in the demo file; a reading that arrives while demo mode is shown
+     * goes into the real file, the demo file stays unchanged; leaving demo mode shows it.
+     */
+    static void phoneDemo329() throws Exception {
+        Context c = phone254("openring329-demo");
+        Db real = Db.get(c);
+        double t0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        app.openring.data.PhoneStore.addAll(real, readings329(5, t0, 24, 0, 5));
+        String realRows = phoneRows329(real);
+        LocalDate today = LocalDate.now();
+        app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        Db demo = Db.get(c);
+        String demoRows = phoneRows329(demo);
+        long demoEvents = demo.eventCount();
+        check("#329b demo mode: the made up phone steps are in the demo file, two phone starts", Db.DEMO.equals(demo.fileName) && phoneCount329(demo, "phone_readings") > 35 * 15
+                && demo.count("SELECT COUNT(DISTINCT boot) FROM phone_readings") == 2 && !demoRows.equals(realRows), phoneCount329(demo, "phone_readings"));
+        check("#329b demo mode: the demo follows today with its phone steps too", today.toString().equals(demo.latestDay()), demo.latestDay());
+        // a reading arrives while the demo is shown (the job, a restart, the app opening)
+        app.openring.core.PhoneSteps.Reading late = new app.openring.core.PhoneSteps.Reading(5, Math.round((25 * 3600 + 7200) * 1000.0), 99999, t0 + 25 * 3600);
+        int res = app.openring.data.PhoneStore.record(c, late, 0);
+        Db stillDemo = Db.get(c);
+        check("#329b demo on, a reading arrives: stored, the demo file unchanged and still the open one", res == app.openring.data.PhoneStore.STORED
+                && Db.DEMO.equals(stillDemo.fileName) && phoneRows329(stillDemo).equals(demoRows) && stillDemo.eventCount() == demoEvents, res);
+        app.openring.data.Prefs.of(c).setDemo(false);
+        Db back = Db.get(c);
+        check("#329b leaving demo mode: the reading is in the real file, the demo's made up ones are not", Db.REAL.equals(back.fileName)
+                && phoneCount329(back, "phone_readings") == 25 && !phoneRows329(back).equals(realRows)
+                && back.count("SELECT COUNT(*) FROM phone_readings WHERE boot = 41 OR boot = 42") == 0, phoneCount329(back, "phone_readings"));
+        clean254();
+    }
+
+    /** Issue #329: three years of hourly readings (about 26,000) are worked out, read and carried through a restore quickly. */
+    static void phoneLarge329() throws Exception {
+        Context c = phone254("openring329-large");
+        Db db = Db.get(c);
+        byte[] full = backup252(c);
+        double t0 = LocalDate.of(2016, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        List<app.openring.core.PhoneSteps.Reading> rs = new ArrayList<app.openring.core.PhoneSteps.Reading>();
+        // a restart about every month, as phones get updates
+        int hours = 3 * 365 * 24;
+        for (int k = 0; k * 720 < hours; k++) rs.addAll(readings329(100 + k, t0 + k * 720 * 3600.0, Math.min(720, hours - k * 720), 0, k));
+        long ta = System.currentTimeMillis();
+        app.openring.data.PhoneStore.addAll(db, rs);
+        long addMs = System.currentTimeMillis() - ta;
+        ta = System.currentTimeMillis();
+        app.openring.data.PhoneStore.rebuild(db);
+        long rebuildMs = System.currentTimeMillis() - ta;
+        ta = System.currentTimeMillis();
+        double day = LocalDate.of(2018, 6, 10).atStartOfDay(Z58).toEpochSecond();
+        app.openring.core.MainDevice.Phone w = app.openring.data.PhoneStore.window(db, day, day + 86400);
+        long readMs = System.currentTimeMillis() - ta;
+        System.out.println("  #329 three years: " + rs.size() + " readings stored in " + addMs + " ms, worked out again in " + rebuildMs + " ms, a day read in " + readMs + " ms");
+        check("#329b three years of hourly readings: every one stored, an interval each", phoneCount329(db, "phone_readings") == rs.size() && rs.size() >= 26000
+                && phoneCount329(db, "phone_steps") == rs.size(), rs.size());
+        check("#329b three years are worked out again in seconds, a day read at once", rebuildMs < 10000 && readMs < 1000 && w.intervals.size() >= 23, rebuildMs + " / " + readMs);
+        String rows = phoneRows329(db);
+        ta = System.currentTimeMillis();
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        long restoreMs = System.currentTimeMillis() - ta;
+        check("#329b three years of readings carried through a restore of an older backup, every row, in seconds", r.ok && phoneRows329(Db.get(c)).equals(rows)
+                && restoreMs < 60000, restoreMs);
         clean254();
     }
 
