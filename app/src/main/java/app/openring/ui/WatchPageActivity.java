@@ -14,6 +14,7 @@ import android.widget.TextView;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.SortedMap;
 import java.util.Locale;
 import java.util.TreeMap;
 
@@ -108,22 +109,26 @@ public final class WatchPageActivity extends Activity {
             @Override
             public void run() {
                 WatchStore.Data d = null;
-                List<Object[]> zoneRows = null;
+                WatchDays.Zones z = null;
+                WatchDays.Index ix = null;
                 String err = null;
                 try {
                     Db db = Db.get(appCtx);
                     // a newer decoder (an update) works the rows out again first, in one transaction (issue #251)
                     if (WatchStore.ensureDecoded(db)) app.openring.ble.RingManager.get(appCtx).log("watch page: a new decoder, every stored message decoded again");
-                    d = WatchStore.load(db);
-                    zoneRows = db.zones();
+                    WatchStore.Data read = WatchStore.load(db);
+                    // the zones and the per day answers once, here and not on each tap (without zone rows: the phone's zone)
+                    z = zonesOf(db.zones());
+                    ix = new WatchDays.Index(read.steps, read.moves, read.heart, read.workouts, read.sleep, read.battery, z);
+                    d = read;
                 } catch (RuntimeException e) {
+                    d = null;
                     err = e.getClass().getSimpleName();
                     app.openring.ble.RingManager.get(appCtx).log("watch page: not read (" + err + ")");
                 }
                 final WatchStore.Data got = d;
-                // the zones and the per day answers once, here and not on each tap (without zone rows: the phone's zone)
-                final WatchDays.Zones zs = got == null ? null : zonesOf(zoneRows);
-                final WatchDays.Index gotIndex = got == null ? null : new WatchDays.Index(got.steps, got.moves, got.heart, got.workouts, got.sleep, got.battery, zs);
+                final WatchDays.Zones zs = z;
+                final WatchDays.Index gotIndex = ix;
                 h.post(new Runnable() {
                     @Override
                     public void run() {
@@ -194,8 +199,8 @@ public final class WatchPageActivity extends Activity {
     View steps(Context c, LocalDate d) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Steps"));
-        TreeMap<LocalDate, Integer> per = index.steps;
-        TreeMap<LocalDate, Integer> metres = index.metres;
+        SortedMap<LocalDate, Integer> per = index.steps;
+        SortedMap<LocalDate, Integer> metres = index.metres;
         double v = WatchDays.of(per, d), m = WatchDays.of(metres, d);
         card.addView(Ui.statRow(c, Ui.stat(c, "Steps", Double.isNaN(v) ? "--" : String.format(Locale.getDefault(), "%,d", (int) v), "", Ui.ACTIVE, "Counted by the watch on this day"),
                 Ui.stat(c, "Distance", Double.isNaN(m) ? "--" : WatchDays.distance((int) m), "", Ui.ACTIVE, "The watch's own estimate from your steps")));

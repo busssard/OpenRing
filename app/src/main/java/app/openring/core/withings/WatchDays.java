@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
 import java.util.TreeMap;
 
 /**
@@ -279,7 +280,8 @@ public final class WatchDays {
      * went through the whole stored history about ten times on the main thread, with a zone lookup per row.
      */
     public static final class Index {
-        public final TreeMap<LocalDate, Integer> steps, metres, kcal, climb, battery;
+        /** Per day maps, read only: they are shared for as long as the page is open. */
+        public final SortedMap<LocalDate, Integer> steps, metres, kcal, climb, battery;
         /** The newest battery reading, or null ({@link #newestBattery}). */
         public final Records.Battery newestBattery;
         private final TreeMap<LocalDate, List<Records.Heart>> heart = new TreeMap<LocalDate, List<Records.Heart>>();
@@ -291,11 +293,11 @@ public final class WatchDays {
         public Index(List<Records.Steps> steps, List<Records.Moves> moves, List<Records.Heart> heart, List<Records.Workout> workouts,
                 List<Records.Sleep> sleep, List<Records.Battery> battery, Zones z) {
             this.zones = z;
-            this.steps = stepsPerDay(steps, z);
-            this.metres = metresPerDay(steps, z);
-            this.kcal = kcalPerDay(steps, z);
-            this.climb = climbPerDay(moves, z);
-            this.battery = batteryPerDay(battery, z);
+            this.steps = Collections.unmodifiableSortedMap(stepsPerDay(steps, z));
+            this.metres = Collections.unmodifiableSortedMap(metresPerDay(steps, z));
+            this.kcal = Collections.unmodifiableSortedMap(kcalPerDay(steps, z));
+            this.climb = Collections.unmodifiableSortedMap(climbPerDay(moves, z));
+            this.battery = Collections.unmodifiableSortedMap(batteryPerDay(battery, z));
             this.newestBattery = newestBattery(battery);
             this.sleep = new ArrayList<Records.Sleep>(sleep);
             this.batteryRows = new ArrayList<Records.Battery>(battery);
