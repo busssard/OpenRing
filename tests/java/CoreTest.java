@@ -1139,6 +1139,10 @@ public class CoreTest {
         liveScreen();
         backgroundJob();
         backgroundJobDue329();
+        phoneSteps329();
+        phoneDays329();
+        phoneJob329();
+        noRingWalk329();
         dating220();
         recent194();
         demoLive();
@@ -9174,5 +9178,265 @@ public class CoreTest {
         eq("input limit: a number too long for an int is the default", InputLimit.WEIGHT_KG.parse("99999999999"), 72);
         eq("input limit: a decimal height is the default", InputLimit.HEIGHT_CM.parse("180.5"), 175);
         eq("input limit: a screen goal over a day is a whole day", InputLimit.SCREEN_GOAL_MIN.parse("2000"), 1440);
+    }
+
+    // ------------------------------------------------------------------ issue #329, phase 1b: steps from this phone
+
+    static PhoneSteps.Reading rd(long boot, double elapsedS, long counter, double wall) {
+        return new PhoneSteps.Reading(boot, Math.round(elapsedS * 1000), counter, wall);
+    }
+
+    static long stepsOf(List<PhoneSteps.Interval> l) {
+        long n = 0;
+        for (PhoneSteps.Interval i : l) n += i.steps;
+        return n;
+    }
+
+    /** The differences between readings: restarts by boot count, clock changes, a falling or impossible counter. */
+    static void phoneSteps329() {
+        double w0 = 1_780_000_000; // some day in 2026
+        // the plain case: hourly readings, one boot that started 2 hours before the first
+        List<PhoneSteps.Reading> plain = new ArrayList<PhoneSteps.Reading>();
+        plain.add(rd(7, 7200, 900, w0));
+        plain.add(rd(7, 10800, 1400, w0 + 3600));
+        plain.add(rd(7, 14400, 2100, w0 + 7200));
+        List<PhoneSteps.Interval> iv = PhoneSteps.intervals(plain);
+        check("#329b phone: the first reading counts since the phone started, then the differences", iv.size() == 3 && iv.get(0).steps == 900
+                && iv.get(0).start == w0 - 7200 && iv.get(0).stop == w0 && iv.get(1).steps == 500 && iv.get(2).steps == 700 && stepsOf(iv) == 2100, iv.size());
+        check("#329b phone: any order of readings gives the same intervals", stepsOf(PhoneSteps.intervals(Arrays.asList(plain.get(2), plain.get(0), plain.get(1)))) == 2100);
+        // the clock set back an hour between two readings: the interval keeps its real length, dated by the later clock
+        List<PhoneSteps.Reading> back = new ArrayList<PhoneSteps.Reading>(plain.subList(0, 2));
+        back.add(rd(7, 14400, 2100, w0 + 7200 - 3600));
+        List<PhoneSteps.Interval> ib = PhoneSteps.intervals(back);
+        PhoneSteps.Interval last = ib.get(ib.size() - 1);
+        check("#329b phone: clock set back an hour, nothing lost, one hour long, dated by the new clock", stepsOf(ib) == 2100 && last.stop - last.start == 3600
+                && last.stop == w0 + 3600 && last.steps == 700, last.start + " " + last.stop);
+        // the clock set forward a day: the same steps, one hour long
+        List<PhoneSteps.Reading> fwd = new ArrayList<PhoneSteps.Reading>(plain.subList(0, 2));
+        fwd.add(rd(7, 14400, 2100, w0 + 7200 + 86400));
+        List<PhoneSteps.Interval> iff = PhoneSteps.intervals(fwd);
+        PhoneSteps.Interval lf = iff.get(iff.size() - 1);
+        check("#329b phone: clock set forward a day, nothing made up, one hour long", stepsOf(iff) == 2100 && lf.stop - lf.start == 3600 && lf.steps == 700);
+        // a restart: a new boot count, the counter starts again; no difference across it, the new boot counts from its start
+        List<PhoneSteps.Reading> rs = new ArrayList<PhoneSteps.Reading>(plain);
+        rs.add(rd(8, 600, 80, w0 + 7200 + 3600)); // started 10 minutes before this reading
+        rs.add(rd(8, 4200, 380, w0 + 7200 + 7200));
+        List<PhoneSteps.Interval> ir = PhoneSteps.intervals(rs);
+        check("#329b phone: a restart starts again from 0, nothing taken across it", ir.size() == 5 && stepsOf(ir) == 2100 + 380 && ir.get(3).steps == 80
+                && ir.get(3).start == w0 + 7200 + 3000 && ir.get(3).boot == 8, ir.size());
+        // a restart whose new counter is already above the old one: the boot count tells, a falling counter alone would not
+        List<PhoneSteps.Reading> above = new ArrayList<PhoneSteps.Reading>(plain);
+        above.add(rd(8, 9000, 2500, w0 + 7200 + 9000));
+        List<PhoneSteps.Interval> ia = PhoneSteps.intervals(above);
+        check("#329b phone: a restart with a higher counter is not 400 steps since the last reading", ia.size() == 4 && ia.get(3).steps == 2500
+                && ia.get(3).stop - ia.get(3).start == 9000 && stepsOf(ia) == 2100 + 2500, stepsOf(ia));
+        // a restart in the middle of an interval: the steps after the last reading before it are lost, the rest is exact
+        List<PhoneSteps.Reading> mid = new ArrayList<PhoneSteps.Reading>(plain.subList(0, 2)); // 1400 at w0 + 3600
+        mid.add(rd(8, 1800, 150, w0 + 7200)); // the phone died at about w0 + 4800 (steps 1400 to its death lost), started at w0 + 5400
+        List<PhoneSteps.Interval> im = PhoneSteps.intervals(mid);
+        check("#329b phone: a restart in the middle of an interval keeps both sides, loses only the time in between", im.size() == 3 && stepsOf(im) == 1400 + 150
+                && im.get(2).start == w0 + 5400 && im.get(1).stop == w0 + 3600, stepsOf(im));
+        // a counter that falls without a new boot count: no difference, left out and counted; the next one counts again
+        List<PhoneSteps.Reading> fell = new ArrayList<PhoneSteps.Reading>(plain);
+        fell.add(rd(7, 18000, 1000, w0 + 10800));
+        fell.add(rd(7, 21600, 1300, w0 + 14400));
+        PhoneSteps.Left left = new PhoneSteps.Left();
+        List<PhoneSteps.Interval> ifl = PhoneSteps.intervals(fell, left);
+        check("#329b phone: a counter that falls without a restart gives no difference", ifl.size() == 4 && stepsOf(ifl) == 2100 + 300 && left.fell == 1, stepsOf(ifl));
+        // more steps than anyone walks: left out
+        List<PhoneSteps.Reading> fast = new ArrayList<PhoneSteps.Reading>(plain);
+        fast.add(rd(7, 14460, 2100 + 1000, w0 + 7260));
+        PhoneSteps.Left lf2 = new PhoneSteps.Left();
+        check("#329b phone: 1,000 steps in a minute is left out", stepsOf(PhoneSteps.intervals(fast, lf2)) == 2100 && lf2.implausible == 1);
+        PhoneSteps.Left lf3 = new PhoneSteps.Left();
+        check("#329b phone: a first reading above what fits since the start is left out (a counter that did not reset)",
+                PhoneSteps.intervals(Arrays.asList(rd(9, 60, 500000, w0)), lf3).isEmpty() && lf3.implausible == 1);
+        check("#329b phone: two readings at the same moment give nothing", PhoneSteps.intervals(Arrays.asList(rd(7, 100, 10, w0), rd(7, 100, 12, w0))).size() == 1);
+        // the boot key: Android's count when readable, else a stand in from the start time (never a real count)
+        check("#329b phone: the boot key is the boot count", PhoneSteps.bootKey(42, w0, 5000) == 42 && PhoneSteps.bootKey(0, w0, 5000) == 0);
+        long k1 = PhoneSteps.bootKey(-1, w0, 3_600_000), k2 = PhoneSteps.bootKey(-1, w0 + 3600, 7_200_000), k3 = PhoneSteps.bootKey(-1, w0 + 3600, 1_000);
+        check("#329b phone: without a boot count, the start time stands in (same start, same key; another start, another key; never a count)",
+                k1 == k2 && k1 != k3 && k1 < 0 && k3 < 0, k1 + " " + k2 + " " + k3);
+        // the counts for the Data check
+        List<PhoneSteps.Reading> gaps = new ArrayList<PhoneSteps.Reading>(rs);
+        gaps.add(rd(8, 4200 + 5 * 3600, 900, w0 + 7200 + 7200 + 5 * 3600));
+        PhoneSteps.Counts cn = PhoneSteps.counts(gaps);
+        check("#329b phone: counts of readings, starts, gaps", cn.readings == 6 && cn.boots == 2 && cn.gaps == 1 && Math.round(cn.longest) == 5 * 3600 && cn.intervals == 6,
+                cn.readings + " " + cn.boots + " " + cn.gaps + " " + cn.longest);
+        // the readout
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        java.time.LocalDate d = java.time.LocalDate.of(2026, 6, 10);
+        double a = d.atStartOfDay(z).toEpochSecond(), b = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        PhoneSteps.Interval in = new PhoneSteps.Interval(a + 14 * 3600 + 120, a + 15 * 3600 + 240, 412, 7, 1);
+        eq("#329b phone: the readout of an interval inside the day", PhoneSteps.tip(in, a, b, z, Locale.US), "14:02 to 15:04, 412 steps from your phone");
+        PhoneSteps.Interval over = new PhoneSteps.Interval(b - 3600, b + 3600, 412, 7, 2);
+        eq("#329b phone: the readout of an interval split at midnight says it is spread", PhoneSteps.tip(over, a, b, z, Locale.US), "about 206 steps (spread over 23:00 to 01:00)");
+        boolean plainTexts = true;
+        for (String t : PhoneSteps.texts()) plainTexts &= !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014") && !t.contains("--");
+        for (String t : KeyState.texts()) plainTexts &= !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014");
+        plainTexts &= !app.openring.ui.Explain.PHONE_STEPS.contains(" - ");
+        check("#329b phone texts: plain, no dashes as punctuation", plainTexts);
+        eq("#329b phone texts: the plan's words", PhoneSteps.TITLE + " / " + PhoneSteps.ABOUT + " / " + PhoneSteps.MAIN_LINE + " / " + PhoneSteps.NEED_DEVICE,
+                "Steps from this phone / Counted by the phone's step sensor about every hour. Steps while the phone lies on a table are not counted. / Phone (steps only)"
+                        + " / Sleep and readiness need a ring or a watch. Add one in Settings.");
+        check("#329b Explain.PHONE_STEPS: the plan's text", app.openring.ui.Explain.PHONE_STEPS.startsWith("Your phone counts steps in its own sensor.")
+                && app.openring.ui.Explain.PHONE_STEPS.contains("Nothing leaves the phone."));
+    }
+
+    /** Spreading steps over days: a 23 and a 25 hour day, a trip, and the Data check lines (numbers only). */
+    static void phoneDays329() {
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        // the night of the spring change (23 hours): 22:00 to 04:00 on the clock, 5 real hours, 500 steps
+        java.time.LocalDate spring = java.time.LocalDate.of(2026, 3, 29);
+        double s0 = spring.atStartOfDay(z).toEpochSecond();
+        PhoneSteps.Interval sp = new PhoneSteps.Interval(s0 - 2 * 3600, s0 + 3 * 3600, 500, 1, 1);
+        double[] days = PhoneSteps.days(Arrays.asList(sp), spring.minusDays(1), spring, z);
+        check("#329b days: over the spring change the steps follow real time (2 of 5 hours before, 3 after)", Math.abs(days[0] - 200) < 1e-9 && Math.abs(days[1] - 300) < 1e-9,
+                days[0] + " " + days[1]);
+        check("#329b days: the spring day is 23 hours", spring.plusDays(1).atStartOfDay(z).toEpochSecond() - s0 == 23 * 3600);
+        // the autumn change (25 hours): an interval over the whole day lands in it whole, by real time
+        java.time.LocalDate autumn = java.time.LocalDate.of(2026, 10, 25);
+        double f0 = autumn.atStartOfDay(z).toEpochSecond(), f1 = autumn.plusDays(1).atStartOfDay(z).toEpochSecond();
+        PhoneSteps.Interval all = new PhoneSteps.Interval(f0 - 25 * 3600, f1 + 25 * 3600, 7500, 1, 2);
+        double[] ad = PhoneSteps.days(Arrays.asList(all), autumn.minusDays(1), autumn.plusDays(1), z);
+        check("#329b days: the 25 hour day gets 25 of 75 hours, its neighbours 24 and 24 (the rest lies outside)", Math.abs(ad[1] - 2500) < 1e-9 && Math.abs(ad[0] - 2400) < 1e-9
+                && Math.abs(ad[2] - 2400) < 1e-9, ad[0] + " " + ad[1] + " " + ad[2]);
+        // the sum over days is the sum of the intervals
+        List<PhoneSteps.Interval> many = new ArrayList<PhoneSteps.Interval>();
+        Random r = new Random(329);
+        double t = f0 - 10 * 86400;
+        long sum = 0;
+        while (t < f1 + 10 * 86400) {
+            double len = 600 + r.nextInt(5 * 3600);
+            long st = r.nextInt(3000);
+            many.add(new PhoneSteps.Interval(t, t + len, st, 1, (long) t));
+            sum += st;
+            t += len + (r.nextInt(4) == 0 ? r.nextInt(3600) : 0);
+        }
+        double[] md = PhoneSteps.days(many, autumn.minusDays(12), autumn.plusDays(12), z);
+        double got = 0;
+        for (double v : md) got += Double.isNaN(v) ? 0 : v;
+        check("#329b days: spread over many days, nothing is lost or counted twice", Math.abs(got - sum) < 1e-6, got + " " + sum);
+        // a trip: a day in Zurich, the next in New York (the day zone of each day, Json.dayZone in the app); every step lands
+        // in exactly one of the windows that touch, the hours both share are not counted twice
+        java.time.ZoneId ny = java.time.ZoneId.of("America/New_York");
+        java.time.LocalDate trip = java.time.LocalDate.of(2026, 6, 10);
+        double z0 = trip.atStartOfDay(z).toEpochSecond(), z1 = trip.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double n0 = trip.plusDays(1).atStartOfDay(ny).toEpochSecond(), n1 = trip.plusDays(2).atStartOfDay(ny).toEpochSecond();
+        PhoneSteps.Interval flight = new PhoneSteps.Interval(z1 - 4 * 3600, n0 + 2 * 3600, 1200, 1, 3);
+        double zurichDay = PhoneSteps.total(Arrays.asList(flight), z0, z1), gap = PhoneSteps.total(Arrays.asList(flight), z1, n0),
+                nyDay = PhoneSteps.total(Arrays.asList(flight), n0, n1);
+        check("#329b days: a trip, the Zurich day and the New York day each get their own hours, the six between neither", Math.abs(zurichDay + gap + nyDay - 1200) < 1e-9
+                && Math.abs(zurichDay - 400) < 1e-9 && Math.abs(nyDay - 200) < 1e-9 && n0 - z1 == 6 * 3600, zurichDay + " " + gap + " " + nyDay);
+        check("#329b days: a day no interval reaches is NaN, not 0", Double.isNaN(PhoneSteps.total(Arrays.asList(flight), n1, n1 + 86400)));
+        // the Data check: counts, dates, day totals; never a clock time, never "min"
+        long now = (long) z1;
+        List<PhoneSteps.Reading> demo = PhoneSteps.demo(trip, 20, now, z, new Random(1));
+        String lines = PhoneSteps.checkLines(demo, PhoneSteps.intervals(demo), 2, now - 3600, trip, 14, z);
+        check("#329b data check: counts and day totals, no clock time", lines.startsWith("Phone steps: ") && lines.contains("phone starts") && lines.contains("Steps per day")
+                && lines.contains("No sensor value in time: 2 times, the last on " + trip) && !java.util.regex.Pattern.compile("\\d{1,2}:\\d{2}").matcher(lines).find()
+                && !java.util.regex.Pattern.compile("\\d+ ?min\\b").matcher(lines).find(), lines);
+        eq("#329b data check: nothing stored", PhoneSteps.checkLines(new ArrayList<PhoneSteps.Reading>(), new ArrayList<PhoneSteps.Interval>(), 0, 0, trip, 14, z),
+                "Phone steps: no readings stored\n");
+        // the demo: realistic days (some thousand steps), one restart, readings about hourly by day
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 8);
+        long dnow = today.atStartOfDay(z).toEpochSecond() + 15 * 3600;
+        List<PhoneSteps.Reading> dm = PhoneSteps.demo(today, 35, dnow, z, new Random(329));
+        PhoneSteps.Counts dc = PhoneSteps.counts(dm);
+        double[] dd = PhoneSteps.days(PhoneSteps.intervals(dm), today.minusDays(34), today.minusDays(1), z);
+        double lo = 1e9, hi = 0;
+        for (double v : dd) {
+            lo = Math.min(lo, v);
+            hi = Math.max(hi, v);
+        }
+        check("#329b demo: two phone starts, readings about hourly, nothing left out", dc.boots == 2 && dc.readings > 35 * 15 && dc.fell == 0 && dc.implausible == 0, dc.readings);
+        check("#329b demo: every day between 4,000 and 14,000 steps", lo > 4000 && hi < 14000, lo + " " + hi);
+    }
+
+    /** The phone's own job: a busy ring never skips it, and it is a job of its own. */
+    static void phoneJob329() {
+        BackgroundJob.Inputs in = new BackgroundJob.Inputs();
+        in.phoneSteps = true;
+        in.ringBusy = true;
+        BackgroundJob.Due d = BackgroundJob.due(in);
+        check("#329b job: a busy ring does not skip the phone", d.phone && !d.ring && !d.watch && !d.run());
+        in.ringBusy = false;
+        in.demo = true;
+        check("#329b job: demo mode does not skip the phone (its readings go to the real file)", BackgroundJob.due(in).phone);
+        in.phoneSteps = false;
+        check("#329b job: nothing when the phone does not count steps", !BackgroundJob.due(in).phone);
+        // every combination of the ring and watch inputs: the phone part follows only phoneSteps, the rest is as before
+        boolean ok = true;
+        for (boolean busy : new boolean[] {false, true}) {
+            for (boolean bg : new boolean[] {false, true}) {
+                for (int ks : new int[] {KeyState.NONE, KeyState.READABLE, KeyState.UNREADABLE, KeyState.NO_RING}) {
+                    for (boolean phone : new boolean[] {false, true}) {
+                        BackgroundJob.Inputs x = new BackgroundJob.Inputs();
+                        x.ringBusy = busy;
+                        x.backgroundSync = bg;
+                        x.keyState = ks;
+                        x.now = 1_780_000_000L;
+                        x.phoneSteps = phone;
+                        BackgroundJob.Inputs y = new BackgroundJob.Inputs();
+                        y.ringBusy = busy;
+                        y.backgroundSync = bg;
+                        y.keyState = ks;
+                        y.now = 1_780_000_000L;
+                        BackgroundJob.Due dx = BackgroundJob.due(x), dy = BackgroundJob.due(y);
+                        ok &= dx.phone == phone && dx.ring == dy.ring && dx.watch == dy.watch && (dx.log == null ? dy.log == null : dx.log.equals(dy.log));
+                        ok &= !(ks == KeyState.NO_RING && dx.ring);
+                    }
+                }
+            }
+        }
+        check("#329b job: the phone part changes nothing of the ring and watch parts; no ring never syncs", ok);
+        BackgroundJob.Spec p = BackgroundJob.phoneWanted("app.openring/.sync.PhoneJob"), s = BackgroundJob.wanted("app.openring/.sync.SyncJob");
+        check("#329b job: about every hour with 15 minutes flex, kept after a restart, no battery condition", p.periodic && p.interval == 3_600_000L && p.flex == 900_000L
+                && p.persisted && !p.batteryNotLow && !p.charging && !p.equals(s), p);
+        check("#329b job: an equal pending job is kept, none is scheduled, off is cancelled", BackgroundJob.decide(true, true, p, p) == BackgroundJob.Action.KEEP
+                && BackgroundJob.decide(true, true, null, p) == BackgroundJob.Action.SCHEDULE && BackgroundJob.decide(false, true, p, p) == BackgroundJob.Action.CANCEL);
+        // the Settings block
+        check("#329b Settings: the Phone block and its card", SettingsBlocks.of("phone") == SettingsBlocks.PHONE && SettingsBlocks.startsOpen(SettingsBlocks.PHONE, "phone")
+                && !SettingsBlocks.startsOpen(SettingsBlocks.PHONE, "watch") && "Phone".equals(SettingsBlocks.PHONE_TITLE));
+        eq("#329b Settings: the Phone header", SettingsBlocks.phoneStatus(false, true, true, 1, "20 minutes ago") + " / " + SettingsBlocks.phoneStatus(false, true, true, 0, null)
+                + " / " + SettingsBlocks.phoneStatus(false, true, false, 0, null) + " / " + SettingsBlocks.phoneStatus(false, false, false, 0, null)
+                + " / " + SettingsBlocks.phoneStatus(true, false, false, 0, null),
+                "Counting steps, last reading 20 minutes ago / Counting steps, no reading yet / Steps from this phone are off / This phone has no step counter"
+                        + " / Made up phone steps, demo data");
+    }
+
+    /**
+     * The walk without a ring at the core decision level: Setup, "Use without a ring", the main screen, Settings and back,
+     * and Setup never opens again; pairing a ring later ends it.
+     */
+    static void noRingWalk329() {
+        // a fresh phone: no key, not set up, no choice yet
+        boolean stored = false, noRing = false, setupDone = false, unseen = false;
+        int st = KeyState.of(stored, false, noRing);
+        check("#329b walk: a fresh phone opens Setup", KeyState.opensSetup(false, setupDone, st, unseen) && st == KeyState.NONE);
+        // Setup, "Use without a ring" (Prefs.setNoRing): the main screen
+        noRing = true;
+        st = KeyState.of(stored, false, noRing);
+        check("#329b walk: Use without a ring gives no ring by choice", st == KeyState.NO_RING && KeyState.ofStored(stored, noRing) == KeyState.NO_RING);
+        for (int round = 0; round < 3; round++) {
+            check("#329b walk: the main screen does not open Setup (" + round + ")", !KeyState.opensSetup(false, setupDone, st, unseen));
+            check("#329b walk: Settings does not send to Setup (" + round + ")", !KeyState.needsSetup(setupDone, KeyState.ofStored(stored, noRing)));
+            check("#329b walk: the main screen after a failed demo does not either (" + round + ")", !KeyState.needsSetup(setupDone, KeyState.ofStored(stored, noRing)));
+            check("#329b walk: nothing syncs, ring actions show Add a ring (" + round + ")", !KeyState.syncs(st) && KeyState.addRingInstead(false, st)
+                    && !KeyState.hasRing(KeyState.ofStored(stored, noRing)));
+        }
+        check("#329b walk: in demo mode the made up ring works as before", !KeyState.addRingInstead(true, st) && !KeyState.opensSetup(true, setupDone, st, unseen));
+        // Add a ring, paired: the key wins (Prefs.pairDone also forgets the choice)
+        stored = true;
+        setupDone = true;
+        unseen = true;
+        st = KeyState.of(stored, true, noRing);
+        check("#329b walk: a ring paired later is a ring again, its key page shows once", st == KeyState.READABLE && KeyState.opensSetup(false, setupDone, st, unseen)
+                && KeyState.syncs(st) && !KeyState.addRingInstead(false, st));
+        unseen = false;
+        check("#329b walk: then the main screen stays", !KeyState.opensSetup(false, setupDone, st, false));
+        // an unreadable key is still not "no ring"
+        check("#329b walk: an unreadable key wins over the choice", KeyState.of(true, false, true) == KeyState.UNREADABLE && KeyState.ofStored(true, true) == KeyState.READABLE);
+        check("#329b walk: the old two argument forms never give no ring", KeyState.of(false, false) == KeyState.NONE && KeyState.ofStored(false) == KeyState.NONE);
     }
 }

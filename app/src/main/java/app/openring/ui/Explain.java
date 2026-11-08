@@ -589,4 +589,9 @@ public final class Explain {
 
     public static final String MAIN_WATCH_NIGHT = "Stages from Withings' own analysis on the watch, not from this app. "
             + "The sleep score needs the ring's night, so there is none here.";
+
+    // ---- steps from this phone (issue #329, phase 1b) ----
+
+    public static final String PHONE_STEPS = "Your phone counts steps in its own sensor. Open Ring reads the count about once an hour and stores the difference. "
+            + "Nothing leaves the phone. If the phone restarts because the battery ran out, the steps since the last reading are lost.";
 }

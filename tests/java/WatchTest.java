@@ -1,5 +1,6 @@
 import app.openring.core.Hex;
 import app.openring.core.MainDevice;
+import app.openring.core.PhoneSteps;
 import app.openring.core.RingGate;
 import app.openring.core.withings.*;
 
@@ -47,6 +48,7 @@ public class WatchTest {
         mainDevice();
         mainDeviceEdges();
         mainDeviceSources();
+        mainDevicePhone329();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1851,7 +1853,7 @@ public class WatchTest {
         } catch (IllegalArgumentException e) {
             threw = true;
         }
-        check("#329 sources: a third device is refused until the phone exists", threw);
+        check("#329 sources: a second source of the same device is refused", threw);
         threw = false;
         try {
             MainDevice.numbers(d, Arrays.asList(ws), from, to);
@@ -1860,26 +1862,178 @@ public class WatchTest {
         }
         check("#329 sources: the main device must be in the list", threw);
 
-        // the stored codes: phone reserved, nothing stored or shown changes
-        check("#329 codes: ring 0, watch 1, phone 2 reserved", MainDevice.RING == 0 && MainDevice.WATCH == 1 && MainDevice.PHONE == 2);
-        check("#329 codes: the phone is not a choice yet, a stored 2 is the ring", MainDevice.valid(MainDevice.PHONE) == MainDevice.RING && !MainDevice.known(MainDevice.PHONE)
-                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(-1) && !MainDevice.known(7));
-        check("#329 codes: Settings offers ring and watch, in that order", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH}));
+        // the stored codes (phase 1b: the phone is a choice now; phase 1a only reserved 2 and read it as the ring)
+        check("#329 codes: ring 0, watch 1, phone 2", MainDevice.RING == 0 && MainDevice.WATCH == 1 && MainDevice.PHONE == 2);
+        check("#329b codes: the phone is a choice, a stored 2 stays 2, anything else unknown is the ring", MainDevice.valid(MainDevice.PHONE) == MainDevice.PHONE
+                && MainDevice.known(MainDevice.PHONE) && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(-1) && !MainDevice.known(7)
+                && MainDevice.valid(7) == MainDevice.RING && MainDevice.valid(-1) == MainDevice.RING);
+        check("#329b codes: Settings offers ring, watch and phone, in that order", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH, MainDevice.PHONE}));
         int[] mine = MainDevice.choices();
-        mine[0] = MainDevice.PHONE;
-        mine[1] = 7;
-        check("#329 codes: changing a copy changes neither the choices nor known()", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH})
-                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(7) && !MainDevice.known(MainDevice.PHONE));
+        mine[0] = 7;
+        mine[1] = 8;
+        mine[2] = 9;
+        check("#329 codes: changing a copy changes neither the choices nor known()", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH, MainDevice.PHONE})
+                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && MainDevice.known(MainDevice.PHONE) && !MainDevice.known(7));
         Set<String> labels = new HashSet<String>();
         boolean labelled = true;
         for (int c : MainDevice.choices()) {
             String l = MainDevice.label(c);
             labelled &= l != null && !l.isEmpty() && plain(l) && labels.add(l);
         }
-        check("#329 codes: every choice has its own label", labelled && labels.equals(new HashSet<String>(Arrays.asList("Ring", "Watch"))), labels);
-        check("#329 codes: the reserved phone has its label ready", "Phone".equals(MainDevice.label(MainDevice.PHONE)));
+        check("#329 codes: every choice has its own label", labelled && labels.equals(new HashSet<String>(Arrays.asList("Ring", "Watch", "Phone"))), labels);
+        check("#329 codes: the phone's label", "Phone".equals(MainDevice.label(MainDevice.PHONE)));
+        // without the phone's data (of() with no phone source) a stored 2 is still the ring's day, as in phase 1a
         MainDevice.Day asPhone = MainDevice.of(MainDevice.PHONE, day, from, to, z, ring, srcWatch(day, 99, 99));
         MainDevice.Day asRing = MainDevice.of(MainDevice.RING, day, from, to, z, ring, srcWatch(day, 99, 99));
-        check("#329 codes: a day asked for with 2 is the ring's day", asPhone.main == MainDevice.RING && srcPrint(asPhone).equals(srcPrint(asRing)));
+        check("#329 codes: a day asked for with 2 but no phone source is the ring's day", asPhone.main == MainDevice.RING && srcPrint(asPhone).equals(srcPrint(asRing)));
+    }
+
+    /** One phone interval {start, stop, steps} from clock hours of {@code d} in MD_ZONE. */
+    static double[] ph(LocalDate d, double fromH, double toH, double steps) {
+        return new double[] {srcAt(d, fromH), srcAt(d, toH), steps};
+    }
+
+    /** The phone's share of {@code p} in the quarter hours {@code lo} to {@code hi} (excluded) of the day from {@code from}. */
+    static double phoneShare(MainDevice.Phone p, double from, int lo, int hi) {
+        double sum = 0;
+        for (double[] i : p.intervals) sum += PhoneSteps.share(i[0], i[1], i[2], from + lo * 900, from + hi * 900);
+        return sum;
+    }
+
+    /** Issue #329, phase 1b: the phone as a third source. Ring and watch results stay the same; the phone fills last. */
+    static void mainDevicePhone329() throws Exception {
+        ZoneId z = MD_ZONE;
+        // an empty phone source changes nothing on any of the fingerprint days, with ring or watch as main device
+        boolean same = true;
+        for (Object[] c : srcCases()) {
+            LocalDate d = (LocalDate) c[1];
+            double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            for (int main : new int[] {MainDevice.RING, MainDevice.WATCH}) {
+                String without = srcPrint(MainDevice.of(main, d, from, to, z, (MainDevice.Ring) c[2], (MainDevice.Watch) c[3]));
+                String with = srcPrint(MainDevice.of(main, d, from, to, z, (MainDevice.Ring) c[2], (MainDevice.Watch) c[3], new MainDevice.Phone()));
+                same &= without.equals(with);
+                if (!without.equals(with)) System.out.println("  differs: " + c[0] + " / " + main + "\n    " + without + "\n    " + with);
+            }
+        }
+        check("#329b phone: an empty phone leaves every ring and watch day exactly as it was", same);
+
+        LocalDate day = MD_DAY;
+        double from = mdFrom(day, z), to = mdFrom(day.plusDays(1), z);
+        MainDevice.Phone phone = new MainDevice.Phone();
+        phone.intervals.add(ph(day, 13, 14 + 2 / 60.0, 300));
+        phone.intervals.add(ph(day, 14 + 2 / 60.0, 15 + 4 / 60.0, 412));
+        phone.intervals.add(ph(day, 15 + 4 / 60.0, 17, 600));
+        MainDevice.Source ps = MainDevice.phone(phone, from, to);
+        int on = 0;
+        for (boolean b : ps.worn) if (b) on++;
+        check("#329b phone source: covers 13:00 to 17:00, its total is all its steps, an estimate without a day of its own", ps.kind == MainDevice.PHONE && ps.present
+                && on == 16 && ps.worn[52] && !ps.worn[51] && ps.worn[67] && !ps.worn[68] && Math.abs(ps.steps - 1312) < 1e-6 && ps.estimate && !ps.ownDay && ps.rows
+                && ps.line().size() == 0, on + " " + ps.steps);
+        double lent = 0;
+        for (double[] p : ps.parts) lent += p[1];
+        check("#329b phone source: lends its steps spread over the quarter hours", ps.parts.size() == 16 && Math.abs(lent - 1312) < 1e-6, lent);
+        MainDevice.Source none = MainDevice.phone(new MainDevice.Phone(), from, to);
+        check("#329b phone source without intervals: absent, no total", !none.present && Double.isNaN(none.steps) && none.parts.isEmpty());
+
+        // ring main, off 14:00 to 16:00, no watch: the phone fills exactly those quarter hours, spread evenly, about
+        MainDevice.Ring ring = srcRing(day, 14, 16, 6543);
+        MainDevice.Day r = MainDevice.of(MainDevice.RING, day, from, to, z, ring, null, phone);
+        long want = Math.round(phoneShare(phone, from, 56, 64));
+        check("#329b ring main: the phone fills only the two hours off the finger", r.main == MainDevice.RING && Math.round(r.phoneSteps()) == want
+                && bits(r.steps, 6543 + (double) want) && r.fillSteps == 0 && r.stepFill.isEmpty() && r.fills.size() == 1, r.phoneSteps() + " " + want + " " + r.steps);
+        check("#329b ring main: the existing line style names the phone", ("Includes about " + String.format(Locale.US, "%,d", want)
+                + " steps from your phone, 14:00 to 16:00, when your ring was not worn.").equals(MainDevice.stepsLine(r, z, Locale.US)), MainDevice.stepsLine(r, z, Locale.US));
+        check("#329b ring main: the tile says some came from the phone", "Estimated from your movement, some counted by your phone".equals(MainDevice.stepsNote(r)), MainDevice.stepsNote(r));
+        check("#329b ring main: the phone has no heart rate, the ring's line stays", r.hr == ring.hr && r.hrFill.isEmpty() && MainDevice.heartLine(r, z) == null);
+        check("#329b ring main: the evidence keeps the day's phone intervals", r.phone.size() == 3 && r.base == MainDevice.RING);
+
+        // ring and watch: the watch fills the ring's gap first, the phone only where neither was worn
+        MainDevice.Watch watch = srcWatch(day, 14.75, 15.25);
+        MainDevice.Day rw = MainDevice.of(MainDevice.RING, day, from, to, z, ring, watch, phone);
+        MainDevice.Day rwNo = MainDevice.of(MainDevice.RING, day, from, to, z, ring, watch);
+        check("#329b ring and watch: the watch covers the gap, the phone adds nothing", rw.phoneSteps() == 0 && bits(rw.steps, rwNo.steps) && bits(rw.fillSteps, rwNo.fillSteps)
+                && srcPrint(rw).equals(srcPrint(rwNo)), rw.phoneSteps());
+        MainDevice.Watch away = srcWatch(day, 10, 20);
+        MainDevice.Day ra = MainDevice.of(MainDevice.RING, day, from, to, z, ring, away, phone);
+        check("#329b ring and watch both off: the phone fills that time", Math.round(ra.phoneSteps()) == want && ra.fillSteps == 0
+                && bits(ra.steps, 6543 + (double) want), ra.phoneSteps());
+        // the watch off for a part of the ring's gap only: the phone takes the rest (the watch's own 30 minute reach counts as worn)
+        MainDevice.Watch part = srcWatch(day, 14, 15.5);
+        MainDevice.Day rp = MainDevice.of(MainDevice.RING, day, from, to, z, ring, part, phone);
+        boolean[] ww = MainDevice.watch(part, from, to).worn;
+        double share = 0;
+        for (int k = 56; k < 64; k++) if (!ww[k]) share += phoneShare(phone, from, k, k + 1);
+        check("#329b ring and watch: the phone only where neither was worn", Math.round(rp.phoneSteps()) == Math.round(share) && share > 0 && rp.fillSteps > 0
+                && rp.fills.size() == 2 && rp.fills.get(0).kind == MainDevice.WATCH && rp.fills.get(1).kind == MainDevice.PHONE, rp.phoneSteps() + " " + share);
+        check("#329b ring and watch: one sentence per device, the phone's last", MainDevice.stepsLine(rp, z, Locale.US).contains("from your watch")
+                && MainDevice.stepsLine(rp, z, Locale.US).indexOf("from your phone") > MainDevice.stepsLine(rp, z, Locale.US).indexOf("from your watch")
+                && "Estimated from your movement, some counted by your watch and phone".equals(MainDevice.stepsNote(rp)), MainDevice.stepsLine(rp, z, Locale.US));
+        // the list in any order gives the same numbers
+        MainDevice.Day y = new MainDevice.Day();
+        y.main = MainDevice.RING;
+        y.watchRows = rp.watchRows;
+        MainDevice.numbers(y, Arrays.asList(MainDevice.phone(phone, from, to), MainDevice.watch(part, from, to), MainDevice.ring(ring, from, to, z)), from, to);
+        check("#329b sources: three in any order give the same numbers", bits(y.steps, rp.steps) && bits(y.metres, rp.metres) && bits(y.phoneSteps(), rp.phoneSteps())
+                && srcRanges(y.stepFill).equals(srcRanges(rp.stepFill)) && sameTs(y.hr, rp.hr));
+
+        // watch main, off 12:00 to 17:00: the ring fills first (its noon walk), the phone where the ring was not worn either
+        MainDevice.Watch wOff = srcWatch(day, 12, 17);
+        MainDevice.Ring rOff = srcRing(day, 14, 16, 6543);
+        MainDevice.Day w = MainDevice.of(MainDevice.WATCH, day, from, to, z, rOff, wOff, phone);
+        check("#329b watch main: ring fills, then the phone, and the tile says both", w.fillSteps > 0 && w.phoneSteps() > 0
+                && "Counted by your watch, some estimated by your ring and some counted by your phone".equals(MainDevice.stepsNote(w)), MainDevice.stepsNote(w));
+
+        // the phone as main device: its own day; the ring fills where the phone counted nothing, the heart rate is the ring's
+        MainDevice.Phone daylong = new MainDevice.Phone();
+        daylong.intervals.add(ph(day, 9, 12, 4000));
+        daylong.intervals.add(ph(day, 13, 22, 5000));
+        MainDevice.Day p = MainDevice.of(MainDevice.PHONE, day, from, to, z, ring, null, daylong);
+        double ringLent = 0;
+        boolean[] pw = MainDevice.phone(daylong, from, to).worn;
+        for (double[] q : MainDevice.ring(ring, from, to, z).parts) if (!pw[(int) q[0]]) ringLent += q[1];
+        check("#329b phone main: its own total, the ring's estimate only outside the phone's intervals", p.main == MainDevice.PHONE && p.base == MainDevice.PHONE
+                && bits(p.steps, 9000 + Math.round(ringLent / 10.0) * 10.0) && p.otherKind == MainDevice.RING, p.steps + " " + ringLent);
+        check("#329b phone main: the tile and the heart rate line", "Counted by your phone, some estimated by your ring".equals(MainDevice.stepsNote(p))
+                && p.hr.size() == ring.hr.size() && "From your ring, your phone measures no heart rate.".equals(MainDevice.heartLine(p, z)), MainDevice.stepsNote(p) + " / " + MainDevice.heartLine(p, z));
+        // the phone main with nothing on this day: the ring's own day as stored, named
+        MainDevice.Day pe = MainDevice.of(MainDevice.PHONE, day, from, to, z, ring, null, new MainDevice.Phone());
+        check("#329b phone main without steps today: the ring's day as stored, said so", pe.whole && pe.wholeFrom == MainDevice.RING && pe.base == MainDevice.RING
+                && bits(pe.steps, 6543) && "From your ring: your phone has no data for this day.".equals(MainDevice.stepsLine(pe, z, Locale.US)) && MainDevice.stepsNote(pe) == null,
+                MainDevice.stepsLine(pe, z, Locale.US));
+        // a phone only person: steps from the phone, nothing named
+        MainDevice.Day only = MainDevice.of(MainDevice.PHONE, day, from, to, z, new MainDevice.Ring(), null, daylong);
+        check("#329b phone only: the phone's steps, no line, its tile", bits(only.steps, 9000) && MainDevice.stepsLine(only, z, Locale.US) == null
+                && "Counted by your phone".equals(MainDevice.stepsNote(only)) && !only.whole && only.hr.size() == 0 && only.any(), only.steps);
+        check("#329b phone only: the distance follows from the steps", bits(only.metres, app.openring.core.analysis.Wellness.stepsToMeters(9000)), only.metres);
+        // a ring only day: the ring's whole day when the ring has nothing and the phone has steps
+        MainDevice.Day off = MainDevice.of(MainDevice.RING, day, from, to, z, new MainDevice.Ring(), null, daylong);
+        check("#329b ring main, ring not worn all day: the phone's day, named", off.whole && off.wholeFrom == MainDevice.PHONE && bits(off.steps, 9000)
+                && "From your phone: your ring has no data for this day.".equals(MainDevice.stepsLine(off, z, Locale.US))
+                && "Counted by your phone".equals(MainDevice.stepsNote(off)), MainDevice.stepsLine(off, z, Locale.US));
+
+        // which device is main: the stored choice, else the default ring, watch, phone; a stored 2 without phone steps is the ring
+        check("#329b main shown: nothing stored, the default by what is there", MainDevice.shown(-1, true, true, true) == MainDevice.RING
+                && MainDevice.shown(-1, false, true, true) == MainDevice.WATCH && MainDevice.shown(-1, false, false, true) == MainDevice.PHONE
+                && MainDevice.shown(-1, false, false, false) == MainDevice.RING);
+        check("#329b main shown: a stored 2 is the phone while it counts steps, otherwise the ring", MainDevice.shown(2, true, true, true) == MainDevice.PHONE
+                && MainDevice.shown(2, true, true, false) == MainDevice.RING && MainDevice.shown(2, false, false, false) == MainDevice.RING);
+        check("#329b main shown: ring and watch stay as stored", MainDevice.shown(1, true, false, true) == MainDevice.WATCH && MainDevice.shown(0, false, true, true) == MainDevice.RING
+                && MainDevice.shown(7, true, true, true) == MainDevice.RING);
+        check("#329b chips: only the devices present, in order", Arrays.equals(MainDevice.present(true, false, true), new int[] {MainDevice.RING, MainDevice.PHONE})
+                && Arrays.equals(MainDevice.present(false, false, true), new int[] {MainDevice.PHONE}) && MainDevice.present(false, false, false).length == 0
+                && Arrays.equals(MainDevice.present(true, true, true), MainDevice.choices()));
+        check("#329b main line: Phone (steps only)", "Phone (steps only)".equals(MainDevice.mainLine(MainDevice.PHONE)) && "Ring".equals(MainDevice.mainLine(MainDevice.RING))
+                && "your phone".equals(MainDevice.name(MainDevice.PHONE)));
+        boolean plainAll = true;
+        for (String t : new String[] {MainDevice.stepsLine(r, z, Locale.US), MainDevice.stepsLine(rp, z, Locale.US), MainDevice.stepsNote(w), MainDevice.heartLine(p, z),
+            MainDevice.stepsLine(pe, z, Locale.US), MainDevice.nightLine(p)}) plainAll &= plain(t);
+        check("#329b texts: plain, no dashes", plainAll);
+        // a 23 hour day: 92 quarter hours, the phone's interval over the clock change spread by real time
+        LocalDate dst = LocalDate.of(2026, 3, 29);
+        double f23 = dst.atStartOfDay(z).toEpochSecond(), t23 = dst.plusDays(1).atStartOfDay(z).toEpochSecond();
+        MainDevice.Phone night = new MainDevice.Phone();
+        night.intervals.add(new double[] {f23 - 3600, f23 + 3 * 3600, 400});
+        MainDevice.Day d23 = MainDevice.of(MainDevice.PHONE, dst, f23, t23, z, new MainDevice.Ring(), null, night);
+        check("#329b 23 hour day: three of the four hours fall into it", MainDevice.slots(f23, t23) == 92 && Math.abs(d23.steps - 300) < 1e-9, d23.steps);
     }
 }
