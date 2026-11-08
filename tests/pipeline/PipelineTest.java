@@ -5343,6 +5343,24 @@ public class PipelineTest {
                 old.equals(db.kv("analysis_error", null)) && !Analyzer.upToDate(c), db.kv("analysis_error", null));
         db.put("analysis_error", "java.lang.OutOfMemoryError");
         check("#289 an older version's text without a message is left out too", DataCheck.run(c).text.contains("Analysis error: noted by an older version"), null);
+        check("#362 the older analysis error's sentence ends with a full stop", text.contains("The next sync analyses again.") && !text.contains(value), text);
+
+        // the last sync error as an older version stored it: the error's full text after "Unexpected error: " (issue #362)
+        app.openring.data.Prefs sp = app.openring.data.Prefs.of(c);
+        String oldSync = "Unexpected error: java.lang.IllegalStateException: 61.5";
+        sp.setLastSyncError(oldSync);
+        text = DataCheck.run(c).text;
+        check("#362 an older sync error: the data check leaves its text out and says so", text.contains("last error: Unexpected error: noted by an older version "
+                + "of the app (its text is left out, it can hold a measured value)\n") && !text.contains("61.5") && !text.contains("IllegalStateException"), text);
+        check("#362 an older sync error is not deleted", oldSync.equals(sp.lastSyncError()), sp.lastSyncError());
+        // as this version stores it: class and place, shown as it is
+        sp.setLastSyncError("Unexpected error: IllegalStateException at RingManager.java:612");
+        check("#362 this version's sync error is shown with its class and place", DataCheck.run(c).text
+                .contains("last error: Unexpected error: IllegalStateException at RingManager.java:612\n"), null);
+        // the app's own sentences are shown as they are
+        sp.setLastSyncError("Ring not found. Is it near the phone?");
+        check("#362 a sync error in the app's own words is shown as it is", DataCheck.run(c).text.contains("last error: Ring not found. Is it near the phone?\n"), null);
+        sp.setLastSyncError(null);
 
         Analyzer.run(c, null);
         check("#289 the next good analysis clears the error, the data check has none", db.kv("analysis_error", null) == null
@@ -9273,6 +9291,15 @@ public class PipelineTest {
             check("#242 the copy fails: the data check gives the reason", DataCheck.run(fc).text.contains("Last update: no copy, error: "), null);
             check("#289 the copy fails: the reason is the error's class and place, never its message",
                     app.openring.core.LoadNote.safe(fp.beforeUpdateNote().substring("error: ".length())), fp.beforeUpdateNote());
+            // the note as an older version stored it: the error's full message (issue #362), left out of the data check
+            String fpNote = fp.beforeUpdateNote();
+            fp.setBeforeUpdateNote("error: /data/user/0/app.openring/files/before-update/x (Not a directory) 61.5", true);
+            String ft = DataCheck.run(fc).text;
+            check("#362 an older before update note: the data check leaves its text out and says so",
+                    ft.contains("Last update: no copy, error: noted by an older version of the app (its text is left out)") && !ft.contains("61.5")
+                    && !ft.contains("Not a directory"), ft);
+            fp.setBeforeUpdateNote(fpNote, true);
+            check("#362 this version's before update note is shown with its class and place", DataCheck.run(fc).text.contains("Last update: no copy, " + fpNote), fpNote);
             fp.clearBeforeUpdateUnseen();
             check("#242 OK on the main screen's note: it is not shown again, the reason stays for Data check", !fp.beforeUpdateUnseen() && fp.beforeUpdateNote() != null, null);
 
@@ -9285,6 +9312,8 @@ public class PipelineTest {
             app.openring.data.Prefs hp = app.openring.data.Prefs.of(hc);
             check("#242 the copy fails half way: no copy counted, the reason kept, the history opens", ho > 0 && !new java.io.File(copies242(hc), "before-43-1.42.raw").exists()
                     && hp.beforeUpdateNote() != null && hp.beforeUpdateNote().startsWith("error: ") && hp.notedVersion() == 43, hp.beforeUpdateNote());
+            check("#362 the copy fails half way: the reason is the error's class and place, never its message",
+                    app.openring.core.LoadNote.safe(hp.beforeUpdateNote().substring("error: ".length())), hp.beforeUpdateNote());
 
             // the version cannot be read: nothing is compared or copied, the history opens
             Context uc = oldPhone242("openring242-unknown", 4);

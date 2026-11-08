@@ -29,6 +29,10 @@ public final class BeforeUpdate {
     static final String DIR = "before-update";
     /** The side files a history can have next to it; {@code -shm} only mirrors the log and is never copied. */
     static final String[] SIDE = {"-wal", "-journal"};
+    /** Start of the note of a copy that failed: then the error's class and place ({@link app.openring.core.LoadNote#error}). */
+    static final String ERROR = "error: ";
+    /** Said instead of the full error text an older version stored in that note (issue #362): a path or a message. */
+    static final String OLDER_ERROR = "noted by an older version of the app (its text is left out)";
     /** Files folders whose first open in this process was handled (one per app; the tests use many). */
     private static final Set<String> HANDLED = new HashSet<String>();
     /** Guards the folder of the copies: the copy at the start, the check, going back, deleting them all. */
@@ -81,7 +85,7 @@ public final class BeforeUpdate {
             try {
                 Prefs p = Prefs.of(c);
                 // the class and place only, never the message, which the data check would show (issue #289)
-                p.setBeforeUpdateNote("error: " + app.openring.core.LoadNote.error(t), true);
+                p.setBeforeUpdateNote(ERROR + app.openring.core.LoadNote.error(t), true);
                 p.noteVersion(versionCode(c));
             } catch (Throwable ignored) {
                 // nothing more can be done; the history opens as before
@@ -136,7 +140,8 @@ public final class BeforeUpdate {
             } catch (IOException e) {
                 deleteWithSides(partial);
                 for (String s : SIDE) new File(raw.getPath() + s).delete();
-                p.setBeforeUpdateNote("error: " + e.getMessage(), true);
+                // the class and place only, as above: the message can hold a path or a value (issue #362)
+                p.setBeforeUpdateNote(ERROR + app.openring.core.LoadNote.error(e), true);
                 p.noteVersion(current);
                 return;
             }
@@ -277,7 +282,7 @@ public final class BeforeUpdate {
         }
         String note = Prefs.of(c).beforeUpdateNote();
         if (Backups.SPACE.equals(note)) note = "no copy, not enough free space";
-        else if (note != null) note = "no copy, " + note;
+        else if (note != null) note = "no copy, " + DataCheck.olderError(note, ERROR, OLDER_ERROR);
         return Backups.checkCopies(rows, note);
     }
 

@@ -38,6 +38,13 @@ public final class LogActivity extends Activity {
     static final OneRun<LogActivity> REPAIR = new OneRun<LogActivity>();
     /** Shown while a repair runs, as a toast when it starts and as a line above Repair. */
     private static final String REPAIRING = "Repairing, this can take a few minutes.";
+    /** The line above Repair while Settings' Re analyse all runs the same job: nothing is being repaired (issue #361). */
+    private static final String ANALYSING_ALL = "Analysing all nights again, this can take a few minutes.";
+    /**
+     * Which job {@link #REPAIR} runs now: true for Re analyse all from Settings, false for Repair (issue #361). Set by
+     * {@link #analyseAll}, which both start through once {@link #REPAIR} is theirs; read only while it runs.
+     */
+    private static volatile boolean fromSettingsNow;
 
     private LinearLayout content;
     private TextView repairButton, repairNote;
@@ -189,6 +196,7 @@ public final class LogActivity extends Activity {
     void showRepairState() {
         if (repairButton == null) return;
         boolean on = REPAIR.running();
+        repairNote.setText(fromSettingsNow ? ANALYSING_ALL : REPAIRING);
         repairNote.setVisibility(on ? View.VISIBLE : View.GONE);
         repairButton.setEnabled(!on);
         repairButton.setAlpha(on ? 0.4f : 1f);
@@ -203,8 +211,9 @@ public final class LogActivity extends Activity {
             return;
         }
         Toast.makeText(this, REPAIRING, Toast.LENGTH_LONG).show();
-        showRepairState();
+        // first, so the line above Repair names this job, not the one before (issue #361)
         analyseAll(getApplicationContext(), false);
+        showRepairState();
     }
 
     /**
@@ -212,6 +221,7 @@ public final class LogActivity extends Activity {
      * ({@code fromSettings}, issue #222). A setting saved meanwhile runs it once more ({@link OneRun#finishUnlessAgain}).
      */
     static void analyseAll(Context app, boolean fromSettings) {
+        fromSettingsNow = fromSettings;
         new RepairTask(app, fromSettings).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
