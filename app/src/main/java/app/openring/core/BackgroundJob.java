@@ -158,7 +158,7 @@ public final class BackgroundJob {
 
     /**
      * The phone's step job (issue #329, phase 1b): about every hour with 15 minutes flex, kept after a restart, and no
-     * battery condition (a reading costs about a second of a sensor that counts anyway; skipping readings on a low battery
+     * battery condition (a reading keeps the sensor on for at most 5 s; skipping readings on a low battery
      * would lose the steps before the phone dies). No network, no Bluetooth.
      */
     public static Spec phoneWanted(String service) {

@@ -162,6 +162,9 @@ public final class Db extends SQLiteOpenHelper {
      */
     private static void upgradeTo11(SQLiteDatabase db) {
         PhoneStore.create11(db);
+        // an upgrade stopped half way may have left readings without their intervals: the next day load works them out again
+        // from the readings (PhoneStore.forDay); with no reading stored there is nothing to do
+        PhoneStore.ruleUnknown(db);
     }
 
     /**
@@ -1106,18 +1109,23 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
-    /**
-     * The newest day with data: the newest day summary, or the day of the phone's newest step interval when that is later
-     * (issue #329: a person without a ring follows today too). The phone's day is the phone's zone now.
-     */
+    /** The newest day with a day summary (the ring's analysis), or null: the Settings preview's night and the Data check. */
     public String latestDay() {
-        String ring;
         Cursor c = getReadableDatabase().rawQuery("SELECT MAX(day) FROM days", null);
         try {
-            ring = c.moveToFirst() ? c.getString(0) : null;
+            return c.moveToFirst() ? c.getString(0) : null;
         } finally {
             c.close();
         }
+    }
+
+    /**
+     * The newest day the main screen follows (issue #329): {@link #latestDay}, or the day of the phone's newest step interval
+     * when that is later, so a person without a ring follows today too. The phone's day is the phone's zone now. Only for the
+     * main screen; whatever needs the ring's newest day reads {@link #latestDay}.
+     */
+    public String latestDayWithPhone() {
+        String ring = latestDay();
         double stop = PhoneStore.newestStop(getReadableDatabase());
         if (Double.isNaN(stop)) return ring;
         // an interval ends at its reading; one that ends exactly at midnight belongs to the day before
@@ -1584,8 +1592,8 @@ public final class Db extends SQLiteOpenHelper {
         {"watch_workouts", 9, new String[] {"device", "start", "dur", "kind", "steps", "metres", "kcal"}},
         {"watch_battery", 9, new String[] {"device", "t", "pct", "state", "mv"}},
         {"watch_moves", 10, new String[] {"device", "start", "met", "up", "down"}},
-        {"phone_readings", 11, new String[] {"boot", "elapsed", "counter", "wall"}},
-        {"phone_steps", 11, new String[] {"boot", "elapsed", "start", "stop", "steps"}},
+        {"phone_readings", 11, new String[] {"device", "boot", "elapsed", "counter", "wall"}},
+        {"phone_steps", 11, new String[] {"device", "boot", "elapsed", "start", "stop", "steps"}},
     };
 
     /**

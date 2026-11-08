@@ -39,10 +39,12 @@ public final class PhoneStore {
      * Older files (and restored older backups) get them empty.
      */
     static void create11(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE IF NOT EXISTS phone_readings (boot INTEGER NOT NULL, elapsed INTEGER NOT NULL, counter INTEGER NOT NULL,"
-                + " wall REAL NOT NULL, PRIMARY KEY (boot, elapsed))");
-        db.execSQL("CREATE TABLE IF NOT EXISTS phone_steps (boot INTEGER NOT NULL, elapsed INTEGER NOT NULL, start REAL NOT NULL, stop REAL NOT NULL,"
-                + " steps INTEGER NOT NULL, PRIMARY KEY (boot, elapsed))");
+        // device: a random id made once on the phone (Prefs.phoneDevice), so another phone's readings from a restored backup,
+        // with the same small boot counts, are never differenced against this phone's
+        db.execSQL("CREATE TABLE IF NOT EXISTS phone_readings (device TEXT NOT NULL, boot INTEGER NOT NULL, elapsed INTEGER NOT NULL,"
+                + " counter INTEGER NOT NULL, wall REAL NOT NULL, PRIMARY KEY (device, boot, elapsed))");
+        db.execSQL("CREATE TABLE IF NOT EXISTS phone_steps (device TEXT NOT NULL, boot INTEGER NOT NULL, elapsed INTEGER NOT NULL, start REAL NOT NULL,"
+                + " stop REAL NOT NULL, steps INTEGER NOT NULL, PRIMARY KEY (device, boot, elapsed))");
         // a day's read: the intervals that end after its start (recent days read few rows)
         db.execSQL("CREATE INDEX IF NOT EXISTS phone_steps_stop ON phone_steps(stop)");
     }
@@ -66,20 +68,31 @@ public final class PhoneStore {
         }
     }
 
+    /**
+     * True when this phone's newest reading of boot {@code boot} is less than {@code minGapS} old at {@code elapsedMs}: the app
+     * opening then does not switch the sensor on at all (review of #367). Reads the real history.
+     */
+    public static boolean recent(Context c, String device, long boot, long elapsedMs, long minGapS) {
+        synchronized (Db.class) {
+            return newestElapsed(Db.real(c).getReadableDatabase(), device, boot) > elapsedMs - minGapS * 1000;
+        }
+    }
+
     /** As {@link #record}, into {@code db} itself (the tests, the demo). */
     static int add(Db db, final PhoneSteps.Reading r, long minGapS) {
         final SQLiteDatabase d = db.getWritableDatabase();
         final int[] out = {STORED};
         d.beginTransaction();
         try {
-            if (exists(d, r.boot, r.elapsed)) {
+            if (exists(d, r.device, r.boot, r.elapsed)) {
                 out[0] = KNOWN;
-            } else if (minGapS > 0 && newestElapsed(d, r.boot) > r.elapsed - minGapS * 1000) {
+            } else if (minGapS > 0 && newestElapsed(d, r.device, r.boot) > r.elapsed - minGapS * 1000) {
                 out[0] = TOO_SOON;
             } else {
-                d.execSQL("INSERT OR IGNORE INTO phone_readings(boot, elapsed, counter, wall) VALUES (?, ?, ?, ?)",
-                        new Object[] {r.boot, r.elapsed, r.counter, r.wall});
-                if (String.valueOf(PhoneSteps.RULE).equals(kv(d))) rebuildBoot(d, r.boot);
+                d.execSQL("INSERT OR IGNORE INTO phone_readings(device, boot, elapsed, counter, wall) VALUES (?, ?, ?, ?, ?)",
+                        new Object[] {r.device, r.boot, r.elapsed, r.counter, r.wall});
+                // a new boot's first reading may count since its start (a restart seen): its device is worked out again
+                if (String.valueOf(PhoneSteps.RULE).equals(kv(d))) rebuildDevice(d, r.device);
                 else rebuildAll(d);
             }
             d.setTransactionSuccessful();
@@ -94,12 +107,13 @@ public final class PhoneStore {
         SQLiteDatabase d = db.getWritableDatabase();
         d.beginTransaction();
         try {
-            SQLiteStatement st = d.compileStatement("INSERT OR IGNORE INTO phone_readings(boot, elapsed, counter, wall) VALUES (?, ?, ?, ?)");
+            SQLiteStatement st = d.compileStatement("INSERT OR IGNORE INTO phone_readings(device, boot, elapsed, counter, wall) VALUES (?, ?, ?, ?, ?)");
             for (PhoneSteps.Reading r : readings) {
-                st.bindLong(1, r.boot);
-                st.bindLong(2, r.elapsed);
-                st.bindLong(3, r.counter);
-                st.bindDouble(4, r.wall);
+                st.bindString(1, r.device);
+                st.bindLong(2, r.boot);
+                st.bindLong(3, r.elapsed);
+                st.bindLong(4, r.counter);
+                st.bindDouble(5, r.wall);
                 st.executeInsert();
             }
             st.close();
@@ -110,8 +124,9 @@ public final class PhoneStore {
         }
     }
 
-    private static boolean exists(SQLiteDatabase d, long boot, long elapsed) {
-        Cursor c = d.rawQuery("SELECT 1 FROM phone_readings WHERE boot = ? AND elapsed = ?", new String[] {String.valueOf(boot), String.valueOf(elapsed)});
+    private static boolean exists(SQLiteDatabase d, String device, long boot, long elapsed) {
+        Cursor c = d.rawQuery("SELECT 1 FROM phone_readings WHERE device = ? AND boot = ? AND elapsed = ?",
+                new String[] {device, String.valueOf(boot), String.valueOf(elapsed)});
         try {
             return c.moveToFirst();
         } finally {
@@ -119,8 +134,8 @@ public final class PhoneStore {
         }
     }
 
-    private static long newestElapsed(SQLiteDatabase d, long boot) {
-        Cursor c = d.rawQuery("SELECT MAX(elapsed) FROM phone_readings WHERE boot = ?", new String[] {String.valueOf(boot)});
+    private static long newestElapsed(SQLiteDatabase d, String device, long boot) {
+        Cursor c = d.rawQuery("SELECT MAX(elapsed) FROM phone_readings WHERE device = ? AND boot = ?", new String[] {device, String.valueOf(boot)});
         try {
             return c.moveToFirst() && !c.isNull(0) ? c.getLong(0) : Long.MIN_VALUE / 2;
         } finally {
@@ -140,19 +155,22 @@ public final class PhoneStore {
     /** The readings of one boot, by elapsed time. */
     private static List<PhoneSteps.Reading> readingsOf(SQLiteDatabase d, String where, String[] args) {
         List<PhoneSteps.Reading> out = new ArrayList<PhoneSteps.Reading>();
-        Cursor c = d.rawQuery("SELECT boot, elapsed, counter, wall FROM phone_readings" + where + " ORDER BY boot, elapsed", args);
+        Cursor c = d.rawQuery("SELECT device, boot, elapsed, counter, wall FROM phone_readings" + where + " ORDER BY device, boot, elapsed", args);
         try {
-            while (c.moveToNext()) out.add(new PhoneSteps.Reading(c.getLong(0), c.getLong(1), c.getLong(2), c.getDouble(3)));
+            while (c.moveToNext()) out.add(new PhoneSteps.Reading(c.getString(0), c.getLong(1), c.getLong(2), c.getLong(3), c.getDouble(4)));
         } finally {
             c.close();
         }
         return out;
     }
 
-    /** One boot's intervals worked out again, inside the caller's transaction (they depend only on that boot's readings). */
-    static void rebuildBoot(SQLiteDatabase d, long boot) {
-        d.execSQL("DELETE FROM phone_steps WHERE boot = ?", new Object[] {boot});
-        write(d, PhoneSteps.intervals(readingsOf(d, " WHERE boot = ?", new String[] {String.valueOf(boot)})));
+    /**
+     * One phone's intervals worked out again, inside the caller's transaction (they depend only on that phone's readings: a
+     * boot's first reading needs the boot before it). Hourly readings make a few thousand rows a year, worked out in moments.
+     */
+    static void rebuildDevice(SQLiteDatabase d, String device) {
+        d.execSQL("DELETE FROM phone_steps WHERE device = ?", new Object[] {device});
+        write(d, PhoneSteps.intervals(readingsOf(d, " WHERE device = ?", new String[] {device})));
     }
 
     /**
@@ -166,16 +184,17 @@ public final class PhoneStore {
     }
 
     private static void write(SQLiteDatabase d, List<PhoneSteps.Interval> all) {
-        SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO phone_steps(boot, elapsed, start, stop, steps) VALUES (?, ?, ?, ?, ?)");
+        SQLiteStatement st = d.compileStatement("INSERT OR REPLACE INTO phone_steps(device, boot, elapsed, start, stop, steps) VALUES (?, ?, ?, ?, ?, ?)");
         int n = 0;
         try {
             for (PhoneSteps.Interval i : all) {
                 if (failRebuildAfter >= 0 && n >= failRebuildAfter) throw new IllegalStateException("test stop in the rebuild");
-                st.bindLong(1, i.boot);
-                st.bindLong(2, i.elapsed);
-                st.bindDouble(3, i.start);
-                st.bindDouble(4, i.stop);
-                st.bindLong(5, i.steps);
+                st.bindString(1, i.device);
+                st.bindLong(2, i.boot);
+                st.bindLong(3, i.elapsed);
+                st.bindDouble(4, i.start);
+                st.bindDouble(5, i.stop);
+                st.bindLong(6, i.steps);
                 st.executeInsert();
                 n++;
             }
@@ -193,6 +212,21 @@ public final class PhoneStore {
                 rebuildAll(d);
             }
         });
+    }
+
+    /** Forgets which rule the stored intervals come from (the schema step), so {@link #ensureRule} works them out again. */
+    static void ruleUnknown(SQLiteDatabase d) {
+        d.execSQL("DELETE FROM kv WHERE k = ?", new Object[] {RULE});
+    }
+
+    /**
+     * The phone's intervals around one day for the screens ({@code ui/DayData}, in the load's background task): first the
+     * intervals are worked out again when their rule is not this version's (a new rule, or an upgrade that stopped half way),
+     * unless an analysis runs (its transaction would hold the write; the next load does it). Then {@link #window}.
+     */
+    public static app.openring.core.MainDevice.Phone forDay(Db db, double from, double to) {
+        if (!Analyzer.running()) ensureRule(db);
+        return window(db, from, to);
     }
 
     /** Works the intervals out again when the rule changed since they were stored (or never noted); returns whether it did. */
@@ -250,10 +284,10 @@ public final class PhoneStore {
     /** The intervals ending after {@code from} (the Data check's last days). */
     static List<PhoneSteps.Interval> intervalsSince(Db db, double from) {
         List<PhoneSteps.Interval> out = new ArrayList<PhoneSteps.Interval>();
-        Cursor c = db.getReadableDatabase().rawQuery("SELECT boot, elapsed, start, stop, steps FROM phone_steps WHERE stop > ? ORDER BY start",
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT device, boot, elapsed, start, stop, steps FROM phone_steps WHERE stop > ? ORDER BY start",
                 new String[] {String.valueOf(from)});
         try {
-            while (c.moveToNext()) out.add(new PhoneSteps.Interval(c.getDouble(2), c.getDouble(3), c.getLong(4), c.getLong(0), c.getLong(1)));
+            while (c.moveToNext()) out.add(new PhoneSteps.Interval(c.getDouble(3), c.getDouble(4), c.getLong(5), c.getString(0), c.getLong(1), c.getLong(2)));
         } finally {
             c.close();
         }
@@ -266,7 +300,9 @@ public final class PhoneStore {
     /** The Data check's lines (issue #329): counts, dates and day totals only, never a clock time (see {@code PhoneSteps.checkLines}). */
     static String checkLines(Db db, Prefs p, java.time.LocalDate today, java.time.ZoneId zone) {
         double from = today.minusDays(CHECK_DAYS).atStartOfDay(zone).toEpochSecond();
-        return PhoneSteps.checkLines(readings(db), intervalsSince(db, from), p.phoneNoReading(), p.phoneNoReadingAt(), today, CHECK_DAYS, zone);
+        // the sensor's missing values belong to the real data: the demo's Data check names none
+        boolean demo = Db.DEMO.equals(db.fileName);
+        return PhoneSteps.checkLines(readings(db), intervalsSince(db, from), demo ? 0 : p.phoneNoReading(), demo ? 0 : p.phoneNoReadingAt(), today, CHECK_DAYS, zone);
     }
 
     // ---------------------------------------------------------------------------- restore (issue #329)
@@ -274,9 +310,9 @@ public final class PhoneStore {
     /** Reads every reading of {@code d}, before a restore swaps the file (a file without the table gives none). */
     static List<Object[]> read(SQLiteDatabase d) {
         List<Object[]> out = new ArrayList<Object[]>();
-        Cursor c = d.rawQuery("SELECT boot, elapsed, counter, wall FROM phone_readings", null);
+        Cursor c = d.rawQuery("SELECT device, boot, elapsed, counter, wall FROM phone_readings", null);
         try {
-            while (c.moveToNext()) out.add(new Object[] {c.getLong(0), c.getLong(1), c.getLong(2), c.getDouble(3)});
+            while (c.moveToNext()) out.add(new Object[] {c.getString(0), c.getLong(1), c.getLong(2), c.getLong(3), c.getDouble(4)});
         } finally {
             c.close();
         }
@@ -290,7 +326,7 @@ public final class PhoneStore {
     static void merge(SQLiteDatabase d, List<Object[]> rows) {
         d.beginTransaction();
         try {
-            for (Object[] row : rows) d.execSQL("INSERT OR IGNORE INTO phone_readings(boot, elapsed, counter, wall) VALUES (?, ?, ?, ?)", row);
+            for (Object[] row : rows) d.execSQL("INSERT OR IGNORE INTO phone_readings(device, boot, elapsed, counter, wall) VALUES (?, ?, ?, ?, ?)", row);
             rebuildAll(d);
             d.setTransactionSuccessful();
         } finally {

@@ -23,7 +23,13 @@ import java.util.Random;
  * a restart would look like steps). Intervals are ordered and measured by (boot count, elapsed); the wall clock only dates
  * them: an interval ends at its second reading's wall time and is exactly as long as the elapsed time between the two, so a
  * clock set back or forward moves the interval with the clock but never stretches, shrinks or drops it.</li>
- * <li>The first reading after a restart counts the steps since the start, from the start's time (wall minus elapsed).</li>
+ * <li>The very first reading of a phone is a baseline: it gives no interval (the counter may hold weeks of steps from before
+ * Open Ring read anything). The first reading after a restart counts the steps since the start, from the start's time (wall
+ * minus elapsed), only when the restart was seen: a reading of the same phone from an earlier boot exists, older than this
+ * boot's start, and both boots have real boot counts ({@link #sinceRestart}).</li>
+ * <li>Each phone's readings are its own ({@code device}, a random id made once on the phone): a restored backup from another
+ * phone, or a phone reset to factory settings, can repeat boot counts and elapsed times; intervals are worked out per device and
+ * boot, never across two phones.</li>
  * <li>A counter that falls without a new boot count, or that rose faster than anyone walks ({@link #MAX_PER_S}), gives no
  * difference: the interval is left out and counted for the Data check, nothing is guessed.</li>
  * <li>Steps of one interval are spread evenly over it when a day or a quarter hour is split ({@link #share}).</li>
@@ -45,8 +51,15 @@ public final class PhoneSteps {
     /** A gap between two readings longer than this is counted for the Data check (Doze, a battery saver). */
     public static final double GAP_S = 2 * 3600;
 
+    /** The device of readings made without one (tests). */
+    public static final String THIS = "this";
+    /** The device of the demo's made up readings. */
+    public static final String DEMO = "demo";
+
     /** One raw reading, as stored. */
     public static final class Reading {
+        /** The phone it was read on: a random id made once on that phone, never taken from a backup. */
+        public final String device;
         /** The phone's boot count; a negative value is a stand in made from the start time (see {@link #bootKey}). */
         public final long boot;
         /** Milliseconds since the phone started ({@code SystemClock.elapsedRealtime}). */
@@ -57,6 +70,11 @@ public final class PhoneSteps {
         public final double wall;
 
         public Reading(long boot, long elapsed, long counter, double wall) {
+            this(THIS, boot, elapsed, counter, wall);
+        }
+
+        public Reading(String device, long boot, long elapsed, long counter, double wall) {
+            this.device = device == null ? THIS : device;
             this.boot = boot;
             this.elapsed = elapsed;
             this.counter = counter;
@@ -71,8 +89,14 @@ public final class PhoneSteps {
         public final long steps;
         /** The key of its end reading. */
         public final long boot, elapsed;
+        public final String device;
 
         public Interval(double start, double stop, long steps, long boot, long elapsed) {
+            this(start, stop, steps, THIS, boot, elapsed);
+        }
+
+        public Interval(double start, double stop, long steps, String device, long boot, long elapsed) {
+            this.device = device == null ? THIS : device;
             this.start = start;
             this.stop = stop;
             this.steps = steps;
@@ -91,16 +115,37 @@ public final class PhoneSteps {
         return -1 - Math.round((wall - elapsedMs / 1000.0) / 600.0);
     }
 
-    /** Readings in the order the intervals are measured: by boot key, then elapsed time. */
+    /** Readings in the order the intervals are measured: by device, boot key, then elapsed time. */
     public static List<Reading> sorted(List<Reading> readings) {
         List<Reading> out = new ArrayList<Reading>(readings);
         Collections.sort(out, new Comparator<Reading>() {
             @Override
             public int compare(Reading a, Reading b) {
+                int d = a.device.compareTo(b.device);
+                if (d != 0) return d;
                 return a.boot != b.boot ? Long.compare(a.boot, b.boot) : Long.compare(a.elapsed, b.elapsed);
             }
         });
         return out;
+    }
+
+    /** How far the start of a boot may lie before the last reading of the boot before it (clock drift), seconds. */
+    static final double START_SLACK_S = 600;
+
+    /**
+     * Whether {@code first}, the first reading of its boot, counts its steps since the start: a restart was seen ({@code prev}
+     * is the newest reading of the same phone's boot before, and it is older than this boot's start), and both boot keys are
+     * real boot counts (a stand in moves with a clock correction, which would count steps twice).
+     */
+    static boolean sinceRestart(Reading prev, Reading first) {
+        if (prev == null || !prev.device.equals(first.device) || prev.boot == first.boot) return false;
+        if (prev.boot < 0 || first.boot < 0) return false;
+        return prev.wall <= first.wall - first.elapsed / 1000.0 + START_SLACK_S;
+    }
+
+    /** {@link #sinceRestart} for the JVM tests (the tests live outside the package). */
+    public static boolean sinceRestartForTest(Reading prev, Reading first) {
+        return sinceRestart(prev, first);
     }
 
     /** What {@link #intervals} left out, for the Data check. */
@@ -121,10 +166,12 @@ public final class PhoneSteps {
         List<Interval> out = new ArrayList<Interval>();
         Reading prev = null;
         for (Reading r : sorted(readings)) {
-            if (prev == null || prev.boot != r.boot) {
-                // the first reading of a boot: the steps since the start
-                Interval i = since(r, left);
-                if (i != null) out.add(i);
+            if (prev == null || !prev.device.equals(r.device) || prev.boot != r.boot) {
+                // the first reading of a boot: a baseline, or the steps since the start after a restart that was seen
+                if (sinceRestart(prev, r)) {
+                    Interval i = since(r, left);
+                    if (i != null) out.add(i);
+                }
             } else {
                 Interval i = between(prev, r, left);
                 if (i != null) out.add(i);
@@ -142,7 +189,7 @@ public final class PhoneSteps {
             if (left != null) left.implausible++;
             return null;
         }
-        return new Interval(r.wall - dt, r.wall, r.counter, r.boot, r.elapsed);
+        return new Interval(r.wall - dt, r.wall, r.counter, r.device, r.boot, r.elapsed);
     }
 
     /** The steps between two readings of the same boot, or null (no time between them, a falling or impossible counter). */
@@ -158,7 +205,7 @@ public final class PhoneSteps {
             if (left != null) left.implausible++;
             return null;
         }
-        return new Interval(b.wall - dt, b.wall, diff, b.boot, b.elapsed);
+        return new Interval(b.wall - dt, b.wall, diff, b.device, b.boot, b.elapsed);
     }
 
     // ------------------------------------------------------------------------------------- spreading
@@ -212,6 +259,8 @@ public final class PhoneSteps {
     /** Counts of the readings for the Data check: numbers only, no step value. */
     public static final class Counts {
         public int readings, boots, intervals, gaps, fell, implausible;
+        /** Phones the readings come from (more than one after restoring another phone's backup). */
+        public int devices;
         /** The longest time between two readings of one boot, seconds (0 for none). */
         public double longest;
     }
@@ -225,7 +274,8 @@ public final class PhoneSteps {
         Reading prev = null;
         for (Reading r : sorted(readings)) {
             c.readings++;
-            if (prev == null || prev.boot != r.boot) {
+            if (prev == null || !prev.device.equals(r.device)) c.devices++;
+            if (prev == null || !prev.device.equals(r.device) || prev.boot != r.boot) {
                 c.boots++;
             } else {
                 double gap = (r.elapsed - prev.elapsed) / 1000.0;
@@ -255,6 +305,7 @@ public final class PhoneSteps {
             }
             b.append("Phone steps: ").append(String.format(Locale.US, "%,d", c.readings)).append(c.readings == 1 ? " reading" : " readings")
                     .append(" from ").append(date(first, zone)).append(" to ").append(date(last, zone)).append(", ")
+                    .append(c.devices > 1 ? "from " + c.devices + " phones, " : "")
                     .append(Texts.count(c.boots, "phone start", "phone starts")).append(", ")
                     .append(Texts.count(c.intervals, "interval", "intervals")).append('\n');
             long hours = Math.round(c.longest / 3600);
@@ -353,7 +404,7 @@ public final class PhoneSteps {
             }
             counter += walked(lastStep, t, zone, r);
             lastStep = t;
-            out.add(new Reading(boot, Math.round((t - bootWall) * 1000), Math.round(counter), t));
+            out.add(new Reading(DEMO, boot, Math.round((t - bootWall) * 1000), Math.round(counter), t));
             int h = Instant.ofEpochSecond((long) t).atZone(zone).getHour();
             // by night the phone lies still and Android lets the job wait longer
             double next = h >= 23 || h < 6 ? 3 * 3600 + r.nextInt(5400) : 3600 + r.nextInt(900) - 300;

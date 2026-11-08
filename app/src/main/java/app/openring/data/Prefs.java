@@ -242,6 +242,22 @@ public final class Prefs {
     /** The person chose "Use without a ring" in Setup ({@code core/KeyState.NO_RING} while no key is stored). */
     public boolean noRing() { return sp.getBoolean("no_ring", false); }
     public void setNoRing(boolean b) { sp.edit().putBoolean("no_ring", b).commit(); }
+    /**
+     * This phone's own id for its step readings (issue #329): random, made once and written to disk before it is used, never
+     * in a backup and never set by a restore (no restore step names this key), so another phone's readings brought by a
+     * restore keep their own id and are never mixed with this phone's. Not ANDROID_ID.
+     */
+    public String phoneDevice() {
+        synchronized (NO_READING_LOCK) {
+            String id = sp.getString("phone_device", null);
+            if (id != null) return id;
+            byte[] b = new byte[8];
+            new java.security.SecureRandom().nextBytes(b);
+            id = app.openring.core.Hex.encode(b);
+            sp.edit().putString("phone_device", id).commit();
+            return id;
+        }
+    }
     /** Physical activity was asked for once (a later "not allowed" is then a refusal, not "not asked yet"). */
     public boolean phoneAsked() { return sp.getBoolean("phone_asked", false); }
     public void setPhoneAsked() { sp.edit().putBoolean("phone_asked", true).apply(); }

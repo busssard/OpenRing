@@ -576,7 +576,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     ok = DayData.failed(MainActivity.this, d, "screen log read or its analysis", e);
                 }
                 try {
-                    latest = app.openring.data.Db.get(MainActivity.this).latestDay();
+                    // the ring's newest day, or the phone's newest steps (issue #329): a phone reading after midnight moves here
+                    latest = app.openring.data.Db.get(MainActivity.this).latestDayWithPhone();
                     DayData r = DayData.load(MainActivity.this, d);
                     if (ok && r.ok) DayData.allRead(MainActivity.this, d);
                     return r;

@@ -593,5 +593,6 @@ public final class Explain {
     // ---- steps from this phone (issue #329, phase 1b) ----
 
     public static final String PHONE_STEPS = "Your phone counts steps in its own sensor. Open Ring reads the count about once an hour and stores the difference. "
-            + "Nothing leaves the phone. If the phone restarts because the battery ran out, the steps since the last reading are lost.";
+            + "Nothing leaves the phone. On some phones the sensor only counts while an app such as the phone's own health app keeps it on. "
+            + "If the phone restarts because the battery ran out, the steps since the last reading are lost.";
 }

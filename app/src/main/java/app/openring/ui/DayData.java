@@ -238,7 +238,7 @@ public final class DayData {
             phoneSensor = app.openring.sync.PhoneReader.hasSensor(c);
             phoneAllowed = app.openring.sync.PhoneReader.allowed(c);
             phoneAny = app.openring.data.PhoneStore.any(db);
-            if (phoneAny) phone = app.openring.data.PhoneStore.window(db, ds, de);
+            if (phoneAny) phone = app.openring.data.PhoneStore.forDay(db, ds, de);
             else if (p.demo() || phoneSensor && phoneAllowed) phone = new app.openring.core.MainDevice.Phone();
         } catch (RuntimeException e) {
             phone = null;

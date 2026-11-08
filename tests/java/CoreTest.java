@@ -9202,57 +9202,78 @@ public class CoreTest {
         plain.add(rd(7, 10800, 1400, w0 + 3600));
         plain.add(rd(7, 14400, 2100, w0 + 7200));
         List<PhoneSteps.Interval> iv = PhoneSteps.intervals(plain);
-        check("#329b phone: the first reading counts since the phone started, then the differences", iv.size() == 3 && iv.get(0).steps == 900
-                && iv.get(0).start == w0 - 7200 && iv.get(0).stop == w0 && iv.get(1).steps == 500 && iv.get(2).steps == 700 && stepsOf(iv) == 2100, iv.size());
-        check("#329b phone: any order of readings gives the same intervals", stepsOf(PhoneSteps.intervals(Arrays.asList(plain.get(2), plain.get(0), plain.get(1)))) == 2100);
+        check("#329b phone: the first reading is a baseline, then the differences (review of #367)", iv.size() == 2 && iv.get(0).steps == 500
+                && iv.get(0).start == w0 && iv.get(0).stop == w0 + 3600 && iv.get(1).steps == 700 && stepsOf(iv) == 1200, iv.size());
+        check("#329b phone: any order of readings gives the same intervals", stepsOf(PhoneSteps.intervals(Arrays.asList(plain.get(2), plain.get(0), plain.get(1)))) == 1200);
+        // the very first reading ever, after weeks of the phone running: nothing spread back over days nobody read
+        List<PhoneSteps.Interval> weeks = PhoneSteps.intervals(Arrays.asList(rd(7, 20 * 86400, 140000, w0)));
+        List<PhoneSteps.Interval> weeks2 = PhoneSteps.intervals(Arrays.asList(rd(7, 20 * 86400, 140000, w0), rd(7, 20 * 86400 + 3600, 140400, w0 + 3600)));
+        check("#329b phone: the first reading after 20 days of uptime gives nothing, the next one the hour between", weeks.isEmpty() && weeks2.size() == 1
+                && weeks2.get(0).steps == 400 && weeks2.get(0).start == w0, weeks2.size());
         // the clock set back an hour between two readings: the interval keeps its real length, dated by the later clock
         List<PhoneSteps.Reading> back = new ArrayList<PhoneSteps.Reading>(plain.subList(0, 2));
         back.add(rd(7, 14400, 2100, w0 + 7200 - 3600));
         List<PhoneSteps.Interval> ib = PhoneSteps.intervals(back);
         PhoneSteps.Interval last = ib.get(ib.size() - 1);
-        check("#329b phone: clock set back an hour, nothing lost, one hour long, dated by the new clock", stepsOf(ib) == 2100 && last.stop - last.start == 3600
+        check("#329b phone: clock set back an hour, nothing lost, one hour long, dated by the new clock", stepsOf(ib) == 1200 && last.stop - last.start == 3600
                 && last.stop == w0 + 3600 && last.steps == 700, last.start + " " + last.stop);
         // the clock set forward a day: the same steps, one hour long
         List<PhoneSteps.Reading> fwd = new ArrayList<PhoneSteps.Reading>(plain.subList(0, 2));
         fwd.add(rd(7, 14400, 2100, w0 + 7200 + 86400));
         List<PhoneSteps.Interval> iff = PhoneSteps.intervals(fwd);
         PhoneSteps.Interval lf = iff.get(iff.size() - 1);
-        check("#329b phone: clock set forward a day, nothing made up, one hour long", stepsOf(iff) == 2100 && lf.stop - lf.start == 3600 && lf.steps == 700);
+        check("#329b phone: clock set forward a day, nothing made up, one hour long", stepsOf(iff) == 1200 && lf.stop - lf.start == 3600 && lf.steps == 700);
         // a restart: a new boot count, the counter starts again; no difference across it, the new boot counts from its start
         List<PhoneSteps.Reading> rs = new ArrayList<PhoneSteps.Reading>(plain);
         rs.add(rd(8, 600, 80, w0 + 7200 + 3600)); // started 10 minutes before this reading
         rs.add(rd(8, 4200, 380, w0 + 7200 + 7200));
         List<PhoneSteps.Interval> ir = PhoneSteps.intervals(rs);
-        check("#329b phone: a restart starts again from 0, nothing taken across it", ir.size() == 5 && stepsOf(ir) == 2100 + 380 && ir.get(3).steps == 80
-                && ir.get(3).start == w0 + 7200 + 3000 && ir.get(3).boot == 8, ir.size());
+        check("#329b phone: a restart seen starts again from 0 at the start, nothing taken across it", ir.size() == 4 && stepsOf(ir) == 1200 + 380 && ir.get(2).steps == 80
+                && ir.get(2).start == w0 + 7200 + 3000 && ir.get(2).boot == 8, ir.size());
         // a restart whose new counter is already above the old one: the boot count tells, a falling counter alone would not
         List<PhoneSteps.Reading> above = new ArrayList<PhoneSteps.Reading>(plain);
         above.add(rd(8, 9000, 2500, w0 + 7200 + 9000));
         List<PhoneSteps.Interval> ia = PhoneSteps.intervals(above);
-        check("#329b phone: a restart with a higher counter is not 400 steps since the last reading", ia.size() == 4 && ia.get(3).steps == 2500
-                && ia.get(3).stop - ia.get(3).start == 9000 && stepsOf(ia) == 2100 + 2500, stepsOf(ia));
+        check("#329b phone: a restart with a higher counter is not 400 steps since the last reading", ia.size() == 3 && ia.get(2).steps == 2500
+                && ia.get(2).stop - ia.get(2).start == 9000 && stepsOf(ia) == 1200 + 2500, stepsOf(ia));
         // a restart in the middle of an interval: the steps after the last reading before it are lost, the rest is exact
         List<PhoneSteps.Reading> mid = new ArrayList<PhoneSteps.Reading>(plain.subList(0, 2)); // 1400 at w0 + 3600
         mid.add(rd(8, 1800, 150, w0 + 7200)); // the phone died at about w0 + 4800 (steps 1400 to its death lost), started at w0 + 5400
         List<PhoneSteps.Interval> im = PhoneSteps.intervals(mid);
-        check("#329b phone: a restart in the middle of an interval keeps both sides, loses only the time in between", im.size() == 3 && stepsOf(im) == 1400 + 150
-                && im.get(2).start == w0 + 5400 && im.get(1).stop == w0 + 3600, stepsOf(im));
+        check("#329b phone: a restart in the middle of an interval keeps both sides, loses only the time in between", im.size() == 2 && stepsOf(im) == 500 + 150
+                && im.get(1).start == w0 + 5400 && im.get(0).stop == w0 + 3600, stepsOf(im));
+        // a later boot whose start lies before the last reading of the boot before (an older backup's readings, a clock far
+        // off): no restart was seen, its first reading is a baseline
+        List<PhoneSteps.Interval> unseen = PhoneSteps.intervals(Arrays.asList(rd(7, 7200, 900, w0), rd(8, 7200, 300, w0 + 600)));
+        check("#329b phone: a restart not seen in order gives no since start interval", unseen.isEmpty());
+        // stand in boot keys (no boot count) never count since the start: a clock correction moves them
+        List<PhoneSteps.Interval> stand = PhoneSteps.intervals(Arrays.asList(rd(-5, 7200, 900, w0), rd(-9, 600, 80, w0 + 10800)));
+        check("#329b phone: stand in boot keys never count since the start", stand.isEmpty());
+        // two phones with the same boot counts and elapsed times (a restored backup of another phone): never mixed
+        List<PhoneSteps.Reading> two = new ArrayList<PhoneSteps.Reading>();
+        two.add(new PhoneSteps.Reading("aaaa", 3, 3_600_000, 1000, w0));
+        two.add(new PhoneSteps.Reading("aaaa", 3, 7_200_000, 1600, w0 + 3600));
+        two.add(new PhoneSteps.Reading("bbbb", 3, 3_600_000, 50000, w0 - 86400));
+        two.add(new PhoneSteps.Reading("bbbb", 3, 7_200_000, 50200, w0 - 82800));
+        List<PhoneSteps.Interval> it = PhoneSteps.intervals(two);
+        check("#329b phone: two phones with the same boot counts stay apart", it.size() == 2 && stepsOf(it) == 800 && PhoneSteps.counts(two).devices == 2
+                && PhoneSteps.counts(two).boots == 2, stepsOf(it));
         // a counter that falls without a new boot count: no difference, left out and counted; the next one counts again
         List<PhoneSteps.Reading> fell = new ArrayList<PhoneSteps.Reading>(plain);
         fell.add(rd(7, 18000, 1000, w0 + 10800));
         fell.add(rd(7, 21600, 1300, w0 + 14400));
         PhoneSteps.Left left = new PhoneSteps.Left();
         List<PhoneSteps.Interval> ifl = PhoneSteps.intervals(fell, left);
-        check("#329b phone: a counter that falls without a restart gives no difference", ifl.size() == 4 && stepsOf(ifl) == 2100 + 300 && left.fell == 1, stepsOf(ifl));
+        check("#329b phone: a counter that falls without a restart gives no difference", ifl.size() == 3 && stepsOf(ifl) == 1200 + 300 && left.fell == 1, stepsOf(ifl));
         // more steps than anyone walks: left out
         List<PhoneSteps.Reading> fast = new ArrayList<PhoneSteps.Reading>(plain);
         fast.add(rd(7, 14460, 2100 + 1000, w0 + 7260));
         PhoneSteps.Left lf2 = new PhoneSteps.Left();
-        check("#329b phone: 1,000 steps in a minute is left out", stepsOf(PhoneSteps.intervals(fast, lf2)) == 2100 && lf2.implausible == 1);
+        check("#329b phone: 1,000 steps in a minute is left out", stepsOf(PhoneSteps.intervals(fast, lf2)) == 1200 && lf2.implausible == 1);
         PhoneSteps.Left lf3 = new PhoneSteps.Left();
-        check("#329b phone: a first reading above what fits since the start is left out (a counter that did not reset)",
-                PhoneSteps.intervals(Arrays.asList(rd(9, 60, 500000, w0)), lf3).isEmpty() && lf3.implausible == 1);
-        check("#329b phone: two readings at the same moment give nothing", PhoneSteps.intervals(Arrays.asList(rd(7, 100, 10, w0), rd(7, 100, 12, w0))).size() == 1);
+        check("#329b phone: a first reading after a restart above what fits since the start is left out (a counter that did not reset)",
+                PhoneSteps.intervals(Arrays.asList(rd(9, 7200, 100, w0), rd(10, 60, 500000, w0 + 3600)), lf3).isEmpty() && lf3.implausible == 1);
+        check("#329b phone: two readings at the same moment give nothing", PhoneSteps.intervals(Arrays.asList(rd(7, 100, 10, w0), rd(7, 100, 12, w0))).isEmpty());
         // the boot key: Android's count when readable, else a stand in from the start time (never a real count)
         check("#329b phone: the boot key is the boot count", PhoneSteps.bootKey(42, w0, 5000) == 42 && PhoneSteps.bootKey(0, w0, 5000) == 0);
         long k1 = PhoneSteps.bootKey(-1, w0, 3_600_000), k2 = PhoneSteps.bootKey(-1, w0 + 3600, 7_200_000), k3 = PhoneSteps.bootKey(-1, w0 + 3600, 1_000);
@@ -9262,7 +9283,8 @@ public class CoreTest {
         List<PhoneSteps.Reading> gaps = new ArrayList<PhoneSteps.Reading>(rs);
         gaps.add(rd(8, 4200 + 5 * 3600, 900, w0 + 7200 + 7200 + 5 * 3600));
         PhoneSteps.Counts cn = PhoneSteps.counts(gaps);
-        check("#329b phone: counts of readings, starts, gaps", cn.readings == 6 && cn.boots == 2 && cn.gaps == 1 && Math.round(cn.longest) == 5 * 3600 && cn.intervals == 6,
+        check("#329b phone: counts of readings, starts, gaps", cn.readings == 6 && cn.boots == 2 && cn.gaps == 1 && Math.round(cn.longest) == 5 * 3600 && cn.intervals == 5
+                && cn.devices == 1,
                 cn.readings + " " + cn.boots + " " + cn.gaps + " " + cn.longest);
         // the readout
         java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
@@ -9448,8 +9470,11 @@ public class CoreTest {
         check("#329b edges: a first reading at elapsed 0 or with a negative counter gives nothing", PhoneSteps.intervals(Arrays.asList(rd(1, 0, 10, w0)), left).isEmpty()
                 && PhoneSteps.intervals(Arrays.asList(rd(1, 60, -5, w0)), left).isEmpty() && left.implausible == 0);
         check("#329b edges: left out without a counter to count into", PhoneSteps.intervals(Arrays.asList(rd(1, 10, 99999, w0))).isEmpty()
-                && PhoneSteps.intervals(Arrays.asList(rd(1, 100, 0, w0), rd(1, 110, 99999, w0 + 10))).size() == 1
-                && PhoneSteps.intervals(Arrays.asList(rd(1, 100, 50, w0), rd(1, 200, 10, w0 + 100))).size() == 1);
+                && PhoneSteps.intervals(Arrays.asList(rd(1, 100, 0, w0), rd(1, 110, 99999, w0 + 10))).isEmpty()
+                && PhoneSteps.intervals(Arrays.asList(rd(1, 100, 50, w0), rd(1, 200, 10, w0 + 100))).isEmpty());
+        check("#329b edges: a restart of another phone or the same boot is no restart", !PhoneSteps.sinceRestartForTest(null, rd(1, 10, 1, w0))
+                && !PhoneSteps.sinceRestartForTest(new PhoneSteps.Reading("x", 1, 10, 1, w0), rd(2, 10, 1, w0 + 100))
+                && !PhoneSteps.sinceRestartForTest(rd(2, 10, 1, w0), rd(2, 20, 1, w0 + 100)));
         check("#329b edges: a zero length interval counts where it lies", PhoneSteps.share(w0, w0, 7, w0 - 1, w0 + 1) == 7 && PhoneSteps.share(w0, w0, 7, w0 + 1, w0 + 2) == 0
                 && PhoneSteps.share(w0, w0, 7, w0 - 2, w0 - 1) == 0 && PhoneSteps.share(w0, w0 + 10, 10, w0 + 20, w0 + 30) == 0);
         PhoneSteps.Interval in = new PhoneSteps.Interval(w0, w0 + 100, 1, 1, 1);

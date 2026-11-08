@@ -70,6 +70,23 @@ public final class PhoneReader {
     }
 
     private static int readLocked(Context c, String why, long minGapS) {
+        String device = Prefs.of(c).phoneDevice();
+        int bootCount = -1;
+        try {
+            bootCount = android.provider.Settings.Global.getInt(c.getContentResolver(), android.provider.Settings.Global.BOOT_COUNT, -1);
+        } catch (RuntimeException e) {
+            // the stand in from the start time is used (core/PhoneSteps.bootKey)
+        }
+        // a reading of this boot less than minGapS old: the sensor is not even switched on (review of #367)
+        if (minGapS > 0) {
+            long nowEl = SystemClock.elapsedRealtime();
+            long key = PhoneSteps.bootKey(bootCount, System.currentTimeMillis() / 1000.0, nowEl);
+            try {
+                if (PhoneStore.recent(c, device, key, nowEl, minGapS)) return PhoneStore.TOO_SOON;
+            } catch (RuntimeException e) {
+                // read anyway; the store checks again
+            }
+        }
         SensorManager sm = (SensorManager) c.getSystemService(Context.SENSOR_SERVICE);
         Sensor sensor = sm == null ? null : sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
         if (sensor == null) return NOT_COUNTING;
@@ -81,10 +98,15 @@ public final class PhoneReader {
             public void onSensorChanged(SensorEvent e) {
                 synchronized (lock) {
                     if (!Double.isNaN(value[0]) || e.values == null || e.values.length == 0) return;
-                    // the time it arrived: the counter's value then, on the clock that never jumps and on the wall clock
+                    // the event's own time (elapsedRealtimeNanos on Android's sensors), so a value held back in a batch is dated
+                    // when it was counted; a time far from now (an old sensor driver on another clock) falls back to its arrival
+                    long nowNs = SystemClock.elapsedRealtimeNanos();
+                    double wallNow = System.currentTimeMillis() / 1000.0;
+                    long ts = e.timestamp;
+                    boolean own = ts > 0 && Math.abs(nowNs - ts) < 10L * 60 * 1_000_000_000L;
                     value[0] = e.values[0];
-                    value[1] = SystemClock.elapsedRealtime();
-                    value[2] = System.currentTimeMillis() / 1000.0;
+                    value[1] = own ? ts / 1_000_000.0 : nowNs / 1_000_000.0;
+                    value[2] = own ? wallNow - (nowNs - ts) / 1e9 : wallNow;
                 }
                 got.countDown();
             }
@@ -118,16 +140,10 @@ public final class PhoneReader {
         }
         if (Double.isNaN(v) || v < 0) {
             Prefs.of(c).notePhoneNoReading(System.currentTimeMillis() / 1000);
-            log(c, "phone steps (" + why + "): no value from the sensor within " + held + " ms, nothing stored");
+            log(c, "phone steps (" + why + "): sensor on " + held + " ms, no value, nothing stored");
             return NO_VALUE;
         }
-        int bootCount = -1;
-        try {
-            bootCount = android.provider.Settings.Global.getInt(c.getContentResolver(), android.provider.Settings.Global.BOOT_COUNT, -1);
-        } catch (RuntimeException e) {
-            // the stand in from the start time is used (core/PhoneSteps.bootKey)
-        }
-        PhoneSteps.Reading r = new PhoneSteps.Reading(PhoneSteps.bootKey(bootCount, wall, (long) elapsed), (long) elapsed, (long) v, wall);
+        PhoneSteps.Reading r = new PhoneSteps.Reading(device, PhoneSteps.bootKey(bootCount, wall, (long) elapsed), (long) elapsed, (long) v, wall);
         int res = PhoneStore.BUSY;
         // an analysis holds the history's write for its run: a few tries, then the next reading covers this one
         for (int i = 0; i < 6; i++) {
@@ -145,9 +161,9 @@ public final class PhoneReader {
                 break;
             }
         }
-        // the log names what happened and how long the sensor was on, never the count
-        log(c, "phone steps (" + why + "): " + (res == PhoneStore.STORED ? "reading stored" : res == PhoneStore.KNOWN ? "reading known"
-                : res == PhoneStore.TOO_SOON ? "skipped, the last reading is a minute old" : "skipped, an analysis runs") + ", sensor on " + held + " ms");
+        // the log names the source, how long the sensor was on and what happened, never the count
+        log(c, "phone steps (" + why + "): sensor on " + held + " ms, " + (res == PhoneStore.STORED ? "reading stored" : res == PhoneStore.KNOWN ? "reading known"
+                : res == PhoneStore.TOO_SOON ? "skipped, the last reading is a minute old" : "skipped, an analysis runs"));
         return res;
     }
 

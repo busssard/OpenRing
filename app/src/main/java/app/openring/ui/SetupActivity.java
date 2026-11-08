@@ -289,6 +289,13 @@ public final class SetupActivity extends Activity {
         // a backup without a key (issue #288) on a phone without one it can read: settings and history are back, the
         // key is entered here (Use my existing key); the page stays, its sentence says so
         if (r.noKey && Prefs.of(this).loadKey() == null) {
+            // a backup made without a ring (issue #329): on to the main screen, as "Use without a ring" does
+            if (!Prefs.of(this).hasKey() && Prefs.of(this).noRing()) {
+                Toast.makeText(this, r.message, Toast.LENGTH_LONG).show();
+                startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                finish();
+                return;
+            }
             restoreStatus(r.message, Ui.TEXT);
             return;
         }
