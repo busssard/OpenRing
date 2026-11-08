@@ -11,6 +11,13 @@ public final class KeyState {
 
     /** No key stored; a stored key this phone can read; a stored key this phone cannot read. */
     public static final int NONE = 0, READABLE = 1, UNREADABLE = 2;
+    /**
+     * No ring by choice (issue #329): the person uses Open Ring without a ring (phone steps, screen time, the period
+     * tracker). Not a missing key, so it never opens Setup and never syncs. Nothing sets it before phase 1b; every place
+     * that decides about Setup or a paired ring asks {@link #needsSetup} or {@link #hasRing}, so none can send the person
+     * back to Setup in a loop.
+     */
+    public static final int NO_RING = 3;
 
     /** The state from whether a key is stored and whether it could be read. */
     public static int of(boolean stored, boolean read) {
@@ -19,13 +26,37 @@ public final class KeyState {
     }
 
     /**
+     * The state as far as it is known without reading the key: it never decrypts, so it gives {@link #NONE} or
+     * {@link #READABLE}, also for a stored key this phone cannot read (never {@link #UNREADABLE} or {@link #NO_RING}).
+     * Use it only for {@link #needsSetup} and {@link #hasRing}, which treat a readable and an unreadable key alike; never
+     * for {@link #opensSetup} or {@link #syncs}, which need {@link #of} with the key actually read.
+     */
+    public static int ofStored(boolean stored) {
+        return of(stored, true);
+    }
+
+    /**
+     * Setup is not finished or there is no ring key (Settings and the main screen then go to Setup, as before). No ring
+     * by choice ({@link #NO_RING}) never needs Setup.
+     */
+    public static boolean needsSetup(boolean setupDone, int state) {
+        if (state == NO_RING) return false;
+        return !setupDone || state == NONE;
+    }
+
+    /** A ring is set up on this phone: a key is stored, readable or not (Find my ring talks to it only then). */
+    public static boolean hasRing(int state) {
+        return state == READABLE || state == UNREADABLE;
+    }
+
+    /**
      * Whether the main screen opens Setup by itself: no ring set up or no key, as before, and a pairing whose key page
      * was not left yet (issue #218) only when that key can be shown. An unreadable key keeps the main screen, which
-     * says so and leads to Setup on a tap.
+     * says so and leads to Setup on a tap; no ring by choice keeps it too.
      */
     public static boolean opensSetup(boolean demo, boolean setupDone, int state, boolean pairUnseen) {
         if (demo) return false;
-        return !setupDone || state == NONE || pairUnseen && state == READABLE;
+        return needsSetup(setupDone, state) || pairUnseen && state == READABLE;
     }
 
     /** Whether a sync can start, also the background one: only with a key this phone can read. */
@@ -65,12 +96,22 @@ public final class KeyState {
     /** Settings, Key and backup, in place of the key. */
     public static final String SETTINGS_TEXT = "This phone cannot read the saved key. Enter it again to sync, your history stays.";
 
-    /** A backup file asked for in Settings while the key cannot be read (every backup holds the key, review of #281). */
-    public static final String BACKUP_TEXT = "No backup was saved, because this phone cannot read the saved ring key and every backup holds it. "
-            + "Enter the key again first (Key and backup, Enter the key again).";
+    /**
+     * Settings, the backup cards, while the key cannot be read (issue #288): backups are still saved, without the key.
+     * Before #288 no backup could be saved in this state.
+     */
+    public static final String BACKUP_NO_KEY = "This phone cannot read the saved ring key, so backups are saved without it. "
+            + "After restoring one, enter your key in Setup.";
+
+    /** Under the backup buttons in that state: what "Key and settings only" then holds (review of #340). */
+    public static final String BACKUP_SETTINGS_ONLY = "Key and settings only then saves your settings alone, without the key.";
+
+    /** A backup file saved in Settings while the key cannot be read (issue #288). */
+    public static final String BACKUP_SAVED_NO_KEY = "Backup saved, without the ring key this phone cannot read.";
 
     /** Every text above, for the tests (plain, no dashes as punctuation). */
     public static String[] texts() {
-        return new String[]{NO_KEY_RAW, UNREADABLE_RAW, PLAIN, STATUS, SYNC_TITLE, SYNC_TEXT, BUTTON, SETUP_TITLE, SETUP_TEXT, SETTINGS_TEXT, BACKUP_TEXT};
+        return new String[]{NO_KEY_RAW, UNREADABLE_RAW, PLAIN, STATUS, SYNC_TITLE, SYNC_TEXT, BUTTON, SETUP_TITLE, SETUP_TEXT, SETTINGS_TEXT, BACKUP_NO_KEY,
+            BACKUP_SETTINGS_ONLY, BACKUP_SAVED_NO_KEY};
     }
 }

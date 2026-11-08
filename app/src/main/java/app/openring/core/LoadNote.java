@@ -16,12 +16,26 @@ public final class LoadNote {
     public static String error(Throwable e) {
         if (e == null) return "unknown error";
         String s = e.getClass().getSimpleName();
+        if (s.isEmpty()) {
+            // an anonymous class has no simple name: its binary name without the package, such as Analyzer$1
+            String n = e.getClass().getName();
+            s = n.substring(n.lastIndexOf('.') + 1);
+        }
         for (StackTraceElement f : e.getStackTrace()) {
             if (f == null || f.getClassName() == null || !f.getClassName().startsWith("app.openring.")) continue;
             if (f.getFileName() == null) return s;
             return s + " at " + f.getFileName() + (f.getLineNumber() > 0 ? ":" + f.getLineNumber() : "");
         }
         return s;
+    }
+
+    /**
+     * True when {@code text} has the form {@link #error} gives (a class name without its package, then optionally
+     * {@code " at "}, a file and {@code ":"} a line), so it holds no message (issue #289). A text stored by an older
+     * version as {@code e.toString()} starts with the full class name, which has dots, and never passes.
+     */
+    public static boolean safe(String text) {
+        return text != null && text.matches("[A-Za-z0-9_$]+( at [^\\s:]+(:[0-9]+)?)?");
     }
 
     /** The line for a failed {@code part} while loading {@code date} (ISO), first noted at {@code when}. */

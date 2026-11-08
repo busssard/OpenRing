@@ -80,7 +80,8 @@ public final class BeforeUpdate {
             // also out of memory: the start goes on, the reason is kept for Data check and the main screen
             try {
                 Prefs p = Prefs.of(c);
-                p.setBeforeUpdateNote("error: " + t, true);
+                // the class and place only, never the message, which the data check would show (issue #289)
+                p.setBeforeUpdateNote("error: " + app.openring.core.LoadNote.error(t), true);
                 p.noteVersion(versionCode(c));
             } catch (Throwable ignored) {
                 // nothing more can be done; the history opens as before

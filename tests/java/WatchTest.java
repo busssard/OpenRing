@@ -1,4 +1,5 @@
 import app.openring.core.Hex;
+import app.openring.core.MainDevice;
 import app.openring.core.RingGate;
 import app.openring.core.withings.*;
 
@@ -45,6 +46,7 @@ public class WatchTest {
         gate();
         mainDevice();
         mainDeviceEdges();
+        mainDeviceSources();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1643,5 +1645,241 @@ public class WatchTest {
         MainDevice.Day wnn = MainDevice.of(MainDevice.WATCH, day, from, to, z, withNight, mdWatch(day, z, 99, 99));
         check("edges: watch main, no watch night: the ring's night named, no score line", MainDevice.ringTooLine(wnn, 70) == null && wnn.nightFromOther() && wnn.filled());
         check("edges: the devices' names", "your watch".equals(MainDevice.name(MainDevice.WATCH)) && "your ring".equals(MainDevice.name(MainDevice.RING)));
+    }
+
+    // ------------------------------------------------------------------- main device sources (issue #329, phase 1a)
+
+    /**
+     * What {@code MainDevice.of} gave before the sources (issue #329, phase 1a), taken from the old {@code ringMain} and
+     * {@code watchMain} code (commit 4897c8c) on the cases of {@link #srcCases}: a fingerprint of every field and line of the
+     * day (SHA-256, first 8 bytes), the steps and the filled steps. Never edit these to make a change pass.
+     */
+    static final String[] SRC_EXPECTED = {
+        "ring gap, watch full / 0 = 3b129d7cd2560338 steps 7270.0 fill 727.0",
+        "ring gap, watch full / 1 = c0099d75dda70b31 steps 8292.0 fill 0.0",
+        "ring full, watch gap / 0 = 4b39a1c1279f9684 steps 7000.0 fill 0.0",
+        "ring full, watch gap / 1 = 8e185703958aae90 steps 13172.0 fill 6300.0",
+        "both full / 0 = 4b39a1c1279f9684 steps 7000.0 fill 0.0",
+        "both full / 1 = c0099d75dda70b31 steps 8292.0 fill 0.0",
+        "no ring, watch full / 0 = 5a6ba86523a2a434 steps 8292.0 fill 8292.0",
+        "no ring, watch full / 1 = c0099d75dda70b31 steps 8292.0 fill 0.0",
+        "ring full, watch elsewhere / 0 = acd2c8dd441efed0 steps 5000.0 fill 0.0",
+        "ring full, watch elsewhere / 1 = 8039f46409f290fe steps 5000.0 fill 0.0",
+        "two gaps / 0 = 0b2f51211513fac3 steps 5727.0 fill 727.0",
+        "two gaps / 1 = 5435379fd05d3772 steps 7570.0 fill 0.0",
+        "same gap / 0 = 834c56f4f2b5bd54 steps 5000.0 fill 0.0",
+        "same gap / 1 = 0d18ab35400efc37 steps 6872.0 fill 0.0",
+        "nights and workout / 0 = 077f852062745ac2 steps 7000.0 fill 0.0",
+        "nights and workout / 1 = fa03833def504d58 steps 5881.0 fill 750.0",
+        "ring only / 0 = cead221414d35f78 steps 6543.0 fill 0.0",
+        "ring only / 1 = 9ecf581784ed5c62 steps 6543.0 fill 0.0",
+        "heart only watch / 0 = 4430f54b090e0556 steps NaN fill 0.0",
+        "heart only watch / 1 = 25629c0ad2f12e41 steps NaN fill 0.0",
+        "odd ring points / 0 = 52e7c33663885819 steps 7570.0 fill 7570.0",
+        "odd ring points / 1 = 85d528bef71d1440 steps 7570.0 fill 0.0",
+        "no summary / 0 = 4606c240f9bd8ff0 steps 3439.0 fill 3439.0",
+        "no summary / 1 = 4ec1a15c84969d08 steps 15621.0 fill 10800.0",
+        "23 hour day / 0 = 0cb445d8b1719893 steps 4118.0 fill 1118.0",
+        "23 hour day / 1 = 1895a85fbe431c01 steps 7928.0 fill 0.0",
+        "25 hour day / 0 = aebeb098c1dd05e9 steps 4760.0 fill 1760.0",
+        "25 hour day / 1 = 0abf12a20aedb4be steps 8292.0 fill 0.0",
+        "nothing / 0 = c039674d3ec31ca7 steps NaN fill 0.0",
+        "nothing / 1 = 4ff352036a5da7ed steps NaN fill 0.0"
+    };
+
+    static double srcAt(LocalDate d, double h) {
+        return d.atStartOfDay(MD_ZONE).toEpochSecond() + h * 3600;
+    }
+
+    /** A ring worn all day except {@code offFrom} to {@code offTo} hours; brisk at noon, running 18:00 to 18:30, slow walking 8:00 to 9:00. */
+    static MainDevice.Ring srcRing(LocalDate d, double offFrom, double offTo, double steps) {
+        MainDevice.Ring r = new MainDevice.Ring();
+        r.steps = steps;
+        r.metres = app.openring.core.analysis.Wellness.stepsToMeters(steps);
+        double from = srcAt(d, 0), to = d.plusDays(1).atStartOfDay(MD_ZONE).toEpochSecond();
+        for (double t = from; t < to; t += 900) {
+            double h = (t - from) / 3600;
+            if (h >= offFrom && h < offTo) continue;
+            int q = MainDevice.clockQuarter(t, MD_ZONE);
+            r.met[q] = h >= 12 && h < 13 ? 3.0 : h >= 18 && h < 18.5 ? 7.5 : h >= 8 && h < 9 ? 1.9 : 1.3;
+            r.hr.add(t + 450, 60 + (int) h);
+        }
+        return r;
+    }
+
+    /** A watch worn all day except {@code offFrom} to {@code offTo} hours, with uneven steps and distances and heart rate every 30 minutes. */
+    static MainDevice.Watch srcWatch(LocalDate d, double offFrom, double offTo) {
+        MainDevice.Watch w = new MainDevice.Watch();
+        double from = srcAt(d, 0), to = d.plusDays(1).atStartOfDay(MD_ZONE).toEpochSecond();
+        int i = 0;
+        for (double t = from; t < to; t += 900) {
+            double h = (t - from) / 3600;
+            if (h >= offFrom && h < offTo) continue;
+            w.steps.add(new Records.Steps((long) t + 60, 840, 37 + (i++ * 13) % 101, 21 + i % 50, 4));
+            if (((long) (t - from)) % 1800 == 0) w.heart.add(new Records.Heart((long) t + 100, 60 + i % 30));
+        }
+        return w;
+    }
+
+    static String srcTs(app.openring.core.analysis.TS t) {
+        StringBuilder b = new StringBuilder("[");
+        for (int i = 0; i < t.size(); i++) b.append(t.t(i)).append(':').append(t.v(i)).append(',');
+        return b.append(']').toString();
+    }
+
+    static String srcRanges(List<double[]> l) {
+        StringBuilder b = new StringBuilder("[");
+        for (double[] r : l) b.append(r[0]).append('-').append(r[1]).append(',');
+        return b.append(']').toString();
+    }
+
+    /** Every field and line of a day, as one text. */
+    static String srcPrint(MainDevice.Day d) {
+        ZoneId z = MD_ZONE;
+        return d.main + "|" + d.steps + "|" + d.metres + "|" + d.fillSteps + "|" + srcRanges(d.stepFill) + "|" + srcTs(d.hr) + "|" + srcRanges(d.hrFill) + "|" + d.whole
+                + "|" + (d.watchNight == null ? "-" : d.watchNight.start + "/" + d.watchNight.end + "/" + d.watchNight.asleepMin()) + "|" + d.ringNight + "|" + d.watchRows
+                + "|" + d.workouts.size() + "|" + d.filled() + "|" + d.any() + "|" + d.nightFromOther() + "|" + d.other()
+                + "|" + MainDevice.stepsLine(d, z, Locale.US) + "|" + MainDevice.heartLine(d, z) + "|" + MainDevice.nightLine(d) + "|" + MainDevice.ringTooLine(d, 80)
+                + "|" + MainDevice.stepsNote(d);
+    }
+
+    static String srcSha(String s) throws Exception {
+        byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes("UTF-8"));
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < 8; i++) b.append(String.format("%02x", h[i]));
+        return b.toString();
+    }
+
+    /** The cases: {name, date, ring, watch}. */
+    static List<Object[]> srcCases() {
+        LocalDate day = LocalDate.of(2026, 6, 10), dst = LocalDate.of(2026, 3, 29), back = LocalDate.of(2026, 10, 25);
+        List<Object[]> cases = new ArrayList<Object[]>();
+        MainDevice.Ring sleepy = srcRing(day, 99, 99, 7000);
+        sleepy.sleeps.add(new double[] {srcAt(day, -1), srcAt(day, 7)});
+        sleepy.sleeps.add(new double[] {srcAt(day, 13), srcAt(day, 14)});
+        sleepy.night = true;
+        MainDevice.Watch wsleep = srcWatch(day, 0, 9);
+        wsleep.sleep.add(new Records.Sleep((long) srcAt(day, -1.5), 3 * 3600, Records.DEEP));
+        wsleep.sleep.add(new Records.Sleep((long) srcAt(day, 1.5), 4 * 3600, Records.LIGHT));
+        wsleep.workouts.add(new Records.Workout((long) srcAt(day, 17), 1800, Records.SWIM, 0, 900, 120));
+        MainDevice.Watch hrOnly = new MainDevice.Watch();
+        hrOnly.heart.add(new Records.Heart((long) srcAt(day, 10), 66));
+        hrOnly.heart.add(new Records.Heart((long) srcAt(day, 10.6), 71));
+        MainDevice.Ring odd = new MainDevice.Ring();
+        odd.steps = 0;
+        odd.hr.add(srcAt(day, 0) - 450, 70);
+        odd.hr.add(srcAt(day, 0) + 450, Double.NaN);
+        odd.hr.add(srcAt(day, 24) + 450, 70);
+        MainDevice.Ring noSummary = srcRing(day, 0, 12, Double.NaN);
+        noSummary.metres = Double.NaN;
+        cases.add(new Object[] {"ring gap, watch full", day, srcRing(day, 14, 16, 6543), srcWatch(day, 99, 99)});
+        cases.add(new Object[] {"ring full, watch gap", day, srcRing(day, 99, 99, 7000), srcWatch(day, 11, 15)});
+        cases.add(new Object[] {"both full", day, srcRing(day, 99, 99, 7000), srcWatch(day, 99, 99)});
+        cases.add(new Object[] {"no ring, watch full", day, new MainDevice.Ring(), srcWatch(day, 99, 99)});
+        cases.add(new Object[] {"ring full, watch elsewhere", day, srcRing(day, 99, 99, 5000), srcWatch(day.minusDays(3), 99, 99)});
+        cases.add(new Object[] {"two gaps", day, srcRing(day, 14, 16, 5000), srcWatch(day, 19.5, 21.5)});
+        cases.add(new Object[] {"same gap", day, srcRing(day, 11, 15, 5000), srcWatch(day, 11, 15)});
+        cases.add(new Object[] {"nights and workout", day, sleepy, wsleep});
+        cases.add(new Object[] {"ring only", day, srcRing(day, 14, 16, 6543), null});
+        cases.add(new Object[] {"heart only watch", day, new MainDevice.Ring(), hrOnly});
+        cases.add(new Object[] {"odd ring points", day, odd, srcWatch(day, 0, 2)});
+        cases.add(new Object[] {"no summary", day, noSummary, srcWatch(day, 10, 20)});
+        cases.add(new Object[] {"23 hour day", dst, srcRing(dst, 1, 4, 3000), srcWatch(dst, 99, 99)});
+        cases.add(new Object[] {"25 hour day", back, srcRing(back, 20, 25, 3000), srcWatch(back, 2, 3)});
+        cases.add(new Object[] {"nothing", day, new MainDevice.Ring(), new MainDevice.Watch()});
+        return cases;
+    }
+
+    /** Issue #329, phase 1a: one source per device, one merge path, the same days as the old ring and watch paths. */
+    static void mainDeviceSources() throws Exception {
+        ZoneId z = MD_ZONE;
+        List<String> got = new ArrayList<String>();
+        boolean sameAsList = true;
+        for (Object[] c : srcCases()) {
+            LocalDate d = (LocalDate) c[1];
+            double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            MainDevice.Ring r = (MainDevice.Ring) c[2];
+            MainDevice.Watch w = (MainDevice.Watch) c[3];
+            for (int main : new int[] {MainDevice.RING, MainDevice.WATCH}) {
+                MainDevice.Day x = MainDevice.of(main, d, from, to, z, r, w);
+                got.add(c[0] + " / " + main + " = " + srcSha(srcPrint(x)) + " steps " + x.steps + " fill " + x.fillSteps);
+                // the list in the other order, through numbers() directly: the same numbers (night and workouts are of()'s)
+                MainDevice.Day y = new MainDevice.Day();
+                y.main = MainDevice.valid(main);
+                y.watchRows = x.watchRows;
+                List<MainDevice.Source> list = new ArrayList<MainDevice.Source>();
+                list.add(MainDevice.watch(w == null ? new MainDevice.Watch() : w, from, to));
+                list.add(MainDevice.ring(r, from, to, z));
+                MainDevice.numbers(y, list, from, to);
+                sameAsList &= bits(x.steps, y.steps) && bits(x.metres, y.metres) && bits(x.fillSteps, y.fillSteps) && x.whole == y.whole
+                        && srcRanges(x.stepFill).equals(srcRanges(y.stepFill)) && srcRanges(x.hrFill).equals(srcRanges(y.hrFill)) && sameTs(x.hr, y.hr);
+            }
+        }
+        check("#329 sources: as many days as before", got.size() == SRC_EXPECTED.length, got.size());
+        for (int i = 0; i < Math.min(got.size(), SRC_EXPECTED.length); i++) {
+            check("#329 sources: the same day as the old ring and watch paths: " + SRC_EXPECTED[i], SRC_EXPECTED[i].equals(got.get(i)), got.get(i));
+        }
+        check("#329 sources: the list in any order gives the same numbers", sameAsList);
+
+        // each source on its own
+        LocalDate day = MD_DAY;
+        double from = mdFrom(day, z), to = mdFrom(day.plusDays(1), z);
+        MainDevice.Ring ring = srcRing(day, 14, 16, 6543);
+        MainDevice.Source rs = MainDevice.ring(ring, from, to, z);
+        int worn = 0;
+        for (boolean b : rs.worn) if (b) worn++;
+        check("#329 ring source: covers the day except its two hours off", rs.kind == MainDevice.RING && rs.present && worn == 96 - 8 && !rs.worn[56] && rs.worn[55] && rs.worn[64], worn);
+        check("#329 ring source: its total is the day summary's, its parts are an estimate", bits(rs.steps, 6543) && rs.estimate && rs.line() == ring.hr, rs.steps);
+        double lent = 0;
+        for (double[] p : rs.parts) lent += p[1];
+        check("#329 ring source: it lends noon (4 x 1575), running (2 x 2250) and slow walking (4 x 375)", rs.parts.size() == 10 && lent == 4 * 1575 + 2 * 2250 + 4 * 375, lent);
+        MainDevice.Watch watch = srcWatch(day, 11, 15);
+        MainDevice.Source ws = MainDevice.watch(watch, from, to);
+        double sum = 0;
+        for (Records.Steps s : watch.steps) sum += s.steps;
+        check("#329 watch source: its total is the sum of its records, it lends each of them", ws.kind == MainDevice.WATCH && ws.present && !ws.estimate && bits(ws.steps, sum)
+                && ws.parts.size() == watch.steps.size(), ws.steps);
+        check("#329 watch source: its line is made from its readings", ws.line().size() > 0 && ws.heartIn(ws.worn).size() == 0, ws.line().size());
+        MainDevice.Source empty = MainDevice.watch(new MainDevice.Watch(), from, to);
+        check("#329 watch source without rows: absent, no total", !empty.present && Double.isNaN(empty.steps) && Double.isNaN(empty.metres) && empty.parts.isEmpty());
+
+        // the list's rules
+        MainDevice.Day d = new MainDevice.Day();
+        boolean threw = false;
+        try {
+            MainDevice.numbers(d, Arrays.asList(rs, ws, MainDevice.watch(watch, from, to)), from, to);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check("#329 sources: a third device is refused until the phone exists", threw);
+        threw = false;
+        try {
+            MainDevice.numbers(d, Arrays.asList(ws), from, to);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check("#329 sources: the main device must be in the list", threw);
+
+        // the stored codes: phone reserved, nothing stored or shown changes
+        check("#329 codes: ring 0, watch 1, phone 2 reserved", MainDevice.RING == 0 && MainDevice.WATCH == 1 && MainDevice.PHONE == 2);
+        check("#329 codes: the phone is not a choice yet, a stored 2 is the ring", MainDevice.valid(MainDevice.PHONE) == MainDevice.RING && !MainDevice.known(MainDevice.PHONE)
+                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(-1) && !MainDevice.known(7));
+        check("#329 codes: Settings offers ring and watch, in that order", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH}));
+        int[] mine = MainDevice.choices();
+        mine[0] = MainDevice.PHONE;
+        mine[1] = 7;
+        check("#329 codes: changing a copy changes neither the choices nor known()", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH})
+                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(7) && !MainDevice.known(MainDevice.PHONE));
+        Set<String> labels = new HashSet<String>();
+        boolean labelled = true;
+        for (int c : MainDevice.choices()) {
+            String l = MainDevice.label(c);
+            labelled &= l != null && !l.isEmpty() && plain(l) && labels.add(l);
+        }
+        check("#329 codes: every choice has its own label", labelled && labels.equals(new HashSet<String>(Arrays.asList("Ring", "Watch"))), labels);
+        check("#329 codes: the reserved phone has its label ready", "Phone".equals(MainDevice.label(MainDevice.PHONE)));
+        MainDevice.Day asPhone = MainDevice.of(MainDevice.PHONE, day, from, to, z, ring, srcWatch(day, 99, 99));
+        MainDevice.Day asRing = MainDevice.of(MainDevice.RING, day, from, to, z, ring, srcWatch(day, 99, 99));
+        check("#329 codes: a day asked for with 2 is the ring's day", asPhone.main == MainDevice.RING && srcPrint(asPhone).equals(srcPrint(asRing)));
     }
 }
