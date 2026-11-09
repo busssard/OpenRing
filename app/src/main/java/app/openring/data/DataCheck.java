@@ -126,7 +126,7 @@ public final class DataCheck {
                     Texts.count(mainNights, "main night", "main nights"), Texts.count(days, "day", "days"),
                     r.latestDay == null ? "" : ", latest day " + r.latestDay);
             int st = err != null ? 2 : (days == 0 ? 2 : (mainNights == 0 ? 1 : 0));
-            if (err != null) detail += ". Analysis error: " + err;
+            if (err != null) detail += ". Analysis error: " + analysisError(err);
             else if (days == 0) detail += ". Nothing was computed although data is dated; use Repair below and send this report.";
             else if (mainNights == 0) detail += ". No night found yet; sleep appears after the ring was worn overnight and synced in the morning.";
             r.steps.add(new Step("Analysis", st, detail));
@@ -173,6 +173,18 @@ public final class DataCheck {
         String often = per == 0 ? "by hand" : per == 1 ? "once a day" : per + " times a day";
         return "Watch sync: " + often + ", last good sync " + date(p.watchLastOk() == 0 ? Double.NaN : p.watchLastOk()) + ", last try "
                 + date(p.watchLastAttempt() == 0 ? Double.NaN : p.watchLastAttempt()) + ", last problem: " + (p.watchError() == null ? "none" : p.watchError()) + "\n";
+    }
+
+    /** Said instead of an analysis error stored by an older version as its full text, which can hold a measured value (issue #289). */
+    static final String OLDER_ANALYSIS_ERROR = "noted by an older version of the app (its text is left out, it can hold a measured value). "
+            + "The next sync analyses again";
+
+    /**
+     * The stored {@code analysis_error} as the data check shows it (issue #289): the error's class and place as this
+     * version stores it, otherwise {@link #OLDER_ANALYSIS_ERROR}, never the text itself.
+     */
+    static String analysisError(String stored) {
+        return app.openring.core.LoadNote.safe(stored) ? stored : OLDER_ANALYSIS_ERROR;
     }
 
     /** The kv key of the last part of loading a day that failed and kept its fallback (issue #235): a {@link app.openring.core.LoadNote} line, no values. */

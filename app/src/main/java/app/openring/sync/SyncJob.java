@@ -73,40 +73,77 @@ public final class SyncJob extends JobService {
 
     @Override
     public boolean onStartJob(final JobParameters params) {
-        if (RingManager.get(this).busy()) return false;
-        Prefs prefs = Prefs.of(this);
-        long now = System.currentTimeMillis() / 1000;
-        // the ring first, as before; the watch after it when one of its clock times passed (issue #251)
-        final boolean ringPart = prefs.backgroundSync() && app.openring.core.KeyState.syncs(prefs.keyState());
-        final boolean watchPart = !prefs.demo() && prefs.watchAddress() != null
-                && app.openring.core.withings.WatchDue.due(now, prefs.watchPerDay(), prefs.watchLastOk(), prefs.watchLastAttempt(), java.time.ZoneId.systemDefault());
-        // a sync of the person's own, or an attempt, a few minutes ago: nothing new to fetch yet (issue #194)
-        final boolean ringRecent = BackgroundJob.recent(now, prefs.lastSync(), prefs.lastAttempt());
-        if (ringPart && ringRecent) RingManager.get(this).log("background sync skipped: the last sync was less than 30 minutes ago");
-        if ((!ringPart || ringRecent) && !watchPart) return false;
-        final RingManager.SyncTicket t = new RingManager.SyncTicket();
+        // what is due is decided in core/BackgroundJob (issue #329): the ring first, as before; the watch after it when one
+        // of its clock times passed (issue #251); a sync of the person's own a few minutes ago skips the ring (issue #194)
+        BackgroundJob.Inputs in = new BackgroundJob.Inputs();
+        in.ringBusy = RingManager.get(this).busy();
+        if (!in.ringBusy) {
+            Prefs prefs = Prefs.of(this);
+            in.now = System.currentTimeMillis() / 1000;
+            in.backgroundSync = prefs.backgroundSync();
+            // the key is read (decrypted) only when background sync is on, as before
+            if (in.backgroundSync) in.keyState = prefs.keyState();
+            in.demo = prefs.demo();
+            in.watchAdded = prefs.watchAddress() != null;
+            in.watchPerDay = prefs.watchPerDay();
+            in.watchLastOk = prefs.watchLastOk();
+            in.watchLastAttempt = prefs.watchLastAttempt();
+            in.lastSync = prefs.lastSync();
+            in.lastAttempt = prefs.lastAttempt();
+            in.zone = java.time.ZoneId.systemDefault();
+        }
+        BackgroundJob.Due due = BackgroundJob.due(in);
+        if (due.log != null) RingManager.get(this).log(due.log);
+        if (!due.run()) return false;
+        final boolean ringPart = due.ring, watchPart = due.watch;
+        // nobody watches this sync: it scans briefly and filtered only when the ring is away (issue #195)
+        final RingManager.SyncTicket t = RingManager.SyncTicket.background();
         ticket = t;
         new Thread(new Runnable() {
             @Override
             public void run() {
-                RingManager.SyncResult res = new RingManager.SyncResult();
-                if (ringPart && !ringRecent) res = RingManager.get(SyncJob.this).syncBlocking(t);
-                if (watchPart && !t.stopped()) {
-                    String w = app.openring.ble.WatchSync.run(SyncJob.this);
-                    RingManager.get(SyncJob.this).log("background watch sync: " + (w == null ? "done" : w));
-                }
-                // a background sync that worked removes the notice of an earlier failed one (issue #91)
-                if (res.ok) {
+                // any error ends this run with a line in the log, never the app, and the job is always finished (issue #334)
+                try {
+                    RingManager.SyncResult res = new RingManager.SyncResult();
                     try {
-                        ((android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(SyncService.FAILED_ID);
-                    } catch (RuntimeException e) {
-                        RingManager.get(SyncJob.this).log("old sync notice not removed: " + e);
+                        if (ringPart) res = RingManager.get(SyncJob.this).syncBlocking(t);
+                    } catch (Throwable e) {
+                        // the watch part still runs
+                        log("background sync failed: ", e);
                     }
+                    if (watchPart && !t.stopped()) {
+                        try {
+                            String w = app.openring.ble.WatchSync.run(SyncJob.this);
+                            RingManager.get(SyncJob.this).log("background watch sync: " + (w == null ? "done" : w));
+                        } catch (Throwable e) {
+                            log("background watch sync failed: ", e);
+                        }
+                    }
+                    // a background sync that worked removes the notice of an earlier failed one (issue #91)
+                    if (res != null && res.ok) {
+                        try {
+                            ((android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(SyncService.FAILED_ID);
+                        } catch (RuntimeException e) {
+                            RingManager.get(SyncJob.this).log("old sync notice not removed: " + e);
+                        }
+                    }
+                } catch (Throwable e) {
+                    log("background job failed: ", e);
+                } finally {
+                    jobFinished(params, false);
                 }
-                jobFinished(params, false);
             }
         }, "ring-job").start();
         return true;
+    }
+
+    /** Logs {@code e} with its stack trace; when even that fails, Android's own log keeps it (issue #334). */
+    private void log(String what, Throwable e) {
+        try {
+            RingManager.get(this).log(what + android.util.Log.getStackTraceString(e));
+        } catch (Throwable ignored) {
+            android.util.Log.e("OpenRing", what, e);
+        }
     }
 
     @Override

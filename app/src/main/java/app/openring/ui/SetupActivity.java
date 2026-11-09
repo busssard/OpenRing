@@ -286,6 +286,12 @@ public final class SetupActivity extends Activity {
             restoreStatus(r.message, Ui.WARN);
             return;
         }
+        // a backup without a key (issue #288) on a phone without one it can read: settings and history are back, the
+        // key is entered here (Use my existing key); the page stays, its sentence says so
+        if (r.noKey && Prefs.of(this).loadKey() == null) {
+            restoreStatus(r.message, Ui.TEXT);
+            return;
+        }
         paired(r.message);
     }
 

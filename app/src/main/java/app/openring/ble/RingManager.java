@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantLock;
 
 import app.openring.core.Auth;
+import app.openring.core.ConnectPlan;
 import app.openring.core.Hex;
 import app.openring.core.ModeRestore;
 import app.openring.core.HistoryBatch;
@@ -269,6 +270,11 @@ public final class RingManager {
     }
 
     private Session open(boolean anyRing, Set<String> exclude) throws IOException, InterruptedException {
+        return open(anyRing, exclude, ConnectPlan.PERSON);
+    }
+
+    /** Connects as {@code plan} says: the background job scans briefly, everything else as a sync the person starts (issue #195). */
+    private Session open(boolean anyRing, Set<String> exclude, ConnectPlan plan) throws IOException, InterruptedException {
         // every connection starts here: none in demo mode, whichever path asks (issue #185)
         String demo = demoRefusal();
         if (demo != null) throw new IOException(demo);
@@ -281,24 +287,24 @@ public final class RingManager {
         if (!anyRing && addr != null && (exclude == null || !exclude.contains(addr))) {
             BluetoothDevice d = a.getRemoteDevice(addr);
             setStatus("Connecting to your ring");
-            for (int attempt = 1; attempt <= 2 && s.link == null; attempt++) {
+            for (int attempt = 1; attempt <= plan.directTries && s.link == null; attempt++) {
                 try {
-                    s.link = GattLink.open(ctx, d, glog, 12000);
+                    s.link = GattLink.open(ctx, d, glog, plan.directMs);
                 } catch (IOException e) {
                     log("direct connect attempt " + attempt + " failed (" + e.getMessage() + ")");
-                    if (attempt == 1) Thread.sleep(1500);
+                    if (attempt < plan.directTries) Thread.sleep(plan.directGapMs);
                 }
             }
             if (s.link == null) log("scanning instead");
         }
         if (s.link == null) {
             setStatus("Looking for your ring");
-            BluetoothDevice d = RingScanner.find(ctx, anyRing ? null : addr, exclude, 40000, glog);
+            BluetoothDevice d = RingScanner.find(ctx, anyRing ? null : addr, exclude, plan.scanMs, plan.lowLatency, plan.widen, glog);
             if (d == null) {
                 throw new IOException("No ring found. Put it on its charger next to the phone, and close the Oura app if it is installed.");
             }
             setStatus("Connecting to your ring");
-            s.link = GattLink.open(ctx, d, glog, 20000);
+            s.link = GattLink.open(ctx, d, glog, plan.connectMs);
             s.scanned = true;
         }
         Prefs.of(ctx).setLastHeard(System.currentTimeMillis() / 1000); // for the ring finder (issue #74)
@@ -324,6 +330,22 @@ public final class RingManager {
     /** One sync, so a stop can name it (issue #43). */
     public static final class SyncTicket {
         volatile boolean stop;
+        /** The background job's sync: it connects with {@link ConnectPlan#BACKGROUND} (issue #195). */
+        final boolean background;
+
+        /** A sync the person started (the sync service, also when the app opens). */
+        public SyncTicket() {
+            this(false);
+        }
+
+        private SyncTicket(boolean background) {
+            this.background = background;
+        }
+
+        /** A sync of the background job, which nobody watches: a short scan and one round fewer (issue #195). */
+        public static SyncTicket background() {
+            return new SyncTicket(true);
+        }
 
         /** Android stopped the job this ticket belongs to (the watch sync after the ring's then does not start, issue #251). */
         public boolean stopped() {
@@ -437,40 +459,82 @@ public final class RingManager {
         boolean analysingRaised = false;
         String own = null;
         try {
-            Db held;
-            while (true) {
-                // a long analysis replaces the results (issue #230): wait for it without the ring, every write of the
-                // download would wait for it with the ring held
-                if (!waitForLongRun(ticket)) {
-                    res.message = "Sync stopped";
-                    log("sync stopped while it waited for the analysis");
-                    return res;
+            final Db[] start = new Db[1];
+            final SyncTicket tk = ticket;
+            // any error before the download (a database that cannot be opened, full storage, out of memory) gives back what
+            // it took and ends this sync with a text, instead of ending the app with the ring lock held (issue #334)
+            app.openring.core.SyncStart.Result begun = app.openring.core.SyncStart.run(op, new app.openring.core.SyncStart.Steps() {
+                @Override
+                public String run(app.openring.core.SyncStart.Held h) {
+                    while (true) {
+                        // a long analysis replaces the results (issue #230): wait for it without the ring, every write of the
+                        // download would wait for it with the ring held
+                        if (!waitForLongRun(tk)) {
+                            log("sync stopped while it waited for the analysis");
+                            return "Sync stopped";
+                        }
+                        // a game or live session that just ended may still be closing its link
+                        boolean locked;
+                        try {
+                            locked = op.tryLock(15, java.util.concurrent.TimeUnit.SECONDS);
+                        } catch (InterruptedException e) {
+                            locked = false;
+                        }
+                        if (!locked) {
+                            log("sync skipped: the ring is busy with another task");
+                            return "The ring is busy with another task";
+                        }
+                        Db db = Db.get(ctx);
+                        // demo mode turned on between the check above and this sync's count (issue #219): end before connecting,
+                        // so neither the download nor the screen log and analysis after it reach the demo file
+                        if (demoRefusal(db) != null) {
+                            op.unlock();
+                            log("sync not started: demo mode was turned on");
+                            return "Demo mode: syncing is off";
+                        }
+                        if (db.holdForRing()) {
+                            start[0] = db;
+                            h.ring = true;
+                            return null;
+                        }
+                        // a long analysis began meanwhile: give the ring back and wait for it
+                        op.unlock();
+                    }
                 }
-                // a game or live session that just ended may still be closing its link
-                boolean locked;
+            }, new Runnable() {
+                @Override
+                public void run() {
+                    Db db = start[0];
+                    if (db != null) db.releaseForRing();
+                }
+            });
+            if (begun.error != null) {
+                // the class and place only are stored and shown (issue #289), the whole stack trace goes to the log
+                res.message = begun.message;
+                // the outer finally shows it and lowers the count, so busy() drops back
+                own = SyncError.plain(res.message);
+                // stored first, so a failing log (out of memory) never skips it (issue #91)
                 try {
-                    locked = op.tryLock(15, java.util.concurrent.TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    locked = false;
+                    prefs.setLastSyncError(SyncError.stored(false, res.message));
+                } catch (Throwable e) {
+                    try {
+                        log("sync error not stored: " + app.openring.core.LoadNote.error(e));
+                    } catch (Throwable ignored) {
+                        // nothing more can be done
+                    }
                 }
-                if (!locked) {
-                    res.message = "The ring is busy with another task";
-                    log("sync skipped: the ring is busy with another task");
-                    return res;
+                try {
+                    log("sync could not start: " + android.util.Log.getStackTraceString(begun.error));
+                } catch (Throwable e) {
+                    android.util.Log.e("OpenRing", "sync could not start", begun.error);
                 }
-                held = Db.get(ctx);
-                // demo mode turned on between the check above and this sync's count (issue #219): end before connecting,
-                // so neither the download nor the screen log and analysis after it reach the demo file
-                if (demoRefusal(held) != null) {
-                    op.unlock();
-                    res.message = "Demo mode: syncing is off";
-                    log("sync not started: demo mode was turned on");
-                    return res;
-                }
-                if (held.holdForRing()) break;
-                // a long analysis began meanwhile: give the ring back and wait for it
-                op.unlock();
+                return res;
             }
+            if (begun.message != null) {
+                res.message = begun.message;
+                return res;
+            }
+            final Db held = start[0];
             boolean stopped = false;
             try {
                 downloader.take(ticket);
@@ -479,7 +543,7 @@ public final class RingManager {
                 progress = -1;
                 prefs.setLastAttempt(System.currentTimeMillis() / 1000);
                 notifyListeners();
-                download(res, key, prefs);
+                download(res, key, prefs, ConnectPlan.of(ticket.background));
             } finally {
                 try {
                     prefs.setLastSyncError(SyncError.stored(res.ok, res.message));
@@ -566,17 +630,18 @@ public final class RingManager {
     }
 
     /** The connect and download attempts of a sync; fills {@code res}. Runs with the ring lock held. */
-    private void download(SyncResult res, byte[] key, Prefs prefs) {
+    private void download(SyncResult res, byte[] key, Prefs prefs, ConnectPlan plan) {
         Set<String> exclude = new HashSet<String>();
+        if (plan.background) log("background sync: " + plan);
         try {
-            for (int attempt = 1; attempt <= 3; attempt++) {
+            for (int attempt = 1; attempt <= plan.maxRounds(); attempt++) {
                 if (cancelRequested) {
                     res.message = "Sync stopped";
                     break;
                 }
                 Session s = null;
                 try {
-                    s = open(false, exclude);
+                    s = open(false, exclude, plan);
                     // a stop that came while open() connected found no client to cancel (current was still null);
                     // open() set current before this check and both are volatile, so one of the two sees the other
                     // and this sync ends as stopped before any request (issue #193); finally closes the session
@@ -607,14 +672,18 @@ public final class RingManager {
                     // only Bluetooth really off, no ring found, a key problem or a stop end the sync at once;
                     // passing Bluetooth errors (a refused write, a failed scan) get the other attempts (issue #157)
                     if (!SyncError.retryable(res.message, on)) break;
-                    if (attempt < 3) Thread.sleep(2500);
+                    // a ring away gets fewer rounds in the background, a link that broke off after connecting
+                    // keeps all of them (s is set only once open() connected, issue #195)
+                    if (!plan.another(attempt, s != null)) break;
+                    Thread.sleep(plan.roundGapMs);
                 } catch (HistoryBatch.BatchException e) {
                     String raw = SyncError.raw(e);
                     log("attempt " + attempt + " failed: " + raw);
                     boolean on = bluetoothOn();
                     res.message = SyncError.attemptError(raw, on);
                     if (!on) break;
-                    if (attempt < 3) Thread.sleep(2500);
+                    if (!plan.another(attempt, s != null)) break;
+                    Thread.sleep(plan.roundGapMs);
                 } finally {
                     close(s);
                 }
@@ -622,7 +691,9 @@ public final class RingManager {
         } catch (InterruptedException e) {
             res.message = "Interrupted";
         } catch (RuntimeException e) {
-            res.message = "Unexpected error: " + e;
+            // the class and place only: the stored text is in the data check, which is safe to share, and a message
+            // can carry a value (issue #289); the full stack trace goes to the Log tab below
+            res.message = "Unexpected error: " + app.openring.core.LoadNote.error(e);
             log(android.util.Log.getStackTraceString(e));
         }
     }

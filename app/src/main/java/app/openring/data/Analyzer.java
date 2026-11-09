@@ -74,6 +74,9 @@ public final class Analyzer {
         } : log;
     }
 
+    /** kv: the readiness rules the stored days were worked out with ({@link Scores#READINESS_VERSION}, issue #240). */
+    static final String READINESS_RULES = "readiness_rules";
+
     /** kv: Re analyse all was asked for and has not been stored yet; the next analysis does it (issue #230). */
     static final String FULL_PENDING = "full_pending";
     /**
@@ -85,7 +88,7 @@ public final class Analyzer {
 
     /**
      * Incremental: re analyse from a little before the last analysed point up to now. Any failure, also running out
-     * of memory, rolls the results back to the old ones and stores its text in {@code analysis_error} (issue #230).
+     * of memory, rolls the results back to the old ones and stores its class and place in {@code analysis_error} (issues #230, #289).
      */
     public static void run(Context c, Log log) {
         RUNS.incrementAndGet();
@@ -166,7 +169,7 @@ public final class Analyzer {
     /** What an analysis of the events up to id {@code lastId}, analysed up to {@code until}, on the day of {@code nowUnix} depends on. */
     private String inputs(long lastId, long until, long nowUnix) {
         return lastId + " " + until + " " + prefs.stageDetail() + " " + (prefs.screenAwake() ? 1 : 0) + " " + StageFilter.VERSION + " "
-                + NightFinder.VERSION + " " + DayHeart.VERSION + " " + ScreenTime.AWAKE_RULE + " " + prefs.age() + " " + prefs.sex() + " "
+                + NightFinder.VERSION + " " + DayHeart.VERSION + " " + Scores.READINESS_VERSION + " " + ScreenTime.AWAKE_RULE + " " + prefs.age() + " " + prefs.sex() + " "
                 + prefs.weightKg() + " " + prefs.heightCm() + " " + prefs.targetKcal() + " " + zone.getId() + " " + date(nowUnix)
                 // only when something is left out (issue #254), so everyone else keeps the inputs they had
                 + (left.isEmpty() ? "" : " left " + left.key());
@@ -259,13 +262,104 @@ public final class Analyzer {
      * What the main screen does before it loads a day (review of #243): note the phone's zone and, when a new zone
      * opened, analyse the nights since. While an analysis runs it does nothing and returns false at once, so the
      * screen shows the stored (old) nights instead of waiting for the run; the running analysis notes the zone itself.
+     * When the zone is the one noted last (nearly always) the note goes to the background ({@link #noteLater}), so a
+     * backup, a restore or a run that starts meanwhile does not hold up the day either (issue #197).
      */
     public static boolean beforeLoad(Context c) {
+        // a note left to the background failed on an earlier load: said once this load's own note is done (so that
+        // note is not skipped), and the screen's load records it as before; kept for the next load if this one fails
+        Throwable late = LATE_NOTE_ERROR.getAndSet(null);
+        boolean did;
+        try {
+            did = noteBeforeLoad(c);
+        } catch (RuntimeException | Error e) {
+            if (late != null) LATE_NOTE_ERROR.compareAndSet(null, late);
+            throw e;
+        }
+        if (late instanceof RuntimeException) throw (RuntimeException) late;
+        if (late instanceof Error) throw (Error) late;
+        if (late != null) throw new RuntimeException(late);
+        return did;
+    }
+
+    /** The work of {@link #beforeLoad} itself. */
+    private static boolean noteBeforeLoad(Context c) {
         if (running()) return false;
         if (Prefs.of(c).demo()) return true;
         Db db = Db.get(c);
-        if (noteZone(db, System.currentTimeMillis() / 1000.0, ZoneId.systemDefault(), Double.NaN) && db.eventCount() > 0) run(c, null);
+        ZoneId zone = ZoneId.systemDefault();
+        if (sameZone(db, zone)) {
+            // the usual case (issue #197): the note would only stretch the newest row to now, so it waits for the
+            // analysis lock in the background and the day loads at once, also while a backup or another holder has it
+            noteLater(c.getApplicationContext());
+            return true;
+        }
+        if (noteZone(db, System.currentTimeMillis() / 1000.0, zone, Double.NaN) && db.eventCount() > 0) run(c, null);
         return true;
+    }
+
+    /**
+     * True when the newest row of the zone history is {@code zone}, read without the analysis lock (issue #197): then
+     * {@link #noteZone} would only extend that row, never open one or analyse anything again. False without any row.
+     */
+    static boolean sameZone(Db db, ZoneId zone) {
+        return zone.getId().equals(db.zoneAt(Double.MAX_VALUE));
+    }
+
+    /** One thread for the zone notes the main screen leaves to the background (issue #197); it never keeps the app alive. */
+    private static final java.util.concurrent.ExecutorService LATE_NOTES = java.util.concurrent.Executors.newSingleThreadExecutor(
+            new java.util.concurrent.ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "zone note");
+                    t.setDaemon(true);
+                    return t;
+                }
+            });
+    /** A late note is waiting to run: more loads meanwhile add none (each would only stretch the same row). */
+    private static final java.util.concurrent.atomic.AtomicBoolean LATE_NOTE_QUEUED = new java.util.concurrent.atomic.AtomicBoolean();
+    /** Tests only: how many late notes were queued so far. */
+    private static final java.util.concurrent.atomic.AtomicInteger LATE_NOTES_QUEUED_COUNT = new java.util.concurrent.atomic.AtomicInteger();
+    /** The failure of the last late note, said by the next {@link #beforeLoad}. */
+    private static final java.util.concurrent.atomic.AtomicReference<Throwable> LATE_NOTE_ERROR =
+            new java.util.concurrent.atomic.AtomicReference<Throwable>();
+
+    /** Tests only: waits until the late zone notes queued so far are done. */
+    static void awaitLateNotes() throws Exception {
+        LATE_NOTES.submit(new Runnable() {
+            @Override
+            public void run() {}
+        }).get(120, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    /**
+     * The zone note of {@link #beforeLoad} for an unchanged zone, done on its own thread (issue #197): the same call as
+     * before, holding the analysis lock, only later. Skipped like before while an analysis runs or waits (it notes the
+     * zone itself) and in demo mode. A zone that changed between the check in {@link #beforeLoad} and this note is noted
+     * and analysed here, so the stored data is the same as before; the screen shows it with its next load. A failure is
+     * kept and thrown by the next {@link #beforeLoad}, so that load records it (lost if the app closes before).
+     */
+    static java.util.concurrent.Future<?> noteLater(final Context c) {
+        if (!LATE_NOTE_QUEUED.compareAndSet(false, true)) return null;
+        LATE_NOTES_QUEUED_COUNT.incrementAndGet();
+        return LATE_NOTES.submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    synchronized (Analyzer.class) {
+                        // cleared once the lock is held, so loads while it waits for the lock queue no second note;
+                        // a load from now on queues the next one (it would note a later time)
+                        LATE_NOTE_QUEUED.set(false);
+                        // under the lock, so the switch into demo mode cannot happen between the check and the note
+                        if (running() || Prefs.of(c).demo()) return;
+                        Db db = Db.get(c);
+                        if (noteZone(db, System.currentTimeMillis() / 1000.0, ZoneId.systemDefault(), Double.NaN) && db.eventCount() > 0) Analyzer.run(c, null);
+                    }
+                } catch (Throwable e) {
+                    LATE_NOTE_ERROR.set(e);
+                }
+            }
+        });
     }
 
     /**
@@ -293,10 +387,19 @@ public final class Analyzer {
         }
     }
 
-    /** Stores the error of a failed run (after its roll back); never throws, also when the database cannot be written. */
+    /**
+     * Stores the error of a failed run (after its roll back) for the data check as {@link app.openring.core.LoadNote#error}:
+     * its class and first place in Open Ring's code, never its message, which can carry a stored value (issue #289). The
+     * full error goes to Android's log; the callers put it in the Log tab. Never throws, also when the database cannot be written.
+     */
     private void failed(Throwable e) {
         try {
-            db.put("analysis_error", e.toString());
+            android.util.Log.w("OpenRing", "analysis failed", e);
+        } catch (Throwable ignored) {
+            // the stored note below matters more
+        }
+        try {
+            db.put("analysis_error", app.openring.core.LoadNote.error(e));
         } catch (Throwable ignored) {
             // nothing more can be done here; the caller gets the error itself
         }
@@ -341,6 +444,9 @@ public final class Analyzer {
         // the day's heart rate line changed (issue #97, plausibility range, readings after midnight): days from
         // older rules are analysed again once; databases from before the version existed read as version 1
         if (db.kvLong("day_heart", 1) != DayHeart.VERSION) db.put("analyzed_until", 0);
+        // readiness leaves days without the ring out of its activity parts (issue #240): days from older rules are
+        // analysed again once; databases from before the version existed read as version 1
+        if (db.kvLong(READINESS_RULES, 1) != Scores.READINESS_VERSION) db.put("analyzed_until", 0);
         // "count phone use as awake" switched (issue #13): only nights since the first screen data change
         final long screenAwake = prefs.screenAwake() ? 1 : 0;
         double firstScreen = db.screenStart(true);
@@ -393,6 +499,7 @@ public final class Analyzer {
                     db.put("stage_filter", StageFilter.VERSION);
                     db.put("night_finder", NightFinder.VERSION);
                     db.put("day_heart", DayHeart.VERSION);
+                    db.put(READINESS_RULES, Scores.READINESS_VERSION);
                     db.put("screen_awake", screenAwake);
                     db.put("phone_awake", ScreenTime.AWAKE_RULE);
                     if (all) db.put(FULL_PENDING, 0);
@@ -1051,19 +1158,23 @@ public final class Analyzer {
         Json.put(debtJ, "need_h", need[0] / 3600.0);
         Json.put(out, "sleep_debt", debtJ);
 
-        JSONObject yesterday = prevDays.isEmpty() ? null : prevDays.get(prevDays.size() - 1);
-        if (yesterday != null && yesterday.optString("date").equals(day.minusDays(1).toString())) {
-            double t = Json.d(yesterday, "target_kcal");
-            if (t > 0) ri.prevDayActivity = Json.d(yesterday, "active_kcal") / t;
+        // yesterday's activity and the activity balance, days without the ring left out (issue #240)
+        int np = prevDays.size();
+        double[] pActive = new double[np], pTarget = new double[np], pCovered = new double[np];
+        for (int i = 0; i < np; i++) {
+            JSONObject p = prevDays.get(i);
+            pActive[i] = Json.d(p, "active_kcal");
+            pTarget[i] = Json.d(p, "target_kcal");
+            pCovered[i] = p.optDouble("covered_min", 0);
         }
-        double[] act7 = lastValues(prevDays, "active_kcal", 7), act28 = lastValues(prevDays, "active_kcal", 28);
-        if (Stats.countFinite(act7) >= 3 && Stats.countFinite(act28) >= 7 && Stats.mean(act28) > 0) {
-            ri.activityBalance = Stats.mean(act7) / Stats.mean(act28);
-        }
+        boolean lastIsYesterday = np > 0 && prevDays.get(np - 1).optString("date").equals(day.minusDays(1).toString());
+        boolean unwornYesterday = Scores.readinessActivity(ri, pActive, pTarget, pCovered, lastIsYesterday);
         Night.Score readiness = null;
         if (mainNight != null) {
             readiness = Scores.readiness(ri);
             Json.put(out, "readiness", Json.score(readiness));
+            // the Readiness page says why Previous day activity is missing (only with days before, so not on the first)
+            if (unwornYesterday && np > 0) Json.put(out, "prev_day_unworn", true);
         }
 
         // ---- activity score and target ----
@@ -1076,7 +1187,7 @@ public final class Analyzer {
         }
         d.targetKcal = target;
         Scores.ActivityInput ai = new Scores.ActivityInput();
-        if (d.coveredMin >= 60) {
+        if (Scores.worn(d.coveredMin)) {
             ai.inactiveMin = d.inactiveMin;
             ai.longInactiveStreaks = d.longInactiveStreaks;
             int met7 = d.activeKcal >= target ? 1 : 0, n7 = 1, train = (d.mediumMin + d.highMin >= 30) ? 1 : 0;
@@ -1084,7 +1195,7 @@ public final class Analyzer {
             for (JSONObject p : prevDays) {
                 LocalDate pd = LocalDate.parse(p.optString("date", key));
                 if (pd.isBefore(day.minusDays(6))) continue;
-                if (p.optDouble("covered_min", 0) < 60) continue; // ring not worn: left out (issue #44)
+                if (!Scores.worn(p.optDouble("covered_min", 0))) continue; // ring not worn: left out (issue #44)
                 n7++;
                 if (p.optDouble("active_kcal", 0) >= p.optDouble("target_kcal", 1e9)) met7++;
                 if (p.optDouble("medium_min", 0) + p.optDouble("high_min", 0) >= 30) train++;

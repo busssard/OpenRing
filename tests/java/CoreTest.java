@@ -931,15 +931,162 @@ public class CoreTest {
         }
         eq("key state: the backup reason (review of #281)", Backups.reason(Backups.KEY), "this phone cannot read the saved ring key, enter it again in Setup");
         check("key state: the backup reason is not the folder's", !Backups.reason(Backups.KEY).equals(Backups.reason(Backups.WRITE)));
-        check("key state: the manual backup sentence says what to do", KeyState.BACKUP_TEXT.contains("Enter the key again"));
+        check("#288 the backup cards say the key is left out and what to do", KeyState.BACKUP_NO_KEY.contains("saved without it") && KeyState.BACKUP_NO_KEY.contains("Setup"));
+        check("#288 the saved note says the key is not in it, and fits a toast", KeyState.BACKUP_SAVED_NO_KEY.startsWith("Backup saved, without the ring key")
+                && Texts.fitsToast(KeyState.BACKUP_SAVED_NO_KEY));
         check("key state: the plain sentences say what to do", KeyState.PLAIN.contains("enter the key again") && KeyState.STATUS.contains("Tap here")
                 && KeyState.SETUP_TEXT.contains("saved key stays") && KeyState.SYNC_TEXT.contains("saved key stays"));
+    }
+
+    /** Issue #329, phase 1a: one "no ring by choice" state decides every place that sends a person to Setup. */
+    static void keyStateNoRing329() {
+        int[] all = {KeyState.NONE, KeyState.READABLE, KeyState.UNREADABLE, KeyState.NO_RING};
+        check("#329 no ring: a state of its own", KeyState.NO_RING != KeyState.NONE && KeyState.NO_RING != KeyState.READABLE && KeyState.NO_RING != KeyState.UNREADABLE);
+        // nothing sets it in phase 1a: of() never gives it
+        for (boolean stored : new boolean[] {false, true}) {
+            for (boolean read : new boolean[] {false, true}) check("#329 no ring: not from a stored key " + stored + " " + read, KeyState.of(stored, read) != KeyState.NO_RING);
+        }
+        eq("#329 without reading the key: nothing stored", KeyState.ofStored(false), KeyState.NONE);
+        eq("#329 without reading the key: a stored key", KeyState.ofStored(true), KeyState.READABLE);
+        for (boolean stored : new boolean[] {false, true}) {
+            int st = KeyState.ofStored(stored);
+            check("#329 without reading the key: never unreadable or no ring (" + stored + ")", st != KeyState.UNREADABLE && st != KeyState.NO_RING);
+        }
+        // the main screen (MainActivity.onResume): never Setup in a loop
+        for (boolean done : new boolean[] {false, true}) {
+            for (boolean unseen : new boolean[] {false, true}) {
+                check("#329 no ring: the main screen never opens Setup (set up " + done + ", key page " + unseen + ")", !KeyState.opensSetup(false, done, KeyState.NO_RING, unseen));
+                check("#329 no ring: demo neither", !KeyState.opensSetup(true, done, KeyState.NO_RING, unseen));
+            }
+        }
+        // Settings.onResume and the main screen after a failed demo: Setup only when not set up or no key, as before
+        for (int st : all) {
+            for (boolean done : new boolean[] {false, true}) {
+                boolean before = !done || st == KeyState.NONE; // !setupDone() || !hasKey(), the old test
+                boolean want = st == KeyState.NO_RING ? false : before;
+                eq("#329 needs Setup: state " + st + ", set up " + done, KeyState.needsSetup(done, st), want);
+            }
+        }
+        // the old checks of the two screens read hasKey(): a stored key, readable or not; ofStored keeps them exact
+        for (boolean stored : new boolean[] {false, true}) {
+            for (boolean done : new boolean[] {false, true}) {
+                eq("#329 needs Setup as before: stored " + stored + ", set up " + done, KeyState.needsSetup(done, KeyState.ofStored(stored)), !done || !stored);
+                eq("#329 needs Setup as before, read state: stored " + stored + ", set up " + done, KeyState.needsSetup(done, KeyState.of(stored, false)), !done || !stored);
+            }
+        }
+        // opensSetup is unchanged for the old states
+        for (int st : new int[] {KeyState.NONE, KeyState.READABLE, KeyState.UNREADABLE}) {
+            for (boolean demo : new boolean[] {false, true}) {
+                for (boolean done : new boolean[] {false, true}) {
+                    for (boolean unseen : new boolean[] {false, true}) {
+                        boolean old = !demo && (!done || st == KeyState.NONE || unseen && st == KeyState.READABLE);
+                        eq("#329 opens Setup as before: " + st + " " + demo + " " + done + " " + unseen, KeyState.opensSetup(demo, done, st, unseen), old);
+                    }
+                }
+            }
+        }
+        // Find my ring talks to a paired ring only with a stored key (was hasKey())
+        check("#329 has a ring: only with a stored key", KeyState.hasRing(KeyState.READABLE) && KeyState.hasRing(KeyState.UNREADABLE) && !KeyState.hasRing(KeyState.NONE)
+                && !KeyState.hasRing(KeyState.NO_RING));
+        check("#329 has a ring as before: hasKey()", KeyState.hasRing(KeyState.ofStored(true)) && !KeyState.hasRing(KeyState.ofStored(false)));
+        check("#329 no ring: never syncs", !KeyState.syncs(KeyState.NO_RING));
+    }
+
+    /** Issue #329, phase 1a: the background job's decision, as SyncJob made it before (busy, ring part, watch part, recent). */
+    static void backgroundJobDue329() {
+        java.time.ZoneId zone = java.time.ZoneId.of("Europe/Zurich");
+        long now = java.time.ZonedDateTime.of(2026, 11, 5, 15, 0, 0, 0, zone).toEpochSecond();
+        int count = 0;
+        for (boolean busy : new boolean[] {false, true}) {
+            for (boolean bg : new boolean[] {false, true}) {
+                for (int ks : new int[] {KeyState.NONE, KeyState.READABLE, KeyState.UNREADABLE, KeyState.NO_RING}) {
+                    for (boolean demo : new boolean[] {false, true}) {
+                        for (boolean added : new boolean[] {false, true}) {
+                            for (boolean watchDue : new boolean[] {false, true}) {
+                                for (long last : new long[] {0, now - 10 * 60, now - 30 * 60, now - 31 * 60, now + 3600}) {
+                                    BackgroundJob.Inputs in = new BackgroundJob.Inputs();
+                                    in.ringBusy = busy;
+                                    in.backgroundSync = bg;
+                                    in.keyState = ks;
+                                    in.demo = demo;
+                                    in.watchAdded = added;
+                                    in.watchPerDay = 1;
+                                    // once a day: due when the last good sync is before today's clock time
+                                    in.watchLastOk = watchDue ? now - 3 * 86400 : now - 60;
+                                    in.watchLastAttempt = 0;
+                                    in.lastSync = last;
+                                    in.lastAttempt = 0;
+                                    in.now = now;
+                                    in.zone = zone;
+                                    BackgroundJob.Due d = BackgroundJob.due(in);
+                                    // the old SyncJob.onStartJob, line by line
+                                    boolean oRun, oRing, oWatch;
+                                    String oLog = null;
+                                    if (busy) {
+                                        oRun = oRing = oWatch = false;
+                                    } else {
+                                        boolean ringPart = bg && KeyState.syncs(ks);
+                                        boolean watchPart = !demo && added && app.openring.core.withings.WatchDue.due(now, 1, in.watchLastOk, 0, zone);
+                                        boolean ringRecent = BackgroundJob.recent(now, last, 0);
+                                        if (ringPart && ringRecent) oLog = "background sync skipped: the last sync was less than 30 minutes ago";
+                                        oRun = !((!ringPart || ringRecent) && !watchPart);
+                                        oRing = oRun && ringPart && !ringRecent;
+                                        oWatch = oRun && watchPart;
+                                    }
+                                    String name = "#329 job due: busy " + busy + ", on " + bg + ", key " + ks + ", demo " + demo + ", watch " + added + " due " + watchDue
+                                            + ", last " + (now - last) + " s ago";
+                                    check(name, d.run() == oRun && d.ring == oRing && d.watch == oWatch && (oLog == null ? d.log == null : oLog.equals(d.log)));
+                                    count++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eq("#329 job due: every combination", count, 2 * 2 * 4 * 2 * 2 * 2 * 5);
+        // the cases by name
+        BackgroundJob.Inputs in = new BackgroundJob.Inputs();
+        in.now = now;
+        in.zone = zone;
+        in.backgroundSync = true;
+        in.keyState = KeyState.READABLE;
+        BackgroundJob.Due d = BackgroundJob.due(in);
+        check("#329 job due: the ring on, nothing recent: the ring syncs", d.run() && d.ring && !d.watch && d.log == null);
+        in.lastSync = now - 5 * 60;
+        d = BackgroundJob.due(in);
+        check("#329 job due: a sync 5 minutes ago: nothing runs, the skip is logged", !d.run() && !d.ring && BackgroundJob.SKIPPED_RECENT.equals(d.log));
+        in.watchAdded = true;
+        in.watchPerDay = 1;
+        d = BackgroundJob.due(in);
+        check("#329 job due: recent ring, a watch due: only the watch, the skip logged", d.run() && !d.ring && d.watch && d.log != null);
+        in.demo = true;
+        d = BackgroundJob.due(in);
+        check("#329 job due: demo: never the watch", !d.watch && !d.run());
+        in.demo = false;
+        in.ringBusy = true;
+        d = BackgroundJob.due(in);
+        check("#329 job due: the ring busy: nothing, not even the watch, nothing logged", !d.run() && !d.ring && !d.watch && d.log == null);
+        in.ringBusy = false;
+        in.lastSync = 0;
+        in.keyState = KeyState.UNREADABLE;
+        in.watchAdded = false;
+        d = BackgroundJob.due(in);
+        check("#329 job due: an unreadable key: no ring part, no skip line", !d.run() && d.log == null);
+        in.keyState = KeyState.NO_RING;
+        d = BackgroundJob.due(in);
+        check("#329 job due: no ring by choice: no ring part", !d.run() && !d.ring);
+        check("#329 job due: the skip line is the one SyncJob logged", BackgroundJob.SKIPPED_RECENT.equals("background sync skipped: the last sync was less than 30 minutes ago"));
+        BackgroundJob.Inputs fresh = new BackgroundJob.Inputs();
+        check("#329 job due: by default nothing is due", !BackgroundJob.due(fresh).run() && fresh.keyState == KeyState.NONE && fresh.zone != null);
     }
 
     public static void main(String[] args) throws Exception {
         permissionSettings();
         keyState199();
+        keyStateNoRing329();
         inputLimit();
+        monthGrid();
         protocol();
         history();
         bundles();
@@ -950,6 +1097,7 @@ public class CoreTest {
         vo2max();
         longWake();
         nightNumbers();
+        stageRuns189();
         timeline();
         activityWeek();
         activityDay();
@@ -965,12 +1113,15 @@ public class CoreTest {
         stageShare();
         sleepMinutes();
         syncError();
+        syncStart334();
         texts();
         unitTexts();
         scoreLadder();
+        readinessUnworn240();
         movementShares();
         drafts();
         oneRun();
+        fileSave222();
         backups242();
         keptHeight();
         scrollKeep();
@@ -987,6 +1138,7 @@ public class CoreTest {
         demoRing();
         liveScreen();
         backgroundJob();
+        backgroundJobDue329();
         dating220();
         recent194();
         demoLive();
@@ -1007,9 +1159,11 @@ public class CoreTest {
         remind252();
         drip252();
         rise252();
+        how252();
         badges265();
         badgeScreens265();
         recent265();
+        connectPlan195();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1354,17 +1508,95 @@ public class CoreTest {
         for (String t : tx) plain &= t != null && plain252(t);
         check("#252e texts use no dashes as punctuation", plain);
         String rule = app.openring.ui.Explain.periodRise(0.12, 0.08);
-        check("#252e explain: the rule with its numbers, the limits, not birth control", rule.contains("Three over six") && rule.contains("the third at least 0.12 °C for your ring, 0.10 °C by mouth")
+        check("#252e explain: the rule with its numbers, the limits, not birth control", rule.startsWith("Ovulation from your temperature: three over six, the classic rule.") && rule.contains("the third at least 0.12 °C for your ring, 0.10 °C by mouth")
                 && rule.contains("varies by about 0.12 °C") && rule.contains("Illness, alcohol, travel and a warm room move the temperature too")
                 && rule.contains("not birth control and not a medical diagnosis"), rule);
         check("#252e explain: the own luteal length and how many cycles", app.openring.ui.Explain.periodLuteal(6, 12, 0.8).contains("your 6 newest cycles with a rise, which vary by about 0.8 days")
                 && app.openring.ui.Explain.periodLuteal(2, 14, Double.NaN).contains("(2 so far), the estimate uses the usual 14 days."));
-        check("#252e explain: the measured ranges", app.openring.ui.Explain.periodOvulation(m).startsWith("Give or take 1 day: a clear rise")
-                && app.openring.ui.Explain.periodRange(m).startsWith("Measured: the ovulation day plus 13 days, your own time")
+        check("#252e explain: the measured ranges", app.openring.ui.Explain.periodOvulation(m).startsWith("Ovulation day: give or take 1 day, from a clear rise")
+                && app.openring.ui.Explain.periodRange(m).startsWith("Next period: measured, the ovulation day plus 13 days, your own time")
                 && app.openring.ui.Explain.periodRange(cal).equals(app.openring.ui.Explain.periodRange(cal.used.size(), cal.length, cal.range, cal.sd))
                 && app.openring.ui.Explain.periodOvulation(cal).equals(app.openring.ui.Explain.periodOvulation(cal.used.size(), cal.ovulationRange)));
         m = Cycles.of(log, null, last.plusDays(14)).measured(ring, null);
         check("#252e explain: the calendar with the own time", app.openring.ui.Explain.periodOvulation(m).contains("together with how much your own time from ovulation"));
+    }
+
+    /**
+     * Issue #252, owner's feedback of 3 November: the texts on how it works move into a closed "How it works" at the bottom
+     * of each period screen. Each list holds exactly the texts that left the screen, for the parts the screen shows; the
+     * short lines that stay are one or two sentences with the person's own counts.
+     */
+    static void how252() {
+        java.time.LocalDate dt = java.time.LocalDate.of(2026, 11, 2);
+        Cycles demo = Cycles.of(Cycles.demo(dt), null, dt);
+        List<String> card = app.openring.ui.Explain.periodCardHow(demo);
+        check("#252h Period card: how the range, the ovulation range and vary by are worked out, in the card's order",
+                card.equals(Arrays.asList(app.openring.ui.Explain.periodRange(demo), app.openring.ui.Explain.periodOvulation(demo),
+                        app.openring.ui.Explain.periodVary(demo.used.size()))), String.valueOf(card));
+        List<String> cyc = app.openring.ui.Explain.periodCyclesHow(demo);
+        check("#252h Your cycles: vary by, the cycle chart, the estimate's window, the period charts, then not birth control; no rise without temperatures",
+                cyc.equals(Arrays.asList(app.openring.ui.Explain.periodVary(demo.used.size()), app.openring.ui.Explain.PERIOD_DOTS_CYCLES,
+                        app.openring.ui.Explain.PERIOD_WINDOW, app.openring.ui.Explain.PERIOD_DOTS_PERIODS, app.openring.ui.Explain.PERIOD_LENGTH_DAYS,
+                        Cycles.NOT_ADVICE)), String.valueOf(cyc));
+        // with the demo's mouth temperatures: the measured texts and the rule with both noises
+        TreeMap<java.time.LocalDate, Double> dm = new TreeMap<java.time.LocalDate, Double>();
+        for (Map.Entry<java.time.LocalDate, DripCsv.Temp> e : DripCsv.demoMouth(dt, Cycles.demoWarmNights(dt)).entrySet()) if (!e.getValue().excluded) dm.put(e.getKey(), e.getValue().c);
+        Cycles m = demo.measured(null, dm);
+        card = app.openring.ui.Explain.periodCardHow(m);
+        cyc = app.openring.ui.Explain.periodCyclesHow(m);
+        check("#252h measured: the card explains the measured range, Your cycles holds the rule with the mouth's noise",
+                m.method == Cycles.MEASURED && card.get(0).startsWith("Next period: measured, the ovulation day plus") && card.get(1).startsWith("Ovulation day: give or take")
+                        && cyc.contains(app.openring.ui.Explain.periodRise(m.rise.ringNoise, m.rise.mouthNoise)) && cyc.indexOf(app.openring.ui.Explain.PERIOD_WINDOW) < cyc.indexOf(app.openring.ui.Explain.PERIOD_DOTS_PERIODS)
+                        && cyc.get(cyc.size() - 1).equals(Cycles.NOT_ADVICE), String.valueOf(cyc));
+        boolean labelled = true;
+        for (Cycles x : new Cycles[] {demo, m}) {
+            List<String> k = app.openring.ui.Explain.periodCardHow(x);
+            labelled &= k.get(0).startsWith("Next period: ") && k.get(1).startsWith("Ovulation day: ") && k.get(2).startsWith("Vary by: ");
+        }
+        check("#252h every paragraph says what it is about: Next period, Ovulation day, Vary by, Ovulation from your temperature", labelled
+                && app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN).startsWith("Next period: typical cycle 29 days")
+                && app.openring.ui.Explain.periodOvulation(2, 5).startsWith("Ovulation day: give or take 5 days, from a typical spread")
+                && app.openring.ui.Explain.periodRise(0.12, Double.NaN).startsWith("Ovulation from your temperature: "));
+        // nothing logged: Your cycles shows only its empty line, so no How it works there
+        Cycles none = Cycles.of(new HashMap<java.time.LocalDate, Integer>(), null, dt);
+        check("#252h nothing logged: no How it works in Your cycles", app.openring.ui.Explain.periodCyclesHow(none).isEmpty()
+                && app.openring.ui.Explain.periodCyclesHow(null).isEmpty() && app.openring.ui.Explain.periodCardHow(null).isEmpty());
+        check("#252h nothing logged: the card explains only what it shows", app.openring.ui.Explain.periodCardHow(none).contains(app.openring.ui.Explain.periodRange(none)) == (none.nextLine() != null)
+                && !app.openring.ui.Explain.periodCardHow(none).contains(app.openring.ui.Explain.periodVary(0)));
+        // one period that is over: no cycle yet, so no cycle chart texts; its length is explained
+        Cycles one = Cycles.of(log252(5), null, C0.plusDays(12));
+        cyc = app.openring.ui.Explain.periodCyclesHow(one);
+        check("#252h one period: the period charts only, then not birth control", one.cycles.isEmpty() && !cyc.contains(app.openring.ui.Explain.PERIOD_DOTS_CYCLES)
+                && !cyc.contains(app.openring.ui.Explain.PERIOD_WINDOW) && cyc.contains(app.openring.ui.Explain.PERIOD_DOTS_PERIODS) && cyc.contains(app.openring.ui.Explain.PERIOD_LENGTH_DAYS)
+                && cyc.get(cyc.size() - 1).equals(Cycles.NOT_ADVICE), String.valueOf(cyc));
+        // periods stopped: no next period line on the card, so its range is not explained
+        Map<java.time.LocalDate, Integer> log = log252(5, 28, 28, 28, 28);
+        java.time.LocalDate today = lastStart252(28, 28, 28, 28).plusDays(10);
+        Cycles stopped = Cycles.of(log, null, today, today.minusDays(1));
+        check("#252h periods stopped: no range or ovulation text", stopped.nextLine() == null && !app.openring.ui.Explain.periodCardHow(stopped).contains(app.openring.ui.Explain.periodRange(stopped)));
+        // the temperature card and the drip import
+        check("#252h night temperature: the long text, the mouth line only with drip temperatures",
+                app.openring.ui.Explain.periodTempHow(false).equals(Arrays.asList(app.openring.ui.Explain.PERIOD_TEMP))
+                        && app.openring.ui.Explain.periodTempHow(true).equals(Arrays.asList(app.openring.ui.Explain.PERIOD_TEMP, app.openring.ui.Explain.PERIOD_MOUTH)));
+        check("#252h drip: how periods are counted, then the parts shown",
+                app.openring.ui.Explain.dripHow(false, false).equals(Arrays.asList(app.openring.ui.Explain.DRIP_COUNTS))
+                        && app.openring.ui.Explain.dripHow(true, true).equals(Arrays.asList(app.openring.ui.Explain.DRIP_COUNTS, app.openring.ui.Explain.DRIP_OTHER, app.openring.ui.Explain.DRIP_SHORT)));
+        // what stays in view: short, with the person's own counts
+        String[] stay = {app.openring.ui.Explain.periodDots(true), app.openring.ui.Explain.periodDots(false), app.openring.ui.Explain.PERIOD_TEMP_LINE,
+                app.openring.ui.Explain.periodCycles(8, 0), app.openring.ui.Explain.periodLengths(7)};
+        boolean shortLines = true;
+        for (String x : stay) shortLines &= x.length() <= 120 && x.split("\\. ").length <= 2;
+        check("#252h the lines in view are one or two short sentences", shortLines);
+        check("#252h the lines in view keep the counts", app.openring.ui.Explain.periodCycles(8, 0).contains("all your 8 cycles")
+                && app.openring.ui.Explain.periodLengths(7).contains("your 7 periods that are over") && app.openring.ui.Explain.periodCycles(9, 2).contains("2 cycles more than 10 days"));
+        List<String> all = new ArrayList<String>(Arrays.asList(stay));
+        all.addAll(app.openring.ui.Explain.periodCyclesHow(m));
+        all.addAll(app.openring.ui.Explain.periodCardHow(m));
+        all.addAll(app.openring.ui.Explain.periodTempHow(true));
+        all.addAll(app.openring.ui.Explain.dripHow(true, true));
+        boolean plain = true;
+        for (String x : all) plain &= x != null && !x.isEmpty() && plain252(x);
+        check("#252h texts use no dashes as punctuation", plain);
     }
 
     // ---------------------------------------------------------------- issue #252, phase 1b: import from drip
@@ -2449,7 +2681,7 @@ public class CoreTest {
                         && app.openring.ui.Explain.periodRange(4, 28, 3, 2.2).contains("the middle value of your 4 cycles")
                         && app.openring.ui.Explain.periodRange(1, 28, 5, Double.NaN).contains("the middle value of your 1 cycle")
                         && app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN).contains("give or take 5 days while there are fewer than 3 cycles"));
-        check("#252 explain: give or take and vary by", app.openring.ui.Explain.periodOvulation(8, 4).startsWith("Give or take 4 days: how much your last 8 cycles vary")
+        check("#252 explain: give or take and vary by", app.openring.ui.Explain.periodOvulation(8, 4).startsWith("Ovulation day: give or take 4 days, from how much your last 8 cycles vary")
                 && app.openring.ui.Explain.periodOvulation(2, 5).contains("a typical spread of 2.6 days")
                 && app.openring.ui.Explain.periodVary(4).startsWith("Vary by: the standard deviation of your 4 cycles"));
     }
@@ -2617,7 +2849,8 @@ public class CoreTest {
         check("#252b explain: from how many cycles, what is left out, the window of the estimate",
                 app.openring.ui.Explain.periodCycles(9, 2).contains("over all your 9 cycles") && app.openring.ui.Explain.periodCycles(9, 2).contains("2 cycles more than 10 days from the middle value are left out")
                         && app.openring.ui.Explain.periodCycles(1, 1).contains("your 1 cycle") && app.openring.ui.Explain.periodCycles(1, 1).contains("1 cycle more than 10 days from the middle value is left out")
-                        && app.openring.ui.Explain.periodCycles(8, 0).endsWith("uses only your newest 12 cycles.") && !app.openring.ui.Explain.periodCycles(8, 0).contains("left out"));
+                        && app.openring.ui.Explain.periodCycles(8, 0).endsWith("Spread: how far a cycle usually lies from the average.") && !app.openring.ui.Explain.periodCycles(8, 0).contains("left out")
+                        && app.openring.ui.Explain.PERIOD_WINDOW.contains("uses only your newest 12 cycles"));
         check("#252b explain: the amount is a relative score, not millilitres", app.openring.ui.Explain.PERIOD_AMOUNT.contains("not a measured amount")
                 && app.openring.ui.Explain.PERIOD_TEMP.contains("the likely ovulation, the day before the first high night") && app.openring.ui.Explain.periodLengths(1).contains("your 1 period ")
                 && app.openring.ui.Explain.periodNext(null, true, 0).contains("stopped"));
@@ -3098,6 +3331,27 @@ public class CoreTest {
         eq("backups: the new file is not there, nothing complete goes", Backups.folderToDelete(Arrays.asList(a, b, c2, e), listed, nw, 3), Arrays.asList());
         eq("backups: the new file is not the newest by name (clock set back), it is kept with the 2 newest others", new java.util.TreeSet<String>(
             Backups.folderToDelete(Arrays.asList(a, b, c2, e, nw), listed, a, 3)), new java.util.TreeSet<String>(Arrays.asList(b, c2)));
+        // review of #340: copies without the key (issue #288) are named so, and never push out the last copy with the key
+        eq("backups: a copy without the key", Backups.withoutKey(Backups.folderName(t, null)), "openring-backup-2026-10-29-0312-nokey.zip");
+        eq("backups: an update copy without the key", Backups.withoutKey(Backups.folderName(t, "1.42")), "openring-backup-2026-10-29-0312-before-1.42-nokey.zip");
+        check("backups: copies without the key are ours and known as such", Backups.folderFile("openring-backup-2026-10-29-0312-nokey.zip")
+                && Backups.folderFile("openring-backup-2026-10-29-0312-before-1.42-nokey.zip") && Backups.keyless("openring-backup-2026-10-29-0312-nokey.zip")
+                && !Backups.keyless("openring-backup-2026-10-29-0312.zip") && Backups.withoutKey("openring-backup-2026-10-29-0312-nokey.zip").equals("openring-backup-2026-10-29-0312-nokey.zip"));
+        {
+            List<String> keyed = Arrays.asList("openring-backup-2026-10-01-0300.zip", "openring-backup-2026-10-02-0300.zip", "openring-backup-2026-10-03-0300-before-1.40.zip");
+            List<String> all = new ArrayList<String>(keyed);
+            for (int k = 4; k <= 9; k++) all.add("openring-backup-2026-10-0" + k + "-0300-nokey.zip");
+            String newest = "openring-backup-2026-10-09-0300-nokey.zip";
+            eq("backups: without the key the newest copy with it stays beside the 3 newest, older ones go", new java.util.TreeSet<String>(Backups.folderToDelete(all, all, newest, 3)),
+                    new java.util.TreeSet<String>(Arrays.asList("openring-backup-2026-10-01-0300.zip", "openring-backup-2026-10-02-0300.zip",
+                            "openring-backup-2026-10-04-0300-nokey.zip", "openring-backup-2026-10-05-0300-nokey.zip", "openring-backup-2026-10-06-0300-nokey.zip")));
+            List<String> back = new ArrayList<String>(all);
+            back.add("openring-backup-2026-10-10-0300.zip");
+            check("backups: a copy with the key again: the rotation is as before", Backups.folderToDelete(back, back, "openring-backup-2026-10-10-0300.zip", 3)
+                    .contains("openring-backup-2026-10-03-0300-before-1.40.zip"));
+            check("backups: a copy with the key among the newest: nothing extra kept", Backups.folderToDelete(all.subList(0, 4), all, "openring-backup-2026-10-04-0300-nokey.zip", 3)
+                    .equals(Arrays.asList("openring-backup-2026-10-01-0300.zip")));
+        }
         eq("backups: the partial of the new file itself is not ours to delete", Backups.folderToDelete(Arrays.asList(nw + ".partial", nw), listed, nw, 3), Arrays.asList());
         // the folder's permission, from the picker's result (review of #259)
         eq("backups: read and write given: both kept", Backups.keepFlags(Backups.GRANT_READ | Backups.GRANT_WRITE | 64 | 128), 3);
@@ -3155,6 +3409,118 @@ public class CoreTest {
         check("backups: short notes fit a toast", Texts.fitsToast(Backups.STOPPED) && Texts.fitsToast(Backups.NOT_IN_DEMO) && Texts.fitsToast(Backups.WENT_BACK));
     }
 
+    /** A picked file that fails on the way is removed, or called incomplete when it cannot be (issue #222). */
+    static void fileSave222() {
+        final java.io.ByteArrayOutputStream[] file = {null};
+        final boolean[] deleted = {false};
+        final int[] failAfter = {-1};
+        final boolean[] deleteWorks = {true};
+        FileSave.Target target = new FileSave.Target() {
+            @Override
+            public java.io.OutputStream open() {
+                file[0] = new java.io.ByteArrayOutputStream() {
+                    @Override
+                    public synchronized void write(byte[] b, int off, int len) {
+                        if (failAfter[0] >= 0 && size() + len > failAfter[0]) {
+                            int room = Math.max(0, failAfter[0] - size());
+                            super.write(b, off, room);
+                            throw new RuntimeException(new IOException("No space left on device"));
+                        }
+                        super.write(b, off, len);
+                    }
+                };
+                deleted[0] = false;
+                return file[0];
+            }
+
+            @Override
+            public boolean delete() {
+                if (!deleteWorks[0]) return false;
+                deleted[0] = true;
+                return true;
+            }
+        };
+        final byte[] content = new byte[100000];
+        new Random(222).nextBytes(content);
+        FileSave.Body body = new FileSave.Body() {
+            @Override
+            public void write(java.io.OutputStream os) throws IOException {
+                for (int i = 0; i < content.length; i += 8192) os.write(content, i, Math.min(8192, content.length - i));
+            }
+        };
+        FileSave.Outcome ok = FileSave.save(target, body);
+        check("#222 a save that works is complete and kept", ok.ok() && ok.bytes == content.length && !deleted[0] && Arrays.equals(file[0].toByteArray(), content));
+        failAfter[0] = 30000;
+        FileSave.Outcome cut = FileSave.save(target, body);
+        check("#222 a save that fails after 30000 bytes removes the started file", !cut.ok() && cut.bytes == 24576 && cut.removed && deleted[0] && !cut.leftOver);
+        failAfter[0] = 0;
+        FileSave.Outcome none = FileSave.save(target, body);
+        check("#222 a save that fails before the first byte removes the empty file, as before", !none.ok() && none.bytes == 0 && none.removed);
+        deleteWorks[0] = false;
+        failAfter[0] = 30000;
+        FileSave.Outcome left = FileSave.save(target, body);
+        check("#222 a cut file that cannot be removed is called incomplete", !left.ok() && left.leftOver && !left.removed && left.removeError != null);
+        failAfter[0] = 0;
+        FileSave.Outcome empty = FileSave.save(target, body);
+        check("#222 an empty file that cannot be removed is not called incomplete", !empty.ok() && !empty.leftOver);
+        deleteWorks[0] = true;
+        failAfter[0] = -1;
+        FileSave.Outcome refused = FileSave.save(target, new FileSave.Body() {
+            @Override
+            public void write(java.io.OutputStream os) throws IOException {
+                throw new IOException("the copy did not pass its check");
+            }
+        });
+        check("#222 a body that refuses before writing removes the file and keeps its reason", !refused.ok() && refused.removed
+                && "the copy did not pass its check".equals(refused.error.getMessage()));
+        // the last bytes fail at close (a file app that writes on close): not complete either
+        FileSave.Outcome atClose = FileSave.save(new FileSave.Target() {
+            @Override
+            public java.io.OutputStream open() {
+                return new java.io.ByteArrayOutputStream() {
+                    @Override
+                    public void close() throws IOException {
+                        throw new IOException("close failed");
+                    }
+                };
+            }
+
+            @Override
+            public boolean delete() {
+                deleted[0] = true;
+                return true;
+            }
+        }, body);
+        check("#222 a file that fails when it is closed is removed", !atClose.ok() && atClose.removed && "close failed".equals(atClose.error.getMessage()));
+        FileSave.Outcome noFile = FileSave.save(new FileSave.Target() {
+            @Override
+            public java.io.OutputStream open() {
+                return null;
+            }
+
+            @Override
+            public boolean delete() {
+                throw new IllegalStateException("nothing to delete");
+            }
+        }, body);
+        check("#222 no file from Android: failed, nothing to remove", !noFile.ok() && !noFile.removed && !noFile.leftOver && noFile.bytes == 0);
+        // an Error (out of memory) on the way: the started file is removed first, then the Error goes on (review of #340)
+        deleted[0] = false;
+        Error thrown = null;
+        try {
+            FileSave.save(target, new FileSave.Body() {
+                @Override
+                public void write(java.io.OutputStream os) throws IOException {
+                    os.write(content, 0, 1000);
+                    throw new OutOfMemoryError("test");
+                }
+            });
+        } catch (OutOfMemoryError e) {
+            thrown = e;
+        }
+        check("#222 an Error removes the started file and is thrown on", thrown != null && deleted[0]);
+    }
+
     static void oneRun() {
         OneRun<String> r = new OneRun<String>();
         check("one run: idle at first", !r.running());
@@ -3191,6 +3557,20 @@ public class CoreTest {
         check("shown screen: the job still runs", shown.running());
         shown.detach("turned settings");
         check("shown screen: none after Back", shown.attached() == null);
+        // issue #222: Re analyse all and Repair are one job; a second tap is refused, a saved setting runs it once more
+        OneRun<String> all = new OneRun<String>();
+        check("#222 a first start runs", all.startOrAgain() && all.running() && !all.againAsked());
+        check("#222 a second tap on Re analyse all is refused", !all.start() && !all.againAsked());
+        check("#222 Repair while it runs is refused too", !all.start());
+        check("#222 a saved setting while it runs does not start a second run", !all.startOrAgain() && all.running());
+        check("#222 ... but asks for one more pass", all.againAsked());
+        check("#222 two settings saved ask for one pass, not two", !all.startOrAgain() && all.againAsked());
+        check("#222 the pass that ends takes the request and keeps running", !all.finishUnlessAgain() && all.running() && !all.againAsked());
+        check("#222 the next pass ends the job", all.finishUnlessAgain() && !all.running());
+        check("#222 after the end a new start runs", all.start());
+        check("#222 a plain finish drops a request", !all.startOrAgain() && all.finish() == null && !all.running() && !all.againAsked());
+        check("#222 and a new start does not inherit it", all.start() && all.finishUnlessAgain() && !all.running());
+        check("#222 ending twice is harmless", all.finishUnlessAgain() && !all.running());
     }
 
     /** Issue #127: the space kept for Further analysis belongs to one screen layout. */
@@ -3429,6 +3809,17 @@ public class CoreTest {
         noLine.setStackTrace(new StackTraceElement[] {new StackTraceElement("app.openring.data.Db", "kv", "Db.java", -1)});
         eq("load note: an own frame without line", LoadNote.error(noLine), "RuntimeException at Db.java");
         eq("load note: none", LoadNote.error(null), "unknown error");
+        // issue #289: the safe form is recognised, a full text an older version stored never is
+        check("load note: the class and place are safe", LoadNote.safe(LoadNote.error(nfe)) && LoadNote.safe("NumberFormatException at Analyzer.java:412")
+                && LoadNote.safe("RuntimeException at Db.java") && LoadNote.safe("OutOfMemoryError") && LoadNote.safe(LoadNote.error(outside)));
+        check("load note: a full text is not safe", !LoadNote.safe("java.lang.NumberFormatException: For input string: \"61.5\"")
+                && !LoadNote.safe("org.json.JSONException: Value 61.5 at hr of type java.lang.Double cannot be converted to JSONObject")
+                && !LoadNote.safe("java.lang.OutOfMemoryError") && !LoadNote.safe("NumberFormatException: 61.5")
+                && !LoadNote.safe("NumberFormatException at Analyzer.java:412 61.5") && !LoadNote.safe("") && !LoadNote.safe(null)
+                && !LoadNote.safe(LoadNote.error(null)));
+        Throwable anon = new RuntimeException("61.5") {};
+        check("load note: an anonymous error class is named by its binary name, no value", LoadNote.error(anon).startsWith("CoreTest$")
+                && !LoadNote.error(anon).contains("61.5") && LoadNote.safe(LoadNote.error(anon)), LoadNote.error(anon));
         String later = LoadNote.line("2026-11-01", "screen time", nfe, "2026-11-02 09:30");
         check("load note: the same failure later is not written again", !LoadNote.differs(ln, later));
         check("load note: another part, date or error is written",
@@ -3791,6 +4182,175 @@ public class CoreTest {
         eq("fit: nothing measured, size kept", Texts.fitSize(11, 0, 56, 8), 11f);
     }
 
+    /** Stand ins with Android's class names: LoadNote keeps only the simple name (issue #334). */
+    static final class SQLiteFullException extends RuntimeException {
+        SQLiteFullException(String m) { super(m); }
+    }
+
+    static final class SQLiteDiskIOException extends RuntimeException {
+        SQLiteDiskIOException(String m) { super(m); }
+    }
+
+    static StackTraceElement[] dbTrace334() {
+        return new StackTraceElement[] {new StackTraceElement("android.database.sqlite.SQLiteConnection", "nativeExecute", "SQLiteConnection.java", 1),
+            new StackTraceElement("app.openring.data.Db", "get", "Db.java", 45),
+            new StackTraceElement("app.openring.ble.RingManager", "syncBlocking", "RingManager.java", 480)};
+    }
+
+    /** A sync whose start fails ends with a safe text, the ring lock free and the database released once (issue #334). */
+    static void syncStart334() {
+        // the stored text: class and place, never the message (issue #289)
+        IllegalStateException ise = new IllegalStateException("cannot open file at line 41234 of [a1b2c3]");
+        ise.setStackTrace(dbTrace334());
+        String raw = SyncError.startFailed(ise);
+        eq("#334 start failed: class and place", raw, "Sync could not start: IllegalStateException at Db.java:45");
+        check("#334 start failed: the message and its numbers are dropped", !raw.contains("41234") && !raw.contains("cannot open"), raw);
+        check("#334 start failed: the part after the prefix is a safe load note", LoadNote.safe(raw.substring(SyncError.START_FAILED.length())), raw);
+        eq("#334 start failed: no error", SyncError.startFailed(null), "Sync could not start: unknown error");
+        eq("#334 start failed: stored as it is", SyncError.stored(false, raw), raw);
+        eq("#334 start failed: an other error is unexpected", SyncError.kind(raw), SyncError.Kind.UNKNOWN);
+        eq("#334 start failed: the unexpected sentence with the details", SyncError.plain(raw),
+                "The sync did not finish because of an unexpected problem. Sync again. " + SyncError.DETAILS);
+        eq("#334 start failed: the notice says the same", SyncError.failureNotice(false, raw), SyncError.plain(raw));
+
+        // full or unwritable storage: a sentence that says what to do
+        SQLiteFullException full = new SQLiteFullException("database or disk is full (code 13 SQLITE_FULL)");
+        full.setStackTrace(dbTrace334());
+        String fullRaw = SyncError.startFailed(full);
+        eq("#334 storage: class and place", fullRaw, "Sync could not start: SQLiteFullException at Db.java:45");
+        check("#334 storage: the code number is dropped", !fullRaw.contains("13"), fullRaw);
+        eq("#334 storage: full is its kind", SyncError.kind(fullRaw), SyncError.Kind.STORAGE);
+        SQLiteDiskIOException io = new SQLiteDiskIOException("disk I/O error (code 266)");
+        io.setStackTrace(dbTrace334());
+        eq("#334 storage: a disk error is its kind", SyncError.kind(SyncError.startFailed(io)), SyncError.Kind.STORAGE);
+        String sentence = "This phone's storage is full or could not be written, so the sync could not start. Free some storage or restart the phone, then sync again.";
+        eq("#334 storage: the sentence", SyncError.plain(fullRaw), sentence);
+        eq("#334 storage: the notice", SyncError.failureNotice(false, fullRaw), sentence);
+        eq("#334 storage: stored as it is", SyncError.stored(false, fullRaw), fullRaw);
+        eq("#334 storage: other tasks", SyncError.plain(fullRaw, SyncError.Task.ACTION),
+                "This phone's storage is full or could not be written. Free some storage or restart the phone, then try again.");
+        check("#334 storage: not tried again at once", !SyncError.retryable(fullRaw, true));
+        check("#334 storage: no dashes as punctuation", !sentence.contains(" - ") && !sentence.contains("\u2013") && !sentence.contains("\u2014"), sentence);
+        check("#334 storage: a ring text is not storage", SyncError.kind("storage failed: no space") != SyncError.Kind.STORAGE);
+
+        java.util.concurrent.locks.ReentrantLock op = new java.util.concurrent.locks.ReentrantLock();
+        final int[] released = new int[1];
+        Runnable release = new Runnable() {
+            @Override
+            public void run() {
+                released[0]++;
+            }
+        };
+
+        // an error before the lock (waiting for the analysis)
+        SyncStart.Result r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                throw new SQLiteFullException("database or disk is full");
+            }
+        }, release);
+        check("#334 guard, before the lock: the error is kept", r.error instanceof SQLiteFullException, r.error);
+        check("#334 guard, before the lock: the message is set", r.message != null && r.message.startsWith(SyncError.START_FAILED), r.message);
+        check("#334 guard, before the lock: the lock is free", !op.isLocked());
+        eq("#334 guard, before the lock: nothing released", released[0], 0);
+
+        // an error after the lock, before the database was held (opening the database)
+        final java.util.concurrent.locks.ReentrantLock lock = op;
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                throw new IllegalStateException("cannot open 4711");
+            }
+        }, release);
+        check("#334 guard, after the lock: the lock is free again", !op.isLocked(), op.getHoldCount());
+        eq("#334 guard, after the lock: the database was not held, nothing released", released[0], 0);
+        check("#334 guard, after the lock: no message of the error", r.message != null && !r.message.contains("4711"), r.message);
+
+        // an error after the database was held: released once, the lock given back
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                h.ring = true;
+                throw new IllegalStateException("late");
+            }
+        }, release);
+        check("#334 guard, after the hold: the lock is free again", !op.isLocked());
+        eq("#334 guard, after the hold: released once", released[0], 1);
+
+        // an Error, not only a RuntimeException, with the lock taken twice
+        released[0] = 0;
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                lock.lock();
+                throw new OutOfMemoryError("Failed to allocate 1048576 bytes");
+            }
+        }, release);
+        check("#334 guard, an Error: caught", r.error instanceof OutOfMemoryError, r.error);
+        check("#334 guard, an Error: class and place, no message", r.message != null && r.message.startsWith("Sync could not start: OutOfMemoryError")
+                && !r.message.contains("1048576"), r.message);
+        check("#334 guard, an Error: the lock is free again", !op.isLocked(), op.getHoldCount());
+        eq("#334 guard, an Error: unexpected sentence", SyncError.plain(r.message),
+                "The sync did not finish because of an unexpected problem. Sync again. " + SyncError.DETAILS);
+
+        // a release that fails too: the lock is still given back, the first error kept
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                h.ring = true;
+                throw new IllegalStateException("first");
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                throw new IllegalArgumentException("second");
+            }
+        });
+        check("#334 guard, failed release: the lock is free again", !op.isLocked());
+        check("#334 guard, failed release: the first error kept", r.error instanceof IllegalStateException && r.error.getSuppressed().length == 1, r.error);
+
+        // a hold taken before the start stays (only the steps' holds are given back)
+        op.lock();
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                throw new IllegalStateException("x");
+            }
+        }, release);
+        eq("#334 guard: an earlier hold stays", op.getHoldCount(), 1);
+        op.unlock();
+
+        // the normal path: the lock stays held for the download, nothing released
+        released[0] = 0;
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                lock.lock();
+                h.ring = true;
+                return null;
+            }
+        }, release);
+        check("#334 guard, normal: no message, no error", r.message == null && r.error == null);
+        check("#334 guard, normal: the lock is held for the download", op.isHeldByCurrentThread());
+        eq("#334 guard, normal: nothing released", released[0], 0);
+        op.unlock();
+
+        // a refusal (busy, stopped, demo) passes through unchanged, nothing held
+        r = SyncStart.run(op, new SyncStart.Steps() {
+            @Override
+            public String run(SyncStart.Held h) {
+                return "The ring is busy with another task";
+            }
+        }, release);
+        eq("#334 guard, refusal: its text", r.message, "The ring is busy with another task");
+        check("#334 guard, refusal: no error, lock free", r.error == null && !op.isLocked());
+    }
+
     /** Plain sentences for failed syncs; the raw texts come from the code (issue #47). */
     static void syncError() throws java.io.IOException {
         Object[][] cases = {
@@ -3861,6 +4421,22 @@ public class CoreTest {
         eq("re analysing: Re analyse all waits for the ring task", Texts.REANALYSE_WAITS,
                 "Waiting for the ring to finish its current task, then re analysing all nights. This can take a few minutes.");
         eq("re analysing: Re analyse all failed", Texts.ANALYSIS_FAILED, "The analysis failed, your nights and days are as before. " + SyncError.DETAILS);
+        // issue #222: the texts of the one Re analyse all job and of saving a file
+        for (String t : new String[] {Texts.REANALYSING, Texts.REANALYSE_RUNS, Texts.REANALYSE_AGAIN, Texts.ANALYSIS_UPDATED, Texts.ANALYSIS_FAILED_TOAST,
+                Texts.SAVING_BACKUP, Texts.SAVING_EXPORT, Texts.SAVING_AUTO, Texts.SAVE_BUSY, Texts.saveFailed(true, true), Texts.saveFailed(false, true)}) {
+            check("#222 plain, no dash as punctuation: " + t, !t.isEmpty() && !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
+        check("#222 the toasts fit in two lines", Texts.fitsToast(Texts.REANALYSE_RUNS) && Texts.fitsToast(Texts.ANALYSIS_UPDATED)
+                && Texts.fitsToast(Texts.ANALYSIS_FAILED_TOAST) && Texts.fitsToast(Texts.REANALYSING) && Texts.fitsToast(Texts.SAVE_BUSY));
+        eq("#222 a save that failed without a left over file reads as before", Texts.saveFailed(true, false), Texts.saveFailed(true));
+        for (boolean backup : new boolean[] {false, true}) {
+            for (boolean left : new boolean[] {false, true}) {
+                String t = Texts.saveFailedToast(backup, left);
+                check("#222 the short failure fits a toast: " + t, Texts.fitsToast(t) && !t.contains(" - ") && (left == t.contains("incomplete")));
+            }
+        }
+        check("#222 a left over file is called incomplete", Texts.saveFailed(true, true).contains("incomplete, delete it")
+                && !Texts.saveFailed(true, false).contains("incomplete"));
         ringError(cases);
     }
 
@@ -5198,6 +5774,18 @@ public class CoreTest {
         m = new Mock();
         eq("probe: cursor 0 is present", probe(new RingClient(m).quiet(5), 0), "true");
         eq("probe: cursor 0 sends nothing", m.writes.size(), 0);
+
+        // GattLink.open never leaves a half open link behind: any way out but the return closes it, an
+        // unexpected RuntimeException from the Bluetooth stack too (nobody else holds the link to close it)
+        String gatt = new String(java.nio.file.Files.readAllBytes(
+                new java.io.File("app/src/main/java/app/openring/ble/GattLink.java").toPath()), "UTF-8");
+        int from = gatt.indexOf("public static GattLink open(");
+        int to = from < 0 ? -1 : gatt.indexOf("private void connect(", from);
+        check("GattLink.open found", from >= 0 && to > from);
+        String open = from >= 0 && to > from ? gatt.substring(from, to) : "";
+        int fin = open.indexOf("finally");
+        check("GattLink.open closes the link in finally, whatever was thrown", fin >= 0 && open.indexOf("l.close()", fin) > fin, open);
+        check("GattLink.open catches nothing it would not throw again", !open.contains("catch ("), open);
     }
 
     /** A link that is lost after {@code req}: once its frames are read, poll fails as {@code GattLink.poll} does. */
@@ -5504,6 +6092,127 @@ public class CoreTest {
     static Night.Contributor part(Night.Score s, String key) {
         for (Night.Contributor c : s.contributors) if (c.key.equals(key)) return c;
         return null;
+    }
+
+    /** The rule before issue #240: yesterday's activity and the 7 against 28 day balance, every stored day counted. */
+    static Scores.ReadinessInput oldReadinessActivity(double[] active, double[] target, boolean lastIsYesterday) {
+        Scores.ReadinessInput in = new Scores.ReadinessInput();
+        int n = active.length;
+        if (lastIsYesterday && n > 0 && target[n - 1] > 0) in.prevDayActivity = active[n - 1] / target[n - 1];
+        double[] a7 = Arrays.copyOfRange(active, Math.max(0, n - 7), n), a28 = Arrays.copyOfRange(active, Math.max(0, n - 28), n);
+        if (Stats.countFinite(a7) >= 3 && Stats.countFinite(a28) >= 7 && Stats.mean(a28) > 0) in.activityBalance = Stats.mean(a7) / Stats.mean(a28);
+        return in;
+    }
+
+    static double[] filled(int n, double v) {
+        double[] a = new double[n];
+        Arrays.fill(a, v);
+        return a;
+    }
+
+    /** Issue #240: a day without the ring is left out of readiness's activity parts, not counted as no activity. */
+    static void readinessUnworn240() {
+        eq("#240 worn day rule: 60 minutes", Scores.WORN_DAY_MIN, 60);
+        check("#240 worn: 60 minutes counts, 59 and unknown do not", Scores.worn(60) && Scores.worn(900) && !Scores.worn(59.9) && !Scores.worn(0)
+            && !Scores.worn(Double.NaN));
+        // every day worn: exactly the rule before, for many made up histories (also missing values and short lists)
+        java.util.Random r = new java.util.Random(240);
+        int same = 0;
+        for (int k = 0; k < 2000; k++) {
+            int n = r.nextInt(62);
+            double[] act = new double[n], tgt = new double[n], cov = new double[n];
+            for (int i = 0; i < n; i++) {
+                act[i] = r.nextInt(10) == 0 ? Double.NaN : r.nextInt(8) == 0 ? 0 : 50 + r.nextDouble() * 900;
+                tgt[i] = r.nextInt(12) == 0 ? Double.NaN : r.nextInt(15) == 0 ? 0 : 300 + 10 * r.nextInt(20);
+                cov[i] = 60 + r.nextInt(1380);
+            }
+            boolean y = r.nextBoolean();
+            Scores.ReadinessInput mine = new Scores.ReadinessInput();
+            boolean unworn = Scores.readinessActivity(mine, act, tgt, cov, y);
+            Scores.ReadinessInput old = oldReadinessActivity(act, tgt, y);
+            if (Double.compare(mine.prevDayActivity, old.prevDayActivity) == 0 && Double.compare(mine.activityBalance, old.activityBalance) == 0
+                && unworn == !(y && n > 0)) same++;
+        }
+        eq("#240 every day worn: the same numbers as the rule before, 2000 histories", same, 2000);
+
+        // 28 worn days of 400 kcal against a 400 goal, then yesterday on the charger (20 minutes, 0 kcal)
+        double[] act = filled(29, 400), tgt = filled(29, 400), cov = filled(29, 900);
+        act[28] = 0;
+        cov[28] = 20;
+        Scores.ReadinessInput in = new Scores.ReadinessInput();
+        check("#240 yesterday unworn: reported", Scores.readinessActivity(in, act, tgt, cov, true));
+        check("#240 yesterday unworn: previous day activity unknown", Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+        eq("#240 yesterday unworn: activity balance from the worn days only", in.activityBalance, 1.0);
+        Scores.ReadinessInput before = oldReadinessActivity(act, tgt, true);
+        eq("#240 the rule before: 55 for the charger day", Math.round(Scores.readiness(before).get("prev_activity").score), 55L);
+        check("#240 the rule before: the balance pulled down", before.activityBalance < 0.9, before.activityBalance);
+        // the readiness of such a day: the contributor is left out and the weights spread over the rest
+        in.rhr = 55;
+        in.sleepScore = 90;
+        in.hrvRecent = 100;
+        in.hrvBaseline = 100;
+        Night.Score sc = Scores.readiness(in);
+        check("#240 readiness without previous day activity", sc.get("prev_activity") == null && sc.get("activity_balance") != null, sc.contributors.size());
+        double w = 0, s = 0;
+        for (Night.Contributor c : sc.contributors) {
+            w += c.weight;
+            s += c.weight * c.score;
+        }
+        eq("#240 readiness: the other weights renormalised", (long) sc.value, Math.round(s / w));
+        eq("#240 readiness: weights without previous day activity", w, 17.0 + 15 + 15 + 8);
+
+        // yesterday worn just at the rule, missing, or not the day before
+        cov[28] = 60;
+        in = new Scores.ReadinessInput();
+        check("#240 an hour of wear counts", !Scores.readinessActivity(in, act, tgt, cov, true) && in.prevDayActivity == 0, in.prevDayActivity);
+        in = new Scores.ReadinessInput();
+        check("#240 the newest stored day is not yesterday: reported, no previous day activity", Scores.readinessActivity(in, act, tgt, cov, false)
+            && Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+        in = new Scores.ReadinessInput();
+        check("#240 no days before: reported, both unknown", Scores.readinessActivity(in, new double[0], new double[0], new double[0], true)
+            && Double.isNaN(in.prevDayActivity) && Double.isNaN(in.activityBalance), null);
+        in = new Scores.ReadinessInput();
+        check("#240 worn yesterday with no goal: not reported, unknown as before", !Scores.readinessActivity(in, new double[] {300}, new double[] {0},
+            new double[] {600}, true) && Double.isNaN(in.prevDayActivity), in.prevDayActivity);
+
+        // the minimum counts: 3 worn of the last 7 and 7 worn of the last 28
+        act = filled(28, 400);
+        tgt = filled(28, 400);
+        cov = filled(28, 900);
+        for (int i = 21; i < 28; i++) cov[i] = i < 26 ? 0 : 900; // last 7: 2 worn
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 2 worn days of the last 7: no activity balance", Double.isNaN(in.activityBalance), in.activityBalance);
+        cov[25] = 900; // 3 worn
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        eq("#240 3 worn days of the last 7: activity balance", in.activityBalance, 1.0);
+        cov = filled(28, 0);
+        for (int i = 22; i < 28; i++) cov[i] = 900; // 6 worn in 28
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 6 worn days of the last 28: no activity balance", Double.isNaN(in.activityBalance) && !Double.isNaN(in.prevDayActivity), in.activityBalance);
+        cov[3] = 900; // 7 worn in 28
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        eq("#240 7 worn days of the last 28: activity balance", in.activityBalance, 1.0);
+        // an unworn day older than 28 days changes nothing
+        act = filled(40, 400);
+        tgt = filled(40, 400);
+        cov = filled(40, 900);
+        Scores.ReadinessInput all = new Scores.ReadinessInput();
+        Scores.readinessActivity(all, act, tgt, cov, true);
+        act[5] = 0;
+        cov[5] = 0;
+        in = new Scores.ReadinessInput();
+        Scores.readinessActivity(in, act, tgt, cov, true);
+        check("#240 an unworn day before the 28: the same numbers", in.activityBalance == all.activityBalance && in.prevDayActivity == all.prevDayActivity, null);
+
+        // texts
+        eq("#240 the note on the Readiness page", app.openring.ui.Explain.READINESS_UNWORN, "Previous day activity is left out: the ring was "
+            + "on for less than an hour the day before, so there is no activity to compare with your goal.");
+        check("#240 explanations name the rule", app.openring.ui.Explain.of("prev_activity").endsWith("A day with less than an hour of wear is left out.")
+            && app.openring.ui.Explain.of("activity_balance").endsWith("Days with less than an hour of wear are left out."), null);
     }
 
     static Scores.ActivityInput activityIn(int days, double met, int train, double kcal) {
@@ -5820,6 +6529,174 @@ public class CoreTest {
         check("#110 period without codes: no ring run", plain.ringRun() == null);
         plain.codes = new int[] {1, 2};
         check("#110 period without codesEnd: codes end at its end", plain.ringRun().end == 600 && plain.ringRun().start == 540);
+    }
+
+    /** Counts of each stage code (0 to 4) in {@code a}. */
+    static int[] codeCounts(int[] a) {
+        int[] n = new int[5];
+        for (int x : a) if (x >= 0 && x < 5) n[x]++;
+        return n;
+    }
+
+    /** {@code cells} steps of 30 s, all {@code code}. */
+    static int[] fill(int cells, int code) {
+        int[] a = new int[cells];
+        java.util.Arrays.fill(a, code);
+        return a;
+    }
+
+    /**
+     * Issue #189: two ring stage runs with a break of an hour or less between them are one night, and both runs keep
+     * their stages at their own times (before, the second run's stages were dropped). The break is awake where the
+     * ring's own sleep state says awake and has no stage data otherwise; it is never made asleep.
+     */
+    static void stageRuns189() {
+        double day = 1_760_000_000L - 1_760_000_000L % 86400;
+        double a0 = day - 3600, a1 = day + 2 * 3600, b0 = day + 2.5 * 3600, b1 = day + 6 * 3600; // 23:00 to 02:00, 02:30 to 06:00
+        // the issue's case: A 3 hours light, a break of 30 minutes, B 3.5 hours deep, no sleep state
+        List<NightFinder.RingRun> runs = new ArrayList<NightFinder.RingRun>();
+        runs.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        runs.add(new NightFinder.RingRun(b0, b1, fill(420, 1)));
+        List<NightFinder.Period> ps = NightFinder.find(new ArrayList<double[]>(), runs, new TS(), new TS());
+        eq("#189 two runs 30 min apart: one night", ps.size(), 1);
+        if (ps.size() == 1) {
+            NightFinder.Period q = ps.get(0);
+            check("#189 the night runs from the first run's start to the second run's end", near(q.start, a0) && near(q.end, b1), q.start + " " + q.end);
+            int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+            int[] n = codeCounts(al);
+            check("#189 both runs' stages kept: 3 h light and 3.5 h deep", n[2] == 360 && n[1] == 420, java.util.Arrays.toString(n));
+            check("#189 without sleep state the break has no stage data (not awake, not asleep)", n[0] == 60 && n[4] == 0, java.util.Arrays.toString(n));
+            check("#189 light at the first run's times, deep at the second's", al[(int) ((a0 + 60 - q.start) / 30)] == 2
+                    && al[(int) ((a1 - 60 - q.start) / 30)] == 2 && al[(int) ((b0 + 60 - q.start) / 30)] == 1 && al[(int) ((b1 - 60 - q.start) / 30)] == 1);
+            check("#189 the break has no stages from the ring", al[(int) ((day + 2.25 * 3600 - q.start) / 30)] == 0);
+            check("#189 no wake up added without sleep state", q.awake.isEmpty(), q.awake.size());
+            Night night = NightAnalyzer.analyze(nightInput(q, al));
+            check("#189 the ring's stages are used for the whole night (they cover 93%)", "ring".equals(night.stageSource), night.stageSource);
+            check("#189 180 min light, 210 min deep", near(night.lightMin, 180) && near(night.deepMin, 210), night.lightMin + " " + night.deepMin);
+        }
+
+        // with the ring's sleep state: asleep through both runs, awake 02:05 to 02:20 inside the break
+        TS st = new TS();
+        for (int m = -60; m < 6 * 60; m += 5) st.add(day + m * 60, m >= 125 && m < 140 ? 0 : 1);
+        TS support = new TS();
+        for (int i = 0; i < st.size(); i++) support.add(st.t(i), 1);
+        List<NightFinder.Period> ws = NightFinder.find(new ArrayList<double[]>(), runs, st, support);
+        eq("#189 with sleep state: one night", ws.size(), 1);
+        if (ws.size() == 1) {
+            NightFinder.Period q = ws.get(0);
+            int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+            int[] n = codeCounts(al);
+            check("#189 with sleep state: both runs kept", n[2] == 360 && n[1] == 420, java.util.Arrays.toString(n));
+            check("#189 with sleep state: the 15 min the ring says awake are awake", n[4] == 30
+                    && al[(int) ((day + 2 * 3600 + 6 * 60 - q.start) / 30)] == 4 && al[(int) ((day + 2 * 3600 + 19 * 60 - q.start) / 30)] == 4, java.util.Arrays.toString(n));
+            check("#189 with sleep state: the rest of the break is asleep without a stage, so it stays without data", n[0] == 30
+                    && al[(int) ((day + 2 * 3600 + 60 - q.start) / 30)] == 0 && al[(int) ((day + 2 * 3600 + 25 * 60 - q.start) / 30)] == 0, java.util.Arrays.toString(n));
+            check("#189 with sleep state: the wake up is the ring's own (kept by every detail level)", near(awakeMin(q), 15)
+                    && near(q.awake.get(0)[0], day + 2 * 3600 + 5 * 60), awakeMin(q));
+            NightAnalyzer.Input in = nightInput(q, al);
+            in.ringAwake.addAll(q.awake);
+            Night night = NightAnalyzer.analyze(in);
+            check("#189 with sleep state: one wake up of 15 min counted", "ring".equals(night.stageSource) && night.awakenings == 1 && near(night.wasoMin, 15),
+                    night.awakenings + " " + night.wasoMin);
+        }
+
+        // three runs, each 20 min apart: all three kept
+        List<NightFinder.RingRun> three = new ArrayList<NightFinder.RingRun>();
+        three.add(new NightFinder.RingRun(a0, a0 + 7200, fill(240, 2)));
+        three.add(new NightFinder.RingRun(a0 + 8400, a0 + 15600, fill(240, 1)));
+        three.add(new NightFinder.RingRun(a0 + 16800, a0 + 24000, fill(240, 3)));
+        List<NightFinder.Period> ts = NightFinder.find(new ArrayList<double[]>(), three, new TS(), new TS());
+        eq("#189 three runs 20 min apart: one night", ts.size(), 1);
+        if (ts.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(ts.get(0).ringRun(), ts.get(0).start, ts.get(0).end));
+            check("#189 three runs: every run's stages kept, the two breaks without data", n[2] == 240 && n[1] == 240 && n[3] == 240 && n[0] == 80,
+                    java.util.Arrays.toString(n));
+        }
+
+        // a ring run inside a bedtime period, then a second run 30 min after it: both kept, the bedtime's edges without data
+        List<double[]> beds = new ArrayList<double[]>();
+        beds.add(new double[] {a0 - 600, a1 + 600});
+        List<NightFinder.Period> bs = NightFinder.find(beds, runs, new TS(), new TS());
+        eq("#189 bedtime, run and a second run: one night", bs.size(), 1);
+        if (bs.size() == 1) {
+            NightFinder.Period q = bs.get(0);
+            int[] al = NightFinder.align(q.ringRun(), q.start, q.end);
+            int[] n = codeCounts(al);
+            check("#189 bedtime and two runs: both runs at their times (#110 kept)", n[2] == 360 && n[1] == 420 && al[(int) ((a0 + 60 - q.start) / 30)] == 2
+                    && al[(int) ((a0 - 300 - q.start) / 30)] == 0 && near(q.start, a0 - 600) && near(q.end, b1), java.util.Arrays.toString(n));
+        }
+
+        // a run the ring sent again (overlapping the first one): unchanged, the first run's stages stay (issue #68 decides odd pages)
+        List<NightFinder.RingRun> again = new ArrayList<NightFinder.RingRun>();
+        again.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        again.add(new NightFinder.RingRun(a0 + 3600, a1 + 3600, fill(360, 1)));
+        List<NightFinder.Period> os = NightFinder.find(new ArrayList<double[]>(), again, new TS(), new TS());
+        if (os.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(os.get(0).ringRun(), os.get(0).start, os.get(0).end));
+            check("#189 overlapping runs: unchanged, the first run's stages only", n[2] == 360 && n[1] == 0, java.util.Arrays.toString(n));
+        } else {
+            check("#189 overlapping runs: one night", false, os.size());
+        }
+
+        // the two runs with a break of over an hour stay two (outside the night window, no clock): unchanged
+        List<NightFinder.RingRun> far = new ArrayList<NightFinder.RingRun>();
+        far.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        far.add(new NightFinder.RingRun(a1 + 3700, a1 + 3700 + 12600, fill(420, 1)));
+        eq("#189 a break of over an hour without a night wake: still two sleeps", NightFinder.find(new ArrayList<double[]>(), far, new TS(), new TS()).size(), 2);
+
+        // the edges of the join: a break of exactly an hour is joined, a 20 s overlap is stitched, a 60 s overlap keeps the first run only
+        List<NightFinder.RingRun> hour = new ArrayList<NightFinder.RingRun>();
+        hour.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        hour.add(new NightFinder.RingRun(a1 + 3600, a1 + 3600 + 12600, fill(420, 1)));
+        List<NightFinder.Period> hs = NightFinder.find(new ArrayList<double[]>(), hour, new TS(), new TS());
+        eq("#189 a break of exactly an hour: one night", hs.size(), 1);
+        if (hs.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(hs.get(0).ringRun(), hs.get(0).start, hs.get(0).end));
+            check("#189 a break of exactly an hour: both runs kept, the hour without data", n[2] == 360 && n[1] == 420 && n[0] == 120,
+                    java.util.Arrays.toString(n));
+        }
+        List<NightFinder.RingRun> touch = new ArrayList<NightFinder.RingRun>();
+        touch.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        touch.add(new NightFinder.RingRun(a1 - 20, a1 - 20 + 12600, fill(420, 1)));
+        List<NightFinder.Period> tc = NightFinder.find(new ArrayList<double[]>(), touch, new TS(), new TS());
+        eq("#189 a 20 s overlap: one night", tc.size(), 1);
+        if (tc.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(tc.get(0).ringRun(), tc.get(0).start, tc.get(0).end));
+            check("#189 a 20 s overlap: stitched, both runs kept (the second wins the shared step)", n[1] == 420 && n[2] >= 359 && n[0] == 0,
+                    java.util.Arrays.toString(n));
+        }
+        List<NightFinder.RingRun> over = new ArrayList<NightFinder.RingRun>();
+        over.add(new NightFinder.RingRun(a0, a1, fill(360, 2)));
+        over.add(new NightFinder.RingRun(a1 - 60, a1 - 60 + 12600, fill(420, 1)));
+        List<NightFinder.Period> ov = NightFinder.find(new ArrayList<double[]>(), over, new TS(), new TS());
+        eq("#189 a 60 s overlap: one night", ov.size(), 1);
+        if (ov.size() == 1) {
+            int[] n = codeCounts(NightFinder.align(ov.get(0).ringRun(), ov.get(0).start, ov.get(0).end));
+            check("#189 a 60 s overlap: sent again, the first run's stages only (#68)", n[2] == 360 && n[1] == 0, java.util.Arrays.toString(n));
+        }
+
+        // the awake parts from the ring's sleep state: samples cover up to the next one, at most 5 minutes
+        TS s2 = new TS();
+        s2.add(100, 1);
+        s2.add(400, 0);
+        s2.add(700, 0);
+        s2.add(1000, 1);
+        s2.add(2000, 0);
+        List<double[]> aw = NightFinder.stateAwake(s2, 0, 2100);
+        check("#189 state awake: 400 to 1000 and 2000 to 2100", aw.size() == 2 && near(aw.get(0)[0], 400) && near(aw.get(0)[1], 1000)
+                && near(aw.get(1)[0], 2000) && near(aw.get(1)[1], 2100), aw.size());
+        check("#189 state awake: clipped to the break", NightFinder.stateAwake(s2, 500, 600).size() == 1 && near(NightFinder.stateAwake(s2, 500, 600).get(0)[0], 500));
+        TS lone = new TS();
+        lone.add(1000, 0);
+        lone.add(2200, 1);
+        List<double[]> la = NightFinder.stateAwake(lone, 0, 3000);
+        check("#189 state awake: an awake sample with the next one 20 min later covers exactly 5 min", la.size() == 1 && near(la.get(0)[0], 1000)
+                && near(la.get(0)[1], 1300), la.isEmpty() ? "none" : la.get(0)[0] + " " + la.get(0)[1]);
+        TS last = new TS();
+        last.add(1000, 0);
+        List<double[]> ll = NightFinder.stateAwake(last, 0, 3000);
+        check("#189 state awake: the last sample covers 5 min", ll.size() == 1 && near(ll.get(0)[1], 1300), ll.size());
+        check("#189 state awake: none without state or in an empty break", NightFinder.stateAwake(new TS(), 0, 100).isEmpty() && NightFinder.stateAwake(s2, 600, 600).isEmpty());
     }
 
     static NightAnalyzer.Input nightInput(NightFinder.Period q, int[] stages) {
@@ -7822,6 +8699,74 @@ public class CoreTest {
         eq("#220 a date 6 hours ahead is kept", Dating.limit(1_800_021_600.0, 1_800_000_000L), 1_800_021_600.0);
     }
 
+    /**
+     * Issue #195: the background job connects with a short, filtered, balanced scan and one round fewer; everything else
+     * keeps the plan it had before, and the app's code uses the plan, not numbers of its own.
+     */
+    static void connectPlan195() throws IOException {
+        ConnectPlan p = ConnectPlan.of(false), b = ConnectPlan.of(true);
+        check("#195 a person's sync uses the person plan", p == ConnectPlan.PERSON && !p.background);
+        check("#195 the background job uses the background plan", b == ConnectPlan.BACKGROUND && b.background);
+        // the person plan is exactly the one before #195
+        eq("#195 person: 2 direct connects", p.directTries, 2);
+        eq("#195 person: 12 s each", p.directMs, 12000L);
+        eq("#195 person: 1.5 s between them", p.directGapMs, 1500L);
+        eq("#195 person: 40 s scan", p.scanMs, 40000L);
+        check("#195 person: low latency, unfiltered second half", p.lowLatency && p.widen);
+        eq("#195 person: 20 s connect after a scan hit", p.connectMs, 20000L);
+        eq("#195 person: 3 rounds", p.rounds, 3);
+        eq("#195 person: 2.5 s between rounds", p.roundGapMs, 2500L);
+        // the background plan
+        eq("#195 background: 2 direct connects", b.directTries, 2);
+        eq("#195 background: 12 s each", b.directMs, 12000L);
+        eq("#195 background: 10 s scan", b.scanMs, 10000L);
+        check("#195 background: balanced and filtered only (an unfiltered scan hears nothing with the screen off)", !b.lowLatency && !b.widen);
+        eq("#195 background: 20 s connect after a scan hit", b.connectMs, 20000L);
+        eq("#195 background: 2 rounds", b.rounds, 2);
+        // rounds: a ring not reached gets the plan's rounds, a link that broke off after connecting keeps 3 (#157)
+        eq("#195 both plans: 3 rounds after connecting", b.connectedRounds + "," + p.connectedRounds, "3,3");
+        eq("#195 most rounds: 3 in both plans", b.maxRounds() + "," + p.maxRounds(), "3,3");
+        check("#195 person, not reached: rounds 2 and 3, then no more", p.another(1, false) && p.another(2, false) && !p.another(3, false));
+        check("#195 person, broke off after connecting: rounds 2 and 3, then no more", p.another(1, true) && p.another(2, true) && !p.another(3, true));
+        check("#195 background, not reached: round 2, then no more", b.another(1, false) && !b.another(2, false));
+        check("#195 background, broke off after connecting: rounds 2 and 3 as before #195", b.another(1, true) && b.another(2, true) && !b.another(3, true));
+        check("#195 background: a round not reached after one that connected ends the sync", !b.another(2, false) && !b.another(3, false));
+        // radio time with the ring away and in the worst case
+        eq("#195 person: ring away 65.5 s", p.awayMs(), 65500L);
+        eq("#195 background: ring away 35.5 s", b.awayMs(), 35500L);
+        eq("#195 person: worst case 261.5 s", p.worstMs(), 261500L);
+        eq("#195 background: worst case 113.5 s", b.worstMs(), 113500L);
+        check("#195 background: no part longer than the person's", b.directTries <= p.directTries && b.directMs <= p.directMs && b.scanMs <= p.scanMs
+                && b.connectMs <= p.connectMs && b.rounds <= p.rounds && (p.lowLatency || !b.lowLatency) && (p.widen || !b.widen));
+        eq("#195 one direct connect: no gap counted", new ConnectPlan(true, 1, 12000, 1500, 10000, false, false, 20000, 1, 2500).awayMs(), 22000L);
+        eq("#195 log line names the background plan", b.toString(), "direct 2 x 12 s, scan 10 s balanced filtered, 2 rounds");
+        eq("#195 log line names the person plan", p.toString(), "direct 2 x 12 s, scan 40 s low latency then unfiltered, 3 rounds");
+        // the app uses the plan: the job asks for it, the connection and the rounds read it, no old numbers remain
+        String root = "app/src/main/java/app/openring/";
+        String job = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "sync/SyncJob.java").toPath()), "UTF-8");
+        String svc = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "sync/SyncService.java").toPath()), "UTF-8");
+        String rm = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ble/RingManager.java").toPath()), "UTF-8");
+        check("#195 the background job syncs with a background ticket", job.contains("RingManager.SyncTicket.background()") && !job.contains("new RingManager.SyncTicket()"));
+        check("#195 the sync the person starts keeps the person plan", svc.contains(".syncBlocking()") && !svc.contains("background()"));
+        check("#195 the sync passes the ticket's plan", rm.contains("download(res, key, prefs, ConnectPlan.of(ticket.background))") && rm.contains("s = open(false, exclude, plan);"));
+        check("#195 every other connection keeps the person plan", rm.contains("return open(anyRing, exclude, ConnectPlan.PERSON);"));
+        check("#195 the connection reads the plan", rm.contains("plan.scanMs, plan.lowLatency, plan.widen") && rm.contains("GattLink.open(ctx, d, glog, plan.directMs)")
+                && rm.contains("GattLink.open(ctx, d, glog, plan.connectMs)") && rm.contains("attempt <= plan.maxRounds()"));
+        check("#195 both retried failures ask the plan whether another round runs", rm.split("if \\(!plan.another\\(attempt, s != null\\)\\) break;", -1).length == 3);
+        int o = rm.indexOf("private Session open(boolean anyRing, Set<String> exclude, ConnectPlan plan)"), oe = rm.indexOf("private void close(Session s)", o);
+        int d = rm.indexOf("private void download(SyncResult res"), de = rm.indexOf("private boolean bluetoothOn()", d);
+        check("#195 open() and download() found", o > 0 && oe > o && d > 0 && de > d);
+        String openBody = rm.substring(o, oe), dlBody = rm.substring(d, de);
+        check("#195 open() types no timeout of its own", !openBody.contains("12000") && !openBody.contains("20000") && !openBody.contains("40000") && !openBody.contains("sleep(1500)"));
+        check("#195 download() types no round count of its own", !dlBody.contains("attempt <= 3") && !dlBody.contains("attempt < 3"));
+        String sc = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ble/RingScanner.java").toPath()), "UTF-8");
+        check("#195 the filtered only scan also matches the saved ring's address (review of a1fa895)",
+                sc.contains("if (!widen && preferred != null && BluetoothAdapter.checkBluetoothAddress(preferred))")
+                && sc.contains("filters.add(new ScanFilter.Builder().setDeviceAddress(preferred).build());")
+                && sc.contains("if (!addr.equals(preferred) && !isOura(r)) return;"));
+        check("#195 one find left, every caller chooses the plan", sc.split("public static BluetoothDevice find\\(", -1).length == 2);
+    }
+
     /** Issue #194: the rule for skipping a sync shortly after the last one, and screen sessions read again unchanged. */
     static void recent194() {
         long now = 1_800_000_000L;
@@ -8137,6 +9082,70 @@ public class CoreTest {
         } catch (NumberFormatException x) {
             return def;
         }
+    }
+
+    /** The day under a point, as both month calendars worked it out before MonthGrid (BadgeCalendar and PeriodCalendar). */
+    static java.time.LocalDate dayAtBefore(java.time.YearMonth month, java.time.DayOfWeek firstDay, int width, float head, float cellH, float x, float y) {
+        float cw = width / 7f;
+        int col = (int) Math.max(0, Math.min(6, Math.floor(x / cw)));
+        int row = (int) Math.floor((y - head) / cellH);
+        if (row < 0 || row >= 6) return null;
+        int off = (month.atDay(1).getDayOfWeek().getValue() - firstDay.getValue() + 7) % 7;
+        int dom = row * 7 + col - off + 1;
+        return dom >= 1 && dom <= month.lengthOfMonth() ? month.atDay(dom) : null;
+    }
+
+    /** The month calendars' grid and touch decision give exactly what the two copies in the views gave. */
+    static void monthGrid() {
+        int same = 0, all = 0, sameOff = 0, offs = 0;
+        int[] widths = {0, 1, 700, 1080, 1439};
+        float[][] sizes = {{22, 42}, {57.75f, 110.25f}, {66, 126}};
+        for (java.time.DayOfWeek first : java.time.DayOfWeek.values()) {
+            for (int m = 0; m < 30; m++) {
+                java.time.YearMonth month = java.time.YearMonth.of(2023, 11).plusMonths(m); // includes February 2024 (29 days)
+                offs++;
+                if (MonthGrid.offset(month, first) == (month.atDay(1).getDayOfWeek().getValue() - first.getValue() + 7) % 7) sameOff++;
+                for (int width : widths) {
+                    for (float[] hc : sizes) {
+                        float head = hc[0], cellH = hc[1];
+                        for (float x = -40; x <= width + 40; x += Math.max(1, width / 37f)) {
+                            for (float y = -10; y <= head + 7 * cellH; y += cellH / 5.5f) {
+                                all++;
+                                java.time.LocalDate a = MonthGrid.dayAt(month, first, width, head, cellH, x, y), b = dayAtBefore(month, first, width, head, cellH, x, y);
+                                if (a == null ? b == null : a.equals(b)) same++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eq("month grid: the first of the month in the same column for every first weekday", sameOff, offs);
+        eq("month grid: every point gives the same day as before", same, all);
+        check("month grid: enough points compared", all > 100000, all);
+        java.time.YearMonth nov = java.time.YearMonth.of(2026, 11); // 1 November 2026 is a Sunday
+        eq("month grid: Monday first puts Sunday the 1st last", MonthGrid.offset(nov, java.time.DayOfWeek.MONDAY), 6);
+        eq("month grid: Sunday first puts it first", MonthGrid.offset(nov, java.time.DayOfWeek.SUNDAY), 0);
+        eq("month grid: first cell, Sunday first", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, 5, 30), java.time.LocalDate.of(2026, 11, 1));
+        eq("month grid: first cell before the 1st is no day", MonthGrid.dayAt(nov, java.time.DayOfWeek.MONDAY, 700, 22, 42, 5, 30), null);
+        eq("month grid: left of the grid counts as the first column", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, -50, 30), java.time.LocalDate.of(2026, 11, 1));
+        eq("month grid: above the rows is no day", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, 5, 21.9f), null);
+        eq("month grid: below the sixth row is no day", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, 5, 22 + 6 * 42), null);
+        eq("month grid: the 30th in the fifth row", MonthGrid.dayAt(nov, java.time.DayOfWeek.SUNDAY, 700, 22, 42, 150, 22 + 4 * 42 + 1), java.time.LocalDate.of(2026, 11, 30));
+        int sameG = 0, gs = 0;
+        float[] ds = {0, 1, 7.5f, 8, 8.01f, 9, 15, 16, 16.5f, 40};
+        for (int slop : new int[] {0, 8, 16, 24}) {
+            for (float dx : ds) {
+                for (float dy : ds) {
+                    gs++;
+                    int before = dx > slop && dx > dy ? MonthGrid.SLIDE : dy > slop ? MonthGrid.SCROLL : MonthGrid.WAIT;
+                    if (MonthGrid.gesture(dx, dy, slop) == before) sameG++;
+                }
+            }
+        }
+        eq("month grid: every move is a slide, a scroll or undecided as before", sameG, gs);
+        eq("month grid: sideways past the slop slides", MonthGrid.gesture(9, 3, 8), MonthGrid.SLIDE);
+        eq("month grid: as much down as sideways scrolls", MonthGrid.gesture(9, 9, 8), MonthGrid.SCROLL);
+        eq("month grid: within the slop waits", MonthGrid.gesture(8, 8, 8), MonthGrid.WAIT);
     }
 
     /** The named profile and screen goal limits give exactly the numbers that were typed in Setup, Settings and the restore. */
