@@ -916,6 +916,7 @@ public class PipelineTest {
         phoneLarge329();
         phoneTwoPhones329();
         phoneNoRingBackup329();
+        startDevices373();
         badges265();
         phase1a2_252();
         rise252();
@@ -13464,6 +13465,74 @@ public class PipelineTest {
         check("#329b two phones: this phone's id survives the restore (it is never in a backup)", newId.equals(app.openring.data.Prefs.of(now).phoneDevice())
                 && !new String(zipEntry(fromOld, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8).contains(oldId), null);
         clean254();
+    }
+
+    /**
+     * Issue #373: an added watch counts as no ring while no key is stored (the main screen never opens the ring setup), the
+     * key still wins, and the start choice goes through a backup; an older backup without it keeps the phone's.
+     */
+    static void startDevices373() throws Exception {
+        Context c = phone254("openring373-start");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        byte[] key = p.loadKey();
+        check("#373 a ring user: nothing changes with a watch added", p.keyState() == app.openring.core.KeyState.READABLE, p.keyState());
+        p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
+        check("#373 a ring user with a watch: still the ring", p.keyState() == app.openring.core.KeyState.READABLE && p.ringState() == app.openring.core.KeyState.READABLE
+                && !app.openring.core.Start.opensSetup(false, true, p.keyState(), false, true), p.keyState());
+        p.clearKey();
+        check("#373 only a watch, no choice stored: no ring, never Setup", !p.noRing() && p.keyState() == app.openring.core.KeyState.NO_RING
+                && p.ringState() == app.openring.core.KeyState.NO_RING && !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, true)
+                && !app.openring.core.KeyState.needsSetup(false, p.ringState()), p.keyState());
+        p.forgetWatch();
+        check("#373 no watch, no key, no choice: Getting started", p.keyState() == app.openring.core.KeyState.NONE
+                && app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
+        check("#373 no choice stored yet", p.startChoice() == app.openring.core.Start.NONE, p.startChoice());
+        p.setStartChoice(app.openring.core.Start.WATCH);
+        p.setNoRing(true);
+        check("#373 the watch chosen, its setup left half way: the app", p.startChoice() == app.openring.core.Start.WATCH
+                && !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
+        p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
+        // a backup of a watch only phone carries the choice and no key; a restore elsewhere goes on with the watch
+        byte[] full = backup252(c);
+        org.json.JSONObject o = new org.json.JSONObject(new String(zipEntry(full, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
+        check("#373 the backup holds the choice and the watch, no key", o.optInt("start_choice") == app.openring.core.Start.WATCH && !o.has("key")
+                && "AA:BB:CC:00:11:22".equals(o.optString("watch_address")), o.keySet());
+        restart242();
+        Context other = phone254("openring373-restore");
+        app.openring.data.Prefs q = app.openring.data.Prefs.of(other);
+        q.clearKey();
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(other, new java.io.ByteArrayInputStream(full));
+        check("#373 restored: the watch, the choice, no ring, never Setup", r.ok && q.startChoice() == app.openring.core.Start.WATCH
+                && q.watchAddress() != null && q.keyState() == app.openring.core.KeyState.NO_RING
+                && !app.openring.core.Start.opensSetup(false, false, q.keyState(), false, true), r.message);
+        // an older backup without the choice keeps the phone's
+        o.remove("start_choice");
+        q.setStartChoice(app.openring.core.Start.PHONE);
+        java.io.ByteArrayOutputStream rebuilt = new java.io.ByteArrayOutputStream();
+        java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(rebuilt);
+        java.util.zip.ZipInputStream zin = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(full));
+        for (java.util.zip.ZipEntry e; (e = zin.getNextEntry()) != null; ) {
+            z.putNextEntry(new java.util.zip.ZipEntry(e.getName()));
+            if (e.getName().equals("openring-backup.json")) z.write(o.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            else {
+                byte[] buf = new byte[8192];
+                for (int n; (n = zin.read(buf)) > 0; ) z.write(buf, 0, n);
+            }
+            z.closeEntry();
+        }
+        z.close();
+        r = app.openring.data.Backup.read(other, new java.io.ByteArrayInputStream(rebuilt.toByteArray()));
+        check("#373 an older backup without the choice keeps the phone's", r.ok && q.startChoice() == app.openring.core.Start.PHONE, r.message);
+        // a ring paired later: the key wins, the watch stays
+        q.pairDone(key != null ? key : new byte[16], "AA:BB:CC:DD:EE:FF", "TESTSERIAL", "paired", false);
+        check("#373 a ring paired later is the ring, the watch stays", q.keyState() == app.openring.core.KeyState.READABLE && q.watchAddress() != null
+                && !q.noRing(), q.keyState());
+        q.clearPairUnseen();
+        q.forgetWatch();
+        p.forgetWatch();
+        p.setNoRing(false);
+        if (key != null) p.saveKey(key);
+        restart242();
     }
 
     /**

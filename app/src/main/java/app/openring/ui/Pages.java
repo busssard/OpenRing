@@ -49,6 +49,8 @@ public final class Pages {
     // ======================================================================== TODAY
 
     public static View today(final Context c, DayData d, final Nav nav, String syncLine) {
+        // only a watch or only the phone (issue #373): their own cards, no empty ring cards
+        if (!d.has.ring) return todayWithout(c, d, nav, syncLine);
         LinearLayout root = Ui.vbox(c);
         LinearLayout rings = Ui.card(c);
         LinearLayout row = Ui.hbox(c);
@@ -182,6 +184,29 @@ public final class Pages {
         // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
         if (d.periodShown) root.addView(PeriodCard.today(c, d, nav));
 
+        TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
+        foot.setGravity(Gravity.CENTER);
+        foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
+        root.addView(foot);
+        return root;
+    }
+
+    /** Today without a ring (issue #373): the cards {@code core/Start.cards} names, the badges, the period card, the foot line. */
+    static View todayWithout(Context c, DayData d, Nav nav, String syncLine) {
+        LinearLayout root = Ui.vbox(c);
+        for (String k : app.openring.core.Start.cards(TODAY, d.has)) {
+            if (app.openring.core.Start.NEED_SCORES.equals(k)) {
+                root.addView(DeviceViews.scoresWithout(c, d, nav));
+                if (!d.badges.isEmpty()) root.addView(BadgeViews.row(c, d, nav));
+            } else if (app.openring.core.Start.FINISH_WATCH.equals(k)) {
+                root.addView(DeviceViews.finishWatch(c));
+            } else if (app.openring.core.Start.WATCH_DAY.equals(k)) {
+                root.addView(DeviceViews.watchDay(c, d));
+            } else if (app.openring.core.Start.PHONE_DAY.equals(k)) {
+                root.addView(DeviceViews.phoneDay(c, d));
+            }
+        }
+        if (d.periodShown) root.addView(PeriodCard.today(c, d, nav));
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
@@ -381,9 +406,16 @@ public final class Pages {
 
     public static View sleep(Context c, DayData d, Nav nav) {
         // no ring and no watch (issue #329): one card instead of empty charts
-        if (PhoneViews.needsDevice(c, d)) return PhoneViews.needDevice(c);
+        if (PhoneViews.needsDevice(c, d)) return DeviceViews.needDevice(c);
         // the watch's night: the main device's, or the ring has none for this day (issue #251)
         if (d.merged != null && d.merged.watchNight != null) return watchSleep(c, d, nav, d.merged.watchNight);
+        if (!d.has.ring && d.night == null) {
+            // only a watch, no night from it (issue #373): what to do, no ring instructions
+            LinearLayout root = Ui.vbox(c);
+            root.addView(hero(c, Double.NaN, "Sleep", Ui.SLEEP, app.openring.core.Start.NO_WATCH_NIGHT));
+            root.addView(infoCard(c, "About sleep", Explain.SLEEP_WATCH_ONLY));
+            return root;
+        }
         LinearLayout root = Ui.vbox(c);
         JSONObject n = d.night;
         // each night in the zone it was slept in (issue #22)
@@ -868,9 +900,16 @@ public final class Pages {
 
     public static View readiness(Context c, DayData d) {
         // no ring and no watch (issue #329): one card instead of empty charts
-        if (PhoneViews.needsDevice(c, d)) return PhoneViews.needDevice(c);
+        if (PhoneViews.needsDevice(c, d)) return DeviceViews.needDevice(c);
         LinearLayout root = Ui.vbox(c);
         JSONObject sc = d.scoreObj("readiness");
+        if (sc == null && app.openring.core.Start.shows(app.openring.core.Start.READY, app.openring.core.Start.READY_NEEDS_RING, d.has)) {
+            // only a watch (issue #373): why readiness needs a ring, and the way to add one
+            root.addView(hero(c, Double.NaN, "Readiness", Ui.READY, app.openring.core.Start.READY_TITLE));
+            root.addView(DeviceViews.needCard(c, null, app.openring.core.Start.READY_TEXT, false));
+            root.addView(infoCard(c, "What is readiness?", Explain.READINESS));
+            return root;
+        }
         root.addView(hero(c, d.score("readiness"), "Readiness", Ui.READY,
                 sc == null ? "Readiness appears the morning after a night with the ring on" : headline(d)));
         root.addView(infoCard(c, "What is readiness?", Explain.READINESS));
@@ -981,11 +1020,14 @@ public final class Pages {
         LinearLayout root = Ui.vbox(c);
         JSONObject day = d.day;
         double active = Json.d(day, "active_kcal"), target = Json.d(day, "target_kcal");
+        // without a ring and without its score (issue #373): the steps and workouts below, and why there is no score
+        boolean noScore = !d.has.ring && Double.isNaN(d.score("activity_score"));
         root.addView(hero(c, d.score("activity_score"), "Activity", Ui.ACTIVE,
-                day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal"));
+                noScore ? app.openring.core.Start.ACTIVITY_NEEDS_RING
+                        : day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal"));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
-        if (day == null) {
+        if (day == null || noScore) {
             // no ring summary: the watch's steps and workouts, when it has any (issue #251)
             app.openring.core.MainDevice.Day m = d.merged;
             if (m != null && !Double.isNaN(m.steps)) {
@@ -1465,7 +1507,16 @@ public final class Pages {
         JSONObject day = d.day;
         // the period tracker first (issue #252), when the profile says female, the Settings switch says so, or in demo mode
         if (d.periodShown) root.addView(PeriodCard.body(c, d, nav));
-        root.addView(rightNow(c, d.now));
+        // without a ring (issue #373): no ring readings, live buttons or night charts, one card instead; with neither a ring
+        // nor a watch no heart rate either
+        boolean ring = d.has.ring;
+        if (app.openring.core.Start.shows(BODY, app.openring.core.Start.HEART_NEEDS_DEVICE, d.has)) {
+            root.addView(DeviceViews.needCard(c, null, app.openring.core.Start.HEART_NEEDS, true));
+            root.addView(DeviceViews.needCard(c, app.openring.core.Start.NIGHT_TITLE, app.openring.core.Start.NIGHT_TEXT, false));
+            if (d.periodShown && d.periods != null) root.addView(PeriodAnalysis.cycles(c, d));
+            return root;
+        }
+        if (ring) root.addView(rightNow(c, d.now));
         LinearLayout hr = Ui.card(c);
         hr.addView(Ui.caption(c, "Heart rate today"));
         // the day's own hours, midnight to midnight as the analysis counted them (23 or 25 on a clock change, issue #22)
@@ -1499,6 +1550,15 @@ public final class Pages {
             hr.addView(Ui.gap(c, 4));
             hr.addView(Ui.text(c, fromOther, 12, Ui.OXY, Ui.REGULAR));
             hr.addView(Ui.text(c, Explain.MAIN_FILLED, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
+        if (!ring) {
+            root.addView(hr);
+            root.addView(DeviceViews.needCard(c, app.openring.core.Start.NIGHT_TITLE, app.openring.core.Start.NIGHT_TEXT, false));
+            if (d.periodShown && d.periods != null) {
+                root.addView(PeriodAnalysis.cycles(c, d));
+                if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
+            }
+            return root;
         }
         hr.addView(Ui.gap(c, 10));
         TextView live = Ui.button(c, "Measure live heart rate and HRV", Ui.HEART, false);

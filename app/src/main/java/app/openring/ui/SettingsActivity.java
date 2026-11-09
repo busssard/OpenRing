@@ -273,7 +273,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             LinearLayout demo = Ui.card(this);
             demo.addView(Ui.caption(this, "Demo mode"));
             demo.addView(Ui.body(this, "You are looking at a made up person's data. Your own data (if any) is kept separately and untouched."));
-            action(demo, p.hasKey() ? "Leave the demo, back to my ring" : p.noRing() ? "Leave the demo, back to my data" : "Leave the demo and connect a ring", Ui.SLEEP, new Runnable() {
+            action(demo, p.hasKey() ? "Leave the demo, back to my ring" : p.noRing() || p.watchAddress() != null ? "Leave the demo, back to my data" : "Leave the demo and get started", Ui.SLEEP, new Runnable() {
                 @Override
                 public void run() {
                     if (!app.openring.data.Demo.leave(SettingsActivity.this)) {

@@ -1170,6 +1170,9 @@ public class CoreTest {
         recent265();
         connectPlan195();
         watchSetupWayBack351();
+        start373();
+        startCards373();
+        startScreens373();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -9563,5 +9566,138 @@ public class CoreTest {
                 && settings.substring(Math.max(0, back - 120), back).contains("if (getIntent().getBooleanExtra(FROM_WATCH_SETUP, false)) action(prof, ")
                 && settings.indexOf("startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));", back) - back < 200
                 && settings.indexOf("startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));", back) > back);
+    }
+
+    // ------------------------------------------------------------------ issue #373: Getting started, a watch, a ring or the phone
+
+    /** Which screen the main screen opens: Getting started only with nothing set up; never again with a watch or a choice. */
+    static void start373() {
+        int[] choices = {app.openring.core.Start.NONE, app.openring.core.Start.RING, app.openring.core.Start.WATCH, app.openring.core.Start.PHONE};
+        for (int c : choices) check("#373 valid choice " + c, app.openring.core.Start.valid(c) == c);
+        check("#373 an unknown stored choice is none", app.openring.core.Start.valid(7) == app.openring.core.Start.NONE
+                && app.openring.core.Start.valid(-1) == app.openring.core.Start.NONE);
+        check("#373 the watch and the phone are without a ring, the ring and none are not", app.openring.core.Start.withoutRing(app.openring.core.Start.WATCH)
+                && app.openring.core.Start.withoutRing(app.openring.core.Start.PHONE) && !app.openring.core.Start.withoutRing(app.openring.core.Start.RING)
+                && !app.openring.core.Start.withoutRing(app.openring.core.Start.NONE));
+        // a fresh phone (the owner's reset): Getting started
+        int fresh = KeyState.of(false, false, app.openring.core.Start.noRing(false, false));
+        check("#373 a fresh phone opens Getting started", fresh == KeyState.NONE && app.openring.core.Start.opensSetup(false, false, fresh, false, false));
+        check("#373 a fresh phone in demo mode does not", !app.openring.core.Start.opensSetup(true, false, fresh, false, false));
+        // only a watch: as Prefs.keyState gives it (an added watch counts as no ring while no key is stored)
+        for (boolean chosen : new boolean[] {false, true}) {
+            int st = KeyState.of(false, false, app.openring.core.Start.noRing(chosen, true));
+            check("#373 only a watch is no ring (chosen " + chosen + ")", st == KeyState.NO_RING && KeyState.addRingInstead(false, st) && !KeyState.syncs(st));
+            for (boolean done : new boolean[] {false, true}) {
+                for (boolean unseen : new boolean[] {false, true}) {
+                    check("#373 only a watch never opens the ring setup (chosen " + chosen + ", done " + done + ", key page " + unseen + ")",
+                            !app.openring.core.Start.opensSetup(false, done, st, unseen, true));
+                    check("#373 nor Settings or a failed demo (" + chosen + done + unseen + ")", !KeyState.needsSetup(done, KeyState.ofStored(false, app.openring.core.Start.noRing(chosen, true))));
+                }
+            }
+        }
+        // a watch added and a state that says no key (an older caller): still the app
+        check("#373 a watch with no key state never opens Setup", !app.openring.core.Start.opensSetup(false, false, KeyState.NONE, false, true));
+        // the watch chosen, its setup left half way: the choice is stored, so the app
+        int half = KeyState.of(false, false, app.openring.core.Start.noRing(true, false));
+        check("#373 a watch setup left half way stays in the app", half == KeyState.NO_RING && !app.openring.core.Start.opensSetup(false, false, half, false, false));
+        // just the phone
+        check("#373 just the phone stays in the app", !app.openring.core.Start.opensSetup(false, false, KeyState.of(false, false, true), false, false));
+        // a ring user: exactly as before, with and without a watch
+        for (boolean watch : new boolean[] {false, true}) {
+            for (boolean done : new boolean[] {false, true}) {
+                for (boolean unseen : new boolean[] {false, true}) {
+                    for (boolean read : new boolean[] {false, true}) {
+                        int st = KeyState.of(true, read, app.openring.core.Start.noRing(false, watch));
+                        check("#373 a ring user decides as before (watch " + watch + ", done " + done + ", key page " + unseen + ", read " + read + ")",
+                                app.openring.core.Start.opensSetup(false, done, st, unseen, watch) == KeyState.opensSetup(false, done, KeyState.of(true, read), unseen));
+                    }
+                }
+            }
+        }
+        // the key page of a pairing still shows once with a watch (a ring added later)
+        check("#373 a ring paired later shows its key page once", app.openring.core.Start.opensSetup(false, true, KeyState.READABLE, true, true));
+        // a walk: Getting started, Pair a watch, the app, Settings and a restart, three times
+        int st = KeyState.of(false, false, app.openring.core.Start.noRing(app.openring.core.Start.withoutRing(app.openring.core.Start.WATCH), false));
+        for (int round = 0; round < 3; round++) {
+            check("#373 walk: the app stays the app (" + round + ")", !app.openring.core.Start.opensSetup(false, false, st, false, round > 0));
+            st = KeyState.of(false, false, app.openring.core.Start.noRing(true, true));
+        }
+        for (String t : app.openring.core.Start.texts()) {
+            check("#373 plain, no dash as punctuation: " + t, !t.isEmpty() && !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014") && !t.contains("--"));
+        }
+        check("#373 the owner's words", app.openring.core.Start.GET_STARTED.equals("Get started") && app.openring.core.Start.WATCH_TITLE.equals("Pair a watch")
+                && app.openring.core.Start.RING_TITLE.equals("Pair a ring") && app.openring.core.Start.TITLE.equals("Getting started"));
+        check("#373 each path asks for its own device", app.openring.core.Start.bluetooth(app.openring.core.Start.WATCH).contains("your watch")
+                && app.openring.core.Start.bluetooth(app.openring.core.Start.RING).contains("your ring")
+                && app.openring.core.Start.profile(app.openring.core.Start.WATCH).contains("sent to your watch")
+                && !app.openring.core.Start.profile(app.openring.core.Start.PHONE).contains("sleep"));
+        eq("#373 workouts", app.openring.core.Start.workouts(1) + ", " + app.openring.core.Start.workouts(0) + ", " + app.openring.core.Start.workouts(4), "1 workout, 0 workouts, 4 workouts");
+        check("#373 Explain: sleep with only the watch", app.openring.ui.Explain.SLEEP_WATCH_ONLY.contains("need a ring") && !app.openring.ui.Explain.SLEEP_WATCH_ONLY.contains(" - "));
+    }
+
+    /** Which device cards each tab shows: ring only, watch only, phone only, both, a watch half set up, demo and its previews. */
+    static void startCards373() {
+        app.openring.core.Start.Has ring = app.openring.core.Start.of(false, true, false, app.openring.core.Start.RING, 0);
+        app.openring.core.Start.Has watch = app.openring.core.Start.of(false, false, true, app.openring.core.Start.WATCH, 0);
+        app.openring.core.Start.Has phone = app.openring.core.Start.of(false, false, false, app.openring.core.Start.PHONE, 0);
+        app.openring.core.Start.Has both = app.openring.core.Start.of(false, true, true, app.openring.core.Start.RING, 0);
+        app.openring.core.Start.Has half = app.openring.core.Start.of(false, false, false, app.openring.core.Start.WATCH, 0);
+        app.openring.core.Start.Has demo = app.openring.core.Start.of(true, false, false, app.openring.core.Start.NONE, 0);
+        app.openring.core.Start.Has demoWatch = app.openring.core.Start.of(true, true, false, app.openring.core.Start.NONE, app.openring.core.Start.PREVIEW_WATCH);
+        app.openring.core.Start.Has demoPhone = app.openring.core.Start.of(true, true, true, app.openring.core.Start.NONE, app.openring.core.Start.PREVIEW_PHONE);
+        int T = app.openring.core.Start.TODAY, S = app.openring.core.Start.SLEEP, R = app.openring.core.Start.READY, B = app.openring.core.Start.BODY;
+        eq("#373 ring only, Today", app.openring.core.Start.cards(T, ring).toString(), "[scores, find, ring_metrics, live]");
+        eq("#373 ring and watch, Today: as with the ring", app.openring.core.Start.cards(T, both), app.openring.core.Start.cards(T, ring));
+        eq("#373 watch only, Today", app.openring.core.Start.cards(T, watch).toString(), "[need_scores, watch_day]");
+        eq("#373 phone only, Today", app.openring.core.Start.cards(T, phone).toString(), "[need_scores, phone_day]");
+        eq("#373 watch chosen, not added, Today", app.openring.core.Start.cards(T, half).toString(), "[need_scores, finish_watch, phone_day]");
+        check("#373 a watch half set up is pending, a ring or a watch ends it", half.watchPending && !watch.watchPending && !ring.watchPending
+                && !app.openring.core.Start.of(false, true, false, app.openring.core.Start.WATCH, 0).watchPending);
+        for (app.openring.core.Start.Has h : new app.openring.core.Start.Has[] {watch, phone, half, demoWatch, demoPhone}) {
+            for (String k : new String[] {app.openring.core.Start.SCORES, app.openring.core.Start.FIND, app.openring.core.Start.RING_METRICS, app.openring.core.Start.LIVE}) {
+                check("#373 no ring card without a ring: " + k, !app.openring.core.Start.shows(T, k, h));
+            }
+            check("#373 no ring body cards without a ring", !app.openring.core.Start.shows(B, app.openring.core.Start.RING_BODY, h)
+                    && app.openring.core.Start.shows(B, app.openring.core.Start.NIGHT_NEEDS_RING, h));
+        }
+        eq("#373 Sleep: only the phone needs a device", app.openring.core.Start.cards(S, phone).toString() + app.openring.core.Start.cards(S, watch)
+                + app.openring.core.Start.cards(S, ring) + app.openring.core.Start.cards(S, both), "[need_device][][][]");
+        eq("#373 Ready", app.openring.core.Start.cards(R, phone).toString() + app.openring.core.Start.cards(R, watch) + app.openring.core.Start.cards(R, ring)
+                + app.openring.core.Start.cards(R, both), "[need_device][ready_needs_ring][][]");
+        eq("#373 Body", app.openring.core.Start.cards(B, phone).toString() + app.openring.core.Start.cards(B, watch) + app.openring.core.Start.cards(B, ring),
+                "[heart_needs_device, night_needs_ring][heart, night_needs_ring][heart, ring_body]");
+        eq("#373 Activity and Screen show no device cards", app.openring.core.Start.cards(app.openring.core.Start.ACTIVITY, watch).size()
+                + app.openring.core.Start.cards(app.openring.core.Start.SCREEN, phone).size(), 0);
+        check("#373 demo: the made up ring and watch, whatever is stored", demo.ring && demo.watch && !demo.watchPending);
+        check("#373 demo preview: only the watch", !demoWatch.ring && demoWatch.watch && demoWatch.watchOnly());
+        check("#373 demo preview: only the phone", demoPhone.phoneOnly() && !demoPhone.watchOnly());
+        check("#373 previews count only in demo mode", app.openring.core.Start.of(false, true, true, 0, app.openring.core.Start.PREVIEW_PHONE).ring);
+        eq("#373 Today's cards follow the same order for the demo's watch preview", app.openring.core.Start.cards(T, demoWatch), app.openring.core.Start.cards(T, watch));
+    }
+
+    /** The screens ask core/Start (read from the sources, which the JVM cannot run). */
+    static void startScreens373() {
+        try {
+            String root = "app/src/main/java/app/openring/";
+            String main = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/MainActivity.java").toPath()), "UTF-8");
+            String setup = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/SetupActivity.java").toPath()), "UTF-8");
+            String pages = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/Pages.java").toPath()), "UTF-8");
+            String prefs = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "data/Prefs.java").toPath()), "UTF-8");
+            check("#373 the main screen decides with Start.opensSetup and the watch", main.contains("app.openring.core.Start.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null, prefs.watchAddress() != null)")
+                    && !main.contains("app.openring.core.KeyState.opensSetup("));
+            check("#373 Prefs counts an added watch as no ring", prefs.contains("KeyState.of(hasKey(), loadKey() != null, app.openring.core.Start.noRing(noRing(), watchAddress() != null))")
+                    && prefs.contains("KeyState.ofStored(hasKey(), app.openring.core.Start.noRing(noRing(), watchAddress() != null))"));
+            check("#373 Getting started leads to the choice, the choice to each path", setup.contains("step = CHOICE;") && setup.contains("app.openring.core.Start.RING_TITLE")
+                    && setup.contains("app.openring.core.Start.WATCH_TITLE") && setup.contains("app.openring.core.Start.PHONE_TITLE"));
+            int fw = setup.indexOf("void finishWithout(int choice)");
+            check("#373 the watch and the phone set no ring before the app opens, the watch setup on top", fw > 0
+                    && setup.indexOf("p.setNoRing(true);", fw) > fw && setup.indexOf("p.setNoRing(true);", fw) < setup.indexOf("startActivities(", fw)
+                    && setup.indexOf("new Intent(this, WatchSetupActivity.class)", fw) > fw);
+            check("#373 Today without a ring takes its cards from Start", pages.contains("if (!d.has.ring) return todayWithout(c, d, nav, syncLine);")
+                    && pages.contains("app.openring.core.Start.cards(TODAY, d.has)"));
+            check("#373 the old first screen button is gone", !setup.contains("KeyState.USE_WITHOUT"));
+        } catch (IOException e) {
+            check("#373 sources readable", false, e);
+        }
     }
 }

@@ -574,6 +574,11 @@ public final class Explain {
     public static final String WATCH_SLEEP = "Withings' own sleep stages for the night that ended on this day, as the watch worked them out. "
             + "Time asleep adds light, deep and REM. Parts with a code we do not know yet show as no data.";
 
+    /** Sleep with only the watch and no night from it (issue #373). */
+    public static final String SLEEP_WATCH_ONLY = "With only the watch, Sleep shows Withings' own night: when you fell asleep and woke up, light, deep and REM "
+            + "sleep and the heart rate through the night. Wear the watch in bed and sync it in the morning (Settings, Watch). "
+            + "A sleep score, HRV, blood oxygen and breathing need a ring.";
+
     public static final String WATCH_BATTERY = "The watch's battery at the last sync of each day. A jump up is a charge.";
 
     public static final String WATCH_DROP = "How much the battery fell per day over the last 7 days, charges left out. "

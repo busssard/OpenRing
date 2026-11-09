@@ -257,28 +257,9 @@ final class PhoneViews {
         return b;
     }
 
-    /** Sleep and Ready without a ring and without a watch: one card instead of empty charts, and the way to Settings. */
-    static View needDevice(final Context c) {
-        LinearLayout root = Ui.vbox(c);
-        LinearLayout card = Ui.card(c);
-        card.addView(Ui.body(c, PhoneSteps.NEED_DEVICE));
-        TextView b = Ui.button(c, "Open Settings", Ui.TEXT_2, false);
-        b.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                c.startActivity(new Intent(c, SettingsActivity.class));
-            }
-        });
-        LinearLayout.LayoutParams lp = Ui.matchWrap();
-        lp.setMargins(0, Ui.dp(c, 12), 0, 0);
-        card.addView(b, lp);
-        root.addView(card);
-        return root;
-    }
-
-    /** Sleep and Ready show {@link #needDevice}: no ring, no watch and no night stored, outside demo mode. */
+    /** Sleep and Ready show {@code DeviceViews.needDevice}: no ring, no watch and no night stored, outside demo mode. */
     static boolean needsDevice(Context c, DayData d) {
-        Prefs p = Prefs.of(c);
-        return !p.demo() && !KeyState.hasRing(p.ringState()) && p.watchAddress() == null && !d.anyNight && (d.merged == null || d.merged.watchNight == null);
+        // the devices as the day was loaded (issue #373: also the demo's previews)
+        return d.has.phoneOnly() && !d.anyNight && (d.merged == null || d.merged.watchNight == null);
     }
 }
