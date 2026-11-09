@@ -254,9 +254,9 @@ check "version: a stable rebuild of the v2.0 commit after v2.1 exists is 2.0 aga
 check "version: back on the newest commit the stable is 2.2 (it has a note after v2.1)" '[ "$(ver stable)" = "35 2.2" ]'
 ( cd "$vr" && git tag v2.x-test && git tag v2.1.5 )
 check "version: odd tags are ignored" '[ "$(ver nightly)" = "35 2.1.1" ]'
-check "version: no channel set means nightly" '[ "$( cd "$vr" && ./tools/version.sh )" = "35 2.1.1" ]'
+check "version: no channel set means nightly" '[ "$( cd "$vr" && env -u VERSION_CHANNEL ./tools/version.sh )" = "35 2.1.1" ]'
 mkdir -p "$vr/nogit"; cp -r "$vr/tools" "$vr/changes" "$vr/nogit/"
-check "version: a copy without git or tags counts as no 2.x yet" '[ "$( cd "$vr/nogit" && GIT_DIR=/nonexistent ./tools/version.sh )" = "35 1.34" ]'
+check "version: a copy without git or tags counts as no 2.x yet" '[ "$( cd "$vr/nogit" && env -u VERSION_CHANNEL GIT_DIR=/nonexistent ./tools/version.sh )" = "35 1.34" ]'
 rm -rf "$vr"
 chan=$(grep -h 'VERSION_CHANNEL: ' .github/workflows/build.yml | sed 's/^ *//')
 check "version: the emulator build reads the tags and the channel as build.yml does (its screenshots show the version)" \

@@ -23,3 +23,18 @@ jobs:
             echo "::error::main only takes releases from dev. Change the base of this pull request to dev (Edit, next to the title)."
             exit 1
           fi
+  stable-build:
+    # The build on main runs as the stable channel (VERSION_CHANNEL=stable in build.yml); pull requests and
+    # dev build as nightlies. This runs the release's version and CI script checks the way main will, so a
+    # release pull request is only green when the stable build can pass (6 and 9 November it could not, #371).
+    runs-on: ubuntu-latest
+    env:
+      VERSION_CHANNEL: stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Version as main will build it
+        run: ./tests/check_version.sh && ./tools/version.sh
+      - name: CI script checks as stable
+        run: ./tests/test_ci_scripts.sh
