@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
 import java.util.TreeMap;
 
 /**
@@ -270,6 +271,91 @@ public final class WatchDays {
         if (w.steps > 0) b.append(", ").append(w.steps).append(w.steps == 1 ? " step" : " steps");
         if (w.kcal > 0) b.append(", ").append(w.kcal).append(" kcal");
         return b.toString();
+    }
+
+    /**
+     * Everything the Watch page reads per day, worked out once from the stored rows (on the loading thread), so going to
+     * another day only looks it up. Each answer is exactly what the function of the same name above gives for the same
+     * rows and zones; it only does the work once instead of on every tap of "Day before" or "Next day", where each tap
+     * went through the whole stored history about ten times on the main thread, with a zone lookup per row.
+     */
+    public static final class Index {
+        /** Per day maps, read only: they are shared for as long as the page is open. */
+        public final SortedMap<LocalDate, Integer> steps, metres, kcal, climb, battery;
+        /** The newest battery reading, or null ({@link #newestBattery}). */
+        public final Records.Battery newestBattery;
+        private final TreeMap<LocalDate, List<Records.Heart>> heart = new TreeMap<LocalDate, List<Records.Heart>>();
+        private final TreeMap<LocalDate, List<Records.Workout>> workouts = new TreeMap<LocalDate, List<Records.Workout>>();
+        private final List<Records.Sleep> sleep;
+        private final List<Records.Battery> batteryRows;
+        private final Zones zones;
+
+        public Index(List<Records.Steps> steps, List<Records.Moves> moves, List<Records.Heart> heart, List<Records.Workout> workouts,
+                List<Records.Sleep> sleep, List<Records.Battery> battery, Zones z) {
+            this.zones = z;
+            this.steps = Collections.unmodifiableSortedMap(stepsPerDay(steps, z));
+            this.metres = Collections.unmodifiableSortedMap(metresPerDay(steps, z));
+            this.kcal = Collections.unmodifiableSortedMap(kcalPerDay(steps, z));
+            this.climb = Collections.unmodifiableSortedMap(climbPerDay(moves, z));
+            this.battery = Collections.unmodifiableSortedMap(batteryPerDay(battery, z));
+            this.newestBattery = newestBattery(battery);
+            this.sleep = new ArrayList<Records.Sleep>(sleep);
+            this.batteryRows = new ArrayList<Records.Battery>(battery);
+            // the rows themselves (no copies), grouped in their order, then sorted per day by time like heartOn and
+            // workoutsOn (a stable sort, so rows with the same time keep the same order)
+            for (Records.Heart h : heart) {
+                LocalDate d = day(h.t, z);
+                List<Records.Heart> l = this.heart.get(d);
+                if (l == null) this.heart.put(d, l = new ArrayList<Records.Heart>());
+                l.add(h);
+            }
+            for (List<Records.Heart> l : this.heart.values()) {
+                Collections.sort(l, new Comparator<Records.Heart>() {
+                    @Override
+                    public int compare(Records.Heart a, Records.Heart b) {
+                        return Long.compare(a.t, b.t);
+                    }
+                });
+            }
+            for (Records.Workout w : workouts) {
+                LocalDate d = day(w.start, z);
+                List<Records.Workout> l = this.workouts.get(d);
+                if (l == null) this.workouts.put(d, l = new ArrayList<Records.Workout>());
+                l.add(w);
+            }
+            for (List<Records.Workout> l : this.workouts.values()) {
+                Collections.sort(l, new Comparator<Records.Workout>() {
+                    @Override
+                    public int compare(Records.Workout a, Records.Workout b) {
+                        return Long.compare(a.start, b.start);
+                    }
+                });
+            }
+        }
+
+        /** As {@link WatchDays#heartOn}, a new list. */
+        public List<long[]> heartOn(LocalDate day) {
+            List<long[]> out = new ArrayList<long[]>();
+            List<Records.Heart> l = heart.get(day);
+            if (l != null) for (Records.Heart h : l) out.add(new long[] {h.t, h.bpm});
+            return out;
+        }
+
+        /** As {@link WatchDays#workoutsOn}, a new list. */
+        public List<Records.Workout> workoutsOn(LocalDate day) {
+            List<Records.Workout> l = workouts.get(day);
+            return l == null ? new ArrayList<Records.Workout>() : new ArrayList<Records.Workout>(l);
+        }
+
+        /** As {@link WatchDays#nightFor} (the sleep rows are few, so it is worked out per day). */
+        public Night nightFor(LocalDate day) {
+            return WatchDays.nightFor(sleep, day, zones);
+        }
+
+        /** As {@link WatchDays#dropPerDay} on the battery rows. */
+        public double dropPerDay(long from) {
+            return WatchDays.dropPerDay(batteryRows, from);
+        }
     }
 
     /** Map helper for the page: the value of a day, NaN when missing. */
