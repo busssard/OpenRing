@@ -13,9 +13,9 @@ public final class KeyState {
     public static final int NONE = 0, READABLE = 1, UNREADABLE = 2;
     /**
      * No ring by choice (issue #329): the person uses Open Ring without a ring (phone steps, screen time, the period
-     * tracker). Not a missing key, so it never opens Setup and never syncs. Nothing sets it before phase 1b; every place
-     * that decides about Setup or a paired ring asks {@link #needsSetup} or {@link #hasRing}, so none can send the person
-     * back to Setup in a loop.
+     * tracker). Not a missing key, so it never opens Setup and never syncs. Setup's "Use without a ring" sets it (phase 1b,
+     * {@code Prefs.setNoRing}); a key, once stored, wins over it. Every place that decides about Setup or a paired ring asks
+     * {@link #needsSetup} or {@link #hasRing}, so none can send the person back to Setup in a loop.
      */
     public static final int NO_RING = 3;
 
@@ -26,6 +26,15 @@ public final class KeyState {
     }
 
     /**
+     * As {@link #of(boolean, boolean)}, with the person's choice to use the app without a ring ({@code noRing}, issue #329):
+     * it counts only while no key is stored, so pairing a ring later ends it by itself.
+     */
+    public static int of(boolean stored, boolean read, boolean noRing) {
+        if (!stored && noRing) return NO_RING;
+        return of(stored, read);
+    }
+
+    /**
      * The state as far as it is known without reading the key: it never decrypts, so it gives {@link #NONE} or
      * {@link #READABLE}, also for a stored key this phone cannot read (never {@link #UNREADABLE} or {@link #NO_RING}).
      * Use it only for {@link #needsSetup} and {@link #hasRing}, which treat a readable and an unreadable key alike; never
@@ -33,6 +42,11 @@ public final class KeyState {
      */
     public static int ofStored(boolean stored) {
         return of(stored, true);
+    }
+
+    /** As {@link #ofStored(boolean)} with the choice to use the app without a ring: {@link #NO_RING} while no key is stored. */
+    public static int ofStored(boolean stored, boolean noRing) {
+        return of(stored, true, noRing);
     }
 
     /**
@@ -109,9 +123,33 @@ public final class KeyState {
     /** A backup file saved in Settings while the key cannot be read (issue #288). */
     public static final String BACKUP_SAVED_NO_KEY = "Backup saved, without the ring key this phone cannot read.";
 
+    // ---- no ring by choice (issue #329, phase 1b) ----
+
+    /** Setup's second button on its first screen: sets {@link #NO_RING} and goes to the main screen. */
+    public static final String USE_WITHOUT = "Use without a ring";
+    /** Under it: what works without a ring. */
+    public static final String WITHOUT_TEXT = "Steps from this phone, screen time and the period tracker work without a ring. Add a ring later in Settings.";
+    /** The button every ring only action shows instead (Sync now, Find my ring, Live, the games, the Ring block); it opens Setup. */
+    public static final String ADD_RING = "Add a ring";
+    /** The window or line those actions show without a ring. */
+    public static final String NO_RING_TEXT = "No ring is added. Add a ring to sync, find it or measure live.";
+    /** The Ring block's header line and text without a ring. */
+    public static final String NO_RING_STATUS = "No ring added";
+    public static final String NO_RING_BLOCK = "You use Open Ring without a ring. Add one to see sleep, readiness and your heart rate.";
+    /** The ring games card without a ring. */
+    public static final String NO_RING_GAMES = "The ring games use your ring as a controller. Add a ring to play.";
+
+    /**
+     * What a ring only action does now (issue #329): {@code true} when it must show {@link #ADD_RING} instead of running
+     * (no ring by choice, outside demo mode; demo mode has its made up ring).
+     */
+    public static boolean addRingInstead(boolean demo, int state) {
+        return !demo && state == NO_RING;
+    }
+
     /** Every text above, for the tests (plain, no dashes as punctuation). */
     public static String[] texts() {
         return new String[]{NO_KEY_RAW, UNREADABLE_RAW, PLAIN, STATUS, SYNC_TITLE, SYNC_TEXT, BUTTON, SETUP_TITLE, SETUP_TEXT, SETTINGS_TEXT, BACKUP_NO_KEY,
-            BACKUP_SETTINGS_ONLY, BACKUP_SAVED_NO_KEY};
+            BACKUP_SETTINGS_ONLY, BACKUP_SAVED_NO_KEY, USE_WITHOUT, WITHOUT_TEXT, ADD_RING, NO_RING_TEXT, NO_RING_STATUS, NO_RING_BLOCK, NO_RING_GAMES};
     }
 }

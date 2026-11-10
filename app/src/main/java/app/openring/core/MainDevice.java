@@ -33,23 +33,27 @@ import app.openring.core.withings.WatchDays;
  *
  * <p>Each device is one {@link Source} (issue #329, phase 1a, moved here from {@code core/withings}): the step sum and the
  * gap filling exist once, in {@link #numbers}, for whichever device is the main one.
+ *
+ * <p>The phone (issue #329, phase 1b) is the third device: steps only, from its step counter ({@link PhoneSteps}). It
+ * covers the quarter hours its counted intervals reach, lends each interval's steps spread evenly over it (an estimate), and
+ * fills last: only where neither the main device nor the device before it was worn. It has no heart rate and no night.
  */
 public final class MainDevice {
     private MainDevice() {}
 
     /** The stored codes (Prefs and backups): never change them. */
     public static final int RING = 0, WATCH = 1;
-    /** Reserved for the phone's own step counter (issue #329, phase 1b); not a choice yet, {@link #valid} still makes it the ring. */
+    /** The phone's own step counter (issue #329, phase 1b): steps only. */
     public static final int PHONE = 2;
     /** The devices that can be picked as main device, in the order Settings shows them (a copy: {@link #choices}). */
-    private static final int[] CHOICES = {RING, WATCH};
+    private static final int[] CHOICES = {RING, WATCH, PHONE};
 
     /** The devices that can be picked as main device, in the order Settings shows them; a new array on each call. */
     public static int[] choices() {
         return CHOICES.clone();
     }
 
-    /** The name on a device's chip in Settings ("Ring", "Watch"; "Phone" for the reserved code, not shown yet). */
+    /** The name on a device's chip in Settings ("Ring", "Watch", "Phone"). */
     public static String label(int device) {
         switch (device) {
             case WATCH: return "Watch";
@@ -62,9 +66,47 @@ public final class MainDevice {
     /** A watch record counts the watch as worn this long before and after it (its heart rate comes about every 30 minutes). */
     public static final long WATCH_REACH_S = 1800;
 
-    /** A stored choice that is not one of the two is the ring, the default (also {@link #PHONE} while it is reserved). */
+    /** A stored choice that is not one of the three is the ring, the default before the phone existed. */
     public static int valid(int main) {
-        return main == WATCH ? WATCH : RING;
+        return main == WATCH || main == PHONE ? main : RING;
+    }
+
+    /**
+     * The main device when the person never picked one (issue #329): the ring when one is paired, else the watch when one is
+     * added, else the phone when it counts steps, else the ring (as before).
+     */
+    public static int defaultMain(boolean ring, boolean watch, boolean phone) {
+        if (ring) return RING;
+        if (watch) return WATCH;
+        return phone ? PHONE : RING;
+    }
+
+    /**
+     * The main device shown (issue #329): {@code stored} is the saved choice, -1 for none. None: {@link #defaultMain}. A
+     * stored phone ({@code 2}, which a version of phase 1a read as the ring) is the phone only while the phone counts steps
+     * ({@code phone}), otherwise the ring as before; the ring and the watch stay as stored (also a watch that was forgotten,
+     * as before).
+     */
+    public static int shown(int stored, boolean ring, boolean watch, boolean phone) {
+        if (stored < 0) return defaultMain(ring, watch, phone);
+        if (stored == PHONE) return phone ? PHONE : RING;
+        return valid(stored);
+    }
+
+    /** The devices Settings offers as main device: those present, in the order of {@link #choices}. */
+    public static int[] present(boolean ring, boolean watch, boolean phone) {
+        int n = (ring ? 1 : 0) + (watch ? 1 : 0) + (phone ? 1 : 0);
+        int[] out = new int[n];
+        int k = 0;
+        if (ring) out[k++] = RING;
+        if (watch) out[k++] = WATCH;
+        if (phone) out[k] = PHONE;
+        return out;
+    }
+
+    /** The line Settings shows for the main device ("Phone (steps only)" for the phone, else its label). */
+    public static String mainLine(int device) {
+        return device == PHONE ? PhoneSteps.MAIN_LINE : label(device);
     }
 
     /** A value that is one of the choices (a restore takes only such a value from a backup); reads the private array, so no caller can change it. */
@@ -73,9 +115,14 @@ public final class MainDevice {
         return false;
     }
 
-    /** The other device's name in a sentence ("your watch"). */
+    /** A device's name in a sentence ("your watch"). */
     public static String name(int device) {
-        return device == WATCH ? "your watch" : "your ring";
+        return device == WATCH ? "your watch" : device == PHONE ? "your phone" : "your ring";
+    }
+
+    /** The order the other devices fill the main one's gaps in: ring, watch, then the phone (steps only, last). */
+    static int priority(int kind) {
+        return kind == RING ? 0 : kind == WATCH ? 1 : 2;
     }
 
     /** What the ring's stored results give for one day, read by the caller from its day summary and nights. */
@@ -108,6 +155,30 @@ public final class MainDevice {
         }
     }
 
+    /**
+     * The phone's step intervals around one day (issue #329, phase 1b), each {start, stop, steps}; more is fine, only the parts
+     * inside the day count, spread evenly over each interval.
+     */
+    public static final class Phone {
+        public final List<double[]> intervals = new ArrayList<double[]>();
+
+        public boolean isEmpty() {
+            return intervals.isEmpty();
+        }
+    }
+
+    /** What one other device added to the day: its steps and the quarter hours it filled. */
+    public static final class Fill {
+        public final int kind;
+        public final double steps;
+        public final List<double[]> ranges = new ArrayList<double[]>();
+
+        Fill(int kind, double steps) {
+            this.kind = kind;
+            this.steps = steps;
+        }
+    }
+
     /** The day as shown. */
     public static final class Day {
         public int main;
@@ -131,14 +202,41 @@ public final class MainDevice {
         public boolean watchRows;
         /** The watch's workouts that start on this day, oldest first (only the watch records them). */
         public final List<Records.Workout> workouts = new ArrayList<Records.Workout>();
+        /**
+         * Every other device that added steps, in the order they filled (issue #329): the first one's are also in
+         * {@link #fillSteps} and {@link #stepFill} as before, the phone's come last.
+         */
+        public final List<Fill> fills = new ArrayList<Fill>();
+        /** The device that fills first (the old "other"), -1 before {@link #numbers}. */
+        public int otherKind = -1;
+        /** The device the main device's gaps are measured from: the main one, or the other's own day when the main one has none. */
+        public int base = -1;
+        /** With {@link #whole}: the device whose numbers they are. */
+        public int wholeFrom = -1;
+        /** The device whose heart rate fills the line, -1 for none. */
+        public int hrFrom = -1;
+        /** The phone's intervals that reach into this day, each {start, stop, steps} (the evidence on Activity), empty for none. */
+        public final List<double[]> phone = new ArrayList<double[]>();
+        /** The steps the {@link #base} device lends per quarter hour ({quarter hour, steps, metres}), and where it was worn. */
+        public final List<double[]> baseParts = new ArrayList<double[]>();
+        public boolean[] baseWorn = new boolean[0];
+        /** The quarter hours some device counted steps in after the filling (the main device, then each other in turn). */
+        public boolean[] covered = new boolean[0];
+
+        /** The steps the phone added, 0 for none. */
+        public double phoneSteps() {
+            for (Fill f : fills) if (f.kind == PHONE) return f.steps;
+            return 0;
+        }
 
         /** The other device filled some of the day. */
         public boolean filled() {
-            return whole || !stepFill.isEmpty() || !hrFill.isEmpty() || nightFromOther();
+            return whole || !stepFill.isEmpty() || !hrFill.isEmpty() || nightFromOther() || !fills.isEmpty();
         }
 
-        /** The night shown comes from the device that is not the main one. */
+        /** The night shown comes from the device that is not the main one (the phone has none of its own). */
         public boolean nightFromOther() {
+            if (main == PHONE) return watchNight != null || ringNight;
             return main == RING ? watchNight != null : watchNight == null && ringNight && watchRows;
         }
 
@@ -147,8 +245,9 @@ public final class MainDevice {
             return !Double.isNaN(steps) || hr.size() > 0 || watchNight != null || !workouts.isEmpty();
         }
 
-        /** The other device. */
+        /** The other device (the first one that fills the main one's gaps). */
         public int other() {
+            if (otherKind >= 0) return otherKind;
             return main == WATCH ? RING : WATCH;
         }
     }
@@ -219,7 +318,7 @@ public final class MainDevice {
      * new source, not a third copy of the step sum and the gap filling.
      */
     public static final class Source {
-        /** {@link #RING}, {@link #WATCH} (and {@link #PHONE} once it exists). */
+        /** {@link #RING}, {@link #WATCH} or {@link #PHONE}. */
         public final int kind;
         /** The quarter hours of the day it covers (was worn). */
         public final boolean[] worn;
@@ -230,24 +329,40 @@ public final class MainDevice {
         /** The steps it lends to the main device's gaps, each {quarter hour, steps, metres}, in the order they are summed. */
         public final List<double[]> parts = new ArrayList<double[]>();
         /**
-         * Its parts are an estimate (the ring's per minute rule): their sum is rounded to tens, the distance follows from
-         * the steps, and only a sum above 0 counts. A main device with nothing on the day then shows this device's own day
-         * as stored instead of the estimate.
+         * Its parts are an estimate (the ring's per minute rule, the phone's even spread): their sum is rounded to
+         * {@link #roundTo}, the distance follows from the steps, and only a sum above 0 counts. (Phase 1a let this flag also
+         * pick the fallback below; the #347 review asked to split the two jobs before the phone came.)
          */
         public final boolean estimate;
+        /** The unit {@link #estimate} parts are rounded to: tens for the ring, whole steps for the phone (0: not rounded). */
+        public final double roundTo;
+        /**
+         * A main device with nothing on the day shows this device's own day as stored instead of its estimate (the ring:
+         * its day summary). False for the watch and the phone, whose own day is the sum of what they lend.
+         */
+        public final boolean ownDay;
+        /**
+         * The device is there around this day, so "it has no data for this day" may be said when it is the main device: the
+         * ring always (as before), the watch when it has rows around the day ({@code Day.watchRows}), the phone always.
+         */
+        public final boolean rows;
         /** Its heart rate points: the ring's line as stored, or the watch's readings of the day (made a line by {@link #curve}). */
         final TS heart;
         /** {@link #heart} holds single readings that become a line with {@code DayHeart.curve}. */
         final boolean curve;
         private final double from, to;
 
-        Source(int kind, boolean[] worn, boolean present, double steps, double metres, boolean estimate, TS heart, boolean curve, double from, double to) {
+        Source(int kind, boolean[] worn, boolean present, double steps, double metres, boolean estimate, double roundTo, boolean ownDay, boolean rows,
+                TS heart, boolean curve, double from, double to) {
             this.kind = kind;
             this.worn = worn;
             this.present = present;
             this.steps = steps;
             this.metres = metres;
             this.estimate = estimate;
+            this.roundTo = roundTo;
+            this.ownDay = ownDay;
+            this.rows = rows;
             this.heart = heart;
             this.curve = curve;
             this.from = from;
@@ -274,7 +389,7 @@ public final class MainDevice {
     /** The ring as a source: worn by its movement, heart rate and nights; it lends its movement estimate outside its nights. */
     public static Source ring(Ring r, double from, double to, ZoneId zone) {
         boolean[] rw = ringWorn(r, from, to, zone);
-        Source s = new Source(RING, rw, any(rw), r.steps, r.metres, true, r.hr, false, from, to);
+        Source s = new Source(RING, rw, any(rw), r.steps, r.metres, true, 10, true, true, r.hr, false, from, to);
         for (int k = 0; k < rw.length; k++) {
             if (!rw[k]) continue;
             double a = from + k * SLOT_S, mid = a + SLOT_S / 2;
@@ -302,18 +417,59 @@ public final class MainDevice {
         }
         TS readings = new TS();
         for (Records.Heart h : w.heart) if (h.t >= from && h.t < to) readings.add(h.t, h.bpm);
-        Source s = new Source(WATCH, ww, anyWatchIn(w, from, to) && any(ww), got ? steps : Double.NaN, got ? metres : Double.NaN, false, readings, true, from, to);
+        Source s = new Source(WATCH, ww, anyWatchIn(w, from, to) && any(ww), got ? steps : Double.NaN, got ? metres : Double.NaN, false, 0, false,
+                !w.isEmpty(), readings, true, from, to);
         s.parts.addAll(parts);
         return s;
     }
 
     /**
+     * The phone as a source (issue #329, phase 1b): it covers every quarter hour one of its counted intervals reaches (a
+     * phone that lay on a table counted 0 there), its total is the day's share of every interval, spread evenly, and it
+     * lends each quarter hour's share above 0. The distance follows from the steps. No heart rate.
+     */
+    public static Source phone(Phone p, double from, double to) {
+        int n = slots(from, to);
+        boolean[] on = new boolean[n];
+        double[] per = new double[n];
+        double steps = 0;
+        boolean got = false;
+        for (double[] i : p.intervals) {
+            double a = i[0], b = i[1];
+            if (b <= from || a >= to) continue;
+            got = true;
+            steps += PhoneSteps.share(a, b, i[2], from, to);
+            int lo = Math.max(0, slot(Math.max(a, from), from)), hi = Math.min(n - 1, (int) Math.ceil((Math.min(b, to) - from) / SLOT_S - 1e-9) - 1);
+            for (int k = lo; k <= hi; k++) {
+                double sa = from + k * SLOT_S, sb = Math.min(to, sa + SLOT_S);
+                double part = PhoneSteps.share(a, b, i[2], sa, sb);
+                if (b > sa && a < sb) on[k] = true;
+                per[k] += part;
+            }
+        }
+        Source s = new Source(PHONE, on, got, got ? steps : Double.NaN, got ? Wellness.stepsToMeters(steps) : Double.NaN, true, 1, false, true,
+                new TS(), false, from, to);
+        for (int k = 0; k < n; k++) if (per[k] > 0) s.parts.add(new double[] {k, per[k], 0});
+        return s;
+    }
+
+    /**
      * The day {@code date} from {@code from} to {@code to} (its midnights in {@code zone}) as shown with {@code main} as the
-     * main device. {@code watch} null or empty: the ring's numbers exactly as given.
+     * main device. {@code watch} null or empty: the ring's numbers exactly as given. Without the phone: a stored phone
+     * ({@code 2}) is the ring, as in phase 1a.
      */
     public static Day of(int main, LocalDate date, double from, double to, final ZoneId zone, Ring ring, Watch watch) {
+        return of(main, date, from, to, zone, ring, watch, null);
+    }
+
+    /**
+     * As above with the phone's intervals around the day (issue #329, phase 1b); {@code phone} null: no phone source at all,
+     * and the phone as main device falls back to the ring. An empty {@code phone} is a source with nothing on this day.
+     */
+    public static Day of(int main, LocalDate date, double from, double to, final ZoneId zone, Ring ring, Watch watch, Phone phone) {
         Day d = new Day();
         d.main = valid(main);
+        if (d.main == PHONE && phone == null) d.main = RING;
         d.ringNight = ring.night;
         if (watch == null) watch = new Watch();
         d.watchRows = !watch.isEmpty();
@@ -335,61 +491,110 @@ public final class MainDevice {
         List<Source> sources = new ArrayList<Source>();
         sources.add(ring(ring, from, to, zone));
         sources.add(watch(watch, from, to));
+        if (phone != null) {
+            sources.add(phone(phone, from, to));
+            for (double[] i : phone.intervals) if (i[1] > from && i[0] < to) d.phone.add(i);
+        }
         numbers(d, sources, from, to);
         return d;
     }
 
     /**
      * Steps, distance and the heart rate line of {@code d} (its {@code main} and {@code watchRows} set): the main device's
-     * own numbers, and the other device's only in the quarter hours the main one did not cover. One path for every pair
-     * of devices. {@code sources} holds one source per device, the main one among them; until the phone arrives (issue
-     * #329, phase 1b) at most one other.
+     * own numbers, and the others' only in the quarter hours the main one did not cover. One path for every set of devices.
+     * {@code sources} holds one source per device, the main one among them, and at least one other; the others fill in the
+     * order ring, watch, phone, each only where no device before it was worn. With the ring and the watch alone this is
+     * exactly the path of phase 1a (the same doubles, JVM test).
      */
     public static void numbers(Day d, List<Source> sources, double from, double to) {
-        Source main = null, other = null;
+        Source main = null;
+        List<Source> others = new ArrayList<Source>();
+        boolean[] seen = new boolean[3];
         for (Source s : sources) {
-            if (s.kind == d.main && main == null) main = s;
-            else if (other == null) other = s;
-            else throw new IllegalArgumentException("one other device only, the phone comes with phase 1b of #329");
+            int p = priority(s.kind);
+            if (seen[p]) throw new IllegalArgumentException("one source per device");
+            seen[p] = true;
+            if (s.kind == d.main) main = s;
+            else others.add(s);
         }
-        if (main == null || other == null) throw new IllegalArgumentException("the main device and one other are needed");
+        if (main == null || others.isEmpty()) throw new IllegalArgumentException("the main device and one other are needed");
+        Collections.sort(others, new Comparator<Source>() {
+            @Override
+            public int compare(Source a, Source b) {
+                return priority(a.kind) - priority(b.kind);
+            }
+        });
         int n = slots(from, to);
-        // named only when the watch has rows at all (a day before it was added, a day off the wrist)
-        d.whole = !main.present && other.present && d.watchRows;
-        if (!main.present && other.estimate) {
-            // the main device has nothing on this day: the other's day as stored, not its estimate
-            d.steps = other.steps;
-            d.metres = other.metres;
-            d.hr = other.line();
-            return;
+        Source first = others.get(0);
+        d.otherKind = first.kind;
+        Source present = null;
+        for (Source o : others) {
+            if (o.present) {
+                present = o;
+                break;
+            }
         }
-        d.steps = main.steps;
-        d.metres = main.metres;
-        boolean[] used = new boolean[n];
-        double steps = 0, metres = 0;
-        boolean got = false;
-        for (double[] p : other.parts) {
-            int k = (int) p[0];
-            if (main.worn[k]) continue;
-            steps += p[1];
-            metres += p[2];
-            used[k] = true;
-            got = true;
+        // named only when the main device is there around this day (the watch: it has rows at all; a day before it was added)
+        d.whole = !main.present && present != null && main.rows;
+        if (d.whole) d.wholeFrom = present.kind;
+        // the main device has nothing on this day: the first other one's own day as stored, not its estimate (the ring)
+        Source base = !main.present && first.ownDay ? first : main;
+        d.base = base.kind;
+        d.steps = base.steps;
+        d.metres = base.metres;
+        d.baseParts.addAll(base.parts);
+        d.baseWorn = base.worn.clone();
+        boolean[] covered = base.worn.clone();
+        for (Source f : others) {
+            if (f == base) continue;
+            boolean[] used = new boolean[n];
+            double steps = 0, metres = 0;
+            boolean got = false;
+            for (double[] p : f.parts) {
+                int k = (int) p[0];
+                if (covered[k]) continue;
+                steps += p[1];
+                metres += p[2];
+                used[k] = true;
+                got = true;
+            }
+            if (f.estimate) {
+                if (f.roundTo > 0) steps = Math.round(steps / f.roundTo) * f.roundTo;
+                metres = Wellness.stepsToMeters(steps);
+                got = steps > 0;
+            }
+            if (got) {
+                Fill fill = new Fill(f.kind, steps);
+                fill.ranges.addAll(stretches(not(covered), used, from, to));
+                d.fills.add(fill);
+                if (f == first) {
+                    d.fillSteps = steps;
+                    d.stepFill.addAll(fill.ranges);
+                }
+                d.steps = (Double.isNaN(d.steps) ? 0 : d.steps) + steps;
+                d.metres = (Double.isNaN(d.metres) ? 0 : d.metres) + metres;
+            }
+            // where this device was worn counts as counted for the next one (a watch worn with 0 steps is not a gap)
+            for (int k = 0; k < n; k++) covered[k] |= f.worn[k];
         }
-        if (other.estimate) {
-            steps = Math.round(steps / 10.0) * 10;
-            metres = Wellness.stepsToMeters(steps);
-            got = steps > 0;
+        d.covered = covered;
+        TS line = base.line();
+        if (base != main) {
+            // the other device's own day: its own line (phase 1a); only a device after it may still fill
+            d.hrFrom = line.size() > 0 ? base.kind : -1;
         }
-        if (got) {
-            d.fillSteps = steps;
-            d.steps = (Double.isNaN(main.steps) ? 0 : main.steps) + steps;
-            d.metres = (Double.isNaN(main.metres) ? 0 : main.metres) + metres;
-            d.stepFill.addAll(stretches(not(main.worn), used, from, to));
+        boolean[] hrCovered = base.kind == PHONE ? new boolean[n] : base.worn.clone();
+        for (Source o : others) {
+            if (o == base) continue;
+            TS add = o.heartIn(hrCovered);
+            if (add.size() > 0) {
+                line = joined(line, add);
+                if (o == first || d.hrFrom < 0) d.hrFrom = o.kind;
+                d.hrFill.addAll(stretches(not(hrCovered), slotsOf(add, from, n), from, to));
+            }
+            if (o.kind != PHONE) for (int k = 0; k < n; k++) hrCovered[k] |= o.worn[k];
         }
-        TS line = main.line(), add = other.heartIn(main.worn);
-        d.hr = add.size() > 0 ? joined(line, add) : line;
-        if (add.size() > 0) d.hrFill.addAll(stretches(not(main.worn), slotsOf(add, from, n), from, to));
+        d.hr = line;
     }
 
     private static boolean anyWatchIn(Watch w, double from, double to) {
@@ -469,17 +674,32 @@ public final class MainDevice {
         return String.format(Locale.US, "%02d:%02d", z.getHour(), z.getMinute());
     }
 
-    /** The line under Steps, null when the main device counted them all. */
+    /**
+     * The line under Steps, null when the main device counted them all. One sentence per device that filled (a ring's or the
+     * phone's an estimate, so "about"; the phone's last); with only the ring and the watch exactly the line of phase 1a.
+     */
     public static String stepsLine(Day d, ZoneId zone, Locale l) {
-        String other = name(d.other()), main = name(d.main);
-        if (d.whole && !Double.isNaN(d.steps)) return "From " + other + ": " + main + " has no data for this day.";
-        if (d.stepFill.isEmpty()) return null;
-        return "Includes " + (d.main == WATCH ? "about " : "") + String.format(l, "%,d", Math.round(d.fillSteps)) + (Math.round(d.fillSteps) == 1 ? " step" : " steps")
-                + " from " + other + ", " + clockRanges(d.stepFill, zone) + ", when " + main + " was not worn.";
+        StringBuilder b = new StringBuilder();
+        String main = name(d.main);
+        if (d.whole && !Double.isNaN(d.steps)) b.append("From ").append(name(d.wholeFrom >= 0 ? d.wholeFrom : d.other())).append(": ").append(main).append(" has no data for this day.");
+        String gapOf = name(d.base >= 0 ? d.base : d.main);
+        for (Fill f : d.fills) {
+            // the whole day from one device is said above; only a device after it gets its own sentence
+            if (d.whole && f.kind == d.wholeFrom) continue;
+            if (b.length() > 0) b.append(' ');
+            boolean about = f.kind == PHONE || f.kind == RING;
+            b.append("Includes ").append(about ? "about " : "").append(String.format(l, "%,d", Math.round(f.steps))).append(Math.round(f.steps) == 1 ? " step" : " steps")
+                    .append(" from ").append(name(f.kind)).append(", ").append(clockRanges(f.ranges, zone)).append(", when ").append(gapOf).append(" was not worn.");
+        }
+        return b.length() == 0 ? null : b.toString();
     }
 
     /** The line under the heart rate of the day, null when the main device measured it all. */
     public static String heartLine(Day d, ZoneId zone) {
+        if (d.main == PHONE) {
+            // the phone measures no heart rate: the line is all another device's
+            return d.hr.size() > 0 && d.hrFrom >= 0 ? "From " + name(d.hrFrom) + ", your phone measures no heart rate." : null;
+        }
         String other = name(d.other()), main = name(d.main);
         if (d.whole && d.hr.size() > 0) return "From " + other + ": " + main + " has no data for this day.";
         if (d.hrFill.isEmpty()) return null;
@@ -489,7 +709,8 @@ public final class MainDevice {
     /** The line under the night, null when it is the main device's. */
     public static String nightLine(Day d) {
         if (!d.nightFromOther()) return null;
-        return "From " + name(d.other()) + ": " + name(d.main) + " has no night for this day.";
+        int from = d.main == PHONE ? (d.watchNight != null ? WATCH : RING) : d.other();
+        return "From " + name(from) + ": " + name(d.main) + " has no night for this day.";
     }
 
     /**
@@ -504,8 +725,32 @@ public final class MainDevice {
 
     /** The Steps tile's own line about where the number comes from; null for the ring's own estimate (its usual line). */
     public static String stepsNote(Day d) {
-        if (d.whole) return d.main == RING ? "Counted by your watch" : null;
-        if (d.main == WATCH) return d.fillSteps > 0 ? "Counted by your watch, some estimated by your ring" : "Counted by your watch";
-        return d.fillSteps > 0 ? "Estimated from your movement, some counted by your watch" : null;
+        boolean phone = false, ring = false, watch = false;
+        for (Fill f : d.fills) {
+            // a fill of 0 steps (a watch record without steps) is not named here, as in phase 1a
+            if (d.whole && f.kind == d.wholeFrom || !(f.steps > 0)) continue;
+            phone |= f.kind == PHONE;
+            ring |= f.kind == RING;
+            watch |= f.kind == WATCH;
+        }
+        if (d.whole) {
+            int from = d.wholeFrom >= 0 ? d.wholeFrom : d.other();
+            String head = from == RING ? null : "Counted by " + name(from);
+            if (!phone || from == PHONE) return head;
+            return (head == null ? "Estimated from your movement" : head) + ", some counted by your phone";
+        }
+        if (d.main == PHONE) {
+            String some = ring && watch ? ", some estimated by your ring and some counted by your watch" : ring ? ", some estimated by your ring"
+                    : watch ? ", some counted by your watch" : "";
+            return "Counted by your phone" + some;
+        }
+        if (d.main == WATCH) {
+            String some = ring && phone ? ", some estimated by your ring and some counted by your phone" : ring ? ", some estimated by your ring"
+                    : phone ? ", some counted by your phone" : "";
+            return "Counted by your watch" + some;
+        }
+        if (watch && phone) return "Estimated from your movement, some counted by your watch and phone";
+        if (watch) return "Estimated from your movement, some counted by your watch";
+        return phone ? "Estimated from your movement, some counted by your phone" : null;
     }
 }

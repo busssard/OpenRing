@@ -390,7 +390,9 @@ public final class Analyzer {
     /**
      * Stores the error of a failed run (after its roll back) for the data check as {@link app.openring.core.LoadNote#error}:
      * its class and first place in Open Ring's code, never its message, which can carry a stored value (issue #289). The
-     * full error goes to Android's log; the callers put it in the Log tab. Never throws, also when the database cannot be written.
+     * full error goes to Android's log. The Log tab gets it from the callers: the sync, Repair, Re analyse all and Settings'
+     * screen time update log the full stack trace; the main screen ({@code DayData.failed}) and Settings' left out times
+     * log one line; the demo logs nothing. Never throws, also when the database cannot be written.
      */
     private void failed(Throwable e) {
         try {
@@ -608,12 +610,18 @@ public final class Analyzer {
     }
 
     /**
-     * A day's zone by {@link Json#dayZone}: its main night's ({@code main}, null when none), else the zone history's, else
-     * the phone's. The zone history is read only when the night gives no zone, as it is once per day of a long run.
+     * A day's zone by the one rule {@link Json#dayZone(JSONObject, java.util.function.Supplier, ZoneId)}, the same the
+     * screens, the badges and the export use (issue #352): its main night's ({@code main}, null when none), else the zone
+     * history's, else the phone's. The zone history is read only when the night gives no zone, as it is once per day of a
+     * long run.
      */
-    ZoneId dayZone(LocalDate d, JSONObject main) {
-        ZoneId z = Json.zone(main, null);
-        return z != null ? z : Json.dayZone(null, db.zoneAt(Json.noon(d, zone)), zone);
+    ZoneId dayZone(final LocalDate d, JSONObject main) {
+        return Json.dayZone(main, new java.util.function.Supplier<String>() {
+            @Override
+            public String get() {
+                return db.zoneAt(Json.noon(d, zone));
+            }
+        }, zone);
     }
 
     // ------------------------------------------------------------------------------ main
