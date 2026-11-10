@@ -608,12 +608,18 @@ public final class Analyzer {
     }
 
     /**
-     * A day's zone by {@link Json#dayZone}: its main night's ({@code main}, null when none), else the zone history's, else
-     * the phone's. The zone history is read only when the night gives no zone, as it is once per day of a long run.
+     * A day's zone by the one rule {@link Json#dayZone(JSONObject, java.util.function.Supplier, ZoneId)}, the same the
+     * screens, the badges and the export use (issue #352): its main night's ({@code main}, null when none), else the zone
+     * history's, else the phone's. The zone history is read only when the night gives no zone, as it is once per day of a
+     * long run.
      */
-    ZoneId dayZone(LocalDate d, JSONObject main) {
-        ZoneId z = Json.zone(main, null);
-        return z != null ? z : Json.dayZone(null, db.zoneAt(Json.noon(d, zone)), zone);
+    ZoneId dayZone(final LocalDate d, JSONObject main) {
+        return Json.dayZone(main, new java.util.function.Supplier<String>() {
+            @Override
+            public String get() {
+                return db.zoneAt(Json.noon(d, zone));
+            }
+        }, zone);
     }
 
     // ------------------------------------------------------------------------------ main

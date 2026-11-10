@@ -49,6 +49,8 @@ import app.openring.sync.SyncService;
 
 /** Ring, profile, key, data and advanced settings. */
 public final class SettingsActivity extends Activity implements RingManager.Listener {
+    /** Extra (boolean): opened by the watch setup's Open Settings, Profile, so Profile offers Back to the watch setup (issue #351). */
+    static final String FROM_WATCH_SETUP = "from_watch_setup";
     private static final int EXPORT_CSV = 11, EXPORT_DB = 12, BACKUP_KEY = 13, BACKUP_FULL = 14, PICK_FOLDER = 15;
     private ScrollView scroll;
     private LinearLayout chips;
@@ -442,6 +444,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 // the tracker follows the saved profile until its switch is touched (issue #252)
                 periodSwitch(p);
                 reanalyse(true);
+            }
+        });
+        // opened from the watch setup (issue #351): its button closed the setup, so this leads back to it; Settings stays
+        // below it, as when the setup is opened from the Watch block
+        if (getIntent().getBooleanExtra(FROM_WATCH_SETUP, false)) action(prof, "Back to the watch setup", Ui.OXY, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, WatchSetupActivity.class));
             }
         });
         // the period tracker (issue #252): shown by itself when the profile says female; hiding deletes nothing
