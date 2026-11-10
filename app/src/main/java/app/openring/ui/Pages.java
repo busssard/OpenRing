@@ -251,8 +251,7 @@ public final class Pages {
 
     /**
      * The night as a list of moments: bedtime, falling asleep, every wake up of a minute or more (the
-     * ones Wake ups counts, issue #70), lowest HR, waking. Times are rounded to whole minutes so the
-     * clock times and the minutes between them agree.
+     * ones Wake ups counts, issue #70), lowest HR, waking. The rows come from {@link WakeUps#timeline}.
      */
     static View timeline(Context c, JSONObject n, java.time.ZoneId z, List<double[]> leftOut) {
         LinearLayout card = Ui.card(c);
@@ -264,41 +263,9 @@ public final class Pages {
         int[] st = Json.stages(n);
         double s = Json.d(n, "start"), e = Json.d(n, "end");
         double ep = st.length == 0 ? 30 : (e - s) / st.length;
-        List<String[]> rows = new ArrayList<String[]>();
-        // a time left out because someone else wore the ring next to this night (issue #254): before or after it
-        List<String[]> leftBefore = new ArrayList<String[]>(), leftAfter = new ArrayList<String[]>();
-        for (double[] r : leftOut) {
-            if (r[1] < s - 3600 || r[0] > e + 3600) continue;
-            String[] row = {minute(r[0], z), app.openring.core.analysis.LeftOut.timelineRow(r[0], r[1], z)};
-            if (r[1] <= s + 60) leftBefore.add(row);
-            else leftAfter.add(row);
-        }
-        rows.addAll(leftBefore);
-        rows.add(new String[] {minute(s, z), "Start of the sleep window"});
-        int first = -1, last = -1;
-        for (int i = 0; i < st.length; i++) if (st[i] >= 1 && st[i] <= 3) {
-            if (first < 0) first = i;
-            last = i;
-        }
-        double low = Json.d(n, "lowest_hr_time");
-        boolean lowDone = Double.isNaN(low);
-        if (first >= 0) {
-            double asleep = s + first * ep;
-            rows.add(new String[] {minute(asleep, z), "Fell asleep" + (first > 0 ? " after " + WakeUps.shownMinutes(s, asleep) + " min" : "")});
-            // every wake up the Wake ups number counts, none left out (issue #70)
-            for (int[] w : WakeUps.list(st, ep)) {
-                double a = s + w[0] * ep, b = s + w[1] * ep;
-                if (!lowDone && low < a) {
-                    rows.add(new String[] {minute(low, z), "Lowest heart rate, " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm"});
-                    lowDone = true;
-                }
-                rows.add(new String[] {minute(a, z), "Awake for " + WakeUps.shownMinutes(a, b) + " min, back asleep " + minute(b, z)});
-            }
-            if (!lowDone) rows.add(new String[] {minute(low, z), "Lowest heart rate, " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm"});
-            rows.add(new String[] {minute(s + (last + 1) * ep, z), "Woke up"});
-        }
-        rows.add(new String[] {minute(e, z), "End of the sleep window"});
-        rows.addAll(leftAfter);
+        // the rows, with left out times next to the night (issue #254), in core so they are tested
+        List<String[]> rows = WakeUps.timeline(st, s, e, Json.d(n, "lowest_hr_time"), Json.d(n, "lowest_hr"), leftOut, z,
+                Locale.getDefault());
         for (String[] r : rows) {
             LinearLayout row = Ui.hbox(c);
             row.setPadding(0, Ui.dp(c, 3), 0, Ui.dp(c, 3));

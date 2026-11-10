@@ -310,6 +310,115 @@ public class CoreTest {
         eq("random nights: wake ups and short pieces are all awake runs", partsMissing, 0);
     }
 
+    /**
+     * The Sleep page's night timeline rows (issues #70, #138, #254), worked out in WakeUps.timeline since the code health
+     * PR that moved them out of ui/Pages. A known night with every kind of row, then random nights against a copy of the
+     * code Pages ran before, so the move changes nothing.
+     */
+    static void nightTimeline() {
+        int L = Stager.LIGHT, W = Stager.WAKE;
+        java.time.ZoneId utc = java.time.ZoneId.of("UTC");
+        double s = 1767304800; // 1 January 2026, 22:00 UTC
+        int[] st = runs(W, 10, L, 20, W, 4, L, 20, W, 1, L, 20, W, 6, L, 10, W, 4);
+        double e = s + st.length * 30;
+        List<double[]> left = new ArrayList<double[]>();
+        left.add(new double[] {s + 3000, s + 3600});      // after the night
+        left.add(new double[] {s - 1800, s - 600});       // before it
+        left.add(new double[] {e + 4000, e + 5000});      // more than an hour after: not shown
+        left.add(new double[] {s - 9000, s - 3700});      // ends more than an hour before: not shown
+        List<String[]> rows = WakeUps.timeline(st, s, e, s + 600, 48.4, left, utc, Locale.US);
+        StringBuilder got = new StringBuilder();
+        for (String[] r : rows) got.append(r[0]).append(' ').append(r[1]).append('\n');
+        eq("timeline: every kind of row in order", got.toString(),
+                "21:30 Left out from 21:30 to 21:50 (someone else wore the ring)\n"
+                + "22:00 Start of the sleep window\n"
+                + "22:05 Fell asleep after 5 min\n"
+                + "22:10 Lowest heart rate, 48 bpm\n"
+                + "22:15 Awake for 2 min, back asleep 22:17\n"
+                + "22:38 Awake for 3 min, back asleep 22:41\n"
+                + "22:46 Woke up\n"
+                + "22:48 End of the sleep window\n"
+                + "22:50 Left out from 22:50 to 23:00 (someone else wore the ring)\n");
+        eq("timeline: lowest heart rate after the last wake up comes before Woke up",
+                WakeUps.timeline(st, s, e, s + 2600, 51, new ArrayList<double[]>(), utc, Locale.US).get(4)[1], "Lowest heart rate, 51 bpm");
+        eq("timeline: no lowest heart rate time, no row", WakeUps.timeline(st, s, e, Double.NaN, 51, new ArrayList<double[]>(), utc, Locale.US).size(), 6);
+        eq("timeline: unknown lowest heart rate shows --",
+                WakeUps.timeline(st, s, e, s + 600, Double.NaN, new ArrayList<double[]>(), utc, Locale.US).get(2)[1], "Lowest heart rate, -- bpm");
+        eq("timeline: no stages, only the window", WakeUps.timeline(new int[0], s, e, s + 600, 50, new ArrayList<double[]>(), utc, Locale.US).size(), 2);
+        eq("timeline: asleep from the first step has no minutes",
+                WakeUps.timeline(runs(L, 20), s, s + 600, Double.NaN, 0, new ArrayList<double[]>(), utc, Locale.US).get(1)[1], "Fell asleep");
+
+        // random nights, zones and left out times: the same rows as the code in ui/Pages before the move
+        Random rnd = new Random(257);
+        java.time.ZoneId[] zones = {utc, java.time.ZoneId.of("Europe/Zurich"), java.time.ZoneId.of("America/Santiago"), null};
+        int differs = 0, n = 5000;
+        for (int t = 0; t < n; t++) {
+            int len = rnd.nextInt(8) == 0 ? 0 : 1 + rnd.nextInt(400);
+            int[] g = new int[len];
+            for (int i = 0; i < len; ) {
+                int code = rnd.nextInt(12) == 0 ? 0 : 1 + rnd.nextInt(4);
+                int run = 1 + rnd.nextInt(rnd.nextBoolean() ? 3 : 12);
+                for (int k = 0; k < run && i < len; k++) g[i++] = code;
+            }
+            double a = 1_700_000_000 + rnd.nextInt(400 * 86400) + rnd.nextDouble();
+            double b = a + (len == 0 ? rnd.nextInt(30000) : len * (25 + rnd.nextDouble() * 10));
+            double lowAt = rnd.nextInt(5) == 0 ? Double.NaN : a + rnd.nextDouble() * (b - a);
+            double lowHr = rnd.nextInt(7) == 0 ? Double.NaN : 35 + rnd.nextDouble() * 40;
+            List<double[]> lo = new ArrayList<double[]>();
+            for (int k = rnd.nextInt(4); k > 0; k--) {
+                double x = a - 10000 + rnd.nextDouble() * (b - a + 20000);
+                lo.add(new double[] {x, x + 60 + rnd.nextDouble() * (rnd.nextBoolean() ? 7200 : 100000)});
+            }
+            java.time.ZoneId z = zones[rnd.nextInt(zones.length)];
+            if (z == null && !lo.isEmpty()) z = utc; // LeftOut.timelineRow needs the zone, as before
+            List<String[]> now = WakeUps.timeline(g, a, b, lowAt, lowHr, lo, z, Locale.getDefault());
+            List<String[]> before = timelineBefore(g, a, b, lowAt, lowHr, lo, z);
+            boolean same = now.size() == before.size();
+            for (int i = 0; same && i < now.size(); i++) same = Arrays.equals(now.get(i), before.get(i));
+            if (!same) differs++;
+        }
+        eq("timeline: random nights give the rows of the code before the move", differs, 0);
+    }
+
+    /** The night timeline rows exactly as ui/Pages.timeline built them before the move to WakeUps.timeline. */
+    static List<String[]> timelineBefore(int[] st, double s, double e, double low, double lowHr, List<double[]> leftOut, java.time.ZoneId z) {
+        double ep = st.length == 0 ? 30 : (e - s) / st.length;
+        List<String[]> rows = new ArrayList<String[]>();
+        List<String[]> leftBefore = new ArrayList<String[]>(), leftAfter = new ArrayList<String[]>();
+        for (double[] r : leftOut) {
+            if (r[1] < s - 3600 || r[0] > e + 3600) continue;
+            String[] row = {WakeUps.clock(r[0], z), LeftOut.timelineRow(r[0], r[1], z)};
+            if (r[1] <= s + 60) leftBefore.add(row);
+            else leftAfter.add(row);
+        }
+        rows.addAll(leftBefore);
+        rows.add(new String[] {WakeUps.clock(s, z), "Start of the sleep window"});
+        int first = -1, last = -1;
+        for (int i = 0; i < st.length; i++) if (st[i] >= 1 && st[i] <= 3) {
+            if (first < 0) first = i;
+            last = i;
+        }
+        boolean lowDone = Double.isNaN(low);
+        String hr = Double.isNaN(lowHr) ? "--" : String.format(Locale.getDefault(), "%." + 0 + "f", lowHr); // Ui.fmt(v, 0)
+        if (first >= 0) {
+            double asleep = s + first * ep;
+            rows.add(new String[] {WakeUps.clock(asleep, z), "Fell asleep" + (first > 0 ? " after " + WakeUps.shownMinutes(s, asleep) + " min" : "")});
+            for (int[] w : WakeUps.list(st, ep)) {
+                double a = s + w[0] * ep, b = s + w[1] * ep;
+                if (!lowDone && low < a) {
+                    rows.add(new String[] {WakeUps.clock(low, z), "Lowest heart rate, " + hr + " bpm"});
+                    lowDone = true;
+                }
+                rows.add(new String[] {WakeUps.clock(a, z), "Awake for " + WakeUps.shownMinutes(a, b) + " min, back asleep " + WakeUps.clock(b, z)});
+            }
+            if (!lowDone) rows.add(new String[] {WakeUps.clock(low, z), "Lowest heart rate, " + hr + " bpm"});
+            rows.add(new String[] {WakeUps.clock(s + (last + 1) * ep, z), "Woke up"});
+        }
+        rows.add(new String[] {WakeUps.clock(e, z), "End of the sleep window"});
+        rows.addAll(leftAfter);
+        return rows;
+    }
+
     /** Issue #30: the stage detail preview is the night that saving produces, also with phone use. */
     static void previewSameAsSaved() {
         int L = Stager.LIGHT, W = Stager.WAKE;
@@ -1109,6 +1218,7 @@ public class CoreTest {
         dialMath();
         stageFilter();
         wakeUps();
+        nightTimeline();
         previewSameAsSaved();
         stageShare();
         sleepMinutes();
