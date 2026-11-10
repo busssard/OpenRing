@@ -156,6 +156,8 @@ public final class Backup {
         Json.put(o, "watch_name", p.watchName());
         Json.put(o, "watch_per_day", p.watchPerDay());
         Json.put(o, "main_device", p.mainDevice());
+        // the path picked on Getting started (issue #373); only when one was picked
+        if (p.startChoice() != app.openring.core.Start.NONE) Json.put(o, "start_choice", p.startChoice());
         // the watch's setup choices (issue #251, watch setup): step goal, distance unit, the alarm
         Json.put(o, "watch_goal", p.watchGoal());
         Json.put(o, "watch_metric", p.watchMetric());
@@ -572,6 +574,9 @@ public final class Backup {
         // the main device (one set of numbers): an older backup has none and keeps the phone's
         int main = o.optInt("main_device", -1);
         if (app.openring.core.MainDevice.known(main)) p.setMainDevice(main);
+        // the path picked on Getting started (issue #373): an older backup has none and keeps the phone's
+        int start = app.openring.core.Start.valid(o.optInt("start_choice", 0));
+        if (start != app.openring.core.Start.NONE) p.setStartChoice(start);
         // the watch's setup choices: an older backup has none and keeps the phone's; a restored alarm is sent at the next sync
         int goal = o.optInt("watch_goal", -1);
         if (goal >= 1000 && goal <= 50000) p.setWatchGoal(goal);

@@ -84,6 +84,17 @@ launch() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
 log "first start: setup"
 launch
 shot setup 5
+# Getting started (issue #373): Get started leads to the device choice, a ring, a watch or just this phone
+tap_text() {  # $1 the exact text of a view: taps its middle; fails when not on screen
+  local b
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  b=$(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o "text=\"$1\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  adb shell input tap $(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))
+}
+if tap_text "Get started"; then shot setup-choice 2
+else echo "::warning::issue #373 step: Get started was not on the first screen"; fi
 
 log "demo data, turning the phone twice while it is prepared (issue #29)"
 adb shell settings put system accelerometer_rotation 0
@@ -405,6 +416,10 @@ launch --es settings watch --ei main_device 1; shot settings-main-watch
 launch --ei tab 1 --ei main_device 1;       shot sleep-watch-main
 swipe_up;                                   shot sleep-watch-main-stages 1
 launch --ei tab 0 --ei main_device 0;       sleep 3
+# Only a watch (issue #373, extra devices 1, demo mode only, nothing stored): Today with the watch's day and the line that
+# the scores need a ring, Ready with why readiness needs a ring
+launch --ei tab 0 --ei devices 1;           shot today-watch-only
+launch --ei tab 2 --ei devices 1;           shot ready-watch-only
 # Steps from this phone (issue #329, phase 1b): the demo's made up phone readings (in the demo file only) as light bars under
 # the ring's steps per hour on Activity, then touched in the afternoon (the readout names the ring's hour and the phone's
 # interval there); Activity's card that asks for Physical activity (extra phone_ask, demo mode only, nothing is asked); the

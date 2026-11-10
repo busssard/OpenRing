@@ -38,7 +38,7 @@ Not affiliated with Oura, not a medical device.
   drip. Shown when your profile says female, or switched on in Settings
 * Steps counted by your phone itself (about once an hour, nothing leaves the phone). They fill the
   time the ring was not worn, and with steps, screen time and the period tracker the app is useful
-  without a ring too ("Use without a ring" in setup)
+  without a ring too ("Just this phone" when you start)
 * Find my ring, when the ring is lost at home (see below)
 * Nights keep the time zone you slept in, so a trip does not move your other nights
 * Touch the night timeline, the heart rate and trend lines or the screen time clock to see the exact
@@ -118,8 +118,14 @@ More in [SECURITY.md](SECURITY.md).
 
 ## Getting started
 
-Works with Oura Ring Gen 3, Ring 4 and Ring 5 (see Devices above). Or tap
-**Just looking? Explore with demo data** on the first screen to look around without a ring.
+Tap **Get started**, then pick what you use: **Pair a ring** (Oura Ring Gen 3, Ring 4, Ring 5),
+**Pair a watch** (Withings Steel HR) or **Just this phone** (steps, screen time, period tracker). You can
+add the other device later in Settings. Or tap **Just looking? Explore with demo data** to look around first.
+
+**With a watch:** allow Bluetooth access, enter your profile (the watch gets it for distance and
+calories), then the watch setup finds, pairs and syncs it. Remove the watch from the Withings app first.
+
+**With a ring:**
 
 1. Allow Bluetooth access.
 2. Enter age, sex, weight and height (used for calories, goals and age adjusted sleep targets).

@@ -69,6 +69,14 @@ public final class DayData {
      * reading is stored in the file shown (the demo has its own). Read in the load's background task.
      */
     public boolean phoneSensor, phoneAllowed, phoneAny;
+    /** The devices the tabs are built for (issue #373, {@code core/Start}); never null after {@link #load}. */
+    public app.openring.core.Start.Has has = new app.openring.core.Start.Has(true, false, false);
+    /**
+     * Screen test, demo mode only (extra {@code devices}, issue #373): show the demo as for a person with only the watch
+     * ({@code Start.PREVIEW_WATCH}) or only the phone. Nothing stored changes; the ring's (and the watch's) results of the
+     * demo file are left out of what is shown.
+     */
+    static volatile int preview = app.openring.core.Start.PREVIEW_NONE;
 
     /**
      * Notes a part of loading {@code date} that failed and kept its fallback (issue #235): a warning in Android's log
@@ -118,9 +126,20 @@ public final class DayData {
         d.date = date;
         String key = date.toString();
         d.day = Json.parse(db.dayJson(key));
+        try {
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            d.has = app.openring.core.Start.of(p.demo(), app.openring.core.KeyState.hasRing(p.ringState()), p.watchAddress() != null,
+                    p.startChoice(), p.demo() ? preview : app.openring.core.Start.PREVIEW_NONE);
+        } catch (RuntimeException e) {
+            d.ok = failed(c, date, "devices", e);
+        }
+        // the demo shown as without a ring (screen test, issue #373): its ring results are not shown
+        boolean hideRing = !d.has.ring && app.openring.data.Prefs.of(c).demo();
+        if (hideRing) d.day = null;
         for (String s : db.nightsJson(key, key, false)) {
             JSONObject o = Json.parse(s);
             if (o == null) continue;
+            if (hideRing) continue;
             if (o.optBoolean("main")) d.night = o;
             else d.naps.add(o);
         }
@@ -136,11 +155,11 @@ public final class DayData {
         // a window around the date, so an old date loads as fast as a recent one (issue #98)
         for (String s : db.recentNights(date, LocalDate.now())) {
             JSONObject o = Json.parse(s);
-            if (o != null) d.recent.add(o);
+            if (o != null && !hideRing) d.recent.add(o);
         }
-        d.anyNight = !d.recent.isEmpty() || db.anyMainNight();
+        d.anyNight = !hideRing && (!d.recent.isEmpty() || db.anyMainNight());
         try {
-            d.now = app.openring.data.RightNow.load(c);
+            if (!hideRing) d.now = app.openring.data.RightNow.load(c);
         } catch (RuntimeException e) {
             // the Body card shows only its caption and the Today ring no verdict, as before (issue #235)
             d.ok = failed(c, date, "latest readings", e);
@@ -206,7 +225,7 @@ public final class DayData {
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
             JSONObject o = Json.parse(r[1]);
-            if (o != null) d.history.put(r[0], o);
+            if (o != null && !hideRing) d.history.put(r[0], o);
         }
         d.merge(c, db);
         return d;
@@ -227,7 +246,8 @@ public final class DayData {
         app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         try {
             // a day earlier for the night that ends this morning
-            if (app.openring.data.WatchStore.any(db)) watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
+            // the demo shown as for only the phone (screen test, issue #373) leaves the watch's rows out too
+            if (app.openring.data.WatchStore.any(db) && (has.watch || !p.demo())) watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
         } catch (RuntimeException e) {
             watch = null;
             ok = failed(c, date, "watch data", e);
@@ -246,9 +266,11 @@ public final class DayData {
         }
         try {
             boolean demo = p.demo();
-            boolean ringThere = demo || app.openring.core.KeyState.hasRing(p.ringState());
-            boolean watchThere = demo || p.watchAddress() != null;
-            main = app.openring.core.MainDevice.shown(p.mainDeviceStored(), ringThere, watchThere, phone != null);
+            boolean ringThere = has.ring, watchThere = has.watch;
+            // without a ring (issue #373) a stored ring choice falls back to the device that is there
+            int stored = p.mainDeviceStored();
+            if (!ringThere && stored == app.openring.core.MainDevice.RING) stored = -1;
+            main = app.openring.core.MainDevice.shown(stored, ringThere, watchThere, phone != null);
         } catch (RuntimeException e) {
             ok = failed(c, date, "main device", e);
         }

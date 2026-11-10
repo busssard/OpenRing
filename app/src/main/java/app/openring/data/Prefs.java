@@ -243,6 +243,13 @@ public final class Prefs {
     public boolean noRing() { return sp.getBoolean("no_ring", false); }
     public void setNoRing(boolean b) { sp.edit().putBoolean("no_ring", b).commit(); }
     /**
+     * The path picked on Getting started (issue #373, {@code core/Start}): none yet, a ring, a watch or just this phone. The
+     * watch and the phone also set {@link #setNoRing}, at the tap, so a setup left half way never leads back to the ring setup.
+     * In the backup; an older backup without it keeps the phone's.
+     */
+    public int startChoice() { return app.openring.core.Start.valid(sp.getInt("start_choice", app.openring.core.Start.NONE)); }
+    public void setStartChoice(int c) { sp.edit().putInt("start_choice", app.openring.core.Start.valid(c)).commit(); }
+    /**
      * This phone's own id for its step readings (issue #329): random, made once and written to disk before it is used, never
      * in a backup and never set by a restore (no restore step names this key), so another phone's readings brought by a
      * restore keep their own id and are never mixed with this phone's. Not ANDROID_ID.
@@ -425,7 +432,8 @@ public final class Prefs {
      * transfer the Keystore lock stays behind, issue #199). Reads the key once; never changes what is stored.
      */
     public int keyState() {
-        return app.openring.core.KeyState.of(hasKey(), loadKey() != null, noRing());
+        // an added watch counts as no ring while no key is stored (issue #373): a watch only phone never opens the ring setup
+        return app.openring.core.KeyState.of(hasKey(), loadKey() != null, app.openring.core.Start.noRing(noRing(), watchAddress() != null));
     }
 
     /**
@@ -435,7 +443,7 @@ public final class Prefs {
      * {@code KeyState.opensSetup} or {@code KeyState.syncs}, which need {@link #keyState}.
      */
     public int ringState() {
-        return app.openring.core.KeyState.ofStored(hasKey(), noRing());
+        return app.openring.core.KeyState.ofStored(hasKey(), app.openring.core.Start.noRing(noRing(), watchAddress() != null));
     }
 
     /** Why the last stored key could not be read (exception and message, for the Bluetooth log), null when none failed. */

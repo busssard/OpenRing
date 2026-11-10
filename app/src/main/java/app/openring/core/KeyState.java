@@ -125,7 +125,7 @@ public final class KeyState {
 
     // ---- no ring by choice (issue #329, phase 1b) ----
 
-    /** Setup's second button on its first screen: sets {@link #NO_RING} and goes to the main screen. */
+    /** Setup's second button on its first screen until issue #373, which made it "Just this phone" ({@code Start}); kept for the tests. */
     public static final String USE_WITHOUT = "Use without a ring";
     /** Under it: what works without a ring. */
     public static final String WITHOUT_TEXT = "Steps from this phone, screen time and the period tracker work without a ring. Add a ring later in Settings.";

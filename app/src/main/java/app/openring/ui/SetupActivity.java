@@ -289,8 +289,8 @@ public final class SetupActivity extends Activity {
         // a backup without a key (issue #288) on a phone without one it can read: settings and history are back, the
         // key is entered here (Use my existing key); the page stays, its sentence says so
         if (r.noKey && Prefs.of(this).loadKey() == null) {
-            // a backup made without a ring (issue #329): on to the main screen, as "Use without a ring" does
-            if (!Prefs.of(this).hasKey() && Prefs.of(this).noRing()) {
+            // a backup made without a ring (issue #329) or with only a watch (issue #373): on to the main screen
+            if (Prefs.of(this).keyState() == app.openring.core.KeyState.NO_RING) {
                 Toast.makeText(this, r.message, Toast.LENGTH_LONG).show();
                 startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
                 finish();
@@ -408,7 +408,7 @@ public final class SetupActivity extends Activity {
         Prefs p = Prefs.of(this);
         String unseen = p.pairUnseen();
         keyState = p.keyState();
-        if (step != 5 && keyState == app.openring.core.KeyState.READABLE && (unseen != null || step >= 3 && p.setupDone())) {
+        if (step != 5 && keyState == app.openring.core.KeyState.READABLE && (unseen != null || step >= 3 && step != CHOICE && p.setupDone())) {
             step = 5;
             if (unseen != null) pairedMessage = unseen;
             show();
@@ -503,6 +503,13 @@ public final class SetupActivity extends Activity {
         } else if (rekey) {
             // back to the screen that opened it (main screen or Settings) with the saved key as it was (issue #199, review of #281)
             finish();
+        } else if (step == CHOICE) {
+            step = 0;
+            show();
+        } else if (step == 1 || step == 2 && (choice() == app.openring.core.Start.PHONE || Permissions.granted(this))) {
+            // back to the choice (issue #373); from About you too when Bluetooth access would send the page straight back
+            step = CHOICE;
+            show();
         } else if (step > 0) {
             step--;
             show();
@@ -578,44 +585,46 @@ public final class SetupActivity extends Activity {
             case 5:
                 paired(pairedMessage);
                 break;
+            case CHOICE:
+                choose();
+                break;
             default:
                 break;
         }
     }
 
+    /** The page "What do you want to use?" (issue #373), after Getting started. */
+    static final int CHOICE = 6;
+
+    /** The path this Setup is on: the ring when it adds a ring or enters the key again, else the start choice (issue #373). */
+    int choice() {
+        if (addRing || rekey) return app.openring.core.Start.RING;
+        int c = Prefs.of(this).startChoice();
+        return c == app.openring.core.Start.NONE ? app.openring.core.Start.RING : c;
+    }
+
+    /** Getting started (issue #373): what the app is, the three drawings, then the choice or the demo. */
     void welcome() {
-        LinearLayout l = page("Your ring, your phone",
-                "Open Ring reads your Oura Ring directly over Bluetooth and computes sleep, readiness, activity and body signals on this phone. "
-                        + "No account, no cloud, no subscription. Your data never leaves the device unless you export it.");
-        Charts.ScoreRing r = new Charts.ScoreRing(this, 86, "Ready", Ui.READY, true);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(this, 170), Ui.dp(this, 170));
-        lp.gravity = Gravity.CENTER_HORIZONTAL;
-        lp.setMargins(0, Ui.dp(this, 10), 0, Ui.dp(this, 4));
-        l.addView(r, lp);
-        TextView sample = Ui.text(this, "An example. Readiness, sleep and activity are scores from 0 to 100, higher is better.", 12, Ui.TEXT_3, Ui.REGULAR);
-        sample.setGravity(Gravity.CENTER_HORIZONTAL);
-        l.addView(sample);
-        l.addView(Ui.gap(this, 22));
-        l.addView(Ui.text(this, "Built on the open_oura and open_health reverse engineering projects. Not affiliated with Oura. "
-                + "Scores follow Oura's recovered contributor weights but are not identical to the official app, and nothing here is medical advice.", 12, Ui.TEXT_3, Ui.REGULAR));
+        LinearLayout l = page(app.openring.core.Start.TITLE, null);
+        LinearLayout icons = Ui.hbox(this);
+        icons.setGravity(Gravity.CENTER);
+        int[] kinds = {DeviceIcon.RING, DeviceIcon.WATCH, DeviceIcon.PHONE};
+        for (int k : kinds) {
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(Ui.dp(this, 76), Ui.dp(this, 76));
+            ip.setMargins(Ui.dp(this, 8), 0, Ui.dp(this, 8), 0);
+            icons.addView(new DeviceIcon(this, k), ip);
+        }
+        l.addView(icons, Ui.matchWrap());
+        l.addView(Ui.gap(this, 20));
+        l.addView(Ui.body(this, app.openring.core.Start.INTRO));
         l.addView(Ui.gap(this, 16));
-        primary(l, "Get started", new View.OnClickListener() {
+        primary(l, app.openring.core.Start.GET_STARTED, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                step = 1;
+                step = CHOICE;
                 show();
             }
         });
-        // without a ring (issue #329): phone steps, screen time and the period tracker; a ring can be added later in Settings
-        secondary(l, app.openring.core.KeyState.USE_WITHOUT, new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Prefs.of(SetupActivity.this).setNoRing(true);
-                startActivity(new Intent(SetupActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
-                finish();
-            }
-        });
-        l.addView(Ui.text(this, app.openring.core.KeyState.WITHOUT_TEXT, 12, Ui.TEXT_3, Ui.REGULAR));
         secondary(l, "Just looking? Explore with demo data", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -624,7 +633,83 @@ public final class SetupActivity extends Activity {
                 finish();
             }
         });
-        l.addView(Ui.text(this, "The demo shows a made up person's five weeks, so you can see every screen without a ring.", 12, Ui.TEXT_3, Ui.REGULAR));
+        l.addView(Ui.text(this, "The demo shows a made up person's five weeks with a ring, a watch and a phone, so you can see every screen first.", 12, Ui.TEXT_3, Ui.REGULAR));
+        l.addView(Ui.gap(this, 22));
+        l.addView(Ui.text(this, "Built on the open_oura and open_health reverse engineering projects. Not affiliated with Oura or Withings. "
+                + "Scores follow Oura's recovered contributor weights but are not identical to the official app, and nothing here is medical advice.", 12, Ui.TEXT_3, Ui.REGULAR));
+    }
+
+    /** "What do you want to use?" (issue #373): a ring, a watch or just this phone, each a card with its drawing. */
+    void choose() {
+        LinearLayout l = page(app.openring.core.Start.CHOICE_TITLE, app.openring.core.Start.CHOICE_TEXT);
+        choiceCard(l, DeviceIcon.RING, app.openring.core.Start.RING_TITLE, app.openring.core.Start.RING_TEXT, app.openring.core.Start.RING);
+        choiceCard(l, DeviceIcon.WATCH, app.openring.core.Start.WATCH_TITLE, app.openring.core.Start.WATCH_TEXT, app.openring.core.Start.WATCH);
+        choiceCard(l, DeviceIcon.PHONE, app.openring.core.Start.PHONE_TITLE, app.openring.core.Start.PHONE_TEXT, app.openring.core.Start.PHONE);
+        l.addView(Ui.gap(this, 4));
+        l.addView(Ui.text(this, app.openring.core.Start.BOTH, 12, Ui.TEXT_3, Ui.REGULAR));
+        l.addView(Ui.gap(this, 12));
+        // a new phone or a reinstall with any device: the backup brings it back (a backup without a ring goes on without one)
+        restoreStatus = Ui.text(this, "", 13, Ui.TEXT_2, Ui.REGULAR);
+        secondary(l, "Restore from a backup file", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pickBackup();
+            }
+        });
+        l.addView(restoreStatus);
+    }
+
+    void choiceCard(LinearLayout parent, int icon, String title, String text, final int choice) {
+        LinearLayout card = Ui.card(this);
+        LinearLayout row = Ui.hbox(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(Ui.dp(this, 56), Ui.dp(this, 56));
+        ip.setMargins(0, 0, Ui.dp(this, 14), 0);
+        row.addView(new DeviceIcon(this, icon), ip);
+        LinearLayout t = Ui.vbox(this);
+        t.addView(Ui.h2(this, title));
+        t.addView(Ui.gap(this, 4));
+        t.addView(Ui.text(this, text, 13, Ui.TEXT_2, Ui.REGULAR));
+        row.addView(t, Ui.weight(1));
+        card.addView(row);
+        card.setClickable(true);
+        card.setContentDescription(title);
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Prefs.of(SetupActivity.this).setStartChoice(choice);
+                // the phone needs no Bluetooth: straight to About you
+                step = choice == app.openring.core.Start.PHONE ? 2 : 1;
+                show();
+            }
+        });
+        parent.addView(card);
+    }
+
+    /** Opens the file picker for a backup (the choice page and "Connect your ring"). */
+    void pickBackup() {
+        if (PAIR.running()) {
+            restoreStatus(app.openring.core.SetupTasks.RESTORE_REFUSED, Ui.WARN);
+            return;
+        }
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        startActivityForResult(i, RESTORE);
+    }
+
+    /**
+     * The watch or the phone path is done (issue #373): no ring for now (so the main screen never opens Setup again), then
+     * the main screen, with the watch setup on top for the watch. Back from the watch setup is the main screen.
+     */
+    void finishWithout(int choice) {
+        Prefs p = Prefs.of(this);
+        p.setStartChoice(choice);
+        p.setNoRing(true);
+        Intent main = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (choice == app.openring.core.Start.WATCH) startActivities(new Intent[] {main, new Intent(this, WatchSetupActivity.class)});
+        else startActivity(main);
+        finish();
     }
 
     void permissions() {
@@ -633,8 +718,7 @@ public final class SetupActivity extends Activity {
             show();
             return;
         }
-        LinearLayout l = page("Bluetooth access", "The app needs permission to find and connect to your ring. On older Android versions this is called location access; "
-                + "the app never reads your location.");
+        LinearLayout l = page("Bluetooth access", app.openring.core.Start.bluetooth(choice()));
         if (permissionBlocked) {
             // Android no longer shows its dialog: only the app's settings can switch it on (issue #186)
             l.addView(Ui.body(this, app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT)));
@@ -681,7 +765,8 @@ public final class SetupActivity extends Activity {
 
     void profile() {
         final Prefs p = Prefs.of(this);
-        LinearLayout l = page("About you", "Used for calorie burn, activity goals and age adjusted sleep targets. Stored only on this phone.");
+        final int path = choice();
+        LinearLayout l = page("About you", app.openring.core.Start.profile(path));
         final EditText age = field(l, "Age", String.valueOf(p.age()), true);
         final EditText weight = field(l, "Weight (kg)", String.valueOf(p.weightKg()), true);
         final EditText height = field(l, "Height (cm)", String.valueOf(p.heightCm()), true);
@@ -715,6 +800,11 @@ public final class SetupActivity extends Activity {
             public void onClick(View v) {
                 p.setProfile(num(age, InputLimit.AGE), sex[0], num(weight, InputLimit.WEIGHT_KG), num(height, InputLimit.HEIGHT_CM), p.targetKcal());
                 p.setProfileSet();
+                // the watch and the phone go on to the app (issue #373), the ring to "Connect your ring"
+                if (app.openring.core.Start.withoutRing(path)) {
+                    finishWithout(path);
+                    return;
+                }
                 step = 3;
                 show();
             }
@@ -819,14 +909,7 @@ public final class SetupActivity extends Activity {
         secondary(rcard, "Choose backup file", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (PAIR.running()) {
-                    restoreStatus(app.openring.core.SetupTasks.RESTORE_REFUSED, Ui.WARN);
-                    return;
-                }
-                Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                i.addCategory(Intent.CATEGORY_OPENABLE);
-                i.setType("*/*");
-                startActivityForResult(i, RESTORE);
+                pickBackup();
             }
         });
         rcard.addView(restoreStatus);
