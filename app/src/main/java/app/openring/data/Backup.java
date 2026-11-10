@@ -37,6 +37,8 @@ public final class Backup {
     static final String JSON = "openring-backup.json", DB = "openring.db";
     /** The mark of a backup written without the key (issue #288). */
     static final String NO_KEY = "no_key";
+    /** The backup was made by Open Ring used without a ring (issue #329); only together with {@link #NO_KEY}. */
+    static final String NO_RING = "no_ring";
 
     public static final class Result {
         public boolean ok;
@@ -86,7 +88,9 @@ public final class Backup {
     public static Begun begin(Context c, boolean withHistory) throws IOException {
         Prefs p = Prefs.of(c);
         byte[] key = p.loadKey();
-        if (key == null && !p.hasKey()) throw new IOException("no ring key saved on this phone");
+        // without a ring by choice (issue #329) there is no key: the backup is written without one, as for a key this phone
+        // cannot read (#288), so the phone's steps, the period log and the settings can be kept
+        if (key == null && !p.hasKey() && !p.noRing()) throw new IOException("no ring key saved on this phone");
         Begun b = new Begun(p, key);
         b.snap = withHistory ? Exporter.snapshot(c) : null;
         return b;
@@ -116,6 +120,8 @@ public final class Backup {
         // no "key" at all without one: every older version then refuses the file before it changes anything
         if (key != null) Json.put(o, "key", Hex.encode(key));
         else Json.put(o, NO_KEY, true);
+        // used without a ring (issue #329): a restore onto a phone without a key goes on without one too
+        if (key == null && !p.hasKey() && p.noRing()) Json.put(o, NO_RING, true);
         Json.put(o, "address", p.address());
         Json.put(o, "serial", p.serial());
         Json.put(o, "hardware", p.hardware());
@@ -224,6 +230,8 @@ public final class Backup {
     /** Added to the result of a restore from a backup without a key (issue #288), by whether this phone has a key it can use. */
     public static final String NO_KEY_ENTER = "This copy has no ring key, enter your key in Setup (Use my existing key) to sync again.";
     public static final String NO_KEY_KEPT = "This copy has no ring key, the key on this phone stays.";
+    /** Restored without a key onto a phone used without a ring (issue #329). */
+    public static final String NO_KEY_NO_RING = "Open Ring goes on without a ring. Add one in Settings at any time.";
 
     static final String DAMAGED = "The history in this backup is damaged, nothing was changed.";
     static final String NEWER = "This backup comes from a newer Open Ring. Update the app first, nothing was changed.";
@@ -406,13 +414,15 @@ public final class Backup {
         // the key is saved: a Setup screen closed before showing the result must not start over. A backup without a key
         // (issue #288) leaves a phone without one in Setup, where the key is entered
         if (prefs.hasKey()) prefs.setSetupDone(true);
+        // a backup made without a ring onto a phone without a key: it goes on without a ring (issue #329); a key wins anyway
+        if (p.noKey && p.o != null && p.o.optBoolean(NO_RING, false) && !prefs.hasKey()) prefs.setNoRing(true);
         r.ok = true;
         r.noKey = p.noKey;
         String what = p.noKey ? "settings" : "key and settings";
         if (r.history) r.message = "Restored your " + (p.noKey ? "settings and history" : "key, settings and history") + (r.logDamaged ? ". " + PERIODS_DAMAGED : "");
         else if (p.history) r.message = "Restored your " + what + ", the history on this phone stays";
         else r.message = "Restored your " + what;
-        if (p.noKey) r.message += ". " + (prefs.loadKey() != null ? NO_KEY_KEPT : NO_KEY_ENTER);
+        if (p.noKey) r.message += ". " + (prefs.loadKey() != null ? NO_KEY_KEPT : !prefs.hasKey() && prefs.noRing() ? NO_KEY_NO_RING : NO_KEY_ENTER);
         return r;
     }
 

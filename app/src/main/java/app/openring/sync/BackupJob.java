@@ -44,7 +44,8 @@ public final class BackupJob extends JobService {
             known = false;
         }
         Prefs prefs = Prefs.of(c);
-        boolean on = prefs.backupFolder() != null && prefs.hasKey() && !prefs.demo();
+        // without a ring by choice (issue #329) the copies are made without a key
+        boolean on = prefs.backupFolder() != null && (prefs.hasKey() || prefs.noRing()) && !prefs.demo();
         switch (BackgroundJob.decide(on, known, pending, wanted)) {
             case CANCEL:
                 js.cancel(JOB_ID);

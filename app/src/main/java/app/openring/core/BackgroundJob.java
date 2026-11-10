@@ -50,6 +50,11 @@ public final class BackgroundJob {
         /** Now, unix seconds, and the phone's zone (the watch's clock times). */
         public long now;
         public java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+        /**
+         * The phone counts steps (issue #329, phase 1b): it has a step counter and Physical activity is allowed. Read by the
+         * phone's own job, which never asks whether the ring is busy.
+         */
+        public boolean phoneSteps;
     }
 
     /** What the job does in one run. */
@@ -60,14 +65,20 @@ public final class BackgroundJob {
         public final boolean watch;
         /** The line to log ({@link #SKIPPED_RECENT}), null for none. */
         public final String log;
+        /**
+         * Read the phone's step counter (issue #329, phase 1b): its own job ({@link #phoneWanted}), no Bluetooth, never the
+         * ring's lock, so a busy ring never skips it. Not part of {@link #run}, which is the ring and watch job's.
+         */
+        public final boolean phone;
 
-        Due(boolean ring, boolean watch, String log) {
+        Due(boolean ring, boolean watch, String log, boolean phone) {
             this.ring = ring;
             this.watch = watch;
             this.log = log;
+            this.phone = phone;
         }
 
-        /** Anything to do; when not, the job ends at once. */
+        /** Anything to do for the ring and watch job; when not, it ends at once. */
         public boolean run() {
             return ring || watch;
         }
@@ -81,12 +92,14 @@ public final class BackgroundJob {
      * ({@code WatchDue}), also when the ring part is skipped.
      */
     public static Due due(Inputs in) {
-        if (in.ringBusy) return new Due(false, false, null);
+        // the phone's part first: the ring being busy (or demo mode, whose readings go to the real file) never skips it
+        boolean phone = in.phoneSteps;
+        if (in.ringBusy) return new Due(false, false, null, phone);
         boolean ringPart = in.backgroundSync && KeyState.syncs(in.keyState);
         boolean watchPart = !in.demo && in.watchAdded
                 && app.openring.core.withings.WatchDue.due(in.now, in.watchPerDay, in.watchLastOk, in.watchLastAttempt, in.zone);
         boolean ringRecent = recent(in.now, in.lastSync, in.lastAttempt);
-        return new Due(ringPart && !ringRecent, watchPart, ringPart && ringRecent ? SKIPPED_RECENT : null);
+        return new Due(ringPart && !ringRecent, watchPart, ringPart && ringRecent ? SKIPPED_RECENT : null, phone);
     }
 
     /** The parts of a job this app sets; a pending job is compared with the wanted one by these. */
@@ -141,6 +154,15 @@ public final class BackgroundJob {
     /** The background sync job as this version wants it. */
     public static Spec wanted(String service) {
         return new Spec(service, true, INTERVAL_MS, FLEX_MS, true, true);
+    }
+
+    /**
+     * The phone's step job (issue #329, phase 1b): about every hour with 15 minutes flex, kept after a restart, and no
+     * battery condition (a reading keeps the sensor on for at most 5 s; skipping readings on a low battery
+     * would lose the steps before the phone dies). No network, no Bluetooth.
+     */
+    public static Spec phoneWanted(String service) {
+        return new Spec(service, true, PhoneSteps.INTERVAL_MS, PhoneSteps.FLEX_MS, true, false);
     }
 
     /**

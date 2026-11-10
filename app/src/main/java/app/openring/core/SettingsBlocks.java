@@ -9,11 +9,11 @@ package app.openring.core;
 public final class SettingsBlocks {
     private SettingsBlocks() {}
 
-    /** Not in a block, the Ring block, the Watch block. */
-    public static final int NONE = 0, RING = 1, WATCH = 2;
+    /** Not in a block, the Ring block, the Watch block, the Phone block (issue #329, phase 1b). */
+    public static final int NONE = 0, RING = 1, WATCH = 2, PHONE = 3;
 
     /** Titles of the blocks' headers. */
-    public static final String RING_TITLE = "Ring", WATCH_TITLE = "Watch";
+    public static final String RING_TITLE = "Ring", WATCH_TITLE = "Watch", PHONE_TITLE = "Phone";
 
     /**
      * The block that holds the card named by the {@code settings} extra ({@code top}, {@code blocks}, {@code period},
@@ -23,6 +23,7 @@ public final class SettingsBlocks {
     public static int of(String section) {
         if ("stages".equals(section)) return RING;
         if ("watch".equals(section)) return WATCH;
+        if ("phone".equals(section)) return PHONE;
         return NONE;
     }
 
@@ -65,6 +66,19 @@ public final class SettingsBlocks {
         String name = shortModel(hw);
         if (lastSync <= 0 || ago == null) return name + ", not synced yet";
         return name + ", last sync " + ago;
+    }
+
+    /**
+     * The Phone header's line (issue #329): "Counting steps, last reading 20 minutes ago", "Counting steps, no reading yet",
+     * "Steps from this phone are off", "This phone has no step counter"; in demo mode the made up phone steps. {@code ago} is
+     * the time since the last reading as Android words it.
+     */
+    public static String phoneStatus(boolean demo, boolean sensor, boolean allowed, double lastReading, String ago) {
+        if (demo) return "Made up phone steps, demo data";
+        if (!sensor) return "This phone has no step counter";
+        if (!allowed) return "Steps from this phone are off";
+        if (lastReading <= 0 || ago == null) return "Counting steps, no reading yet";
+        return "Counting steps, last reading " + ago;
     }
 
     /**

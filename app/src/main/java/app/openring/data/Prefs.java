@@ -231,6 +231,45 @@ public final class Prefs {
      */
     public int mainDevice() { return app.openring.core.MainDevice.valid(sp.getInt("main_device", app.openring.core.MainDevice.RING)); }
     public void setMainDevice(int d) { sp.edit().putInt("main_device", app.openring.core.MainDevice.valid(d)).apply(); }
+    /**
+     * The main device as stored, -1 when the person never picked one (issue #329: then {@code MainDevice.defaultMain} picks
+     * the ring, the watch or the phone by what is there). A stored phone (2) comes back as 2; {@code MainDevice.shown} reads it
+     * as the ring while the phone counts no steps.
+     */
+    public int mainDeviceStored() { return sp.contains("main_device") ? app.openring.core.MainDevice.valid(sp.getInt("main_device", 0)) : -1; }
+
+    // ---- the phone's own steps (issue #329, phase 1b); not in the backup: they belong to this phone ----
+    /** The person chose "Use without a ring" in Setup ({@code core/KeyState.NO_RING} while no key is stored). */
+    public boolean noRing() { return sp.getBoolean("no_ring", false); }
+    public void setNoRing(boolean b) { sp.edit().putBoolean("no_ring", b).commit(); }
+    /**
+     * This phone's own id for its step readings (issue #329): random, made once and written to disk before it is used, never
+     * in a backup and never set by a restore (no restore step names this key), so another phone's readings brought by a
+     * restore keep their own id and are never mixed with this phone's. Not ANDROID_ID.
+     */
+    public String phoneDevice() {
+        synchronized (NO_READING_LOCK) {
+            String id = sp.getString("phone_device", null);
+            if (id != null) return id;
+            byte[] b = new byte[8];
+            new java.security.SecureRandom().nextBytes(b);
+            id = app.openring.core.Hex.encode(b);
+            sp.edit().putString("phone_device", id).commit();
+            return id;
+        }
+    }
+    /** Physical activity was asked for once (a later "not allowed" is then a refusal, not "not asked yet"). */
+    public boolean phoneAsked() { return sp.getBoolean("phone_asked", false); }
+    public void setPhoneAsked() { sp.edit().putBoolean("phone_asked", true).apply(); }
+    /** How often the step sensor sent no value in time, and the last time (unix seconds): for the Data check only. */
+    public int phoneNoReading() { return sp.getInt("phone_no_reading", 0); }
+    public long phoneNoReadingAt() { return sp.getLong("phone_no_reading_at", 0); }
+    public void notePhoneNoReading(long now) {
+        synchronized (NO_READING_LOCK) {
+            sp.edit().putInt("phone_no_reading", phoneNoReading() + 1).putLong("phone_no_reading_at", now).apply();
+        }
+    }
+    private static final Object NO_READING_LOCK = new Object();
     // ---- the watch's setup (issue #251, watch setup): what the watch is told, in the backup ----
     /** When the first setup was sent completely (unix seconds), 0 never. */
     public long watchSetupAt() { return sp.getLong("watch_setup_at", 0); }
@@ -386,7 +425,7 @@ public final class Prefs {
      * transfer the Keystore lock stays behind, issue #199). Reads the key once; never changes what is stored.
      */
     public int keyState() {
-        return app.openring.core.KeyState.of(hasKey(), loadKey() != null);
+        return app.openring.core.KeyState.of(hasKey(), loadKey() != null, noRing());
     }
 
     /**
@@ -396,7 +435,7 @@ public final class Prefs {
      * {@code KeyState.opensSetup} or {@code KeyState.syncs}, which need {@link #keyState}.
      */
     public int ringState() {
-        return app.openring.core.KeyState.ofStored(hasKey());
+        return app.openring.core.KeyState.ofStored(hasKey(), noRing());
     }
 
     /** Why the last stored key could not be read (exception and message, for the Bluetooth log), null when none failed. */
@@ -450,7 +489,8 @@ public final class Prefs {
     public boolean pairDone(byte[] key16, String address, String serial, String message, boolean dropPending) {
         SharedPreferences.Editor e = put(sp.edit(), "key_enc", "key_iv", encrypt(key16));
         if (address != null) e.putString("address", address);
-        e.putString("serial", serial).putBoolean("setup_done", true).putString("pair_unseen", message);
+        // a ring paired after "Use without a ring" (issue #329): the key wins anyway, the choice is no longer needed
+        e.putString("serial", serial).putBoolean("setup_done", true).putString("pair_unseen", message).remove("no_ring");
         if (dropPending) e.remove("pending_key_enc").remove("pending_key_iv").remove("pending_key_serial");
         return e.commit();
     }

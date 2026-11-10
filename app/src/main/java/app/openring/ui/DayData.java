@@ -64,6 +64,11 @@ public final class DayData {
     public app.openring.core.MainDevice.Day merged;
     /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
     public boolean ok = true;
+    /**
+     * Steps from this phone (issue #329, phase 1b): the phone has a step counter, Physical activity is allowed, and any
+     * reading is stored in the file shown (the demo has its own). Read in the load's background task.
+     */
+    public boolean phoneSensor, phoneAllowed, phoneAny;
 
     /**
      * Notes a part of loading {@code date} that failed and kept its fallback (issue #235): a warning in Android's log
@@ -219,15 +224,35 @@ public final class DayData {
         app.openring.core.MainDevice.Ring ring = app.openring.data.WatchStore.ringDay(day, night, nights, ds, de);
         int main = app.openring.core.MainDevice.RING;
         app.openring.core.MainDevice.Watch watch = null;
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         try {
-            main = app.openring.data.Prefs.of(c).mainDevice();
             // a day earlier for the night that ends this morning
             if (app.openring.data.WatchStore.any(db)) watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
         } catch (RuntimeException e) {
             watch = null;
             ok = failed(c, date, "watch data", e);
         }
-        merged = app.openring.core.MainDevice.of(main, date, ds, de, zone, ring, watch);
+        // the phone (issue #329, phase 1b): a source while it counts steps or has any stored; null leaves only ring and watch
+        app.openring.core.MainDevice.Phone phone = null;
+        try {
+            phoneSensor = app.openring.sync.PhoneReader.hasSensor(c);
+            phoneAllowed = app.openring.sync.PhoneReader.allowed(c);
+            phoneAny = app.openring.data.PhoneStore.any(db);
+            if (phoneAny) phone = app.openring.data.PhoneStore.forDay(db, ds, de);
+            else if (p.demo() || phoneSensor && phoneAllowed) phone = new app.openring.core.MainDevice.Phone();
+        } catch (RuntimeException e) {
+            phone = null;
+            ok = failed(c, date, "phone steps", e);
+        }
+        try {
+            boolean demo = p.demo();
+            boolean ringThere = demo || app.openring.core.KeyState.hasRing(p.ringState());
+            boolean watchThere = demo || p.watchAddress() != null;
+            main = app.openring.core.MainDevice.shown(p.mainDeviceStored(), ringThere, watchThere, phone != null);
+        } catch (RuntimeException e) {
+            ok = failed(c, date, "main device", e);
+        }
+        merged = app.openring.core.MainDevice.of(main, date, ds, de, zone, ring, watch, phone);
     }
 
     /** Values of a day field for the {@code n} days ending at the selected date (NaN if missing). */

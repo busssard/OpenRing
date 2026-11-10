@@ -59,11 +59,14 @@ public final class Pages {
         double sc = d.score("screen");
         row.addView(ringButton(c, sc, "Screen", Ui.OXY, nav, SCREEN, Double.isNaN(sc) && !screenReady(c) ? "Tap to set up" : null), Ui.weight(1));
         rings.addView(row);
-        TextView find = Ui.smallButton(c, "Find my ring", Ui.OXY); // issue #74
+        // without a ring by choice (issue #329) the button adds one instead
+        final boolean noRing = PhoneViews.noRing(c);
+        TextView find = Ui.smallButton(c, noRing ? app.openring.core.KeyState.ADD_RING : "Find my ring", Ui.OXY); // issue #74
         find.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                c.startActivity(new android.content.Intent(c, FinderActivity.class));
+                if (noRing) PhoneViews.addRing(c);
+                else c.startActivity(new android.content.Intent(c, FinderActivity.class));
             }
         });
         LinearLayout.LayoutParams fl = Ui.matchWrap();
@@ -78,6 +81,16 @@ public final class Pages {
 
         if (d.emptyAll() && d.allLeftOut()) {
             // nothing to show: the Left out card above says why
+        } else if (d.emptyAll() && noRing) {
+            // without a ring (issue #329): the phone's steps come with its readings, about every hour
+            LinearLayout e = Ui.card(c);
+            e.addView(Ui.h2(c, "No data for this day yet"));
+            e.addView(Ui.gap(c, 6));
+            e.addView(Ui.body(c, "Steps from this phone show on Activity after its first reading, screen time on Screen. "
+                    + "Sleep and readiness need a ring or a watch."));
+            e.addView(Ui.gap(c, 12));
+            e.addView(PhoneViews.addRingButton(c, true), Ui.matchWrap());
+            root.addView(e);
         } else if (d.emptyAll()) {
             LinearLayout e = Ui.card(c);
             e.addView(Ui.h2(c, "No data for this day yet"));
@@ -108,9 +121,11 @@ public final class Pages {
             LinearLayout digest = Ui.card(c);
             digest.addView(Ui.caption(c, "Your day"));
             digest.addView(Ui.gap(c, 6));
-            digest.addView(Ui.text(c, headline(d), 20, Ui.TEXT, Ui.LIGHT));
+            // without a ring (issue #329) the day is the phone's steps: no "keep wearing your ring"
+            digest.addView(Ui.text(c, noRing ? "Steps counted by this phone" : headline(d), 20, Ui.TEXT, Ui.LIGHT));
             digest.addView(Ui.gap(c, 6));
-            digest.addView(Ui.body(c, digest(d)));
+            digest.addView(Ui.body(c, noRing ? "Sleep and readiness need a ring or a watch. Everything is worked out on this phone, nothing left the device."
+                    : digest(d)));
             root.addView(digest);
 
             LinearLayout stats = Ui.card(c);
@@ -151,13 +166,14 @@ public final class Pages {
         LinearLayout lr = Ui.hbox(c);
         LinearLayout lt = Ui.vbox(c);
         lt.addView(Ui.h2(c, "Live heart rate"));
-        lt.addView(Ui.body(c, "Measure right now with your ring"));
+        lt.addView(Ui.body(c, noRing ? "Needs a ring" : "Measure right now with your ring"));
         lr.addView(lt, Ui.weight(1));
-        TextView lb = Ui.button(c, "Start", Ui.HEART, false);
+        TextView lb = Ui.button(c, noRing ? app.openring.core.KeyState.ADD_RING : "Start", Ui.HEART, false);
         lb.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                nav.live(false);
+                if (noRing) PhoneViews.addRing(c);
+                else nav.live(false);
             }
         });
         lr.addView(lb);
@@ -331,6 +347,8 @@ public final class Pages {
     // ======================================================================== SLEEP
 
     public static View sleep(Context c, DayData d, Nav nav) {
+        // no ring and no watch (issue #329): one card instead of empty charts
+        if (PhoneViews.needsDevice(c, d)) return PhoneViews.needDevice(c);
         // the watch's night: the main device's, or the ring has none for this day (issue #251)
         if (d.merged != null && d.merged.watchNight != null) return watchSleep(c, d, nav, d.merged.watchNight);
         LinearLayout root = Ui.vbox(c);
@@ -816,6 +834,8 @@ public final class Pages {
     // ===================================================================== READINESS
 
     public static View readiness(Context c, DayData d) {
+        // no ring and no watch (issue #329): one card instead of empty charts
+        if (PhoneViews.needsDevice(c, d)) return PhoneViews.needDevice(c);
         LinearLayout root = Ui.vbox(c);
         JSONObject sc = d.scoreObj("readiness");
         root.addView(hero(c, d.score("readiness"), "Readiness", Ui.READY,
@@ -941,8 +961,12 @@ public final class Pages {
                 sc.addView(Ui.statRow(c, stepsStat(c, d, 0, "Estimated from how much you moved, so \"est.\""), distanceStat(c, d)));
                 String fill = stepsLine(d);
                 if (fill != null) sc.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
+                if (phoneCounted(d)) sc.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
                 root.addView(sc);
             }
+            // steps from this phone (issue #329): the evidence, or the card that asks for Physical activity
+            View phone = PhoneViews.activityCard(c, d);
+            if (phone != null) root.addView(phone);
             View w = workoutsCard(c, d);
             if (w != null) root.addView(w);
             return root;
@@ -960,7 +984,12 @@ public final class Pages {
             goal.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
             goal.addView(Ui.text(c, Explain.MAIN_FILLED, 12, Ui.TEXT_3, Ui.REGULAR));
         }
+        // phone steps in the total are spread evenly over each interval between two readings (issue #329)
+        if (phoneCounted(d)) goal.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(goal);
+        // steps from this phone (issue #329): the evidence under the main device's steps, or the card that asks
+        View phone = PhoneViews.activityCard(c, d);
+        if (phone != null) root.addView(phone);
         // the watch's workouts of the day: only the watch records them (issue #251)
         View workouts = workoutsCard(c, d);
         if (workouts != null) root.addView(workouts);
@@ -1058,8 +1087,17 @@ public final class Pages {
         app.openring.core.MainDevice.Day m = d.merged;
         String note = m == null ? null : app.openring.core.MainDevice.stepsNote(m);
         double metres = m == null ? Json.d(d.day, "distance_m") : m.metres;
-        return Ui.stat(c, "Distance", Ui.fmt(metres / 1000.0, 1), "km", 0, note == null ? "Estimated from the steps"
-                : note.startsWith("Counted") ? "The watch's own estimate from your steps" : "Estimated from the steps of both");
+        // the phone counts no distance: it is worked out from its steps (issue #329)
+        boolean phone = m != null && (m.main == app.openring.core.MainDevice.PHONE || m.whole && m.wholeFrom == app.openring.core.MainDevice.PHONE);
+        return Ui.stat(c, "Distance", Ui.fmt(metres / 1000.0, 1), "km", 0, note == null || phone ? "Estimated from the steps"
+                : note.startsWith("Counted") && !note.contains("phone") ? "The watch's own estimate from your steps" : "Estimated from the steps of both");
+    }
+
+    /** Phone steps are part of the day's total: the phone is the main device with steps, or it filled a gap (issue #329). */
+    static boolean phoneCounted(DayData d) {
+        app.openring.core.MainDevice.Day m = d.merged;
+        if (m == null || Double.isNaN(m.steps)) return false;
+        return m.phoneSteps() > 0 || (m.base == app.openring.core.MainDevice.PHONE && m.steps > 0);
     }
 
     /** The watch's workouts of the day as one card, null without any (issue #251). */
