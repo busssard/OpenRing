@@ -223,7 +223,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
      * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
      * rise it marks (phase 2),
-     * period_how (boolean, demo mode only) opens How it works on the Period card and in Your cycles,
+     * period_how (boolean, demo mode only) opens How it works on the Period card, in Your cycles and on the night
+     * temperature card (issue #363),
      * drip (boolean, demo mode only) opens Import from drip with a made up drip file (the preview only, nothing is imported in
      * demo mode) and drip_correct (boolean) with it opens Correct on its first short period,
      * main_device (int, demo mode only: 0 ring, 1 watch, 2 phone) picks the main device as Settings does (issue #251),
@@ -264,8 +265,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
         PeriodCard.askPending = i.getBooleanExtra("period_ask", false) && Prefs.of(this).demo();
         // screen test: the marked temperature rise of phase 2, read by touch on its first high night, demo mode only
         PeriodAnalysis.risePending = i.getBooleanExtra("period_rise", false) && Prefs.of(this).demo();
-        // screen test: How it works opened on the Period card and in Your cycles (owner's feedback of 3 November), demo mode only
-        if (i.getBooleanExtra("period_how", false) && Prefs.of(this).demo()) PeriodCard.howOpen[0] = PeriodAnalysis.howOpen[0] = true;
+        // screen test: How it works opened on the Period card, in Your cycles and on the night temperature card (owner's feedback
+        // of 3 November, issue #363), demo mode only
+        if (i.getBooleanExtra("period_how", false) && Prefs.of(this).demo()) {
+            PeriodCard.howOpen[0] = PeriodAnalysis.howOpen[0] = PeriodAnalysis.tempHowOpen[0] = true;
+        }
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)

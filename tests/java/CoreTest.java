@@ -1704,6 +1704,9 @@ public class CoreTest {
         boolean shortLines = true;
         for (String x : stay) shortLines &= x.length() <= 120 && x.split("\\. ").length <= 2;
         check("#252h the lines in view are one or two short sentences", shortLines);
+        // with left out cycles the Your cycles line adds a third sentence that names them; up to three are fine there (issue #363)
+        String leftOut = app.openring.ui.Explain.periodCycles(9, 2);
+        check("#252h the Your cycles line with left out cycles has at most three sentences", leftOut.split("\\. ").length <= 3, leftOut);
         check("#252h the lines in view keep the counts", app.openring.ui.Explain.periodCycles(8, 0).contains("all your 8 cycles")
                 && app.openring.ui.Explain.periodLengths(7).contains("your 7 periods that are over") && app.openring.ui.Explain.periodCycles(9, 2).contains("2 cycles more than 10 days"));
         List<String> all = new ArrayList<String>(Arrays.asList(stay));
@@ -5902,6 +5905,12 @@ public class CoreTest {
         String open = from >= 0 && to > from ? gatt.substring(from, to) : "";
         int fin = open.indexOf("finally");
         check("GattLink.open closes the link in finally, whatever was thrown", fin >= 0 && open.indexOf("l.close()", fin) > fin, open);
+        // but never the link it hands back (issue #366): the close in finally is guarded, and the flag is set as the last
+        // statement before the return, so nothing that can throw lies between them
+        int guard = fin < 0 ? -1 : open.indexOf("if (!opened) l.close()", fin);
+        check("GattLink.open closes only a link it does not return", guard > fin && open.indexOf("l.close()", fin) == guard + "if (!opened) ".length(), open);
+        java.util.regex.Matcher setBeforeReturn = java.util.regex.Pattern.compile("opened = true;\\s*return l;").matcher(open);
+        check("GattLink.open sets opened right before return l", setBeforeReturn.find() && (fin < 0 || setBeforeReturn.end() < fin), open);
         check("GattLink.open catches nothing it would not throw again", !open.contains("catch ("), open);
     }
 

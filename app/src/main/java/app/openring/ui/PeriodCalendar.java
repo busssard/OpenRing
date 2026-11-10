@@ -7,6 +7,7 @@ import android.graphics.Paint;
 import java.time.LocalDate;
 import java.time.YearMonth;
 
+import app.openring.core.MonthGrid;
 import app.openring.core.analysis.Cycles;
 
 /**
@@ -41,7 +42,7 @@ final class PeriodCalendar extends MonthView {
     @Override
     protected void onDraw(Canvas cv) {
         Context c = getContext();
-        float w = getWidth(), cw = w / 7f;
+        float w = getWidth(), cw = w / MonthGrid.COLS;
         drawWeekdays(cv, cw);
         int off = offset(), len = month.lengthOfMonth();
         float rad = Math.min(cw, cellH) * 0.36f;
@@ -51,10 +52,10 @@ final class PeriodCalendar extends MonthView {
                 LocalDate d = month.atDay(dom);
                 boolean in = pass == 0 ? cy.inOvulation(d) : pass == 1 ? cy.inExpected(d) : cy.inFertile(d);
                 if (!in) continue;
-                int i = off + dom - 1, col = i % 7, row = i / 7;
+                int i = off + dom - 1, col = i % MonthGrid.COLS, row = i / MonthGrid.COLS;
                 float x0 = col * cw, top = head + row * cellH;
                 boolean left = col > 0 && dom > 1 && (pass == 0 ? cy.inOvulation(d.minusDays(1)) : pass == 1 ? cy.inExpected(d.minusDays(1)) : cy.inFertile(d.minusDays(1)));
-                boolean right = col < 6 && dom < len && (pass == 0 ? cy.inOvulation(d.plusDays(1)) : pass == 1 ? cy.inExpected(d.plusDays(1)) : cy.inFertile(d.plusDays(1)));
+                boolean right = col < MonthGrid.COLS - 1 && dom < len && (pass == 0 ? cy.inOvulation(d.plusDays(1)) : pass == 1 ? cy.inExpected(d.plusDays(1)) : cy.inFertile(d.plusDays(1)));
                 if (pass == 2) {
                     // the fertile window: a bar under the day
                     fill.setColor(Ui.READY);
@@ -72,7 +73,7 @@ final class PeriodCalendar extends MonthView {
         stroke.setStrokeWidth(Ui.dp(c, 1.4f));
         for (int dom = 1; dom <= len; dom++) {
             LocalDate d = month.atDay(dom);
-            int i = off + dom - 1, col = i % 7, row = i / 7;
+            int i = off + dom - 1, col = i % MonthGrid.COLS, row = i / MonthGrid.COLS;
             float cx = cw * (col + 0.5f), cyy = head + row * cellH + cellH / 2 - Ui.dp(c, 1);
             Integer f = cy.flows.get(d);
             boolean bleeding = f != null && f >= Cycles.LIGHT;
@@ -100,7 +101,7 @@ final class PeriodCalendar extends MonthView {
             cv.drawText(String.valueOf(dom), cx, cyy + txt.getTextSize() * 0.36f, txt);
         }
         // legend, two by two
-        float ly = head + ROWS * cellH + Ui.dp(c, 14);
+        float ly = head + MonthGrid.ROWS * cellH + Ui.dp(c, 14);
         txt.setTextSize(Ui.dp(c, 11));
         txt.setColor(Ui.TEXT_2);
         txt.setTextAlign(Paint.Align.LEFT);

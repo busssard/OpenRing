@@ -31,7 +31,6 @@ abstract class MonthView extends View {
         void tap(LocalDate day);
     }
 
-    static final int ROWS = MonthGrid.ROWS;
     protected final DayOfWeek firstDay = WeekFields.of(Locale.getDefault()).getFirstDayOfWeek();
     protected YearMonth month;
     protected LocalDate readDay;
@@ -72,7 +71,7 @@ abstract class MonthView extends View {
 
     @Override
     protected void onMeasure(int widthSpec, int heightSpec) {
-        setMeasuredDimension(MeasureSpec.getSize(widthSpec), (int) Math.ceil(head + ROWS * cellH + below()));
+        setMeasuredDimension(MeasureSpec.getSize(widthSpec), (int) Math.ceil(head + MonthGrid.ROWS * cellH + below()));
     }
 
     /** The place of the first of the month in the first row. */
@@ -90,7 +89,7 @@ abstract class MonthView extends View {
         Context c = getContext();
         txt.setTextSize(Ui.dp(c, 11));
         txt.setColor(Ui.TEXT_3);
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < MonthGrid.COLS; i++) {
             String n = firstDay.plus(i).getDisplayName(TextStyle.NARROW, Locale.getDefault());
             cv.drawText(n, cw * (i + 0.5f), head - Ui.dp(c, 8), txt);
         }
