@@ -3320,13 +3320,20 @@ public class PipelineTest {
     /**
      * Issue #72: on every demo day the Body tab's Lowest, Average and Highest are the stored line's own lowest point,
      * mean and highest point, with every stored point inside the day the chart draws, and the day's lowest stays near
-     * the night's lowest (5 minute averages). That holds for whole nights only: a night the demo cut short at its
+     * the night's lowest (5 minute averages); the line also holds the next night from bedtime to midnight, so an early
+     * bedtime before a calmer night (the story's best night, for example) may bring it down to that night's lowest, never
+     * lower. That holds for whole nights only: a night the demo cut short at its
      * {@code now} falls and rises within minutes, so a quarter hour sits above its 5 minute low (issue #123). Such days
      * are left out of the second check; {@code wantCut} is how many there must be.
      */
     static void dayHeartChecks(Db db, long now, String label, int wantCut) {
         int days = 0, matched = 0, nearNight = 0, withNight = 0, cut = 0;
-        String bad = "";
+        String bad = "", bad72 = "";
+        java.util.Map<String, Double> nightLow = new java.util.HashMap<String, Double>();
+        for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
+            JSONObject o = Json.parse(r[1]);
+            if (o != null) nightLow.put(r[0], Json.d(o, "rhr"));
+        }
         for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
             if (o == null || o.optJSONArray("hr_day") == null) continue;
@@ -3349,12 +3356,17 @@ public class PipelineTest {
                 continue;
             }
             withNight++;
-            if (Math.abs(low - night) <= 3) nearNight++;
+            // the day's line also holds the start of the next night (from bedtime to midnight): an early bedtime before a
+            // calmer night can dip below this day's own night, never below the lower of the two nights
+            Double next = nightLow.get(day.plusDays(1).toString());
+            double floor = next == null || Double.isNaN(next) ? night : Math.min(night, next);
+            if (low >= floor - 3 && low <= night + 3) nearNight++;
+            else bad72 += r[0] + " (lowest " + low + ", night " + night + ", next " + next + ") ";
         }
         check(label + ": Highest and Lowest are the drawn line's highest and lowest point, Average its mean (#72)",
                 days >= 28 && matched == days, matched + " of " + days + " " + bad);
-        check(label + ": the day's lowest within 3 bpm of the night's lowest (#72)", withNight >= 28 && nearNight == withNight && cut == wantCut,
-                nearNight + " of " + withNight + ", " + cut + " night cut short left out");
+        check(label + ": the day's lowest within 3 bpm of the night's lowest, or of the next night's when that starts lower before midnight (#72)",
+                withNight >= 28 && nearNight == withNight && cut == wantCut, nearNight + " of " + withNight + ", " + cut + " night cut short left out " + bad72);
     }
 
     /**
@@ -5388,6 +5400,24 @@ public class PipelineTest {
                 old.equals(db.kv("analysis_error", null)) && !Analyzer.upToDate(c), db.kv("analysis_error", null));
         db.put("analysis_error", "java.lang.OutOfMemoryError");
         check("#289 an older version's text without a message is left out too", DataCheck.run(c).text.contains("Analysis error: noted by an older version"), null);
+        check("#362 the older analysis error's sentence ends with a full stop", text.contains("The next sync analyses again.") && !text.contains(value), text);
+
+        // the last sync error as an older version stored it: the error's full text after "Unexpected error: " (issue #362)
+        app.openring.data.Prefs sp = app.openring.data.Prefs.of(c);
+        String oldSync = "Unexpected error: java.lang.IllegalStateException: 61.5";
+        sp.setLastSyncError(oldSync);
+        text = DataCheck.run(c).text;
+        check("#362 an older sync error: the data check leaves its text out and says so", text.contains("last error: Unexpected error: noted by an older version "
+                + "of the app (its text is left out, it can hold a measured value)\n") && !text.contains("61.5") && !text.contains("IllegalStateException"), text);
+        check("#362 an older sync error is not deleted", oldSync.equals(sp.lastSyncError()), sp.lastSyncError());
+        // as this version stores it: class and place, shown as it is
+        sp.setLastSyncError("Unexpected error: IllegalStateException at RingManager.java:612");
+        check("#362 this version's sync error is shown with its class and place", DataCheck.run(c).text
+                .contains("last error: Unexpected error: IllegalStateException at RingManager.java:612\n"), null);
+        // the app's own sentences are shown as they are
+        sp.setLastSyncError("Ring not found. Is it near the phone?");
+        check("#362 a sync error in the app's own words is shown as it is", DataCheck.run(c).text.contains("last error: Ring not found. Is it near the phone?\n"), null);
+        sp.setLastSyncError(null);
 
         Analyzer.run(c, null);
         check("#289 the next good analysis clears the error, the data check has none", db.kv("analysis_error", null) == null
@@ -9318,6 +9348,15 @@ public class PipelineTest {
             check("#242 the copy fails: the data check gives the reason", DataCheck.run(fc).text.contains("Last update: no copy, error: "), null);
             check("#289 the copy fails: the reason is the error's class and place, never its message",
                     app.openring.core.LoadNote.safe(fp.beforeUpdateNote().substring("error: ".length())), fp.beforeUpdateNote());
+            // the note as an older version stored it: the error's full message (issue #362), left out of the data check
+            String fpNote = fp.beforeUpdateNote();
+            fp.setBeforeUpdateNote("error: /data/user/0/app.openring/files/before-update/x (Not a directory) 61.5", true);
+            String ft = DataCheck.run(fc).text;
+            check("#362 an older before update note: the data check leaves its text out and says so",
+                    ft.contains("Last update: no copy, error: noted by an older version of the app (its text is left out)") && !ft.contains("61.5")
+                    && !ft.contains("Not a directory"), ft);
+            fp.setBeforeUpdateNote(fpNote, true);
+            check("#362 this version's before update note is shown with its class and place", DataCheck.run(fc).text.contains("Last update: no copy, " + fpNote), fpNote);
             fp.clearBeforeUpdateUnseen();
             check("#242 OK on the main screen's note: it is not shown again, the reason stays for Data check", !fp.beforeUpdateUnseen() && fp.beforeUpdateNote() != null, null);
 
@@ -9330,6 +9369,8 @@ public class PipelineTest {
             app.openring.data.Prefs hp = app.openring.data.Prefs.of(hc);
             check("#242 the copy fails half way: no copy counted, the reason kept, the history opens", ho > 0 && !new java.io.File(copies242(hc), "before-43-1.42.raw").exists()
                     && hp.beforeUpdateNote() != null && hp.beforeUpdateNote().startsWith("error: ") && hp.notedVersion() == 43, hp.beforeUpdateNote());
+            check("#362 the copy fails half way: the reason is the error's class and place, never its message",
+                    app.openring.core.LoadNote.safe(hp.beforeUpdateNote().substring("error: ".length())), hp.beforeUpdateNote());
 
             // the version cannot be read: nothing is compared or copied, the history opens
             Context uc = oldPhone242("openring242-unknown", 4);

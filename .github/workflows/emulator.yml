@@ -15,7 +15,9 @@ concurrency:
 jobs:
   screens:
     runs-on: ubuntu-latest
-    timeout-minutes: 20   # a normal run takes about 8 minutes; screens.sh limits every adb call (issue #278)
+    # The emulator step now takes 16 to 20 minutes (more screens); 20 for the whole job cancelled green runs
+    # (#324). The emulator and the publish step have limits of their own; the job limit is the sum plus setup.
+    timeout-minutes: 40
     env:
       # tools/version.sh, as in build.yml: the Settings screenshot shows the same version as the release
       VERSION_CHANNEL: ${{ (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && 'stable' || 'nightly' }}
@@ -40,6 +42,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Run on the emulator
+        timeout-minutes: 30   # screens.sh limits every adb call (issue #278)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -62,6 +65,8 @@ jobs:
       # latest run); a lost race with another pull request is retried, a preview never turns the check
       # red, and without screenshots (the emulator failed first) the step does nothing (issue #57).
       - name: Publish the screenshots
+        timeout-minutes: 5    # a slow publish only warns, the screens decide the check (#324)
+        continue-on-error: true
         if: (success() || (failure() && github.event_name == 'pull_request')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         env:
           GH_TOKEN: ${{ github.token }}

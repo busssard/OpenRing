@@ -390,7 +390,9 @@ public final class Analyzer {
     /**
      * Stores the error of a failed run (after its roll back) for the data check as {@link app.openring.core.LoadNote#error}:
      * its class and first place in Open Ring's code, never its message, which can carry a stored value (issue #289). The
-     * full error goes to Android's log; the callers put it in the Log tab. Never throws, also when the database cannot be written.
+     * full error goes to Android's log. The Log tab gets it from the callers: the sync, Repair, Re analyse all and Settings'
+     * screen time update log the full stack trace; the main screen ({@code DayData.failed}) and Settings' left out times
+     * log one line; the demo logs nothing. Never throws, also when the database cannot be written.
      */
     private void failed(Throwable e) {
         try {
