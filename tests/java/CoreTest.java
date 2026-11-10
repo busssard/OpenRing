@@ -1251,6 +1251,7 @@ public class CoreTest {
         backgroundJobDue329();
         dating220();
         recent194();
+        jobLine361();
         demoLive();
         liveFeed();
         requests();
@@ -8876,6 +8877,26 @@ public class CoreTest {
                 && sc.contains("filters.add(new ScanFilter.Builder().setDeviceAddress(preferred).build());")
                 && sc.contains("if (!addr.equals(preferred) && !isOura(r)) return;"));
         check("#195 one find left, every caller chooses the plan", sc.split("public static BluetoothDevice find\\(", -1).length == 2);
+    }
+
+    /**
+     * Issue #361: the Data check's line above Repair names the job that runs: Repair says Repairing, Settings' Re analyse
+     * all (the same job) shows the same line as Settings (Texts.REANALYSING). Source checks, LogActivity is Android.
+     */
+    static void jobLine361() throws Exception {
+        String src = new String(java.nio.file.Files.readAllBytes(new java.io.File("app/src/main/java/app/openring/ui/LogActivity.java").toPath()), "UTF-8");
+        check("#361 Repair has its own line", src.contains("REPAIRING = \"Repairing, this can take a few minutes.\";"));
+        check("#361 Re analyse all shows the same line as Settings, without Repairing",
+                app.openring.core.Texts.REANALYSING.equals("Re analysing all nights, this can take a few minutes.") && !src.contains("ANALYSING_ALL"));
+        check("#361 the line above Repair is the running job's", src.contains("repairNote.setText(fromSettingsNow ? app.openring.core.Texts.REANALYSING : REPAIRING);")
+                && src.split("repairNote = Ui.text\\(", -1).length == 2);
+        int a = src.indexOf("static void analyseAll(Context app, boolean fromSettings) {"), b = src.indexOf("new RepairTask(", a);
+        check("#361 the job notes which one it is before it starts", a > 0 && b > a && src.substring(a, b).contains("fromSettingsNow = fromSettings;"));
+        int r = src.indexOf("void repair() {"), re = src.indexOf("static void analyseAll(", r);
+        String rep = r > 0 && re > r ? src.substring(r, re) : "";
+        check("#361 Repair notes its job before the line is shown", rep.indexOf("analyseAll(getApplicationContext(), false);") > 0
+                && rep.indexOf("analyseAll(getApplicationContext(), false);") < rep.lastIndexOf("showRepairState();"));
+        check("#361 the Repair toast stays Repairing", rep.contains("Toast.makeText(this, REPAIRING, Toast.LENGTH_LONG)"));
     }
 
     /** Issue #194: the rule for skipping a sync shortly after the last one, and screen sessions read again unchanged. */

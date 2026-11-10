@@ -63,7 +63,8 @@ public final class DataCheck {
         t.append("Ring ").append(mask(p.serial())).append(", hw ").append(p.hardware()).append(", fw ").append(p.firmware()).append('\n');
         t.append("Last sync ").append(p.lastSync() == 0 ? "never"
                 : DateUtils.getRelativeTimeSpanString(p.lastSync() * 1000, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS))
-                .append(", last error: ").append(p.lastSyncError() == null ? "none" : p.lastSyncError()).append('\n');
+                .append(", last error: ").append(p.lastSyncError() == null ? "none" : olderError(p.lastSyncError(), app.openring.core.SyncError.UNEXPECTED, OLDER_TEXT))
+                .append('\n');
 
         long total = db.count("SELECT COUNT(*) FROM events");
         long dated = db.count("SELECT COUNT(*) FROM events WHERE unix IS NOT NULL");
@@ -175,9 +176,22 @@ public final class DataCheck {
                 + date(p.watchLastAttempt() == 0 ? Double.NaN : p.watchLastAttempt()) + ", last problem: " + (p.watchError() == null ? "none" : p.watchError()) + "\n";
     }
 
-    /** Said instead of an analysis error stored by an older version as its full text, which can hold a measured value (issue #289). */
-    static final String OLDER_ANALYSIS_ERROR = "noted by an older version of the app (its text is left out, it can hold a measured value). "
-            + "The next sync analyses again";
+    /** Said instead of an error stored by an older version as its full text, which can hold a measured value (issues #289, #362). */
+    static final String OLDER_TEXT = "noted by an older version of the app (its text is left out, it can hold a measured value)";
+
+    /** Said instead of an analysis error stored by an older version as its full text (issue #289). */
+    static final String OLDER_ANALYSIS_ERROR = OLDER_TEXT + ". The next sync analyses again.";
+
+    /**
+     * A stored note as the data check shows it (issue #362): one that starts with {@code prefix} keeps the prefix and
+     * shows what follows only when it is an error's class and place ({@link app.openring.core.LoadNote#safe}), as this
+     * version stores it; the full text an older version stored there becomes {@code said}. Any other note is shown as it
+     * is (the app's own sentences and the ring connection's messages). Only the shown text changes, the stored one is kept.
+     */
+    static String olderError(String stored, String prefix, String said) {
+        if (stored == null || !stored.startsWith(prefix)) return stored;
+        return app.openring.core.LoadNote.safe(stored.substring(prefix.length())) ? stored : prefix + said;
+    }
 
     /**
      * The stored {@code analysis_error} as the data check shows it (issue #289): the error's class and place as this
