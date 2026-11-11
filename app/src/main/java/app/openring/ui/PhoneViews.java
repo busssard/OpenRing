@@ -117,36 +117,54 @@ final class PhoneViews {
         return card;
     }
 
-    /** The day line of {@link #evidenceCard}. */
+    /**
+     * The day line of {@link #evidenceCard}, and of the watch's steps through the day (issue #251): steps per hour as bars,
+     * with the phone's intervals as a light row under them when there are any, touch readable.
+     */
     static final class DayLine extends Charts.Scrub {
-        private final MainDevice.Day day;
         private final double from, to;
         private final ZoneId zone;
         private final double[] hourly;
         private final int base;
+        /** Where the device of the bars was worn, per quarter hour; null: an hour without steps just reads "no steps". */
+        private final boolean[] worn;
+        /** The phone's intervals {start, stop, steps}; null: no phone row at all. */
+        private final java.util.List<double[]> phone;
         private final Paint bar = new Paint(Paint.ANTI_ALIAS_FLAG), light = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint();
         private final android.graphics.RectF r = new android.graphics.RectF();
 
         DayLine(Context c, MainDevice.Day day, double from, double to, ZoneId zone) {
+            this(c, hourly(day, from, to), day.baseWorn, day.base >= 0 ? day.base : day.main, day.phone, from, to, zone,
+                    "Steps through the day, touch to read the numbers");
+        }
+
+        DayLine(Context c, double[] hourly, boolean[] worn, int base, java.util.List<double[]> phone, double from, double to, ZoneId zone, String description) {
             super(c);
-            this.day = day;
             this.from = from;
             this.to = to;
             this.zone = zone;
-            base = day.base >= 0 ? day.base : day.main;
-            int hours = (int) Math.ceil((to - from) / 3600 - 1e-9);
-            hourly = new double[Math.max(1, hours)];
-            for (double[] p : day.baseParts) {
-                int h = (int) p[0] / 4;
-                if (h >= 0 && h < hourly.length) hourly[h] += p[1];
-            }
+            this.hourly = hourly;
+            this.worn = worn;
+            this.base = base;
+            this.phone = phone;
             bar.setColor(Ui.ACTIVE);
             light.setColor(Ui.alpha(Ui.OXY, 0.4f));
             txt.setColor(Ui.TEXT_3);
             txt.setTextSize(Ui.dp(c, 10));
             grid.setColor(Ui.LINE);
             grid.setStrokeWidth(1);
-            setContentDescription("Steps through the day, touch to read the numbers");
+            setContentDescription(description);
+        }
+
+        /** The steps per hour the main (or base) device's quarter hour parts add up to. */
+        static double[] hourly(MainDevice.Day day, double from, double to) {
+            int hours = (int) Math.ceil((to - from) / 3600 - 1e-9);
+            double[] hourly = new double[Math.max(1, hours)];
+            for (double[] p : day.baseParts) {
+                int h = (int) p[0] / 4;
+                if (h >= 0 && h < hourly.length) hourly[h] += p[1];
+            }
+            return hourly;
         }
 
         private float x(double t, float left, float w) {
@@ -159,7 +177,7 @@ final class PhoneViews {
             float left = 0, tipH = Ui.dp(getContext(), 22);
             float axis = h - Ui.dp(getContext(), 14);
             float rowTop = axis - Ui.dp(getContext(), 30), rowBottom = axis - Ui.dp(getContext(), 4);
-            float barBottom = rowTop - Ui.dp(getContext(), 6), barTop = tipH;
+            float barBottom = phone == null ? axis - Ui.dp(getContext(), 4) : rowTop - Ui.dp(getContext(), 6), barTop = tipH;
             double max = 1;
             for (double v : hourly) max = Math.max(max, v);
             cv.drawLine(left, barBottom, w, barBottom, grid);
@@ -171,17 +189,19 @@ final class PhoneViews {
                 r.set(bx + 1, barBottom - bh, bx + hw - 1, barBottom);
                 cv.drawRoundRect(r, Ui.dp(getContext(), 2), Ui.dp(getContext(), 2), bar);
             }
-            // the phone's intervals: as wide as their time, as high as their steps per minute
-            double rateMax = 1;
-            for (double[] i : day.phone) rateMax = Math.max(rateMax, i[2] / Math.max(60, i[1] - i[0]));
-            for (double[] i : day.phone) {
-                float a = x(Math.max(from, i[0]), left, w), b = x(Math.min(to, i[1]), left, w);
-                double rate = i[2] / Math.max(60, i[1] - i[0]);
-                float top = rowBottom - (float) Math.max(Ui.dp(getContext(), 2), rate / rateMax * (rowBottom - rowTop));
-                r.set(a + 0.5f, top, Math.max(a + 1.5f, b - 0.5f), rowBottom);
-                cv.drawRect(r, light);
+            if (phone != null) {
+                // the phone's intervals: as wide as their time, as high as their steps per minute
+                double rateMax = 1;
+                for (double[] i : phone) rateMax = Math.max(rateMax, i[2] / Math.max(60, i[1] - i[0]));
+                for (double[] i : phone) {
+                    float a = x(Math.max(from, i[0]), left, w), b = x(Math.min(to, i[1]), left, w);
+                    double rate = i[2] / Math.max(60, i[1] - i[0]);
+                    float top = rowBottom - (float) Math.max(Ui.dp(getContext(), 2), rate / rateMax * (rowBottom - rowTop));
+                    r.set(a + 0.5f, top, Math.max(a + 1.5f, b - 0.5f), rowBottom);
+                    cv.drawRect(r, light);
+                }
+                cv.drawLine(left, rowBottom, w, rowBottom, grid);
             }
-            cv.drawLine(left, rowBottom, w, rowBottom, grid);
             // the clock every 6 hours
             for (int k = 0; k * 3600 <= to - from; k += 6) {
                 double t = from + k * 3600;
@@ -190,23 +210,24 @@ final class PhoneViews {
             }
             if (!Float.isNaN(scrubX)) {
                 double t = from + (Math.max(left, Math.min(w - 1, scrubX)) - left) / (w - left) * (to - from);
-                drawTip(cv, scrubX, tipH, rowBottom, tip(t));
+                drawTip(cv, scrubX, tipH, phone == null ? barBottom : rowBottom, tip(t));
             }
         }
 
-        /** Both lines of the readout at {@code t}: the main device's hour, and the phone's interval there. */
+        /** The readout at {@code t}: the hour and its steps, and with the phone row the phone's interval there. */
         String tip(double t) {
             int k = (int) Math.max(0, Math.min(hourly.length - 1, Math.floor((t - from) / 3600)));
             double a = from + k * 3600, b = Math.min(to, a + 3600);
             String hour = clock(a) + " to " + clock(b);
-            boolean worn = false;
-            for (int s = k * 4; s < Math.min(day.baseWorn.length, k * 4 + 4); s++) worn |= day.baseWorn[s];
+            boolean on = worn == null;
+            for (int s = k * 4; worn != null && s < Math.min(worn.length, k * 4 + 4); s++) on |= worn[s];
             long v = Math.round(hourly[k]);
-            String first = !worn && v == 0 ? hour + ", " + MainDevice.name(base) + (base == MainDevice.PHONE ? " counted nothing" : " was not worn")
+            String first = !on && v == 0 ? hour + ", " + MainDevice.name(base) + (base == MainDevice.PHONE ? " counted nothing" : " was not worn")
                     : hour + ", " + (base == MainDevice.WATCH ? "" : "about ") + String.format(Locale.getDefault(), "%,d", v) + (v == 1 ? " step" : " steps")
                             + " from " + MainDevice.name(base);
+            if (phone == null) return first;
             PhoneSteps.Interval at = null;
-            for (double[] i : day.phone) if (t >= i[0] && t < i[1]) at = new PhoneSteps.Interval(i[0], i[1], (long) i[2], 0, 0);
+            for (double[] i : phone) if (t >= i[0] && t < i[1]) at = new PhoneSteps.Interval(i[0], i[1], (long) i[2], 0, 0);
             if (at == null) return first + "\nNo reading of your phone covers this time";
             return first + "\n" + PhoneSteps.tip(at, from, to, zone, Locale.getDefault());
         }
@@ -215,6 +236,29 @@ final class PhoneViews {
             java.time.ZonedDateTime z = Instant.ofEpochSecond((long) Math.round(t)).atZone(zone);
             return String.format(Locale.getDefault(), "%02d:%02d", z.getHour(), z.getMinute());
         }
+    }
+
+    /**
+     * Activity's "Steps through the day" for the watch's steps (issue #251, owner's report of 11 November): its records per
+     * hour as bars, touch readable, adding up to exactly the watch's own count of the day; null when the day's steps are
+     * not the watch's own.
+     */
+    static View watchDayCard(Context c, DayData d) {
+        MainDevice.Day m = d.merged;
+        if (m == null || m.base != MainDevice.WATCH || m.baseParts.isEmpty()) return null;
+        double[] hourly = DayLine.hourly(m, d.dayStart(), d.dayEnd());
+        double own = 0;
+        for (double v : hourly) own += v;
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Steps through the day"));
+        card.addView(Ui.gap(c, 8));
+        card.addView(new DayLine(c, hourly, m.baseWorn, MainDevice.WATCH, null, d.dayStart(), d.dayEnd(), d.zone,
+                "Watch steps through the day, touch to read the numbers"), Ui.sized(c, -1, 130));
+        card.addView(Ui.gap(c, 6));
+        card.addView(Ui.text(c, "Bars: steps per hour counted by your watch, " + String.format(Locale.getDefault(), "%,d", Math.round(own))
+                + " in all. Touch to see the hour and its steps.", 12, Ui.TEXT_3, Ui.REGULAR));
+        if (!m.fills.isEmpty()) card.addView(Ui.text(c, Explain.WATCH_DAY_FILLED, 12, Ui.TEXT_3, Ui.REGULAR));
+        return card;
     }
 
     // ---------------------------------------------------------------------------------------- without a ring

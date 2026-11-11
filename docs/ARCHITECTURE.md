@@ -770,8 +770,13 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   the messages by `core/withings/Records` (`watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery`,
   keyed by device and time, UTC seconds), so the same message twice adds nothing. kv `watch_decoder` holds
   `Records.VERSION`; a new decoder works every row out again in one transaction before the next sync, the old rows stay until
-  then. T is the newest stored record of its kind minus 2 hours (0 the first time), worked out from the rows, so a restore
-  or a new decoder needs no cursor. Pairing another ring keeps the watch tables (`Db.KEPT_TABLES`), Delete all empties
+  then. Each request (activity, movement, heart rate) starts at T, the newest record of its own last whole answers (one that
+  reached the end part `0x0100`) minus 2 hours, a month back when it never had one (owner's report of 11 November: before,
+  T came from the stored rows of any answer, so heart rates inside an activity answer moved the heart rate request on, and
+  an answer cut off after another one was never asked again). T is noted in kv `watch_cursor_<type>_<address>` in the
+  transaction that stores the session's rows, never moves back, and is worked out again from the raw messages
+  (`WatchStore.fromRaw`, `Records.newestComplete`) when not noted: after an update, a new decoder, a restore or pairing
+  another ring (which empties kv). Pairing another ring keeps the watch tables (`Db.KEPT_TABLES`), Delete all empties
   them, a restore carries the phone's raw messages and devices into the restored file like the period log (same step of
   `Db.replaceWith`, the phone's row wins, any failure puts the old file back) and works the rows out again. A damaged phone
   file loses its watch rows with its period log (the restore says so). Days come from the `zones` table
@@ -785,8 +790,10 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   watch part outside demo mode when it is due; `SyncJob` only reads the settings and asks it.
 * **Screens:** Settings, Watch (the watch, paired with this phone or not, last sync, battery, last problem, "Sync the watch
   now", the chips, "Open the watch page", "Forget the watch": syncing stops, nothing is deleted); the
-  Watch page with steps per day (30 days as dots), the day's workouts, the heart rate curve, Withings' own sleep as a
-  timeline (per minute, codes not known yet as no data) and the battery per day with its drop per day (falls added up,
+  Watch page with steps per day (30 days as dots) and per hour (touch readable, the hours add up to the day), the day's
+  workouts, the heart rate curve, Withings' own sleep as a timeline (per minute, awake, REM, light, deep; time without a
+  record or with a code not known as no data) with the watch's heart rate readings of the night under it on the same time
+  axis (lowest and average of the readings; readings more than an hour apart are not joined) and the battery per day with its drop per day (falls added up,
   charges left out, over 7 days). Nothing on the page is stored: `core/withings/WatchDays` works it out on each load.
 * **Log and Data check:** every step, message type and length, never a value (the JVM test checks the session's lines);
   the Data check names counts, dates and message types only (no step, heart rate or battery value).
@@ -834,8 +841,8 @@ read, no Device Information or Battery service, silent until asked).
 * Activity records `0x0978` and heart rate records `0x0928`, each with part `0x0506` (from, 4 bytes; count, 2 bytes, 0 for
   all), heart rate also with part `0x0961` (version 1). The answers come as several messages until one holds the end part
   `0x0100`. Records follow each other, each starting with a time part `0x0601` (unix seconds): duration `0x0602` (seconds),
-  steps and distance `0x0603` (steps 2 bytes, distance 4, then two numbers not used), calories `0x0608` and `0x060a` (2
-  bytes, then an intensity), sleep stage `0x0607` (0 light, 2 deep, 3 REM; 1 not documented), workout type `0x0969` (codes:
+  steps and distance `0x0603` (steps 2 bytes, distance 4 in centimetres, then climbed and descended), calories `0x0608` and `0x060a` (2
+  bytes, then an intensity), sleep stage `0x0607` (0 awake, 1 light, 2 deep, 3 REM: the numbers of Withings' public sleep data, which the owner's first real night confirmed with 1 as the most common code; Gadgetbridge reads 0 and 1 as light), workout type `0x0969` (codes:
   1 walking, 2 running, 3 hiking, 6 cycling, 7 swimming and 30 more), running `0x0605` and swimming `0x060d` marks, heart
   rate `0x0929` (the first byte). Sleep heart rate comes as records with only a heart rate.
 * `0x0506` "movement samples" is asked too since the watch setup (below); its records go through the same decoder and are
@@ -898,9 +905,11 @@ read, no Device Information or Battery service, silent until asked).
     sex sends no user until the setup screen asks for it.
   * **Records** (answers of all three requests): a time part `0x0601` starts each record; duration `0x0602` (2 bytes);
     movement `0x0603` (steps 2, distance 4, climbed 4, descended 4); walking `0x0604` (a level, 2 bytes), running `0x0605`,
-    swimming `0x060d` (marks); sleep `0x0607` (2 bytes: 0 light, 2 deep, 3 REM); calories `0x0608` and `0x060a` (calories 2,
+    swimming `0x060d` (marks); sleep `0x0607` (2 bytes: 0 awake, 1 light, 2 deep, 3 REM); calories `0x0608` and `0x060a` (calories 2,
     then an intensity 2); `0x060b` unknown; workout type `0x0969` (2 bytes); heart rate `0x0929` (1 byte). Decoder version 2
-    stores the intensity and the climb in `watch_moves`.
+    stores the intensity and the climb in `watch_moves`. Decoder version 3 (owner's report of 11 November) reads the distance
+    as centimetres and stores whole metres (half a metre up): the owner's first day came to about 80 per step, a step's length
+    in centimetres. Gadgetbridge stores the number without a unit. The climb's unit is not confirmed (shown as metres).
   * **The watch's own messages** have `0x41` or `0x81` as the type's first byte. A sync ask `0x0141` from the watch is
     answered with an empty `0x4141` (the answer to one of the watch's own messages carries `0x4000`), as Gadgetbridge does.
     Live workout messages (`0x013d`, `0x013e`, `0x0140`) and notification requests are only stored here.

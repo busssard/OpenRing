@@ -903,6 +903,8 @@ public class PipelineTest {
         upgradeSetup251();
         store251();
         fixes332();
+        cursor251();
+        decoder3For251();
         restore251();
         large251();
         demo251();
@@ -12607,15 +12609,15 @@ public class PipelineTest {
         Context c = phone254("openring332-fixes");
         Db db = Db.get(c);
         long now = T251 + 40 * 86400L;
-        check("#332 since: nothing stored yet, the first request asks 30 days back", app.openring.data.WatchStore.since(db, DEV251, false, now) == now - 30 * 86400L
-                && app.openring.data.WatchStore.since(db, DEV251, true, now) == now - 30 * 86400L, app.openring.data.WatchStore.since(db, DEV251, false, now));
-        check("#332 since: a clock before the month: never below 0", app.openring.data.WatchStore.since(db, DEV251, true, 1000) == 0, null);
+        check("#332 since: nothing stored yet, the first request asks 30 days back", app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.ACTIVITY, now) == now - 30 * 86400L
+                && app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.HEART_RATE, now) == now - 30 * 86400L, app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.ACTIVITY, now));
+        check("#332 since: a clock before the month: never below 0", app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.HEART_RATE, 1000) == 0, null);
         // the activity answer: steps with calories and intensity; the movement answer: the same record, steps with climb, no calories
         List<byte[][]> act = new ArrayList<byte[][]>(), mov = new ArrayList<byte[][]>();
         act.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
-            app.openring.core.withings.WatchDemo.steps(500, 360), app.openring.core.withings.WatchDemo.calories(21, 35)});
+            app.openring.core.withings.WatchDemo.steps(500, 36000), app.openring.core.withings.WatchDemo.calories(21, 35)});
         mov.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
-            app.openring.core.withings.WatchDemo.steps(500, 360, 6, 4)});
+            app.openring.core.withings.WatchDemo.steps(500, 36000, 6, 4)});
         List<byte[]> msgs = new ArrayList<byte[]>();
         msgs.addAll(app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.ACTIVITY, act, 5));
         msgs.addAll(app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.MOVEMENT, mov, 5));
@@ -12624,7 +12626,7 @@ public class PipelineTest {
         check("#332 merge: the movement answer without calories keeps the activity answer's calories", rows.contains(DEV251 + " " + T251 + " 900 500 360 21\n"), rows);
         check("#332 merge: intensity from the activity answer and the climb from the movement answer, in one row", rows.contains(DEV251 + " " + T251 + " 35 6 4\n")
                 && watchCount251(db, "watch_moves") == 1 && watchCount251(db, "watch_steps") == 1, rows);
-        check("#332 since: after a sync, 2 hours before the newest record", app.openring.data.WatchStore.since(db, DEV251, false, now) == T251 - 7200, null);
+        check("#332 since: after a sync, 2 hours before the newest record", app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.ACTIVITY, now) == T251 - 7200, null);
         // decoding everything again (a new decoder) gives the same rows, the raw messages unchanged
         String raw = rows.substring(0, rows.indexOf("--\n"));
         app.openring.data.WatchStore.decodeAgain(db);
@@ -12632,7 +12634,7 @@ public class PipelineTest {
         // a later activity answer with the record grown: the larger counts win
         List<byte[][]> later = new ArrayList<byte[][]>();
         later.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251), app.openring.core.withings.WatchDemo.duration(900),
-            app.openring.core.withings.WatchDemo.steps(640, 460), app.openring.core.withings.WatchDemo.calories(27, 40)});
+            app.openring.core.withings.WatchDemo.steps(640, 46000), app.openring.core.withings.WatchDemo.calories(27, 40)});
         session251(db, 4000, app.openring.core.withings.WatchDemo.answer(app.openring.core.withings.Proto.ACTIVITY, later, 5), T251 + 7200);
         rows = watchRows251(db);
         check("#332 merge: a record that came again grown takes the new counts, the climb stays", rows.contains(DEV251 + " " + T251 + " 900 640 460 27\n")
@@ -12668,8 +12670,8 @@ public class PipelineTest {
         Context c = phone254("openring251-store");
         Db db = Db.get(c);
         List<String> ring = results139(db), ev = events58(db);
-        check("#251 nothing stored: the next requests start at 0", app.openring.data.WatchStore.since(db, DEV251, false) == 0
-                && app.openring.data.WatchStore.since(db, DEV251, true) == 0 && !app.openring.data.WatchStore.any(db), null);
+        check("#251 nothing stored: the next requests start at 0", app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.ACTIVITY) == 0
+                && app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.HEART_RATE) == 0 && !app.openring.data.WatchStore.any(db), null);
         List<byte[]> msgs = made251(T251, 80);
         session251(db, 1000, msgs, T251 + 86400);
         check("#251 a session: every message kept with its place", watchCount251(db, "watch_raw") == msgs.size(), watchCount251(db, "watch_raw"));
@@ -12680,9 +12682,9 @@ public class PipelineTest {
         check("#251 the same messages in a second session: all kept (equal messages are real repeats), no decoded row added",
                 watchCount251(db, "watch_raw") == 2 * msgs.size() && watchRows251(db).replaceFirst("(?s)^.*?--\n", "").equals(decoded), watchCount251(db, "watch_raw"));
         long newestStep = T251 + 39 * 900, newestHr = T251 + 19 * 1800;
-        check("#251 the next requests start 2 hours before the newest stored record of their kind", app.openring.data.WatchStore.since(db, DEV251, false)
-                == T251 + 10 * 3600 - 7200 && app.openring.data.WatchStore.since(db, DEV251, true) == newestHr - 7200, app.openring.data.WatchStore.since(db, DEV251, false));
-        check("#251 another watch's records do not move this one's start", app.openring.data.WatchStore.since(db, "other", false) == 0, null);
+        check("#251 the next requests start 2 hours before the newest stored record of their kind", app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.ACTIVITY)
+                == T251 + 10 * 3600 - 7200 && app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.HEART_RATE) == newestHr - 7200, app.openring.data.WatchStore.since(db, DEV251, app.openring.core.withings.Proto.ACTIVITY));
+        check("#251 another watch's records do not move this one's start", app.openring.data.WatchStore.since(db, "other", app.openring.core.withings.Proto.ACTIVITY) == 0, null);
         check("#251 storing the watch left the ring's events and results alone", events58(db).equals(ev) && results139(db).equals(ring), null);
 
         // a new decoder: everything worked out again; stopped half way, the old rows stay
@@ -12743,6 +12745,155 @@ public class PipelineTest {
         for (String t : new String[] {"watch_raw", "watch_devices", "watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery", "watch_moves"}) empty &= watchCount251(db, t) == 0;
         check("#251 Delete all local data empties every watch table", empty, watchRows251(db));
         clean254();
+    }
+
+    /** A made up data answer of {@code type}: records from {@code t0} every {@code step} seconds, with or without its end part. */
+    static List<byte[]> answer251(int type, long t0, int n, int step, boolean whole, boolean heartOnly) {
+        List<byte[][]> recs = new ArrayList<byte[][]>();
+        for (int i = 0; i < n; i++) {
+            long t = t0 + (long) i * step;
+            recs.add(heartOnly ? new byte[][] {app.openring.core.withings.WatchDemo.time(t), app.openring.core.withings.WatchDemo.heart(55 + i % 20)}
+                    : new byte[][] {app.openring.core.withings.WatchDemo.time(t), app.openring.core.withings.WatchDemo.duration(900),
+                        app.openring.core.withings.WatchDemo.steps(100 + i, 7200 + i), app.openring.core.withings.WatchDemo.heart(70 + i % 20)});
+        }
+        List<byte[]> out = app.openring.core.withings.WatchDemo.answer(type, recs, 6);
+        if (!whole) {
+            // cut off: the end part never came (the link dropped, the ring wanted Bluetooth, the time ran out)
+            out = new ArrayList<byte[]>(out.subList(0, out.size() - 1));
+        }
+        return out;
+    }
+
+    /**
+     * The owner's report of 11 November (a sync brought only the battery, a later one the data): where each request starts
+     * must only move once a whole answer of that request is stored. Before, the starts were worked out from the stored rows of
+     * any answer: heart rates inside an activity answer moved the heart rate request's start, and the movement request used
+     * the activity answer's start, so an answer cut off after another one was never asked again. Made up messages only.
+     */
+    static void cursor251() throws Exception {
+        Context c = phone254("openring251-cursor");
+        Db db = Db.get(c);
+        int ACT = app.openring.core.withings.Proto.ACTIVITY, MOV = app.openring.core.withings.Proto.MOVEMENT, HR = app.openring.core.withings.Proto.HEART_RATE;
+        long now = T251 + 3 * 86400L, month = now - 30 * 86400L;
+        // session 1: the activity answer whole (its records carry heart rates up to T+10 h), the heart rate answer cut off
+        List<byte[]> s1 = new ArrayList<byte[]>();
+        s1.add(app.openring.core.withings.WatchDemo.batteryReply(80, 2, 3900));
+        s1.addAll(answer251(ACT, T251, 41, 900, true, false));
+        s1.addAll(answer251(HR, T251 - 4 * 3600, 30, 600, false, true));
+        session251(db, 1000, s1, T251 + 11 * 3600);
+        long newestAct = T251 + 40 * 900;
+        check("#251 cursor: a whole activity answer moves the activity start", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == newestAct - 7200,
+                app.openring.data.WatchStore.since(db, DEV251, ACT, now));
+        check("#251 cursor: heart rates inside the activity answer do not move the heart rate start (the cut off answer is asked again)",
+                app.openring.data.WatchStore.since(db, DEV251, HR, now) == month, app.openring.data.WatchStore.since(db, DEV251, HR, now));
+        check("#251 cursor: the movement request was never answered, it starts a month back", app.openring.data.WatchStore.since(db, DEV251, MOV, now) == month, null);
+        check("#251 cursor: the rows of the cut off answer are stored all the same", db.count("SELECT COUNT(*) FROM watch_hr WHERE t < " + T251) > 0, null);
+        // session 2: only the battery (the session ended before the data, as with the alarm before #378): nothing moves
+        session251(db, 2000, java.util.Collections.singletonList(app.openring.core.withings.WatchDemo.batteryReply(79, 2, 3890)), T251 + 86400);
+        check("#251 cursor: a session with only the battery moves no start", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == newestAct - 7200
+                && app.openring.data.WatchStore.since(db, DEV251, HR, now) == month, null);
+        // session 3: a later activity answer cut off, a whole heart rate and movement answer
+        List<byte[]> s3 = new ArrayList<byte[]>();
+        s3.addAll(answer251(ACT, T251 + 86400, 20, 900, false, false));
+        s3.addAll(answer251(MOV, T251 + 86400, 10, 900, true, false));
+        s3.addAll(answer251(HR, T251 - 4 * 3600, 60, 1800, true, true));
+        session251(db, 3000, s3, T251 + 86400 + 6 * 3600);
+        check("#251 cursor: an activity answer cut off moves nothing", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == newestAct - 7200, null);
+        check("#251 cursor: each whole answer moves only its own start", app.openring.data.WatchStore.since(db, DEV251, MOV, now) == T251 + 86400 + 9 * 900 - 7200
+                && app.openring.data.WatchStore.since(db, DEV251, HR, now) == T251 - 4 * 3600 + 59 * 1800 - 7200, app.openring.data.WatchStore.since(db, DEV251, HR, now));
+        // never back: an older whole answer later does not move a start back
+        session251(db, 4000, answer251(HR, T251 - 20 * 3600, 3, 600, true, true), T251 + 2 * 86400);
+        check("#251 cursor: an older whole answer never moves a start back", app.openring.data.WatchStore.since(db, DEV251, HR, now) == T251 - 4 * 3600 + 59 * 1800 - 7200, null);
+        // the noted starts are exactly what the raw messages give (an older version or a restore works them out from them)
+        long[] noted = {app.openring.data.WatchStore.newest(db, DEV251, ACT), app.openring.data.WatchStore.newest(db, DEV251, MOV), app.openring.data.WatchStore.newest(db, DEV251, HR)};
+        db.getWritableDatabase().execSQL("DELETE FROM kv WHERE k LIKE 'watch_cursor_%'");
+        long[] fromRaw = {app.openring.data.WatchStore.newest(db, DEV251, ACT), app.openring.data.WatchStore.newest(db, DEV251, MOV), app.openring.data.WatchStore.newest(db, DEV251, HR)};
+        check("#251 cursor: worked out from the raw messages it is the same as noted session by session", Arrays.equals(noted, fromRaw), Arrays.toString(fromRaw));
+        db.put("watch_cursor_0x0506_other", "not a number");
+        check("#251 cursor: a damaged note counts as none, the request asks a month back", app.openring.data.WatchStore.since(db, "other", MOV, now) == month, null);
+        check("#251 cursor: another watch has its own starts", app.openring.data.WatchStore.since(db, "other", ACT, now) == month, null);
+        // a stop while a session is decoded: neither rows nor start moved
+        List<byte[]> s5 = answer251(ACT, T251 + 2 * 86400, 12, 900, true, false);
+        for (int i = 0; i < s5.size(); i++) app.openring.data.WatchStore.addRaw(db, 5000, i, DEV251, s5.get(i), T251 + 2 * 86400 + 3 * 3600);
+        String rows = watchRows251(db);
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop251 BEFORE INSERT ON kv WHEN NEW.k LIKE 'watch_cursor_%' BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        Throwable got = null;
+        try {
+            app.openring.data.WatchStore.decodeSession(db, 5000);
+        } catch (RuntimeException e) {
+            got = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER stop251");
+        check("#251 cursor: a stop while noting the start keeps the old rows and the old start (one transaction)", got != null && watchRows251(db).equals(rows)
+                && app.openring.data.WatchStore.since(db, DEV251, ACT, now) == newestAct - 7200, got);
+        app.openring.data.WatchStore.decodeSession(db, 5000);
+        check("#251 cursor: decoded again after the stop, rows and start move together", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == T251 + 2 * 86400 + 11 * 900 - 7200
+                && !watchRows251(db).equals(rows), null);
+        // a new decoder works the starts out again from the raw messages: the same
+        long act = app.openring.data.WatchStore.newest(db, DEV251, ACT);
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#251 cursor: after decoding everything again the starts are the same", app.openring.data.WatchStore.newest(db, DEV251, ACT) == act
+                && app.openring.data.WatchStore.newest(db, DEV251, HR) == fromRaw[2], null);
+        // Delete all: the starts go with the messages
+        Analyzer.deleteAll(c);
+        check("#251 cursor: after Delete all a request starts a month back again", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month, null);
+        clean254();
+    }
+
+    /**
+     * The owner's report of 11 November, data safety of decoder 3 (distance in centimetres): a history stored by decoder 2
+     * (distance taken as metres, 100 times too large) is worked out again from the kept raw messages: the raw messages stay
+     * byte for byte, every other row stays the same, only the distance becomes metres; a stop half way keeps decoder 2's
+     * rows; running it twice gives the same; a backup made with decoder 2 restores with decoder 3's rows.
+     */
+    static void decoder3For251() throws Exception {
+        Context c = phone254("openring251-decoder3");
+        Db db = Db.get(c);
+        session251(db, 1000, made251(T251, 90), T251 + 86400);
+        session251(db, 2000, made251(T251 + 86400, 88), T251 + 2 * 86400);
+        String now3 = watchRows251(db);
+        String raw = rawRows251(db);
+        // what decoder 2 stored: the same rows with the centimetres as metres
+        db.getWritableDatabase().execSQL("UPDATE watch_steps SET metres = metres * 100");
+        db.getWritableDatabase().execSQL("UPDATE watch_workouts SET metres = metres * 100");
+        db.put("watch_decoder", "2");
+        String old = watchRows251(db);
+        check("#251 decoder 2's rows had the distance 100 times too large", !old.equals(now3), null);
+        byte[] backup = backup252(c);
+        java.lang.reflect.Field fail = app.openring.data.WatchStore.class.getDeclaredField("failDecodeAfter");
+        fail.setAccessible(true);
+        fail.set(null, 7);
+        Throwable got = null;
+        try {
+            app.openring.data.WatchStore.ensureDecoded(db);
+        } catch (RuntimeException e) {
+            got = e;
+        } finally {
+            fail.set(null, -1);
+        }
+        check("#251 decoder 3 stopped half way: decoder 2's rows stay until the new ones are complete", got != null && watchRows251(db).equals(old)
+                && "2".equals(db.kv("watch_decoder", null)), got);
+        check("#251 decoder 3: the distance in metres, every other row the same, raw messages byte for byte", app.openring.data.WatchStore.ensureDecoded(db)
+                && watchRows251(db).equals(now3) && rawRows251(db).equals(raw) && "3".equals(db.kv("watch_decoder", null)), watchRows251(db));
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#251 decoder 3 twice: the same rows", watchRows251(db).equals(now3), null);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(backup));
+        db = Db.get(c);
+        check("#251 a backup made with decoder 2 restores with decoder 3's rows and every raw message", r.ok && watchRows251(db).equals(now3) && rawRows251(db).equals(raw), r.message);
+        clean254();
+    }
+
+    /** The raw messages, row for row (hex), to prove they never change. */
+    static String rawRows251(Db db) {
+        StringBuilder sb = new StringBuilder();
+        android.database.Cursor cur = db.getReadableDatabase().rawQuery("SELECT session, seq, device, type, hex(body), captured FROM watch_raw ORDER BY session, seq", null);
+        try {
+            while (cur.moveToNext()) sb.append(cur.getString(0)).append(' ').append(cur.getString(1)).append(' ').append(cur.getString(2)).append(' ')
+                    .append(cur.getString(3)).append(' ').append(cur.getString(4)).append(' ').append(cur.getString(5)).append('\n');
+        } finally {
+            cur.close();
+        }
+        return sb.toString();
     }
 
     /**

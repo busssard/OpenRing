@@ -182,9 +182,9 @@ public class WatchTest {
 
     static void records() {
         byte[] act = Frame.message(Proto.ACTIVITY,
-                WatchDemo.time(1000), WatchDemo.duration(900), WatchDemo.steps(420, 300), WatchDemo.calories(17),
+                WatchDemo.time(1000), WatchDemo.duration(900), WatchDemo.steps(420, 30000), WatchDemo.calories(17),
                 WatchDemo.time(2000), WatchDemo.duration(1500), WatchDemo.sleep(Records.DEEP),
-                WatchDemo.time(3000), WatchDemo.duration(2100), WatchDemo.workout(2), WatchDemo.steps(5000, 5500), WatchDemo.calories(380),
+                WatchDemo.time(3000), WatchDemo.duration(2100), WatchDemo.workout(2), WatchDemo.steps(5000, 550000), WatchDemo.calories(380),
                 WatchDemo.time(4000), WatchDemo.heart(55),
                 WatchDemo.time(5000), Frame.part(Proto.REC_RUN, new byte[0]), WatchDemo.duration(60),
                 WatchDemo.time(6000), Frame.part(Proto.REC_SWIM, new byte[0]),
@@ -197,7 +197,7 @@ public class WatchTest {
                 && d.steps.get(0).metres == 300 && d.steps.get(0).kcal == 17, d.steps.size());
         check("records: a sleep piece", d.sleep.size() == 1 && d.sleep.get(0).start == 2000 && d.sleep.get(0).dur == 1500 && d.sleep.get(0).stage == Records.DEEP);
         check("records: a workout with its own steps, not in the steps list", d.workouts.size() == 3 && d.workouts.get(0).kind == 2 && d.workouts.get(0).steps == 5000
-                && d.workouts.get(0).kcal == 380 && d.workouts.get(0).dur == 2100, d.workouts.size());
+                && d.workouts.get(0).kcal == 380 && d.workouts.get(0).dur == 2100 && d.workouts.get(0).metres == 5500, d.workouts.size());
         check("records: the watch's running and swimming marks are workouts", d.workouts.get(1).kind == Records.RUN && d.workouts.get(2).kind == Records.SWIM);
         check("records: a heart rate in an otherwise empty record (how the watch sends sleep heart rate)", d.heart.size() == 1 && d.heart.get(0).t == 4000
                 && d.heart.get(0).bpm == 55, d.heart.size());
@@ -616,7 +616,7 @@ public class WatchTest {
         Records.decode(m, 2000, d);
         check("records: movement answers decode, with intensity and climb", d.steps.size() == 2 && d.steps.get(0).kcal == 20 && d.moves.size() == 1
                 && d.moves.get(0).start == 100 && d.moves.get(0).met == 33 && d.moves.get(0).up == 12 && d.moves.get(0).down == 9, d.moves.size());
-        check("records: decoder version 2", Records.VERSION == 2);
+        check("records: decoder version 3 (distance in centimetres)", Records.VERSION == 3);
         WatchDays.Zones utc = WatchDays.zones(new ArrayList<Object[]>(), ZoneId.of("UTC"));
         List<Records.Steps> rows = Arrays.asList(new Records.Steps(100, 900, 500, 380, 20), new Records.Steps(1000, 900, 50, 30, 3), new Records.Steps(90000, 900, 5, 3, 7));
         List<Records.Moves> mv2 = Arrays.asList(new Records.Moves(100, 33, 12, 9), new Records.Moves(1000, 10, 0, 4), new Records.Moves(90000, 5, 6, 0));
@@ -1208,16 +1208,18 @@ public class WatchTest {
         // a night of three pieces with a gap, ending on the morning of d
         long bed = midnight - 3600;
         List<Records.Sleep> sl = new ArrayList<Records.Sleep>(Arrays.asList(new Records.Sleep(bed, 1800, Records.LIGHT), new Records.Sleep(bed + 1800, 1200, Records.DEEP),
-                new Records.Sleep(bed + 3600, 900, Records.REM), new Records.Sleep(bed + 5400, 600, 1)));
+                new Records.Sleep(bed + 3600, 900, Records.REM), new Records.Sleep(bed + 5400, 600, 9)));
         // a nap in the afternoon of d: its end is after 18:00? no, at 15:30; shorter than the night, so the night wins
         sl.add(new Records.Sleep(midnight + 14 * 3600, 1800, Records.LIGHT));
         WatchDays.Night n = WatchDays.nightFor(sl, d, z);
         check("days: the night joins pieces across a short gap", n != null && n.start == bed && n.end == bed + 6000, n == null ? null : n.end - n.start);
-        check("days: minutes per stage", n.deepMin == 20 && n.lightMin == 30 && n.remMin == 15 && n.otherMin == 10 && n.asleepMin() == 65, n.deepMin + " " + n.lightMin);
+        check("days: minutes per stage", n.deepMin == 20 && n.lightMin == 30 && n.remMin == 15 && n.awakeMin == 0 && n.otherMin == 35 && n.asleepMin() == 65
+                && n.inBedMin() == n.stages.length, n.deepMin + " " + n.lightMin);
         check("days: per minute stages in the app's digits, the gap and the unknown code as 0", n.stages.length == 100 && n.stages[0] == 2 && n.stages[30] == 1
                 && n.stages[52] == 0 && n.stages[60] == 3 && n.stages[95] == 0, n.stages.length);
         check("days: no night on a day without sleep", WatchDays.nightFor(sl, d.plusDays(3), z) == null);
-        check("days: stage codes", WatchDays.stage(Records.DEEP) == 1 && WatchDays.stage(Records.LIGHT) == 2 && WatchDays.stage(Records.REM) == 3 && WatchDays.stage(1) == 0);
+        check("days: stage codes", WatchDays.stage(Records.DEEP) == 1 && WatchDays.stage(Records.LIGHT) == 2 && WatchDays.stage(Records.REM) == 3 && WatchDays.stage(9) == 0);
+        sleep251();
         // battery: the last reading of each day and the drop per day without the charge
         List<Records.Battery> bat = Arrays.asList(new Records.Battery(midnight + 7 * 3600, 90, 2, 0), new Records.Battery(midnight + 86400 + 7 * 3600, 86, 2, 0),
                 new Records.Battery(midnight + 86400 + 19 * 3600, 100, 0, 0), new Records.Battery(midnight + 2 * 86400 + 7 * 3600, 98, 2, 0));
@@ -2199,5 +2201,107 @@ public class WatchTest {
         night.intervals.add(new double[] {f23 - 3600, f23 + 3 * 3600, 400});
         MainDevice.Day d23 = MainDevice.of(MainDevice.PHONE, dst, f23, t23, z, new MainDevice.Ring(), null, night);
         check("#329b 23 hour day: three of the four hours fall into it", MainDevice.slots(f23, t23) == 92 && Math.abs(d23.steps - 300) < 1e-9, d23.steps);
+    }
+
+    // ------------------------------------------------------------- first real watch data (owner's report of 11 November)
+
+    /**
+     * Issue #251, the owner's first real data: the sleep codes (0 awake, 1 light, 2 deep, 3 REM), the night's minutes adding
+     * up to the chart, the night's heart rate, steps per hour adding up to the day, distance in centimetres, and where the
+     * next request starts. Made up records only.
+     */
+    static void sleep251() {
+        ZoneId zurich = ZoneId.of("Europe/Zurich");
+        WatchDays.Zones z = new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return zurich;
+            }
+        };
+        LocalDate d = LocalDate.of(2026, 11, 10);
+        long midnight = d.atStartOfDay(zurich).toEpochSecond(), bed = midnight - 2 * 3600;
+        check("251 sleep codes: 0 awake, 1 light, 2 deep, 3 REM, as the app's digits", WatchDays.stage(0) == 4 && WatchDays.stage(1) == 2 && WatchDays.stage(2) == 1
+                && WatchDays.stage(3) == 3 && WatchDays.stage(5) == 0 && Records.AWAKE == 0 && Records.LIGHT == 1);
+        // a night mostly light (code 1), with deep, REM, a wake up and a gap without a record
+        List<Records.Sleep> sl = Arrays.asList(new Records.Sleep(bed, 600, 0), new Records.Sleep(bed + 600, 3000, 1), new Records.Sleep(bed + 3600, 1800, 2),
+                new Records.Sleep(bed + 5400, 1200, 1), new Records.Sleep(bed + 6600, 300, 0), new Records.Sleep(bed + 6900, 1500, 3),
+                new Records.Sleep(bed + 9000, 3600, 1));
+        WatchDays.Night n = WatchDays.nightFor(sl, d, z);
+        check("251 night: light is code 1 and no longer shown as no data", n != null && n.lightMin == 50 + 20 + 60 && n.deepMin == 30 && n.remMin == 25
+                && n.awakeMin == 15 && n.otherMin == 10 && n.asleepMin() == 185, n == null ? null : n.lightMin + " " + n.otherMin);
+        check("251 night: the rows add up to the whole night as the chart shows it", n.inBedMin() == n.stages.length && n.stages.length == 210, n.stages.length);
+        check("251 night: awake minutes in the chart as awake, the gap as no data", n.stages[0] == 4 && n.stages[112] == 4 && n.stages[145] == 0 && n.stages[10] == 2,
+                n.stages[145]);
+        // overlapping pieces: each minute counts once (it counted twice before)
+        WatchDays.Night o = WatchDays.nightFor(Arrays.asList(new Records.Sleep(midnight, 3600, 2), new Records.Sleep(midnight + 1800, 3600, 1)), d, z);
+        check("251 night: overlapping pieces count each minute once", o.inBedMin() == 90 && o.deepMin == 30 && o.lightMin == 60, o.deepMin + " " + o.lightMin);
+
+        // the night's heart rate: only readings from its start to its end, oldest first, lowest and average
+        List<Records.Heart> hr = Arrays.asList(new Records.Heart(n.end, 60), new Records.Heart(bed + 3600, 48), new Records.Heart(bed - 1, 70),
+                new Records.Heart(bed, 54), new Records.Heart(n.end + 1, 90), new Records.Heart(bed + 7200, 51));
+        WatchDays.NightHeart h = WatchDays.heartIn(hr, n.start, n.end);
+        check("251 night heart: the readings inside the night, both ends included, oldest first", h.points.size() == 4 && h.points.get(0)[0] == bed
+                && h.points.get(3)[0] == n.end && h.points.get(1)[1] == 48, h.points.size());
+        check("251 night heart: lowest with its time, average of the readings", h.lowest == 48 && h.lowestAt == bed + 3600 && Math.abs(h.average - 53.25) < 1e-9, h.average);
+        WatchDays.NightHeart none = WatchDays.heartIn(hr, midnight + 12 * 3600, midnight + 13 * 3600);
+        check("251 night heart: no reading, nothing made up", none.points.isEmpty() && none.lowest < 0 && Double.isNaN(none.average));
+        // on the Sleep page through the main device: the watch's night comes with its heart rate
+        MainDevice.Watch w = new MainDevice.Watch();
+        w.sleep.addAll(sl);
+        w.heart.addAll(hr);
+        MainDevice.Day day = MainDevice.of(MainDevice.WATCH, d, midnight, d.plusDays(1).atStartOfDay(zurich).toEpochSecond(), zurich, new MainDevice.Ring(), w);
+        check("251 night heart: the watch's night on Sleep carries its heart rate", day.watchNight != null && day.watchNightHeart != null
+                && day.watchNightHeart.points.size() == 4 && day.watchNightHeart.lowest == 48, day.watchNightHeart == null ? null : day.watchNightHeart.points.size());
+
+        // steps per hour: each record in the hour it starts in, adding up to exactly the day total
+        long dayEnd = d.plusDays(1).atStartOfDay(zurich).toEpochSecond();
+        List<Records.Steps> st = Arrays.asList(new Records.Steps(midnight + 8 * 3600, 900, 400, 300, 10), new Records.Steps(midnight + 8 * 3600 + 3599, 900, 7, 5, 0),
+                new Records.Steps(midnight + 9 * 3600, 900, 123, 90, 3), new Records.Steps(midnight - 1, 900, 999, 700, 9), new Records.Steps(dayEnd, 900, 55, 40, 1),
+                new Records.Steps(dayEnd - 1, 60, 3, 2, 0));
+        double[] per = WatchDays.stepsPerHour(st, midnight, dayEnd);
+        double sum = 0;
+        for (double v : per) sum += v;
+        check("251 steps per hour: 24 hours, each record in its starting hour", per.length == 24 && per[8] == 407 && per[9] == 123 && per[23] == 3 && per[0] == 0, per[8]);
+        check("251 steps per hour: the hours add up to the day's total", sum == WatchDays.stepsPerDay(st, z).get(d), sum);
+        WatchDays.Index ix = new WatchDays.Index(st, new ArrayList<Records.Moves>(), hr, new ArrayList<Records.Workout>(), sl, new ArrayList<Records.Battery>(), z);
+        check("251 the Watch page's index gives the same hours and night heart rate", Arrays.equals(ix.stepsPerHour(d), per)
+                && ix.heartIn(n).points.size() == 4 && ix.heartIn(n).lowest == 48);
+        LocalDate back = LocalDate.of(2026, 10, 25), forward = LocalDate.of(2026, 3, 29);
+        check("251 steps per hour: 25 hours when the clocks go back, 23 when they go forward",
+                WatchDays.stepsPerHour(st, WatchDays.dayStart(back, z), WatchDays.dayStart(back.plusDays(1), z)).length == 25
+                        && WatchDays.stepsPerHour(st, WatchDays.dayStart(forward, z), WatchDays.dayStart(forward.plusDays(1), z)).length == 23);
+
+        // distance: the watch sends centimetres
+        Records.Decoded dec = new Records.Decoded();
+        Records.decode(Frame.message(Proto.ACTIVITY, WatchDemo.time(1000), WatchDemo.duration(900), WatchDemo.steps(3900, 315500), WatchDemo.end()), 2000, dec);
+        check("251 distance: centimetres become metres (about 0.8 m a step)", dec.steps.get(0).metres == 3155, dec.steps.get(0).metres);
+        check("251 distance: half a metre rounds up, nothing below 0", Records.metres(149) == 1 && Records.metres(150) == 2 && Records.metres(0) == 0
+                && Records.metres(-5) == 0 && Records.metres(Long.MAX_VALUE / 2) == Integer.MAX_VALUE);
+
+        // where the next request starts: only a whole answer counts
+        List<byte[]> whole = WatchDemo.answer(Proto.HEART_RATE, Arrays.asList(new byte[][] {WatchDemo.time(500), WatchDemo.heart(60)},
+                new byte[][] {WatchDemo.time(900), WatchDemo.heart(61)}), 1);
+        check("251 cursor: a whole answer gives its newest record", Records.newestComplete(whole) == 900, Records.newestComplete(whole));
+        check("251 cursor: an answer cut off before its end part gives nothing", Records.newestComplete(whole.subList(0, 1)) == -1);
+        check("251 cursor: a whole answer without records gives 0", Records.newestComplete(Collections.singletonList(Frame.message(Proto.HEART_RATE, WatchDemo.end()))) == 0);
+
+        // the demo's watch night: light, deep, REM and awake, with heart rate readings through it
+        LocalDate today = LocalDate.of(2026, 11, 3);
+        List<WatchDemo.Msg> msgs = WatchDemo.history(today, 10, at(today, 10, 0, zurich), zurich, new Random(251));
+        List<byte[]> bodies = new ArrayList<byte[]>();
+        List<Long> caps = new ArrayList<Long>();
+        for (WatchDemo.Msg m : msgs) {
+            bodies.add(m.body);
+            caps.add(m.captured);
+        }
+        Records.Decoded demo = Records.decode(bodies, caps);
+        WatchDays.Night dn = WatchDays.nightFor(demo.sleep, today, z);
+        WatchDays.NightHeart dh = WatchDays.heartIn(demo.heart, dn.start, dn.end);
+        check("251 demo night: light, deep, REM and awake, no gap", dn.lightMin > dn.deepMin && dn.deepMin > 30 && dn.remMin > 30 && dn.awakeMin > 0 && dn.awakeMin < 20
+                && dn.otherMin == 0, dn.lightMin + " " + dn.deepMin + " " + dn.remMin + " " + dn.awakeMin + " " + dn.otherMin);
+        check("251 demo night: a heart rate reading about every 10 minutes, lowest under the evening's", dh.points.size() > 40 && dh.lowest >= 45 && dh.lowest < 56
+                && dh.average > dh.lowest, dh.points.size() + " " + dh.lowest);
+        double km = WatchDays.metresPerDay(demo.steps, z).get(today.minusDays(1)) / (double) WatchDays.stepsPerDay(demo.steps, z).get(today.minusDays(1));
+        check("251 demo: about 0.7 m a step", km > 0.65 && km < 0.8, km);
     }
 }

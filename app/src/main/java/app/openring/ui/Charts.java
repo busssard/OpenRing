@@ -199,6 +199,30 @@ public final class Charts {
         private double markAt = Double.NaN;
 
         private ZoneId zone = ZoneId.systemDefault();
+        /** The watch's heart rate readings {time, bpm} in a band under the stages, or null (the owner's wish of 11 November). */
+        private java.util.List<long[]> heart;
+        private final Paint hrLine = new Paint(Paint.ANTI_ALIAS_FLAG), hrDot = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        /**
+         * Draws {@code points} ({time, bpm}, oldest first) as a heart rate line under the stages, on the same time axis; touching
+         * names the nearest reading too. Two readings further apart than {@link #HEART_JOIN_S} are not joined: the watch
+         * measures only now and then, and a line across a long gap would show values nobody measured.
+         */
+        public Hypnogram heart(java.util.List<long[]> points) {
+            heart = points == null || points.isEmpty() ? null : points;
+            setContentDescription(heart == null ? null : "Sleep stages and heart rate through the night, touch to read them");
+            return this;
+        }
+
+        /** Readings at most this far apart are joined by a line; a reading counts for a touch this far away (the watch's reach). */
+        static final long HEART_JOIN_S = 2 * app.openring.core.MainDevice.WATCH_REACH_S, HEART_NEAR_S = app.openring.core.MainDevice.WATCH_REACH_S;
+
+        /** The reading nearest to {@code t} within {@link #HEART_NEAR_S}, or null. */
+        static long[] nearest(java.util.List<long[]> pts, double t) {
+            long[] best = null;
+            for (long[] p : pts) if (Math.abs(p[0] - t) <= HEART_NEAR_S && (best == null || Math.abs(p[0] - t) < Math.abs(best[0] - t))) best = p;
+            return best;
+        }
 
         /** A thin orange line where the clocks changed during the night (issue #22). */
         public Hypnogram clockChange(double at) {
@@ -229,6 +253,9 @@ public final class Charts {
             grid.setStrokeWidth(1);
             mark.setColor(Ui.ACTIVE);
             mark.setStrokeWidth(Ui.dp(c, 1.5f));
+            hrLine.setColor(Ui.HEART);
+            hrLine.setStrokeWidth(Ui.dp(c, 1.5f));
+            hrDot.setColor(Ui.HEART);
         }
 
         static int level(int s) {
@@ -266,6 +293,9 @@ public final class Charts {
             float w = getWidth(), h = getHeight();
             float labelW = Ui.dp(getContext(), 44);
             float bottom = h - Ui.dp(getContext(), 18);
+            float axisBottom = bottom;
+            // with heart rate: the stages above, the heart rate band below, one time axis
+            if (heart != null) bottom = axisBottom * 0.62f;
             float rowH = bottom / 4f;
             String[] names = {"Awake", "REM", "Light", "Deep"};
             for (int i = 0; i < 4; i++) {
@@ -304,8 +334,9 @@ public final class Charts {
             }
             if (!Double.isNaN(markAt) && markAt > start && markAt < end) {
                 float x = labelW + (float) ((markAt - start) / (end - start)) * (w - labelW);
-                cv.drawLine(x, 0, x, bottom, mark);
+                cv.drawLine(x, 0, x, axisBottom, mark);
             }
+            if (heart != null) drawHeart(cv, labelW, w, bottom + Ui.dp(getContext(), 12), axisBottom - Ui.dp(getContext(), 4));
             if (!Float.isNaN(scrubX)) {
                 int k = (int) Math.max(0, Math.min(n - 1, Math.floor((scrubX - labelW) / cw)));
                 int a = k, b = k + 1;
@@ -315,7 +346,11 @@ public final class Charts {
                 double ta = start + a * ep, tb = start + b * ep;
                 // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
                 String label = app.openring.core.analysis.ClockChange.roundedStageTip(zone, start + (k + 0.5) * ep, name(stages[k]), ta, tb);
-                drawTip(cv, labelW + (k + 0.5f) * cw, Ui.dp(getContext(), 20), bottom, label);
+                if (heart != null) {
+                    long[] near = nearest(heart, start + (k + 0.5) * ep);
+                    label += near == null ? "\nNo heart rate reading near this time" : "\nHeart rate " + near[1] + " bpm at " + clock(near[0]);
+                }
+                drawTip(cv, labelW + (k + 0.5f) * cw, Ui.dp(getContext(), 20), axisBottom, label);
             }
             // time axis
             txt.setTextAlign(Paint.Align.LEFT);
@@ -325,6 +360,33 @@ public final class Charts {
             txt.setTextAlign(Paint.Align.CENTER);
             cv.drawText(clock((start + end) / 2), labelW + (w - labelW) / 2, h - Ui.dp(getContext(), 3), txt);
             txt.setTextAlign(Paint.Align.LEFT);
+        }
+
+        /** The heart rate band from {@code top} to {@code bot}: dots for the readings, lines only across short gaps. */
+        private void drawHeart(Canvas cv, float labelW, float w, float top, float bot) {
+            long lo = Long.MAX_VALUE, hi = Long.MIN_VALUE;
+            for (long[] p : heart) {
+                lo = Math.min(lo, p[1]);
+                hi = Math.max(hi, p[1]);
+            }
+            long span = Math.max(10, hi - lo);
+            double mid = (hi + lo) / 2.0;
+            double vlo = mid - span / 2.0, vhi = mid + span / 2.0;
+            cv.drawText(hi + " bpm", 0, top + Ui.dp(getContext(), 8), txt);
+            cv.drawText(String.valueOf(lo), 0, bot, txt);
+            cv.drawLine(labelW, bot, w, bot, grid);
+            float rad = Ui.dp(getContext(), 2);
+            float px = Float.NaN, py = Float.NaN;
+            long pt = 0;
+            for (long[] p : heart) {
+                float x = labelW + (float) ((p[0] - start) / (end - start)) * (w - labelW);
+                float y = bot - (float) ((p[1] - vlo) / (vhi - vlo)) * (bot - top);
+                if (!Float.isNaN(px) && p[0] - pt <= HEART_JOIN_S) cv.drawLine(px, py, x, y, hrLine);
+                cv.drawCircle(x, y, rad, hrDot);
+                px = x;
+                py = y;
+                pt = p[0];
+            }
         }
     }
 

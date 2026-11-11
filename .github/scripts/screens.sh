@@ -445,6 +445,19 @@ shot activity-phone-ask 1
 launch --es settings phone;                 shot settings-phone
 launch --ei tab 3 --ei main_device 2 --es day "$FILL_DAY"; shot activity-phone-main
 launch --ei tab 0 --ei main_device 0;       sleep 3
+# The owner's first real watch data (issue #251, 11 November): with only the watch (extra devices 1, demo mode only),
+# Activity's Steps through the day from the watch's records, then touched (the hour and its steps); Sleep with the watch's
+# night (awake, REM, light, deep) and its heart rate under the stages, touched (time, stage and the nearest reading)
+launch --ei tab 3 --ei devices 1; sleep 3
+scroll_to "STEPS THROUGH THE DAY" 8 || echo "::warning::issue #251 step: Steps through the day was not found on Activity"
+shot activity-watch-steps 1
+if tap_desc_at "Watch steps through the day" 40; then shot activity-watch-steps-touch 1
+else echo "::warning::issue #251 step skipped: the watch's steps chart was not on screen to touch it"; fi
+launch --ei tab 1 --ei devices 1; sleep 3
+scroll_to "SLEEP DEPTH THROUGH THE NIGHT" 4 || echo "::warning::issue #251 step: the watch's night was not found on Sleep"
+shot sleep-watch-heart 1
+if tap_desc_at "Sleep stages and heart rate" 30; then shot sleep-watch-heart-touch 1
+else echo "::warning::issue #251 step skipped: the watch's night chart was not on screen to touch it"; fi
 # A time left out because someone else wore the ring (issue #254), last: the example changes the demo's results for
 # every shot after it. left_out leaves out the day before yesterday 13:00 to 17:00, only in demo mode (the demo file),
 # then the analysis runs again: the Body tab shows the grey band on Heart rate today, Today the Left out card, and
