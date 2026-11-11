@@ -929,13 +929,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
             android.widget.Toast.makeText(this, "This is demo data. Leave the demo in Settings to sync.", android.widget.Toast.LENGTH_LONG).show();
             return;
         }
-        // without a ring (issue #329): the watch syncs when there is one (issue #373), else the way to add a ring
-        if (keyState == app.openring.core.KeyState.NO_RING) {
-            if (Prefs.of(this).watchAddress() != null) syncWatch();
-            else PhoneViews.addRingDialog(this);
+        // with a watch added, Sync always syncs it, whatever the ring key's state; a usable ring syncs right after it
+        // (owner's report of 11 November, core/SyncPlan)
+        app.openring.core.SyncPlan plan = app.openring.core.SyncPlan.of(false, keyState, Prefs.of(this).watchAddress() != null);
+        if (plan.watch) {
+            syncWatch(plan.ring, plan.note);
             return;
         }
-        if (keyState == app.openring.core.KeyState.UNREADABLE) {
+        if (plan.addRing) {
+            PhoneViews.addRingDialog(this);
+            return;
+        }
+        if (plan.keyDialog) {
             new android.app.AlertDialog.Builder(this)
                     .setTitle(app.openring.core.KeyState.SYNC_TITLE)
                     .setMessage(app.openring.core.KeyState.SYNC_TEXT)
@@ -949,6 +954,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     .show();
             return;
         }
+        syncRing();
+    }
+
+    /** The ring part of Sync: Bluetooth access first, then the ring sync as before. */
+    void syncRing() {
         if (!Permissions.granted(this)) {
             if (permissionBlocked) {
                 askSettings();
@@ -966,6 +976,14 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
     /** Sync with only a watch (issue #373): the same as Settings, Watch, Sync the watch now; the day loads again after it. */
     void syncWatch() {
+        syncWatch(false, null);
+    }
+
+    /**
+     * The watch part of Sync: as Settings, Watch, Sync the watch now; the day loads again after it. {@code thenRing}: the
+     * ring syncs right after (core/SyncPlan); {@code note}: shown after a good watch sync instead of "Watch synced".
+     */
+    void syncWatch(final boolean thenRing, final String note) {
         if (!Permissions.granted(this)) {
             Permissions.request(this);
             return;
@@ -985,10 +1003,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        android.widget.Toast.makeText(appCtx, r == null ? "Watch synced" : r, android.widget.Toast.LENGTH_LONG).show();
+                        android.widget.Toast.makeText(appCtx, r == null ? (note != null ? note : "Watch synced") : r, android.widget.Toast.LENGTH_LONG).show();
                         if (!isFinishing() && !isDestroyed()) {
                             updateStatus();
                             load();
+                            if (thenRing) syncRing();
                         }
                     }
                 });

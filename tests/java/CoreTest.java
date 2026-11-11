@@ -1282,6 +1282,7 @@ public class CoreTest {
         connectPlan195();
         watchSetupWayBack351();
         start373();
+        syncPlan();
         startCards373();
         startScreens373();
         System.out.println(passed + " passed, " + failed + " failed");
@@ -9711,6 +9712,29 @@ public class CoreTest {
     // ------------------------------------------------------------------ issue #373: Getting started, a watch, a ring or the phone
 
     /** Which screen the main screen opens: Getting started only with nothing set up; never again with a watch or a choice. */
+    static void syncPlan() {
+        int R = KeyState.READABLE, U = KeyState.UNREADABLE, N = KeyState.NONE, X = KeyState.NO_RING;
+        SyncPlan p = SyncPlan.of(false, R, true);
+        check("sync plan: watch and a usable ring sync both, the watch first", p.watch && p.ring && !p.keyDialog && !p.addRing && p.note == null);
+        p = SyncPlan.of(false, U, true);
+        check("sync plan: a watch with an unreadable ring key syncs the watch, no key dialog", p.watch && !p.ring && !p.keyDialog && SyncPlan.KEY_NOTE.equals(p.note));
+        p = SyncPlan.of(false, X, true);
+        check("sync plan: only a watch syncs the watch", p.watch && !p.ring && !p.addRing && p.note == null);
+        p = SyncPlan.of(false, N, true);
+        check("sync plan: a watch and no key at all syncs the watch", p.watch && !p.ring && !p.addRing);
+        p = SyncPlan.of(false, R, false);
+        check("sync plan: only a ring syncs the ring as before", p.ring && !p.watch);
+        p = SyncPlan.of(false, U, false);
+        check("sync plan: only an unreadable ring key asks for the key as before", p.keyDialog && !p.ring && !p.watch);
+        p = SyncPlan.of(false, X, false);
+        check("sync plan: no ring and no watch offers a ring", p.addRing && !p.ring && !p.watch);
+        for (int k : new int[] {N, R, U, X}) for (boolean w : new boolean[] {false, true}) {
+            p = SyncPlan.of(true, k, w);
+            check("sync plan: demo syncs nothing " + k + " " + w, !p.ring && !p.watch && !p.keyDialog && !p.addRing);
+        }
+        check("sync plan: the note is plain", !SyncPlan.KEY_NOTE.contains(" - ") && !SyncPlan.KEY_NOTE.contains("\u2014"));
+    }
+
     static void start373() {
         int[] choices = {app.openring.core.Start.NONE, app.openring.core.Start.RING, app.openring.core.Start.WATCH, app.openring.core.Start.PHONE};
         for (int c : choices) check("#373 valid choice " + c, app.openring.core.Start.valid(c) == c);
