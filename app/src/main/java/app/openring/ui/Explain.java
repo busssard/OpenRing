@@ -572,7 +572,25 @@ public final class Explain {
             + "in a workout more often. Touch the chart to read a time and its value.";
 
     public static final String WATCH_SLEEP = "Withings' own sleep stages for the night that ended on this day, as the watch worked them out. "
-            + "Time asleep adds light, deep and REM. Parts with a code we do not know yet show as no data.";
+            + "Time asleep adds light, deep and REM. Awake is time the watch marked as awake inside the night. "
+            + "Time without a record from the watch, or with a code we do not know yet, shows as no data.";
+
+    /** The watch night's No data row (owner's report of 11 November). */
+    public static final String WATCH_NO_RECORD = "No data is time inside the night the watch sent no sleep record for. It is not counted as asleep or awake.";
+
+    /** The watch night's heart rate under its stages (owner's wish of 11 November). */
+    public static final String WATCH_NIGHT_HEART = "Heart rate: the watch's own readings between falling asleep and waking up. "
+            + "The watch measures only every few minutes, so each dot is one reading; dots further apart than an hour are not joined. "
+            + "Lowest is the lowest reading, average the average of the readings.";
+
+    /** Activity's steps through the day from the watch when another device filled its gaps (issue #251). */
+    public static final String WATCH_DAY_FILLED = "The steps another device added where the watch was not worn are in the day's total above, not in these bars.";
+
+    /** The Watch page's steps per hour (issue #251). */
+    public static final String WATCH_HOURS = "Steps per hour as the watch counted them; each record counts in the hour it started. Touch to see the hour and its steps.";
+
+    /** The watch's distance (owner's report of 11 November: the watch sends centimetres). */
+    public static final String WATCH_DISTANCE = "Distance is the watch's own estimate from your steps. It sends it in centimetres; shown here in km.";
 
     /** Sleep with only the watch and no night from it (issue #373). */
     public static final String SLEEP_WATCH_ONLY = "With only the watch, Sleep shows Withings' own night: when you fell asleep and woke up, light, deep and REM "

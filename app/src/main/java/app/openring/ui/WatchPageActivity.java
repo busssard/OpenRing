@@ -213,11 +213,20 @@ public final class WatchPageActivity extends Activity {
             if (e.getKey().isAfter(d) || e.getKey().isBefore(d.minusDays(29))) continue;
             ts.add(e.getKey().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + 43200, e.getValue());
         }
+        // the day per hour, touch readable (owner's report of 11 November); the hours add up to the day's count above
+        long from = WatchDays.dayStart(d, zones), to = WatchDays.dayStart(d.plusDays(1), zones);
+        if (!Double.isNaN(v)) {
+            card.addView(Ui.gap(c, 8));
+            card.addView(Ui.text(c, "Through the day", 12, Ui.TEXT_3, Ui.REGULAR));
+            card.addView(new PhoneViews.DayLine(c, index.stepsPerHour(d), null, app.openring.core.MainDevice.WATCH, null, from, to, zones.at(from + 43200),
+                    "Watch steps per hour, touch to read the numbers"), Ui.sized(c, -1, 120));
+            card.addView(Ui.text(c, Explain.WATCH_HOURS, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
         card.addView(Ui.gap(c, 8));
         card.addView(Ui.text(c, "Last 30 days", 12, Ui.TEXT_3, Ui.REGULAR));
         card.addView(new Charts.LineChart(c, ts, Double.NaN, Double.NaN, Ui.ACTIVE).daily(d, 30).unit(" steps").empty("No steps synced yet"), Ui.sized(c, -1, 120));
         card.addView(Ui.text(c, Explain.WATCH_STEPS, 12, Ui.TEXT_3, Ui.REGULAR));
-        card.addView(Ui.text(c, Explain.WATCH_CALORIES + " " + Explain.WATCH_CLIMB, 12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.text(c, Explain.WATCH_DISTANCE + " " + Explain.WATCH_CALORIES + " " + Explain.WATCH_CLIMB, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
     }
 
@@ -262,11 +271,20 @@ public final class WatchPageActivity extends Activity {
         } else {
             ZoneId z = zones.at(n.end);
             card.addView(Ui.statRow(c, Ui.stat(c, "Asleep", Ui.hm(n.asleepMin()), "", Ui.SLEEP, "Light, deep and REM added up"),
-                    Ui.stat(c, "Deep", Ui.hm(n.deepMin), "", Ui.SLEEP, "Deep sleep as the watch counted it")));
-            card.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(n.lightMin), "", Ui.SLEEP, "Light sleep as the watch counted it"),
-                    Ui.stat(c, "REM", Ui.hm(n.remMin), "", Ui.SLEEP, "REM sleep as the watch counted it")));
+                    Ui.stat(c, "Awake", Ui.hm(n.awakeMin), "", Ui.SLEEP, "Awake inside the night, as the watch marked it")));
+            card.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(n.deepMin), "", Ui.SLEEP, "Deep sleep as the watch counted it"),
+                    Ui.stat(c, "Light", Ui.hm(n.lightMin), "", Ui.SLEEP, "Light sleep as the watch counted it")));
+            card.addView(Ui.statRow(c, Ui.stat(c, "REM", Ui.hm(n.remMin), "", Ui.SLEEP, "REM sleep as the watch counted it"),
+                    Ui.stat(c, "No data", Ui.hm(n.otherMin), "", Ui.SLEEP, "Time in the night without a sleep record")));
             card.addView(Ui.gap(c, 8));
-            card.addView(new Charts.Hypnogram(c, n.stages, n.start, n.end).zone(z), Ui.sized(c, -1, 150));
+            WatchDays.NightHeart hr = index.heartIn(n);
+            boolean withHr = !hr.points.isEmpty();
+            card.addView(new Charts.Hypnogram(c, n.stages, n.start, n.end).zone(z).heart(withHr ? hr.points : null), Ui.sized(c, -1, withHr ? 230 : 150));
+            if (withHr) {
+                card.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", String.valueOf(hr.lowest), "bpm", Ui.HEART, "The watch's lowest reading this night"),
+                        Ui.stat(c, "Average HR", Ui.fmt(hr.average, 0), "bpm", Ui.HEART, "Of its " + hr.points.size() + " readings this night")));
+                card.addView(Ui.text(c, Explain.WATCH_NIGHT_HEART, 12, Ui.TEXT_3, Ui.REGULAR));
+            }
         }
         card.addView(Ui.text(c, Explain.WATCH_SLEEP, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;

@@ -61,15 +61,15 @@ public final class WatchDemo {
         return Frame.part(Proto.REC_DURATION, v);
     }
 
-    public static byte[] steps(int steps, int metres) {
-        return steps(steps, metres, 0, 0);
+    public static byte[] steps(int steps, int cm) {
+        return steps(steps, cm, 0, 0);
     }
 
-    /** A movement part: steps (2 bytes), distance, metres climbed and descended (4 bytes each). */
-    public static byte[] steps(int steps, int metres, int up, int down) {
+    /** A movement part: steps (2 bytes), distance in centimetres, metres climbed and descended (4 bytes each). */
+    public static byte[] steps(int steps, int cm, int up, int down) {
         byte[] v = new byte[14];
         Frame.put16(v, 0, steps);
-        Frame.put32(v, 2, metres);
+        Frame.put32(v, 2, cm);
         Frame.put32(v, 6, up);
         Frame.put32(v, 10, down);
         return Frame.part(Proto.REC_STEPS, v);
@@ -144,8 +144,9 @@ public final class WatchDemo {
     /**
      * Made up sessions for the {@code days} days up to {@code today}: one about 07:05 each morning with what came since
      * the morning before, and one at {@code now} with today so far. Sleep from about 23:10 to 06:50 in cycles of light,
-     * deep and REM, steps every 15 minutes in the day, a run or a ride every third day, heart rate every 30 minutes
-     * (every 5 in a workout), and a battery that falls about 3 % a day and was charged once.
+     * deep and REM, a few minutes awake after the second and fourth cycle, steps every 15 minutes in the day (distance in
+     * centimetres, as the watch sends it), a run or a ride every third day, heart rate every 30 minutes by day and every
+     * 10 at night (every 5 in a workout), and a battery that falls about 3 % a day and was charged once.
      */
     public static List<Msg> history(LocalDate today, int days, long now, ZoneId zone, Random r) {
         List<long[]> idx = new ArrayList<long[]>();
@@ -168,6 +169,13 @@ public final class WatchDemo {
                     idx.add(new long[] {t});
                     t += dur;
                 }
+                // a short wake up after the second and the fourth cycle (no random number, so the other values stay)
+                if ((cycle == 1 || cycle == 3) && t < wake) {
+                    int dur = (int) Math.min((cycle == 1 ? 4 : 7) * 60L, wake - t);
+                    recs.add(new byte[][] {time(t), duration(dur), sleep(Records.AWAKE)});
+                    idx.add(new long[] {t});
+                    t += dur;
+                }
                 cycle++;
             }
             // steps through the day, a workout every third day
@@ -178,7 +186,7 @@ public final class WatchDemo {
                 int base = h >= 8 && h < 8.5 || h >= 17.25 && h < 17.75 ? 700 : h >= 12 && h < 12.5 ? 450 : 120;
                 int st = Math.max(0, base + r.nextInt(250) - 100);
                 // made up climb and intensity from the steps (no new random number, so every other made up value stays)
-                recs.add(new byte[][] {time(s), duration(900), steps(st, (int) (st * 0.72), st / 150, st / 170), calories(st / 25, 10 + st / 40)});
+                recs.add(new byte[][] {time(s), duration(900), steps(st, st * 72, st / 150, st / 170), calories(st / 25, 10 + st / 40)});
                 idx.add(new long[] {s});
             }
             if (workout) {
@@ -187,19 +195,23 @@ public final class WatchDemo {
                 int dur = run ? 35 * 60 + r.nextInt(300) : 50 * 60 + r.nextInt(600);
                 int st = run ? 5000 + r.nextInt(600) : 0;
                 int m = run ? 5400 + r.nextInt(700) : 14000 + r.nextInt(3000);
-                recs.add(new byte[][] {time(s), duration(dur), workout(run ? 2 : 6), steps(st, m), calories(run ? 360 + r.nextInt(60) : 420 + r.nextInt(80))});
+                recs.add(new byte[][] {time(s), duration(dur), workout(run ? 2 : 6), steps(st, m * 100), calories(run ? 360 + r.nextInt(60) : 420 + r.nextInt(80))});
                 idx.add(new long[] {s});
                 for (long u = s; u < s + dur; u += 300) {
                     hrs.add(new byte[][] {time(u), heart((run ? 145 : 128) + r.nextInt(18))});
                     hrT.add(u);
                 }
             }
-            // heart rate every 30 minutes
-            for (double h = 0; h < 24; h += 0.5) {
+            // heart rate every 30 minutes, at night every 10 (made up from the time, no random number, lowest in the
+            // early night as in deep sleep)
+            for (int k = 0; k < 144; k++) {
+                double h = k / 6.0;
+                boolean night = h < 6.5 || h >= 23;
+                if (!night && k % 3 != 0) continue;
                 long u = at(day, h, zone);
                 if (workout && h >= 18 && h < 19) continue;
-                boolean night = h < 6.5 || h >= 23;
-                hrs.add(new byte[][] {time(u), heart(night ? 52 + r.nextInt(8) : 64 + r.nextInt(18))});
+                int nightBpm = (h >= 23 ? 56 : h < 3 ? 50 + (k % 4) : 53 + (k * 7 % 6)) + (k % 5 == 0 ? 3 : 0);
+                hrs.add(new byte[][] {time(u), heart(night ? nightBpm : 64 + r.nextInt(18))});
                 hrT.add(u);
             }
         }

@@ -81,22 +81,45 @@ public final class WatchStore {
         db.getWritableDatabase().execSQL("UPDATE watch_devices SET removed = ? WHERE address = ?", new Object[] {now, address});
     }
 
-    /** Works out the rows of one session's messages, in one transaction. */
+    /**
+     * Works out the rows of one session's messages, then moves where the next request of each kind starts
+     * ({@link #since(Db, String, int, long)}) for the answers of this session that reached their end, all in one
+     * transaction: a start only moves once the rows up to it are stored, and an answer cut off moves nothing.
+     */
     public static Records.Decoded decodeSession(Db db, final long session) {
         final SQLiteDatabase d = db.getWritableDatabase();
         final Records.Decoded[] all = {new Records.Decoded()};
+        // the session's data answers per device and request (a session has one of each)
+        java.util.Map<String, List<byte[]>> answers = new java.util.TreeMap<String, List<byte[]>>();
         d.beginTransaction();
         try {
             Cursor c = d.rawQuery("SELECT device, body, captured FROM watch_raw WHERE session = ? ORDER BY seq", new String[] {String.valueOf(session)});
             try {
                 while (c.moveToNext()) {
+                    byte[] body = c.getBlob(1);
                     Records.Decoded one = new Records.Decoded();
-                    Records.decode(c.getBlob(1), (long) c.getDouble(2), one);
+                    Records.decode(body, (long) c.getDouble(2), one);
                     write(d, c.getString(0), one);
                     collect(all[0], one);
+                    int type = Frame.type(body);
+                    if (isRequest(type)) {
+                        String k = cursorKey(c.getString(0), type);
+                        List<byte[]> l = answers.get(k);
+                        if (l == null) answers.put(k, l = new ArrayList<byte[]>());
+                        l.add(body);
+                    }
                 }
             } finally {
                 c.close();
+            }
+            for (java.util.Map.Entry<String, List<byte[]>> e : answers.entrySet()) {
+                long got = Records.newestComplete(e.getValue());
+                if (got <= 0) continue;
+                String k = e.getKey();
+                String have = kv(d, k);
+                // no start noted yet (an older version, a restore): worked out from every raw message, this session's too
+                long next = have == null ? fromRaw(d, deviceOf(k), typeOf(k)) : Math.max(parse(have), got);
+                d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {k, String.valueOf(next)});
             }
             d.setTransactionSuccessful();
         } finally {
@@ -211,6 +234,8 @@ public final class WatchStore {
      */
     static void decodeAll(SQLiteDatabase d) {
         for (String t : DECODED) d.execSQL("DELETE FROM " + t);
+        // where the next requests start is worked out again from the raw messages when next asked (a restore brings others)
+        d.execSQL("DELETE FROM kv WHERE k LIKE '" + CURSOR + "%'");
         int n = 0;
         long last = Long.MIN_VALUE;
         int lastSeq = -1;
@@ -261,28 +286,109 @@ public final class WatchStore {
         });
     }
 
-    /**
-     * Where the next request starts (unix seconds): the newest stored record of that kind of this watch minus 2 hours,
-     * so a record still running at the last sync comes again whole (its key replaces it); 0 for none (the sync then asks
-     * {@code WatchSetup.FIRST_SINCE_S} back, see {@link #since(Db, String, boolean, long)}).
-     */
-    public static long since(Db db, String device, boolean heart) {
-        String q = heart ? "SELECT MAX(t) FROM watch_hr WHERE device = ?"
-                : "SELECT MAX(m) FROM (SELECT MAX(start) AS m FROM watch_steps WHERE device = ?1 UNION ALL SELECT MAX(start) FROM watch_sleep WHERE device = ?1"
-                        + " UNION ALL SELECT MAX(start) FROM watch_workouts WHERE device = ?1)";
-        Cursor c = db.getReadableDatabase().rawQuery(q, new String[] {device});
+    /** kv: per watch and request, the newest record time of its whole answers ({@code watch_cursor_<type>_<address>}). */
+    static final String CURSOR = "watch_cursor_";
+    /** The data requests, each with its own start (owner's report of 11 November). */
+    public static final int[] REQUESTS = {app.openring.core.withings.Proto.ACTIVITY, app.openring.core.withings.Proto.MOVEMENT,
+        app.openring.core.withings.Proto.HEART_RATE};
+    public static final long OVERLAP_S = 2 * 3600;
+
+    static boolean isRequest(int type) {
+        for (int r : REQUESTS) if (r == type) return true;
+        return false;
+    }
+
+    static String cursorKey(String device, int type) {
+        return CURSOR + Frame.hexType(type) + "_" + device;
+    }
+
+    private static String deviceOf(String key) {
+        return key.substring(key.indexOf('_', CURSOR.length()) + 1);
+    }
+
+    private static int typeOf(String key) {
+        String hex = key.substring(CURSOR.length(), key.indexOf('_', CURSOR.length()));
+        return Integer.parseInt(hex.startsWith("0x") ? hex.substring(2) : hex, 16);
+    }
+
+    private static long parse(String v) {
         try {
-            return c.moveToFirst() && !c.isNull(0) ? Math.max(0, c.getLong(0) - OVERLAP_S) : 0;
+            return Long.parseLong(v);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static String kv(SQLiteDatabase d, String k) {
+        Cursor c = d.rawQuery("SELECT v FROM kv WHERE k = ?", new String[] {k});
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getString(0) : null;
         } finally {
             c.close();
         }
     }
 
-    public static final long OVERLAP_S = 2 * 3600;
+    /**
+     * The newest record time of every whole answer to request {@code type} from {@code device} in the raw messages, 0 for
+     * none: each session's answer counts only when it reached its end part. Reads session by session, so memory stays flat.
+     */
+    static long fromRaw(SQLiteDatabase d, String device, int type) {
+        long newest = 0, last = Long.MIN_VALUE;
+        while (true) {
+            Cursor c = d.rawQuery("SELECT DISTINCT session FROM watch_raw WHERE device = ? AND type = ? AND session > ? ORDER BY session LIMIT 500",
+                    new String[] {device, String.valueOf(type), String.valueOf(last)});
+            List<Long> sessions = new ArrayList<Long>();
+            try {
+                while (c.moveToNext()) sessions.add(c.getLong(0));
+            } finally {
+                c.close();
+            }
+            if (sessions.isEmpty()) return newest;
+            for (long s : sessions) {
+                List<byte[]> answer = new ArrayList<byte[]>();
+                Cursor m = d.rawQuery("SELECT body FROM watch_raw WHERE session = ? AND device = ? AND type = ? ORDER BY seq",
+                        new String[] {String.valueOf(s), device, String.valueOf(type)});
+                try {
+                    while (m.moveToNext()) answer.add(m.getBlob(0));
+                } finally {
+                    m.close();
+                }
+                newest = Math.max(newest, Records.newestComplete(answer));
+                last = s;
+            }
+        }
+    }
 
-    /** {@link #since(Db, String, boolean)}, or {@code now} minus a month when nothing of that kind is stored yet. */
-    public static long since(Db db, String device, boolean heart, long now) {
-        long s = since(db, device, heart);
+    /**
+     * The newest record time of the whole answers to request {@code type} of this watch (unix seconds, 0 for none). Noted
+     * per request when a session is decoded; when nothing is noted (an older version, after a restore or a new decoder) it
+     * is worked out from the raw messages once and noted.
+     */
+    public static long newest(Db db, String device, int type) {
+        String k = cursorKey(device, type);
+        SQLiteDatabase d = db.getWritableDatabase();
+        String have = kv(d, k);
+        if (have != null) return parse(have);
+        long v = fromRaw(d, device, type);
+        d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {k, String.valueOf(v)});
+        return v;
+    }
+
+    /**
+     * Where the next request {@code type} starts (unix seconds): 2 hours before the newest record of its last whole answers,
+     * so a record still running then comes again whole (its key replaces it); 0 when it never had a whole answer (the sync
+     * then asks {@code WatchSetup.FIRST_SINCE_S} back, see {@link #since(Db, String, int, long)}). Each request has its own
+     * start: the heart rates inside an activity answer, or an activity answer next to a movement answer that was cut off,
+     * never move another request's start (owner's report of 11 November).
+     */
+    public static long since(Db db, String device, int type) {
+        long n = newest(db, device, type);
+        return n > 0 ? Math.max(0, n - OVERLAP_S) : 0;
+    }
+
+    /** {@link #since(Db, String, int)}, or {@code now} minus a month when that request never had a whole answer. */
+    public static long since(Db db, String device, int type, long now) {
+        long s = since(db, device, type);
         return s > 0 ? s : Math.max(0, now - app.openring.core.withings.WatchSetup.FIRST_SINCE_S);
     }
 

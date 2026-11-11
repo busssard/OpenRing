@@ -544,15 +544,31 @@ public final class Pages {
         LinearLayout hyp = Ui.card(c);
         hyp.addView(Ui.caption(c, "Sleep depth through the night"));
         hyp.addView(Ui.gap(c, 10));
-        hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz), Ui.sized(c, -1, 170));
+        // the watch's heart rate of the night under the stages, on the same time axis (the owner's wish of 11 November)
+        app.openring.core.withings.WatchDays.NightHeart hr = d.merged.watchNightHeart;
+        boolean withHr = hr != null && !hr.points.isEmpty();
+        hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz).heart(withHr ? hr.points : null), Ui.sized(c, -1, withHr ? 250 : 170));
         hyp.addView(Ui.gap(c, 4));
-        hyp.addView(Ui.text(c, "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        hyp.addView(Ui.text(c, withHr ? "Touch or slide along the chart to see the time, the stage and the nearest heart rate."
+                : "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        if (withHr) {
+            hyp.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", String.valueOf(hr.lowest), "bpm", Ui.HEART, "At " + minute(hr.lowestAt, nz) + ", the watch's lowest reading"),
+                    Ui.stat(c, "Average HR", Ui.fmt(hr.average, 0), "bpm", Ui.HEART, "Of its " + hr.points.size() + " readings this night")));
+            hyp.addView(Ui.text(c, Explain.WATCH_NIGHT_HEART, 11, Ui.TEXT_3, Ui.REGULAR));
+        }
         hyp.addView(Ui.gap(c, 8));
-        double asleep = wn.asleepMin();
-        hyp.addView(stageRow(c, "REM", wn.remMin, asleep, Ui.STAGE_REM));
-        hyp.addView(stageRow(c, "Light", wn.lightMin, asleep, Ui.STAGE_LIGHT));
-        hyp.addView(stageRow(c, "Deep", wn.deepMin, asleep, Ui.STAGE_DEEP));
-        if (wn.otherMin > 0) hyp.addView(stageRow(c, "No data", wn.otherMin, asleep + wn.otherMin, Ui.TEXT_3));
+        // awake and no record are shares of the whole night, the stages of the time asleep, as on the ring's night
+        double inBed = wn.inBedMin();
+        int[] share = StageShare.sleepShares(wn.deepMin, wn.lightMin, wn.remMin);
+        hyp.addView(stageRowPct(c, "Awake", wn.awakeMin, StageShare.share(wn.awakeMin, inBed), Ui.STAGE_AWAKE));
+        hyp.addView(stageRowPct(c, "REM", wn.remMin, share == null ? Double.NaN : share[2], Ui.STAGE_REM));
+        hyp.addView(stageRowPct(c, "Light", wn.lightMin, share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
+        hyp.addView(stageRowPct(c, "Deep", wn.deepMin, share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
+        if (wn.otherMin > 0) hyp.addView(stageRowPct(c, "No data", wn.otherMin, StageShare.share(wn.otherMin, inBed), Ui.TEXT_3));
+        hyp.addView(Ui.gap(c, 2));
+        hyp.addView(Ui.text(c, "REM, light and deep are shares of your time asleep, so they add up to 100%. "
+                + (wn.otherMin > 0 ? "Awake and No data are shares of the whole night. " + Explain.WATCH_NO_RECORD : "Awake is a share of the whole night."),
+                11, Ui.TEXT_3, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 6));
         String from = app.openring.core.MainDevice.nightLine(d.merged);
         if (from != null) hyp.addView(Ui.text(c, from, 12, Ui.OXY, Ui.REGULAR));
@@ -1006,6 +1022,9 @@ public final class Pages {
                 if (phoneCounted(d)) sc.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
                 root.addView(sc);
             }
+            // the watch's steps per hour, touch readable (owner's report of 11 November)
+            View hours = PhoneViews.watchDayCard(c, d);
+            if (hours != null) root.addView(hours);
             // steps from this phone (issue #329): the evidence, or the card that asks for Physical activity
             View phone = PhoneViews.activityCard(c, d);
             if (phone != null) root.addView(phone);
@@ -1029,6 +1048,9 @@ public final class Pages {
         // phone steps in the total are spread evenly over each interval between two readings (issue #329)
         if (phoneCounted(d)) goal.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(goal);
+        // the watch's steps per hour when its steps are the day's (owner's report of 11 November)
+        View hours = PhoneViews.watchDayCard(c, d);
+        if (hours != null) root.addView(hours);
         // steps from this phone (issue #329): the evidence under the main device's steps, or the card that asks
         View phone = PhoneViews.activityCard(c, d);
         if (phone != null) root.addView(phone);

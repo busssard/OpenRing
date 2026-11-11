@@ -196,6 +196,8 @@ public final class MainDevice {
         public boolean whole;
         /** Withings' own night ending on this day when it is the one shown, else null (the ring's night is shown). */
         public WatchDays.Night watchNight;
+        /** The watch's heart rate readings during {@link #watchNight}, null without that night (the owner's wish of 11 November). */
+        public WatchDays.NightHeart watchNightHeart;
         /** The ring also has a night for this day (shown or not). */
         public boolean ringNight;
         /** The watch has rows around this day (else nothing is named: someone with only a ring sees the ring as before). */
@@ -488,6 +490,7 @@ public final class MainDevice {
         });
         WatchDays.Night wn = watch.sleep.isEmpty() ? null : WatchDays.nightFor(watch.sleep, date, z);
         if (d.main == WATCH || !ring.night) d.watchNight = wn;
+        if (d.watchNight != null) d.watchNightHeart = WatchDays.heartIn(watch.heart, d.watchNight.start, d.watchNight.end);
         List<Source> sources = new ArrayList<Source>();
         sources.add(ring(ring, from, to, zone));
         sources.add(watch(watch, from, to));

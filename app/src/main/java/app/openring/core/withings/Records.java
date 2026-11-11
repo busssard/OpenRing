@@ -11,13 +11,14 @@ import java.util.List;
  * workout type, or the watch marks it as running or swimming), a piece of sleep (it has a sleep stage), or steps; a
  * heart rate part in any record gives a heart rate at its time. Times are unix seconds (UTC). Version 2 (watch setup):
  * the movement answers ({@link Proto#MOVEMENT}) too, and per record the intensity of its calories part and the metres
- * climbed and descended of its movement part ({@link Moves}).
+ * climbed and descended of its movement part ({@link Moves}). Version 3 (the owner's first real data, 11 November): the
+ * distance of the movement part is in centimetres (about 80 per step), so it is stored as whole metres.
  */
 public final class Records {
     private Records() {}
 
     /** Raised whenever the rules below change: every stored message is decoded again (old rows stay until then). */
-    public static final int VERSION = 2;
+    public static final int VERSION = 3;
 
     /** Heart rates outside this range are damaged bytes, as for the ring (30 to 220 bpm). */
     public static final int HR_MIN = 30, HR_MAX = 220;
@@ -25,8 +26,35 @@ public final class Records {
     /** Workout codes for the watch's own running and swimming marks (the same codes as the workout list). */
     public static final int RUN = 2, SWIM = 7;
 
-    /** Sleep stage codes as the watch sends them: 0 light, 2 deep, 3 REM; others (1) are not documented. */
-    public static final int LIGHT = 0, DEEP = 2, REM = 3;
+    /**
+     * Sleep stage codes as the watch sends them, the numbers of Withings' public sleep data: 0 awake, 1 light, 2 deep,
+     * 3 REM. (Gadgetbridge reads 0 and any unknown code as light; the owner's first real night showed 1 as the most common
+     * code, which only fits light sleep.) Other codes are kept as they came and show as no data.
+     */
+    public static final int AWAKE = 0, LIGHT = 1, DEEP = 2, REM = 3;
+
+    /** Whole metres of a distance the watch sends in centimetres (half a metre rounds up). */
+    public static int metres(long cm) {
+        return (int) Math.min(Integer.MAX_VALUE, (Math.max(0, cm) + 50) / 100);
+    }
+
+    /**
+     * The newest record time in the messages of one data answer (one request in one session, its own type), or -1 when
+     * the answer did not reach its end part: only a whole answer may move where the next request of that kind starts.
+     * 0 for a whole answer without records. Messages the watch sent on its own are not part of an answer.
+     */
+    public static long newestComplete(List<byte[]> answer) {
+        boolean end = false;
+        long newest = 0;
+        for (byte[] m : answer) {
+            if (Frame.fromWatch(m)) continue;
+            for (Frame.Part p : Frame.parts(m)) {
+                if (p.type == Proto.END) end = true;
+                else if (p.type == Proto.REC_TIME && p.value.length >= 4) newest = Math.max(newest, Frame.u32(p.value, 0));
+            }
+        }
+        return end ? newest : -1;
+    }
 
     public static final class Steps {
         public final long start;
@@ -165,7 +193,7 @@ public final class Records {
                 case Proto.REC_STEPS:
                     if (v.length >= 6) {
                         steps = Frame.u16(v, 0);
-                        metres = (int) Math.min(Integer.MAX_VALUE, Frame.u32(v, 2));
+                        metres = metres(Frame.u32(v, 2));
                         moved = true;
                     }
                     if (v.length >= 14) {

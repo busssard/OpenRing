@@ -183,7 +183,10 @@ public final class WatchSync {
             final long session = System.currentTimeMillis();
             final double captured = session / 1000.0;
             long now = session / 1000;
-            Session.Plan plan = plan(now, WatchStore.since(db, address, false, now), WatchStore.since(db, address, true, now));
+            // each request from its own start: only a whole answer of that request moved it (owner's report of 11 November)
+            Session.Plan plan = plan(now, WatchStore.since(db, address, app.openring.core.withings.Proto.ACTIVITY, now),
+                    WatchStore.since(db, address, app.openring.core.withings.Proto.HEART_RATE, now));
+            long movementSince = WatchStore.since(db, address, app.openring.core.withings.Proto.MOVEMENT, now);
             plan.address = address;
             final Prefs prefs = Prefs.of(ctx);
             // the hands: from the moment calibration mode is asked for until it is switched off, the watch may be in it
@@ -203,7 +206,7 @@ public final class WatchSync {
             int alarmChange = prefs.watchAlarmChange();
             WatchSetup.Alarm alarm = prefs.watchAlarm();
             if (mode == SETUP) {
-                plan.steps = WatchSetup.setup(plan, who, alarm, plan.activitySince);
+                plan.steps = WatchSetup.setup(plan, who, alarm, movementSince);
                 plan.limitMs = 180000;
             } else if (mode == ALARM) {
                 plan.steps = WatchSetup.alarmOnly(alarm);
@@ -213,7 +216,7 @@ public final class WatchSync {
                 plan.last = WatchSetup.handsEnd(plan);
                 plan.limitMs = 300000;
             } else {
-                plan.steps = WatchSetup.sync(plan, who, prefs.watchAlarmPending() ? alarm : null, plan.activitySince);
+                plan.steps = WatchSetup.sync(plan, who, prefs.watchAlarmPending() ? alarm : null, movementSince);
             }
             // a calibration whose link was lost: calibration mode off and the time first (review of #332)
             boolean closing = mode != HANDS && prefs.watchCalibrating();

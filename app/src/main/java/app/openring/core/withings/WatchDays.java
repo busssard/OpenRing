@@ -135,18 +135,25 @@ public final class WatchDays {
     /** Withings' own sleep of a night: its start and end and one stage per minute in the app's digits. */
     public static final class Night {
         public long start, end;
-        /** Per minute: 1 deep, 2 light, 3 REM, 0 a code not known yet or a gap (as the app's stage strings). */
+        /** Per minute: 4 awake, 3 REM, 2 light, 1 deep, 0 no record (a gap between pieces, or a code not known yet). */
         public int[] stages;
-        public int deepMin, lightMin, remMin, otherMin;
+        /** Minutes of each, counted from {@link #stages}, so they add up to the whole night as the chart shows it. */
+        public int deepMin, lightMin, remMin, awakeMin, otherMin;
 
         public int asleepMin() {
             return deepMin + lightMin + remMin;
         }
+
+        /** The whole night, from the first piece to the end of the last: every minute of {@link #stages}. */
+        public int inBedMin() {
+            return deepMin + lightMin + remMin + awakeMin + otherMin;
+        }
     }
 
-    /** The app's stage digit of a watch sleep code. */
+    /** The app's stage digit of a watch sleep code (the digits of the ring's stage strings, 4 awake). */
     public static int stage(int code) {
         switch (code) {
+            case Records.AWAKE: return 4;
             case Records.DEEP: return 1;
             case Records.LIGHT: return 2;
             case Records.REM: return 3;
@@ -198,15 +205,65 @@ public final class WatchDays {
             int a = (int) ((p.start - start) / 60), b = (int) Math.min(mins, (p.start + Math.max(0, p.dur) - start + 59) / 60);
             for (int k = Math.max(0, a); k < b; k++) n.stages[k] = stage(p.stage);
         }
-        for (Records.Sleep p : pieces) {
-            int m = (int) Math.round(Math.max(0, p.dur) / 60.0);
-            int st = stage(p.stage);
-            if (st == 1) n.deepMin += m;
-            else if (st == 2) n.lightMin += m;
-            else if (st == 3) n.remMin += m;
-            else n.otherMin += m;
+        for (int st : n.stages) {
+            if (st == 1) n.deepMin++;
+            else if (st == 2) n.lightMin++;
+            else if (st == 3) n.remMin++;
+            else if (st == 4) n.awakeMin++;
+            else n.otherMin++;
         }
         return n;
+    }
+
+    /** The watch's heart rate during a night: its readings, the lowest (and when) and the average of the readings. */
+    public static final class NightHeart {
+        /** {time, bpm}, oldest first. */
+        public final List<long[]> points = new ArrayList<long[]>();
+        public int lowest = -1;
+        public long lowestAt;
+        public double average = Double.NaN;
+    }
+
+    /**
+     * The heart rates from {@code start} to {@code end} (unix seconds, both included), oldest first, with the lowest and the
+     * average of the readings. The watch measures only now and then, so these are its readings, nothing filled in between.
+     */
+    public static NightHeart heartIn(List<Records.Heart> rows, long start, long end) {
+        NightHeart h = new NightHeart();
+        List<Records.Heart> s = new ArrayList<Records.Heart>();
+        for (Records.Heart x : rows) if (x.t >= start && x.t <= end) s.add(x);
+        Collections.sort(s, new Comparator<Records.Heart>() {
+            @Override
+            public int compare(Records.Heart a, Records.Heart b) {
+                return Long.compare(a.t, b.t);
+            }
+        });
+        long sum = 0;
+        for (Records.Heart x : s) {
+            h.points.add(new long[] {x.t, x.bpm});
+            sum += x.bpm;
+            if (h.lowest < 0 || x.bpm < h.lowest) {
+                h.lowest = x.bpm;
+                h.lowestAt = x.t;
+            }
+        }
+        if (!s.isEmpty()) h.average = sum / (double) s.size();
+        return h;
+    }
+
+    /**
+     * Steps per hour from {@code from} to {@code to} (a day's midnights, unix seconds; 23 or 25 hours on a clock change
+     * day): each record counts in the hour it starts in, as the day total counts it on the day it starts, so the hours add
+     * up to exactly that total.
+     */
+    public static double[] stepsPerHour(List<Records.Steps> rows, long from, long to) {
+        int hours = (int) Math.max(1, (to - from + 3599) / 3600);
+        double[] out = new double[hours];
+        for (Records.Steps s : rows) {
+            if (s.start < from || s.start >= to) continue;
+            out[(int) Math.min(hours - 1, (s.start - from) / 3600)] += s.steps;
+        }
+        return out;
     }
 
     /** The last battery reading of each day. */
@@ -288,6 +345,8 @@ public final class WatchDays {
         private final TreeMap<LocalDate, List<Records.Workout>> workouts = new TreeMap<LocalDate, List<Records.Workout>>();
         private final List<Records.Sleep> sleep;
         private final List<Records.Battery> batteryRows;
+        private final List<Records.Steps> stepRows;
+        private final List<Records.Heart> heartRows;
         private final Zones zones;
 
         public Index(List<Records.Steps> steps, List<Records.Moves> moves, List<Records.Heart> heart, List<Records.Workout> workouts,
@@ -300,6 +359,8 @@ public final class WatchDays {
             this.battery = Collections.unmodifiableSortedMap(batteryPerDay(battery, z));
             this.newestBattery = newestBattery(battery);
             this.sleep = new ArrayList<Records.Sleep>(sleep);
+            this.stepRows = new ArrayList<Records.Steps>(steps);
+            this.heartRows = new ArrayList<Records.Heart>(heart);
             this.batteryRows = new ArrayList<Records.Battery>(battery);
             // the rows themselves (no copies), grouped in their order, then sorted per day by time like heartOn and
             // workoutsOn (a stable sort, so rows with the same time keep the same order)
@@ -350,6 +411,16 @@ public final class WatchDays {
         /** As {@link WatchDays#nightFor} (the sleep rows are few, so it is worked out per day). */
         public Night nightFor(LocalDate day) {
             return WatchDays.nightFor(sleep, day, zones);
+        }
+
+        /** As {@link WatchDays#stepsPerHour} for {@code day} (its midnights in its zone). */
+        public double[] stepsPerHour(LocalDate day) {
+            return WatchDays.stepsPerHour(stepRows, dayStart(day, zones), dayStart(day.plusDays(1), zones));
+        }
+
+        /** As {@link WatchDays#heartIn} for a night. */
+        public NightHeart heartIn(Night n) {
+            return WatchDays.heartIn(heartRows, n.start, n.end);
         }
 
         /** As {@link WatchDays#dropPerDay} on the battery rows. */
