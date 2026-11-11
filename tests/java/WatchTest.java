@@ -657,8 +657,8 @@ public class WatchTest {
         Lines log = new Lines();
         Session.Result r = Session.run(w, plan, new Gate(), new Store(), log);
         List<Integer> order = Arrays.asList(Proto.HELLO, Proto.CONNECT, Proto.SET_LOCALE, Proto.SET_TIME, Proto.SET_USER, Proto.SET_GOAL, Proto.SET_UNIT, Proto.SET_UNIT,
-                Proto.SET_SCREENS, Proto.SET_ALARM, Proto.ALARM_ON, Proto.BATTERY, Proto.SETUP_FINISHED, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE, Proto.SYNC_DONE);
-        check("setup session: every step in order, the first sync after setup finished, sync done last", r.ended == null && w.types().equals(order), w.types());
+                Proto.SET_SCREENS, Proto.BATTERY, Proto.SETUP_FINISHED, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE, Proto.SET_ALARM, Proto.ALARM_ON, Proto.SYNC_DONE);
+        check("setup session: every step in order, the first sync after setup finished, the alarm after the data, sync done last", r.ended == null && w.types().equals(order), w.types());
         check("setup session: each step started and done, setup finished among them", heard.events.contains(WatchSetup.FINISHED + " " + Session.DONE)
                 && heard.events.contains(Session.HEART + " " + Session.DONE) && heard.events.indexOf(Session.HELLO + " " + Session.STARTED) == 0
                 && r.done.contains(WatchSetup.ALARM_ON) && r.movementDone, heard.events);
@@ -691,6 +691,27 @@ public class WatchTest {
         w = new FakeWatch();
         Session.run(w, sp, new Gate(), new Store(), new Lines());
         check("sync: a pending alarm that was switched off sends only off", w.types().contains(Proto.ALARM_ON) && !w.types().contains(Proto.SET_ALARM));
+
+        // the owner's Steel HR (log of 11 November) sets the alarm but never answers 0x0145: the sync goes on, the data came first
+        WatchSetup.Alarm on = new WatchSetup.Alarm();
+        on.on = true;
+        sp.steps = WatchSetup.sync(sp, profile(), on, 5);
+        w = new FakeWatch();
+        w.silent.add(Proto.SET_ALARM);
+        w.silent.add(Proto.ALARM_ON);
+        Lines quiet = new Lines();
+        r = Session.run(w, sp, new Gate(), new Store(), quiet);
+        check("sync: a watch silent to the alarm still syncs, the data requests come before the alarm", r.ended == null && w.types().equals(Arrays.asList(Proto.HELLO,
+                Proto.CONNECT, Proto.BATTERY, Proto.SET_TIME, Proto.SET_USER, Proto.SET_GOAL, Proto.SET_UNIT, Proto.SET_UNIT, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE,
+                Proto.SET_ALARM, Proto.ALARM_ON, Proto.SYNC_DONE)), w.types() + " " + r.ended);
+        check("sync: the alarm counts as sent without an answer, the log says it went on", r.done.contains(WatchSetup.ALARM_ON)
+                && joined(quiet.lines).contains("no answer to alarm, going on"), quiet.lines);
+        Session.Plan silentAlarm = plan();
+        silentAlarm.steps = WatchSetup.alarmOnly(on);
+        w = new FakeWatch();
+        w.silent.add(Proto.SET_ALARM);
+        r = Session.run(w, silentAlarm, new Gate(), new Store(), new Lines());
+        check("alarm: a watch silent to the alarm does not end the session", r.ended == null && r.done.contains(WatchSetup.ALARM), r.ended);
 
         // a watch that does not know a setup message: the session ends at it and says which
         w = new FakeWatch();

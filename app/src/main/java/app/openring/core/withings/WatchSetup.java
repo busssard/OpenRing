@@ -109,11 +109,15 @@ public final class WatchSetup {
         return out;
     }
 
-    /** The alarm's two steps: the alarm itself and on, or only off (also for on without a day). */
+    /**
+     * The alarm's two steps: the alarm itself and on, or only off (also for on without a day). Both wait only briefly for
+     * an answer and go on without one: the owner's Steel HR sets the alarm but never answers {@code 0x0145} (log of
+     * 11 November), and waiting for it ended every sync before the data requests.
+     */
     public static List<Session.Step> alarm(Alarm a) {
         List<Session.Step> out = new ArrayList<Session.Step>();
-        if (a.active()) out.add(ask(ALARM, Proto.alarm(a.hour, a.minute, a.days, a.smart)));
-        out.add(ask(ALARM_ON, Proto.alarmOn(a.active())));
+        if (a.active()) out.add(soft(ALARM, Proto.alarm(a.hour, a.minute, a.days, a.smart)));
+        out.add(soft(ALARM_ON, Proto.alarmOn(a.active())));
         return out;
     }
 
@@ -138,8 +142,8 @@ public final class WatchSetup {
 
     /**
      * Each sync, after the hello and sign in: connect, battery, the time (with the next clock change, so the hands follow a
-     * daylight saving change), the user, the goal and the units, the alarm when it changed and was not sent yet
-     * ({@code alarm} null otherwise), then activity, movement and heart rate records.
+     * daylight saving change), the user, the goal and the units, then activity, movement and heart rate records, and last
+     * the alarm when it changed and was not sent yet ({@code alarm} null otherwise), so the data comes first.
      */
     public static List<Session.Step> sync(Session.Plan plan, Profile p, Alarm alarm, long movementSince) {
         List<Session.Step> out = new ArrayList<Session.Step>();
@@ -147,14 +151,14 @@ public final class WatchSetup {
         out.add(ask(BATTERY, Proto.battery()));
         out.add(time(plan));
         out.addAll(person(p));
-        if (alarm != null) out.addAll(alarm(alarm));
         out.addAll(download(plan.activitySince, movementSince, plan.heartSince));
+        if (alarm != null) out.addAll(alarm(alarm));
         return out;
     }
 
     /**
-     * The first setup, after the hello and sign in: connect, language, time, the person, the display screens, the alarm
-     * (null to leave it), battery and "setup finished"; then the first sync's data requests in the same connection.
+     * The first setup, after the hello and sign in: connect, language, time, the person, the display screens, battery and
+     * "setup finished"; then the first sync's data requests in the same connection, and last the alarm (null to leave it).
      */
     public static List<Session.Step> setup(Session.Plan plan, Profile p, Alarm alarm, long movementSince) {
         List<Session.Step> out = new ArrayList<Session.Step>();
@@ -163,10 +167,10 @@ public final class WatchSetup {
         out.add(time(plan));
         out.addAll(person(p));
         out.add(ask(SCREENS, Proto.screens()));
-        if (alarm != null) out.addAll(alarm(alarm));
         out.add(ask(BATTERY, Proto.battery()));
         out.add(ask(FINISHED, Proto.setupFinished()));
         out.addAll(download(plan.activitySince, movementSince, plan.heartSince));
+        if (alarm != null) out.addAll(alarm(alarm));
         return out;
     }
 

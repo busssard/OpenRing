@@ -1,0 +1,1 @@
+* The watch sync no longer stops at the alarm: your Steel HR sets the alarm without answering, so the app now goes on after a short wait, and it asks for steps, heart rate and sleep before it sends the alarm.
