@@ -1357,7 +1357,11 @@ public class CoreTest {
                 && six.periodWeight(six.start.plusDays(3)) > six.periodWeight(six.start.plusDays(6)) && six.periodWeight(six.start.plusDays(six.range + 1)) == 0
                 && six.periodWeight(six.start.minusDays(2)) == six.periodWeight(six.start.plusDays(2)));
         check("#252k at the end of the range about 0.44 of the middle", Math.abs(six.periodWeight(six.start.plusDays(six.range)) - Math.exp(-0.5 * Cycles.Z80 * Cycles.Z80)) < 1e-9);
-        check("#252k ovulation shade and fertile days", six.ovulationWeight(six.ovulation) == 1 && six.inFertile(six.ovulation.minusDays(5)) && !six.inFertile(six.ovulation.plusDays(1)));
+        check("#252k ovulation shade and fertile days", six.ovulationWeight(six.ovulation) == 1 && six.inFertile(six.ovulation.minusDays(5)) && !six.inFertile(six.ovulation.plusDays(1))
+                && six.ovulationWeight(six.ovulation.plusDays(six.ovulationRange + 1)) == 0 && six.toString().startsWith("6: " + six.start));
+        String rd = c.describe(a.get(2).ovulation, EN);
+        check("#252k the readout of a later cycle's ovulation day", rd.contains("\nThe most likely ovulation day (2 cycles after the next), give or take ")
+                && rd.contains("\nIn the likely fertile days before it."), rd);
 
         // ---- regular: 12 x 28, SD 0: one day each way all the way ----
         int[] l12 = new int[12];
@@ -1408,7 +1412,7 @@ public class CoreTest {
                 && a.get(0).ovulation.equals(m.ovulation) && a.get(1).start.equals(m.next.plusDays(28)) && a.get(1).ovulation.equals(a.get(1).start.minusDays(13)), a.get(1));
         check("#252k measured: sqrt(r1^2 + (k - 1) x rc^2), never below the first", a.get(1).range == Math.max(m.range, (int) Math.round(Math.sqrt(m.rangeExact * m.rangeExact + m.calendarRangeExact * m.calendarRangeExact)))
                 && a.get(11).range >= a.get(1).range);
-        String rd = m.describe(a.get(2).start, EN);
+        rd = m.describe(a.get(2).start, EN);
         check("#252k the readout of a later cycle's most likely day", rd.contains("\nThe most likely first day of a period (2 cycles after the next), give or take "), rd);
 
         // ---- the card's lines: the most likely day ----
@@ -1452,12 +1456,13 @@ public class CoreTest {
                 t.phase(s12.plusDays(20)));
         check("#252k a cycle that is over: its ovulation from the next start", t.phase(s12.minusDays(28).plusDays(16)).equals("after ovulation (estimate)")
                 && t.phase(s12.minusDays(28).plusDays(13)).equals("fertile days (estimate)"));
+        check("#252k waiting for the next start: no phase in this cycle", cyc252(l, s12.plusDays(57)).phase(s12.plusDays(40)) == null);
         check("#252k measured cycles say measured", m.phase(C0.plusDays(15)).equals("ovulation (measured)") && m.phase(C0.plusDays(20)).equals("after ovulation (measured)")
                 && m.phase(last.plusDays(10)).equals("fertile days (measured)"), m.phase(last.plusDays(10)));
         String tip = t.tempTip(s12.plusDays(20), 0.3, EN);
-        check("#252k touch reads date, temperature, cycle day and phase", tip.endsWith(": +0.3 °C, cycle day 21, after ovulation (estimate)"), tip);
+        check("#252k touch reads date, temperature, cycle day and phase", tip.endsWith(": +0.3 °C, cycle day 21\nAfter ovulation (estimate)"), tip);
         tip = t.tempTip(s12.plusDays(28), Double.NaN, EN);
-        check("#252k touch on a day to come", tip.endsWith(": still to come, cycle day 29, expected period"), tip);
+        check("#252k touch on a day to come", tip.endsWith(": still to come, cycle day 29\nExpected period"), tip);
         check("#252k touch on a day to come with drip readings", t.tempTip(s12.plusDays(28), Double.NaN, Double.NaN, null, false, EN).endsWith("\nStill to come"));
 
         // ---- plain texts, no dashes as punctuation ----
@@ -2106,8 +2111,9 @@ public class CoreTest {
                 && tip.endsWith("\nRing +0.2 °C, mouth 36.62 °C at 07:10"));
         check("#252d touch: no ring night, a reading drip left out, no time", cy.tempTip(t1, Double.NaN, 36.5, null, true, EN).endsWith("\nNo ring night, mouth 36.50 °C, left out in drip")
                 && cy.tempTip(t1, 0.1, Double.NaN, null, false, EN).endsWith("\nRing +0.1 °C, no mouth reading"));
-        check("#252d touch without drip readings stays as before", cy.tempTip(t1, 0.2, EN).startsWith(t1.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", EN)) + ": +0.2 °C, cycle day " + cy.cycleDay(t1))
-                && !cy.tempTip(t1, 0.2, EN).contains("\n"));
+        // the phase has its own second line since the owner's feedback of 11 November, so the touch text stays narrow
+        check("#252d touch without drip readings: the first line as before, the phase under it", cy.tempTip(t1, 0.2, EN).startsWith(t1.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", EN)) + ": +0.2 °C, cycle day " + cy.cycleDay(t1))
+                && cy.tempTip(t1, 0.2, EN).split("\n").length <= 2, cy.tempTip(t1, 0.2, EN));
 
         // ---- ten years in one file ----
         StringBuilder big = new StringBuilder("date,bleeding.value,temperature.value,temperature.time,mood.happy,note.value\r\n");
@@ -3043,12 +3049,12 @@ public class CoreTest {
         eq("#252b a period logged for later: not after today", fut.tempFrom(), C0.minusDays(3));
         String tip = c.tempTip(s12.plusDays(1), 0.24, EN);
         check("#252b temperature tip on a period day", tip.endsWith(": +0.2 °C, period day 2") && tip.startsWith(s12.plusDays(1).getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, EN)));
-        check("#252b temperature tip on cycle day 10, no night, with its phase", c.tempTip(s12.plusDays(9), Double.NaN, EN).endsWith(": no night, cycle day 10, fertile days (estimate)"),
+        check("#252b temperature tip on cycle day 10, no night, with its phase", c.tempTip(s12.plusDays(9), Double.NaN, EN).endsWith(": no night, cycle day 10\nFertile days (estimate)"),
                 c.tempTip(s12.plusDays(9), Double.NaN, EN));
-        check("#252b temperature tip in the ovulation range", c.tempTip(s12.plusDays(12), -0.31, EN).endsWith(": -0.3 °C, cycle day 13, fertile days (estimate), ovulation range"),
+        check("#252b temperature tip in the ovulation range", c.tempTip(s12.plusDays(12), -0.31, EN).endsWith(": -0.3 °C, cycle day 13\nFertile days (estimate), ovulation range"),
                 c.tempTip(s12.plusDays(12), -0.31, EN));
         Cycles lateC = cyc252(reg, s12.plusDays(28));
-        check("#252b temperature tip on the expected day", lateC.tempTip(s12.plusDays(28), 0.0, EN).endsWith(": 0.0 °C, cycle day 29, expected period"));
+        check("#252b temperature tip on the expected day", lateC.tempTip(s12.plusDays(28), 0.0, EN).endsWith(": 0.0 °C, cycle day 29\nExpected period"), lateC.tempTip(s12.plusDays(28), 0.0, EN));
         check("#252b before the first period: the date and the value only", c.tempTip(C0.minusDays(2), 0.1, EN).endsWith(": +0.1 °C"));
 
         // ---- "My periods have stopped" ----

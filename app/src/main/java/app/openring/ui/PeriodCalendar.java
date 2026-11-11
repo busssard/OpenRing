@@ -71,7 +71,7 @@ final class PeriodCalendar extends MonthView {
                     float bh = Ui.dp(c, 3.5f), y = top + cellH - Ui.dp(c, 4);
                     band(cv, x0, y - bh, x0 + cw, y, bh / 2, left, right);
                 } else {
-                    fill.setColor(pass == 0 ? Ui.alpha(Ui.READY, (float) (0.07 + 0.2 * wt)) : Ui.alpha(Ui.PERIOD, (float) (0.08 + 0.3 * wt)));
+                    fill.setColor(pass == 0 ? Ui.alpha(Ui.READY, (float) (0.05 + 0.27 * wt)) : Ui.alpha(Ui.PERIOD, (float) (0.05 + 0.4 * wt)));
                     float inset = Ui.dp(c, 3);
                     band(cv, x0, top + inset, x0 + cw, top + cellH - inset, Ui.dp(c, 10), left, right);
                 }
@@ -146,7 +146,7 @@ final class PeriodCalendar extends MonthView {
                 float bw = 2 * s + Ui.dp(c, 4);
                 for (int q = 0; q < 3; q++) {
                     float wq = q == 1 ? 1f : 0.35f;
-                    fill.setColor(k == 1 ? Ui.alpha(Ui.PERIOD, 0.08f + 0.3f * wq) : Ui.alpha(Ui.READY, 0.07f + 0.2f * wq));
+                    fill.setColor(k == 1 ? Ui.alpha(Ui.PERIOD, 0.05f + 0.4f * wq) : Ui.alpha(Ui.READY, 0.05f + 0.27f * wq));
                     r.set(x + q * bw / 3, y - 2 * s, x + (q + 1) * bw / 3, y + s * 0.4f);
                     cv.drawRect(r, fill);
                 }
