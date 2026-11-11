@@ -592,10 +592,10 @@ public final class Explain {
     /** The watch's distance (owner's report of 11 November: the watch sends centimetres). */
     public static final String WATCH_DISTANCE = "Distance is the watch's own estimate from your steps. It sends it in centimetres; shown here in km.";
 
-    /** Sleep with only the watch and no night from it (issue #373). */
+    /** Sleep with only the watch and no night from it (issues #373, #379). */
     public static final String SLEEP_WATCH_ONLY = "With only the watch, Sleep shows Withings' own night: when you fell asleep and woke up, light, deep and REM "
-            + "sleep and the heart rate through the night. Wear the watch in bed and sync it in the morning (Settings, Watch). "
-            + "A sleep score, HRV, blood oxygen and breathing need a ring.";
+            + "sleep, the heart rate through the night and a sleep score worked out from them. Wear the watch in bed and sync it in the "
+            + "morning (Settings, Watch). HRV, blood oxygen and breathing need a ring.";
 
     public static final String WATCH_BATTERY = "The watch's battery at the last sync of each day. A jump up is a charge.";
 
@@ -612,6 +612,65 @@ public final class Explain {
 
     public static final String MAIN_WATCH_NIGHT = "Stages from Withings' own analysis on the watch, not from this app. "
             + "The sleep score needs the ring's night, so there is none here.";
+
+    // ---- scores without a ring (issue #379, core/DeviceScores) ----
+
+    /** Under the watch's night when it has a score. */
+    public static final String WATCH_NIGHT_SCORE = "Stages from Withings' own analysis on the watch. The sleep score is worked out from them on this phone "
+            + "with the same formula as for the ring, see Contributors.";
+
+    public static final String SLEEP_DEVICE = "The sleep score from your watch uses the ring's formula on the watch's night: total sleep, how much of "
+            + "the night you were asleep, wake ups and time awake, deep and REM sleep, and timing. Parts the watch cannot give are left out "
+            + "and the others count for more.";
+
+    public static final String READINESS_DEVICE = "Readiness from your watch uses the ring's formula with the signals the watch has: your lowest "
+            + "heart rate last night against your usual, last night's sleep score, your sleep over two weeks, and your steps yesterday and over "
+            + "the last weeks. HRV and body temperature, the strongest signs of recovery, need a ring, so this readiness rests on fewer signals. "
+            + "85 or more: ready for a demanding day. 70 to 84: good. Below 70: your body is asking for rest.";
+
+    public static final String ACTIVITY_DEVICE = "The activity score from steps uses the ring's formula: how long you sat still, whether you moved "
+            + "every hour, how often you reached your step goal and your training over the last week. Steps stand in for the ring's movement, "
+            + "so standing or cycling without a workout counts as sitting. Days with less than an hour of data are left out.";
+
+    /** The note above the device's activity contributors while fewer than 7 days of the last week have data. */
+    public static String activityDaysDevice(int n, boolean watch) {
+        String days = n == 1 ? "1 day" : n + " days";
+        String rule = " with " + (watch ? "the watch" : "steps from this phone") + " in the last 7 days (a day counts with at least an hour of data). ";
+        if (n >= app.openring.core.analysis.Scores.MIN_WEEK_DAYS) return "Based on " + days + rule + "Daily targets and training are steadier after a full week.";
+        return "Only " + days + rule + "Daily targets and training count from " + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " days on.";
+    }
+
+    /**
+     * A contributor's text for a score from the watch or the phone (issue #379), null where the ring's text ({@link #of}) fits
+     * as it is.
+     */
+    public static String ofDevice(String key, boolean watch) {
+        if (key == null) return null;
+        String dev = watch ? "the watch was on" : "the phone counted";
+        switch (key) {
+            case "stay_active": return "Time awake while " + dev + ", in quarter hours with fewer than 60 steps. Each counts as 15 minutes sitting.";
+            case "move_hourly": return "Times you took fewer than 60 steps per quarter hour for an hour or more between 08:00 and 22:00.";
+            case "targets": return "How often you reached your step goal in the last 7 days. Days with less than an hour of data are left out.";
+            case "frequency": return "Days in the last 7 with at least 30 brisk minutes: a quarter hour with 1,000 steps or more (100 steps a minute "
+                + "is a brisk walk), or a workout the watch recorded.";
+            case "volume": return "Calories the watch counted in brisk quarter hours and in its workouts over the last 7 days.";
+            case "efficiency": return "Share of the watch's night spent asleep. Time without a record from the watch counts as in bed, not as sleep.";
+            case "restfulness": return "Wake ups and time awake between falling asleep and waking up, from the watch's stages. Restless movement "
+                + "is left out, the watch sends none.";
+            case "rem": return "Dreaming sleep, from Withings' own stages. Usually about a fifth of sleep.";
+            case "deep": return "The most restorative stage, from Withings' own stages. Usually 13 to 23% of sleep.";
+            case "latency": return "Time awake at the start of the watch's night before the first sleep.";
+            case "rhr": return "The lowest of the watch's heart rate readings last night against your usual over the last 14 watch nights. "
+                + "The watch reads every 10 to 30 minutes, so the true lowest can be a little lower.";
+            case "sleep": return "Last night's sleep score from the watch's night.";
+            case "sleep_balance": return "Your sleep from the watch over the last two weeks compared with your sleep need.";
+            case "prev_activity": return "Yesterday's steps compared with your step goal. Both very little and a lot lower readiness. "
+                + "A day with less than an hour of data is left out.";
+            case "activity_balance": return "Your steps over the last week compared with the last four weeks, so sudden jumps show up. "
+                + "Days with less than an hour of data are left out.";
+            default: return null;
+        }
+    }
 
     // ---- steps from this phone (issue #329, phase 1b) ----
 

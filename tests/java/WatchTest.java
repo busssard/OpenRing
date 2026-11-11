@@ -50,6 +50,7 @@ public class WatchTest {
         mainDeviceEdges();
         mainDeviceSources();
         mainDevicePhone329();
+        deviceScores379();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -2303,5 +2304,333 @@ public class WatchTest {
                 && dh.average > dh.lowest, dh.points.size() + " " + dh.lowest);
         double km = WatchDays.metresPerDay(demo.steps, z).get(today.minusDays(1)) / (double) WatchDays.stepsPerDay(demo.steps, z).get(today.minusDays(1));
         check("251 demo: about 0.7 m a step", km > 0.65 && km < 0.8, km);
+    }
+
+    // ------------------------------------------------------------------------------------ scores without a ring (#379)
+
+    static final ZoneId DS_ZONE = ZoneId.of("Europe/Zurich");
+    static final LocalDate DS_DAY = LocalDate.of(2026, 11, 3);
+
+    /** A made up watch: {@code days} days up to {@link #DS_DAY}, each with a night, steps every quarter hour by day and heart rate. */
+    static MainDevice.Watch dsWatch(int days, int stepsPerQuarter, boolean nights, boolean heart) {
+        MainDevice.Watch w = new MainDevice.Watch();
+        for (int d = days - 1; d >= 0; d--) {
+            LocalDate day = DS_DAY.minusDays(d);
+            if (nights) dsNight(w, day, new int[][] {{Records.LIGHT, 60}, {Records.DEEP, 60}, {Records.LIGHT, 60}, {Records.REM, 30},
+                {Records.AWAKE, 5}, {Records.LIGHT, 90}, {Records.DEEP, 30}, {Records.REM, 60}, {Records.LIGHT, 40}}, 23, 0, heart);
+            for (int q = 7 * 4; q < 22 * 4; q++) {
+                long t = at(day, q / 4, (q % 4) * 15, DS_ZONE);
+                w.steps.add(new Records.Steps(t, 900, stepsPerQuarter, stepsPerQuarter * 7 / 10, stepsPerQuarter / 25));
+                if (heart && q % 2 == 0) w.heart.add(new Records.Heart(t, 70));
+            }
+        }
+        return w;
+    }
+
+    /** A night ending on {@code day}: pieces {stage, minutes} from {@code h}:{@code m} (the evening before from 12:00), heart rate every 10 minutes. */
+    static void dsNight(MainDevice.Watch w, LocalDate day, int[][] pieces, int h, int m, boolean heart) {
+        // a start in the evening is the evening before, one after midnight is on the day itself
+        long t = at(h >= 12 ? day.minusDays(1) : day, h, m, DS_ZONE);
+        long start = t;
+        for (int[] p : pieces) {
+            w.sleep.add(new Records.Sleep(t, p[1] * 60, p[0]));
+            t += p[1] * 60L;
+        }
+        if (heart) for (long u = start; u < t; u += 600) w.heart.add(new Records.Heart(u, 52 + (int) ((u - start) / 600 % 7)));
+    }
+
+    static String keys(app.openring.core.analysis.Night.Score s) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.analysis.Night.Contributor c : s.contributors) b.append(b.length() == 0 ? "" : ",").append(c.key);
+        return b.toString();
+    }
+
+    static String leftKeys(List<app.openring.core.DeviceScores.Left> l) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.DeviceScores.Left x : l) b.append(b.length() == 0 ? "" : ",").append(x.key);
+        return b.toString();
+    }
+
+    /** The weighted mean of the contributors, as Scores.finish works it out (the left out weight shared out). */
+    static int weighted(app.openring.core.analysis.Night.Score s) {
+        double w = 0, v = 0;
+        for (app.openring.core.analysis.Night.Contributor c : s.contributors) {
+            w += c.weight;
+            v += c.weight * c.score;
+        }
+        return (int) Math.round(v / w);
+    }
+
+    static void deviceScores379() throws Exception {
+        // ---- the ring's scores byte for byte as before: 9,000 scores from seeded inputs, fingerprint taken on dev before #379
+        check("#379 ring unchanged: sleep, readiness and activity scores of 9,000 seeded inputs as before the change",
+                ringFingerprint().equals("c637f65e2f4c7b3d94253c54f8610d1199a7c1dada3dfd04e51251776bd6795e"), ringFingerprint());
+
+        // ---- which device
+        check("#379 ring only: no scores from another device", app.openring.core.DeviceScores.device(true, false, true) == -1
+                && app.openring.core.DeviceScores.device(true, false, false) == -1);
+        check("#379 ring and watch: the watch's version next to the ring's", app.openring.core.DeviceScores.device(true, true, true) == MainDevice.WATCH);
+        check("#379 watch only: the watch, also with phone steps", app.openring.core.DeviceScores.device(false, true, true) == MainDevice.WATCH
+                && app.openring.core.DeviceScores.device(false, true, false) == MainDevice.WATCH);
+        check("#379 phone only: the phone; nothing at all: none", app.openring.core.DeviceScores.device(false, false, true) == MainDevice.PHONE
+                && app.openring.core.DeviceScores.device(false, false, false) == -1);
+
+        // ---- watch only, the demo watch
+        long now = at(DS_DAY, 10, 0, DS_ZONE);
+        List<WatchDemo.Msg> msgs = WatchDemo.history(DS_DAY, 35, now, DS_ZONE, new Random(251));
+        List<byte[]> bodies = new ArrayList<byte[]>();
+        List<Long> caps = new ArrayList<Long>();
+        for (WatchDemo.Msg m : msgs) {
+            bodies.add(m.body);
+            caps.add(m.captured);
+        }
+        Records.Decoded dec = Records.decode(bodies, caps);
+        MainDevice.Watch demo = new MainDevice.Watch();
+        demo.steps.addAll(dec.steps);
+        demo.heart.addAll(dec.heart);
+        demo.sleep.addAll(dec.sleep);
+        demo.workouts.addAll(dec.workouts);
+        LocalDate y = DS_DAY.minusDays(1);
+        app.openring.core.DeviceScores.Result r = app.openring.core.DeviceScores.of(MainDevice.WATCH, y, DS_ZONE, demo, null, 10000, 40);
+        check("#379 watch only: all three scores", r.activity != null && r.sleep != null && r.readiness != null
+                && r.activityNone == null && r.sleepNone == null && r.readinessNone == null, r.activityNone + " " + r.sleepNone + " " + r.readinessNone);
+        check("#379 watch only: activity has every part of the ring's", keys(r.activity).equals("stay_active,move_hourly,targets,frequency,volume")
+                && r.activityLeft.isEmpty(), keys(r.activity));
+        check("#379 watch only: the demo night starts asleep, so latency is left out and said why", keys(r.sleep).equals("total,efficiency,restfulness,rem,deep,timing")
+                && leftKeys(r.sleepLeft).equals("restless,latency"), keys(r.sleep) + " / " + leftKeys(r.sleepLeft));
+        check("#379 watch only: readiness without HRV, temperature and recovery, each named", keys(r.readiness).equals("rhr,sleep,sleep_balance,prev_activity,activity_balance")
+                && leftKeys(r.readinessLeft).equals("hrv,temperature,recovery"), keys(r.readiness) + " / " + leftKeys(r.readinessLeft));
+        check("#379 the left out weight is shared out (the ring's rule)", r.readiness.value == weighted(r.readiness) && r.sleep.value == weighted(r.sleep)
+                && r.activity.value == weighted(r.activity), r.readiness.value);
+        check("#379 readiness takes the watch's sleep score", r.readiness.get("sleep").score == r.sleep.value);
+        WatchDays.Night wn = WatchDays.nightFor(demo.sleep, y, new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return DS_ZONE;
+            }
+        });
+        WatchDays.NightHeart nh = WatchDays.heartIn(demo.heart, wn.start, wn.end);
+        check("#379 resting heart rate is the watch's lowest reading of the night", r.readiness.get("rhr").detail.startsWith(nh.lowest + " bpm (usual "),
+                r.readiness.get("rhr").detail);
+        check("#379 total sleep is the watch night's time asleep", r.sleep.get("total").detail.equals(app.openring.core.analysis.Scores.hm(wn.asleepMin())),
+                r.sleep.get("total").detail);
+        check("#379 the step goal stands in for the calorie goal, said in the detail", r.activity.get("targets").detail.endsWith(" at 10,000 steps")
+                && r.readiness.get("prev_activity").detail.endsWith(" steps of 10,000"), r.activity.get("targets").detail);
+        check("#379 the day's steps and goal for the Activity line", r.steps == WatchDays.stepsPerDay(demo.steps, new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return DS_ZONE;
+            }
+        }).get(y) && r.goal == 10000 && r.days7 == 7, r.steps);
+        check("#379 demo watch: plausible scores", r.activity.value >= 60 && r.sleep.value >= 70 && r.readiness.value >= 60,
+                r.activity.value + " " + r.sleep.value + " " + r.readiness.value);
+        check("#379 the same rows give the same scores", app.openring.core.DeviceScores.of(MainDevice.WATCH, y, DS_ZONE, demo, null, 10000, 40).readiness.value == r.readiness.value);
+        check("#379 a goal of 0 is the default 10,000", app.openring.core.DeviceScores.of(MainDevice.WATCH, y, DS_ZONE, demo, null, 0, 40).goal == 10000);
+
+        // ---- phone only
+        MainDevice.Phone ph = new MainDevice.Phone();
+        for (PhoneSteps.Interval i : PhoneSteps.intervals(PhoneSteps.demo(DS_DAY, 35, now, DS_ZONE, new Random(329)))) ph.intervals.add(new double[] {i.start, i.stop, i.steps});
+        app.openring.core.DeviceScores.Result p = app.openring.core.DeviceScores.of(MainDevice.PHONE, y, DS_ZONE, null, ph, 10000, 40);
+        check("#379 phone only: activity without training volume, which is named", p.activity != null && keys(p.activity).equals("stay_active,move_hourly,targets,frequency")
+                && leftKeys(p.activityLeft).equals("volume") && p.activityLeft.get(0).why.contains("no calories"), p.activity == null ? p.activityNone : keys(p.activity));
+        check("#379 phone only: no sleep, no readiness, said plainly", p.sleep == null && p.readiness == null
+                && app.openring.core.DeviceScores.PHONE_NO_NIGHT.equals(p.sleepNone) && app.openring.core.DeviceScores.PHONE_NO_NIGHT.equals(p.readinessNone));
+        check("#379 phone only: the line under the dial", app.openring.core.DeviceScores.from(MainDevice.PHONE, "activity_score").equals("From this phone's steps")
+                && app.openring.core.DeviceScores.from(MainDevice.WATCH, "readiness").contains("fewer signals"));
+        // a phone that counted all day, every quarter hour 0 steps: only 07:00 to 23:00 is awake, 16 hours inactive
+        MainDevice.Phone still = new MainDevice.Phone();
+        for (int d = 6; d >= 0; d--) still.intervals.add(new double[] {at(DS_DAY.minusDays(d), 0, 0, DS_ZONE), at(DS_DAY.minusDays(d).plusDays(1), 0, 0, DS_ZONE), 0});
+        app.openring.core.DeviceScores.Result ps = app.openring.core.DeviceScores.of(MainDevice.PHONE, y, DS_ZONE, null, still, 10000, 40);
+        check("#379 phone: no night known, so only 07:00 to 23:00 counts as awake", ps.activity.get("stay_active").detail.equals("16h 0m inactive"),
+                ps.activity.get("stay_active").detail);
+        check("#379 phone: a still day is one long sitting period from 08:00 to 22:00", ps.activity.get("move_hourly").detail.equals("1 long sitting period"),
+                ps.activity.get("move_hourly").detail);
+
+        // ---- a day with no steps, the watch worn (heart rate all day)
+        MainDevice.Watch zero = dsWatch(7, 0, true, true);
+        app.openring.core.DeviceScores.Result z = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY.minusDays(1), DS_ZONE, zero, null, 10000, 40);
+        // the ring's rule gives a whole day of sitting one long sitting period, so the score stays near 45, not near 0
+        check("#379 a day with no steps still has a score, a low one", z.activity != null && z.activity.value < 50 && z.steps == 0
+                && z.activity.get("stay_active").score <= 25, z.activity == null ? z.activityNone : z.activity.value);
+        check("#379 a day with no steps: no target met, no training", z.activity.get("targets").detail.startsWith("0 of 7 days")
+                && z.activity.get("frequency").detail.startsWith("0 training days"), z.activity.get("targets").detail);
+        // ---- a day not worn: nothing from the watch on it
+        MainDevice.Watch gap = dsWatch(7, 200, true, true);
+        LocalDate later = DS_DAY.plusDays(2);
+        app.openring.core.DeviceScores.Result g = app.openring.core.DeviceScores.of(MainDevice.WATCH, later, DS_ZONE, gap, null, 10000, 40);
+        check("#379 a day without the watch: no scores, each says why", g.activity == null && g.sleep == null && g.readiness == null
+                && app.openring.core.DeviceScores.WATCH_NO_ACTIVITY.equals(g.activityNone) && app.openring.core.DeviceScores.WATCH_NO_NIGHT.equals(g.sleepNone)
+                && app.openring.core.DeviceScores.WATCH_NO_READINESS.equals(g.readinessNone) && Double.isNaN(g.steps), g.activityNone);
+        check("#379 the result reads NaN for a score it has not", Double.isNaN(g.value("sleep")) && Double.isNaN(g.value("readiness")) && Double.isNaN(g.value("activity_score")));
+        check("#379 nothing at all: no rows, no scores, no crash", app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, null, null, 10000, 40).activity == null
+                && app.openring.core.DeviceScores.of(MainDevice.PHONE, DS_DAY, DS_ZONE, null, null, 10000, 40).activity == null);
+
+        // ---- a short night and a night with only light sleep
+        app.openring.core.DeviceScores.Result full = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY.minusDays(1), DS_ZONE, dsWatch(10, 200, true, true), null, 10000, 40);
+        check("#379 a long night scores well", full.sleep != null && full.sleep.value >= 80, full.sleep == null ? full.sleepNone : full.sleep.value);
+        MainDevice.Watch three = dsWatch(10, 200, true, true);
+        three.sleep.clear();
+        dsNight(three, DS_DAY, new int[][] {{Records.LIGHT, 60}, {Records.DEEP, 40}, {Records.LIGHT, 50}, {Records.REM, 30}}, 3, 0, false);
+        app.openring.core.DeviceScores.Result s3 = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, three, null, 10000, 40);
+        check("#379 a short night (3 hours): a low score, total sleep counts most", s3.sleep != null && s3.sleep.value < 60 && s3.sleep.get("total").score < 30,
+                s3.sleep == null ? s3.sleepNone : s3.sleep.value + " " + s3.sleep.get("total").score);
+        check("#379 a single night: no sleep balance, no usual heart rate, readiness provisional", s3.readiness != null && s3.readiness.provisional
+                && s3.readiness.get("sleep_balance") == null && leftKeys(s3.readinessLeft).contains("sleep_balance")
+                && s3.readiness.get("rhr") != null && !s3.readiness.get("rhr").detail.contains("usual"), s3.readiness == null ? null : keys(s3.readiness));
+        MainDevice.Watch light = dsWatch(3, 200, false, true);
+        dsNight(light, DS_DAY, new int[][] {{Records.LIGHT, 450}}, 23, 0, true);
+        app.openring.core.DeviceScores.Result li = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, light, null, 10000, 40);
+        check("#379 only light sleep: deep and REM count as none (0), not as left out", li.sleep.get("deep").score == 0 && li.sleep.get("rem").score == 0
+                && li.sleep.get("total").score >= 90, keys(li.sleep));
+        check("#379 only light sleep: a lower score than the same length with stages", li.sleep.value < full.sleep.value, li.sleep.value + " vs " + full.sleep.value);
+        check("#379 the watch's heart rate of the night gives the resting heart rate", li.readiness.get("rhr") != null && li.readiness.get("rhr").detail.startsWith("52 bpm"),
+                li.readiness.get("rhr") == null ? null : li.readiness.get("rhr").detail);
+
+        // ---- latency, wake ups and an all awake night
+        MainDevice.Watch lat = dsWatch(2, 200, false, false);
+        dsNight(lat, DS_DAY, new int[][] {{Records.AWAKE, 12}, {Records.LIGHT, 200}, {Records.AWAKE, 3}, {Records.DEEP, 100}, {Records.AWAKE, 1}, {Records.REM, 120}}, 23, 0, false);
+        app.openring.core.DeviceScores.Result la = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, lat, null, 10000, 40);
+        check("#379 a night that starts awake has a latency", la.sleep.get("latency") != null && la.sleep.get("latency").detail.equals("12 min")
+                && !leftKeys(la.sleepLeft).contains("latency"), keys(la.sleep));
+        check("#379 wake ups and time awake between first and last sleep (the ring's rule)", la.sleep.get("restfulness").detail.equals("2 wake ups, 0h 4m awake"),
+                la.sleep.get("restfulness").detail);
+        check("#379 efficiency: asleep over the whole night", la.sleep.get("efficiency").detail.equals(Math.round(100.0 * 420 / 436) + "%"), la.sleep.get("efficiency").detail);
+        check("#379 a night without heart rate: resting heart rate left out, said why", la.readiness.get("rhr") == null
+                && leftKeys(la.readinessLeft).startsWith("hrv,temperature,recovery,rhr"), leftKeys(la.readinessLeft));
+        MainDevice.Watch awake = dsWatch(2, 200, false, false);
+        dsNight(awake, DS_DAY, new int[][] {{Records.AWAKE, 300}}, 23, 0, false);
+        app.openring.core.DeviceScores.Result aw = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, awake, null, 10000, 40);
+        check("#379 a night with no sleep at all: only total sleep scores, the rest left out", aw.sleep != null && keys(aw.sleep).equals("total,rem,deep")
+                && aw.sleep.value < 20, aw.sleep == null ? aw.sleepNone : keys(aw.sleep));
+
+        // ---- the activity parts on quarter hours
+        MainDevice.Watch brisk = dsWatch(7, 200, true, true);
+        // yesterday 12:00 to 12:30: two quarter hours of 1,200 steps (12 brisk minutes each), and a 40 minute workout at 18:00
+        LocalDate b = DS_DAY.minusDays(1);
+        for (Records.Steps st : new ArrayList<Records.Steps>(brisk.steps)) {
+            if (st.start == at(b, 12, 0, DS_ZONE) || st.start == at(b, 12, 15, DS_ZONE)) {
+                brisk.steps.remove(st);
+                brisk.steps.add(new Records.Steps(st.start, 900, 1200, 900, 60));
+            }
+        }
+        app.openring.core.DeviceScores.Day bd = app.openring.core.DeviceScores.day(MainDevice.WATCH, at(b, 0, 0, DS_ZONE), at(b.plusDays(1), 0, 0, DS_ZONE), DS_ZONE, brisk, null);
+        check("#379 brisk quarter hours: steps / 100 minutes", Math.abs(bd.trainingMin - 24) < 1e-9 && bd.trainingKcal == 120, bd.trainingMin + " " + bd.trainingKcal);
+        brisk.workouts.add(new Records.Workout(at(b, 18, 0, DS_ZONE), 40 * 60, 2, 4000, 5000, 300));
+        bd = app.openring.core.DeviceScores.day(MainDevice.WATCH, at(b, 0, 0, DS_ZONE), at(b.plusDays(1), 0, 0, DS_ZONE), DS_ZONE, brisk, null);
+        check("#379 a workout counts its minutes and calories", Math.abs(bd.trainingMin - 64) < 1e-9 && bd.trainingKcal == 420, bd.trainingMin + " " + bd.trainingKcal);
+        app.openring.core.DeviceScores.Result br = app.openring.core.DeviceScores.of(MainDevice.WATCH, b, DS_ZONE, brisk, null, 10000, 40);
+        check("#379 a day with 30 brisk minutes is a training day", br.activity.get("frequency").detail.startsWith("1 training day"), br.activity.get("frequency").detail);
+        check("#379 no workout: training frequency still from steps", app.openring.core.DeviceScores.of(MainDevice.WATCH, b, DS_ZONE, dsWatch(7, 200, true, true), null, 10000, 40)
+                .activity.get("frequency").detail.startsWith("0 training days"));
+        // sitting from 21:00 to 23:00 (worn, heart rate): only 21:00 to 22:00 is daytime, so one long sitting period; 07:00 to 08:45 gives 45 daytime minutes, none
+        MainDevice.Watch sit = new MainDevice.Watch();
+        LocalDate sd = DS_DAY;
+        for (int q = 7 * 4; q < 23 * 4; q++) {
+            long t = at(sd, q / 4, (q % 4) * 15, DS_ZONE);
+            boolean idle = q < 8 * 4 + 3 || q >= 21 * 4;
+            sit.steps.add(new Records.Steps(t, 900, idle ? 10 : 300, 0, 0));
+            sit.heart.add(new Records.Heart(t, 70));
+        }
+        app.openring.core.DeviceScores.Day sday = app.openring.core.DeviceScores.day(MainDevice.WATCH, at(sd, 0, 0, DS_ZONE), at(sd.plusDays(1), 0, 0, DS_ZONE), DS_ZONE, sit, null);
+        check("#379 a sitting stretch over 22:00 counts its daytime hour, 45 minutes after 07:00 do not", sday.longSits == 1, sday.longSits);
+        // 07:00 to 08:45 and 21:00 to 23:00, and the 30 minutes the watch counts as worn around its records (06:30 to 07:00, 23:00 to 23:45)
+        check("#379 inactive: every worn awake quarter hour under 60 steps", sday.inactiveMin == (7 + 8 + 2 + 3) * 15, sday.inactiveMin);
+        check("#379 an hour of the watch makes a worn day", sday.worn() && sday.wornQ >= app.openring.core.DeviceScores.WORN_QUARTERS);
+        // asleep quarter hours are rest, not sitting
+        MainDevice.Watch inBed = new MainDevice.Watch();
+        for (int q = 7 * 4; q < 12 * 4; q++) inBed.heart.add(new Records.Heart(at(sd, q / 4, (q % 4) * 15, DS_ZONE), 60));
+        inBed.sleep.add(new Records.Sleep(at(sd, 7, 0, DS_ZONE), 5 * 3600, Records.LIGHT));
+        app.openring.core.DeviceScores.Day bed = app.openring.core.DeviceScores.day(MainDevice.WATCH, at(sd, 0, 0, DS_ZONE), at(sd.plusDays(1), 0, 0, DS_ZONE), DS_ZONE, inBed, null);
+        // 07:00 to 12:00 asleep; only the worn quarter hours around it (06:30 to 07:00, 12:00 to 12:45) are inactive
+        check("#379 time asleep is not inactive", bed.inactiveMin == 5 * 15 && bed.longSits == 0, bed.inactiveMin);
+        // fewer than 3 worn days in the week: the weekly parts are left out, each said why
+        app.openring.core.DeviceScores.Result two = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, dsWatch(2, 200, false, true), null, 10000, 40);
+        check("#379 two days of the watch: only the daily parts, the weekly ones named", keys(two.activity).equals("stay_active,move_hourly")
+                && leftKeys(two.activityLeft).equals("targets,frequency,volume") && two.days7 == 2, keys(two.activity));
+
+        // ---- the ring's sleep function: "watch" counts as staged, other sources as before
+        app.openring.core.analysis.Night n = new app.openring.core.analysis.Night();
+        n.asleepMin = 420;
+        n.remMin = 90;
+        n.deepMin = 60;
+        n.stageSource = "none";
+        check("#379 a night without stages scores no REM or deep, as before", app.openring.core.analysis.Scores.sleep(n, 0, 40).get("rem") == null);
+        n.stageSource = "watch";
+        check("#379 the watch's stages count as stages", app.openring.core.analysis.Scores.sleep(n, 0, 40).get("rem") != null);
+
+        // ---- texts
+        boolean ok = true;
+        for (String t : app.openring.core.DeviceScores.texts()) ok &= plain(t) && !t.isEmpty();
+        for (String k : new String[] {"stay_active", "move_hourly", "targets", "frequency", "volume", "efficiency", "restfulness", "rem", "deep", "latency", "rhr",
+            "sleep", "sleep_balance", "prev_activity", "activity_balance"}) {
+            ok &= plain(app.openring.ui.Explain.ofDevice(k, true)) && plain(app.openring.ui.Explain.ofDevice(k, false)) && app.openring.ui.Explain.ofDevice(k, true) != null;
+        }
+        for (String t : new String[] {app.openring.ui.Explain.WATCH_NIGHT_SCORE, app.openring.ui.Explain.SLEEP_DEVICE, app.openring.ui.Explain.READINESS_DEVICE,
+            app.openring.ui.Explain.ACTIVITY_DEVICE, app.openring.ui.Explain.activityDaysDevice(2, true), app.openring.ui.Explain.activityDaysDevice(5, false),
+            app.openring.ui.Explain.SLEEP_WATCH_ONLY}) ok &= plain(t);
+        check("#379 texts plain, no dashes as punctuation", ok);
+        check("#379 texts: the comparison line and the goal line", app.openring.core.DeviceScores.version(77.6).equals("Watch version: 78")
+                && app.openring.core.DeviceScores.goalLine(8412, 10000, java.util.Locale.US).equals("8,412 of 10,000 steps goal")
+                && app.openring.core.DeviceScores.goalLine(Double.NaN, 10000, java.util.Locale.US).startsWith("0 of"));
+        check("#379 unknown keys have no device text", app.openring.ui.Explain.ofDevice("hrv", true) == null && app.openring.ui.Explain.ofDevice(null, true) == null);
+    }
+
+    static String ringFingerprint() throws Exception {
+        Random r = new Random(379);
+        StringBuilder all = new StringBuilder();
+        String[] sources = {"ring", "signals", "none"};
+        for (int i = 0; i < 3000; i++) {
+            app.openring.core.analysis.Night n = new app.openring.core.analysis.Night();
+            n.stageSource = sources[i % 3];
+            n.asleepMin = r.nextInt(700);
+            n.efficiency = fpMaybe(r, 50 + r.nextDouble() * 50);
+            n.wasoMin = fpMaybe(r, r.nextDouble() * 200);
+            n.awakenings = r.nextInt(20);
+            n.restlessPct = fpMaybe(r, r.nextDouble() * 70);
+            n.remMin = r.nextDouble() * 130;
+            n.deepMin = r.nextDouble() * 100;
+            n.latencyMin = fpMaybe(r, r.nextDouble() * 100);
+            n.midpoint = fpMaybe(r, 1.7e9 + r.nextInt(86400 * 30));
+            all.append(fpText(app.openring.core.analysis.Scores.sleep(n, (r.nextInt(27) - 12) * 3600, 10 + r.nextInt(80)))).append('\n');
+            app.openring.core.analysis.Scores.ReadinessInput ri = new app.openring.core.analysis.Scores.ReadinessInput();
+            ri.sleepScore = fpMaybe(r, r.nextInt(101));
+            ri.rhr = fpMaybe(r, 38 + r.nextDouble() * 60);
+            ri.rhrBaseline = fpMaybe(r, 40 + r.nextDouble() * 40);
+            ri.rhrSd = fpMaybe(r, r.nextDouble() * 5);
+            ri.hrvRecent = fpMaybe(r, 10 + r.nextDouble() * 100);
+            ri.hrvBaseline = fpMaybe(r, 10 + r.nextDouble() * 100);
+            ri.tempDev = fpMaybe(r, r.nextDouble() * 3 - 1.5);
+            ri.recoveryFraction = fpMaybe(r, r.nextDouble());
+            ri.sleepBalance = fpMaybe(r, 0.5 + r.nextDouble() * 0.7);
+            ri.prevDayActivity = fpMaybe(r, r.nextDouble() * 3.5);
+            ri.activityBalance = fpMaybe(r, r.nextDouble() * 2.5);
+            ri.historyNights = r.nextInt(30);
+            all.append(fpText(app.openring.core.analysis.Scores.readiness(ri))).append('\n');
+            app.openring.core.analysis.Scores.ActivityInput ai = new app.openring.core.analysis.Scores.ActivityInput();
+            ai.inactiveMin = fpMaybe(r, r.nextDouble() * 900);
+            ai.longInactiveStreaks = r.nextInt(8) - 1;
+            ai.targetsMetFraction = fpMaybe(r, r.nextInt(8) / 7.0);
+            ai.trainingDays7 = r.nextInt(9) - 1;
+            ai.trainingKcal7 = fpMaybe(r, r.nextDouble() * 2500);
+            ai.days7 = 1 + r.nextInt(7);
+            all.append(fpText(app.openring.core.analysis.Scores.activity(ai))).append('\n');
+        }
+        byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(all.toString().getBytes("UTF-8"));
+        StringBuilder x = new StringBuilder();
+        for (byte v : h) x.append(String.format("%02x", v));
+        return x.toString();
+    }
+
+    static double fpMaybe(Random r, double v) {
+        return r.nextInt(8) == 0 ? Double.NaN : v;
+    }
+
+    /** Every bit of a score: value, provisional, each contributor's key, label, exact score and weight, detail. */
+    static String fpText(app.openring.core.analysis.Night.Score s) {
+        StringBuilder b = new StringBuilder();
+        b.append(s.value).append(s.provisional ? "p" : "").append('[');
+        for (app.openring.core.analysis.Night.Contributor c : s.contributors) b.append(c.key).append('|').append(c.label).append('|')
+                .append(Double.doubleToLongBits(c.score)).append('|').append(Double.doubleToLongBits(c.weight)).append('|').append(c.detail).append(';');
+        return b.append(']').toString();
     }
 }

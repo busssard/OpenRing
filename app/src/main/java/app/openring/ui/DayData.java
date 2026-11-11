@@ -69,6 +69,12 @@ public final class DayData {
      * reading is stored in the file shown (the demo has its own). Read in the load's background task.
      */
     public boolean phoneSensor, phoneAllowed, phoneAny;
+    /**
+     * The scores from the watch, or from the phone without a ring (issue #379, {@code core/DeviceScores}): worked out on each
+     * load from the stored rows, nothing stored. Null with only a ring, or when the rows could not be read. Without a ring
+     * {@link #score} and {@link #scoreObj} show them; with a ring they are only the "Watch version" line.
+     */
+    public app.openring.core.DeviceScores.Result devices;
     /** The devices the tabs are built for (issue #373, {@code core/Start}); never null after {@link #load}. */
     public app.openring.core.Start.Has has = new app.openring.core.Start.Has(true, false, false);
     /**
@@ -275,6 +281,34 @@ public final class DayData {
             ok = failed(c, date, "main device", e);
         }
         merged = app.openring.core.MainDevice.of(main, date, ds, de, zone, ring, watch, phone);
+        try {
+            // the scores without a ring (issue #379): the watch's or the phone's rows of the last five weeks
+            int dev = app.openring.core.DeviceScores.device(has.ring, has.watch, phone != null);
+            if (dev >= 0) {
+                double from = ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600;
+                app.openring.core.MainDevice.Watch w = dev == app.openring.core.MainDevice.WATCH && app.openring.data.WatchStore.any(db)
+                        ? app.openring.data.WatchStore.window(db, from - 86400, de) : null;
+                app.openring.core.MainDevice.Phone ph = dev == app.openring.core.MainDevice.PHONE && phoneAny
+                        ? app.openring.data.PhoneStore.window(db, from, de) : null;
+                devices = app.openring.core.DeviceScores.of(dev, date, zone, w, ph, p.watchGoal(), p.age());
+            }
+        } catch (RuntimeException e) {
+            // the tabs show the scores as without data; the ring's own are not touched
+            devices = null;
+            ok = failed(c, date, "scores without a ring", e);
+        }
+    }
+
+    /** The score {@code key} comes from the watch or the phone: no ring, and the device has one (issue #379). */
+    public boolean fromDevice(String key) {
+        return !has.ring && devices != null && !Double.isNaN(devices.value(key));
+    }
+
+    /** With a ring, the line "Watch version: 78" under the ring's score {@code key} when the watch has one too; else null. */
+    public String watchVersion(String key) {
+        if (!has.ring || devices == null || devices.device != app.openring.core.MainDevice.WATCH) return null;
+        double v = devices.value(key);
+        return Double.isNaN(v) ? null : app.openring.core.DeviceScores.version(v);
     }
 
     /** Values of a day field for the {@code n} days ending at the selected date (NaN if missing). */
@@ -309,6 +343,8 @@ public final class DayData {
 
     public double score(String key) {
         if ("screen".equals(key)) return screen == null || screen.score == null ? Double.NaN : screen.score.value;
+        // without a ring the watch's or the phone's (issue #379); a ring's stored score is never replaced
+        if (fromDevice(key)) return devices.value(key);
         if ("sleep".equals(key)) {
             JSONObject s = night == null ? null : night.optJSONObject("score");
             return s == null || !s.has("value") ? Double.NaN : s.optDouble("value");
@@ -318,6 +354,11 @@ public final class DayData {
     }
 
     public JSONObject scoreObj(String key) {
+        if (fromDevice(key)) {
+            JSONObject o = Json.score("sleep".equals(key) ? devices.sleep : "readiness".equals(key) ? devices.readiness : devices.activity);
+            Json.put(o, "device", devices.device);
+            return o;
+        }
         if ("sleep".equals(key)) return night == null ? null : night.optJSONObject("score");
         return day == null ? null : day.optJSONObject(key);
     }
