@@ -179,7 +179,8 @@ public final class DayData {
             d.periodShown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
             if (d.periodShown) {
                 LocalDate today = LocalDate.now();
-                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped()));
+                // the prediction method of Settings (issue #383); measured below keeps it
+                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped())).withMethod(p.periodMethod());
                 d.periodAsk = d.periods.askStopped(p.age(), app.openring.core.analysis.Cycles.day(p.periodAskLater()));
                 try {
                     // phase 2: the temperature rise of each cycle, from the ring's nights and the mouth temperatures
@@ -188,6 +189,10 @@ public final class DayData {
                     // the calendar estimate stays; the error's kind only, never a date or a value
                     app.openring.ble.RingManager.get(c).log("day load: the temperature rise for the period tracker: " + e.getClass().getSimpleName());
                 }
+                // "How close the estimates were" (issue #383): both backtests worked out here in the background, not while the
+                // card is drawn (each is kept in the estimate once done)
+                d.periods.backtest();
+                d.periods.riseBacktest();
                 // the day summaries hold no period data; read here for Body's temperature chart with the cycle on it, over
                 // its whole time span up to today (owner's feedback of 11 November)
                 LocalDate[] span = d.periods.tempWindow(date);

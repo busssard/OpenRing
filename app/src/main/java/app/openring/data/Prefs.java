@@ -104,6 +104,18 @@ public final class Prefs {
     public void setPeriodRemindDays(int d) { sp.edit().putInt("period_remind_days", app.openring.core.PeriodRemind.validDays(d) ? d : 0).apply(); }
     public int periodRemindMinute() { return app.openring.core.PeriodRemind.minute(sp.getInt("period_remind_min", app.openring.core.PeriodRemind.DEFAULT_MINUTE)); }
     public void setPeriodRemindMinute(int m) { sp.edit().putInt("period_remind_min", app.openring.core.PeriodRemind.minute(m)).apply(); }
+    /**
+     * Settings, Period tracker, Prediction (issue #383): {@code cycleforecast.Methods.BEST} (0, the default: the method the
+     * backtest on the person's own cycles found closest) or a method's id. Display only, the log never changes; in a backup.
+     * Demo and real share it (it is how the estimate is shown, not data).
+     */
+    public int periodMethod() {
+        int m = sp.getInt("period_method", app.openring.core.analysis.cycleforecast.Methods.BEST);
+        return app.openring.core.analysis.cycleforecast.Methods.valid(m) ? m : app.openring.core.analysis.cycleforecast.Methods.BEST;
+    }
+    public void setPeriodMethod(int m) {
+        sp.edit().putInt("period_method", app.openring.core.analysis.cycleforecast.Methods.valid(m) ? m : app.openring.core.analysis.cycleforecast.Methods.BEST).apply();
+    }
     /** The cycle already reminded of (the start of its period), so one cycle never gets two; not in a backup. */
     public String periodRemindSent() { return sp.getString("period_remind_sent", null); }
     /** Written to disk before it returns, before the notification is posted, so a stop in between never sends twice. */

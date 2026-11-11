@@ -10,7 +10,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `app/src/main/java/app/openring/` | The app (plain Java, no third party libraries). Packages explained in ARCHITECTURE.md |
 | `app/src/main/res/` | Icons (vector drawables), app name, theme. All screens are built in code, there are no layouts |
 | `app/src/main/AndroidManifest.xml` | Permissions, activities, services. Must never request `INTERNET` |
-| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring) and `WatchTest.java` (the Withings watch) run after it |
+| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383) run after it |
 | `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh` |
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |

@@ -199,11 +199,11 @@ public final class Demo {
     }
 
     /**
-     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on cycle day 20
-     * ({@code Cycles.demo}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
+     * The demo's made up period log (issue #252): 37 cycles over about 3 years before the newest period, so the prediction
+     * methods can be compared (issue #383), today on cycle day 20 ({@code Cycles.demoHistory}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
      */
     static void periods(final Db db, LocalDate today, final long now) {
-        final java.util.Map<LocalDate, Integer> log = app.openring.core.analysis.Cycles.demo(today);
+        final java.util.Map<LocalDate, Integer> log = app.openring.core.analysis.Cycles.demoHistory(today);
         db.inTransaction(new Runnable() {
             @Override
             public void run() {

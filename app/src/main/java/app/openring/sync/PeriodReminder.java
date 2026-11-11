@@ -88,11 +88,13 @@ public final class PeriodReminder extends BroadcastReceiver {
         Prefs p = Prefs.of(c);
         LocalDate stopped = Cycles.day(p.periodStoppedReal());
         try {
-            return Periods.readReal(c, today, stopped);
+            // the prediction method of Settings (issue #383), as the screens show it
+            Cycles own = Periods.readReal(c, today, stopped);
+            return own == null ? null : own.withMethod(p.periodMethod());
         } catch (RuntimeException e) {
             if (p.demo()) throw e;
             app.openring.data.Db db = app.openring.data.Db.get(c);
-            Cycles base = Periods.cycles(db, today, stopped);
+            Cycles base = Periods.cycles(db, today, stopped).withMethod(p.periodMethod());
             try {
                 return Periods.measured(db, base, java.time.ZoneId.systemDefault());
             } catch (RuntimeException again) {

@@ -2082,7 +2082,8 @@ public class CoreTest {
 
         // ---- the demo's made up file (screens.sh) ----
         DripCsv.File demo = drip(DripCsv.demo(today));
-        java.util.Map<java.time.LocalDate, Integer> demoLog = new java.util.HashMap<java.time.LocalDate, Integer>(Cycles.demo(today));
+        // the demo writes its whole made up history (issue #383), which the file overlaps at its first period
+        java.util.Map<java.time.LocalDate, Integer> demoLog = new java.util.HashMap<java.time.LocalDate, Integer>(Cycles.demoHistory(today));
         DripImport.Preview dp = DripImport.preview(demo.flows, demo.temps, demoLog, noT, noG, today);
         check("#252d demo file: a BOM, Windows line ends, newest row first, read by name", DripCsv.demo(today).startsWith("﻿date,") && DripCsv.demo(today).contains("\r\n")
                 && demo.rows > 150 && demo.unreadable == 0 && demo.badValues == 0);

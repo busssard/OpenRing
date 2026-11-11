@@ -1502,7 +1502,10 @@ public final class Pages {
         if (app.openring.core.Start.shows(BODY, app.openring.core.Start.HEART_NEEDS_DEVICE, d.has)) {
             root.addView(DeviceViews.needCard(c, null, app.openring.core.Start.HEART_NEEDS, true));
             root.addView(DeviceViews.needCard(c, app.openring.core.Start.NIGHT_TITLE, app.openring.core.Start.NIGHT_TEXT, false));
-            if (d.periodShown && d.periods != null) root.addView(PeriodAnalysis.cycles(c, d));
+            if (d.periodShown && d.periods != null) {
+                root.addView(PeriodAnalysis.cycles(c, d));
+                if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
+            }
             return root;
         }
         if (ring) root.addView(rightNow(c, d.now));
@@ -1546,6 +1549,7 @@ public final class Pages {
             if (d.periodShown && d.periods != null) {
                 // without a ring this is the only temperature chart (drip's mouth temperatures), so it stays next to the cycles
                 root.addView(PeriodAnalysis.cycles(c, d));
+                if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
                 if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
             }
             return root;
@@ -1619,7 +1623,11 @@ public final class Pages {
         if (d.periodShown && d.periods != null && !d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
         else root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
         // the period tracker's analysis at the end (issue #252, phase 1a2): the cycles over time
-        if (d.periodShown && d.periods != null) root.addView(PeriodAnalysis.cycles(c, d));
+        if (d.periodShown && d.periods != null) {
+            root.addView(PeriodAnalysis.cycles(c, d));
+            // how close each prediction method was on these cycles (issue #383)
+            if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
+        }
         return root;
     }
 

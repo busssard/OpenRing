@@ -35,7 +35,7 @@ final class PeriodAnalysis {
     /** "Show all" was tapped, kept while the page is rebuilt. */
     static boolean listAll;
     /** The How it works of Your cycles and of the night temperature card are open, kept while the page is rebuilt. */
-    static final boolean[] howOpen = {false}, tempHowOpen = {false};
+    static final boolean[] howOpen = {false}, tempHowOpen = {false}, accHowOpen = {false};
 
     static View cycles(final Context c, DayData d) {
         final Cycles cy = d.periods;
@@ -87,7 +87,8 @@ final class PeriodAnalysis {
                 faded[i] = k.leftOut;
                 tips[i] = cy.cycleTip(k, loc);
             }
-            card.addView(new Dots(c, x, y, faded, tips, cy.length, cy.range, " days", "Cycle lengths, touch a dot to read it"), Ui.sized(c, -1, 130));
+            // the dashed line is the length the estimate expects (the method of Settings, issue #383), the band its range
+            card.addView(new Dots(c, x, y, faded, tips, cy.step, cy.range, " days", "Cycle lengths, touch a dot to read it"), Ui.sized(c, -1, 130));
             card.addView(PeriodCard.note(c, Explain.periodDots(true)));
             Cycles.Summary s = cy.cycleSummary();
             if (s.n > 0) {
@@ -139,6 +140,105 @@ final class PeriodAnalysis {
     }
 
     /** Average, spread, shortest and longest in one row. */
+    /** The card's caption (screens.sh scrolls to it). */
+    static final String ACC_CAPTION = "How close the estimates were";
+
+    /**
+     * "How close the estimates were" (issue #383), after Your cycles: each prediction method's average error in days and how
+     * often the start fell in its range on the person's own cycles (the backtest, {@code cycleforecast.Backtest}), the one in
+     * use marked; a dot for each period with the error of the method in use, touch readable; and the temperature's replay
+     * against the calendar on the same days ({@code RiseBacktest}). The evidence for Settings' Prediction; nothing stored.
+     */
+    static View accuracy(Context c, DayData d) {
+        Cycles cy = d.periods;
+        Locale loc = Locale.getDefault();
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, ACC_CAPTION));
+        app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
+        if (bt.scored() == 0) {
+            card.addView(Ui.body(c, "Appears once you have logged " + (app.openring.core.analysis.cycleforecast.Backtest.FROM + 2)
+                    + " periods: each method then says when your 5th period would start from the 3 cycles before it, and so on, and you see which came closest."));
+            return card;
+        }
+        card.addView(Ui.text(c, "Each method said when each of your last " + bt.scored() + " periods would start, from only the cycles before it.", 14, Ui.TEXT, Ui.REGULAR));
+        double max = 0;
+        for (app.openring.core.analysis.cycleforecast.Backtest.Score sc : bt.scores) max = Math.max(max, sc.mae);
+        for (app.openring.core.analysis.cycleforecast.Backtest.Score sc : bt.scores) card.addView(methodRow(c, cy, sc, max), Ui.matchWrap());
+        card.addView(PeriodCard.note(c, Explain.PERIOD_ACC_ROWS));
+        if (bt.farOut > 0) card.addView(PeriodCard.note(c, Texts.count(bt.farOut, "cycle", "cycles") + " far from the rest "
+                + (bt.farOut == 1 ? "is" : "are") + " not counted, probably a period that was not logged."));
+
+        // the evidence: each period's error with the method in use
+        app.openring.core.analysis.cycleforecast.Backtest.Score use = bt.of(cy.methodId);
+        card.addView(Ui.gap(c, 14));
+        card.addView(Ui.text(c, "Each period, " + app.openring.core.analysis.cycleforecast.Methods.name(cy.methodId), 15, Ui.TEXT, Ui.MEDIUM));
+        int n = use.n;
+        double[] x = new double[n], y = new double[n];
+        String[] tips = new String[n];
+        for (int i = 0; i < n; i++) {
+            Cycles.Cycle k = cy.cycles.get(use.index[i]);
+            x[i] = k.next.toEpochDay();
+            y[i] = use.late(i);
+            tips[i] = errorTip(cy, k, use.expected[i], use.range[i], loc);
+        }
+        card.addView(new Dots(c, x, y, new boolean[n], tips, 0, use.avgRange, " days", "Days each period came after the expected day, touch a dot to read it"), Ui.sized(c, -1, 130));
+        card.addView(PeriodCard.note(c, Explain.PERIOD_ACC_DOTS));
+
+        // the temperature on top
+        app.openring.core.analysis.RiseBacktest rb = cy.riseBacktest();
+        card.addView(Ui.gap(c, 14));
+        card.addView(Ui.text(c, "With your temperature", 15, Ui.TEXT, Ui.MEDIUM));
+        if (rb == null || rb.n() == 0) {
+            card.addView(PeriodCard.note(c, "Once a cycle with a temperature rise has ended with a logged period, this compares the estimate from the rise with the calendar."));
+        } else {
+            card.addView(Ui.statRow(c,
+                    Ui.stat(c, "Temperature", Ui.fmt(rb.mae, 1), "days off", Ui.PERIOD),
+                    Ui.stat(c, "Calendar", Ui.fmt(rb.calendarMae, 1), "days off", 0)));
+            card.addView(PeriodCard.note(c, Explain.periodAccTemp(rb)));
+            if (!cy.riseUsed) card.addView(PeriodCard.note(c, cy.riseOff()));
+        }
+        card.addView(Ui.gap(c, 6));
+        card.addView(Ui.howItWorks(c, accHowOpen, Explain.periodAccuracyHow()), Ui.matchWrap());
+        return card;
+    }
+
+    /** One method: its name (the one in use marked), a bar as long as its error, the error and how often it was in range. */
+    static View methodRow(Context c, Cycles cy, app.openring.core.analysis.cycleforecast.Backtest.Score sc, double max) {
+        boolean inUse = sc.method == cy.methodId;
+        int color = inUse ? Ui.PERIOD : Ui.TEXT_3;
+        LinearLayout row = Ui.vbox(c);
+        row.setPadding(0, Ui.dp(c, 8), 0, 0);
+        LinearLayout top = Ui.hbox(c);
+        String name = app.openring.core.analysis.cycleforecast.Methods.name(sc.method);
+        if (inUse) name += cy.choice == app.openring.core.analysis.cycleforecast.Methods.BEST ? ", in use (best for you)" : ", in use";
+        TextView nm = Ui.text(c, name, 14, inUse ? Ui.TEXT : Ui.TEXT_2, inUse ? Ui.MEDIUM : Ui.REGULAR);
+        top.addView(nm, new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        top.addView(Ui.text(c, Ui.fmt(sc.mae, 1) + " days off", 14, inUse ? Ui.TEXT : Ui.TEXT_2, inUse ? Ui.MEDIUM : Ui.REGULAR));
+        row.addView(top, Ui.matchWrap());
+        LinearLayout bar = Ui.hbox(c);
+        View fill = new View(c);
+        fill.setBackground(Ui.rounded(Ui.alpha(color, inUse ? 0.85f : 0.45f), Ui.dp(c, 3)));
+        float share = max > 0 ? (float) Math.max(0.02, sc.mae / max) : 0.02f;
+        bar.addView(fill, new LinearLayout.LayoutParams(0, Ui.dp(c, 6), share));
+        bar.addView(new View(c), new LinearLayout.LayoutParams(0, Ui.dp(c, 6), 1 - share));
+        LinearLayout.LayoutParams bl = Ui.matchWrap();
+        bl.setMargins(0, Ui.dp(c, 4), 0, Ui.dp(c, 2));
+        row.addView(bar, bl);
+        row.addView(Ui.text(c, "In range " + sc.hits + " of " + sc.n + " (" + Math.round(100 * sc.hitRate()) + " %), give or take "
+                + Ui.fmt(sc.avgRange, 1) + " days on average", 12, Ui.TEXT_3, Ui.REGULAR));
+        row.setContentDescription(name + ": " + Ui.fmt(sc.mae, 1) + " days off on average, in range " + sc.hits + " of " + sc.n);
+        return row;
+    }
+
+    /** What touching a period's dot reads: "Period of 3 Mar 2026: expected 1 Mar, came 2 days later, inside the range (give or take 2 days)". */
+    static String errorTip(Cycles cy, Cycles.Cycle k, int expectedLength, int range, Locale loc) {
+        LocalDate expected = k.start.plusDays(expectedLength);
+        int late = (int) ChronoUnit.DAYS.between(expected, k.next);
+        String when = late == 0 ? "came on that day" : "came " + Texts.count(Math.abs(late), "day", "days") + (late > 0 ? " later" : " earlier");
+        return "Period of " + cy.date(k.next, loc) + ": expected " + cy.date(expected, loc) + ", " + when + ", "
+                + (Math.abs(late) <= range ? "inside" : "outside") + " the range (give or take " + Texts.count(range, "day", "days") + ")";
+    }
+
     static View summary(Context c, Cycles.Summary s, String unit) {
         return Ui.statRow(c,
                 Ui.stat(c, "Average", Ui.fmt(s.mean, 1), unit, 0),

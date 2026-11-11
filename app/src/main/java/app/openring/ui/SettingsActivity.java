@@ -795,6 +795,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.removeAllViews();
         card.addView(Ui.caption(this, "Period tracker"));
         card.addView(Ui.gap(this, 4));
+        prediction(card, p);
+        card.addView(Ui.gap(this, 14));
         card.addView(Ui.text(this, "Remind me before my period", 14, Ui.TEXT, Ui.REGULAR));
         LinearLayout row = Ui.hbox(this);
         final int days = p.periodRemindDays();
@@ -894,6 +896,65 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.addView(stop, swl);
         card.addView(Ui.text(this, Explain.PERIOD_STOPPED, 12, Ui.TEXT_3, Ui.REGULAR));
         dripImports(card);
+    }
+
+    /**
+     * Prediction (issue #383): Best for you (the default) and each method by name, the chosen one filled, a line under each;
+     * then which method Best for you uses now, worked out from the open log in the background (in demo mode the demo's).
+     * Display only: the choice is stored in Prefs (and the backup), the log never changes. The reminder follows it.
+     */
+    void prediction(LinearLayout card, final Prefs p) {
+        card.addView(Ui.text(this, "Prediction", 14, Ui.TEXT, Ui.REGULAR));
+        final int chosen = p.periodMethod();
+        for (final int id : app.openring.core.analysis.cycleforecast.Methods.CHOICES) {
+            TextView chip = Ui.smallButton(this, app.openring.core.analysis.cycleforecast.Methods.name(id), id == chosen ? Ui.PERIOD : Ui.TEXT_3);
+            if (id == chosen) chip.setBackground(Ui.rounded(Ui.alpha(Ui.PERIOD, 0.18f), Ui.dp(this, 24))); // filled, not only colored
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (id == p.periodMethod()) return;
+                    p.setPeriodMethod(id);
+                    app.openring.sync.PeriodReminder.planLater(SettingsActivity.this);
+                    fillPeriodCard();
+                }
+            });
+            LinearLayout.LayoutParams lp = Ui.matchWrap();
+            lp.setMargins(0, Ui.dp(this, 6), 0, 0);
+            card.addView(chip, lp);
+            card.addView(Ui.text(this, app.openring.core.analysis.cycleforecast.Methods.line(id), 12, Ui.TEXT_3, Ui.REGULAR));
+        }
+        final TextView now = Ui.text(this, "Checking the methods on your cycles", 13, Ui.TEXT_2, Ui.REGULAR);
+        now.setPadding(0, Ui.dp(this, 8), 0, 0);
+        card.addView(now);
+        card.addView(Ui.text(this, Explain.PERIOD_METHOD_SETTINGS, 12, Ui.TEXT_3, Ui.REGULAR));
+        final Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, String>() {
+            @Override
+            protected String doInBackground(Void... v) {
+                try {
+                    app.openring.data.Db db = app.openring.data.Db.get(ctx);
+                    java.time.LocalDate today = java.time.LocalDate.now();
+                    app.openring.core.analysis.Cycles cy = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped()))
+                            .withMethod(app.openring.core.analysis.cycleforecast.Methods.BEST);
+                    try {
+                        cy = app.openring.data.Periods.measured(db, cy, java.time.ZoneId.systemDefault());
+                    } catch (RuntimeException e) {
+                        // the calendar's backtest still answers
+                        RingManager.get(ctx).log("prediction: the temperature rise: " + e.getClass().getSimpleName());
+                    }
+                    return cy.periods.isEmpty() ? "Once you have logged periods, the methods are checked on them here." : Explain.periodBestNow(cy);
+                } catch (RuntimeException e) {
+                    // the error's kind only, never a date or a value
+                    RingManager.get(ctx).log("prediction: " + e.getClass().getSimpleName());
+                    return "Your period log could not be read just now. Try again later.";
+                }
+            }
+
+            @Override
+            protected void onPostExecute(String s) {
+                now.setText(s);
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /**

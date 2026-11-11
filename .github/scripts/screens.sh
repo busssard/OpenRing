@@ -262,6 +262,14 @@ scroll_to "YOUR CYCLES" 40 || echo "::warning::issue #252 step: the Your cycles 
 shot body-cycles 1
 if touch_desc "Cycle lengths"; then shot body-cycles-touch 1
 else echo "::warning::issue #252 step skipped: the cycle length chart was not on screen to touch it"; fi
+# issue #383: "How close the estimates were" after Your cycles: each prediction method's error and range hits on the demo's
+# 3 made up years (the one in use marked), then the chart of each period's error with the method in use, touched at 70 %
+# of its width (a period: expected day, how many days later or earlier, inside or outside the range)
+scroll_to "HOW CLOSE THE ESTIMATES WERE" 50 || echo "::warning::issue #383 step: the card How close the estimates were was not found on Body"
+shot body-period-accuracy 1
+scroll_to "Each period, " 12 || echo "::warning::issue #383 step: the chart of each period's error was not found"
+if touch_desc "Days each period came" 70; then shot body-period-accuracy-touch 1
+else echo "::warning::issue #383 step skipped: the chart of each period's error was not on screen to touch it"; fi
 # Phase 2 of #252: "Ovulation from your temperature" in Your cycles (this cycle's measured day, in how many cycles a rise
 # was found, the own time from ovulation to the period, a line under each cycle), the Period card's measured lines, and the
 # rise marked on the night temperature line (baseline, ringed high nights, the ovulation line), opened touched on its first
@@ -390,6 +398,10 @@ fi
 launch --es settings screen;                shot settings-screen-time
 # the period tracker's reminder and "My periods have stopped" (issue #252, phase 1a2); the reminder follows the real log only
 launch --es settings period;                shot settings-period
+# the card starts with Prediction (issue #383): Best for you and each method, and which one Best for you uses now; the
+# reminder below it gets its own shot
+scroll_to "Remind me before my period" 8 || echo "::warning::issue #383 step: the reminder was not found below Prediction"
+shot settings-period-remind 1
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
 # The Watch check (issue #251, phase 1a): the Settings card, then in demo mode the made up scan (never Bluetooth) and
