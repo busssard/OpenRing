@@ -200,33 +200,69 @@ final class PeriodAnalysis {
 
     // ------------------------------------------------------------------- temperature
 
+    /** The caption of Body's temperature chart while the period tracker draws the cycle on it. */
+    static final String TEMP_CAPTION = "Temperature deviation and your cycle";
+
+    /**
+     * Body's night temperature chart with the cycle drawn on it (owner's feedback of 11 November: one temperature chart, not
+     * a second one at the end of Body): the nights compared with the usual, never fewer days than the plain chart's 30, with
+     * the period days, the measured rise, and the expected period and ovulation range ahead, readable by touch.
+     */
     static View temperature(Context c, DayData d) {
         Cycles cy = d.periods;
         LinearLayout card = Ui.card(c);
-        card.addView(Ui.caption(c, "Night temperature and your cycle"));
-        LocalDate from = cy.tempFrom();
+        card.addView(Ui.caption(c, TEMP_CAPTION));
+        LocalDate from = d.periodFrom != null ? d.periodFrom : cy.tempFrom(), to = d.periodTo != null ? d.periodTo : cy.today;
         // the time axis fits the data: from the first night (or drip morning) with a value, when that is later
         LocalDate first = null;
         if (!d.periodTemps.isEmpty()) first = d.periodTemps.firstKey();
         if (!d.periodMouth.isEmpty() && (first == null || d.periodMouth.firstKey().isBefore(first))) first = d.periodMouth.firstKey();
-        if (first != null && first.isAfter(from)) from = first;
+        if (first != null && first.isAfter(from) && first.isBefore(to)) from = first;
         boolean mouth = !d.periodMouth.isEmpty();
         card.addView(Ui.gap(c, 6));
         // a found rise adds lines to the touch text: a little more room
-        int h = (mouth ? 170 : 150) + (cy.rise != null ? 30 : 0);
-        card.addView(new TempLine(c, cy, from, cy.today, d.periodTemps, d.periodMouth), Ui.sized(c, -1, h));
-        if (mouth) {
-            // the two lines, labelled in their own colours
-            LinearLayout keys = Ui.hbox(c);
-            keys.addView(Ui.text(c, "\u25CF Ring, skin at night (left)", 12, Ui.TEMP, Ui.MEDIUM), Ui.weight(1));
-            keys.addView(Ui.text(c, "\u25CF Mouth, morning (right)", 12, MOUTH, Ui.MEDIUM), Ui.weight(1));
-            LinearLayout.LayoutParams kl = Ui.matchWrap();
-            kl.setMargins(0, Ui.dp(c, 4), 0, 0);
-            card.addView(keys, kl);
-        }
+        int h = (mouth ? 190 : 170) + (cy.rise != null ? 30 : 0);
+        card.addView(new TempLine(c, cy, from, to, d.periodTemps, d.periodMouth), Ui.sized(c, -1, h));
+        card.addView(legend(c, cy, mouth), legendParams(c));
         card.addView(PeriodCard.note(c, Explain.PERIOD_TEMP_LINE));
         card.addView(Ui.howItWorks(c, tempHowOpen, Explain.periodTempHow(mouth)), Ui.matchWrap());
         return card;
+    }
+
+    static LinearLayout.LayoutParams legendParams(Context c) {
+        LinearLayout.LayoutParams kl = Ui.matchWrap();
+        kl.setMargins(0, Ui.dp(c, 4), 0, 0);
+        return kl;
+    }
+
+    /** One small legend line: each mark in its own colour, the parts the chart can show. */
+    static TextView legend(Context c, Cycles cy, boolean mouth) {
+        android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+        key(sb, "\u25A0", Ui.alpha(Ui.PERIOD, 0.6f), "Period");
+        if (cy.estimates()) key(sb, "\u25A0", Ui.alpha(Ui.PERIOD, 0.35f), "Expected period");
+        if (cy.estimates()) {
+            key(sb, "\u00A6", Ui.PERIOD, "Most likely first day");
+            key(sb, "\u25A0", Ui.alpha(Ui.READY, 0.45f), "Ovulation range");
+            key(sb, "\u25AC", Ui.READY, "Fertile days");
+        }
+        if (cy.rise != null) key(sb, "|", Ui.READY, "Measured ovulation");
+        if (cy.rise != null) key(sb, "\u25CB", Ui.TEXT, "High night");
+        if (mouth) {
+            key(sb, "\u25CF", Ui.TEMP, "Ring, skin at night (left)");
+            key(sb, "\u25CF", MOUTH, "Mouth, morning (right)");
+        }
+        TextView t = Ui.text(c, "", 12, Ui.TEXT_2, Ui.REGULAR);
+        t.setText(sb);
+        t.setContentDescription("Legend of the temperature chart");
+        return t;
+    }
+
+    private static void key(android.text.SpannableStringBuilder sb, String mark, int color, String name) {
+        if (sb.length() > 0) sb.append("   ");
+        int a = sb.length();
+        sb.append(mark);
+        sb.setSpan(new android.text.style.ForegroundColorSpan(color), a, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        sb.append('\u00A0').append(name.replace(' ', '\u00A0'));
     }
 
     /** Screen test (extra {@code period_rise}, demo mode only): the temperature line opens touched on the first high night. */
@@ -355,7 +391,9 @@ final class PeriodAnalysis {
 
     /**
      * The nights' skin temperature compared with the usual, day by day from {@code from} to {@code to}: period days as red
-     * columns, the estimate's ovulation range green and its expected period light red behind the line. With drip
+     * columns, the estimate's ovulation range green and its expected period light red behind the line, each darkest on its
+     * most likely day, the expected first day a dashed red line, the fertile days a green bar at the bottom, and a thin line
+     * after today when {@code to} lies ahead. With drip
      * temperatures by mouth (phase 1b) a second line in its own colour on its own scale (°C, on the right): a different
      * measurement, never mixed with the ring's; a reading drip left out is a hollow dot outside the line. Touch reads the
      * day under the finger, also one without a value.
@@ -430,14 +468,39 @@ final class PeriodAnalysis {
                     mhi = mlo + 0.6;
                 }
             }
-            // the bands behind: period days, the estimate's expected period and ovulation range
+            // the bands behind: period days, the estimate's ovulation range and expected period, each darkest on its most
+            // likely day (owner's feedback of 11 November), and the fertile days as a bar along the bottom
+            java.util.List<Cycles.Ahead> ahead = cy.ahead(to);
+            Cycles.Ahead one = ahead.isEmpty() ? null : ahead.get(0);
             for (int i = 0; i < n; i++) {
                 LocalDate d = from.plusDays(i);
-                int color = cy.periodOn(d) != null ? Ui.alpha(Ui.PERIOD, 0.24f) : cy.inOvulation(d) ? Ui.alpha(Ui.READY, 0.18f)
-                        : cy.inExpected(d) ? Ui.alpha(Ui.PERIOD, 0.12f) : 0;
-                if (color == 0) continue;
-                col.setColor(color);
-                cv.drawRect(left + i * cw, top, left + (i + 1) * cw, bottom, col);
+                double wo = one == null ? 0 : one.ovulationWeight(d), wp = one == null ? 0 : one.periodWeight(d);
+                int color = cy.periodOn(d) != null ? Ui.alpha(Ui.PERIOD, 0.24f) : wo > 0 ? Ui.alpha(Ui.READY, (float) (0.07 + 0.2 * wo))
+                        : wp > 0 ? Ui.alpha(Ui.PERIOD, (float) (0.06 + 0.2 * wp)) : 0;
+                if (color != 0) {
+                    col.setColor(color);
+                    cv.drawRect(left + i * cw, top, left + (i + 1) * cw, bottom, col);
+                }
+                if (one != null && one.inFertile(d)) {
+                    col.setColor(Ui.READY);
+                    cv.drawRect(left + i * cw, bottom - Ui.dp(c, 3), left + (i + 1) * cw, bottom, col);
+                }
+            }
+            if (one != null && !one.start.isBefore(from) && !one.start.isAfter(to)) {
+                // the most likely first day of the next period: a dashed red line
+                base.setColor(Ui.alpha(Ui.PERIOD, 0.9f));
+                float x = xOf(one.start, cw, left);
+                Path dp = new Path();
+                dp.moveTo(x, top);
+                dp.lineTo(x, bottom);
+                cv.drawPath(dp, base);
+            }
+            if (to.isAfter(cy.today) && !cy.today.isBefore(from)) {
+                // where the nights end and the days to come begin
+                float x = left + (ChronoUnit.DAYS.between(from, cy.today) + 1) * cw;
+                cv.drawLine(x, top, x, bottom, grid);
+                txt.setTextAlign(Paint.Align.CENTER);
+                if (x - left > Ui.dp(c, 60) && right - x > Ui.dp(c, 60)) cv.drawText("today", x, h - Ui.dp(c, 3), txt);
             }
             txt.setTextAlign(Paint.Align.LEFT);
             for (int k = -1; k <= 1; k++) {

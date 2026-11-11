@@ -262,6 +262,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         previewUnreadable = i.getBooleanExtra("key_unreadable", false) && Prefs.of(this).demo();
         // screen test: the period tracker's day editor on Body (issue #252), demo mode only; nothing is saved without a tap
         if (i.getBooleanExtra("period_edit", false) && Prefs.of(this).demo()) PeriodCard.editPending = true;
+        // screen test: the period calendar some months ahead (owner's feedback of 11 November), demo mode only
+        PeriodCard.monthsPending = Prefs.of(this).demo() ? Math.max(0, i.getIntExtra("period_month", 0)) : 0;
         // screen test: the gentle question of phase 1a2 on the period cards, demo mode only; nothing is saved without a tap
         PeriodCard.askPending = i.getBooleanExtra("period_ask", false) && Prefs.of(this).demo();
         // screen test: the marked temperature rise of phase 2, read by touch on its first high night, demo mode only

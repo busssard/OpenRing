@@ -155,6 +155,25 @@ public final class Explain {
                 + "(about 2.4 days in a large study), times 1.28 for about 4 in 5. At least 3 days.";
     }
 
+    /** How it works on the Period card: why one day is the most likely and the days around it less so. */
+    public static final String PERIOD_LIKELY = "Most likely day: the expected day itself. The days around it are less likely the further "
+            + "they lie from it, as in a normal spread, so the calendar shades the range darkest on that day and marks it with a "
+            + "dashed ring. The same for the ovulation day.";
+
+    /**
+     * How it works on the Period card: the months ahead, with the ranges of the next cycle, six and twelve cycles ahead
+     * ({@code Cycles.ahead}), worked out from the person's own numbers.
+     */
+    public static String periodAhead(app.openring.core.analysis.Cycles cy) {
+        java.util.List<app.openring.core.analysis.Cycles.Ahead> a = cy.ahead(cy.today.plusDays(13L * Math.max(1, cy.length)));
+        String r1 = a.get(0).range + (a.get(0).range == 1 ? " day" : " days");
+        String more = a.size() >= 12 ? ", " + a.get(5).range + " six cycles ahead and " + a.get(11).range + " twelve cycles ahead" : "";
+        return "Months ahead: each later period is one typical cycle (" + cy.length + " days) after the one before, counted from today "
+                + "while the next one is due. Its range grows with the square root of how many cycles ahead it is, from the same "
+                + "spread, because the variation of each cycle adds up: give or take " + r1 + " for the next" + more
+                + ". Page with the arrows above the calendar.";
+    }
+
     /** Under "Your cycles vary by about N days". */
     public static String periodVary(int cycles) {
         return "Vary by: the standard deviation of " + yourCycles(cycles) + ", how far a cycle usually lies from their average. "
@@ -202,14 +221,17 @@ public final class Explain {
     }
 
     /** Under the night temperature line, in view; the rest is in its How it works ({@link #periodTempHow}). */
-    public static final String PERIOD_TEMP_LINE = "Your ring's skin temperature each night, compared with your usual. Touch the line to read a night.";
+    public static final String PERIOD_TEMP_LINE = "Each night's skin temperature compared with your usual, your cycle behind it. "
+            + "Touch to read a day and its phase.";
 
     /** Under the night temperature line (the plan's text, with the marked rise of phase 2). */
     public static final String PERIOD_TEMP = "Your ring's nightly skin temperature compared with your usual. In many people it rises a little "
             + "after ovulation and stays higher until the next period. Where the app found that rise, the dashed line is the baseline "
             + "(the highest of the 6 nights before), the ringed dots are the high nights and the thin line the likely ovulation, the day "
-            + "before the first high night. Red bands are period days, green the ovulation range of the estimate. Nights you left out are "
-            + "not shown, and illness, alcohol, travel or a warm room move it too. Touch the line to read a night.";
+            + "before the first high night. Red bands are period days, green the ovulation range of the estimate and light red the "
+            + "expected period, both darkest on their most likely day; the dashed red line is the expected first day and the green "
+            + "bar at the bottom the likely fertile days. The chart goes on to the end of the expected period, a thin line marks "
+            + "today. Nights you left out are not shown, and illness, alcohol, travel or a warm room move it too.";
 
     // ------------------------------------------ period tracker, ovulation from the temperature (issue #252, phase 2)
 
@@ -357,6 +379,11 @@ public final class Explain {
             out.add(periodOvulation(cy));
         }
         if (cy.regularityLine() != null) out.add(periodVary(cy.used.size()));
+        if (cy.nextLine() != null) {
+            // the most likely day and the months ahead (owner's feedback of 11 November)
+            out.add(PERIOD_LIKELY);
+            out.add(periodAhead(cy));
+        }
         return out;
     }
 
