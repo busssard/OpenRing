@@ -413,7 +413,7 @@ public final class Explain {
     public static final String BADGES_OPEN = "Open that day";
     public static final String BADGES_NEW = "New";
     public static final String BADGES_ALL = "All badges";
-    public static final String BADGES_CALENDAR = "A dot marks a day with at least one badge, a bigger dot two or more. "
+    public static final String BADGES_CALENDAR = "Each badge of a day is a dot in its colour, the colour of its tab. "
             + "Touch and slide across the days to read them, tap a day to open it.";
     public static final String BADGES_COUNT_NOTE = "The number counts the days with this badge in all your history. It is not a score to beat: "
             + "a day without a badge says nothing.";
