@@ -164,12 +164,15 @@ public final class BadgesActivity extends Activity {
 
         // ---- the calendar ----
         final Map<LocalDate, List<Badges.Badge>> byDay = new HashMap<LocalDate, List<Badges.Badge>>();
-        Map<LocalDate, Integer> counts = new HashMap<LocalDate, Integer>();
+        // the colours of each day's badges, in the order of the kinds (Badges.of lists a date's badges by kind)
+        Map<LocalDate, List<Integer>> colors = new HashMap<LocalDate, List<Integer>>();
         for (Badges.Badge b : all) {
             List<Badges.Badge> on = byDay.get(b.date);
             if (on == null) byDay.put(b.date, on = new ArrayList<Badges.Badge>());
             on.add(b);
-            counts.put(b.date, on.size());
+            List<Integer> cs = colors.get(b.date);
+            if (cs == null) colors.put(b.date, cs = new ArrayList<Integer>());
+            cs.add(BadgeViews.color(b.kind));
         }
         if (month == null) month = YearMonth.from(today);
         LinearLayout cal = Ui.card(this);
@@ -179,7 +182,7 @@ public final class BadgesActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         final TextView readout = Ui.text(this, Explain.BADGES_CALENDAR, 13, Ui.TEXT_2, Ui.REGULAR);
         readout.setMinLines(3);
-        final BadgeCalendar view = new BadgeCalendar(this, counts, today, month, new BadgeCalendar.Listener() {
+        final BadgeCalendar view = new BadgeCalendar(this, colors, today, month, new BadgeCalendar.Listener() {
             @Override
             public void read(LocalDate day) {
                 List<Badges.Badge> on = byDay.get(day);
@@ -216,6 +219,8 @@ public final class BadgesActivity extends Activity {
         cal.addView(Ui.gap(this, 6));
         cal.addView(view, Ui.matchWrap());
         cal.addView(Ui.gap(this, 6));
+        cal.addView(legend());
+        cal.addView(Ui.gap(this, 8));
         cal.addView(readout);
         body.addView(cal);
 
@@ -235,10 +240,10 @@ public final class BadgesActivity extends Activity {
             LinearLayout item = Ui.vbox(this);
             int p = Ui.dp(this, 10);
             item.setPadding(p, p, p, p);
-            item.setBackground(Ui.rounded(Ui.CARD_HI, Ui.dp(this, 12)));
-            LinearLayout line = Ui.hbox(this);
-            line.addView(Ui.text(this, Badges.NAMES[k], 15, Ui.TEXT, Ui.MEDIUM), Ui.weight(1));
-            line.addView(Ui.text(this, Explain.badgeCount(n, last, today), 13, n > 0 ? Ui.GOOD : Ui.TEXT_3, Ui.REGULAR));
+            int level = last == null ? BadgeViews.NOT_YET : Badges.thisWeek(last, today) ? BadgeViews.RECENT : BadgeViews.EARLIER;
+            item.setBackground(BadgeViews.frame(this, k, level, false));
+            LinearLayout line = BadgeViews.title(this, k, 15, level);
+            line.addView(Ui.text(this, Explain.badgeCount(n, last, today), 13, n > 0 ? Ui.TEXT_2 : Ui.TEXT_3, Ui.REGULAR));
             item.addView(line);
             item.addView(Ui.gap(this, 4));
             item.addView(Ui.text(this, Explain.badgeRule(k), 12, Ui.TEXT_2, Ui.REGULAR));
@@ -260,6 +265,25 @@ public final class BadgesActivity extends Activity {
             kinds.addView(item, il);
         }
         body.addView(kinds);
+    }
+
+    /** One line under the calendar: a dot in each colour the badges have, with its tab's name (Sleep, Readiness, ...). */
+    View legend() {
+        LinearLayout row = Ui.hbox(this);
+        row.setGravity(Gravity.CENTER);
+        boolean[] done = new boolean[Badges.GROUPS];
+        for (int k = 0; k < Badges.KINDS; k++) {
+            int g = Badges.group(k);
+            if (done[g]) continue;
+            done[g] = true;
+            View dot = new View(this);
+            dot.setBackground(Ui.rounded(BadgeViews.color(k), Ui.dp(this, 3)));
+            LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(Ui.dp(this, 6), Ui.dp(this, 6));
+            dl.setMargins(row.getChildCount() == 0 ? 0 : Ui.dp(this, 12), 0, Ui.dp(this, 5), 0);
+            row.addView(dot, dl);
+            row.addView(Ui.text(this, Badges.GROUP_NAMES[g], 12, Ui.TEXT_2, Ui.REGULAR));
+        }
+        return row;
     }
 
     void showMonth(YearMonth m, BadgeCalendar view, TextView title, TextView readout) {

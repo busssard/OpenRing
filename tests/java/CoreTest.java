@@ -1278,6 +1278,7 @@ public class CoreTest {
         how252();
         ahead252();
         badges265();
+        badgeGroups265();
         badgeScreens265();
         recent265();
         connectPlan195();
@@ -2580,6 +2581,24 @@ public class CoreTest {
     }
 
     /** Phase 1b (issue #265): the screens' texts and the small helpers they use. */
+    /** Owner's wish of 12 November: every badge kind has the group (and so the tab colour) of what it is about. */
+    static void badgeGroups265() {
+        boolean all = Badges.NAMES.length == Badges.KINDS && Badges.GROUP_NAMES.length == Badges.GROUPS;
+        for (int k = 0; k < Badges.KINDS; k++) all &= Badges.group(k) >= 0 && Badges.group(k) < Badges.GROUPS && Badges.group(k) != Badges.OTHER;
+        check("#265 every badge kind has a group of its own tab, none is Other", all);
+        int[] want = {Badges.SLEEP, Badges.SLEEP, Badges.READINESS, Badges.SCREEN, Badges.ACTIVITY, Badges.ACTIVITY, Badges.SCREEN};
+        int[] got = new int[Badges.KINDS];
+        for (int k = 0; k < Badges.KINDS; k++) got[k] = Badges.group(k);
+        eq("#265 groups: best night and restful week sleep, recovered readiness, steps and goal activity, evenings and calm days screen",
+                Arrays.toString(got), Arrays.toString(want));
+        check("#265 a number that is no kind is Other", Badges.group(-1) == Badges.OTHER && Badges.group(Badges.KINDS) == Badges.OTHER);
+        eq("#265 group names follow the tabs", Arrays.asList(Badges.GROUP_NAMES), Arrays.asList("Sleep", "Readiness", "Activity", "Body", "Screen", "Period", "Other"));
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 12);
+        check("#265 this week: today and the 6 days before, not the 7th day back, not after today",
+                Badges.thisWeek(today, today) && Badges.thisWeek(today.minusDays(6), today) && !Badges.thisWeek(today.minusDays(7), today)
+                        && !Badges.thisWeek(today.plusDays(1), today) && !Badges.thisWeek(null, today));
+    }
+
     static void badgeScreens265() {
         java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 3);
         List<String> texts = new ArrayList<String>(Arrays.asList(app.openring.ui.Explain.BADGES_ROW, app.openring.ui.Explain.BADGES_ROW_NOTE,

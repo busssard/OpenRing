@@ -58,6 +58,42 @@ public final class Badges {
     public static final String[] NAMES = {"Best night", "Restful week", "Recovered", "Phone free evening", "Above your usual",
         "Goal reached", "Calm screen day"};
 
+    /**
+     * What a badge is about, so the screens give it the colour of that tab (owner's wish of 12 November): the groups
+     * follow the app's tabs. Body and Period have no badge yet; a new kind goes into the group of the tab that shows
+     * its numbers, Other only when none fits.
+     */
+    public static final int SLEEP = 0, READINESS = 1, ACTIVITY = 2, BODY = 3, SCREEN = 4, PERIOD = 5, OTHER = 6;
+    public static final int GROUPS = 7;
+    public static final String[] GROUP_NAMES = {"Sleep", "Readiness", "Activity", "Body", "Screen", "Period", "Other"};
+
+    /** The group of a kind ({@link #SLEEP} to {@link #OTHER}); {@link #OTHER} for a number that is no kind. */
+    public static int group(int kind) {
+        switch (kind) {
+            case BEST_NIGHT:
+            case RESTFUL_WEEK:
+                return SLEEP;
+            case RECOVERED:
+                return READINESS;
+            case ABOVE_USUAL:
+            case GOAL:
+                return ACTIVITY;
+            case PHONE_FREE:
+            case CALM_SCREEN:
+                return SCREEN;
+            default:
+                return OTHER;
+        }
+    }
+
+    /**
+     * Whether a badge's date is in the last {@link #WEEK} days up to {@code today} (today included): the screens show
+     * such a badge in fuller colour. Only the look changes, never the badge.
+     */
+    public static boolean thisWeek(LocalDate date, LocalDate today) {
+        return date != null && !date.isBefore(today.minusDays(WEEK - 1)) && !date.isAfter(today);
+    }
+
     /** Best night: the window in calendar days, the badge's night included. */
     public static final int BEST_DAYS = 30;
     /** Nights needed in a best night window and in the 4 weeks before a restful week. */
