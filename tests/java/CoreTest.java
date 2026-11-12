@@ -9812,9 +9812,9 @@ public class CoreTest {
         int T = app.openring.core.Start.TODAY, S = app.openring.core.Start.SLEEP, R = app.openring.core.Start.READY, B = app.openring.core.Start.BODY;
         eq("#373 ring only, Today", app.openring.core.Start.cards(T, ring).toString(), "[scores, find, ring_metrics, live]");
         eq("#373 ring and watch, Today: as with the ring", app.openring.core.Start.cards(T, both), app.openring.core.Start.cards(T, ring));
-        eq("#373 watch only, Today", app.openring.core.Start.cards(T, watch).toString(), "[need_scores, watch_day]");
-        eq("#373 phone only, Today", app.openring.core.Start.cards(T, phone).toString(), "[need_scores, phone_day]");
-        eq("#373 watch chosen, not added, Today", app.openring.core.Start.cards(T, half).toString(), "[need_scores, finish_watch, phone_day]");
+        eq("#373 watch only, Today", app.openring.core.Start.cards(T, watch).toString(), "[device_scores, watch_day]");
+        eq("#373 phone only, Today", app.openring.core.Start.cards(T, phone).toString(), "[device_scores, phone_day]");
+        eq("#373 watch chosen, not added, Today", app.openring.core.Start.cards(T, half).toString(), "[device_scores, finish_watch, phone_day]");
         check("#373 a watch half set up is pending, a ring or a watch ends it", half.watchPending && !watch.watchPending && !ring.watchPending
                 && !app.openring.core.Start.of(false, true, false, app.openring.core.Start.WATCH, 0).watchPending);
         for (app.openring.core.Start.Has h : new app.openring.core.Start.Has[] {watch, phone, half, demoWatch, demoPhone}) {
@@ -9827,7 +9827,7 @@ public class CoreTest {
         eq("#373 Sleep: only the phone needs a device", app.openring.core.Start.cards(S, phone).toString() + app.openring.core.Start.cards(S, watch)
                 + app.openring.core.Start.cards(S, ring) + app.openring.core.Start.cards(S, both), "[need_device][][][]");
         eq("#373 Ready", app.openring.core.Start.cards(R, phone).toString() + app.openring.core.Start.cards(R, watch) + app.openring.core.Start.cards(R, ring)
-                + app.openring.core.Start.cards(R, both), "[need_device][ready_needs_ring][][]");
+                + app.openring.core.Start.cards(R, both), "[need_device][ready_watch][][]");
         eq("#373 Body", app.openring.core.Start.cards(B, phone).toString() + app.openring.core.Start.cards(B, watch) + app.openring.core.Start.cards(B, ring),
                 "[heart_needs_device, night_needs_ring][heart, night_needs_ring][heart, ring_body]");
         eq("#373 Activity and Screen show no device cards", app.openring.core.Start.cards(app.openring.core.Start.ACTIVITY, watch).size()

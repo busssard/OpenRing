@@ -51,6 +51,11 @@ Nothing leaves the phone: the app has no internet permission.
   a watch only phone is `NO_RING` and the main screen (`Start.opensSetup`, which also never opens Setup with a watch added)
   never sends it to the ring setup. The tabs ask `Start.cards(tab, DayData.has)` which device cards to show: without a ring
   no empty ring cards, a short line with Add a ring (`ui/DeviceViews`), the watch's or the phone's day on Today.
+  Scores without a ring (issue #379, `core/DeviceScores`): Activity, Sleep and Readiness from the watch, Activity from the
+  phone's steps, worked out on each day load (`DayData.devices`, 35 days of rows, nothing stored) with the ring's own
+  functions in `core/analysis/Scores` on other inputs (steps per quarter hour, Withings' night, the watch's lowest night
+  heart rate); a part the device cannot give is left out and named on the tab. With a ring the ring's stored scores stay
+  and the watch's show only as "Watch version" lines; a JVM test fingerprints 9,000 ring scores to prove them unchanged.
   Pairing (`core/Pairing`, issue #218) stores a key on the phone (the kept key, `Prefs.keepPendingKey`, written with
   `commit`, with the serial of the ring it goes to) before it writes it to the ring, and nothing goes to the ring when that
   fails. A kept key is never overwritten: "Pair and create a new key" uses it again (also on another ring, which then shares

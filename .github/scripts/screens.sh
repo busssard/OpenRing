@@ -416,10 +416,22 @@ launch --es settings watch --ei main_device 1; shot settings-main-watch
 launch --ei tab 1 --ei main_device 1;       shot sleep-watch-main
 swipe_up;                                   shot sleep-watch-main-stages 1
 launch --ei tab 0 --ei main_device 0;       sleep 3
-# Only a watch (issue #373, extra devices 1, demo mode only, nothing stored): Today with the watch's day and the line that
-# the scores need a ring, Ready with why readiness needs a ring
+# Only a watch (issue #373, extra devices 1, demo mode only, nothing stored): Today with the dials of the scores from the
+# watch (issue #379) and the watch's day; Ready, Sleep and Activity with the watch's score, then each one's Contributors
+# and Left out (what the score could not use and why)
 launch --ei tab 0 --ei devices 1;           shot today-watch-only
 launch --ei tab 2 --ei devices 1;           shot ready-watch-only
+scroll_to "CONTRIBUTORS" 6 || echo "::warning::issue #379 step: Contributors was not found on Ready with only the watch"
+shot ready-watch-only-parts 1
+launch --ei tab 1 --ei devices 1;           shot sleep-watch-only
+scroll_to "CONTRIBUTORS" 10 || echo "::warning::issue #379 step: Contributors was not found on Sleep with only the watch"
+shot sleep-watch-only-parts 1
+launch --ei tab 3 --ei devices 1;           shot activity-watch-only
+scroll_to "CONTRIBUTORS" 14 || echo "::warning::issue #379 step: Contributors was not found on Activity with only the watch"
+shot activity-watch-only-parts 1
+# Only the phone (extra devices 2): Today with the Activity and Screen dials, Activity with the score from the phone's steps
+launch --ei tab 0 --ei devices 2;           shot today-phone-only
+launch --ei tab 3 --ei devices 2;           shot activity-phone-only
 # Steps from this phone (issue #329, phase 1b): the demo's made up phone readings (in the demo file only) as light bars under
 # the ring's steps per hour on Activity, then touched in the afternoon (the readout names the ring's hour and the phone's
 # interval there); Activity's card that asks for Physical activity (extra phone_ask, demo mode only, nothing is asked); the
