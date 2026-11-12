@@ -142,7 +142,8 @@ else
   echo "::warning::issue #69 step: no cut off demo was finished after opening again (the preparation may have ended before the app was)"
 fi
 shot today 2
-# the compact Recent badges row under the score rings (issue #265) is in the today shot above
+# the compact Recent badges row under the score rings (issue #265) is in the today shot above, each badge framed in the
+# colour of its tab (owner's wish of 12 November)
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
@@ -316,7 +317,8 @@ log "clock touch at ${xy:-$DIAL_FALLBACK}"
 adb shell input tap ${xy:-$DIAL_FALLBACK}; shot screen-touch 1
 swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
-# the Badges page (issue #265): calendar with a dot on each day with a badge, then each kind with how often and its rule
+# the Badges page (issue #265): calendar with a dot in its colour for each badge of a day and the colours' names under it,
+# then each kind in its colour (frame, disc and name) with how often and its rule
 launch --ez badges true;                    shot badges 4
 swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
 launch --es settings top;                   shot settings
