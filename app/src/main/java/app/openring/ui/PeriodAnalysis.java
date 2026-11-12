@@ -574,8 +574,8 @@ final class PeriodAnalysis {
             for (int i = 0; i < n; i++) {
                 LocalDate d = from.plusDays(i);
                 double wo = one == null ? 0 : one.ovulationWeight(d), wp = one == null ? 0 : one.periodWeight(d);
-                int color = cy.periodOn(d) != null ? Ui.alpha(Ui.PERIOD, 0.24f) : wo > 0 ? Ui.alpha(Ui.READY, (float) (0.07 + 0.2 * wo))
-                        : wp > 0 ? Ui.alpha(Ui.PERIOD, (float) (0.06 + 0.2 * wp)) : 0;
+                int color = cy.periodOn(d) != null ? Ui.alpha(Ui.PERIOD, 0.24f) : wo > 0 ? Ui.alpha(Ui.READY, (float) (0.05 + 0.25 * wo))
+                        : wp > 0 ? Ui.alpha(Ui.PERIOD, (float) (0.05 + 0.3 * wp)) : 0;
                 if (color != 0) {
                     col.setColor(color);
                     cv.drawRect(left + i * cw, top, left + (i + 1) * cw, bottom, col);
@@ -597,9 +597,10 @@ final class PeriodAnalysis {
             if (to.isAfter(cy.today) && !cy.today.isBefore(from)) {
                 // where the nights end and the days to come begin
                 float x = left + (ChronoUnit.DAYS.between(from, cy.today) + 1) * cw;
-                cv.drawLine(x, top, x, bottom, grid);
-                txt.setTextAlign(Paint.Align.CENTER);
-                if (x - left > Ui.dp(c, 60) && right - x > Ui.dp(c, 60)) cv.drawText("today", x, h - Ui.dp(c, 3), txt);
+                col.setColor(Ui.TEXT_3);
+                cv.drawRect(x - Ui.dp(c, 0.5f), top - Ui.dp(c, 4), x + Ui.dp(c, 0.5f), bottom, col);
+                txt.setTextAlign(Paint.Align.RIGHT);
+                cv.drawText("today", x - Ui.dp(c, 3), top - Ui.dp(c, 4), txt);
             }
             txt.setTextAlign(Paint.Align.LEFT);
             for (int k = -1; k <= 1; k++) {

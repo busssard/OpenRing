@@ -1032,16 +1032,25 @@ public final class Cycles {
         if (r.ring.odd.contains(d) || r.mouth.odd.contains(d)) sb.append("\nLeft out of the rise: far from the nights around it");
     }
 
-    /** ", cycle day 14, fertile days (estimate)", ", period day 2", with the estimate's band once the phase does not name it. */
+    /**
+     * ", period day 2" or ", cycle day 14" on the first line, then the phase on a line of its own ("Fertile days (estimate),
+     * ovulation range"), so the touch text stays narrow enough for the chart.
+     */
     private void appendPlace(StringBuilder sb, LocalDate d) {
         Period p = periodOn(d);
         int cd = cycleDay(d);
-        if (p == null && cd > 0) sb.append(", cycle day ").append(cd);
+        if (p != null) {
+            sb.append(", period day ").append(ChronoUnit.DAYS.between(p.start, d) + 1);
+            return;
+        }
+        if (cd > 0) sb.append(", cycle day ").append(cd);
         String ph = phase(d);
-        if (ph != null) sb.append(", ").append(ph);
-        if (ph != null && (ph.startsWith("ovulation") || ph.equals("expected period"))) return;
-        if (inOvulation(d)) sb.append(", ovulation range");
-        else if (inExpected(d)) sb.append(", expected period");
+        StringBuilder line = new StringBuilder(ph == null ? "" : ph);
+        // the estimate's band, unless the phase already names it or comes from the measured rise
+        boolean named = ph != null && (ph.startsWith("ovulation") || ph.equals("expected period") || ph.endsWith("(measured)"));
+        if (!named && inOvulation(d)) line.append(line.length() > 0 ? ", " : "").append("ovulation range");
+        else if (!named && inExpected(d)) line.append(line.length() > 0 ? ", " : "").append("expected period");
+        if (line.length() > 0) sb.append('\n').append(Character.toUpperCase(line.charAt(0))).append(line.substring(1));
     }
 
     // --------------------------------------------- "My periods have stopped" (phase 1a2, the owner's wish of 30 Oct)
