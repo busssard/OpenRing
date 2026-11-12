@@ -196,7 +196,14 @@ shot activity-first-days 1
 # its month calendar with the expected period, ovulation range and fertile days, then the day editor (extra period_edit,
 # demo mode only, a day of the newest period picked; nothing is saved without a tap)
 launch --ei tab 4;                          shot body
+# the card names the most likely day of the next period (owner's feedback of 11 November)
+ui_dump | grep -q "Next period expected on" || echo "::warning::period step: the line with the expected day was not on the Period card"
 adb shell input swipe 30 1700 30 700 1500; shot body-period-calendar 1
+# the same calendar six months ahead (extra period_month, demo mode only): each expected period and ovulation shaded darkest
+# on its most likely day (dashed ring), the ranges wider than next month's
+launch --ei tab 4 --ei period_month 6; sleep 3
+adb shell input swipe 30 1700 30 700 1500
+shot body-period-ahead 1
 launch --ei tab 4 --ez period_edit true;    shot period-edit 3
 # the trend charts below the period card (README picture): slow swipes until the Resting heart rate caption is in the
 # upper third of the screen
@@ -217,32 +224,52 @@ swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
 # cycles (the demo's nights are warmer after ovulation), touched on its newest night. Slow swipes until the caption is in
 # the upper third; a chart is found by its content description and touched 10 px inside its right end, where the newest is
 caption_top() { ui_dump | grep -o "text=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p; }  # $1 the text or its start
-scroll_to() {  # $1 caption text, $2 the most swipes
-  local y
+scroll_to() {  # $1 caption text, $2 the most swipes. Done once the caption is in the upper third, or on screen when the
+  # page cannot move further (a card near the end of a page never reaches the upper third)
+  local y prev="" now
   for i in $(seq 1 "$2"); do
     y=$(caption_top "$1")
     if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 3 )) ]; then return 0; fi
+    now=$(ui_dump | grep -o 'bounds="[^"]*"' | head -40 | tr -d '\n')
+    if [ -n "$prev" ] && [ "$now" = "$prev" ]; then
+      [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} - 300 )) ] && return 0
+      return 1
+    fi
+    prev=$now
     adb shell input swipe 30 1500 30 900 1500; sleep 1
   done
   return 1
 }
-touch_desc() {  # $1 the start of a content description: taps 10 px inside the right end, in the middle; fails when not on screen
-  local b
+touch_desc() {  # $1 the start of a content description, $2 where to tap in percent of its width from the left (default:
+  # 10 px inside the right end), in the middle; fails when not on screen
+  local b at=${2:-}
   b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b
   [ $# -eq 4 ] || return 1
-  local y=$(( ($2 + $4) / 2 ))
+  local y=$(( ($2 + $4) / 2 )) x=$(( $3 - 10 ))
+  [ -n "$at" ] && x=$(( $1 + ($3 - $1) * at / 100 ))
   [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} - 450 )) ] || return 1
-  adb shell input tap $(( $3 - 10 )) $y
+  adb shell input tap $x $y
 }
+# Body's one temperature chart carries the cycle (owner's feedback of 11 November): period days, the measured rise, the
+# expected period and ovulation range ahead, touched at 60 % of its width (a night after the demo's measured ovulation:
+# date, temperature, cycle day and phase). It sits above Your cycles, so it comes first.
 launch --ei tab 4; sleep 3
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 40 || echo "::warning::period step: the temperature chart with the cycle was not found on Body"
+if touch_desc "Night temperature since" 60; then shot body-period-temp 1
+else echo "::warning::period step: the temperature chart with the cycle was not on screen to touch it"; shot body-period-temp 1; fi
 scroll_to "YOUR CYCLES" 40 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1
 if touch_desc "Cycle lengths"; then shot body-cycles-touch 1
 else echo "::warning::issue #252 step skipped: the cycle length chart was not on screen to touch it"; fi
-scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 20 || echo "::warning::issue #252 step: the night temperature card was not found on Body"
-if touch_desc "Night temperature since"; then shot body-period-temp 1
-else echo "::warning::issue #252 step: the night temperature line was not on screen to touch it"; shot body-period-temp 1; fi
+# issue #383: "How close the estimates were" after Your cycles: each prediction method's error and range hits on the demo's
+# 3 made up years (the one in use marked), then the chart of each period's error with the method in use, touched at 70 %
+# of its width (a period: expected day, how many days later or earlier, inside or outside the range)
+scroll_to "HOW CLOSE THE ESTIMATES WERE" 50 || echo "::warning::issue #383 step: the card How close the estimates were was not found on Body"
+shot body-period-accuracy 1
+scroll_to "Each period, " 12 || echo "::warning::issue #383 step: the chart of each period's error was not found"
+if touch_desc "Days each period came" 70; then shot body-period-accuracy-touch 1
+else echo "::warning::issue #383 step skipped: the chart of each period's error was not on screen to touch it"; fi
 # Phase 2 of #252: "Ovulation from your temperature" in Your cycles (this cycle's measured day, in how many cycles a rise
 # was found, the own time from ovulation to the period, a line under each cycle), the Period card's measured lines, and the
 # rise marked on the night temperature line (baseline, ringed high nights, the ovulation line), opened touched on its first
@@ -254,7 +281,7 @@ launch --ei tab 4; sleep 3
 scroll_to "Likely fertile days were" 6 || echo "::warning::issue #252 phase 2 step: the measured lines were not found on the Period card"
 shot body-period-measured 1
 launch --ei tab 4 --ez period_rise true; sleep 3
-scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 40 || echo "::warning::issue #252 phase 2 step: the night temperature card was not found on Body"
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 40 || echo "::warning::issue #252 phase 2 step: the temperature chart with the cycle was not found on Body"
 shot body-period-rise 1
 # How it works at the bottom of the Period card, opened (extra period_how, demo mode only): the shots above show it
 # closed, as everyone sees it first (owner's feedback of 3 November, issue #252)
@@ -281,10 +308,16 @@ for i in $(seq 1 12); do
 done
 [ $cycles_how = 1 ] || echo "::warning::issue #363 step: How it works of Your cycles was not found, body-cycles-how shows where the swipes ended"
 shot body-cycles-how 1
-# the night temperature card is the last on Body: flings to the end of the page show its How it works opened under the line
-scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 20 || echo "::warning::issue #363 step: the night temperature card was not found on Body"
-swipe_up; swipe_up; swipe_up
-ui_dump | grep -q "In many people it rises" || echo "::warning::issue #363 step: How it works of the night temperature card is not open on screen"
+# the temperature chart with the cycle sits above Your cycles: a fresh launch, then slow swipes until its How it works
+# text (opened) is in the upper half
+launch --ei tab 4 --ez period_how true; sleep 3
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 40 || echo "::warning::issue #363 step: the temperature chart with the cycle was not found on Body"
+for i in $(seq 1 6); do
+  y=$(ui_dump | grep -o 'text="[^"]*In many people it rises[^"]*"[^>]*bounds="[^"]*"' | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p)
+  if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 2 )) ]; then break; fi
+  adb shell input swipe 30 1500 30 1000 1500; sleep 1
+done
+ui_dump | grep -q "In many people it rises" || echo "::warning::issue #363 step: How it works of the temperature chart is not open on screen"
 shot body-temp-how 1
 # the gentle question "Have your periods stopped?" (extra period_ask, demo mode only; nothing is saved without a tap)
 launch --ei tab 4 --ez period_ask true;    shot period-ask 3
@@ -365,6 +398,10 @@ fi
 launch --es settings screen;                shot settings-screen-time
 # the period tracker's reminder and "My periods have stopped" (issue #252, phase 1a2); the reminder follows the real log only
 launch --es settings period;                shot settings-period
+# the card starts with Prediction (issue #383): Best for you and each method, and which one Best for you uses now; the
+# reminder below it gets its own shot
+scroll_to "Remind me before my period" 8 || echo "::warning::issue #383 step: the reminder was not found below Prediction"
+shot settings-period-remind 1
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
 # The Watch check (issue #251, phase 1a): the Settings card, then in demo mode the made up scan (never Bluetooth) and

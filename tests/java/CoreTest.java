@@ -1276,6 +1276,7 @@ public class CoreTest {
         drip252();
         rise252();
         how252();
+        ahead252();
         badges265();
         badgeScreens265();
         recent265();
@@ -1318,6 +1319,158 @@ public class CoreTest {
 
     static java.time.LocalDate d252(int day) {
         return C0.plusDays(day - 1);
+    }
+
+    /**
+     * Owner's feedback of 11 November: the calendar pages a year ahead with every expected cycle, its range growing about
+     * with the square root of the cycles ahead; the card names the most likely day; Body's temperature chart carries the
+     * cycle (its time span and the phase touch reads).
+     */
+    static void ahead252() {
+        // ---- 12 cycles ahead on the mixed list: SD 2.669, rc = 1.28 x 2.669 = 3.416 ----
+        int[] mix = {26, 30, 28, 31, 27, 29, 33, 25};
+        java.time.LocalDate sm = lastStart252(mix);
+        Cycles c = cyc252(log252(4, mix), sm.plusDays(10));
+        List<Cycles.Ahead> a = c.ahead(c.today.plusDays(366));
+        check("#252k a year ahead: at least 12 cycles, numbered from 1", a.size() >= 12 && a.get(0).k == 1 && a.get(11).k == 12, a.size());
+        Cycles.Ahead one = a.get(0);
+        check("#252k cycle 1 is today's estimate itself", one.start.equals(c.next) && one.range == c.range && one.ovulation.equals(c.ovulation)
+                && one.ovulationRange == c.ovulationRange, one);
+        boolean grows = true, spaced = true, sqrt = true;
+        double rc = Cycles.Z80 * c.sd;
+        for (int i = 1; i < a.size(); i++) {
+            Cycles.Ahead x = a.get(i), p = a.get(i - 1);
+            grows &= x.range >= p.range && x.ovulationRange >= p.ovulationRange;
+            spaced &= x.start.equals(p.start.plusDays(c.length)) && x.ovulation.equals(x.start.minusDays(Cycles.LUTEAL));
+            sqrt &= x.range == Math.max(c.range, (int) Math.round(rc * Math.sqrt(x.k)));
+        }
+        check("#252k ranges never shrink, each cycle one typical length after the one before", grows && spaced);
+        check("#252k on the calendar the range is 1.28 x SD x the square root of k", sqrt);
+        check("#252k mixed: 3 days for the next, 8 six ahead, 12 twelve ahead", a.get(0).range == 3 && a.get(5).range == 8 && a.get(11).range == 12,
+                a.get(0).range + " " + a.get(5).range + " " + a.get(11).range);
+        eq("#252k ovulation 12 ahead: round(sqrt(11.83^2 + 3.07^2)) = 12", a.get(11).ovulationRange, 12);
+        check("#252k the list stops at the asked day", c.ahead(c.next.plusDays(c.length - 30)).size() <= 2 && a.get(a.size() - 1).start.minusDays(a.get(a.size() - 1).range).minusDays(0)
+                .isBefore(c.today.plusDays(367 + Cycles.LUTEAL + 40)));
+        // the shade: 1 on the most likely day, less further out, 0 outside the range
+        Cycles.Ahead six = a.get(5);
+        check("#252k the most likely day is the darkest", six.periodWeight(six.start) == 1 && six.periodWeight(six.start.plusDays(3)) < 1
+                && six.periodWeight(six.start.plusDays(3)) > six.periodWeight(six.start.plusDays(6)) && six.periodWeight(six.start.plusDays(six.range + 1)) == 0
+                && six.periodWeight(six.start.minusDays(2)) == six.periodWeight(six.start.plusDays(2)));
+        check("#252k at the end of the range about 0.44 of the middle", Math.abs(six.periodWeight(six.start.plusDays(six.range)) - Math.exp(-0.5 * Cycles.Z80 * Cycles.Z80)) < 1e-9);
+        check("#252k ovulation shade and fertile days", six.ovulationWeight(six.ovulation) == 1 && six.inFertile(six.ovulation.minusDays(5)) && !six.inFertile(six.ovulation.plusDays(1)));
+
+        // ---- regular: 12 x 28, SD 0: one day each way all the way ----
+        int[] l12 = new int[12];
+        Arrays.fill(l12, 28);
+        java.time.LocalDate s12 = lastStart252(l12);
+        c = cyc252(log252(5, l12), s12.plusDays(10));
+        a = c.ahead(c.today.plusDays(366));
+        check("#252k SD 0: give or take 1 day a year ahead, ovulation 3", a.get(11).range == 1 && a.get(11).ovulationRange == 3 && a.get(11).start.equals(s12.plusDays(28 * 12)));
+
+        // ---- irregular: SD 6, 8 days for the next, 19 six ahead, 27 twelve ahead ----
+        c = cyc252(log252(5, 22, 34, 28), d252(90));
+        a = c.ahead(c.today.plusDays(366));
+        check("#252k irregular: 8, 19, 27 days each way", a.get(0).range == 8 && a.get(5).range == 19 && a.get(11).range == 27,
+                a.get(0).range + " " + a.get(5).range + " " + a.get(11).range);
+
+        // ---- few cycles: 5 days each way, 5 x sqrt(k) ----
+        c = cyc252(log252(5), d252(10));
+        a = c.ahead(c.today.plusDays(366));
+        check("#252k one period: 29 days apart, 5, 12, 17 days each way", a.get(1).start.equals(a.get(0).start.plusDays(29)) && a.get(0).range == 5
+                && a.get(5).range == 12 && a.get(11).range == 17, a.get(0).range + " " + a.get(5).range + " " + a.get(11).range);
+        c = cyc252(log252(5, 27, 31), d252(70));
+        a = c.ahead(c.today.plusDays(366));
+        check("#252k two cycles: their median apart, 5 x sqrt(k)", a.get(1).start.equals(a.get(0).start.plusDays(29)) && a.get(3).range == 10);
+
+        // ---- a cycle running late: every later cycle moves with today ----
+        Map<java.time.LocalDate, Integer> l = log252(5, l12);
+        java.time.LocalDate next = s12.plusDays(28);
+        Cycles onTime = cyc252(l, next.minusDays(3)), late = cyc252(l, next.plusDays(6));
+        List<Cycles.Ahead> ao = onTime.ahead(next.plusDays(200)), al = late.ahead(next.plusDays(200));
+        check("#252k late by 6: cycle 1 stays the estimate, the next ones count from today", late.lateBy() == 6 && al.get(0).start.equals(next)
+                && al.get(1).start.equals(late.today.plusDays(28)) && ao.get(1).start.equals(next.plusDays(28)), al.get(1));
+        check("#252k any day now (inside the range): counted from today too", cyc252(l, next.plusDays(1)).ahead(next.plusDays(60)).get(1).start.equals(next.plusDays(29)));
+        check("#252k no estimate: nothing ahead", cyc252(l, s12.plusDays(57)).ahead(s12.plusDays(400)).isEmpty()
+                && Cycles.of(l, null, s12.plusDays(10), s12.plusDays(9)).ahead(s12.plusDays(400)).isEmpty() && Cycles.of(null, null, C0).ahead(C0.plusDays(400)).isEmpty());
+
+        // ---- the measured mode: cycle 1 from the rise, later ones add the calendar's spread ----
+        int[] len = {28, 28, 28, 28, 28, 28};
+        Map<java.time.LocalDate, Integer> log = log252(5, len);
+        java.time.LocalDate last = lastStart252(len);
+        TreeMap<java.time.LocalDate, Double> ring = new TreeMap<java.time.LocalDate, Double>();
+        for (int k = 0; k <= len.length; k++) {
+            double[] st = step252(16, 28, 35.2, 35.5);
+            for (int i = 0; i < 28; i++) ring.put(C0.plusDays(28L * k).plusDays(i), st[i]);
+        }
+        Cycles m = cyc252(log, last.plusDays(18)).measured(ring, null);
+        a = m.ahead(m.today.plusDays(366));
+        check("#252k measured: cycle 1 from the rise, the next 28 days later", m.method == Cycles.MEASURED && a.get(0).start.equals(m.next) && a.get(0).range == m.range
+                && a.get(0).ovulation.equals(m.ovulation) && a.get(1).start.equals(m.next.plusDays(28)) && a.get(1).ovulation.equals(a.get(1).start.minusDays(13)), a.get(1));
+        check("#252k measured: sqrt(r1^2 + (k - 1) x rc^2), never below the first", a.get(1).range == Math.max(m.range, (int) Math.round(Math.sqrt(m.rangeExact * m.rangeExact + m.calendarRangeExact * m.calendarRangeExact)))
+                && a.get(11).range >= a.get(1).range);
+        String rd = m.describe(a.get(2).start, EN);
+        check("#252k the readout of a later cycle's most likely day", rd.contains("\nThe most likely first day of a period (2 cycles after the next), give or take "), rd);
+
+        // ---- the card's lines: the most likely day ----
+        c = cyc252(log252(5, l12), s12.plusDays(10));
+        eq("#252k the card's big line names the day", c.dayLine(EN), "Next period expected on " + c.weekday(s12.plusDays(28), EN) + ", give or take 1 day");
+        check("#252k the line under it: when, the range, the most likely day", c.expectedLine(EN).startsWith("In about 18 days. Range " + c.span(s12.plusDays(27), s12.plusDays(29), EN)
+                + ", the expected day in its middle is the most likely. "), c.expectedLine(EN));
+        check("#252k tomorrow and today", cyc252(l, next.minusDays(1)).expectedLine(EN).startsWith("Tomorrow. Range ") && cyc252(l, next).expectedLine(EN).startsWith("Today. Range "));
+        Cycles soon = cyc252(l, next.plusDays(1));
+        check("#252k any day now names the day that was most likely", soon.dayLine(EN).equals("Next period expected any day now, the most likely day was " + soon.weekday(next, EN))
+                && cyc252(l, next.plusDays(1)).expectedLine(EN).startsWith("Range "));
+        check("#252k late: the late line", late.dayLine(EN).equals(late.nextLine()) && late.expectedLine(EN).startsWith("Range "));
+        check("#252k no estimate: no line", cyc252(l, s12.plusDays(57)).dayLine(EN) == null);
+        eq("#252k a day next year says its year", c.weekday(java.time.LocalDate.of(2027, 2, 4), EN), "Thu 4 Feb 2027");
+        rd = c.describe(next, EN);
+        check("#252k the readout of the expected day says it is the most likely", rd.contains("\nThe most likely first day of the next period."), rd);
+        check("#252k the readout of the ovulation estimate", c.describe(c.ovulation, EN).contains("\nThe most likely ovulation day."));
+        java.time.LocalDate far = c.ahead(c.today.plusDays(200)).get(4).start.plusDays(1);
+        rd = c.describe(far, EN);
+        check("#252k the readout of a day near a later expected period", rd.contains("\nIn the period expected around ") && rd.contains("(4 cycles after the next), give or take 1 day."), rd);
+
+        // ---- Body's temperature chart: its time span ----
+        Cycles t = cyc252(log252(5, l12), s12.plusDays(10));
+        java.time.LocalDate[] w = t.tempWindow(t.today);
+        check("#252k chart: from the period before the last, to the end of the expected range", w[0].equals(s12.minusDays(28)) && w[1].equals(s12.plusDays(29)));
+        w = cyc252(log252(5), d252(10)).tempWindow(d252(10));
+        check("#252k chart: never fewer than the plain chart's 30 days", w[0].equals(d252(10).minusDays(29)) && w[1].equals(d252(30 + 5)), w[0] + " " + w[1]);
+        w = t.tempWindow(s12.minusDays(60));
+        check("#252k chart: a day before the cycles shown gets its own 30 days", w[0].equals(s12.minusDays(89)) && w[1].equals(s12.minusDays(60)));
+        w = t.tempWindow(t.today.plusDays(5));
+        check("#252k chart: a later day counts as today", w[0].equals(s12.minusDays(28)));
+        w = cyc252(l, s12.plusDays(57)).tempWindow(s12.plusDays(57));
+        check("#252k chart without an estimate: up to today", w[1].equals(s12.plusDays(57)));
+        w = late.tempWindow(late.today);
+        check("#252k chart while late: up to today", w[1].equals(late.today));
+
+        // ---- the phase touch reads ----
+        check("#252k phases of an estimated cycle", t.phase(s12.plusDays(1)).equals("period day 2") && t.phase(s12.plusDays(6)).equals("before ovulation (estimate)")
+                && t.phase(s12.plusDays(10)).equals("fertile days (estimate)") && t.phase(s12.plusDays(14)).equals("ovulation (estimate)")
+                && t.phase(s12.plusDays(20)).equals("after ovulation (estimate)") && t.phase(s12.plusDays(28)).equals("expected period") && t.phase(C0.minusDays(1)) == null,
+                t.phase(s12.plusDays(20)));
+        check("#252k a cycle that is over: its ovulation from the next start", t.phase(s12.minusDays(28).plusDays(16)).equals("after ovulation (estimate)")
+                && t.phase(s12.minusDays(28).plusDays(13)).equals("fertile days (estimate)"));
+        check("#252k measured cycles say measured", m.phase(C0.plusDays(15)).equals("ovulation (measured)") && m.phase(C0.plusDays(20)).equals("after ovulation (measured)")
+                && m.phase(last.plusDays(10)).equals("fertile days (measured)"), m.phase(last.plusDays(10)));
+        String tip = t.tempTip(s12.plusDays(20), 0.3, EN);
+        check("#252k touch reads date, temperature, cycle day and phase", tip.endsWith(": +0.3 °C, cycle day 21, after ovulation (estimate)"), tip);
+        tip = t.tempTip(s12.plusDays(28), Double.NaN, EN);
+        check("#252k touch on a day to come", tip.endsWith(": still to come, cycle day 29, expected period"), tip);
+        check("#252k touch on a day to come with drip readings", t.tempTip(s12.plusDays(28), Double.NaN, Double.NaN, null, false, EN).endsWith("\nStill to come"));
+
+        // ---- plain texts, no dashes as punctuation ----
+        java.time.LocalDate dt = java.time.LocalDate.of(2026, 11, 2);
+        Cycles demo = Cycles.of(Cycles.demo(dt), null, dt);
+        List<String> texts = new ArrayList<String>(Arrays.asList(demo.dayLine(EN), demo.expectedLine(EN), demo.ovulationLine(EN), app.openring.ui.Explain.PERIOD_LIKELY,
+                app.openring.ui.Explain.periodAhead(demo), app.openring.ui.Explain.PERIOD_TEMP, app.openring.ui.Explain.PERIOD_TEMP_LINE, rd, tip,
+                demo.describe(demo.ahead(dt.plusDays(200)).get(5).start, EN)));
+        boolean plain = true;
+        for (String x : texts) plain &= plain252(x) && x != null;
+        check("#252k new texts plain, no dashes", plain, texts);
+        check("#252k How it works names the demo's own ranges", app.openring.ui.Explain.periodAhead(demo).contains("give or take 2 days for the next")
+                && app.openring.ui.Explain.periodAhead(demo).contains("twelve cycles ahead"), app.openring.ui.Explain.periodAhead(demo));
     }
 
     static boolean plain252(String s) {
@@ -1653,7 +1806,7 @@ public class CoreTest {
         List<String> card = app.openring.ui.Explain.periodCardHow(demo);
         check("#252h Period card: how the range, the ovulation range and vary by are worked out, in the card's order",
                 card.equals(Arrays.asList(app.openring.ui.Explain.periodRange(demo), app.openring.ui.Explain.periodOvulation(demo),
-                        app.openring.ui.Explain.periodVary(demo.used.size()))), String.valueOf(card));
+                        app.openring.ui.Explain.periodVary(demo.used.size()), app.openring.ui.Explain.PERIOD_LIKELY, app.openring.ui.Explain.periodAhead(demo))), String.valueOf(card));
         List<String> cyc = app.openring.ui.Explain.periodCyclesHow(demo);
         check("#252h Your cycles: vary by, the cycle chart, the estimate's window, the period charts, then not birth control; no rise without temperatures",
                 cyc.equals(Arrays.asList(app.openring.ui.Explain.periodVary(demo.used.size()), app.openring.ui.Explain.PERIOD_DOTS_CYCLES,
@@ -1672,7 +1825,8 @@ public class CoreTest {
         boolean labelled = true;
         for (Cycles x : new Cycles[] {demo, m}) {
             List<String> k = app.openring.ui.Explain.periodCardHow(x);
-            labelled &= k.get(0).startsWith("Next period: ") && k.get(1).startsWith("Ovulation day: ") && k.get(2).startsWith("Vary by: ");
+            labelled &= k.get(0).startsWith("Next period: ") && k.get(1).startsWith("Ovulation day: ") && k.get(2).startsWith("Vary by: ")
+                    && k.get(3).startsWith("Most likely day: ") && k.get(4).startsWith("Months ahead: ");
         }
         check("#252h every paragraph says what it is about: Next period, Ovulation day, Vary by, Ovulation from your temperature", labelled
                 && app.openring.ui.Explain.periodRange(0, 29, 5, Double.NaN).startsWith("Next period: typical cycle 29 days")
@@ -1928,7 +2082,8 @@ public class CoreTest {
 
         // ---- the demo's made up file (screens.sh) ----
         DripCsv.File demo = drip(DripCsv.demo(today));
-        java.util.Map<java.time.LocalDate, Integer> demoLog = new java.util.HashMap<java.time.LocalDate, Integer>(Cycles.demo(today));
+        // the demo writes its whole made up history (issue #383), which the file overlaps at its first period
+        java.util.Map<java.time.LocalDate, Integer> demoLog = new java.util.HashMap<java.time.LocalDate, Integer>(Cycles.demoHistory(today));
         DripImport.Preview dp = DripImport.preview(demo.flows, demo.temps, demoLog, noT, noG, today);
         check("#252d demo file: a BOM, Windows line ends, newest row first, read by name", DripCsv.demo(today).startsWith("﻿date,") && DripCsv.demo(today).contains("\r\n")
                 && demo.rows > 150 && demo.unreadable == 0 && demo.badValues == 0);
@@ -2575,7 +2730,7 @@ public class CoreTest {
         eq("#252 12 x 28: status", c.status(EN), "Cycle day 11");
         eq("#252 12 x 28: next line", c.nextLine(), "Next period in about 18 days");
         check("#252 12 x 28: about 4 in 5", c.expectedLine(EN).endsWith("About 4 in 5 periods start within such a range.")
-                && c.expectedLine(EN).startsWith("Expected "));
+                && c.expectedLine(EN).startsWith("In about 18 days. Range "), c.expectedLine(EN));
         eq("#252 12 x 28: very regular", c.regularityLine(), "Your cycles vary by less than a day.");
         // ovulation: 14 days before, give or take max(3, round(1.28 x 2.4)) = 3; fertile the 5 days before and the day
         eq("#252 12 x 28: ovulation 14 days before the next start", c.ovulation, s12.plusDays(14));
@@ -2748,7 +2903,8 @@ public class CoreTest {
         Cycles thisYear = cyc252(log252(5), java.time.LocalDate.of(2025, 1, 20));
         eq("#252 a span across months, this year without the year", thisYear.span(java.time.LocalDate.of(2025, 1, 29), java.time.LocalDate.of(2025, 2, 4), EN), "29 Jan to 4 Feb");
         String ov = c.ovulationLine(EN);
-        check("#252 ovulation line", ov.startsWith("Ovulation likely around ") && ov.contains("(give or take 3 days)") && ov.endsWith("not a measurement."));
+        check("#252 ovulation line: the most likely day itself", ov.startsWith("Ovulation expected on " + c.weekday(c.ovulation, EN) + ", give or take 3 days. ")
+                && ov.endsWith("not a measurement."), ov);
         check("#252 fertile line", c.fertileLine(EN).startsWith("Likely fertile days: ") && c.fertileLine(EN).endsWith(", from the calendar only."));
         String rd = c.describe(s12.plusDays(1), EN);
         check("#252 readout of a period day: date, amount, day of the period", rd.contains(": Medium") && rd.contains("\nDay 2 of the period from "));
@@ -2888,8 +3044,10 @@ public class CoreTest {
         eq("#252b a period logged for later: not after today", fut.tempFrom(), C0.minusDays(3));
         String tip = c.tempTip(s12.plusDays(1), 0.24, EN);
         check("#252b temperature tip on a period day", tip.endsWith(": +0.2 °C, period day 2") && tip.startsWith(s12.plusDays(1).getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, EN)));
-        check("#252b temperature tip on cycle day 10, no night", c.tempTip(s12.plusDays(9), Double.NaN, EN).endsWith(": no night, cycle day 10"));
-        check("#252b temperature tip in the ovulation range", c.tempTip(s12.plusDays(12), -0.31, EN).endsWith(": -0.3 °C, cycle day 13, ovulation range"));
+        check("#252b temperature tip on cycle day 10, no night, with its phase", c.tempTip(s12.plusDays(9), Double.NaN, EN).endsWith(": no night, cycle day 10, fertile days (estimate)"),
+                c.tempTip(s12.plusDays(9), Double.NaN, EN));
+        check("#252b temperature tip in the ovulation range", c.tempTip(s12.plusDays(12), -0.31, EN).endsWith(": -0.3 °C, cycle day 13, fertile days (estimate), ovulation range"),
+                c.tempTip(s12.plusDays(12), -0.31, EN));
         Cycles lateC = cyc252(reg, s12.plusDays(28));
         check("#252b temperature tip on the expected day", lateC.tempTip(s12.plusDays(28), 0.0, EN).endsWith(": 0.0 °C, cycle day 29, expected period"));
         check("#252b before the first period: the date and the value only", c.tempTip(C0.minusDays(2), 0.1, EN).endsWith(": +0.1 °C"));

@@ -49,9 +49,11 @@ public final class DayData {
     public LocalDate badgesSeen;
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
+    /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
+    public LocalDate periodFrom, periodTo;
     /**
-     * The nights' skin temperature compared with the usual ({@code temp_dev} of each day summary) from
-     * {@code Cycles.tempFrom()} to today, for the line next to the cycles (phase 1a2). Left out nights have no summary value.
+     * The nights' skin temperature compared with the usual ({@code temp_dev} of each day summary) from {@link #periodFrom} to
+     * today, for Body's temperature chart with the cycle on it. Left out nights have no summary value.
      */
     public final java.util.TreeMap<LocalDate, Double> periodTemps = new java.util.TreeMap<LocalDate, Double>();
     /** The morning temperatures by mouth imported from drip (phase 1b) over the same days, read only while the tracker shows. */
@@ -183,7 +185,8 @@ public final class DayData {
             d.periodShown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
             if (d.periodShown) {
                 LocalDate today = LocalDate.now();
-                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped()));
+                // the prediction method of Settings (issue #383); measured below keeps it
+                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped())).withMethod(p.periodMethod());
                 d.periodAsk = d.periods.askStopped(p.age(), app.openring.core.analysis.Cycles.day(p.periodAskLater()));
                 try {
                     // phase 2: the temperature rise of each cycle, from the ring's nights and the mouth temperatures
@@ -192,9 +195,18 @@ public final class DayData {
                     // the calendar estimate stays; the error's kind only, never a date or a value
                     app.openring.ble.RingManager.get(c).log("day load: the temperature rise for the period tracker: " + e.getClass().getSimpleName());
                 }
-                // the day summaries hold no period data; read here so the line can sit next to the cycles
+                // "How close the estimates were" (issue #383): both backtests worked out here in the background, not while the
+                // card is drawn (each is kept in the estimate once done)
+                d.periods.backtest();
+                d.periods.riseBacktest();
+                // the day summaries hold no period data; read here for Body's temperature chart with the cycle on it, over
+                // its whole time span up to today (owner's feedback of 11 November)
+                LocalDate[] span = d.periods.tempWindow(date);
+                d.periodFrom = span[0];
+                d.periodTo = span[1];
+                String last = (span[1].isAfter(today) ? today : span[1]).toString();
                 try {
-                    for (String[] r : db.daysJson(d.periods.tempFrom().toString(), today.toString())) {
+                    for (String[] r : db.daysJson(span[0].toString(), last)) {
                         double v = Json.d(Json.parse(r[1]), "temp_dev");
                         if (!Double.isNaN(v)) d.periodTemps.put(LocalDate.parse(r[0]), v);
                     }
@@ -204,7 +216,7 @@ public final class DayData {
                     app.openring.ble.RingManager.get(c).log("day load: night temperatures for the period tracker: " + e.getClass().getSimpleName());
                 }
                 try {
-                    d.periodMouth.putAll(app.openring.data.Periods.temps(db, d.periods.tempFrom().toString(), today.toString()));
+                    d.periodMouth.putAll(app.openring.data.Periods.temps(db, span[0].toString(), last));
                 } catch (RuntimeException e) {
                     // the line shows the ring's nights only; the error's kind only, never a date or a value
                     d.periodMouth.clear();
