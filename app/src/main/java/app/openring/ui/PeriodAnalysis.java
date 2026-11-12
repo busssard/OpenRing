@@ -230,13 +230,12 @@ final class PeriodAnalysis {
         return row;
     }
 
-    /** What touching a period's dot reads: "Period of 3 Mar 2026: expected 1 Mar, came 2 days later, inside the range (give or take 2 days)". */
+    /** What touching a period's dot reads, short enough for one line: "4 Jan: expected 6 Jan, 2 days early, in range". */
     static String errorTip(Cycles cy, Cycles.Cycle k, int expectedLength, int range, Locale loc) {
         LocalDate expected = k.start.plusDays(expectedLength);
         int late = (int) ChronoUnit.DAYS.between(expected, k.next);
-        String when = late == 0 ? "came on that day" : "came " + Texts.count(Math.abs(late), "day", "days") + (late > 0 ? " later" : " earlier");
-        return "Period of " + cy.date(k.next, loc) + ": expected " + cy.date(expected, loc) + ", " + when + ", "
-                + (Math.abs(late) <= range ? "inside" : "outside") + " the range (give or take " + Texts.count(range, "day", "days") + ")";
+        String when = late == 0 ? "on that day" : Texts.count(Math.abs(late), "day", "days") + (late > 0 ? " late" : " early");
+        return cy.date(k.next, loc) + ": expected " + cy.date(expected, loc) + ", " + when + (Math.abs(late) <= range ? ", in range" : ", out of range");
     }
 
     static View summary(Context c, Cycles.Summary s, String unit) {
