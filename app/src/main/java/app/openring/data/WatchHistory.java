@@ -104,9 +104,4 @@ public final class WatchHistory {
         for (JSONObject o : nights) h.lightRem |= o.optBoolean("light_rem");
         return h;
     }
-
-    /** As above with one zone for every day and one REM answer for every night. */
-    public static SleepHistory load(Db db, String fromDay, String toDay, ZoneId zone, double age, boolean rem) {
-        return load(db, fromDay, toDay, DeviceHistory.fixed(zone), zone, age, app.openring.core.withings.WatchDays.Rem.of(rem));
-    }
 }
