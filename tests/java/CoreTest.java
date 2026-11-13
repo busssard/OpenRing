@@ -1285,6 +1285,7 @@ public class CoreTest {
         watchSetupWayBack351();
         start373();
         syncPlan();
+        periodSettingsHidden();
         startCards373();
         startScreens373();
         System.out.println(passed + " passed, " + failed + " failed");
@@ -9895,6 +9896,20 @@ public class CoreTest {
     // ------------------------------------------------------------------ issue #373: Getting started, a watch, a ring or the phone
 
     /** Which screen the main screen opens: Getting started only with nothing set up; never again with a watch or a choice. */
+    /** Settings' Period tracker card shows only when the tracker is shown (owner's report, 13 November: a man saw it). */
+    static void periodSettingsHidden() throws Exception {
+        String src = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("app/src/main/java/app/openring/ui/SettingsActivity.java")), "UTF-8");
+        int at = src.indexOf("void fillPeriodCard() {");
+        String body = src.substring(at, src.indexOf("card.addView(Ui.caption(this, \"Period tracker\"));", at));
+        check("settings: the Period tracker card is hidden unless the tracker is shown", body.contains("Cycles.shown(p.periodChoice(), p.sex(), p.demo())")
+                && body.contains("View.GONE") && body.contains("if (!shown) return;"));
+        check("settings: the card follows the switch and a saved profile", src.contains("p.setPeriodChoice(on ? 1 : 0);\n                fillPeriodCard();")
+                && src.contains("periodSwitch(p);\n                fillPeriodCard();"));
+        check("tracker: a man sees it only when switched on", !app.openring.core.analysis.Cycles.shown(-1, 0, false)
+                && app.openring.core.analysis.Cycles.shown(1, 0, false) && app.openring.core.analysis.Cycles.shown(-1, 1, false)
+                && !app.openring.core.analysis.Cycles.shown(0, 1, false));
+    }
+
     static void syncPlan() {
         int R = KeyState.READABLE, U = KeyState.UNREADABLE, N = KeyState.NONE, X = KeyState.NO_RING;
         SyncPlan p = SyncPlan.of(false, R, true);
