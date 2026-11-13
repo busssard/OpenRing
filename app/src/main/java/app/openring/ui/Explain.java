@@ -596,7 +596,8 @@ public final class Explain {
             case Badges.RECOVERED:
                 return "Recovered: readiness back to your usual (its average over the " + weeks + " before the low days) after at least "
                         + Badges.LOW_DAYS + " days in a row clearly below it (lower than the average minus its usual day to day spread, "
-                        + "one standard deviation). Needs readiness on each of these days and on " + Badges.MIN_DAYS + " days of the " + weeks + ".";
+                        + "one standard deviation), on the first day back, at most " + Badges.BACK_WITHIN + " days after the low days. Needs readiness on each "
+                        + "of these days and on " + Badges.MIN_DAYS + " days of the " + weeks + ".";
             case Badges.PHONE_FREE:
                 return "Phone free evening: at most " + Badges.PHONE_FREE_MAX + " min on the phone in the hour before your night started "
                         + "(a look at the clock is fine). Comes for " + Badges.PHONE_FREE_OF + " such evenings in " + week + ", at most once in "
