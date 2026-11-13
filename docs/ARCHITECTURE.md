@@ -840,21 +840,27 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   stored one, byte for byte (JVM test).
 * **Statistics without a ring** (`core/DeviceHistory`, `ui/HistoryViews`, `data/WatchHistory`; owner's report of 13 November):
   with only the watch (or only the phone) each tab gets the statistics a ring has, worked out on each day load from the stored
-  rows (30 days before the shown day to 30 after it, at most today, plus the 35 days the scores read), nothing stored. Each day's
-  scores are `DeviceScores.score`, the function of the dials: the day itself with its rows up to its own midnight, as the day load
-  reads them (JVM test: every day equals `DeviceScores.of` on the day load's rows; the dials' fingerprint is the one from before).
+  rows (`DeviceHistory.range`: 30 days before the shown day, the strip's oldest night, to 30 after it, at most today, plus the 35
+  days the scores read; the sleep pieces of 103 nights before the first day for sleep debt), nothing stored. Each day's scores are
+  `DeviceScores.score`, the function of the dials: the day itself with its rows up to its own midnight and in its own zone
+  (`DeviceHistory.DayZones`, the zone noted at its noon as the dial has it, so a trip does not shift other days' borders), as the
+  day load reads them (JVM test: every day equals `DeviceScores.of` on the day load's rows, a week in another zone included; the
+  dials' fingerprint is the one from before).
   Sleep: the recent nights strip, the night timeline, Details (time in bed, efficiency, latency when the watch marked one, wake ups),
-  sleep debt (the ring's rule on the watch's nights), total sleep of 7 days, sleep times and the sleep score of 30 days, Further
-  analysis of the watch's nights (`WatchHistory.load`, sleep and heart rate rows only, `SleepHistory.of`). Ready: last night's
+  sleep debt (the ring's rule on the watch's nights: 90 nights before each of the 14 days), total sleep of 7 days, sleep times and the sleep score of 30 days, Further
+  analysis of the watch's nights (`WatchHistory.load`, sleep and heart rate rows only, each night in its day's zone, the heart rates
+  sorted once for All time, `SleepHistory.of`). Ready: last night's
   lowest reading against the usual of 14 nights, resting heart rate of 30 days, readiness of 7 days. Activity: steps of 7 and 30
   days, the activity score of 7 days, the watch's calories of 7 days and workouts of 30 days. Body: resting and day heart rate of
   30 days, cardio capacity (Uth method on the watch's lowest reading). One "Needs a ring" card per tab names what stays the ring's.
   The 7 day bar charts read by touch (`BarChart.tips`; the ring's own do not, unchanged). With a ring none of this shows.
-* **REM** (owner's report of 13 November: the Steel HR sends awake, light and deep only): `WatchDays.tellsRem` is true as soon as
-  any stored watch sleep record is REM (`WatchStore.tellsRem` over the whole table). Without, a watch night shows "Light and REM" as
+* **REM** (owner's report of 13 November: the Steel HR sends awake, light and deep only): decided per night (`WatchDays.Rem`,
+  code review of #389). Each watch that ever sent a REM record tells REM from its first REM record to the end of its last sleep
+  piece (`WatchStore.rem`, per `device` of `watch_sleep`); a night tells REM when it reaches into such a span. So a Steel HR's
+  nights keep Light and REM whether it was worn before or after a watch with REM. Without, a watch night shows "Light and REM" as
   one stage (Hypnogram and Pattern with `lightRem`, one stage row, the Watch page), the sleep score's stage source is
   `Scores.NO_REM`, which leaves the REM part out (its weight shared out, the Left out card says why), and Further analysis shows
-  Deep and Light and REM. A later watch that sends REM is shown with it from its first such record on. Ring nights never pass
+  Deep and Light and REM when any night of the period does not tell REM. Ring nights never pass
   through this (JVM test: the ring's 9,000 seeded scores unchanged).
 
 Protocol facts, in our own words, not confirmed with a real watch yet. Sources: the public pairing recording and notes in

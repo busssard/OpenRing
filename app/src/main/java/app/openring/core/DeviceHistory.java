@@ -7,6 +7,7 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.TreeMap;
@@ -30,6 +31,39 @@ public final class DeviceHistory {
     public static final int MONTH = 30, WEEK = 7;
     /** Nights after the shown day that the recent nights strip also holds (as the ring's, issue #98). */
     public static final int AFTER = 30;
+    /**
+     * Days before the shown day with scores: the recent nights strip starts this many days before it (as the ring's), so its
+     * oldest night has its score too (code review of #389: it showed "--" while its dial had one). The 30 day charts read the
+     * last {@link #MONTH} of them.
+     */
+    public static final int BEFORE = 30;
+    /** Nights before the first day the history holds: sleep debt on any day reads 14 days and 90 nights before each (the ring's rule). */
+    public static final int DEBT_BACK = 13 + 90;
+
+    /** The zone of each day: the one its dial uses ({@code db.zoneAt} at the day's noon), so a day's point is its dial after a trip too. */
+    public interface DayZones {
+        ZoneId of(LocalDate day);
+    }
+
+    /** One zone for every day. */
+    public static DayZones fixed(final ZoneId zone) {
+        return new DayZones() {
+            @Override
+            public ZoneId of(LocalDate day) {
+                return zone;
+            }
+        };
+    }
+
+    /**
+     * The days the day load works out for the shown {@code date}: from {@link #BEFORE} days before it (the strip's oldest night) to
+     * {@link #AFTER} after it, at most {@code today} (but never before the date itself). {first, last}.
+     */
+    public static LocalDate[] range(LocalDate date, LocalDate today) {
+        LocalDate last = date.plusDays(AFTER);
+        if (last.isAfter(today)) last = today.isBefore(date) ? date : today;
+        return new LocalDate[] {date.minusDays(BEFORE), last};
+    }
 
     /**
      * The device whose history the tabs show: the watch, else the phone, and only without a ring ({@code -1} with a ring, whose
@@ -52,38 +86,50 @@ public final class DeviceHistory {
         public int lowest = -1;
         public long lowestAt;
         public double average = Double.NaN;
+        /** The zone of its day (the clock its times show in). */
+        public final ZoneId zone;
 
-        NightRow(LocalDate day, WatchDays.Night night, boolean rem) {
+        NightRow(LocalDate day, WatchDays.Night night, boolean rem, ZoneId zone) {
             this.day = day;
             this.night = night;
             this.fields = DeviceScores.night(night, rem);
+            this.zone = zone;
+        }
+
+        void heart(WatchDays.NightHeart nh) {
+            lowest = nh.lowest;
+            lowestAt = nh.lowestAt;
+            average = nh.average;
         }
     }
 
     public final int device;
-    /** The first and last day with values (the charts' days; the strip's nights reach to {@link #last}). */
+    /** The first and last day with values (the strip's and the charts' days). */
     public final LocalDate first, last;
+    /** The zone of the last day; each day's own is {@link #zone(LocalDate)}. */
     public final ZoneId zone;
+    private final DayZones zones;
     /** The step goal the scores and the step chart use. */
     public final int goal;
-    /** The watch tells REM from light sleep ({@link WatchDays#tellsRem}); without, its nights show "Light and REM" as one stage. */
-    public final boolean rem;
+    /** Which nights tell REM from light sleep ({@link WatchDays.Rem}); the others show "Light and REM" as one stage. */
+    public final WatchDays.Rem rem;
     /** One value per day from {@link #first} to {@link #last}, NaN where there is none. */
     public final double[] steps, kcal, workoutMin, activity, sleep, readiness, asleepMin, rhr, dayHr;
     /** Workouts started on each day. */
     public final int[] workouts;
     /** The scores of each day, as {@link DeviceScores#of} gives them. */
     private final DeviceScores.Result[] results;
-    /** Every night from {@link DeviceScores#DAYS} - 1 days before {@link #first} to {@link #last}, null where none. */
+    /** Every night from {@link #DEBT_BACK} days before {@link #first} to {@link #last}, null where none. */
     private final NightRow[] nights;
     private final LocalDate nightsFirst;
 
-    private DeviceHistory(int device, LocalDate first, LocalDate last, ZoneId zone, int goal, boolean rem) {
+    private DeviceHistory(int device, LocalDate first, LocalDate last, DayZones zones, int goal, WatchDays.Rem rem) {
         this.rem = rem;
         this.device = device;
         this.first = first;
         this.last = last;
-        this.zone = zone;
+        this.zones = zones;
+        this.zone = zones.of(last);
         this.goal = goal > 0 ? goal : 10000;
         int n = (int) ChronoUnit.DAYS.between(first, last) + 1;
         steps = nan(n);
@@ -97,8 +143,13 @@ public final class DeviceHistory {
         dayHr = nan(n);
         workouts = new int[n];
         results = new DeviceScores.Result[n];
-        nightsFirst = first.minusDays(DeviceScores.DAYS - 1);
-        nights = new NightRow[n + DeviceScores.DAYS - 1];
+        nightsFirst = first.minusDays(DEBT_BACK);
+        nights = new NightRow[n + DEBT_BACK];
+    }
+
+    /** The zone of {@code day}, as its dial has it. */
+    public ZoneId zone(LocalDate day) {
+        return zones.of(day);
     }
 
     private static double[] nan(int n) {
@@ -140,7 +191,12 @@ public final class DeviceHistory {
         return nights[(int) ChronoUnit.DAYS.between(nightsFirst, day)];
     }
 
-    /** The nights from {@code a} to {@code b}, oldest first (for the recent nights strip). */
+    /** The recent nights strip of the shown {@code date}: its nights from {@link #BEFORE} days before it to {@link #last}, each with its score. */
+    public List<NightRow> strip(LocalDate date) {
+        return nights(date.minusDays(BEFORE), last);
+    }
+
+    /** The nights from {@code a} to {@code b}, oldest first. */
     public List<NightRow> nights(LocalDate a, LocalDate b) {
         List<NightRow> out = new ArrayList<NightRow>();
         for (LocalDate d = a; !d.isAfter(b); d = d.plusDays(1)) {
@@ -197,57 +253,96 @@ public final class DeviceHistory {
     /**
      * The days from {@code first} to {@code last} of {@code device} ({@link MainDevice#WATCH} or {@link MainDevice#PHONE}) with
      * its rows ({@code watch} or {@code phone}, null for none) from {@link DeviceScores#DAYS} days before {@code first} on (as
-     * {@link #rowsFrom} says), the days in {@code zone}, the step goal and the age. The scores of each day are exactly
-     * {@link DeviceScores#of} on the rows up to that day's end, as the day load reads them for the dials.
+     * {@link #rowsFrom} says; the watch's sleep pieces from {@link #sleepFrom} on, for sleep debt), the days in {@code zone}, the
+     * step goal and the age. The scores of each day are exactly {@link DeviceScores#of} on the rows up to that day's end, as the
+     * day load reads them for the dials.
      */
     public static DeviceHistory of(int device, LocalDate first, LocalDate last, ZoneId zone, MainDevice.Watch watch, MainDevice.Phone phone,
             int goal, double age) {
-        return of(device, first, last, zone, watch, phone, goal, age, true);
+        return of(device, first, last, fixed(zone), watch, phone, goal, age, WatchDays.Rem.ALWAYS);
     }
 
-    /** As above; {@code rem}: the watch tells REM apart ({@link WatchDays#tellsRem} over all its stored records, not only these). */
+    /** As above; {@code rem}: one answer for every night ({@link WatchDays.Rem#of(boolean)}). */
     public static DeviceHistory of(int device, LocalDate first, LocalDate last, ZoneId zone, MainDevice.Watch watch, MainDevice.Phone phone,
             int goal, double age, boolean rem) {
-        DeviceHistory h = new DeviceHistory(device, first, last, zone, goal, rem);
+        return of(device, first, last, fixed(zone), watch, phone, goal, age, WatchDays.Rem.of(rem));
+    }
+
+    /** The days and the nights of one zone: every day of the history as a dial in that zone reads it. */
+    private static final class InZone {
+        final ZoneId zone;
+        final double[] from, to;
+        final DeviceScores.Day[] days;
+        final WatchDays.Night[] nights;
+        double[] lowest;
+
+        InZone(ZoneId zone, int all) {
+            this.zone = zone;
+            from = new double[all];
+            to = new double[all];
+            days = new DeviceScores.Day[all];
+            nights = new WatchDays.Night[all];
+        }
+    }
+
+    /**
+     * As above, each day in its own zone ({@code zones}, as its dial: code review of #389, after a trip the days in another zone
+     * kept the shown day's borders) and {@code rem}, which nights tell REM ({@link WatchDays.Rem}, per night).
+     */
+    public static DeviceHistory of(int device, LocalDate first, LocalDate last, DayZones zones, MainDevice.Watch watch, MainDevice.Phone phone,
+            int goal, double age, WatchDays.Rem rem) {
+        final DeviceHistory h = new DeviceHistory(device, first, last, zones, goal, rem);
         if (watch == null) watch = new MainDevice.Watch();
         if (phone == null) phone = new MainDevice.Phone();
-        Sorted rows = new Sorted(watch);
-        boolean isWatch = device == MainDevice.WATCH;
-        int all = h.nights.length;
-        DeviceScores.Day[] days = new DeviceScores.Day[all];
-        double[] from = new double[all], to = new double[all];
+        final Sorted rows = new Sorted(watch);
+        final boolean isWatch = device == MainDevice.WATCH;
+        final int all = h.nights.length, off = DeviceScores.DAYS - 1, back = DEBT_BACK;
+        final WatchDays.HeartIndex heart = new WatchDays.HeartIndex(watch.heart);
+        final List<Records.Sleep> sleep = watch.sleep;
+        final MainDevice.Watch w = watch;
+        final MainDevice.Phone p = phone;
+        ZoneId[] dayZone = new ZoneId[all];
+        for (int i = 0; i < all; i++) dayZone[i] = zones.of(h.nightsFirst.plusDays(i));
+        // the nights of each zone (cheap), and the days of each zone a scored day has (worked out once per zone, usually one)
+        final HashMap<ZoneId, TreeMap<LocalDate, WatchDays.Night>> nightMaps = new HashMap<ZoneId, TreeMap<LocalDate, WatchDays.Night>>();
+        HashMap<ZoneId, InZone> inZone = new HashMap<ZoneId, InZone>();
         for (int i = 0; i < all; i++) {
-            LocalDate di = h.nightsFirst.plusDays(i);
-            from[i] = di.atStartOfDay(zone).toEpochSecond();
-            to[i] = di.plusDays(1).atStartOfDay(zone).toEpochSecond();
-            days[i] = DeviceScores.day(device, from[i], to[i], zone, isWatch ? rows.near(from[i], to[i], Double.POSITIVE_INFINITY) : watch, phone);
-        }
-        WatchDays.Night[] wn = new WatchDays.Night[all];
-        double[] lowest = new double[all];
-        Arrays.fill(lowest, Double.NaN);
-        if (isWatch) {
-            TreeMap<LocalDate, WatchDays.Night> map = watch.sleep.isEmpty() ? new TreeMap<LocalDate, WatchDays.Night>()
-                    : WatchDays.nights(watch.sleep, h.nightsFirst, last, DeviceScores.zones(zone));
-            for (int i = 0; i < all; i++) wn[i] = map.get(h.nightsFirst.plusDays(i));
-            lowest = DeviceScores.lowest(wn, watch.heart);
-            for (int i = 0; i < all; i++) {
-                if (wn[i] == null) continue;
-                NightRow r = new NightRow(h.nightsFirst.plusDays(i), wn[i], rem);
-                WatchDays.NightHeart nh = WatchDays.heartIn(watch.heart, wn[i].start, wn[i].end);
-                r.lowest = nh.lowest;
-                r.lowestAt = nh.lowestAt;
-                r.average = nh.average;
-                h.nights[i] = r;
+            ZoneId z = dayZone[i];
+            TreeMap<LocalDate, WatchDays.Night> map = nightMaps.get(z);
+            if (map == null) {
+                map = !isWatch || sleep.isEmpty() ? new TreeMap<LocalDate, WatchDays.Night>()
+                        : WatchDays.nights(sleep, h.nightsFirst, last, DeviceScores.zones(z));
+                nightMaps.put(z, map);
             }
+            WatchDays.Night n = map.get(h.nightsFirst.plusDays(i));
+            if (n == null) continue;
+            NightRow r = new NightRow(h.nightsFirst.plusDays(i), n, rem.tells(n), z);
+            r.heart(heart.in(n.start, n.end));
+            h.nights[i] = r;
         }
-        int off = DeviceScores.DAYS - 1;
         for (int k = 0; k < h.size(); k++) {
-            int i = k + off;
-            DeviceScores.Day[] window = Arrays.copyOfRange(days, i - off, i + 1);
+            int i = k + back;
+            ZoneId zone = dayZone[i];
+            InZone zd = inZone.get(zone);
+            if (zd == null) {
+                // every day the scores of this zone's days read, from 34 days before the first to the last
+                zd = new InZone(zone, all);
+                TreeMap<LocalDate, WatchDays.Night> map = nightMaps.get(zone);
+                for (int j = back - off; j < all; j++) {
+                    LocalDate dj = h.nightsFirst.plusDays(j);
+                    zd.from[j] = dj.atStartOfDay(zone).toEpochSecond();
+                    zd.to[j] = dj.plusDays(1).atStartOfDay(zone).toEpochSecond();
+                    zd.days[j] = DeviceScores.day(device, zd.from[j], zd.to[j], zone, isWatch ? rows.near(zd.from[j], zd.to[j], Double.POSITIVE_INFINITY) : w, p);
+                    zd.nights[j] = map.get(dj);
+                }
+                zd.lowest = isWatch ? DeviceScores.lowest(zd.nights, heart) : null;
+                inZone.put(zone, zd);
+            }
+            DeviceScores.Day[] window = Arrays.copyOfRange(zd.days, i - off, i + 1);
             // the day itself as the day load reads it: its rows end at its midnight (a reading just after it does not count)
-            if (isWatch) window[off] = DeviceScores.day(device, from[i], to[i], zone, rows.near(from[i], to[i], to[i]), phone);
-            DeviceScores.Result r = DeviceScores.score(device, zone, window, isWatch ? Arrays.copyOfRange(wn, i - off, i + 1) : null,
-                    isWatch ? Arrays.copyOfRange(lowest, i - off, i + 1) : null, goal, age, rem);
+            if (isWatch) window[off] = DeviceScores.day(device, zd.from[i], zd.to[i], zone, rows.near(zd.from[i], zd.to[i], zd.to[i]), p);
+            DeviceScores.Result r = DeviceScores.score(device, zone, window, isWatch ? Arrays.copyOfRange(zd.nights, i - off, i + 1) : null,
+                    isWatch ? Arrays.copyOfRange(zd.lowest, i - off, i + 1) : null, goal, age, rem);
             h.results[k] = r;
             h.steps[k] = r.steps;
             h.activity[k] = r.value("activity_score");
@@ -259,24 +354,25 @@ public final class DeviceHistory {
                 h.rhr[k] = h.nights[i].lowest > 0 ? h.nights[i].lowest : Double.NaN;
             }
             if (!isWatch) continue;
+            double from = zd.from[i], to = zd.to[i];
             double kc = 0;
             boolean any = false;
-            MainDevice.Watch near = rows.near(from[i], to[i], Double.POSITIVE_INFINITY);
+            MainDevice.Watch near = rows.near(from, to, Double.POSITIVE_INFINITY);
             for (Records.Steps s : near.steps) {
-                if (s.start < from[i] || s.start >= to[i]) continue;
+                if (s.start < from || s.start >= to) continue;
                 kc += s.kcal;
                 any = true;
             }
             if (any) h.kcal[k] = kc;
             double min = 0;
             for (Records.Workout x : near.workouts) {
-                if (x.start < from[i] || x.start >= to[i]) continue;
+                if (x.start < from || x.start >= to) continue;
                 h.workouts[k]++;
                 min += Math.max(0, x.dur) / 60.0;
             }
             // a day the watch was worn has its workout minutes, also 0; a day without it has none
-            if (days[i].wornQ > 0 || h.workouts[k] > 0) h.workoutMin[k] = min;
-            DayHeart dh = DayHeart.of(MainDevice.watch(near, from[i], to[i]).line(), from[i], to[i]);
+            if (zd.days[i].wornQ > 0 || h.workouts[k] > 0) h.workoutMin[k] = min;
+            DayHeart dh = DayHeart.of(MainDevice.watch(near, from, to).line(), from, to);
             h.dayHr[k] = dh.avg;
         }
         return h;
@@ -285,6 +381,22 @@ public final class DeviceHistory {
     /** The first moment the rows for {@link #of} must reach back to: the day load's rule for the dials (35 days, an hour and a day before). */
     public static double rowsFrom(LocalDate first, ZoneId zone) {
         return first.atStartOfDay(zone).toEpochSecond() - (DeviceScores.DAYS - 1) * 86400.0 - 3600 - 86400;
+    }
+
+    /** As above with each day in its own zone: the earliest moment any day from {@code first} to {@code last} reads back to. */
+    public static double rowsFrom(LocalDate first, LocalDate last, DayZones zones) {
+        double min = Double.POSITIVE_INFINITY;
+        for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1)) min = Math.min(min, rowsFrom(d, zones.of(d)));
+        return min;
+    }
+
+    /**
+     * The first moment the watch's sleep pieces for {@link #of} must reach back to: sleep debt reads {@link #DEBT_BACK} nights before
+     * the first day (the evening before them, a day more for any zone).
+     */
+    public static double sleepFrom(LocalDate first, DayZones zones) {
+        LocalDate d = first.minusDays(DEBT_BACK);
+        return d.atStartOfDay(zones.of(d)).toEpochSecond() - 2 * 86400.0;
     }
 
     /** A day's look at the watch's rows reaches this far (seconds) before its start and after its end; it needs 30 minutes. */
@@ -367,16 +479,36 @@ public final class DeviceHistory {
      */
     public static List<NightRow> nightRows(List<Records.Sleep> sleep, List<Records.Heart> heart, LocalDate first, LocalDate last, ZoneId zone, double age,
             boolean rem) {
+        return nightRows(sleep, heart, first, last, fixed(zone), age, WatchDays.Rem.of(rem));
+    }
+
+    /**
+     * As above, each night in the zone of its day ({@code zones}, as its dial and the charts) and with REM where it tells it
+     * ({@code rem}). The heart rates are sorted once ({@link WatchDays.HeartIndex}): two years of nights no longer go through
+     * every heart rate for each night (code review of #389).
+     */
+    public static List<NightRow> nightRows(List<Records.Sleep> sleep, List<Records.Heart> heart, LocalDate first, LocalDate last, DayZones zones,
+            double age, WatchDays.Rem rem) {
         List<NightRow> out = new ArrayList<NightRow>();
         if (sleep.isEmpty()) return out;
-        for (java.util.Map.Entry<LocalDate, WatchDays.Night> e : WatchDays.nights(sleep, first, last, DeviceScores.zones(zone)).entrySet()) {
-            NightRow r = new NightRow(e.getKey(), e.getValue(), rem);
-            Night.Score s = DeviceScores.sleepScore(e.getValue(), zone, age, rem);
+        // All time starts in 2000: the days before the first piece have no night, so their zones are not asked for
+        long earliest = Long.MAX_VALUE;
+        for (Records.Sleep s : sleep) earliest = Math.min(earliest, s.start);
+        LocalDate from = Instant.ofEpochSecond(earliest).atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(1);
+        if (from.isBefore(first)) from = first;
+        WatchDays.HeartIndex hi = new WatchDays.HeartIndex(heart);
+        HashMap<ZoneId, TreeMap<LocalDate, WatchDays.Night>> maps = new HashMap<ZoneId, TreeMap<LocalDate, WatchDays.Night>>();
+        for (LocalDate d = from; !d.isAfter(last); d = d.plusDays(1)) {
+            ZoneId z = zones.of(d);
+            TreeMap<LocalDate, WatchDays.Night> map = maps.get(z);
+            if (map == null) maps.put(z, map = WatchDays.nights(sleep, from, last, DeviceScores.zones(z)));
+            WatchDays.Night n = map.get(d);
+            if (n == null) continue;
+            boolean tells = rem.tells(n);
+            NightRow r = new NightRow(d, n, tells, z);
+            Night.Score s = DeviceScores.sleepScore(n, z, age, tells);
             if (s != null) r.score = s.value;
-            WatchDays.NightHeart nh = WatchDays.heartIn(heart, e.getValue().start, e.getValue().end);
-            r.lowest = nh.lowest;
-            r.lowestAt = nh.lowestAt;
-            r.average = nh.average;
+            r.heart(hi.in(n.start, n.end));
             out.add(r);
         }
         return out;

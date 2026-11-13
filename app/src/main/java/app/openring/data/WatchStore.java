@@ -551,12 +551,39 @@ public final class WatchStore {
     }
 
     /**
-     * The watch tells REM from light sleep: any stored sleep record is REM ({@code WatchDays.tellsRem} over the whole table, owner's
-     * report of 13 November). True without any watch row, so nothing changes for a person without a watch.
+     * Which nights tell REM from light sleep ({@code WatchDays.Rem}, code review of #389): each watch that ever sent a REM record,
+     * from its first REM record to the end of its last sleep piece; the nights of a watch that never did (the Steel HR) show
+     * "Light and REM", whether it was worn before or after one with REM. Every night without any watch sleep row, so nothing
+     * changes for a person without a watch.
      */
-    public static boolean tellsRem(Db db) {
-        if (db.count("SELECT COUNT(*) FROM (SELECT 1 FROM watch_sleep LIMIT 1)") == 0) return true;
-        return db.count("SELECT COUNT(*) FROM (SELECT 1 FROM watch_sleep WHERE stage = " + app.openring.core.withings.Records.REM + " LIMIT 1)") > 0;
+    public static app.openring.core.withings.WatchDays.Rem rem(Db db) {
+        if (db.count("SELECT COUNT(*) FROM (SELECT 1 FROM watch_sleep LIMIT 1)") == 0) return app.openring.core.withings.WatchDays.Rem.ALWAYS;
+        List<long[]> spans = new ArrayList<long[]>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT MIN(CASE WHEN stage = " + Records.REM + " THEN start END), MAX(start + dur) FROM watch_sleep"
+                + " GROUP BY device", null);
+        try {
+            while (c.moveToNext()) {
+                if (c.isNull(0)) continue;
+                long first = c.getLong(0);
+                spans.add(new long[] {first, Math.max(first + 1, c.getLong(1))});
+            }
+        } finally {
+            c.close();
+        }
+        return new app.openring.core.withings.WatchDays.Rem(spans.toArray(new long[0][]));
+    }
+
+    /** Only the watch's sleep pieces that reach into {@code from} to {@code to} (sleep debt reads 104 days of nights, not their steps). */
+    public static List<Records.Sleep> sleepRows(Db db, double from, double to) {
+        List<Records.Sleep> out = new ArrayList<Records.Sleep>();
+        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) out.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
+        } finally {
+            c.close();
+        }
+        return out;
     }
 
     /** True when any watch message is stored. */

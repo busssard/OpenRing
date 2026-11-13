@@ -182,12 +182,18 @@ public final class DeviceScores {
         return of(device, date, zone, watch, phone, goal, age, true);
     }
 
-    /**
-     * As above; {@code rem}: the watch tells REM from light sleep ({@link WatchDays#tellsRem} over all its stored records). Without
-     * it the sleep score's REM part is left out, said why, and its weight shared out like any other left out part.
-     */
+    /** As below, one answer for every night: {@code rem} true for {@link WatchDays.Rem#ALWAYS}, false for {@link WatchDays.Rem#NEVER}. */
     public static Result of(int device, LocalDate date, final ZoneId zone, MainDevice.Watch watch, MainDevice.Phone phone, int goal, double age,
             boolean rem) {
+        return of(device, date, zone, watch, phone, goal, age, WatchDays.Rem.of(rem));
+    }
+
+    /**
+     * As above; {@code rem}: which nights tell REM from light sleep ({@link WatchDays.Rem}, per night). A night without it has
+     * the sleep score's REM part left out, said why, and its weight shared out like any other left out part.
+     */
+    public static Result of(int device, LocalDate date, final ZoneId zone, MainDevice.Watch watch, MainDevice.Phone phone, int goal, double age,
+            WatchDays.Rem rem) {
         if (watch == null) watch = new MainDevice.Watch();
         if (phone == null) phone = new MainDevice.Phone();
         // the days, oldest first; the last is the day itself
@@ -220,11 +226,16 @@ public final class DeviceScores {
 
     /** The watch's lowest heart rate reading in each night (NaN without a night or a reading). */
     static double[] lowest(WatchDays.Night[] nights, List<Records.Heart> heart) {
+        return lowest(nights, new WatchDays.HeartIndex(heart));
+    }
+
+    /** As above, with the heart rates sorted once ({@link WatchDays.HeartIndex}). */
+    static double[] lowest(WatchDays.Night[] nights, WatchDays.HeartIndex heart) {
         double[] lowest = new double[nights.length];
         for (int i = 0; i < nights.length; i++) {
             lowest[i] = Double.NaN;
             if (nights[i] == null) continue;
-            WatchDays.NightHeart h = WatchDays.heartIn(heart, nights[i].start, nights[i].end);
+            WatchDays.NightHeart h = heart.in(nights[i].start, nights[i].end);
             if (h.lowest > 0) lowest[i] = h.lowest;
         }
         return lowest;
@@ -235,7 +246,7 @@ public final class DeviceScores {
      * their lowest heart rate ({@link #lowest}; both null for the phone). {@link #of} and {@code DeviceHistory} (every day of the
      * 30 day charts) both come here, so a day's score is the same on its dial and in the charts.
      */
-    static Result score(int device, ZoneId zone, Day[] days, WatchDays.Night[] nights, double[] lowest, int goal, double age, boolean rem) {
+    static Result score(int device, ZoneId zone, Day[] days, WatchDays.Night[] nights, double[] lowest, int goal, double age, WatchDays.Rem remRule) {
         Result r = new Result(device);
         r.goal = goal > 0 ? goal : 10000;
         boolean isWatch = device == MainDevice.WATCH;
@@ -249,6 +260,7 @@ public final class DeviceScores {
             return r;
         }
         WatchDays.Night wn = nights[DAYS - 1];
+        boolean rem = remRule.tells(wn);
         r.sleep = wn == null ? null : sleepScore(wn, zone, age, rem);
         if (r.sleep == null) {
             r.sleepNone = WATCH_NO_NIGHT;

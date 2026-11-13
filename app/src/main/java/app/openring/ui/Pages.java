@@ -569,7 +569,7 @@ public final class Pages {
         app.openring.core.withings.WatchDays.NightHeart hr = d.merged.watchNightHeart;
         boolean withHr = hr != null && !hr.points.isEmpty();
         // a watch that does not tell REM from light sleep shows them as one stage (owner's report of 13 November)
-        boolean lightRem = !d.watchRem;
+        boolean lightRem = !d.watchRem.tells(wn);
         hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem),
                 Ui.sized(c, -1, withHr ? 250 : 170));
         hyp.addView(Ui.gap(c, 4));
@@ -815,15 +815,27 @@ public final class Pages {
         final int load = analysisLoad.incrementAndGet();
         // without a ring the watch's nights (owner's report of 13 November), worked out from its rows
         final boolean watch = HistoryViews.watch(d);
-        final boolean lightRem = watch && !d.watchRem;
+        final app.openring.core.withings.WatchDays.Rem rem = d.watchRem;
+        final java.time.LocalDate shown = d.date;
+        final java.time.ZoneId shownZone = d.zone;
         final int age = Prefs.of(c).age();
         new android.os.AsyncTask<Void, Void, app.openring.data.SleepHistory>() {
             @Override
             protected app.openring.data.SleepHistory doInBackground(Void... v) {
                 // a newer load was asked for while this one waited (another day, tab or period): its card is gone
                 if (load != analysisLoad.get()) return null;
-                if (watch) return app.openring.data.WatchHistory.load(app.openring.data.Db.get(c), from.toString(), to.toString(),
-                        java.time.ZoneId.systemDefault(), age, !lightRem);
+                if (watch) {
+                    // each night in its day's zone, as its dial and the charts (code review of #389), the shown day in the dial's
+                    app.openring.data.Db db = app.openring.data.Db.get(c);
+                    final app.openring.core.DeviceHistory.DayZones noted = app.openring.data.WatchHistory.dayZones(db, java.time.ZoneId.systemDefault());
+                    app.openring.core.DeviceHistory.DayZones zones = new app.openring.core.DeviceHistory.DayZones() {
+                        @Override
+                        public java.time.ZoneId of(java.time.LocalDate day) {
+                            return day.equals(shown) ? shownZone : noted.of(day);
+                        }
+                    };
+                    return app.openring.data.WatchHistory.load(db, from.toString(), to.toString(), zones, java.time.ZoneId.systemDefault(), age, rem);
+                }
                 return app.openring.data.SleepHistory.load(app.openring.data.Db.get(c), from.toString(), to.toString(),
                         java.time.ZoneId.systemDefault());
             }
@@ -835,7 +847,7 @@ public final class Pages {
                 // a screen gone with a turn of the phone shows nothing; the new one loads its own
                 if (c instanceof android.app.Activity && ((android.app.Activity) c).isDestroyed()) return;
                 // the old views go and the new ones come in the same step, before the next layout
-                showAnalysis(c, h, result, period, watch, lightRem);
+                showAnalysis(c, h, result, period, watch, watch && h.lightRem);
                 result.setAlpha(1f);
                 setTouchable(result, true);
                 result.setMinimumHeight(0);

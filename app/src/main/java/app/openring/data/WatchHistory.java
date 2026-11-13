@@ -28,6 +28,8 @@ public final class WatchHistory {
         Json.put(o, "day", r.day.toString());
         Json.put(o, "main", true);
         Json.put(o, "source", "watch");
+        // the zone of its day, so its clock times show as its dial's and the strip marks a trip as for the ring's nights
+        if (r.zone != null) Json.put(o, "zone", r.zone.getId());
         // the watch does not tell REM from light sleep: the screens show them as one stage (owner's report of 13 November)
         if (!r.fields.stageSource.equals("watch")) Json.put(o, "light_rem", true);
         Json.put(o, "start", (double) r.night.start);
@@ -66,14 +68,45 @@ public final class WatchHistory {
     }
 
     /**
-     * Further analysis of the watch's nights whose day lies from {@code fromDay} to {@code toDay} (ISO dates, "2000-01-01" for
-     * all time): the average night, typical values and times, as {@link SleepHistory#load} gives them for the ring. Reads only
-     * the sleep pieces and heart rates, from the evening before the first day.
+     * The zone of each day as the day load gives it to the dials ({@code Json.dayZone} without a ring night: the zone noted at
+     * the day's noon, else {@code phone}), from the zone rows read once (code review of #389: a trip moved the days' borders).
      */
-    public static SleepHistory load(Db db, String fromDay, String toDay, ZoneId zone, double age, boolean rem) {
+    public static DeviceHistory.DayZones dayZones(Db db, final ZoneId phone) {
+        final List<Object[]> rows = db.zones();
+        final java.util.HashMap<LocalDate, ZoneId> seen = new java.util.HashMap<LocalDate, ZoneId>();
+        return new DeviceHistory.DayZones() {
+            @Override
+            public ZoneId of(LocalDate day) {
+                ZoneId z = seen.get(day);
+                if (z == null) {
+                    z = Json.dayZone(null, Db.zoneIn(rows, Json.noon(day, phone)), phone);
+                    seen.put(day, z);
+                }
+                return z;
+            }
+        };
+    }
+
+    /**
+     * Further analysis of the watch's nights whose day lies from {@code fromDay} to {@code toDay} (ISO dates, "2000-01-01" for
+     * all time): the average night, typical values and times, as {@link SleepHistory#load} gives them for the ring. Each night
+     * in its day's zone ({@code zones}) with REM where it tells it ({@code rem}); {@link SleepHistory#lightRem} says when one
+     * does not. Reads only the sleep pieces and heart rates, from the evening before the first day.
+     */
+    public static SleepHistory load(Db db, String fromDay, String toDay, DeviceHistory.DayZones zones, ZoneId phone, double age,
+            app.openring.core.withings.WatchDays.Rem rem) {
         LocalDate first = LocalDate.parse(fromDay), last = LocalDate.parse(toDay);
-        double from = first.atStartOfDay(zone).toEpochSecond() - 86400, to = last.plusDays(1).atStartOfDay(zone).toEpochSecond();
+        // a day more on each side for a day in another zone
+        double from = first.atStartOfDay(zones.of(first)).toEpochSecond() - 2 * 86400, to = last.plusDays(1).atStartOfDay(zones.of(last)).toEpochSecond() + 86400;
         app.openring.core.MainDevice.Watch w = WatchStore.nightRows(db, from, to);
-        return SleepHistory.of(json(DeviceHistory.nightRows(w.sleep, w.heart, first, last, zone, age, rem)), zone);
+        List<JSONObject> nights = json(DeviceHistory.nightRows(w.sleep, w.heart, first, last, zones, age, rem));
+        SleepHistory h = SleepHistory.of(nights, phone);
+        for (JSONObject o : nights) h.lightRem |= o.optBoolean("light_rem");
+        return h;
+    }
+
+    /** As above with one zone for every day and one REM answer for every night. */
+    public static SleepHistory load(Db db, String fromDay, String toDay, ZoneId zone, double age, boolean rem) {
+        return load(db, fromDay, toDay, DeviceHistory.fixed(zone), zone, age, app.openring.core.withings.WatchDays.Rem.of(rem));
     }
 }

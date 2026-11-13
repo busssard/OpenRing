@@ -52,6 +52,7 @@ public class WatchTest {
         mainDevicePhone329();
         deviceScores379();
         deviceHistory();
+        review389();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -2801,7 +2802,8 @@ public class WatchTest {
         check("history: index and result outside are -1 and null", h.index(first.minusDays(1)) == -1 && h.index(DS_DAY.plusDays(1)) == -1
                 && h.result(DS_DAY.plusDays(1)) == null && h.index(DS_DAY) == 29 && h.size() == 30);
         check("history: nights of the weeks before the first day are there for debt and the usual", h.night(first.minusDays(20)) != null
-                && h.night(first.minusDays(40)) == null && h.night(DS_DAY.plusDays(1)) == null);
+                && h.night(first.minusDays(38)) != null && h.night(first.minusDays(app.openring.core.DeviceHistory.DEBT_BACK + 1)) == null
+                && h.night(DS_DAY.plusDays(1)) == null);
         List<app.openring.core.DeviceHistory.NightRow> strip = h.nights(DS_DAY.minusDays(30), DS_DAY);
         check("history: the strip's nights, oldest first", strip.size() == 31 && strip.get(0).day.equals(DS_DAY.minusDays(30)) && strip.get(30).day.equals(DS_DAY), strip.size());
 
@@ -2821,9 +2823,9 @@ public class WatchTest {
             act[i] = n == null ? 0 : n.asleepMin() * 60;
             double[] pr = new double[90];
             Arrays.fill(pr, Double.NaN);
+            // the ring's rule (Analyzer): the 90 nights before each of the 14 days, whatever the history's first day
             for (int k = 0; k < 90; k++) {
                 LocalDate pd = DS_DAY.minusDays(i + k + 1);
-                if (pd.isBefore(first.minusDays(34))) continue;
                 WatchDays.Night p = WatchDays.nightFor(dec.sleep, pd, zones);
                 pr[k] = p == null ? Double.NaN : p.asleepMin() * 60.0;
             }
@@ -2923,7 +2925,7 @@ public class WatchTest {
         for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
             if (!dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, z, dhWindow(noRem, d), null, 9000, 41, false)).equals(dsText(hn.result(d)))) diff++;
         }
-        check("REM: the history without REM has each day's dial", diff == 0 && !hn.rem && h.rem, diff);
+        check("REM: the history without REM has each day's dial", diff == 0 && !hn.rem.any() && h.rem.any(), diff);
         check("REM: its nights are marked as without REM", app.openring.core.analysis.Scores.NO_REM.equals(hn.night(DS_DAY).fields.stageSource)
                 && "watch".equals(h.night(DS_DAY).fields.stageSource), hn.night(DS_DAY).fields.stageSource);
         List<app.openring.core.DeviceHistory.NightRow> nrRows = app.openring.core.DeviceHistory.nightRows(noRem.sleep, noRem.heart, first, DS_DAY, z, 41, false);
@@ -2936,6 +2938,197 @@ public class WatchTest {
         check("REM: a ring night with no REM still scores its REM part (ring nights unchanged)", app.openring.core.analysis.Scores.sleep(ringNight, 0, 40).get("rem") != null);
         check("history: the mean of a series skips days without a value", app.openring.core.DeviceHistory.mean(new double[] {Double.NaN, 4, 6}) == 5
                 && Double.isNaN(app.openring.core.DeviceHistory.mean(new double[] {Double.NaN})));
+    }
+
+    // ------------------------------------------------------------------------------------ code review of #389
+
+    /** The rows of {@code all} as the day load reads them for the dial of {@code d} in {@code z} (35 days, an hour and a day before, to its end). */
+    static MainDevice.Watch wWindow(MainDevice.Watch all, LocalDate d, ZoneId z) {
+        double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double wf = ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600 - 86400;
+        MainDevice.Watch w = new MainDevice.Watch();
+        for (Records.Steps s : all.steps) if (s.start >= Math.floor(wf) && s.start < Math.ceil(de)) w.steps.add(s);
+        for (Records.Heart h : all.heart) if (h.t >= Math.floor(wf) && h.t < Math.ceil(de)) w.heart.add(h);
+        for (Records.Sleep s : all.sleep) if (s.start + s.dur > Math.floor(wf) && s.start < Math.ceil(de)) w.sleep.add(s);
+        for (Records.Workout x : all.workouts) if (x.start >= Math.floor(wf) && x.start < Math.ceil(de)) w.workouts.add(x);
+        return w;
+    }
+
+    /** A night of {@code hours} ending on {@code day} at 07:00, with REM pieces or (the Steel HR's kind) light in their place. */
+    static void rvNight(MainDevice.Watch w, LocalDate day, double hours, boolean rem) {
+        int mins = (int) Math.round(hours * 60);
+        int[][] p = rem ? new int[][] {{Records.LIGHT, mins / 2}, {Records.DEEP, mins / 4}, {Records.REM, mins - mins / 2 - mins / 4}}
+                : new int[][] {{Records.LIGHT, mins / 2}, {Records.DEEP, mins / 4}, {Records.LIGHT, mins - mins / 2 - mins / 4}};
+        long end = at(day, 7, 0, DS_ZONE), t = end - mins * 60L;
+        for (int[] x : p) {
+            w.sleep.add(new Records.Sleep(t, x[1] * 60, x[0]));
+            t += x[1] * 60L;
+        }
+        for (long u = end - mins * 60L; u < end; u += 600) w.heart.add(new Records.Heart(u, 55));
+    }
+
+    static void review389() throws Exception {
+        final ZoneId z = DS_ZONE;
+        // ---- 1. the recent nights strip: every night in it has the score its dial shows (80 identical nights)
+        MainDevice.Watch same = dsWatch(80, 200, true, true);
+        LocalDate[] range = app.openring.core.DeviceHistory.range(DS_DAY, DS_DAY);
+        LocalDate first = range[0];
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(MainDevice.WATCH, range[0], range[1], z, same, null, 10000, 40);
+        List<app.openring.core.DeviceHistory.NightRow> strip = h.strip(DS_DAY);
+        boolean ok = strip.size() == 31 && strip.get(0).day.equals(DS_DAY.minusDays(30)) && range[1].equals(DS_DAY);
+        String bad = null;
+        for (app.openring.core.DeviceHistory.NightRow r : strip) {
+            double dial = app.openring.core.DeviceScores.of(MainDevice.WATCH, r.day, z, wWindow(same, r.day, z), null, 10000, 40).value("sleep");
+            if (!same(r.score, dial) || Double.isNaN(r.score)) {
+                ok = false;
+                if (bad == null) bad = r.day + " strip " + r.score + " dial " + dial;
+            }
+        }
+        check("review #389: every night of the recent nights strip has its dial's score, the oldest too", ok, bad);
+        LocalDate[] old = app.openring.core.DeviceHistory.range(DS_DAY.minusDays(60), DS_DAY);
+        LocalDate[] future = app.openring.core.DeviceHistory.range(DS_DAY.plusDays(2), DS_DAY);
+        check("review #389: the range reaches 30 nights back and 30 ahead, at most today, never before the shown day", old[0].equals(DS_DAY.minusDays(90))
+                && old[1].equals(DS_DAY.minusDays(30)) && future[1].equals(DS_DAY.plusDays(2)) && h.size() == 31 && h.last(h.sleep, DS_DAY, 30)[0] == h.sleep[1]);
+
+        // ---- 2. REM decided per night: a Steel HR before a watch with REM, and the other way round
+        MainDevice.Watch steelFirst = new MainDevice.Watch(), remFirst = new MainDevice.Watch();
+        for (int k = 60; k >= 0; k--) {
+            rvNight(steelFirst, DS_DAY.minusDays(k), 7.5, k <= 30);
+            rvNight(remFirst, DS_DAY.minusDays(k), 7.5, k > 30);
+        }
+        // each watch's own rows: the rule is per watch (WatchStore.rem reads them per device)
+        List<Records.Sleep> steelRows = new ArrayList<Records.Sleep>(), scanRows = new ArrayList<Records.Sleep>();
+        long cut = at(DS_DAY.minusDays(31), 12, 0, z);
+        for (Records.Sleep x : steelFirst.sleep) (x.start < cut ? steelRows : scanRows).add(x);
+        WatchDays.Rem steelThenScan = WatchDays.Rem.of(steelRows, scanRows);
+        List<Records.Sleep> scanRows2 = new ArrayList<Records.Sleep>(), steelRows2 = new ArrayList<Records.Sleep>();
+        for (Records.Sleep x : remFirst.sleep) (x.start < cut ? scanRows2 : steelRows2).add(x);
+        WatchDays.Rem scanThenSteel = WatchDays.Rem.of(scanRows2, steelRows2);
+        LocalDate from = DS_DAY.minusDays(45);
+        app.openring.core.DeviceHistory.DayZones fz = app.openring.core.DeviceHistory.fixed(z);
+        app.openring.core.DeviceHistory hs = app.openring.core.DeviceHistory.of(MainDevice.WATCH, from, DS_DAY, fz, steelFirst, null, 10000, 40, steelThenScan);
+        check("review #389: Steel HR nights before a watch with REM keep Light and REM, no REM part of 0", hs.result(DS_DAY.minusDays(40)).sleep.get("rem") == null
+                && app.openring.core.analysis.Scores.NO_REM.equals(hs.night(DS_DAY.minusDays(40)).fields.stageSource), keys(hs.result(DS_DAY.minusDays(40)).sleep));
+        check("review #389: the watch with REM keeps its REM part from its first REM night on", hs.result(DS_DAY.minusDays(30)).sleep.get("rem") != null
+                && hs.result(DS_DAY).sleep.get("rem") != null && "watch".equals(hs.night(DS_DAY).fields.stageSource), keys(hs.result(DS_DAY).sleep));
+        app.openring.core.DeviceHistory hr = app.openring.core.DeviceHistory.of(MainDevice.WATCH, from, DS_DAY, fz, remFirst, null, 10000, 40, scanThenSteel);
+        check("review #389: the other order, a Steel HR after a watch with REM: its nights have no REM part", hr.result(DS_DAY.minusDays(10)).sleep.get("rem") == null
+                && hr.result(DS_DAY.minusDays(40)).sleep.get("rem") != null, keys(hr.result(DS_DAY.minusDays(10)).sleep));
+        // each day still is its dial with the same rule, and Further analysis and the night objects follow it per night
+        int remDiff = 0;
+        for (LocalDate d = from; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            if (!dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, z, wWindow(steelFirst, d, z), null, 10000, 40, steelThenScan)).equals(dsText(hs.result(d)))) remDiff++;
+            if (!dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, z, wWindow(remFirst, d, z), null, 10000, 40, scanThenSteel)).equals(dsText(hr.result(d)))) remDiff++;
+        }
+        check("review #389: with REM decided per night each day is still its dial, both orders", remDiff == 0, remDiff);
+        List<app.openring.core.DeviceHistory.NightRow> mixed = app.openring.core.DeviceHistory.nightRows(steelFirst.sleep, steelFirst.heart, from, DS_DAY, fz, 40, steelThenScan);
+        boolean perNight = mixed.size() == 46;
+        for (app.openring.core.DeviceHistory.NightRow r : mixed) perNight &= same(r.score, hs.night(r.day).score)
+                && r.fields.stageSource.equals(r.day.isBefore(DS_DAY.minusDays(30)) ? app.openring.core.analysis.Scores.NO_REM : "watch");
+        check("review #389: Further analysis decides REM per night too, with the charts' scores", perNight, mixed.size());
+        check("review #389: the rule: no REM watch, one answer, a watch's span from its first REM record", !WatchDays.Rem.of(steelRows).any()
+                && WatchDays.Rem.of(true) == WatchDays.Rem.ALWAYS && WatchDays.Rem.of(false) == WatchDays.Rem.NEVER && WatchDays.Rem.ALWAYS.tells(0, 1)
+                && !WatchDays.Rem.NEVER.tells(0, Long.MAX_VALUE) && !WatchDays.Rem.ALWAYS.tells(null) && steelThenScan.any()
+                && !steelThenScan.tells(WatchDays.nightFor(steelFirst.sleep, DS_DAY.minusDays(31), zones(z)))
+                && steelThenScan.tells(WatchDays.nightFor(steelFirst.sleep, DS_DAY.minusDays(30), zones(z))));
+
+        // ---- 3. sleep debt by the ring's rule: 90 nights before each of the 14 days (Analyzer reads 104 days back)
+        MainDevice.Watch debtW = new MainDevice.Watch();
+        for (int k = 120; k >= 0; k--) rvNight(debtW, DS_DAY.minusDays(k), k >= 40 ? 9 : 6.5, true);
+        app.openring.core.DeviceHistory hd = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, z, debtW, null, 10000, 40);
+        WatchDays.Zones zz = zones(z);
+        int[] act = new int[14], need = new int[14];
+        for (int i = 0; i < 14; i++) {
+            WatchDays.Night n = WatchDays.nightFor(debtW.sleep, DS_DAY.minusDays(i), zz);
+            act[i] = n == null ? 0 : n.asleepMin() * 60;
+            double[] pr = new double[90];
+            for (int k = 0; k < 90; k++) {
+                WatchDays.Night p = WatchDays.nightFor(debtW.sleep, DS_DAY.minusDays(i + k + 1), zz);
+                pr[k] = p == null ? Double.NaN : p.asleepMin() * 60.0;
+            }
+            need[i] = app.openring.core.analysis.Wellness.sleepNeedS(pr);
+        }
+        double[] want = app.openring.core.analysis.Wellness.sleepDebt(act, need), got = hd.debt(DS_DAY);
+        check("review #389: sleep debt follows the ring's rule, 90 nights before each of the 14 days", got[0] == want[0] / 60 && got[1] == want[1]
+                && got[2] == need[0] / 3600.0 && need[0] == 8 * 3600, got[0] + " " + got[2] + " want " + want[0] / 60 + " " + need[0] / 3600.0);
+
+        // ---- 4. a week in another zone: each day's point is that day's dial in the day's own zone
+        Records.Decoded dec = dhDemo(70);
+        final ZoneId ny = ZoneId.of("America/New_York");
+        final LocalDate tripFrom = DS_DAY.minusDays(12), tripTo = DS_DAY.minusDays(6);
+        MainDevice.Watch all = dhAll(dec);
+        app.openring.core.DeviceHistory.DayZones trip = new app.openring.core.DeviceHistory.DayZones() {
+            @Override
+            public ZoneId of(LocalDate day) {
+                return !day.isBefore(tripFrom) && !day.isAfter(tripTo) ? ny : DS_ZONE;
+            }
+        };
+        app.openring.core.DeviceHistory ht = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, trip, all, null, 9000, 41, WatchDays.Rem.ALWAYS);
+        int diff = 0;
+        String firstDiff = null;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            ZoneId dz = !d.isBefore(tripFrom) && !d.isAfter(tripTo) ? ny : z;
+            String a = dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, dz, wWindow(all, d, dz), null, 9000, 41)), b = dsText(ht.result(d));
+            if (!a.equals(b)) {
+                diff++;
+                if (firstDiff == null) firstDiff = d.toString();
+            }
+        }
+        check("review #389: after a week in another zone each day's point is its dial (the day's own zone)", diff == 0, diff + " days, first " + firstDiff);
+        Map<LocalDate, Integer> nySteps = WatchDays.stepsPerDay(dec.steps, zones(ny));
+        boolean tripOk = true;
+        for (LocalDate d = tripFrom; !d.isAfter(tripTo); d = d.plusDays(1)) {
+            tripOk &= same(ht.steps[ht.index(d)], nySteps.get(d)) && sameNight(ht.night(d).night, WatchDays.nightFor(dec.sleep, d, zones(ny)))
+                    && ht.night(d).zone.equals(ny) && ht.zone(d).equals(ny);
+        }
+        check("review #389: the trip's days count steps and nights by their own midnights", tripOk && ht.night(DS_DAY).zone.equals(DS_ZONE) && ht.zone.equals(DS_ZONE));
+        List<app.openring.core.DeviceHistory.NightRow> tripRows = app.openring.core.DeviceHistory.nightRows(dec.sleep, dec.heart, first, DS_DAY, trip, 41, WatchDays.Rem.ALWAYS);
+        boolean fa = tripRows.size() == 31;
+        for (app.openring.core.DeviceHistory.NightRow r : tripRows) fa &= same(r.score, ht.night(r.day).score) && r.lowest == ht.night(r.day).lowest && r.zone.equals(ht.zone(r.day));
+        check("review #389: Further analysis has each night in its day's zone, with the charts' scores", fa, tripRows.size());
+        double rf = app.openring.core.DeviceHistory.rowsFrom(first, DS_DAY, trip);
+        check("review #389: the rows are read from the earliest day any zone reads", rf == Math.min(app.openring.core.DeviceHistory.rowsFrom(first, DS_ZONE),
+                app.openring.core.DeviceHistory.rowsFrom(tripFrom, ny)) && app.openring.core.DeviceHistory.sleepFrom(first, trip)
+                <= first.minusDays(103).atStartOfDay(DS_ZONE).toEpochSecond() - 86400, rf);
+
+        // ---- 5. the heart rates of each night by a binary search give what going through every row gave
+        Random rnd = new Random(389);
+        List<Records.Heart> hrRows = new ArrayList<Records.Heart>();
+        long base = at(DS_DAY, 0, 0, z);
+        for (int i = 0; i < 3000; i++) hrRows.add(new Records.Heart(base + rnd.nextInt(5 * 86400) / 60 * 60, 40 + rnd.nextInt(60)));
+        WatchDays.HeartIndex hix = new WatchDays.HeartIndex(hrRows);
+        boolean hsame = true;
+        for (int i = 0; i < 300; i++) {
+            long a = base + rnd.nextInt(5 * 86400) - 3600, b = a + rnd.nextInt(12 * 3600);
+            WatchDays.NightHeart x = WatchDays.heartIn(hrRows, a, b), y = hix.in(a, b);
+            boolean pts = x.points.size() == y.points.size();
+            for (int j = 0; pts && j < x.points.size(); j++) pts = Arrays.equals(x.points.get(j), y.points.get(j));
+            hsame &= pts && x.lowest == y.lowest && x.lowestAt == y.lowestAt && same(x.average, y.average);
+        }
+        check("review #389: the sorted heart rates give each night's readings, lowest and average as before (300 windows)", hsame
+                && new WatchDays.HeartIndex(new ArrayList<Records.Heart>()).in(0, Long.MAX_VALUE).lowest == -1);
+        // two years with a heart rate every 10 minutes, day and night
+        MainDevice.Watch two = new MainDevice.Watch();
+        for (int k = 0; k < 730; k++) rvNight(two, DS_DAY.minusDays(k), 7.5, true);
+        two.heart.clear();
+        for (long u = at(DS_DAY.minusDays(731), 0, 0, z); u < at(DS_DAY, 12, 0, z); u += 600) two.heart.add(new Records.Heart(u, 60 + (int) (u / 600 % 9)));
+        long t0 = System.nanoTime();
+        List<app.openring.core.DeviceHistory.NightRow> years = app.openring.core.DeviceHistory.nightRows(two.sleep, two.heart, LocalDate.of(2000, 1, 1), DS_DAY, fz, 41, WatchDays.Rem.ALWAYS);
+        double sec = (System.nanoTime() - t0) / 1e9;
+        System.out.println("    review #389: All time, two years of nights with " + two.heart.size() + " heart rates in " + String.format("%.2f", sec) + " s");
+        WatchDays.Night n0 = WatchDays.nightFor(two.sleep, DS_DAY, zones(z));
+        check("review #389: All time over two years of heart rates, each night's lowest as before", years.size() == 730 && sec < 10
+                && years.get(729).lowest == WatchDays.heartIn(two.heart, n0.start, n0.end).lowest, years.size());
+    }
+
+    /** One zone for every time. */
+    static WatchDays.Zones zones(final ZoneId z) {
+        return new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return z;
+            }
+        };
     }
 
     static List<byte[]> dhBodies(List<WatchDemo.Msg> msgs) {

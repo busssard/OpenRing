@@ -84,10 +84,10 @@ public final class DayData {
      */
     public app.openring.core.DeviceHistory deviceHistory;
     /**
-     * The watch tells REM from light sleep (owner's report of 13 November, {@code WatchDays.tellsRem}: any stored sleep record is
-     * REM). Without, every watch night shows "Light and REM" as one stage and its score leaves REM out. Ring nights never change.
+     * Which watch nights tell REM from light sleep (owner's report of 13 November; per night since the code review of #389,
+     * {@code WatchStore.rem}): the others show "Light and REM" as one stage and their score leaves REM out. Ring nights never change.
      */
-    public boolean watchRem = true;
+    public app.openring.core.withings.WatchDays.Rem watchRem = app.openring.core.withings.WatchDays.Rem.ALWAYS;
     /** The watch's nights of {@link #deviceHistory} around the date as the ring's night objects, for the recent nights strip. */
     public final List<JSONObject> watchRecent = new ArrayList<JSONObject>();
     /** The devices the tabs are built for (issue #373, {@code core/Start}); never null after {@link #load}. */
@@ -280,7 +280,7 @@ public final class DayData {
             // the demo shown as for only the phone (screen test, issue #373) leaves the watch's rows out too
             if (app.openring.data.WatchStore.any(db) && (has.watch || !p.demo())) {
                 watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
-                watchRem = app.openring.data.WatchStore.tellsRem(db);
+                watchRem = app.openring.data.WatchStore.rem(db);
             }
         } catch (RuntimeException e) {
             watch = null;
@@ -329,20 +329,33 @@ public final class DayData {
             // the statistics without a ring (owner's report of 13 November); with a ring its own charts show
             int dev = app.openring.core.DeviceHistory.device(has.ring, has.watch, phone != null);
             if (dev >= 0) {
-                LocalDate today = LocalDate.now();
-                LocalDate first = date.minusDays(app.openring.core.DeviceHistory.MONTH - 1);
-                LocalDate last = date.plusDays(app.openring.core.DeviceHistory.AFTER);
-                if (last.isAfter(today)) last = today.isBefore(date) ? date : today;
-                double from = app.openring.core.DeviceHistory.rowsFrom(first, zone), to = last.plusDays(1).atStartOfDay(zone).toEpochSecond();
-                app.openring.core.MainDevice.Watch w = dev == app.openring.core.MainDevice.WATCH && app.openring.data.WatchStore.any(db)
-                        ? app.openring.data.WatchStore.window(db, from, to) : null;
+                // from the strip's oldest night (30 before) to 30 after, at most today; each day in its own zone as its dial,
+                // the shown day in the zone its dial has (code review of #389)
+                LocalDate[] range = app.openring.core.DeviceHistory.range(date, LocalDate.now());
+                LocalDate first = range[0], last = range[1];
+                final app.openring.core.DeviceHistory.DayZones noted = app.openring.data.WatchHistory.dayZones(db, java.time.ZoneId.systemDefault());
+                final LocalDate shown = date;
+                final java.time.ZoneId shownZone = zone;
+                app.openring.core.DeviceHistory.DayZones zones = new app.openring.core.DeviceHistory.DayZones() {
+                    @Override
+                    public java.time.ZoneId of(LocalDate day) {
+                        return day.equals(shown) ? shownZone : noted.of(day);
+                    }
+                };
+                double from = app.openring.core.DeviceHistory.rowsFrom(first, last, zones);
+                double to = last.plusDays(1).atStartOfDay(zones.of(last)).toEpochSecond();
+                app.openring.core.MainDevice.Watch w = null;
+                if (dev == app.openring.core.MainDevice.WATCH && app.openring.data.WatchStore.any(db)) {
+                    w = app.openring.data.WatchStore.window(db, from, to);
+                    // sleep debt reads 90 nights before each of its 14 days (the ring's rule): only the sleep pieces reach that far
+                    w.sleep.clear();
+                    w.sleep.addAll(app.openring.data.WatchStore.sleepRows(db, app.openring.core.DeviceHistory.sleepFrom(first, zones), to));
+                }
                 // the phone's window as the scores read it: from 35 days before the first day (a day less than the watch's)
                 app.openring.core.MainDevice.Phone ph = dev == app.openring.core.MainDevice.PHONE && phoneAny
                         ? app.openring.data.PhoneStore.window(db, from + 86400, to) : null;
-                deviceHistory = app.openring.core.DeviceHistory.of(dev, first, last, zone, w, ph, p.watchGoal(), p.age(), watchRem);
-                if (dev == app.openring.core.MainDevice.WATCH) {
-                    watchRecent.addAll(app.openring.data.WatchHistory.json(deviceHistory.nights(date.minusDays(app.openring.core.DeviceHistory.MONTH), last)));
-                }
+                deviceHistory = app.openring.core.DeviceHistory.of(dev, first, last, zones, w, ph, p.watchGoal(), p.age(), watchRem);
+                if (dev == app.openring.core.MainDevice.WATCH) watchRecent.addAll(app.openring.data.WatchHistory.json(deviceHistory.strip(date)));
             }
         } catch (RuntimeException e) {
             // the tabs show today's numbers without the charts below them

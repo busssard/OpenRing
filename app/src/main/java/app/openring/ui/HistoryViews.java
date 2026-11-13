@@ -146,13 +146,13 @@ final class HistoryViews {
             bed[i] = n == null ? Double.NaN : n.fields.sleepStart;
             wake[i] = n == null ? Double.NaN : n.fields.sleepEnd;
             if (!Double.isNaN(bed[i])) nights++;
-            tips[i] = DeviceHistory.tip(day, DeviceHistory.timesText(n, h.zone), Locale.getDefault());
+            tips[i] = DeviceHistory.tip(day, DeviceHistory.timesText(n, h.zone(day)), Locale.getDefault());
             dates[i] = day.getDayOfMonth() + "." + day.getMonthValue() + ".";
         }
         LinearLayout times = Ui.card(c);
         times.addView(Ui.caption(c, "Sleep times, last 30 days"));
         times.addView(Ui.gap(c, 8));
-        Charts.SleepTimes st = new Charts.SleepTimes(c, bed, wake, tips, dates, h.zone);
+        Charts.SleepTimes st = new Charts.SleepTimes(c, bed, wake, tips, dates, d.zone);
         st.setContentDescription("Sleep times, last 30 days");
         times.addView(st, Ui.sized(c, -1, 190));
         times.addView(Ui.gap(c, 6));
@@ -180,7 +180,7 @@ final class HistoryViews {
             double s0 = r.fields.sleepStart, s1 = r.fields.sleepEnd;
             String rel = s1 > s0 ? ((r.lowestAt - s0) / (s1 - s0) <= 0.5 ? ", in the first half of the night" : ", late in the night") : "";
             card.addView(Ui.gap(c, 6));
-            card.addView(Ui.body(c, "Lowest reading at " + Pages.minute(r.lowestAt, h.zone) + rel + "."));
+            card.addView(Ui.body(c, "Lowest reading at " + Pages.minute(r.lowestAt, r.zone) + rel + "."));
         }
         card.addView(Ui.text(c, Explain.WATCH_RHR, 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(card);

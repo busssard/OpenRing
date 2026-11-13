@@ -119,7 +119,8 @@ public final class WatchPageActivity extends Activity {
                     WatchStore.Data read = WatchStore.load(db);
                     // the zones and the per day answers once, here and not on each tap (without zone rows: the phone's zone)
                     z = zonesOf(db.zones());
-                    ix = new WatchDays.Index(read.steps, read.moves, read.heart, read.workouts, read.sleep, read.battery, z);
+                    // REM per night, from each watch's own rows (code review of #389)
+                    ix = new WatchDays.Index(read.steps, read.moves, read.heart, read.workouts, read.sleep, read.battery, z, WatchStore.rem(db));
                     d = read;
                 } catch (RuntimeException e) {
                     d = null;
@@ -272,7 +273,8 @@ public final class WatchPageActivity extends Activity {
             ZoneId z = zones.at(n.end);
             card.addView(Ui.statRow(c, Ui.stat(c, "Asleep", Ui.hm(n.asleepMin()), "", Ui.SLEEP, "Light, deep and REM added up"),
                     Ui.stat(c, "Awake", Ui.hm(n.awakeMin), "", Ui.SLEEP, "Awake inside the night, as the watch marked it")));
-            if (index.rem) {
+            boolean rem = index.rem.tells(n);
+            if (rem) {
                 card.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(n.deepMin), "", Ui.SLEEP, "Deep sleep as the watch counted it"),
                         Ui.stat(c, "Light", Ui.hm(n.lightMin), "", Ui.SLEEP, "Light sleep as the watch counted it")));
                 card.addView(Ui.statRow(c, Ui.stat(c, "REM", Ui.hm(n.remMin), "", Ui.SLEEP, "REM sleep as the watch counted it"),
@@ -286,7 +288,7 @@ public final class WatchPageActivity extends Activity {
             card.addView(Ui.gap(c, 8));
             WatchDays.NightHeart hr = index.heartIn(n);
             boolean withHr = !hr.points.isEmpty();
-            card.addView(new Charts.Hypnogram(c, n.stages, n.start, n.end).zone(z).heart(withHr ? hr.points : null).lightRem(!index.rem),
+            card.addView(new Charts.Hypnogram(c, n.stages, n.start, n.end).zone(z).heart(withHr ? hr.points : null).lightRem(!rem),
                     Ui.sized(c, -1, withHr ? 230 : 150));
             if (withHr) {
                 card.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", String.valueOf(hr.lowest), "bpm", Ui.HEART, "The watch's lowest reading this night"),
