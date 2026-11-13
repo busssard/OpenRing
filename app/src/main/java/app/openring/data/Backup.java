@@ -143,6 +143,8 @@ public final class Backup {
         // the reminder and "My periods have stopped" (issue #252, phase 1a2): the person's own, never the demo's
         Json.put(o, "period_remind_days", p.periodRemindDays());
         Json.put(o, "period_remind_min", p.periodRemindMinute());
+        // the prediction method (issue #383)
+        Json.put(o, "period_method", p.periodMethod());
         if (p.periodStoppedReal() != null) Json.put(o, "period_stopped", p.periodStoppedReal());
         if (p.periodAskLaterReal() != null) Json.put(o, "period_ask_later", p.periodAskLaterReal());
         Json.put(o, "screen_min_show", p.screenMinShowMin());
@@ -549,6 +551,8 @@ public final class Backup {
         if (o.has("badges_on")) p.setBadgesOn(o.optBoolean("badges_on", true));
         // phase 1a2: a value that is not one of the choices keeps the current one; an older backup has none of these
         if (app.openring.core.PeriodRemind.validDays(o.optInt("period_remind_days", -1))) p.setPeriodRemindDays(o.optInt("period_remind_days"));
+        // the prediction method (issue #383); an older backup has none, and an id this version does not know keeps the current one
+        if (app.openring.core.analysis.cycleforecast.Methods.valid(o.optInt("period_method", -1))) p.setPeriodMethod(o.optInt("period_method"));
         int remindMin = o.optInt("period_remind_min", -1);
         if (remindMin >= 0 && remindMin < 24 * 60) p.setPeriodRemindMinute(remindMin);
         // a backup that has the reminder but no "stopped" day was made while it was not said: it is not said after the restore either

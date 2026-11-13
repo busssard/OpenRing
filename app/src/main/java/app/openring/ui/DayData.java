@@ -49,9 +49,11 @@ public final class DayData {
     public LocalDate badgesSeen;
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
+    /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
+    public LocalDate periodFrom, periodTo;
     /**
-     * The nights' skin temperature compared with the usual ({@code temp_dev} of each day summary) from
-     * {@code Cycles.tempFrom()} to today, for the line next to the cycles (phase 1a2). Left out nights have no summary value.
+     * The nights' skin temperature compared with the usual ({@code temp_dev} of each day summary) from {@link #periodFrom} to
+     * today, for Body's temperature chart with the cycle on it. Left out nights have no summary value.
      */
     public final java.util.TreeMap<LocalDate, Double> periodTemps = new java.util.TreeMap<LocalDate, Double>();
     /** The morning temperatures by mouth imported from drip (phase 1b) over the same days, read only while the tracker shows. */
@@ -69,6 +71,12 @@ public final class DayData {
      * reading is stored in the file shown (the demo has its own). Read in the load's background task.
      */
     public boolean phoneSensor, phoneAllowed, phoneAny;
+    /**
+     * The scores from the watch, or from the phone without a ring (issue #379, {@code core/DeviceScores}): worked out on each
+     * load from the stored rows, nothing stored. Null with only a ring, or when the rows could not be read. Without a ring
+     * {@link #score} and {@link #scoreObj} show them; with a ring they are only the "Watch version" line.
+     */
+    public app.openring.core.DeviceScores.Result devices;
     /** The devices the tabs are built for (issue #373, {@code core/Start}); never null after {@link #load}. */
     public app.openring.core.Start.Has has = new app.openring.core.Start.Has(true, false, false);
     /**
@@ -177,7 +185,8 @@ public final class DayData {
             d.periodShown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
             if (d.periodShown) {
                 LocalDate today = LocalDate.now();
-                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped()));
+                // the prediction method of Settings (issue #383); measured below keeps it
+                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped())).withMethod(p.periodMethod());
                 d.periodAsk = d.periods.askStopped(p.age(), app.openring.core.analysis.Cycles.day(p.periodAskLater()));
                 try {
                     // phase 2: the temperature rise of each cycle, from the ring's nights and the mouth temperatures
@@ -186,9 +195,18 @@ public final class DayData {
                     // the calendar estimate stays; the error's kind only, never a date or a value
                     app.openring.ble.RingManager.get(c).log("day load: the temperature rise for the period tracker: " + e.getClass().getSimpleName());
                 }
-                // the day summaries hold no period data; read here so the line can sit next to the cycles
+                // "How close the estimates were" (issue #383): both backtests worked out here in the background, not while the
+                // card is drawn (each is kept in the estimate once done)
+                d.periods.backtest();
+                d.periods.riseBacktest();
+                // the day summaries hold no period data; read here for Body's temperature chart with the cycle on it, over
+                // its whole time span up to today (owner's feedback of 11 November)
+                LocalDate[] span = d.periods.tempWindow(date);
+                d.periodFrom = span[0];
+                d.periodTo = span[1];
+                String last = (span[1].isAfter(today) ? today : span[1]).toString();
                 try {
-                    for (String[] r : db.daysJson(d.periods.tempFrom().toString(), today.toString())) {
+                    for (String[] r : db.daysJson(span[0].toString(), last)) {
                         double v = Json.d(Json.parse(r[1]), "temp_dev");
                         if (!Double.isNaN(v)) d.periodTemps.put(LocalDate.parse(r[0]), v);
                     }
@@ -198,7 +216,7 @@ public final class DayData {
                     app.openring.ble.RingManager.get(c).log("day load: night temperatures for the period tracker: " + e.getClass().getSimpleName());
                 }
                 try {
-                    d.periodMouth.putAll(app.openring.data.Periods.temps(db, d.periods.tempFrom().toString(), today.toString()));
+                    d.periodMouth.putAll(app.openring.data.Periods.temps(db, span[0].toString(), last));
                 } catch (RuntimeException e) {
                     // the line shows the ring's nights only; the error's kind only, never a date or a value
                     d.periodMouth.clear();
@@ -275,6 +293,34 @@ public final class DayData {
             ok = failed(c, date, "main device", e);
         }
         merged = app.openring.core.MainDevice.of(main, date, ds, de, zone, ring, watch, phone);
+        try {
+            // the scores without a ring (issue #379): the watch's or the phone's rows of the last five weeks
+            int dev = app.openring.core.DeviceScores.device(has.ring, has.watch, phone != null);
+            if (dev >= 0) {
+                double from = ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600;
+                app.openring.core.MainDevice.Watch w = dev == app.openring.core.MainDevice.WATCH && app.openring.data.WatchStore.any(db)
+                        ? app.openring.data.WatchStore.window(db, from - 86400, de) : null;
+                app.openring.core.MainDevice.Phone ph = dev == app.openring.core.MainDevice.PHONE && phoneAny
+                        ? app.openring.data.PhoneStore.window(db, from, de) : null;
+                devices = app.openring.core.DeviceScores.of(dev, date, zone, w, ph, p.watchGoal(), p.age());
+            }
+        } catch (RuntimeException e) {
+            // the tabs show the scores as without data; the ring's own are not touched
+            devices = null;
+            ok = failed(c, date, "scores without a ring", e);
+        }
+    }
+
+    /** The score {@code key} comes from the watch or the phone: no ring, and the device has one (issue #379). */
+    public boolean fromDevice(String key) {
+        return !has.ring && devices != null && !Double.isNaN(devices.value(key));
+    }
+
+    /** With a ring, the line "Watch version: 78" under the ring's score {@code key} when the watch has one too; else null. */
+    public String watchVersion(String key) {
+        if (!has.ring || devices == null || devices.device != app.openring.core.MainDevice.WATCH) return null;
+        double v = devices.value(key);
+        return Double.isNaN(v) ? null : app.openring.core.DeviceScores.version(v);
     }
 
     /** Values of a day field for the {@code n} days ending at the selected date (NaN if missing). */
@@ -309,6 +355,8 @@ public final class DayData {
 
     public double score(String key) {
         if ("screen".equals(key)) return screen == null || screen.score == null ? Double.NaN : screen.score.value;
+        // without a ring the watch's or the phone's (issue #379); a ring's stored score is never replaced
+        if (fromDevice(key)) return devices.value(key);
         if ("sleep".equals(key)) {
             JSONObject s = night == null ? null : night.optJSONObject("score");
             return s == null || !s.has("value") ? Double.NaN : s.optDouble("value");
@@ -318,6 +366,11 @@ public final class DayData {
     }
 
     public JSONObject scoreObj(String key) {
+        if (fromDevice(key)) {
+            JSONObject o = Json.score("sleep".equals(key) ? devices.sleep : "readiness".equals(key) ? devices.readiness : devices.activity);
+            Json.put(o, "device", devices.device);
+            return o;
+        }
         if ("sleep".equals(key)) return night == null ? null : night.optJSONObject("score");
         return day == null ? null : day.optJSONObject(key);
     }

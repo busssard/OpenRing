@@ -5,25 +5,26 @@ import android.graphics.Canvas;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.List;
 import java.util.Map;
 
 import app.openring.core.MonthGrid;
 
 /**
- * The Badges page's month calendar (issue #265, phase 1b): a dot under each day with a badge, a bigger one with two or
- * more, today with an outline. Touch works like the period calendar ({@link PeriodCalendar}): slide sideways to read each
+ * The Badges page's month calendar (issue #265, phase 1b): under each day with badges one dot per badge in its colour
+ * (the colour of its tab, as on the badges themselves), today with an outline. Touch works like the period calendar ({@link PeriodCalendar}): slide sideways to read each
  * day the finger passes, a tap without movement opens the day, a move that starts upwards or downwards scrolls the page.
  */
 final class BadgeCalendar extends MonthView {
     interface Listener extends MonthView.Listener {
     }
 
-    private final Map<LocalDate, Integer> counts;
+    private final Map<LocalDate, List<Integer>> colors;
     private final LocalDate today;
 
-    BadgeCalendar(Context c, Map<LocalDate, Integer> counts, LocalDate today, YearMonth month, Listener listener) {
+    BadgeCalendar(Context c, Map<LocalDate, List<Integer>> colors, LocalDate today, YearMonth month, Listener listener) {
         super(c, month, listener, true, "Badge calendar, touch and slide to read the days, tap a day to open it");
-        this.counts = counts;
+        this.colors = colors;
         this.today = today;
     }
 
@@ -40,10 +41,15 @@ final class BadgeCalendar extends MonthView {
             LocalDate d = month.atDay(dom);
             int i = off + dom - 1, col = i % MonthGrid.COLS, row = i / MonthGrid.COLS;
             float cx = cw * (col + 0.5f), cy = head + row * cellH + cellH / 2 - Ui.dp(c, 4);
-            Integer n = counts.get(d);
-            if (n != null && n > 0) {
-                fill.setColor(Ui.GOOD);
-                cv.drawCircle(cx, cy + rad + Ui.dp(c, 1), Ui.dp(c, n >= 2 ? 3.5f : 2.4f), fill);
+            List<Integer> cs = colors.get(d);
+            if (cs != null && !cs.isEmpty()) {
+                // side by side and centred; up to all 7 kinds fit a cell of a narrow phone
+                float dot = Ui.dp(c, 2.4f), step = Math.min(dot * 2 + Ui.dp(c, 1.6f), (cw - Ui.dp(c, 4)) / cs.size());
+                float x0 = cx - step * (cs.size() - 1) / 2f;
+                for (int k = 0; k < cs.size(); k++) {
+                    fill.setColor(cs.get(k));
+                    cv.drawCircle(x0 + k * step, cy + rad + Ui.dp(c, 2), Math.min(dot, step * 0.45f), fill);
+                }
             }
             if (d.equals(today)) {
                 stroke.setColor(Ui.TEXT);

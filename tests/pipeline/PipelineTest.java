@@ -599,7 +599,8 @@ public class PipelineTest {
         check("demo uses its own database", demo.fileName.equals(Db.DEMO), demo.fileName);
         // issue #252: the made up period log is in the demo file only, today on cycle day 20
         app.openring.core.analysis.Cycles demoCycles = app.openring.data.Periods.cycles(demo, demoToday);
-        check("#252 demo: 8 made up cycles, today on cycle day 20", demoCycles.cycles.size() == 8 && demoCycles.cycleDay(demoToday) == 20
+        // issue #383: about 3 years (37 cycles), so the prediction methods can be compared
+        check("#252 demo: 37 made up cycles, today on cycle day 20", demoCycles.cycles.size() == 37 && demoCycles.cycleDay(demoToday) == 20
                 && demoCycles.estimates(), demoCycles.cycles);
         check("#252 demo: the real file holds no period day", daysIn252(phone2.getDatabasePath(Db.REAL)).isEmpty(), daysIn252(phone2.getDatabasePath(Db.REAL)));
         check("#252d demo: made up morning temperatures by mouth as one import, in the demo file", demo.count("SELECT COUNT(*) FROM period_imports WHERE gone = 0") == 1
@@ -921,6 +922,7 @@ public class PipelineTest {
         startDevices373();
         badges265();
         phase1a2_252();
+        methods383();
         rise252();
         drip252();
         dripLarge252();
@@ -12154,6 +12156,57 @@ public class PipelineTest {
     }
 
     /** A backup zip holding only the settings file {@code json}. */
+    /**
+     * Issue #383: the prediction method is display only. Its setting (defaults, only the choices, through a backup, an older
+     * backup without it); working out every method and both backtests on a stored log writes nothing (the period rows and the
+     * analysis state are the same after); the reminder's read only helper gives the same estimate as the screens' way.
+     */
+    static void methods383() throws Exception {
+        Context c = phone254("openring383");
+        Db db = Db.get(c);
+        LocalDate today = LocalDate.parse("2026-11-12");
+        java.util.TreeMap<LocalDate, Integer> made = app.openring.core.analysis.Cycles.demoHistory(today);
+        for (java.util.Map.Entry<LocalDate, Integer> e : made.entrySet()) app.openring.data.Periods.setFlow(db, e.getKey().toString(), e.getValue(), 7000);
+        String rows = periodRows252(db), results = results252(db);
+        long kv = db.count("SELECT COUNT(*) FROM kv");
+        app.openring.core.analysis.Cycles base = app.openring.data.Periods.cycles(db, today, null);
+        StringBuilder nexts = new StringBuilder();
+        for (int id : app.openring.core.analysis.cycleforecast.Methods.CHOICES) {
+            app.openring.core.analysis.Cycles cy = app.openring.data.Periods.measured(db, base.withMethod(id), ZoneId.systemDefault());
+            cy.backtest();
+            cy.riseBacktest();
+            nexts.append(app.openring.core.analysis.cycleforecast.Methods.name(id)).append(' ').append(cy.next).append(" +-").append(cy.range).append("; ");
+        }
+        check("#383 every method and both backtests on 3 years of log: no period row, no analysis and no setting row written", periodRows252(db).equals(rows)
+                && results252(db).equals(results) && db.count("SELECT COUNT(*) FROM kv") == kv, nexts);
+        app.openring.core.analysis.Cycles best = app.openring.data.Periods.measured(db, base.withMethod(app.openring.core.analysis.cycleforecast.Methods.BEST), ZoneId.systemDefault());
+        app.openring.core.analysis.Cycles ro = app.openring.data.Periods.readReal(c, today, null).withMethod(app.openring.core.analysis.cycleforecast.Methods.BEST);
+        check("#383 the reminder's read only helper gives the screens' estimate with the method", ro.next.equals(best.next) && ro.range == best.range
+                && ro.methodId == best.methodId && best.methodId != app.openring.core.analysis.cycleforecast.Methods.OPEN_RING, ro.next + " / " + best.next);
+
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        boolean def = p.periodMethod() == app.openring.core.analysis.cycleforecast.Methods.BEST;
+        p.setPeriodMethod(42);
+        boolean invalid = p.periodMethod() == app.openring.core.analysis.cycleforecast.Methods.BEST;
+        p.setPeriodMethod(app.openring.core.analysis.cycleforecast.Methods.TREND);
+        check("#383 setting: Best for you by default, only the choices are stored", def && invalid && p.periodMethod() == app.openring.core.analysis.cycleforecast.Methods.TREND, p.periodMethod());
+        java.io.ByteArrayOutputStream ko = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, ko, false);
+        Context b = freshDb("openring383-backup");
+        MADE_254.add(b);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(ko.toByteArray()));
+        app.openring.data.Prefs q = app.openring.data.Prefs.of(b);
+        check("#383 a backup carries the method", r.ok && q.periodMethod() == app.openring.core.analysis.cycleforecast.Methods.TREND, r.message + " " + q.periodMethod());
+        String json = new String(zipEntry(ko.toByteArray(), "openring-backup.json"), "UTF-8");
+        q.setPeriodMethod(app.openring.core.analysis.cycleforecast.Methods.DRIP);
+        String older = json.replaceAll(",?\"period_method\":-?\\d+", "");
+        r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(zip252(older)));
+        boolean kept = r.ok && !older.contains("period_method") && q.periodMethod() == app.openring.core.analysis.cycleforecast.Methods.DRIP;
+        r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(zip252(json.replace("\"period_method\":4", "\"period_method\":42"))));
+        check("#383 an older backup without it, or one with an unknown method, keeps the current choice", kept && r.ok
+                && q.periodMethod() == app.openring.core.analysis.cycleforecast.Methods.DRIP && json.contains("\"period_method\":4"), q.periodMethod());
+    }
+
     static byte[] zip252(String json) throws Exception {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {

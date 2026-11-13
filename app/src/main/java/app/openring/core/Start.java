@@ -86,14 +86,17 @@ public final class Start {
 
     /** Today: the readiness, sleep and activity rings; Find my ring; the ring's Key metrics; Live heart rate. */
     public static final String SCORES = "scores", FIND = "find", RING_METRICS = "ring_metrics", LIVE = "live";
-    /** Today without a ring: the Screen ring with the line that the scores need a ring; the watch's day; the phone's day. */
-    public static final String NEED_SCORES = "need_scores", WATCH_DAY = "watch_day", PHONE_DAY = "phone_day";
+    /**
+     * Today without a ring: the dials of the scores from the watch or the phone with the Screen ring (issue #379,
+     * {@code core/DeviceScores}); the watch's day; the phone's day.
+     */
+    public static final String DEVICE_SCORES = "device_scores", WATCH_DAY = "watch_day", PHONE_DAY = "phone_day";
     /** Today: the watch was chosen but is not added yet. */
     public static final String FINISH_WATCH = "finish_watch";
     /** Sleep and Ready with neither device: one card with both ways to add one. */
     public static final String NEED_DEVICE = "need_device";
-    /** Ready with only the watch: readiness needs a ring. */
-    public static final String READY_NEEDS_RING = "ready_needs_ring";
+    /** Ready with only the watch: readiness from the watch (issue #379). */
+    public static final String READY_WATCH = "ready_watch";
     /** Body: the ring's latest readings, the live buttons, radar, cardio capacity and night charts; else one card instead. */
     public static final String RING_BODY = "ring_body", NIGHT_NEEDS_RING = "night_needs_ring";
     /** Body: the heart rate of the day (ring or watch); with neither one line instead. */
@@ -116,7 +119,7 @@ public final class Start {
                     out.add(RING_METRICS);
                     out.add(LIVE);
                 } else {
-                    out.add(NEED_SCORES);
+                    out.add(DEVICE_SCORES);
                     if (h.watchPending) out.add(FINISH_WATCH);
                     out.add(h.watch ? WATCH_DAY : PHONE_DAY);
                 }
@@ -126,7 +129,7 @@ public final class Start {
                 break;
             case READY:
                 if (h.phoneOnly()) out.add(NEED_DEVICE);
-                else if (!h.ring) out.add(READY_NEEDS_RING);
+                else if (!h.ring) out.add(READY_WATCH);
                 break;
             case BODY:
                 out.add(h.phoneOnly() ? HEART_NEEDS_DEVICE : HEART);
@@ -181,8 +184,6 @@ public final class Start {
     // tabs without a ring
     public static final String ADD_RING = KeyState.ADD_RING;
     public static final String ADD_WATCH = "Add a watch";
-    public static final String SCORES_NEED_RING = "Readiness, sleep and activity scores need a ring.";
-    public static final String SCORES_NEED_DEVICE = "Readiness, sleep and activity scores need a ring. Sleep also comes from a watch.";
     public static final String WATCH_DAY_TITLE = "From your watch";
     public static final String PHONE_DAY_TITLE = "From this phone";
     public static final String FINISH_TITLE = "Finish setting up your watch";
@@ -190,15 +191,10 @@ public final class Start {
     public static final String FINISH_BUTTON = "Open the watch setup";
     public static final String WATCH_PAGE = "Open the watch page";
     public static final String NO_WATCH_NIGHT = "No sleep from your watch for this night. Wear the watch at night and sync it in the morning.";
-    public static final String READY_TITLE = "Readiness needs a ring";
-    public static final String READY_TEXT = "Readiness compares each night's heart rate, heart rate variability (HRV) and skin temperature with your "
-            + "normal. The watch measures heart rate only, about every 30 minutes, so there is no readiness with only the watch yet. "
-            + "Your sleep and steps from the watch are on Sleep and Activity.";
     public static final String NIGHT_TITLE = "Night measurements need a ring";
     public static final String NIGHT_TEXT = "Heart rate variability (HRV), breathing, blood oxygen, skin temperature, the symptom radar and cardio "
             + "capacity come from the ring's sensors at night. The watch measures heart rate only.";
     public static final String HEART_NEEDS = "Heart rate through the day needs a ring or a watch.";
-    public static final String ACTIVITY_NEEDS_RING = "The activity score and calories need a ring. Steps and workouts are below.";
     public static final String NEED_DEVICE_TEXT = "Sleep and readiness need a ring or a watch.";
     public static final String ADD_DEVICE_TITLE = "Add a device";
     public static final String ADD_DEVICE_TEXT = "Pair a ring for sleep, readiness and night measurements, or a watch for steps, heart rate and its own sleep.";
@@ -221,8 +217,8 @@ public final class Start {
     public static String[] texts() {
         return new String[] {TITLE, INTRO, GET_STARTED, CHOICE_TITLE, CHOICE_TEXT, RING_TITLE, RING_TEXT, WATCH_TITLE, WATCH_TEXT, PHONE_TITLE,
             PHONE_TEXT, BOTH, bluetooth(RING), bluetooth(WATCH), profile(RING), profile(WATCH), profile(PHONE), ADD_RING, ADD_WATCH,
-            SCORES_NEED_RING, SCORES_NEED_DEVICE, WATCH_DAY_TITLE, PHONE_DAY_TITLE, FINISH_TITLE, FINISH_TEXT, FINISH_BUTTON, WATCH_PAGE,
-            NO_WATCH_NIGHT, READY_TITLE, READY_TEXT, NIGHT_TITLE, NIGHT_TEXT, HEART_NEEDS, ACTIVITY_NEEDS_RING, NEED_DEVICE_TEXT,
+            WATCH_DAY_TITLE, PHONE_DAY_TITLE, FINISH_TITLE, FINISH_TEXT, FINISH_BUTTON, WATCH_PAGE,
+            NO_WATCH_NIGHT, NIGHT_TITLE, NIGHT_TEXT, HEART_NEEDS, NEED_DEVICE_TEXT,
             ADD_DEVICE_TITLE, ADD_DEVICE_TEXT, STEPS_WATCH, STEPS_PHONE, SLEEP_WATCH, HR_LOW, HR_AVG, WORKOUTS, SCREEN_TODAY, workouts(1), workouts(3)};
     }
 }

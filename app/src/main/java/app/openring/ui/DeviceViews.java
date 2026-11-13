@@ -52,22 +52,50 @@ final class DeviceViews {
     }
 
     /**
-     * Today's top without a ring: the Screen ring next to the line that the scores need a ring, and the button(s) to add
-     * one (a watch too when there is none).
+     * Today's top without a ring (issue #379): the dials of the scores from the watch (readiness, sleep, activity) or from the
+     * phone (activity), each opening its tab, with the Screen ring; the line where they come from; the button(s) to add a
+     * device (a watch too when there is none).
      */
     static View scoresWithout(Context c, DayData d, Pages.Nav nav) {
         LinearLayout card = Ui.card(c);
         LinearLayout row = Ui.hbox(c);
-        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setGravity(Gravity.CENTER);
+        if (d.has.watch) {
+            row.addView(Pages.ringButton(c, d.score("readiness"), "Readiness", Ui.READY, nav, Pages.READINESS), Ui.weight(1));
+            row.addView(Pages.ringButton(c, d.score("sleep"), "Sleep", Ui.SLEEP, nav, Pages.SLEEP), Ui.weight(1));
+        }
+        row.addView(Pages.ringButton(c, d.score("activity_score"), "Activity", Ui.ACTIVE, nav, Pages.ACTIVITY), Ui.weight(1));
         double sc = d.score("screen");
         row.addView(Pages.ringButton(c, sc, "Screen", Ui.OXY, nav, Pages.SCREEN, Double.isNaN(sc) && !Pages.screenReady(c) ? "Tap to set up" : null), Ui.weight(1));
-        TextView t = Ui.body(c, d.has.watch ? Start.SCORES_NEED_RING : Start.SCORES_NEED_DEVICE);
-        LinearLayout.LayoutParams tl = Ui.weight(2);
-        tl.setMargins(Ui.dp(c, 12), 0, 0, 0);
-        row.addView(t, tl);
         card.addView(row);
+        card.addView(Ui.gap(c, 8));
+        TextView t = Ui.text(c, d.has.watch ? app.openring.core.DeviceScores.TODAY_WATCH : app.openring.core.DeviceScores.TODAY_PHONE, 12, Ui.TEXT_2, Ui.REGULAR);
+        t.setGravity(Gravity.CENTER);
+        card.addView(t);
         addButtons(c, card, !d.has.watch);
         return card;
+    }
+
+    /**
+     * A score from the watch or the phone (issue #379): its contributors with the texts for the device version, then the
+     * parts left out and why (the evidence of what the score could not use).
+     */
+    static void deviceParts(Context c, LinearLayout root, DayData d, String key, int color) {
+        root.addView(Pages.contributors(c, d.scoreObj(key), color, "Contributors"));
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, app.openring.core.DeviceScores.LEFT_TITLE));
+        java.util.List<app.openring.core.DeviceScores.Left> left = d.devices == null ? new java.util.ArrayList<app.openring.core.DeviceScores.Left>()
+                : d.devices.left(key);
+        if (left.isEmpty()) {
+            card.addView(Ui.gap(c, 4));
+            card.addView(Ui.body(c, app.openring.core.DeviceScores.NOTHING_LEFT));
+        }
+        for (app.openring.core.DeviceScores.Left l : left) {
+            card.addView(Ui.gap(c, 6));
+            card.addView(Ui.text(c, l.label, 14, Ui.TEXT, Ui.MEDIUM));
+            card.addView(Ui.text(c, l.why, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
+        root.addView(card);
     }
 
     /** Today: the watch was chosen at the start but is not added yet. */
