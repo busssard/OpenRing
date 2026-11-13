@@ -510,37 +510,24 @@ shot sleep-watch-heart 1
 if tap_desc_at "Sleep stages and heart rate" 30; then shot sleep-watch-heart-touch 1
 else echo "::warning::issue #251 step skipped: the watch's night chart was not on screen to touch it"; fi
 # The statistics without a ring (owner's report of 13 November): with only the watch (extra devices 1, demo mode only,
-# nothing stored) each tab shows its 7 and 30 day charts from the watch, scrolled to them; the demo's watch is like the
-# owner's Steel HR and sends no REM, so its nights show Light and REM as one stage (one row, no REM part in the score).
-# Sleep: the stage list with Light and REM, the details and sleep debt, the 7 day chart, the sleep times touched on a night,
-# Further analysis of the watch's nights; Ready, Activity and Body their charts; Activity with only the phone its steps
-launch --ei tab 1 --ei devices 1; sleep 3
-scroll_to "Light and REM, and deep" 6 || echo "::warning::REM step: the Light and REM line was not found on Sleep with only the watch"
-shot sleep-watch-light-rem 1
-launch --ei tab 1 --ei devices 1; sleep 3
-scroll_to "SLEEP DEBT" 20 || echo "::warning::watch statistics step: Sleep debt was not found on Sleep with only the watch"
-shot sleep-watch-only-stats 1
-scroll_to "SLEEP TIMES, LAST 30 DAYS" 12 || echo "::warning::watch statistics step: Sleep times was not found on Sleep with only the watch"
+# nothing stored) each tab shows its 7 and 30 day charts from the watch. The extra card (demo mode only, underscores for
+# spaces) opens the page scrolled to a text, so these shots need no swipes. The demo's watch is like the owner's Steel HR
+# and sends no REM, so its nights show Light and REM as one stage (one row, no REM part in the score). Sleep: the stage
+# list with Light and REM, sleep debt and the 7 day chart, the sleep times touched on a night, Further analysis of the
+# watch's nights; Ready, Activity (steps touched, workouts) and Body their charts; Activity with only the phone its steps
+launch --ei tab 1 --ei devices 1 --es card "Light_and_REM,_and_deep"; shot sleep-watch-light-rem
+launch --ei tab 1 --ei devices 1 --es card SLEEP_DEBT;             shot sleep-watch-only-stats
+launch --ei tab 1 --ei devices 1 --es card SLEEP_TIMES; sleep 3
 if tap_desc_at "Sleep times, last 30 days" 75; then shot sleep-watch-only-times 1
 else echo "::warning::watch statistics step skipped: the sleep times chart was not on screen to touch it"; fi
-launch --ei tab 1 --ei devices 1 --ez analysis true --ei period 1; sleep 4
-scroll_to "AVERAGE NIGHT" 30 || echo "::warning::watch statistics step: Further analysis was not found on Sleep with only the watch"
-shot sleep-watch-only-analysis 2
-launch --ei tab 2 --ei devices 1; sleep 3
-scroll_to "LAST NIGHT" 20 || echo "::warning::watch statistics step: the heart rate card was not found on Ready with only the watch"
-shot ready-watch-only-stats 1
-launch --ei tab 3 --ei devices 1; sleep 3
-scroll_to "STEPS, LAST 7 DAYS" 30 || echo "::warning::watch statistics step: Steps, last 7 days was not found on Activity with only the watch"
+launch --ei tab 1 --ei devices 1 --ez analysis true --ei period 1 --es card Further_analysis; shot sleep-watch-only-analysis 5
+launch --ei tab 2 --ei devices 1 --es card LAST_NIGHT;             shot ready-watch-only-stats
+launch --ei tab 3 --ei devices 1 --es card "STEPS,_LAST_7"; sleep 3
 if tap_desc_at "Steps, last 7 days" 50; then shot activity-watch-only-stats 1
-else shot activity-watch-only-stats 1; fi
-scroll_to "WORKOUTS, LAST 30 DAYS" 20 || echo "::warning::watch statistics step: Workouts was not found on Activity with only the watch"
-shot activity-watch-only-workouts 1
-launch --ei tab 4 --ei devices 1; sleep 3
-scroll_to "RESTING HEART RATE, 30 DAYS" 30 || echo "::warning::watch statistics step: the 30 day charts were not found on Body with only the watch"
-shot body-watch-only-stats 1
-launch --ei tab 3 --ei devices 2; sleep 3
-scroll_to "STEPS, LAST 7 DAYS" 30 || echo "::warning::watch statistics step: Steps, last 7 days was not found on Activity with only the phone"
-shot activity-phone-only-stats 1
+else echo "::warning::watch statistics step: Steps, last 7 days was not on screen to touch it"; shot activity-watch-only-stats 1; fi
+launch --ei tab 3 --ei devices 1 --es card "WORKOUTS,_LAST_30";    shot activity-watch-only-workouts
+launch --ei tab 4 --ei devices 1 --es card "RESTING_HEART_RATE,_30"; shot body-watch-only-stats
+launch --ei tab 3 --ei devices 2 --es card "STEPS,_LAST_7";        shot activity-phone-only-stats
 # A time left out because someone else wore the ring (issue #254), last: the example changes the demo's results for
 # every shot after it. left_out leaves out the day before yesterday 13:00 to 17:00, only in demo mode (the demo file),
 # then the analysis runs again: the Body tab shows the grey band on Heart rate today, Today the Left out card, and
