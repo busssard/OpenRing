@@ -198,6 +198,25 @@ public final class MainActivity extends Activity implements RingManager.Listener
     private boolean preparingDemo;
     /** Scroll position to return to while stepping through days, -1 when none is pending. */
     private int wantedY = -1;
+    /**
+     * Screen test, demo mode only (extra {@code card}, underscores for spaces): the page opens scrolled to the first text that
+     * starts with it, so a shot of a card near the end of a long page needs no swipes (the watch statistics). Null for none.
+     */
+    private String cardPending;
+
+    /** The top of the first text inside {@code v} that starts with {@code start}, relative to {@code v}; -1 when none. */
+    static int textTop(View v, String start) {
+        if (v instanceof TextView && ((TextView) v).getText().toString().startsWith(start)) return 0;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View ch = g.getChildAt(i);
+                int t = textTop(ch, start);
+                if (t >= 0) return ch.getTop() + t;
+            }
+        }
+        return -1;
+    }
 
     void stepDay(LocalDate d) {
         if (wantedY < 0) wantedY = scroll.getScrollY();
@@ -237,6 +256,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
         if (i.getBooleanExtra("analysis", false)) Pages.analysisOpen = true;
         if (i.hasExtra("period")) Pages.analysisPeriod = i.getIntExtra("period", 1);
+        String card = i.getStringExtra("card");
+        cardPending = card != null && Prefs.of(this).demo() ? card.replace('_', ' ') : null;
         String day = i.getStringExtra("day");
         if (day != null) {
             try {
@@ -704,11 +725,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
         final int y = wantedY >= 0 ? wantedY : scroll.getScrollY();
         scroll.removeAllViews();
         scroll.addView(content);
+        final View shown = content;
         scroll.post(new Runnable() {
             @Override
             public void run() {
                 scroll.scrollTo(0, y);
                 if (scroll.getScrollY() >= y) wantedY = -1;
+                // the screen test's card (demo mode only): once it is on the page, scroll to it a little below the top
+                int top = cardPending == null ? -1 : textTop(shown, cardPending);
+                if (top >= 0) {
+                    scroll.scrollTo(0, Math.max(0, top - Ui.dp(MainActivity.this, 12)));
+                    cardPending = null;
+                }
             }
         });
         for (int i = 0; i < nav.getChildCount(); i++) {

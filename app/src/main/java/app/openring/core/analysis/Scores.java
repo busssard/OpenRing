@@ -58,6 +58,9 @@ public final class Scores {
 
     // ------------------------------------------------------------------------------- sleep
 
+    /** The stage source of a watch night whose watch does not tell REM from light sleep: staged, REM left out. Never a ring night's. */
+    public static final String NO_REM = "watch_no_rem";
+
     public static Night.Score sleep(Night n, int tzOffsetS, double age) {
         Night.Score sc = new Night.Score();
         double h = n.asleepMin / 60.0;
@@ -80,10 +83,12 @@ public final class Scores {
                 Texts.count(n.awakenings, "wake up", "wake ups") + ", " + hm(n.wasoMin) + " awake");
         }
 
-        // "watch": Withings' own stages for the score without a ring (issue #379, core/DeviceScores); never a ring night's source
-        boolean staged = "ring".equals(n.stageSource) || "signals".equals(n.stageSource) || "watch".equals(n.stageSource);
+        // "watch": Withings' own stages for the score without a ring (issue #379, core/DeviceScores); never a ring night's source.
+        // "watch_no_rem": a watch that does not tell REM from light sleep (owner's report of 13 November): REM is left out
+        boolean staged = "ring".equals(n.stageSource) || "signals".equals(n.stageSource) || "watch".equals(n.stageSource)
+                || NO_REM.equals(n.stageSource);
         if (staged) {
-            add(sc, "rem", "REM sleep", Stats.curve(n.remMin, new double[][] {{0, 0}, {30, 30}, {60, 65}, {90, 92}, {110, 100}}), 10, hm(n.remMin));
+            if (!NO_REM.equals(n.stageSource)) add(sc, "rem", "REM sleep", Stats.curve(n.remMin, new double[][] {{0, 0}, {30, 30}, {60, 65}, {90, 92}, {110, 100}}), 10, hm(n.remMin));
             add(sc, "deep", "Deep sleep", Stats.curve(n.deepMin, new double[][] {{0, 0}, {20, 30}, {40, 62}, {60, 88}, {75, 100}}), 10, hm(n.deepMin));
         }
         add(sc, "latency", "Latency", Stats.curve(n.latencyMin, new double[][] {

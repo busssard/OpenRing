@@ -799,4 +799,59 @@ public final class Explain {
     public static final String PHONE_STEPS = "Your phone counts steps in its own sensor. Open Ring reads the count about once an hour and stores the difference. "
             + "Nothing leaves the phone. On some phones the sensor only counts while an app such as the phone's own health app keeps it on. "
             + "If the phone restarts because the battery ran out, the steps since the last reading are lost.";
+
+    // ---- the statistics without a ring (owner's report of 13 November, core/DeviceHistory) ----
+
+    /** A day without a value in a chart's readout. */
+    public static final String NO_VALUE = "no data";
+    public static final String NEEDS_RING_TITLE = "Needs a ring";
+    public static final String WATCH_IN_BED = "From the watch's first piece of sleep to its last";
+    public static final String WATCH_LATENCY = "Only when the watch marked you awake before sleep";
+    public static final String WATCH_WAKE_UPS = "Awake a minute or more between falling asleep and waking up";
+    public static final String WATCH_DEBT_BUILDING = "Needs five nights from the watch.";
+    public static final String WATCH_DEBT = "The ring's rule on the watch's nights: the last two weeks against your sleep need, recent nights counting more. "
+            + "Your need comes from your usual sleep once the watch has two weeks of nights, until then it is 8 hours.";
+    public static final String WATCH_SLEEP_TIMES = "Each bar is one night from your watch, from falling asleep (top) to waking up (bottom). "
+            + "Touch a bar to read the times.";
+    public static final String WATCH_NO_NIGHTS = "No nights from the watch yet";
+    public static final String WATCH_NO_HEART = "No heart rate from the watch yet";
+    public static final String NO_STEPS_YET = "No steps yet";
+    public static final String WATCH_SCORE_MONTH = "The sleep score of each night from your watch, the same as on that night's dial. Touch a dot to read it.";
+    public static final String WATCH_READY_WEEK = "Readiness from your watch on each day, the same as on that day's dial.";
+    public static final String ACTIVITY_WEEK_DEVICE = "The activity score of each day, the same as on that day's dial. Days with less than an hour of data have none.";
+    public static final String WATCH_KCAL = "Calories your watch counted for your movement each day, workouts not included.";
+    public static final String WATCH_WORKOUTS_MONTH = "Minutes of the workouts your watch recorded each day. Touch a bar to read the day.";
+    public static final String WATCH_RHR = "The watch's lowest heart rate reading of each night. It reads every 10 to 30 minutes, so it can be a few beats above the true lowest.";
+    public static final String WATCH_DAY_HR = "The average of each day's heart rate through the day, as on Heart rate today.";
+    public static final String SLEEP_NEEDS_RING = "HRV, breathing, blood oxygen and skin temperature through the night, and their charts, come from the ring's sensors. "
+            + "The watch measures heart rate only.";
+    public static final String ACTIVITY_NEEDS_RING = "Active and total burn against a calorie goal, Daily movement and Intensity through the day come from "
+            + "the ring's movement analysis. Steps stand in for them here.";
+    public static final String BODY_NEEDS_RING = "Heart rate variability (HRV), breathing, blood oxygen, skin temperature and the symptom radar come from the "
+            + "ring's sensors at night. The watch measures heart rate only.";
+    /** A watch that does not tell REM from light sleep (owner's report of 13 November): its two stages as one. */
+    public static final String LIGHT_REM = "Your watch cannot tell REM sleep from light sleep, so they are shown together as Light and REM.";
+    /** Further analysis with only the watch. */
+    public static final String WATCH_ANALYSIS = "From your watch's nights, Withings' own stages. HRV needs a ring.";
+
+    /** The line under Cardio capacity with only the watch: where it comes from, or why there is none. */
+    public static String vo2maxWatch(double v, boolean hadNight) {
+        if (Double.isNaN(v)) {
+            if (hadNight) return "No heart rate from the watch in that night, so no estimate. It needs the lowest heart rate of the night (Uth method).";
+            return "Needs a night with the watch. It comes from your age and the lowest heart rate in that night (Uth method).";
+        }
+        if (Double.isNaN(app.openring.core.analysis.Wellness.vo2maxShown(v))) {
+            return "Not shown for this day: that night's lowest reading gave a value outside what a person can have, so that reading was probably off.";
+        }
+        return "From your age and the watch's lowest heart rate reading that night (Uth method). The watch reads every 10 to 30 minutes, "
+                + "so its lowest is a little higher than the true one and the estimate a little lower. A rough guide, not a lab test.";
+    }
+
+    /** Every text of the statistics without a ring, for the tests. */
+    public static String[] historyTexts() {
+        return new String[] {NO_VALUE, NEEDS_RING_TITLE, WATCH_IN_BED, WATCH_LATENCY, WATCH_WAKE_UPS, WATCH_DEBT_BUILDING, WATCH_DEBT, WATCH_SLEEP_TIMES,
+            WATCH_NO_NIGHTS, WATCH_NO_HEART, NO_STEPS_YET, WATCH_SCORE_MONTH, WATCH_READY_WEEK, ACTIVITY_WEEK_DEVICE, WATCH_KCAL, WATCH_WORKOUTS_MONTH,
+            WATCH_RHR, WATCH_DAY_HR, LIGHT_REM, SLEEP_NEEDS_RING, ACTIVITY_NEEDS_RING, BODY_NEEDS_RING, WATCH_ANALYSIS, vo2maxWatch(Double.NaN, true),
+            vo2maxWatch(Double.NaN, false), vo2maxWatch(5, true), vo2maxWatch(45, true)};
+    }
 }
