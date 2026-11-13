@@ -84,7 +84,9 @@ final class HistoryViews {
     /** "Average 8,412 steps a day." style first part of a foot line, empty without values. */
     static String average(double[] v, String unit, int dp) {
         if (Stats.countFinite(v) == 0) return "";
-        return "Average " + Ui.fmt(Stats.mean(v), dp) + unit + ". ";
+        double m = Stats.mean(v);
+        // whole numbers with the phone's grouping ("10,702 steps"), as the readouts write them
+        return "Average " + (dp == 0 ? whole(m) : Ui.fmt(m, dp)) + unit + ". ";
     }
 
     /** "1,234" with the phone's grouping. */
@@ -239,12 +241,14 @@ final class HistoryViews {
                 LocalDate day = d.date.minusDays(min.length - 1 - i);
                 tips[i] = DeviceHistory.tip(day, Double.isNaN(min[i]) ? Explain.NO_VALUE : count[i] == 0 ? "No workout"
                         : app.openring.core.Start.workouts(count[i]) + ", " + Math.round(min[i]) + " min", Locale.getDefault());
-                labels[i] = i % 7 == min.length % 7 - 1 || i == min.length - 1 ? day.getDayOfMonth() + "." + day.getMonthValue() + "." : "";
+                // a date every week, the newest 3 days in from the right end so no label is cut off
+                labels[i] = (min.length - 1 - i) % 7 == 3 ? day.getDayOfMonth() + "." + day.getMonthValue() + "." : "";
             }
             LinearLayout card = Ui.card(c);
             card.addView(Ui.caption(c, "Workouts, last 30 days"));
             card.addView(Ui.gap(c, 8));
-            Charts.BarChart bars = new Charts.BarChart(c, min, labels, Ui.ACTIVE).valueFormat("%.0f min").tips(tips);
+            // no value over a bar (30 are too narrow for it): touch reads each day
+            Charts.BarChart bars = new Charts.BarChart(c, min, labels, Ui.ACTIVE).highlight(-1).tips(tips);
             bars.setContentDescription("Workouts, last 30 days");
             card.addView(bars, Ui.sized(c, -1, 130));
             card.addView(Ui.gap(c, 6));

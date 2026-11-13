@@ -520,7 +520,9 @@ launch --ei tab 1 --ei devices 1 --es card SLEEP_DEBT;             shot sleep-wa
 launch --ei tab 1 --ei devices 1 --es card SLEEP_TIMES; sleep 3
 if tap_desc_at "Sleep times, last 30 days" 75; then shot sleep-watch-only-times 1
 else echo "::warning::watch statistics step skipped: the sleep times chart was not on screen to touch it"; fi
-launch --ei tab 1 --ei devices 1 --ez analysis true --ei period 1 --es card Further_analysis; shot sleep-watch-only-analysis 5
+launch --ei tab 1 --ei devices 1 --ez analysis true --ei period 1 --es card Further_analysis; sleep 5
+scroll_to "AVERAGE NIGHT" 4 || echo "::warning::watch statistics step: Further analysis of the watch's nights was not found"
+shot sleep-watch-only-analysis 1
 launch --ei tab 2 --ei devices 1 --es card LAST_NIGHT;             shot ready-watch-only-stats
 launch --ei tab 3 --ei devices 1 --es card "STEPS,_LAST_7"; sleep 3
 if tap_desc_at "Steps, last 7 days" 50; then shot activity-watch-only-stats 1
