@@ -72,7 +72,7 @@ public final class Methods {
         switch (id) {
             case OPEN_RING:
                 return "Open Ring: of your newest " + Cycles.WINDOW + " cycles, those more than " + Cycles.FAR + " days from the middle value are left "
-                        + "out (maybe a period was not logged). The typical length is their middle value while there are fewer than "
+                        + "out (maybe a period was not logged), unless half of them or more are. The typical length is their middle value while there are fewer than "
                         + Cycles.TRIM_FROM + ", then their average without the shortest and the longest. Give or take 1.28 times how much they vary.";
             case DRIP:
                 return "drip style: the average of your newest " + Cycles.WINDOW + " cycles, none left out, give or take 1 day when they vary by "
@@ -87,8 +87,8 @@ public final class Methods {
                         + "so without a link it is your average. Needs " + TrendMethod.FROM + " cycles.";
             case BAYES:
                 return "Learns from every cycle: starts from a study of 612,613 cycles (on average 29.3 days, one person's cycles varying by "
-                        + "about 2.6 days) and moves toward your own numbers with each cycle (Bayesian). A cycle about twice your usual length is "
-                        + "counted as two, a period that was probably not logged, as research on period apps suggests. Its range is wider "
+                        + "about 2.6 days) and moves toward your own numbers with each cycle (Bayesian). Once it knows " + Cycles.FEW + " of your cycles, "
+                        + "one about twice your usual length is counted as two, a period that was probably not logged, as research on period apps suggests. Its range is wider "
                         + "while it knows few of your cycles.";
             default:
                 return "";
@@ -140,15 +140,37 @@ public final class Methods {
         return Math.sqrt(q / (v.length - 1));
     }
 
-    /** The cycles Open Ring keeps: within {@link Cycles#FAR} days of the middle value of all, oldest first. */
+    /** The cycles Open Ring keeps ({@link #leftOut}), oldest first. */
     public static int[] kept(int[] lengths) {
+        boolean[] out = leftOut(lengths);
+        int n = 0;
+        for (boolean o : out) if (!o) n++;
+        int[] k = new int[n];
+        int j = 0;
+        for (int i = 0; i < lengths.length; i++) if (!out[i]) k[j++] = lengths[i];
+        return k;
+    }
+
+    /**
+     * Which cycles are left out: those more than {@link Cycles#FAR} days from the middle value of all (maybe a period was not
+     * logged), unless that would be half of them or more ({@link #scattered}): then none, since her cycles vary that much
+     * and leaving them out would leave little or nothing (code review of dev dadbb71: 21 and 45 days in turn left out all
+     * six cycles and showed the 29 day default).
+     */
+    public static boolean[] leftOut(int[] lengths) {
+        boolean[] out = new boolean[lengths.length];
+        if (scattered(lengths)) return out;
+        double med = median(lengths);
+        for (int i = 0; i < lengths.length; i++) out[i] = far(lengths[i], med);
+        return out;
+    }
+
+    /** Half of the cycles or more lie more than {@link Cycles#FAR} days from their middle value: none is an outlier then. */
+    public static boolean scattered(int[] lengths) {
         double med = median(lengths);
         int n = 0;
-        for (int l : lengths) if (!far(l, med)) n++;
-        int[] out = new int[n];
-        int k = 0;
-        for (int l : lengths) if (!far(l, med)) out[k++] = l;
-        return out;
+        for (int l : lengths) if (far(l, med)) n++;
+        return lengths.length > 0 && 2 * n >= lengths.length;
     }
 
     /** More than {@link Cycles#FAR} days from {@code median}: maybe a period was not logged. */

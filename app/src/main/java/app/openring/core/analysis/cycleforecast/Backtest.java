@@ -9,7 +9,7 @@ import app.openring.core.analysis.Cycles;
  * from the {@link #FROM}th + 1 on, each method gets only the lengths of the cycles before it and expects the start that
  * ends it; the error is the days between that expected day and the logged start, "in range" when it fell inside the range
  * the calendar would have shown. Cycles more than {@link Cycles#FAR} days from the middle value of the cycles before them
- * (probably a missed log; every method misses those) are not scored but still handed on as history, so each method deals with them as it
+ * (probably a missed log; every method misses those; not while half of those before are far from their own middle value) are not scored but still handed on as history, so each method deals with them as it
  * would in use. Nothing is stored; it is worked out from the log on each load.
  */
 public final class Backtest {
@@ -86,7 +86,9 @@ public final class Backtest {
         int m = 0;
         for (int i = FROM; i < lengths.length; i++) {
             // far from the middle value of the cycles before it (not of all, so nothing later decides what is scored)
-            if (Methods.far(lengths[i], Methods.median(Arrays.copyOf(lengths, i)))) far++;
+            // (and only while those are not scattered themselves, as Open Ring's rule for leaving cycles out)
+            int[] before = Arrays.copyOf(lengths, i);
+            if (!Methods.scattered(before) && Methods.far(lengths[i], Methods.median(before))) far++;
             else {
                 scored[i] = true;
                 m++;
