@@ -709,8 +709,9 @@ public final class Cycles {
         if (used.size() < FEW && cycles.size() >= FEW) {
             // cycles were logged, but far ones are left out (code review of dev dadbb71: not "until you have logged 3")
             if (methodId != Methods.OPEN_RING && !forecast.fallback) return when + coverage();
-            return when + "Only " + used.size() + " of your " + cycles.size() + " cycles count (" + leftOutCount() + (leftOutCount() == 1 ? " lies" : " lie")
-                    + " far from the rest, maybe a period was not logged), so the range is wider.";
+            // only 3 cycles with 1 left out get here: fewer than half are ever left out (Methods.leftOut)
+            return when + "Only " + used.size() + " of your " + cycles.size() + " cycles count (the other lies far from the rest, maybe a period was not logged), "
+                    + "so the range is wider.";
         }
         if (used.isEmpty()) return when + "Until you have logged " + FEW + " cycles, this uses a typical cycle of " + DEFAULT_LENGTH + " days and a wider range.";
         if (used.size() < FEW) return when + "Until you have logged " + FEW + " cycles, this uses your own " + Texts.count(used.size(), "cycle", "cycles")

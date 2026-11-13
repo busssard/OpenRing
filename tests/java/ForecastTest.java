@@ -523,6 +523,11 @@ public class ForecastTest {
         Cycles tc = Cycles.of(log(three), null, lastStart(three).plusDays(3));
         check("#383 review: 3 cycles with one far: says only 2 count and why, not to log 3", tc.used.size() == 2
                 && tc.expectedLine(en).contains("Only 2 of your 3 cycles count") && !tc.expectedLine(en).contains("Until you have logged"), tc.expectedLine(en));
+        Cycles td = tc.withMethod(Methods.DRIP);
+        check("#383 review: drip style uses all 3 there and says what its range is", td.forecast.n == 3 && !td.forecast.fallback
+                && td.expectedLine(en).contains("drip style shows") && !td.expectedLine(en).contains("Only 2"), td.expectedLine(en));
+        check("#383 review: Learns from every cycle there gives its 4 in 5", tc.withMethod(Methods.BAYES).expectedLine(en).endsWith("About 4 in 5 periods start within such a range."),
+                tc.withMethod(Methods.BAYES).expectedLine(en));
         Backtest altB = Backtest.run(new int[] {21, 45, 21, 45, 21, 45, 21, 45, 21, 45});
         check("#383 review: the backtest scores such cycles too, not every one as far", altB.scored() > 0, altB.scored() + " " + altB.farOut);
     }
