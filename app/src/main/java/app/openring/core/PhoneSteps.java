@@ -410,6 +410,12 @@ public final class PhoneSteps {
             double next = h >= 23 || h < 6 ? 3 * 3600 + r.nextInt(5400) : 3600 + r.nextInt(900) - 300;
             t += next;
         }
+        // the app reads the sensor when it opens: a last reading at the moment demo mode starts, so the demo's phone day
+        // is always today, also just after midnight when the night's readings are hours apart
+        if (lastStep < now) {
+            counter += walked(lastStep, now, zone, r);
+            out.add(new Reading(DEMO, boot, Math.round((now - bootWall) * 1000), Math.round(counter), now));
+        }
         return out;
     }
 
