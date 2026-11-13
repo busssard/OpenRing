@@ -273,7 +273,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             LinearLayout demo = Ui.card(this);
             demo.addView(Ui.caption(this, "Demo mode"));
             demo.addView(Ui.body(this, "You are looking at a made up person's data. Your own data (if any) is kept separately and untouched."));
-            action(demo, p.hasKey() ? "Leave the demo, back to my ring" : p.noRing() || p.watchAddress() != null ? "Leave the demo, back to my data" : "Leave the demo and get started", Ui.SLEEP, new Runnable() {
+            action(demo, p.hasKey() ? "Leave the demo, back to my ring" : p.withoutRing() ? "Leave the demo, back to my data" : "Leave the demo and get started", Ui.SLEEP, new Runnable() {
                 @Override
                 public void run() {
                     if (!app.openring.data.Demo.leave(SettingsActivity.this)) {
@@ -540,7 +540,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         file.addView(Ui.body(this, "A backup file restores the app on a new phone from the setup screen (Restore from a backup)."));
         file.addView(Ui.gap(this, 10));
         file.addView(Ui.text(this, "Save a backup file", 12, Ui.TEXT_3, Ui.REGULAR));
-        saveRow = pair(file, p.hasKey() || !p.noRing() ? "Key and settings only" : "Settings only", Ui.SLEEP, new Runnable() {
+        saveRow = pair(file, p.hasKey() || !p.withoutRing() ? "Key and settings only" : "Settings only", Ui.SLEEP, new Runnable() {
             @Override
             public void run() {
                 create("open-ring-backup.zip", "application/zip", BACKUP_KEY);
@@ -561,7 +561,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             // key in the file would not be true then
             file.addView(Ui.text(this, app.openring.core.KeyState.BACKUP_NO_KEY, 13, Ui.WARN, Ui.REGULAR));
             file.addView(Ui.text(this, app.openring.core.KeyState.BACKUP_SETTINGS_ONLY, 12, Ui.TEXT_3, Ui.REGULAR));
-        } else if (!p.hasKey() && p.noRing()) {
+        } else if (!p.hasKey() && p.withoutRing()) {
             // without a ring (issue #329): no key to keep, the history is what matters
             file.addView(Ui.text(this, "You use Open Ring without a ring, so the backup holds no ring key. The full backup holds your steps from this phone and your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
         } else {
@@ -2949,7 +2949,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             }
             if (o.ok()) {
                 // without a ring by choice (issue #329) there is no key to leave out: a plain "Backup saved"
-                boolean noRing = !Prefs.of(ctx).hasKey() && Prefs.of(ctx).noRing();
+                boolean noRing = !Prefs.of(ctx).hasKey() && Prefs.of(ctx).withoutRing();
                 if (!withKey[0] && !noRing) RingManager.get(ctx).log("backup saved without the ring key: this phone cannot read it (" + Prefs.keyError() + ")");
                 return backup ? (withKey[0] || noRing ? "Backup saved" : app.openring.core.KeyState.BACKUP_SAVED_NO_KEY) : "Exported";
             }

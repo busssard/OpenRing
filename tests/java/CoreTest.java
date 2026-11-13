@@ -9536,6 +9536,68 @@ public class CoreTest {
         return n;
     }
 
+    /**
+     * Code review of the device choice: Android's phone to phone transfer copies the app's settings, with the phone's own id
+     * for its readings, to the new phone. The old phone (boot 40, 10 days up, counters 50,000 and 50,500) and the new one after
+     * the transfer (also boot 40, 1 hour up, counters 800 and 1,500) under one id make up a 48,500 step interval over about 10
+     * days, which passes the speed check. {@code PhoneSteps.samePhone} tells the new phone by the mark of the last reading.
+     */
+    /**
+     * Code review of the device choice: Sync with only a watch asked for Bluetooth without the Sync bookkeeping, so after two
+     * refusals nothing happened, and after allowing it the watch did not sync; the main screen never asked a watch only person.
+     */
+    static void syncAccess373() {
+        int watchOnly = KeyState.of(false, false, app.openring.core.Start.noRing(false, true));
+        check("#373 access: the main screen asks a watch only person for Bluetooth", SyncPlan.asksBluetooth(false, watchOnly, true));
+        check("#373 access: a ring asks, just the phone does not, demo mode never", SyncPlan.asksBluetooth(false, KeyState.READABLE, false)
+                && !SyncPlan.asksBluetooth(false, KeyState.of(false, false, true), false) && !SyncPlan.asksBluetooth(true, watchOnly, true));
+        check("#373 access: allowed from Sync's dialog, the Sync goes on", SyncPlan.afterAnswer(true, true, false) == SyncPlan.GO_ON);
+        check("#373 access: refused for good from Sync, the way to the app settings", SyncPlan.afterAnswer(true, false, true) == SyncPlan.TO_SETTINGS);
+        check("#373 access: refused once, nothing more", SyncPlan.afterAnswer(true, false, false) == SyncPlan.NOTHING);
+        check("#373 access: an answer to the screen's own ask does not sync", SyncPlan.afterAnswer(false, true, false) == SyncPlan.NOTHING
+                && SyncPlan.afterAnswer(false, false, true) == SyncPlan.NOTHING);
+        check("#373 access: the settings text names the watch, the ring or both", SyncPlan.accessText(SyncPlan.of(false, watchOnly, true)).contains("your watch")
+                && SyncPlan.accessText(SyncPlan.of(false, KeyState.READABLE, false)).contains("your ring")
+                && SyncPlan.accessText(SyncPlan.of(false, KeyState.READABLE, true)).contains("your watch and your ring"));
+        for (SyncPlan p : new SyncPlan[] {SyncPlan.of(false, watchOnly, true), SyncPlan.of(false, KeyState.READABLE, true), SyncPlan.of(false, KeyState.READABLE, false)}) {
+            String t = SyncPlan.accessText(p);
+            check("#373 access: plain text without dashes (" + t + ")", !t.contains(" - ") && !t.contains("—") && !t.contains("–"));
+        }
+    }
+
+    static void phoneMoved329() {
+        double w0 = 1_780_000_000;
+        double day = 86400;
+        List<PhoneSteps.Reading> mixed = Arrays.asList(rd(40, 10 * day, 50000, w0), rd(40, 10 * day + 3600, 50500, w0 + 3600),
+                rd(40, 3600, 800, w0 + 2 * day), rd(40, 7200, 1500, w0 + 2 * day + 3600));
+        long most = 0;
+        for (PhoneSteps.Interval i : PhoneSteps.intervals(mixed)) most = Math.max(most, i.steps);
+        check("#329b moved: the old and the new phone under one id make up the 48,500 steps (why the id must change)", most == 48500, most);
+        // the new phone's first reading against the old phone's last one (the mark): the same boot count, less time since the start
+        long el = Math.round(10 * day * 1000) + 3_600_000;
+        check("#329b moved: the same boot count with less time since the start is another phone",
+                !PhoneSteps.samePhone(40, el, w0 + 3600, 40, 3_600_000, w0 + 2 * day));
+        check("#329b moved: the same boot count, more time since the start, a start 2 days off is another phone",
+                !PhoneSteps.samePhone(40, 3_600_000, w0, 40, 2 * 3_600_000, w0 + 2 * day));
+        check("#329b moved: a lower boot count is another phone", !PhoneSteps.samePhone(40, el, w0 + 3600, 3, 3_600_000, w0 + 2 * day));
+        check("#329b moved: a higher boot count that started before the last reading is another phone",
+                !PhoneSteps.samePhone(40, el, w0 + 3600, 45, Math.round(3 * day * 1000), w0 + 2 * day));
+        // the same phone: the next reading, a restart, the clock set back or forward an hour, a stand in boot key, no mark yet
+        check("#329b moved: the next reading of the same boot is the same phone", PhoneSteps.samePhone(40, el, w0 + 3600, 40, el + 3_600_000, w0 + 7200));
+        check("#329b moved: a restart after the last reading is the same phone", PhoneSteps.samePhone(40, el, w0 + 3600, 41, 600_000, w0 + 7200));
+        check("#329b moved: the clock set back or forward an hour is the same phone", PhoneSteps.samePhone(40, el, w0 + 3600, 40, el + 3_600_000, w0 + 3600)
+                && PhoneSteps.samePhone(40, el, w0 + 3600, 40, el + 3_600_000, w0 + 3 * 3600)
+                && PhoneSteps.samePhone(40, el, w0 + 3600, 41, 600_000, w0 + 1800));
+        check("#329b moved: no mark yet (before this version) keeps the id", PhoneSteps.samePhone(0, 0, 0, 40, 3_600_000, w0));
+        long s1 = PhoneSteps.bootKey(-1, w0, 3_600_000), s2 = PhoneSteps.bootKey(-1, w0 + 2 * day, 3_600_000);
+        check("#329b moved: stand in boot keys: less time since the same start is another phone, another start is a restart",
+                !PhoneSteps.samePhone(s1, 7_200_000, w0 + 3600, s1, 3_600_000, w0) && PhoneSteps.samePhone(s1, 3_600_000, w0, s2, 3_600_000, w0 + 2 * day));
+        // with a new id for the new phone the made up interval is gone; each phone keeps its own
+        List<PhoneSteps.Reading> apart = Arrays.asList(rd(40, 10 * day, 50000, w0), rd(40, 10 * day + 3600, 50500, w0 + 3600),
+                new PhoneSteps.Reading("new", 40, 3_600_000, 800, w0 + 2 * day), new PhoneSteps.Reading("new", 40, 7_200_000, 1500, w0 + 2 * day + 3600));
+        check("#329b moved: with its own id the new phone counts only its own steps", stepsOf(PhoneSteps.intervals(apart)) == 500 + 700, stepsOf(PhoneSteps.intervals(apart)));
+    }
+
     /** The differences between readings: restarts by boot count, clock changes, a falling or impossible counter. */
     static void phoneSteps329() {
         double w0 = 1_780_000_000; // some day in 2026
@@ -9617,6 +9679,7 @@ public class CoreTest {
         check("#329b phone: a first reading after a restart above what fits since the start is left out (a counter that did not reset)",
                 PhoneSteps.intervals(Arrays.asList(rd(9, 7200, 100, w0), rd(10, 60, 500000, w0 + 3600)), lf3).isEmpty() && lf3.implausible == 1);
         check("#329b phone: two readings at the same moment give nothing", PhoneSteps.intervals(Arrays.asList(rd(7, 100, 10, w0), rd(7, 100, 12, w0))).isEmpty());
+        phoneMoved329();
         // the boot key: Android's count when readable, else a stand in from the start time (never a real count)
         check("#329b phone: the boot key is the boot count", PhoneSteps.bootKey(42, w0, 5000) == 42 && PhoneSteps.bootKey(0, w0, 5000) == 0);
         long k1 = PhoneSteps.bootKey(-1, w0, 3_600_000), k2 = PhoneSteps.bootKey(-1, w0 + 3600, 7_200_000), k3 = PhoneSteps.bootKey(-1, w0 + 3600, 1_000);
@@ -9959,9 +10022,18 @@ public class CoreTest {
         }
         // a watch added and a state that says no key (an older caller): still the app
         check("#373 a watch with no key state never opens Setup", !app.openring.core.Start.opensSetup(false, false, KeyState.NONE, false, true));
-        // the watch chosen, its setup left half way: the choice is stored, so the app
-        int half = KeyState.of(false, false, app.openring.core.Start.noRing(true, false));
-        check("#373 a watch setup left half way stays in the app", half == KeyState.NO_RING && !app.openring.core.Start.opensSetup(false, false, half, false, false));
+        // the watch chosen, its setup left half way (during Bluetooth access or About you): the tap stores only the start
+        // choice, no_ring comes with finishWithout after About you, so no watch and no choice to go without a ring yet means
+        // Getting started again (code review of the device choice: the old test set no_ring and could not see this)
+        int half = KeyState.of(false, false, app.openring.core.Start.noRing(false, false));
+        check("#373 a watch setup left half way shows Getting started again", half == KeyState.NONE && app.openring.core.Start.opensSetup(false, false, half, false, false));
+        // after About you (finishWithout sets no_ring) the app, also before the watch is added
+        int pastAbout = KeyState.of(false, false, app.openring.core.Start.noRing(true, false));
+        check("#373 a watch path past About you stays in the app", pastAbout == KeyState.NO_RING && !app.openring.core.Start.opensSetup(false, false, pastAbout, false, false));
+        // the one rule for "no key is fine" (backups, automatic backups, going back, Settings' texts): the choice or a watch
+        check("#373 a watch only person may have no key: backups go on without one", app.openring.core.Start.noRing(false, true)
+                && app.openring.core.Start.noRing(true, false) && !app.openring.core.Start.noRing(false, false));
+        syncAccess373();
         // just the phone
         check("#373 just the phone stays in the app", !app.openring.core.Start.opensSetup(false, false, KeyState.of(false, false, true), false, false));
         // a ring user: exactly as before, with and without a watch
@@ -10047,8 +10119,20 @@ public class CoreTest {
             String prefs = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "data/Prefs.java").toPath()), "UTF-8");
             check("#373 the main screen decides with Start.opensSetup and the watch", main.contains("app.openring.core.Start.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null, prefs.watchAddress() != null)")
                     && !main.contains("app.openring.core.KeyState.opensSetup("));
-            check("#373 Prefs counts an added watch as no ring", prefs.contains("KeyState.of(hasKey(), loadKey() != null, app.openring.core.Start.noRing(noRing(), watchAddress() != null))")
-                    && prefs.contains("KeyState.ofStored(hasKey(), app.openring.core.Start.noRing(noRing(), watchAddress() != null))"));
+            check("#373 Prefs counts an added watch as no ring", prefs.contains("public boolean withoutRing() { return app.openring.core.Start.noRing(noRing(), watchAddress() != null); }")
+                    && prefs.contains("KeyState.of(hasKey(), loadKey() != null, withoutRing())") && prefs.contains("KeyState.ofStored(hasKey(), withoutRing())"));
+            // code review of the device choice: every place where a missing key is fine uses the same rule, never no_ring alone
+            for (String f : new String[] {"data/Backup.java", "data/AutoBackup.java", "sync/BackupJob.java", "ui/SettingsActivity.java"}) {
+                String s = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + f).toPath()), "UTF-8");
+                check("#373 " + f + " allows no key with the shared rule (a watch counts)", !s.contains(".noRing()") && s.contains("withoutRing()"));
+            }
+            // Sync with a watch asks for Bluetooth like the ring: blocked leads to the settings, the answer continues the Sync
+            int sw = main.indexOf("void syncWatch(final boolean thenRing, final String note) {");
+            String watchPart = sw < 0 ? "" : main.substring(sw, main.indexOf("watchSyncing = true;", sw));
+            check("#373 Sync with a watch keeps the Bluetooth bookkeeping", watchPart.contains("if (permissionBlocked) {") && watchPart.contains("askSettings();")
+                    && watchPart.contains("syncAsked = true;"));
+            check("#373 the answer continues the Sync, the screen asks a watch only person", main.contains("app.openring.core.SyncPlan.afterAnswer(fromSync, granted, a.blocked)")
+                    && main.contains("app.openring.core.SyncPlan.asksBluetooth(prefs.demo(), keyState, prefs.watchAddress() != null)"));
             check("#373 Getting started leads to the choice, the choice to each path", setup.contains("step = CHOICE;") && setup.contains("app.openring.core.Start.RING_TITLE")
                     && setup.contains("app.openring.core.Start.WATCH_TITLE") && setup.contains("app.openring.core.Start.PHONE_TITLE"));
             int fw = setup.indexOf("void finishWithout(int choice)");

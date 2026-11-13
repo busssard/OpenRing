@@ -922,6 +922,9 @@ public class PipelineTest {
         watchHistory();
         watchReview389();
         startDevices373();
+        phoneMovedReview();
+        watchOnlyBackupReview();
+        phoneWriteLockReview();
         badges265();
         phase1a2_252();
         methods383();
@@ -13734,10 +13737,14 @@ public class PipelineTest {
         check("#373 no watch, no key, no choice: Getting started", p.keyState() == app.openring.core.KeyState.NONE
                 && app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
         check("#373 no choice stored yet", p.startChoice() == app.openring.core.Start.NONE, p.startChoice());
+        // the tap on the watch stores only the choice (SetupActivity); left during Bluetooth access or About you: Getting
+        // started again (code review of the device choice: this test set no_ring here, which only finishWithout does)
         p.setStartChoice(app.openring.core.Start.WATCH);
+        check("#373 the watch chosen, its setup left before About you was done: Getting started again", p.startChoice() == app.openring.core.Start.WATCH
+                && !p.noRing() && app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
+        // About you done (finishWithout): no ring, the app, also before the watch is added
         p.setNoRing(true);
-        check("#373 the watch chosen, its setup left half way: the app", p.startChoice() == app.openring.core.Start.WATCH
-                && !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
+        check("#373 the watch path past About you: the app", !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
         p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
         // a backup of a watch only phone carries the choice and no key; a restore elsewhere goes on with the watch
         byte[] full = backup252(c);
@@ -13780,6 +13787,169 @@ public class PipelineTest {
         p.setNoRing(false);
         if (key != null) p.saveKey(key);
         restart242();
+    }
+
+    /**
+     * Code review of the device choice, finding 1: Android's phone to phone transfer copies the settings (with the phone's own
+     * id) and the history to a new phone. The new phone, also at boot 40 but only an hour up, gets its own id at its first
+     * reading, so no interval is differenced against the old phone's readings, which stay exactly as they were.
+     */
+    static void phoneMovedReview() throws Exception {
+        Context c = phone254("openring-review-moved");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        Db db = Db.get(c);
+        double w0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        long tenDays = 10 * 86_400_000L, hour = 3_600_000L;
+        // an id from before this version has no mark: it is kept at the first reading, which notes the mark
+        String legacy = p.phoneDevice();
+        String oldId = p.phoneDevice(40, tenDays, w0);
+        check("moved: an id from before the mark is kept (an update changes nothing)", legacy.equals(oldId), legacy + " " + oldId);
+        check("moved: the next reading of the old phone keeps its id", oldId.equals(p.phoneDevice(40, tenDays + hour, w0 + 3600)), null);
+        app.openring.data.PhoneStore.addAll(db, Arrays.asList(new app.openring.core.PhoneSteps.Reading(oldId, 40, tenDays, 50000, w0),
+                new app.openring.core.PhoneSteps.Reading(oldId, 40, tenDays + hour, 50500, w0 + 3600)));
+        String oldRows = phoneRows329(db);
+        // the same settings and history on the new phone: boot 40, an hour up, two days later
+        String newId = p.phoneDevice(40, hour, w0 + 2 * 86400);
+        check("moved: the new phone gets its own id at its first reading, and keeps it", !newId.equals(oldId)
+                && newId.equals(p.phoneDevice(40, 2 * hour, w0 + 2 * 86400 + 3600)) && newId.equals(p.phoneDeviceStored()), oldId + " " + newId);
+        app.openring.data.PhoneStore.addAll(db, Arrays.asList(new app.openring.core.PhoneSteps.Reading(newId, 40, hour, 800, w0 + 2 * 86400),
+                new app.openring.core.PhoneSteps.Reading(newId, 40, 2 * hour, 1500, w0 + 2 * 86400 + 3600)));
+        check("moved: no interval made up across the two phones (the 48,500 steps)", db.count("SELECT COUNT(*) FROM phone_steps WHERE steps > 10000") == 0
+                && db.count("SELECT SUM(steps) FROM phone_steps") == 500 + 700, phoneRows329(db));
+        String all = phoneRows329(db);
+        boolean kept = true;
+        for (String line : oldRows.split("\n")) if (!line.equals("--") && !line.isEmpty()) kept &= all.contains(line + "\n");
+        check("moved: the old phone's readings and interval stay exactly as they were", kept && phoneCount329(db, "phone_readings") == 4, all);
+        String json = new String(zipEntry(backup252(c), "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8);
+        check("moved: the id and its mark are never in a backup", !json.contains("phone_device") && !json.contains(newId), null);
+        clean254();
+    }
+
+    /**
+     * Code review of the device choice, finding 2: a person who picked the ring, added a watch, then used "Use a different key
+     * or ring" is watch only (Prefs.keyState gives NO_RING) without the choice to go without a ring. Backups refused ("no ring
+     * key saved on this phone"), the automatic ones stopped, and the restore asked for a key.
+     */
+    static void watchOnlyBackupReview() throws Exception {
+        Context c = phone254("openring-review-watch-backup");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        byte[] key = p.loadKey();
+        Db db = Db.get(c);
+        someLog252(db);
+        p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
+        p.clearKey();
+        p.setNoRing(false);
+        check("watch only: no key, no choice, a watch: no ring", p.keyState() == app.openring.core.KeyState.NO_RING && p.withoutRing() && !p.noRing(), p.keyState());
+        java.io.File fdir = Files.createTempDirectory("folder-review").toFile();
+        try {
+            byte[] full = backup252(c);
+            org.json.JSONObject o = new org.json.JSONObject(new String(zipEntry(full, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
+            check("watch only: a backup is saved without a key, marked so", !o.has("key") && o.optBoolean("no_key") && o.optBoolean("no_ring"), o.keySet());
+            Folder242 folder = new Folder242(fdir);
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/W373", "W373");
+            p.setBackupDays(1);
+            app.openring.data.AutoBackup.Outcome ao = app.openring.data.AutoBackup.run(c, folder, 1780000000L, false, null);
+            check("watch only: the automatic backup writes its copy", ao.error == null && ao.written.size() == 1, ao.error);
+            restart242();
+            Context other = phone254("openring-review-watch-restore");
+            app.openring.data.Prefs q = app.openring.data.Prefs.of(other);
+            q.clearKey();
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(other, new java.io.ByteArrayInputStream(full));
+            check("watch only: the restore goes on without a ring and does not ask for a key", r.ok && q.keyState() == app.openring.core.KeyState.NO_RING
+                    && q.watchAddress() != null && r.message.endsWith(app.openring.data.Backup.NO_KEY_NO_RING), r.message);
+            q.forgetWatch();
+            // without the watch and without the choice the old rule stays: no key, no backup
+            p.forgetWatch();
+            boolean refused = false;
+            try {
+                backup252(c);
+            } catch (java.io.IOException e) {
+                refused = true;
+            }
+            check("watch only: no watch, no key, no choice: still no backup", refused, null);
+        } finally {
+            p.forgetWatch();
+            if (key != null) p.saveKey(key);
+            rmTree(fdir);
+            clean254();
+        }
+    }
+
+    /**
+     * Code review of the device choice, finding 5: a phone reading waited for SQLite's write while holding Db's class lock, so
+     * every Db.get on the main thread waited behind it (an automatic backup's copy holds the write for seconds). Now Db.get
+     * stays free while a reading is written, and a restore's swap waits for the reading, which it then carries over.
+     */
+    static void phoneWriteLockReview() throws Exception {
+        final Context c = phone254("openring-review-lock");
+        Db db = Db.get(c);
+        final double w0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        final String dev = "lockphone";
+        app.openring.data.PhoneStore.addAll(db, Arrays.asList(new app.openring.core.PhoneSteps.Reading(dev, 5, 3_600_000, 100, w0)));
+        final long events = db.eventCount();
+        final java.io.File snap = app.openring.data.Exporter.snapshot(c);
+        final java.util.concurrent.CountDownLatch inWrite = new java.util.concurrent.CountDownLatch(1), release = new java.util.concurrent.CountDownLatch(1);
+        java.lang.reflect.Field hook = app.openring.data.PhoneStore.class.getDeclaredField("whileWriting");
+        hook.setAccessible(true);
+        hook.set(null, new Runnable() {
+            @Override
+            public void run() {
+                inWrite.countDown();
+                try {
+                    release.await(20, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        final int[] stored = {-1};
+        final Throwable[] err = {null};
+        Thread w = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                stored[0] = app.openring.data.PhoneStore.record(c, new app.openring.core.PhoneSteps.Reading(dev, 5, 7_200_000, 400, w0 + 3600), 0);
+            }
+        });
+        Thread g = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                Db.get(c);
+            }
+        });
+        Thread rs = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Db.replaceWith(c, snap, events);
+                } catch (Throwable t) {
+                    err[0] = t;
+                }
+            }
+        });
+        boolean getFree, restoreWaited;
+        try {
+            w.start();
+            inWrite.await(20, java.util.concurrent.TimeUnit.SECONDS);
+            g.start();
+            g.join(3000);
+            getFree = !g.isAlive();
+            rs.start();
+            rs.join(1000);
+            restoreWaited = rs.isAlive();
+        } finally {
+            release.countDown();
+            w.join(20000);
+            g.join(20000);
+            rs.join(60000);
+            hook.set(null, null);
+        }
+        check("write lock: Db.get (the main thread) does not wait while a phone reading is written", getFree, null);
+        check("write lock: a restore's swap waits for the reading, then works", restoreWaited && err[0] == null && stored[0] == app.openring.data.PhoneStore.STORED, err[0]);
+        Db after = Db.get(c);
+        check("write lock: the reading written meanwhile is carried into the restored history", phoneCount329(after, "phone_readings") == 2
+                && after.count("SELECT SUM(steps) FROM phone_steps") == 300, phoneRows329(after));
+        app.openring.data.Exporter.release(snap);
+        clean254();
     }
 
     /**

@@ -155,7 +155,7 @@ public final class AutoBackup {
         boolean created = false;
         try {
             // without a ring by choice (issue #329) the copy is made without a key, like #288's
-            if (key == null && !p.hasKey() && !p.noRing()) throw new IOException("no ring key saved on this phone");
+            if (key == null && !p.hasKey() && !p.withoutRing()) throw new IOException("no ring key saved on this phone");
             // a saved key this phone cannot read (issue #199): the copy is made without it (issue #288), the history is
             // what matters most then. Backups.KEY stays only as the reason older versions stored
             if (key == null && log != null) log.log("automatic backup without the ring key: this phone cannot read it (" + Prefs.keyError() + ")");
@@ -361,7 +361,7 @@ public final class AutoBackup {
         }
         // going back needs no key: a saved key this phone cannot read stays as it is (issue #288)
         byte[] key = Prefs.of(c).loadKey();
-        if (key == null && !Prefs.of(c).hasKey() && !Prefs.of(c).noRing()) {
+        if (key == null && !Prefs.of(c).hasKey() && !Prefs.of(c).withoutRing()) {
             fail.message = "No ring key saved on this phone, nothing was changed.";
             return fail;
         }
