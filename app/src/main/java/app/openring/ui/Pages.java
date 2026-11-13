@@ -611,7 +611,7 @@ public final class Pages {
         }
         root.addView(hyp);
         // the night's timeline from the watch's stages, as the ring's (each wake up of a minute or more)
-        app.openring.core.DeviceHistory.NightRow row = watchOnly ? d.history.night(d.date) : null;
+        app.openring.core.DeviceHistory.NightRow row = watchOnly ? d.deviceHistory.night(d.date) : null;
         if (row != null) root.addView(timeline(c, app.openring.data.WatchHistory.nightJson(row), nz, new ArrayList<double[]>()));
         if (scored) {
             DeviceViews.deviceParts(c, root, d, "sleep", Ui.SLEEP);

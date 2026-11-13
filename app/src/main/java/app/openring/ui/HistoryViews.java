@@ -23,17 +23,17 @@ final class HistoryViews {
 
     /** The tab shows the history from the watch or the phone: no ring, and the history could be read. */
     static boolean on(DayData d) {
-        return !d.has.ring && d.history != null;
+        return !d.has.ring && d.deviceHistory != null;
     }
 
     /** As {@link #on}, from the watch. */
     static boolean watch(DayData d) {
-        return on(d) && d.history.device == MainDevice.WATCH;
+        return on(d) && d.deviceHistory.device == MainDevice.WATCH;
     }
 
     /** "From your watch" or "From this phone's steps", the line under each chart. */
     static String from(DayData d) {
-        return d.history.device == MainDevice.WATCH ? DeviceHistory.FROM_WATCH : DeviceHistory.FROM_PHONE;
+        return d.deviceHistory.device == MainDevice.WATCH ? DeviceHistory.FROM_WATCH : DeviceHistory.FROM_PHONE;
     }
 
     interface Fmt {
@@ -101,7 +101,7 @@ final class HistoryViews {
      */
     static void sleep(Context c, LinearLayout root, final DayData d) {
         if (!watch(d)) return;
-        final DeviceHistory h = d.history;
+        final DeviceHistory h = d.deviceHistory;
         DeviceHistory.NightRow r = h.night(d.date);
         if (r != null) {
             LinearLayout stats = Ui.card(c);
@@ -168,7 +168,7 @@ final class HistoryViews {
     /** Ready with only the watch, after the score's parts: last night's heart rate next to the usual, the 30 and 7 day charts. */
     static void ready(Context c, LinearLayout root, DayData d) {
         if (!watch(d)) return;
-        DeviceHistory h = d.history;
+        DeviceHistory h = d.deviceHistory;
         DeviceHistory.NightRow r = h.night(d.date);
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Last night's heart rate"));
@@ -199,7 +199,7 @@ final class HistoryViews {
     /** Activity without a ring: steps of the last 7 and 30 days, the activity score, and with the watch calories and workouts. */
     static void activity(Context c, LinearLayout root, DayData d) {
         if (!on(d)) return;
-        DeviceHistory h = d.history;
+        DeviceHistory h = d.deviceHistory;
         boolean w = h.device == MainDevice.WATCH;
         double[] steps7 = h.last(h.steps, d.date, DeviceHistory.WEEK);
         root.addView(week(c, d, "Steps, last 7 days", steps7, Ui.ACTIVE, "%,.0f", h.goal, new Fmt() {
@@ -259,7 +259,7 @@ final class HistoryViews {
     /** Body with only the watch, under the heart rate of the day: resting and day heart rate of 30 days, cardio capacity. */
     static void body(Context c, LinearLayout root, DayData d, double age) {
         if (!watch(d)) return;
-        DeviceHistory h = d.history;
+        DeviceHistory h = d.deviceHistory;
         double[] rhr = h.last(h.rhr, d.date, DeviceHistory.MONTH);
         root.addView(month(c, d, "Resting heart rate, 30 days", rhr, Ui.HEART, " bpm", Explain.WATCH_NO_NIGHTS, average(rhr, " bpm", 0) + Explain.WATCH_RHR));
         double[] day = h.last(h.dayHr, d.date, DeviceHistory.MONTH);

@@ -82,13 +82,13 @@ public final class DayData {
      * (owner's report of 13 November, {@code core/DeviceHistory}): from 30 days before the date to 30 days after it (at most
      * today). Null with a ring (its own charts show), without a device, or when the rows could not be read.
      */
-    public app.openring.core.DeviceHistory history;
+    public app.openring.core.DeviceHistory deviceHistory;
     /**
      * The watch tells REM from light sleep (owner's report of 13 November, {@code WatchDays.tellsRem}: any stored sleep record is
      * REM). Without, every watch night shows "Light and REM" as one stage and its score leaves REM out. Ring nights never change.
      */
     public boolean watchRem = true;
-    /** The watch's nights of {@link #history} around the date as the ring's night objects, for the recent nights strip. */
+    /** The watch's nights of {@link #deviceHistory} around the date as the ring's night objects, for the recent nights strip. */
     public final List<JSONObject> watchRecent = new ArrayList<JSONObject>();
     /** The devices the tabs are built for (issue #373, {@code core/Start}); never null after {@link #load}. */
     public app.openring.core.Start.Has has = new app.openring.core.Start.Has(true, false, false);
@@ -339,14 +339,14 @@ public final class DayData {
                 // the phone's window as the scores read it: from 35 days before the first day (a day less than the watch's)
                 app.openring.core.MainDevice.Phone ph = dev == app.openring.core.MainDevice.PHONE && phoneAny
                         ? app.openring.data.PhoneStore.window(db, from + 86400, to) : null;
-                history = app.openring.core.DeviceHistory.of(dev, first, last, zone, w, ph, p.watchGoal(), p.age(), watchRem);
+                deviceHistory = app.openring.core.DeviceHistory.of(dev, first, last, zone, w, ph, p.watchGoal(), p.age(), watchRem);
                 if (dev == app.openring.core.MainDevice.WATCH) {
-                    watchRecent.addAll(app.openring.data.WatchHistory.json(history.nights(date.minusDays(app.openring.core.DeviceHistory.MONTH), last)));
+                    watchRecent.addAll(app.openring.data.WatchHistory.json(deviceHistory.nights(date.minusDays(app.openring.core.DeviceHistory.MONTH), last)));
                 }
             }
         } catch (RuntimeException e) {
             // the tabs show today's numbers without the charts below them
-            history = null;
+            deviceHistory = null;
             watchRecent.clear();
             ok = failed(c, date, "history without a ring", e);
         }
