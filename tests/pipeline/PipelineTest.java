@@ -919,6 +919,7 @@ public class PipelineTest {
         phoneLarge329();
         phoneTwoPhones329();
         phoneNoRingBackup329();
+        watchHistory();
         startDevices373();
         badges265();
         phase1a2_252();
@@ -13838,5 +13839,87 @@ public class PipelineTest {
         check("#329b a day load during an analysis writes nothing, the next one works the intervals out", phoneCount329(rdb, "phone_steps") == 0
                 && app.openring.data.PhoneStore.forDay(rdb, t0, t0 + 86400).intervals.size() > 0 && phoneCount329(rdb, "phone_steps") == 23, null);
         clean254();
+    }
+
+    /**
+     * The statistics without a ring (owner's report of 13 November): the demo's made up watch read from the demo file gives the
+     * 30 days of charts with each day's dial scores, Further analysis of its nights, and the night objects the ring's screens
+     * show. Reading only: nothing in the file changes.
+     */
+    static void watchHistory() throws Exception {
+        Context c = phone254("openring-watchstats");
+        LocalDate today = LocalDate.now();
+        app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        Db demo = Db.get(c);
+        String before = watchRows251(demo) + "|" + demo.count("SELECT COUNT(*) FROM kv") + "|" + demo.count("SELECT COUNT(*) FROM nights");
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        LocalDate first = today.minusDays(29);
+        double from = app.openring.core.DeviceHistory.rowsFrom(first, z), to = today.plusDays(1).atStartOfDay(z).toEpochSecond();
+        app.openring.core.MainDevice.Watch w = app.openring.data.WatchStore.window(demo, from, to);
+        app.openring.core.MainDevice.Watch n = app.openring.data.WatchStore.nightRows(demo, from, to);
+        boolean same = n.sleep.size() == w.sleep.size() && n.heart.size() == w.heart.size() && n.steps.isEmpty() && n.workouts.isEmpty();
+        for (int i = 0; same && i < n.sleep.size(); i++) same = n.sleep.get(i).start == w.sleep.get(i).start && n.sleep.get(i).dur == w.sleep.get(i).dur
+                && n.sleep.get(i).stage == w.sleep.get(i).stage;
+        for (int i = 0; same && i < n.heart.size(); i++) same = n.heart.get(i).t == w.heart.get(i).t && n.heart.get(i).bpm == w.heart.get(i).bpm;
+        check("watch statistics: the night rows are the window's sleep pieces and heart rates, nothing else", same && !n.sleep.isEmpty(), n.sleep.size());
+        // the demo's watch is like the owner's Steel HR: no REM record, so its nights show Light and REM together
+        boolean rem = app.openring.data.WatchStore.tellsRem(demo);
+        check("watch statistics: the demo's watch, like the Steel HR, never sends REM", !rem && !app.openring.core.withings.WatchDays.tellsRem(w.sleep), null);
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(app.openring.core.MainDevice.WATCH, first, today, z, w, null, 10000, 40, rem);
+        int nights = 0;
+        double asleep = 0, score = 0, low = 0;
+        int scored = 0, lows = 0;
+        for (LocalDate d = first; !d.isAfter(today); d = d.plusDays(1)) {
+            app.openring.core.DeviceHistory.NightRow r = h.night(d);
+            if (r == null) continue;
+            nights++;
+            asleep += r.night.asleepMin();
+            if (!Double.isNaN(r.score)) {
+                score += r.score;
+                scored++;
+            }
+            if (r.lowest > 0) {
+                low += r.lowest;
+                lows++;
+            }
+        }
+        check("watch statistics: the demo watch has a night nearly every day of the 30", nights >= 25, nights);
+        LocalDate y = today.minusDays(1);
+        double ds = y.atStartOfDay(z).toEpochSecond(), de = y.plusDays(1).atStartOfDay(z).toEpochSecond();
+        app.openring.core.DeviceScores.Result dial = app.openring.core.DeviceScores.of(app.openring.core.MainDevice.WATCH, y, z,
+                app.openring.data.WatchStore.window(demo, ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600 - 86400, de), null, 10000, 40, rem);
+        app.openring.core.DeviceScores.Result inChart = h.result(y);
+        check("watch statistics: without REM the sleep score leaves REM out and says why", inChart.sleep.get("rem") == null && inChart.sleep.get("deep") != null
+                && leftKeys379(inChart.sleepLeft).contains("rem"), null);
+        check("watch statistics: yesterday in the charts is yesterday's dial (read from the file as the day load does)",
+                dial.value("sleep") == inChart.value("sleep") && dial.value("readiness") == inChart.value("readiness")
+                && dial.value("activity_score") == inChart.value("activity_score") && dial.steps == inChart.steps && !Double.isNaN(dial.value("readiness")),
+                dial.value("readiness") + " " + inChart.value("readiness"));
+        app.openring.data.SleepHistory sh = app.openring.data.WatchHistory.load(demo, first.toString(), today.toString(), z, 40, rem);
+        check("watch statistics: Further analysis of the month has the charts' nights", sh.nights == nights, sh.nights + " " + nights);
+        check("watch statistics: its averages are the nights' (asleep, score, lowest heart rate)", Math.abs(sh.asleepMin - asleep / nights) < 1e-6
+                && Math.abs(sh.score - score / scored) < 1e-6 && Math.abs(sh.lowestHr - low / lows) < 1e-6, sh.asleepMin + " " + sh.score + " " + sh.lowestHr);
+        check("watch statistics: usual sleep times, stages and an average night", !Double.isNaN(sh.bedtimeMin) && !Double.isNaN(sh.wakeMin)
+                && sh.deepMin > 0 && sh.lightMin > 0 && sh.remMin == 0 && !Double.isNaN(sh.wakeUps) && Double.isNaN(sh.hrv), sh.bedtimeMin);
+        app.openring.data.SleepHistory allTime = app.openring.data.WatchHistory.load(demo, "2000-01-01", today.toString(), z, 40, rem);
+        check("watch statistics: All time holds every night of the watch", allTime.nights >= sh.nights && allTime.nights >= 30, allTime.nights);
+        app.openring.data.SleepHistory empty = app.openring.data.WatchHistory.load(demo, "2001-01-01", "2001-02-01", z, 40, rem);
+        check("watch statistics: a period without nights is empty", empty.nights == 0, empty.nights);
+        app.openring.core.DeviceHistory.NightRow r = h.night(y);
+        org.json.JSONObject o = app.openring.data.WatchHistory.nightJson(r);
+        check("watch statistics: the night as the ring's night fields", Json.stages(o).length == r.night.stages.length && Json.stages(o)[0] == r.night.stages[0]
+                && Json.d(o, "asleep_min") == r.night.asleepMin() && Json.d(o, "in_bed_min") == r.night.inBedMin() && o.optString("day").equals(y.toString())
+                && o.optJSONObject("score").optInt("value") == (int) r.score && Json.d(o, "lowest_hr") == r.lowest && Json.d(o, "lowest_hr_time") == r.lowestAt
+                && Json.d(o, "sleep_start") == r.fields.sleepStart && !o.has("avg_hrv") && !o.has("spo2") && o.optBoolean("light_rem"), o.toString().length());
+        check("watch statistics: reading changes nothing in the file", before.equals(watchRows251(demo) + "|" + demo.count("SELECT COUNT(*) FROM kv") + "|"
+                + demo.count("SELECT COUNT(*) FROM nights")), null);
+        app.openring.data.Prefs.of(c).setDemo(false);
+        clean254();
+    }
+
+    static String leftKeys379(List<app.openring.core.DeviceScores.Left> l) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.DeviceScores.Left x : l) b.append(b.length() == 0 ? "" : ",").append(x.key);
+        return b.toString();
     }
 }

@@ -161,6 +161,17 @@ public final class WatchDays {
         }
     }
 
+    /**
+     * Whether the watch tells REM sleep from light sleep (owner's report of 13 November: the Steel HR sends awake, light and deep
+     * only). The rule: true as soon as any of its stored sleep records is REM. A watch that never sent one shows "Light and REM"
+     * as one stage, without a REM row, REM warnings or a REM part in the sleep score; a later watch that does send REM is
+     * shown with it from its first such record on, nothing to switch.
+     */
+    public static boolean tellsRem(List<Records.Sleep> rows) {
+        for (Records.Sleep s : rows) if (s.stage == Records.REM) return true;
+        return false;
+    }
+
     /** Gaps up to this long between sleep pieces join them into one night (seconds). */
     public static final long JOIN_S = 2 * 3600;
 
@@ -193,6 +204,48 @@ public final class WatchDays {
             i = j + 1;
         }
         return best;
+    }
+
+    /**
+     * The nights of every day from {@code first} to {@code last}, each exactly what {@link #nightFor} gives for that day, but with
+     * the rows sorted and joined once instead of once per day (a year of nights for Further analysis). Days without a night are
+     * missing.
+     */
+    public static TreeMap<LocalDate, Night> nights(List<Records.Sleep> rows, LocalDate first, LocalDate last, Zones z) {
+        List<Records.Sleep> s = new ArrayList<Records.Sleep>(rows);
+        Collections.sort(s, new Comparator<Records.Sleep>() {
+            @Override
+            public int compare(Records.Sleep a, Records.Sleep b) {
+                return Long.compare(a.start, b.start);
+            }
+        });
+        TreeMap<LocalDate, int[]> best = new TreeMap<LocalDate, int[]>();
+        TreeMap<LocalDate, long[]> span = new TreeMap<LocalDate, long[]>();
+        int i = 0;
+        while (i < s.size()) {
+            int j = i;
+            long end = s.get(i).start + Math.max(0, s.get(i).dur);
+            while (j + 1 < s.size() && s.get(j + 1).start - end <= JOIN_S) {
+                j++;
+                end = Math.max(end, s.get(j).start + Math.max(0, s.get(j).dur));
+            }
+            long start = s.get(i).start;
+            java.time.ZonedDateTime e = Instant.ofEpochSecond(end).atZone(z.at(end));
+            LocalDate day = e.toLocalDate();
+            long[] b = span.get(day);
+            // the rule of nightFor: before 18:00, longer than none, and only a longer stretch replaces the first one found
+            if (!day.isBefore(first) && !day.isAfter(last) && e.getHour() < 18 && end > start && (b == null || end - start > b[1] - b[0])) {
+                span.put(day, new long[] {start, end});
+                best.put(day, new int[] {i, j});
+            }
+            i = j + 1;
+        }
+        TreeMap<LocalDate, Night> out = new TreeMap<LocalDate, Night>();
+        for (Map.Entry<LocalDate, int[]> e : best.entrySet()) {
+            long[] b = span.get(e.getKey());
+            out.put(e.getKey(), night(s.subList(e.getValue()[0], e.getValue()[1] + 1), b[0], b[1]));
+        }
+        return out;
     }
 
     private static Night night(List<Records.Sleep> pieces, long start, long end) {
@@ -341,6 +394,8 @@ public final class WatchDays {
         public final SortedMap<LocalDate, Integer> steps, metres, kcal, climb, battery;
         /** The newest battery reading, or null ({@link #newestBattery}). */
         public final Records.Battery newestBattery;
+        /** The watch tells REM from light sleep ({@link #tellsRem} over all its sleep rows). */
+        public final boolean rem;
         private final TreeMap<LocalDate, List<Records.Heart>> heart = new TreeMap<LocalDate, List<Records.Heart>>();
         private final TreeMap<LocalDate, List<Records.Workout>> workouts = new TreeMap<LocalDate, List<Records.Workout>>();
         private final List<Records.Sleep> sleep;
@@ -358,6 +413,7 @@ public final class WatchDays {
             this.climb = Collections.unmodifiableSortedMap(climbPerDay(moves, z));
             this.battery = Collections.unmodifiableSortedMap(batteryPerDay(battery, z));
             this.newestBattery = newestBattery(battery);
+            this.rem = tellsRem(sleep);
             this.sleep = new ArrayList<Records.Sleep>(sleep);
             this.stepRows = new ArrayList<Records.Steps>(steps);
             this.heartRows = new ArrayList<Records.Heart>(heart);

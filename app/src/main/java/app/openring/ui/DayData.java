@@ -77,6 +77,19 @@ public final class DayData {
      * {@link #score} and {@link #scoreObj} show them; with a ring they are only the "Watch version" line.
      */
     public app.openring.core.DeviceScores.Result devices;
+    /**
+     * Without a ring, the watch's or the phone's days over time for the 7 and 30 day charts, sleep debt and the recent nights
+     * (owner's report of 13 November, {@code core/DeviceHistory}): from 30 days before the date to 30 days after it (at most
+     * today). Null with a ring (its own charts show), without a device, or when the rows could not be read.
+     */
+    public app.openring.core.DeviceHistory history;
+    /**
+     * The watch tells REM from light sleep (owner's report of 13 November, {@code WatchDays.tellsRem}: any stored sleep record is
+     * REM). Without, every watch night shows "Light and REM" as one stage and its score leaves REM out. Ring nights never change.
+     */
+    public boolean watchRem = true;
+    /** The watch's nights of {@link #history} around the date as the ring's night objects, for the recent nights strip. */
+    public final List<JSONObject> watchRecent = new ArrayList<JSONObject>();
     /** The devices the tabs are built for (issue #373, {@code core/Start}); never null after {@link #load}. */
     public app.openring.core.Start.Has has = new app.openring.core.Start.Has(true, false, false);
     /**
@@ -265,7 +278,10 @@ public final class DayData {
         try {
             // a day earlier for the night that ends this morning
             // the demo shown as for only the phone (screen test, issue #373) leaves the watch's rows out too
-            if (app.openring.data.WatchStore.any(db) && (has.watch || !p.demo())) watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
+            if (app.openring.data.WatchStore.any(db) && (has.watch || !p.demo())) {
+                watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
+                watchRem = app.openring.data.WatchStore.tellsRem(db);
+            }
         } catch (RuntimeException e) {
             watch = null;
             ok = failed(c, date, "watch data", e);
@@ -302,12 +318,37 @@ public final class DayData {
                         ? app.openring.data.WatchStore.window(db, from - 86400, de) : null;
                 app.openring.core.MainDevice.Phone ph = dev == app.openring.core.MainDevice.PHONE && phoneAny
                         ? app.openring.data.PhoneStore.window(db, from, de) : null;
-                devices = app.openring.core.DeviceScores.of(dev, date, zone, w, ph, p.watchGoal(), p.age());
+                devices = app.openring.core.DeviceScores.of(dev, date, zone, w, ph, p.watchGoal(), p.age(), watchRem);
             }
         } catch (RuntimeException e) {
             // the tabs show the scores as without data; the ring's own are not touched
             devices = null;
             ok = failed(c, date, "scores without a ring", e);
+        }
+        try {
+            // the statistics without a ring (owner's report of 13 November); with a ring its own charts show
+            int dev = app.openring.core.DeviceHistory.device(has.ring, has.watch, phone != null);
+            if (dev >= 0) {
+                LocalDate today = LocalDate.now();
+                LocalDate first = date.minusDays(app.openring.core.DeviceHistory.MONTH - 1);
+                LocalDate last = date.plusDays(app.openring.core.DeviceHistory.AFTER);
+                if (last.isAfter(today)) last = today.isBefore(date) ? date : today;
+                double from = app.openring.core.DeviceHistory.rowsFrom(first, zone), to = last.plusDays(1).atStartOfDay(zone).toEpochSecond();
+                app.openring.core.MainDevice.Watch w = dev == app.openring.core.MainDevice.WATCH && app.openring.data.WatchStore.any(db)
+                        ? app.openring.data.WatchStore.window(db, from, to) : null;
+                // the phone's window as the scores read it: from 35 days before the first day (a day less than the watch's)
+                app.openring.core.MainDevice.Phone ph = dev == app.openring.core.MainDevice.PHONE && phoneAny
+                        ? app.openring.data.PhoneStore.window(db, from + 86400, to) : null;
+                history = app.openring.core.DeviceHistory.of(dev, first, last, zone, w, ph, p.watchGoal(), p.age(), watchRem);
+                if (dev == app.openring.core.MainDevice.WATCH) {
+                    watchRecent.addAll(app.openring.data.WatchHistory.json(history.nights(date.minusDays(app.openring.core.DeviceHistory.MONTH), last)));
+                }
+            }
+        } catch (RuntimeException e) {
+            // the tabs show today's numbers without the charts below them
+            history = null;
+            watchRecent.clear();
+            ok = failed(c, date, "history without a ring", e);
         }
     }
 

@@ -496,6 +496,29 @@ public final class WatchStore {
     }
 
     /**
+     * Only the watch's sleep pieces and heart rates from {@code from} to {@code to} (the same rule as {@link #window}), for Further
+     * analysis of the watch's nights over a year or all time, where the steps are not needed.
+     */
+    public static app.openring.core.MainDevice.Watch nightRows(Db db, double from, double to) {
+        app.openring.core.MainDevice.Watch w = new app.openring.core.MainDevice.Watch();
+        SQLiteDatabase d = db.getReadableDatabase();
+        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+        Cursor c = d.rawQuery("SELECT t, bpm FROM watch_hr WHERE t >= ? AND t < ? ORDER BY t", a);
+        try {
+            while (c.moveToNext()) w.heart.add(new Records.Heart(c.getLong(0), c.getInt(1)));
+        } finally {
+            c.close();
+        }
+        c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.sleep.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
+        } finally {
+            c.close();
+        }
+        return w;
+    }
+
+    /**
      * What the ring's stored results give for the main device rule: the day summary's steps, distance, movement per
      * quarter hour and heart rate line, and every night or nap in {@code nights} that reaches the day ({@code from} to
      * {@code to}). Reads only; a missing summary gives NaN and empty values.
@@ -525,6 +548,15 @@ public final class WatchStore {
         } finally {
             c.close();
         }
+    }
+
+    /**
+     * The watch tells REM from light sleep: any stored sleep record is REM ({@code WatchDays.tellsRem} over the whole table, owner's
+     * report of 13 November). True without any watch row, so nothing changes for a person without a watch.
+     */
+    public static boolean tellsRem(Db db) {
+        if (db.count("SELECT COUNT(*) FROM (SELECT 1 FROM watch_sleep LIMIT 1)") == 0) return true;
+        return db.count("SELECT COUNT(*) FROM (SELECT 1 FROM watch_sleep WHERE stage = " + app.openring.core.withings.Records.REM + " LIMIT 1)") > 0;
     }
 
     /** True when any watch message is stored. */
