@@ -90,7 +90,7 @@ public final class Backup {
         byte[] key = p.loadKey();
         // without a ring by choice (issue #329) there is no key: the backup is written without one, as for a key this phone
         // cannot read (#288), so the phone's steps, the period log and the settings can be kept
-        if (key == null && !p.hasKey() && !p.noRing()) throw new IOException("no ring key saved on this phone");
+        if (key == null && !p.hasKey() && !p.withoutRing()) throw new IOException("no ring key saved on this phone");
         Begun b = new Begun(p, key);
         b.snap = withHistory ? Exporter.snapshot(c) : null;
         return b;
@@ -121,7 +121,7 @@ public final class Backup {
         if (key != null) Json.put(o, "key", Hex.encode(key));
         else Json.put(o, NO_KEY, true);
         // used without a ring (issue #329): a restore onto a phone without a key goes on without one too
-        if (key == null && !p.hasKey() && p.noRing()) Json.put(o, NO_RING, true);
+        if (key == null && !p.hasKey() && p.withoutRing()) Json.put(o, NO_RING, true);
         Json.put(o, "address", p.address());
         Json.put(o, "serial", p.serial());
         Json.put(o, "hardware", p.hardware());
@@ -426,7 +426,7 @@ public final class Backup {
         if (r.history) r.message = "Restored your " + (p.noKey ? "settings and history" : "key, settings and history") + (r.logDamaged ? ". " + PERIODS_DAMAGED : "");
         else if (p.history) r.message = "Restored your " + what + ", the history on this phone stays";
         else r.message = "Restored your " + what;
-        if (p.noKey) r.message += ". " + (prefs.loadKey() != null ? NO_KEY_KEPT : !prefs.hasKey() && prefs.noRing() ? NO_KEY_NO_RING : NO_KEY_ENTER);
+        if (p.noKey) r.message += ". " + (prefs.loadKey() != null ? NO_KEY_KEPT : !prefs.hasKey() && prefs.withoutRing() ? NO_KEY_NO_RING : NO_KEY_ENTER);
         return r;
     }
 

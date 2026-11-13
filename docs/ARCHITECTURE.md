@@ -46,10 +46,14 @@ Nothing leaves the phone: the app has no internet permission.
   failed demo, `hasRing` in Find my ring; `Prefs.ringState` answers without reading the key, so it serves only `needsSetup` and `hasRing`), so none can loop.
   **Getting started (issue #373, `core/Start`):** Setup's first screen leads to "What do you want to use?": Pair a ring (the
   old path), Pair a watch (Bluetooth access, About you, then the main screen with the Watch setup on top) or Just this phone
-  (About you, then the main screen). The watch and the phone set `Prefs.noRing` and `Prefs.startChoice` (in the backup)
-  before the main screen opens, and `Prefs.keyState`/`ringState` count an added watch as no ring while no key is stored, so
-  a watch only phone is `NO_RING` and the main screen (`Start.opensSetup`, which also never opens Setup with a watch added)
-  never sends it to the ring setup. The tabs ask `Start.cards(tab, DayData.has)` which device cards to show: without a ring
+  (About you, then the main screen). The tap stores `Prefs.startChoice` (in the backup); the watch and the phone set
+  `Prefs.noRing` after About you (`SetupActivity.finishWithout`), before the main screen opens, so a setup left before that
+  shows Getting started again. `Prefs.withoutRing` (the choice or an added watch, `Start.noRing`) is the one rule for "no
+  key is fine": `Prefs.keyState`/`ringState`, backups, automatic backups, going back to a copy and Settings' texts. So a
+  watch only phone is `NO_RING`, its backups are saved without a key, and the main screen (`Start.opensSetup`, which also
+  never opens Setup with a watch added) never sends it to the ring setup. The main screen and Sync ask for Bluetooth with a
+  watch too (`SyncPlan.asksBluetooth`); an answer to Sync's dialog continues that Sync, a refusal for good leads to the
+  app settings (`SyncPlan.afterAnswer`). The tabs ask `Start.cards(tab, DayData.has)` which device cards to show: without a ring
   no empty ring cards, a short line with Add a ring (`ui/DeviceViews`), the watch's or the phone's day on Today.
   Scores without a ring (issue #379, `core/DeviceScores`): Activity, Sleep and Readiness from the watch, Activity from the
   phone's steps, worked out on each day load (`DayData.devices`, 35 days of rows, nothing stored) with the ring's own
@@ -992,9 +996,20 @@ app) keeps it on. Neither can be checked on the JVM; the log names each reading'
   phone's intervals again, a new rule (`PhoneSteps.RULE`, kv `phone_rule`) all of them, each in one transaction; the schema step
   forgets the rule, so an upgrade stopped half way gets its intervals back at the next day load (`PhoneStore.forDay`, not while
   an analysis runs). The app opening reads only when this boot's newest reading is a minute old or more, before the sensor is on. Readings always go
-  to the real file: `PhoneStore.record` holds Db's class lock (the lock of the restore's swap) and uses `Db.real`, which in demo
-  mode is a second helper on the real file, taken over by `Db.get` when demo mode ends and closed before a restore; it writes
-  nothing while an analysis runs (its transaction would hold the write for minutes), the next reading loses nothing.
+  to the real file: `PhoneStore.record` takes the real file through `Db.beginWrite`/`endWrite` (`Db.real`, which in demo
+  mode is a second helper on the real file, taken over by `Db.get` when demo mode ends, kept aside when it starts during a write, closed
+  before a restore). It does not hold Db's class lock while SQLite's write is awaited (an automatic backup's copy holds it
+  for seconds, and every `Db.get` on the main thread would wait; code review of the device choice); `Db.replaceWith` waits
+  for a write under way before it reads or moves anything and refuses new ones until the swap is over. It writes nothing
+  while an analysis runs or a restore swaps (its transaction would hold the write for minutes), the next reading loses
+  nothing.
+* **Moving to a new phone** (code review of the device choice): Android's phone to phone transfer copies the app's settings
+  and history, also with `allowBackup` off, so the new phone would start with the old phone's id. `Prefs.phoneDevice(boot,
+  elapsed, wall)` keeps the phone's state at each reading as a mark (boot key, time since the start, wall clock; not in a
+  backup) and `PhoneSteps.samePhone` checks a reading against it: a lower boot count, the same boot with less time since
+  the start or a start more than 6 hours off, or a later boot that started before the mark's reading is another phone,
+  which gets a new id. The old phone's readings stay as they are under the old id; a wrong guess (a clock moved by more
+  than 6 hours) costs one interval, never steps. An id from before the mark is kept at the first reading.
 * **Restore**: like the period log, `Db.replaceWith` reads the phone's readings before the swap and adds those the restored
   file lacks (insert, never replace), then works every interval out again, all in one transaction before `.old` goes; any
   failure puts the old file back. Older backups get the tables empty first. Delete all empties both; pairing another ring keeps

@@ -35,7 +35,10 @@ public final class Db extends SQLiteOpenHelper {
     public static synchronized Db get(Context c) {
         String name = Prefs.of(c).demo() ? DEMO : REAL;
         if (instance != null && !instance.fileName.equals(name)) {
-            instance.close();
+            // into demo mode while a phone reading is written through the real file's helper (PhoneStore.record writes
+            // without this lock, code review of the device choice): it is kept aside for the readings, never closed under it
+            if (writers > 0 && REAL.equals(instance.fileName) && realAside == null) realAside = instance;
+            else instance.close();
             instance = null;
         }
         // back from demo mode: the real file's helper the phone's readings used meanwhile (issue #329) is taken over, so
@@ -60,8 +63,8 @@ public final class Db extends SQLiteOpenHelper {
      * The real history, also while demo mode is shown (issue #329, phase 1b): the phone's step readings are the person's,
      * never the demo's. Outside demo mode it is {@link #get}'s own helper; in demo mode a second helper on the real file
      * (the demo has its own file, so the two never meet), taken over by {@link #get} when demo mode ends and closed before a
-     * restore swaps the file. Callers hold Db's class lock while they write ({@code PhoneStore.record}), the lock
-     * {@link #replaceWith} holds, so a reading never lands in a file half swapped.
+     * restore swaps the file. Writers take it through {@link #beginWrite} ({@code PhoneStore.record}), which
+     * {@link #replaceWith} waits for, so a reading never lands in a file half swapped.
      */
     static synchronized Db real(Context c) {
         if (instance != null && REAL.equals(instance.fileName)) return instance;
@@ -73,6 +76,28 @@ public final class Db extends SQLiteOpenHelper {
             realAside = new Db(c.getApplicationContext(), REAL);
         }
         return realAside;
+    }
+
+    /** Writes under way through {@link #beginWrite}; swaps under way or waiting ({@link #replaceWith}). Guarded by Db.class. */
+    private static int writers, swapping;
+
+    /**
+     * The real history for a short write from a background thread (the phone's step readings), or null while a restore swaps
+     * the file or waits to. Code review of the device choice: the write itself runs without Db's class lock, since waiting
+     * for SQLite's write (an automatic backup's copy of the whole history, a sync) while holding it would stop every
+     * {@link #get} on the main thread. {@link #replaceWith} waits until each write ended with {@link #endWrite}.
+     */
+    static synchronized Db beginWrite(Context c) {
+        if (swapping > 0) return null;
+        Db d = real(c);
+        writers++;
+        return d;
+    }
+
+    /** The end of a write begun with {@link #beginWrite} (always, in a finally). */
+    static synchronized void endWrite() {
+        writers--;
+        Db.class.notifyAll();
     }
 
     /** Closes the real file's second helper of demo mode, if any (a restore swaps the file next). */
@@ -1750,9 +1775,30 @@ public final class Db extends SQLiteOpenHelper {
      * says so. Any other error on the way to the phone's log refuses the restore before anything moves
      * ({@link PeriodLogUnreadable}); any failure later puts the old file back with its log, like every other failure here.
      *
+     * A phone reading written meanwhile ({@link #beginWrite}, without the class lock) is waited for first, before anything
+     * is read or moved, and no new one starts until the swap is over; the reading is then in the phone's file and carried
+     * into the restored one like every other reading.
+     *
      * @return true when the phone's file was damaged, so its period log was left behind (review of #275)
      */
     public static synchronized boolean replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
+        swapping++;
+        try {
+            while (writers > 0) {
+                try {
+                    Db.class.wait();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new java.io.InterruptedIOException("stopped while waiting for a phone reading to be written, nothing changed");
+                }
+            }
+            return replaceLocked(c, src, expectedEvents);
+        } finally {
+            swapping--;
+        }
+    }
+
+    private static boolean replaceLocked(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
         java.io.File dst = c.getDatabasePath(REAL);
         dst.getParentFile().mkdirs();
         String old = dst.getPath() + ".old";

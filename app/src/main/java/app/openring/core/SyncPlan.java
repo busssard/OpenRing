@@ -29,6 +29,35 @@ public final class SyncPlan {
             + "Enter it again or forget the ring in Settings, Ring.";
 
     /**
+     * Whether the main screen asks for Bluetooth access when it opens (code review of the device choice): with a ring, and
+     * with a watch added, also without a ring ({@code keyState} {@link KeyState#NO_RING} counts an added watch as no ring).
+     * Just the phone needs no Bluetooth (issue #329); demo mode never asks.
+     */
+    public static boolean asksBluetooth(boolean demo, int keyState, boolean watchAdded) {
+        return !demo && (keyState != KeyState.NO_RING || watchAdded);
+    }
+
+    /** What follows an answer to the Bluetooth dialog: nothing, the Sync that asked goes on, or the way to the app settings. */
+    public static final int NOTHING = 0, GO_ON = 1, TO_SETTINGS = 2;
+
+    /**
+     * @param fromSync the dialog came from Sync (ring or watch), not from the screen opening
+     * @param granted access is allowed now
+     * @param blocked Android no longer shows its dialog ({@code PermissionAsk.Answer.blocked})
+     */
+    public static int afterAnswer(boolean fromSync, boolean granted, boolean blocked) {
+        if (!fromSync) return NOTHING;
+        if (granted) return GO_ON;
+        return blocked ? TO_SETTINGS : NOTHING;
+    }
+
+    /** The first sentence of the dialog that leads to the app settings: what Sync needs Bluetooth for. */
+    public static String accessText(SyncPlan p) {
+        String what = p.watch && p.ring ? "your watch and your ring" : p.watch ? "your watch" : "your ring";
+        return "Sync needs Bluetooth access to reach " + what + ".";
+    }
+
+    /**
      * @param demo demo mode (nothing syncs)
      * @param keyState {@link KeyState} of the ring key, read
      * @param watchAdded a watch is added for syncing

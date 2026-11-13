@@ -143,6 +143,36 @@ public final class PhoneSteps {
         return prev.wall <= first.wall - first.elapsed / 1000.0 + START_SLACK_S;
     }
 
+    /**
+     * How far the start of the phone (wall clock minus the time since the start) may move between the mark and a reading of
+     * the same boot before it counts as another phone, seconds: a clock set by hand or corrected by the network moves it, a
+     * new phone that took over the settings starts at its own time.
+     */
+    public static final double SAME_START_S = 6 * 3600;
+
+    /**
+     * Whether a reading now (boot key, ms since the start, wall clock in seconds) can come from the phone that made the mark,
+     * the phone's state at its last reading (code review of the device choice). Android's phone to phone transfer copies the
+     * app's settings, with the phone's own id ({@code Prefs.phoneDevice}), to a new phone, whose small boot count and short
+     * time since the start would be differenced against the old phone's readings. Not the same phone: a lower boot count, the
+     * same boot with less time since the start or a start more than {@link #SAME_START_S} off, a higher boot count that
+     * started before the mark's reading (with the same slack). A stand in boot key ({@link #bootKey}) changes with the start,
+     * so only the time since the start is compared for the same key. No mark yet ({@code markWall} 0, from before this check):
+     * the same phone. A wrong "another phone" costs one interval (the new id's first reading is a baseline), never steps.
+     */
+    public static boolean samePhone(long markBoot, long markElapsedMs, double markWall, long boot, long elapsedMs, double wall) {
+        if (markWall <= 0) return true;
+        if (boot == markBoot) {
+            if (elapsedMs < markElapsedMs) return false;
+            if (boot < 0) return true;
+            double markStart = markWall - markElapsedMs / 1000.0, start = wall - elapsedMs / 1000.0;
+            return Math.abs(start - markStart) <= SAME_START_S;
+        }
+        if (boot < 0 || markBoot < 0) return true;
+        if (boot < markBoot) return false;
+        return wall - elapsedMs / 1000.0 >= markWall - SAME_START_S;
+    }
+
     /** {@link #sinceRestart} for the JVM tests (the tests live outside the package). */
     public static boolean sinceRestartForTest(Reading prev, Reading first) {
         return sinceRestart(prev, first);
