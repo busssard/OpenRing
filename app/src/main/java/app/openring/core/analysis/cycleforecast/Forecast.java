@@ -11,7 +11,10 @@ public final class Forecast {
     public final int method;
     /** The expected cycle length in days, unrounded. The calendar's next start is the last start plus its rounded value. */
     public final double mean;
-    /** How much the next cycle may differ from {@link #mean} (one standard deviation, days); used for the ovulation range. */
+    /**
+     * How much the next cycle may differ from {@link #mean} (one standard deviation, days; drip style the one its fixed range
+     * stands for); used for the ovulation range.
+     */
     public final double spread;
     /** The range each way in days before rounding (about 4 in 5 starts), and as the calendar shows it. */
     public final double range;

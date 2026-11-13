@@ -2754,7 +2754,7 @@ public class CoreTest {
         eq("#252 12 x 28: cycle day 11", c.cycleDay(s12.plusDays(10)), 11);
         eq("#252 12 x 28: status", c.status(EN), "Cycle day 11");
         eq("#252 12 x 28: next line", c.nextLine(), "Next period in about 18 days");
-        check("#252 12 x 28: about 4 in 5", c.expectedLine(EN).endsWith("About 4 in 5 periods start within such a range.")
+        check("#252 12 x 28: about 4 in 5", c.expectedLine(EN).contains("About 4 in 5 periods start within such a range.")
                 && c.expectedLine(EN).startsWith("In about 18 days. Range "), c.expectedLine(EN));
         eq("#252 12 x 28: very regular", c.regularityLine(), "Your cycles vary by less than a day.");
         // ovulation: 14 days before, give or take max(3, round(1.28 x 2.4)) = 3; fertile the 5 days before and the day
@@ -2934,7 +2934,7 @@ public class CoreTest {
         String rd = c.describe(s12.plusDays(1), EN);
         check("#252 readout of a period day: date, amount, day of the period", rd.contains(": Medium") && rd.contains("\nDay 2 of the period from "));
         rd = c.describe(next, EN);
-        check("#252 readout of the expected day: why it is in the band", rd.contains(": No entry") && rd.contains("\nCycle day 29")
+        check("#252 readout of the expected day: why it is in the band", rd.contains(": No entry") && rd.contains("\nCycle day 1 if the period starts on " + c.weekday(next, EN))
                 && rd.contains("In the expected next period") && rd.contains("your typical cycle of 28 days, give or take 1 day."));
         rd = c.describe(s12.plusDays(13), EN);
         check("#252 readout in the ovulation range and the fertile days", rd.contains("In the likely ovulation range") && rd.contains("about 14 days before")

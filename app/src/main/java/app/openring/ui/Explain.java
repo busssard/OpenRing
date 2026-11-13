@@ -177,7 +177,7 @@ public final class Explain {
     /** Under "Your cycles vary by about N days". */
     public static String periodVary(int cycles) {
         return "Vary by: the standard deviation of " + yourCycles(cycles) + ", how far a cycle usually lies from their average. "
-                + "Cycles far from the rest (more than 10 days from the middle value) are left out, maybe a period was not logged.";
+                + "Cycles far from the rest (more than 10 days from the middle value) are left out, maybe a period was not logged, unless half of them or more are.";
     }
 
     // ------------------------------------------------- period tracker, "Your cycles" (issue #252, phase 1a2)
@@ -282,6 +282,10 @@ public final class Explain {
         if (cy.method == app.openring.core.analysis.Cycles.OWN_LUTEAL) {
             return "Ovulation day: give or take " + cy.ovulationRange + " days, from how much " + yourCycles(cy.used.size()) + " vary, together with how much your own "
                     + "time from ovulation to the period varies, times 1.28 for about 4 in 5. At least 3 days.";
+        }
+        if (cy.methodId == app.openring.core.analysis.cycleforecast.Methods.DRIP && !cy.forecast.fallback) {
+            return "Ovulation day: give or take " + cy.ovulationRange + " days, from drip style's range for the period (" + cy.range + (cy.range == 1 ? " day" : " days")
+                    + " each side) together with how much the time from ovulation to the next period varies (about 2.4 days in a large study). At least 3 days.";
         }
         return periodOvulation(cy.used.size(), cy.ovulationRange);
     }

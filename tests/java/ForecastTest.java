@@ -86,6 +86,7 @@ public class ForecastTest {
         temperature();
         demo();
         texts();
+        review();
         System.out.println("forecast: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -438,5 +439,91 @@ public class ForecastTest {
         check("#383 How it works lists every method once", app.openring.ui.Explain.periodAccuracyHow().size() == Methods.ALL.length + 5);
         check("#383 Settings' names", Methods.name(Methods.BEST).equals("Best for you") && Methods.name(Methods.DRIP).equals("drip style")
                 && Methods.name(Methods.BAYES).equals("Learns from every cycle"));
+    }
+
+    /** The code review of dev dadbb71: long cycles in Bayes, drip style's ranges, cycle days ahead, the outlier rule. */
+    static void review() {
+        Locale en = Locale.ENGLISH;
+        // 1. Bayes: steady long cycles are one cycle each, never split into halves by the study's 29.3 day start
+        for (int len : new int[] {45, 48, 49, 50, 60}) {
+            Forecast b = f(Methods.BAYES, rep(len, 12));
+            check("#383 review: Bayes with twelve " + len + " day cycles expects about " + len, Math.abs(b.mean - len) < 1.0, b);
+        }
+        int[] longFirst = {50, 39, 41, 40, 42, 40, 41, 39, 40, 42};
+        Forecast lf = f(Methods.BAYES, longFirst);
+        check("#383 review: Bayes with a 50 day first cycle, then about 40: expects about 40", lf.mean > 39.5 && lf.mean < 42, lf);
+        Forecast early = f(Methods.BAYES, cat(rep(28, 3), new int[] {56}, rep(28, 6)));
+        check("#383 review: Bayes still takes a 56 day cycle after three 28s as a missed log", Math.abs(early.mean - 28) < 0.3 && early.shown <= 2, early);
+        Forecast mid = f(Methods.BAYES, cat(rep(28, 6), new int[] {57}, rep(28, 2)));
+        check("#383 review: and a 57 day one among 28s", Math.abs(mid.mean - 28) < 0.3, mid);
+        int[] fifty = rep(50, 12);
+        Cycles cb = Cycles.of(log(fifty), null, lastStart(fifty).plusDays(30)).withMethod(Methods.BAYES);
+        check("#383 review: in the app on cycle day 31 of 50 day cycles, not late, next period about 50 days after the last",
+                cb.lateBy() == 0 && cb.step >= 49 && cb.next.equals(lastStart(fifty).plusDays(cb.step)) && cb.nextLine().startsWith("Next period in about "), cb.nextLine() + " " + cb.next);
+        List<Cycles.Ahead> fa = cb.ahead(cb.today.plusDays(365));
+        check("#383 review: the year ahead runs at about 50 days", fa.size() > 3 && fa.get(1).start.equals(fa.get(0).start.plusDays(cb.step)) && cb.step >= 49, fa);
+
+        // 2. drip style: the ovulation range follows its own period range, and later cycles are never narrower
+        int[] miss = cat(rep(28, 11), new int[] {56});
+        Cycles dr = Cycles.of(log(miss), null, lastStart(miss).plusDays(3)).withMethod(Methods.DRIP);
+        double lut = Cycles.Z80 * Cycles.LUTEAL_SD;
+        int expectOv = Math.max(Cycles.OVULATION_MIN, (int) Math.round(Math.sqrt(dr.rangeExact * dr.rangeExact + lut * lut)));
+        check("#383 review: drip style's ovulation range comes from its own period range (" + dr.range + " days), not from a spread with the 56 day cycle",
+                dr.range == 2 && dr.ovulationRange == expectOv && dr.ovulationRange <= 4, dr.range + " / " + dr.ovulationRange);
+        boolean grows = true;
+        for (Cycles cy : new Cycles[] {dr, Cycles.of(log(miss), null, lastStart(miss).plusDays(3)).withMethod(Methods.BAYES),
+                Cycles.of(log(random(20, 29, 3, 7)), null, lastStart(random(20, 29, 3, 7)).plusDays(4)).withMethod(Methods.BEST)}) {
+            List<Cycles.Ahead> a = cy.ahead(cy.today.plusDays(400));
+            for (int i = 1; i < a.size(); i++) grows &= a.get(i).range >= a.get(i - 1).range && a.get(i).ovulationRange >= a.get(i - 1).ovulationRange;
+            if (!grows) System.out.println("  detail: " + a);
+        }
+        check("#383 review: no later cycle has a narrower period or ovulation range than a nearer one", grows);
+        check("#383 review: drip style's ovulation text names its range", app.openring.ui.Explain.periodOvulation(dr).contains("drip"),
+                app.openring.ui.Explain.periodOvulation(dr));
+
+        // 3. the "about 4 in 5" sentence only where it holds; drip style says what its range is
+        String dl = dr.expectedLine(en);
+        check("#383 review: drip style's range is not called 4 in 5, it says it is drip's 1 or 2 days", !dl.contains("4 in 5") && dl.contains("drip style shows 2 days each side"), dl);
+        int[] var = random(20, 29, 3, 7);
+        Cycles vd = Cycles.of(log(var), null, lastStart(var).plusDays(4)).withMethod(Methods.DRIP);
+        Backtest.Score vs = vd.backtest().of(Methods.DRIP);
+        check("#383 review: and how often the start fell in it on her own periods", vd.expectedLine(en).endsWith("On " + vs.n + " of your past periods the start fell in it "
+                + vs.hits + " times."), vd.expectedLine(en));
+        Cycles vo = Cycles.of(log(var), null, lastStart(var).plusDays(4));
+        Backtest.Score os = vo.backtest().of(Methods.OPEN_RING);
+        check("#383 review: other methods keep about 4 in 5, with their real count", vo.expectedLine(en).contains("About 4 in 5 periods start within such a range.")
+                && vo.expectedLine(en).endsWith("On " + os.n + " of your past periods the start fell in it " + os.hits + " times."), vo.expectedLine(en));
+        check("#383 review: without periods to check, only the 4 in 5", Cycles.of(log(28, 29, 30), null, lastStart(28, 29, 30).plusDays(3)).expectedLine(en)
+                .endsWith("About 4 in 5 periods start within such a range."));
+
+        // 4. touching a day ahead: the cycle day counts from that cycle's own expected start
+        int[] reg = rep(28, 8);
+        Cycles rc = Cycles.of(log(reg), null, lastStart(reg).plusDays(3));
+        List<Cycles.Ahead> ra = rc.ahead(rc.today.plusDays(120));
+        String two = rc.describe(ra.get(2).start, en), ov3 = rc.describe(ra.get(2).ovulation, en);
+        check("#383 review: two cycles ahead the most likely first day is cycle day 1 of that cycle, not 85", two.contains("\nCycle day 1 if the period starts on "
+                + rc.weekday(ra.get(2).start, en)) && !two.contains("Cycle day 85"), two);
+        check("#383 review: its ovulation day is cycle day 15 of its cycle", ov3.contains("\nCycle day 15 if the period starts on " + rc.weekday(ra.get(1).start, en)), ov3);
+        check("#383 review: today and days before the next expected start still count from the last start", rc.describe(rc.today.plusDays(5), en).contains("\nCycle day 9")
+                && rc.describe(rc.next.minusDays(1), en).contains("\nCycle day 28") && !rc.describe(rc.next.minusDays(1), en).contains("if the period"), rc.describe(rc.next.minusDays(1), en));
+        Cycles late = Cycles.of(log(reg), null, lastStart(reg).plusDays(33));
+        check("#383 review: with a late period, the days after today still count from the last start until the next expected one",
+                late.describe(late.today.plusDays(2), en).contains("\nCycle day 36") && late.lateBy() > 0, late.describe(late.today.plusDays(2), en));
+
+        // 5. cycles that vary a lot: the rule that leaves far cycles out never leaves out half of them or more
+        int[] alt = {21, 45, 21, 45, 21, 45};
+        Cycles ac = Cycles.of(log(alt), null, lastStart(alt).plusDays(3));
+        check("#383 review: alternating 21 and 45 days: every cycle counts, not the 29 day default", ac.used.size() == 6 && ac.leftOutCount() == 0
+                && Methods.kept(alt).length == 6 && f(Methods.OPEN_RING, alt).n == 6 && ac.length == 33, ac.used);
+        check("#383 review: and the card does not say to log 3 cycles", !ac.expectedLine(en).contains("Until you have logged") && (ac.unusualLine(en) == null || !ac.unusualLine(en).contains("left out")),
+                ac.expectedLine(en) + " | " + ac.unusualLine(en));
+        check("#383 review: a missed log among regular cycles is still left out", Methods.kept(cat(rep(28, 8), new int[] {56})).length == 8
+                && Cycles.of(log(cat(rep(28, 8), new int[] {56})), null, lastStart(cat(rep(28, 8), new int[] {56})).plusDays(3)).leftOutCount() == 1);
+        int[] three = {28, 29, 60};
+        Cycles tc = Cycles.of(log(three), null, lastStart(three).plusDays(3));
+        check("#383 review: 3 cycles with one far: says only 2 count and why, not to log 3", tc.used.size() == 2
+                && tc.expectedLine(en).contains("Only 2 of your 3 cycles count") && !tc.expectedLine(en).contains("Until you have logged"), tc.expectedLine(en));
+        Backtest altB = Backtest.run(new int[] {21, 45, 21, 45, 21, 45, 21, 45, 21, 45});
+        check("#383 review: the backtest scores such cycles too, not every one as far", altB.scored() > 0, altB.scored() + " " + altB.farOut);
     }
 }
