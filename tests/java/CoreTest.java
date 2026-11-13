@@ -2268,6 +2268,21 @@ public class CoreTest {
                 Arrays.asList("30: Readiness 83, back to your usual 82 (the 4 weeks before) after 2 low days in a row (70 and 72)"));
         d.get(30).readiness = 81;
         eq("#265 recovered: not yet back to the usual is no badge", at265(d, C), Collections.emptyList());
+        // back a few days later still counts, on the first day back (owner's report, 13 November)
+        d.get(31).readiness = 81.5;
+        d.get(32).readiness = 85;
+        d.get(33).readiness = 86;
+        eq("#265 recovered: back two days after the dip counts, on the first day back only", kind265(d, C),
+                Arrays.asList("32: Readiness 85, back to your usual 82 (the 4 weeks before) after 2 low days in a row (70 and 72)"));
+        d.get(31).readiness = Double.NaN;
+        eq("#265 recovered: a day without readiness between dip and return breaks it", at265(d, C), Collections.emptyList());
+        d.get(31).readiness = 81.5;
+        for (int i = 30; i < 30 + Badges.BACK_WITHIN; i++) d.get(i).readiness = 81;
+        for (int i = 30 + Badges.BACK_WITHIN; i < 40; i++) d.get(i).readiness = 85;
+        eq("#265 recovered: back on day " + Badges.BACK_WITHIN + " after the dip counts", at265(d, C), Arrays.asList(30 + Badges.BACK_WITHIN));
+        d.get(30 + Badges.BACK_WITHIN).readiness = 81;
+        eq("#265 recovered: later than that does not", at265(d, C), Collections.emptyList());
+        for (int i = 31; i < 40; i++) d.get(i).readiness = Double.NaN;
         d.get(30).readiness = 82;
         eq("#265 recovered: exactly the usual is", at265(d, C), Arrays.asList(30));
         d.get(28).readiness = 80;
