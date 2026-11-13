@@ -31,6 +31,12 @@ public final class WatchStore {
     static final String[] DECODED = {"watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery", "watch_moves"};
     /** kv: the decoder version the stored rows come from. */
     static final String DECODER = "watch_decoder";
+    /**
+     * kv: the newest session whose messages are decoded, with every session before it (review of dadbb71). A session
+     * whose decoding failed stays behind it and is decoded by the next sync ({@link #decodePending}). Missing (an older
+     * version, pairing another ring empties kv): every message is decoded again once ({@link #ensureDecoded}).
+     */
+    static final String DECODED_UPTO = "watch_decoded_session";
     /** Tests only: decoding throws after this many messages, as a stop half way would. */
     static volatile int failDecodeAfter = -1;
 
@@ -63,8 +69,21 @@ public final class WatchStore {
 
     /** Stores one message as it came (its own small transaction, so a stop keeps everything before it). */
     public static void addRaw(Db db, long session, int seq, String device, byte[] body, double captured) {
+        addRaw(db, session, seq, device, body, Frame.type(body), captured);
+    }
+
+    /**
+     * Stores bytes that are no whole message (a Bluetooth piece lost on the way) as they came, under {@code type}: the
+     * request whose answer they came in (-1 for none). That answer then counts as cut off, also when every row is worked
+     * out again ({@link #fromRaw}) or after a restore, and they give no rows ({@code Records.decode}). Review of dadbb71.
+     */
+    public static void addDamaged(Db db, long session, int seq, String device, byte[] bytes, int type, double captured) {
+        addRaw(db, session, seq, device, bytes, type, captured);
+    }
+
+    private static void addRaw(Db db, long session, int seq, String device, byte[] body, int type, double captured) {
         db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO watch_raw(session, seq, device, type, body, captured) VALUES (?, ?, ?, ?, ?, ?)",
-                new Object[] {session, seq, device, Frame.type(body), body, captured});
+                new Object[] {session, seq, device, type, body, captured});
     }
 
     /** Notes the watch (first time: when it was added), with the name and firmware its hello named when known. */
@@ -84,7 +103,9 @@ public final class WatchStore {
     /**
      * Works out the rows of one session's messages, then moves where the next request of each kind starts
      * ({@link #since(Db, String, int, long)}) for the answers of this session that reached their end, all in one
-     * transaction: a start only moves once the rows up to it are stored, and an answer cut off moves nothing.
+     * transaction: a start only moves once the rows up to it are stored, and an answer cut off moves nothing (also one that
+     * lost a piece on the way: its stored type is the request's, see {@link #addDamaged}). Notes the session as decoded
+     * ({@link #DECODED_UPTO}) in the same transaction.
      */
     public static Records.Decoded decodeSession(Db db, final long session) {
         final SQLiteDatabase d = db.getWritableDatabase();
@@ -93,7 +114,7 @@ public final class WatchStore {
         java.util.Map<String, List<byte[]>> answers = new java.util.TreeMap<String, List<byte[]>>();
         d.beginTransaction();
         try {
-            Cursor c = d.rawQuery("SELECT device, body, captured FROM watch_raw WHERE session = ? ORDER BY seq", new String[] {String.valueOf(session)});
+            Cursor c = d.rawQuery("SELECT device, body, captured, type FROM watch_raw WHERE session = ? ORDER BY seq", new String[] {String.valueOf(session)});
             try {
                 while (c.moveToNext()) {
                     byte[] body = c.getBlob(1);
@@ -101,7 +122,8 @@ public final class WatchStore {
                     Records.decode(body, (long) c.getDouble(2), one);
                     write(d, c.getString(0), one);
                     collect(all[0], one);
-                    int type = Frame.type(body);
+                    // the stored type: the message's own, or for damaged bytes the request they came in
+                    int type = c.getInt(3);
                     if (isRequest(type)) {
                         String k = cursorKey(c.getString(0), type);
                         List<byte[]> l = answers.get(k);
@@ -121,6 +143,8 @@ public final class WatchStore {
                 long next = have == null ? fromRaw(d, deviceOf(k), typeOf(k)) : Math.max(parse(have), got);
                 d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {k, String.valueOf(next)});
             }
+            String upto = kv(d, DECODED_UPTO);
+            if (upto == null || parse(upto) < session) d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {DECODED_UPTO, String.valueOf(session)});
             d.setTransactionSuccessful();
         } finally {
             d.endTransaction();
@@ -261,6 +285,14 @@ public final class WatchStore {
             if (got == 0) break;
         }
         d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {DECODER, String.valueOf(Records.VERSION)});
+        // every session is decoded now
+        Cursor m = d.rawQuery("SELECT MAX(session) FROM watch_raw", null);
+        try {
+            if (m.moveToFirst() && !m.isNull(0)) d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {DECODED_UPTO, String.valueOf(m.getLong(0))});
+            else d.execSQL("DELETE FROM kv WHERE k = ?", new Object[] {DECODED_UPTO});
+        } finally {
+            m.close();
+        }
     }
 
     /** True when the stored rows come from this decoder (or nothing is stored yet). */
@@ -268,11 +300,38 @@ public final class WatchStore {
         return String.valueOf(Records.VERSION).equals(db.kv(DECODER, null)) || db.count("SELECT COUNT(*) FROM watch_raw") == 0;
     }
 
-    /** Works every row out again when the decoder changed since they were stored; one transaction. Returns whether it did. */
+    /**
+     * Works every row out again when the decoder changed since they were stored, or when it is not known which sessions
+     * are decoded ({@link #DECODED_UPTO} missing: an older version, pairing another ring); one transaction. Returns whether it did.
+     */
     public static boolean ensureDecoded(Db db) {
-        if (decoderCurrent(db)) return false;
+        if (decoderCurrent(db) && (db.kv(DECODED_UPTO, null) != null || !any(db))) return false;
         decodeAgain(db);
         return true;
+    }
+
+    /**
+     * Decodes every session after the newest one decoded ({@link #DECODED_UPTO}), and {@code session} too when it is not
+     * -1, oldest first, each in its own transaction ({@link #decodeSession}): a session whose decoding failed before (a
+     * full disk) is decoded by the next sync instead of waiting for the next decoder (review of dadbb71). Stops at the
+     * first that fails (it throws), so none is skipped: the note only moves past a session once it is decoded. Returns
+     * what was decoded, for the log's counts and the hello's name and firmware.
+     */
+    public static Records.Decoded decodePending(Db db, long session) {
+        String upto = db.kv(DECODED_UPTO, null);
+        long after = upto == null ? Long.MIN_VALUE : parse(upto);
+        java.util.TreeSet<Long> todo = new java.util.TreeSet<Long>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT DISTINCT session FROM watch_raw WHERE session > ?", new String[] {String.valueOf(after)});
+        try {
+            while (c.moveToNext()) todo.add(c.getLong(0));
+        } finally {
+            c.close();
+        }
+        // this session's messages always, also when a re decode during it noted it as decoded half way
+        if (session != -1) todo.add(session);
+        Records.Decoded all = new Records.Decoded();
+        for (long s : todo) collect(all, decodeSession(db, s));
+        return all;
     }
 
     /** Works every row out again, in one transaction. */

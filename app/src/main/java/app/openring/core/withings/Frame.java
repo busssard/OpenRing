@@ -64,6 +64,14 @@ public final class Frame {
         return u16(msg, 1) & 0x3fff;
     }
 
+    /**
+     * True when {@code msg} is one whole message: the start byte and exactly as long as its header says. Every message the
+     * {@link Assembler} completes is whole; the bytes it had to drop ({@link Assembler#take}) never are.
+     */
+    public static boolean whole(byte[] msg) {
+        return msg != null && msg.length >= HEADER && (msg[0] & 0xff) == START && msg.length == HEADER + u16(msg, 3);
+    }
+
     /** True when the watch started this message itself (a top bit of the type set), not as an answer. */
     public static boolean fromWatch(byte[] msg) {
         return msg != null && msg.length >= HEADER && (msg[1] & 0xc0) != 0;
@@ -118,20 +126,26 @@ public final class Frame {
      * Puts the pieces of the watch's messages together: a message starts with a piece whose first byte is
      * {@link #START} and is complete once its length is reached. Pieces that arrive while no message is open and do not
      * start one are dropped and counted ({@link #dropped}); a piece that runs past the end of a message drops that
-     * message (it is damaged), so one bad piece never shifts every message after it.
+     * message (it is damaged), so one bad piece never shifts every message after it. The bytes it drops are not thrown away
+     * silently: {@link #take} hands them on, so the session stores them and counts the answer they came in as cut off (a
+     * lost piece must never let a start move past records that were not stored, review of dadbb71).
      */
     public static final class Assembler {
         private final ByteArrayOutputStream open = new ByteArrayOutputStream();
         private boolean opened;
         /** Pieces dropped (no message open and no start byte) and messages dropped (longer than their length). */
         public int dropped;
+        /** The bytes the last {@link #feed} dropped, null for none. */
+        private byte[] lost;
 
         /** Feeds one piece; returns the message it completes, or null. */
         public byte[] feed(byte[] piece) {
+            lost = null;
             if (piece == null || piece.length == 0) return null;
             if (!opened) {
                 if ((piece[0] & 0xff) != START) {
                     dropped++;
+                    lost = piece;
                     return null;
                 }
                 opened = true;
@@ -146,9 +160,24 @@ public final class Frame {
             open.reset();
             if (b.length > want) {
                 dropped++;
+                lost = b;
                 return null;
             }
             return b;
+        }
+
+        /**
+         * Feeds one piece and returns, in the order they came, what the link hands on: the bytes this piece made the
+         * Assembler drop (never {@link Frame#whole whole}, so the session knows them as damaged) and the message it
+         * completed. Empty when the piece only adds to an open message.
+         */
+        public List<byte[]> take(byte[] piece) {
+            byte[] m = feed(piece);
+            List<byte[]> out = new ArrayList<byte[]>(1);
+            if (lost != null) out.add(lost);
+            if (m != null) out.add(m);
+            lost = null;
+            return out;
         }
 
         /** True while part of a message has arrived and the rest is still missing. */

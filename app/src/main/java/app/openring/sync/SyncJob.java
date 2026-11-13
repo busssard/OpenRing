@@ -113,7 +113,8 @@ public final class SyncJob extends JobService {
                     }
                     if (watchPart && !t.stopped()) {
                         try {
-                            String w = app.openring.ble.WatchSync.run(SyncJob.this);
+                            // this job's ticket: a stop by Android ends this session only (review of dadbb71)
+                            String w = app.openring.ble.WatchSync.run(SyncJob.this, t);
                             RingManager.get(SyncJob.this).log("background watch sync: " + (w == null ? "done" : w));
                         } catch (Throwable e) {
                             log("background watch sync failed: ", e);
@@ -150,9 +151,8 @@ public final class SyncJob extends JobService {
     public boolean onStopJob(JobParameters params) {
         // stops this job's download only; once it has given the ring back (it then analyses), Live, a
         // game or a sync the person started keep running (issue #43)
+        // the same ticket ends this job's watch sync between two messages (issue #251), never a setup the person started
         RingManager.get(this).cancelSync(ticket);
-        // a watch sync ends between two messages (issue #251)
-        app.openring.ble.WatchSync.stop();
         return false;
     }
 }
