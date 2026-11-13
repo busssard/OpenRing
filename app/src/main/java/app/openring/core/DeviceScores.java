@@ -179,12 +179,23 @@ public final class DeviceScores {
      * person's age (as the ring's sleep score uses it).
      */
     public static Result of(int device, LocalDate date, final ZoneId zone, MainDevice.Watch watch, MainDevice.Phone phone, int goal, double age) {
-        Result r = new Result(device);
-        r.goal = goal > 0 ? goal : 10000;
+        return of(device, date, zone, watch, phone, goal, age, true);
+    }
+
+    /** As below, one answer for every night: {@code rem} true for {@link WatchDays.Rem#ALWAYS}, false for {@link WatchDays.Rem#NEVER}. */
+    public static Result of(int device, LocalDate date, final ZoneId zone, MainDevice.Watch watch, MainDevice.Phone phone, int goal, double age,
+            boolean rem) {
+        return of(device, date, zone, watch, phone, goal, age, WatchDays.Rem.of(rem));
+    }
+
+    /**
+     * As above; {@code rem}: which nights tell REM from light sleep ({@link WatchDays.Rem}, per night). A night without it has
+     * the sleep score's REM part left out, said why, and its weight shared out like any other left out part.
+     */
+    public static Result of(int device, LocalDate date, final ZoneId zone, MainDevice.Watch watch, MainDevice.Phone phone, int goal, double age,
+            WatchDays.Rem rem) {
         if (watch == null) watch = new MainDevice.Watch();
         if (phone == null) phone = new MainDevice.Phone();
-        boolean isWatch = device == MainDevice.WATCH;
-        String dev = isWatch ? "the watch" : "this phone";
         // the days, oldest first; the last is the day itself
         Day[] days = new Day[DAYS];
         for (int i = 0; i < DAYS; i++) {
@@ -192,6 +203,54 @@ public final class DeviceScores {
             double from = di.atStartOfDay(zone).toEpochSecond(), to = di.plusDays(1).atStartOfDay(zone).toEpochSecond();
             days[i] = day(device, from, to, zone, watch, phone);
         }
+        WatchDays.Night[] nights = null;
+        double[] lowest = null;
+        if (device == MainDevice.WATCH) {
+            WatchDays.Zones z = zones(zone);
+            nights = new WatchDays.Night[DAYS];
+            for (int i = 0; i < DAYS; i++) nights[i] = watch.sleep.isEmpty() ? null : WatchDays.nightFor(watch.sleep, date.minusDays(DAYS - 1 - i), z);
+            lowest = lowest(nights, watch.heart);
+        }
+        return score(device, zone, days, nights, lowest, goal, age, rem);
+    }
+
+    /** One zone for every time. */
+    static WatchDays.Zones zones(final ZoneId zone) {
+        return new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return zone;
+            }
+        };
+    }
+
+    /** The watch's lowest heart rate reading in each night (NaN without a night or a reading). */
+    static double[] lowest(WatchDays.Night[] nights, List<Records.Heart> heart) {
+        return lowest(nights, new WatchDays.HeartIndex(heart));
+    }
+
+    /** As above, with the heart rates sorted once ({@link WatchDays.HeartIndex}). */
+    static double[] lowest(WatchDays.Night[] nights, WatchDays.HeartIndex heart) {
+        double[] lowest = new double[nights.length];
+        for (int i = 0; i < nights.length; i++) {
+            lowest[i] = Double.NaN;
+            if (nights[i] == null) continue;
+            WatchDays.NightHeart h = heart.in(nights[i].start, nights[i].end);
+            if (h.lowest > 0) lowest[i] = h.lowest;
+        }
+        return lowest;
+    }
+
+    /**
+     * The scores of the last of {@code days} ({@link #DAYS} of them, oldest first), with the watch's nights of the same days and
+     * their lowest heart rate ({@link #lowest}; both null for the phone). {@link #of} and {@code DeviceHistory} (every day of the
+     * 30 day charts) both come here, so a day's score is the same on its dial and in the charts.
+     */
+    static Result score(int device, ZoneId zone, Day[] days, WatchDays.Night[] nights, double[] lowest, int goal, double age, WatchDays.Rem remRule) {
+        Result r = new Result(device);
+        r.goal = goal > 0 ? goal : 10000;
+        boolean isWatch = device == MainDevice.WATCH;
+        String dev = isWatch ? "the watch" : "this phone";
         Day today = days[DAYS - 1];
         r.steps = today.wornQ > 0 || today.steps > 0 ? today.steps : Double.NaN;
         activity(r, days, dev);
@@ -200,40 +259,42 @@ public final class DeviceScores {
             r.readinessNone = PHONE_NO_NIGHT;
             return r;
         }
-        WatchDays.Zones z = new WatchDays.Zones() {
-            @Override
-            public ZoneId at(double unix) {
-                return zone;
-            }
-        };
-        WatchDays.Night[] nights = new WatchDays.Night[DAYS];
-        for (int i = 0; i < DAYS; i++) nights[i] = watch.sleep.isEmpty() ? null : WatchDays.nightFor(watch.sleep, date.minusDays(DAYS - 1 - i), z);
         WatchDays.Night wn = nights[DAYS - 1];
-        if (wn == null) {
-            r.sleepNone = WATCH_NO_NIGHT;
-            r.readinessNone = WATCH_NO_READINESS;
-            return r;
-        }
-        Night n = night(wn);
-        r.sleep = Scores.sleep(n, zone.getRules().getOffset(Instant.ofEpochSecond((long) Math.floor(Double.isNaN(n.midpoint) ? wn.end : n.midpoint))).getTotalSeconds(), age);
-        if (r.sleep.value < 0) {
-            r.sleep = null;
+        boolean rem = remRule.tells(wn);
+        r.sleep = wn == null ? null : sleepScore(wn, zone, age, rem);
+        if (r.sleep == null) {
             r.sleepNone = WATCH_NO_NIGHT;
             r.readinessNone = WATCH_NO_READINESS;
             return r;
         }
         r.sleepLeft.add(new Left("restless", "Restless movement (part of Restfulness)", "The watch sends no movement during the night."));
+        if (!rem) r.sleepLeft.add(new Left("rem", "REM sleep", REM_LEFT));
         leftOut(r.sleep, SLEEP_PARTS, r.sleepLeft, dev);
-        readiness(r, days, nights, watch, dev);
+        readiness(r, days, nights, lowest, dev);
         return r;
     }
 
+    /**
+     * The sleep score of one watch night (the ring's function on {@link #night}), null when it has none; {@code rem}: the watch
+     * tells REM apart, else REM is left out of the score.
+     */
+    public static Night.Score sleepScore(WatchDays.Night wn, ZoneId zone, double age, boolean rem) {
+        Night n = night(wn, rem);
+        Night.Score s = Scores.sleep(n, zone.getRules().getOffset(Instant.ofEpochSecond((long) Math.floor(Double.isNaN(n.midpoint) ? wn.end : n.midpoint))).getTotalSeconds(), age);
+        return s.value < 0 ? null : s;
+    }
+
     /** Withings' night as the ring's night fields, by the ring's rules ({@code NightAnalyzer}) on whole minutes. */
-    static Night night(WatchDays.Night wn) {
+    public static Night night(WatchDays.Night wn) {
+        return night(wn, true);
+    }
+
+    /** As above; without {@code rem} the stage source says so ({@link Scores#NO_REM}), so the score leaves REM out. */
+    public static Night night(WatchDays.Night wn, boolean rem) {
         Night n = new Night();
         n.start = wn.start;
         n.end = wn.end;
-        n.stageSource = "watch";
+        n.stageSource = rem ? "watch" : Scores.NO_REM;
         int[] st = wn.stages;
         n.inBedMin = st.length;
         n.deepMin = wn.deepMin;
@@ -294,19 +355,12 @@ public final class DeviceScores {
         leftOut(r.activity, ACTIVITY_PARTS, r.activityLeft, dev);
     }
 
-    private static void readiness(Result r, Day[] days, WatchDays.Night[] nights, MainDevice.Watch watch, String dev) {
+    private static void readiness(Result r, Day[] days, WatchDays.Night[] nights, double[] lowest, String dev) {
         int last = days.length - 1;
         Scores.ReadinessInput ri = new Scores.ReadinessInput();
         ri.sleepScore = r.sleep.value >= 0 ? r.sleep.value : Double.NaN;
-        double[] lowest = new double[nights.length];
         int before = 0;
-        for (int i = 0; i < nights.length; i++) {
-            lowest[i] = Double.NaN;
-            if (nights[i] == null) continue;
-            if (i < last) before++;
-            WatchDays.NightHeart h = WatchDays.heartIn(watch.heart, nights[i].start, nights[i].end);
-            if (h.lowest > 0) lowest[i] = h.lowest;
-        }
+        for (int i = 0; i < last; i++) if (nights[i] != null) before++;
         ri.historyNights = before;
         ri.rhr = lowest[last];
         double[] rhr14 = java.util.Arrays.copyOfRange(lowest, last - 14, last);
@@ -393,12 +447,15 @@ public final class DeviceScores {
     public static final String WATCH_NO_ACTIVITY = "The activity score needs an hour with your watch on this day.";
     public static final String PHONE_NO_ACTIVITY = "The activity score needs an hour of steps from this phone on this day.";
     public static final String LEFT_TITLE = "Left out";
+    /** Why REM is left out of the sleep score for a watch that does not tell it from light sleep (owner's report of 13 November). */
+    public static final String REM_LEFT = "Your watch does not tell REM sleep from light sleep, so they show together as Light and REM. "
+            + "The other parts count for more.";
     public static final String NOTHING_LEFT = "Nothing left out. Steps stand in for the ring's movement.";
     /** On Ready while fewer than 14 nights from the watch are known. */
     public static final String PROVISIONAL = "Your usual is still forming. Readiness compares each night with your own normal, which takes about "
             + "two weeks of nights with the watch to settle, so early scores move more.";
     /** On Ready with only the watch, over the button that adds a ring. */
-    public static final String RING_ADDS = "A ring adds HRV, body temperature and the recovery index to readiness.";
+    public static final String RING_ADDS = "A ring adds HRV, body temperature and the recovery index to readiness, and their 30 day charts.";
 
     /** "Watch version: 78", the line under a ring's score when the watch has one too. */
     public static String version(double v) {
@@ -420,7 +477,7 @@ public final class DeviceScores {
     public static List<String> texts() {
         List<String> out = new ArrayList<String>();
         String[] fixed = {FROM_WATCH, FROM_PHONE, FEWER, TODAY_WATCH, TODAY_PHONE, WATCH_NO_NIGHT, WATCH_NO_READINESS, PHONE_NO_NIGHT,
-            WATCH_NO_ACTIVITY, PHONE_NO_ACTIVITY, LEFT_TITLE, NOTHING_LEFT, RING_ADDS, PROVISIONAL, version(78), goalLine(8412, 10000, Locale.US)};
+            WATCH_NO_ACTIVITY, PHONE_NO_ACTIVITY, LEFT_TITLE, REM_LEFT, NOTHING_LEFT, RING_ADDS, PROVISIONAL, version(78), goalLine(8412, 10000, Locale.US)};
         for (String s : fixed) out.add(s);
         for (String[][] parts : new String[][][] {ACTIVITY_PARTS, SLEEP_PARTS, READINESS_PARTS}) {
             for (String[] p : parts) {

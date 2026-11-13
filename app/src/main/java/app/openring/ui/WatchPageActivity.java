@@ -119,7 +119,8 @@ public final class WatchPageActivity extends Activity {
                     WatchStore.Data read = WatchStore.load(db);
                     // the zones and the per day answers once, here and not on each tap (without zone rows: the phone's zone)
                     z = zonesOf(db.zones());
-                    ix = new WatchDays.Index(read.steps, read.moves, read.heart, read.workouts, read.sleep, read.battery, z);
+                    // REM per night, from each watch's own rows (code review of #389)
+                    ix = new WatchDays.Index(read.steps, read.moves, read.heart, read.workouts, read.sleep, read.battery, z, WatchStore.rem(db));
                     d = read;
                 } catch (RuntimeException e) {
                     d = null;
@@ -272,14 +273,23 @@ public final class WatchPageActivity extends Activity {
             ZoneId z = zones.at(n.end);
             card.addView(Ui.statRow(c, Ui.stat(c, "Asleep", Ui.hm(n.asleepMin()), "", Ui.SLEEP, "Light, deep and REM added up"),
                     Ui.stat(c, "Awake", Ui.hm(n.awakeMin), "", Ui.SLEEP, "Awake inside the night, as the watch marked it")));
-            card.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(n.deepMin), "", Ui.SLEEP, "Deep sleep as the watch counted it"),
-                    Ui.stat(c, "Light", Ui.hm(n.lightMin), "", Ui.SLEEP, "Light sleep as the watch counted it")));
-            card.addView(Ui.statRow(c, Ui.stat(c, "REM", Ui.hm(n.remMin), "", Ui.SLEEP, "REM sleep as the watch counted it"),
-                    Ui.stat(c, "No data", Ui.hm(n.otherMin), "", Ui.SLEEP, "Time in the night without a sleep record")));
+            boolean rem = index.rem.tells(n);
+            if (rem) {
+                card.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(n.deepMin), "", Ui.SLEEP, "Deep sleep as the watch counted it"),
+                        Ui.stat(c, "Light", Ui.hm(n.lightMin), "", Ui.SLEEP, "Light sleep as the watch counted it")));
+                card.addView(Ui.statRow(c, Ui.stat(c, "REM", Ui.hm(n.remMin), "", Ui.SLEEP, "REM sleep as the watch counted it"),
+                        Ui.stat(c, "No data", Ui.hm(n.otherMin), "", Ui.SLEEP, "Time in the night without a sleep record")));
+            } else {
+                // the watch does not tell REM from light sleep (owner's report of 13 November): one stage, no empty REM
+                card.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(n.deepMin), "", Ui.SLEEP, "Deep sleep as the watch counted it"),
+                        Ui.stat(c, "Light and REM", Ui.hm(n.lightMin + n.remMin), "", Ui.SLEEP, Explain.LIGHT_REM)));
+                card.addView(Ui.statRow(c, Ui.stat(c, "No data", Ui.hm(n.otherMin), "", Ui.SLEEP, "Time in the night without a sleep record")));
+            }
             card.addView(Ui.gap(c, 8));
             WatchDays.NightHeart hr = index.heartIn(n);
             boolean withHr = !hr.points.isEmpty();
-            card.addView(new Charts.Hypnogram(c, n.stages, n.start, n.end).zone(z).heart(withHr ? hr.points : null), Ui.sized(c, -1, withHr ? 230 : 150));
+            card.addView(new Charts.Hypnogram(c, n.stages, n.start, n.end).zone(z).heart(withHr ? hr.points : null).lightRem(!rem),
+                    Ui.sized(c, -1, withHr ? 230 : 150));
             if (withHr) {
                 card.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", String.valueOf(hr.lowest), "bpm", Ui.HEART, "The watch's lowest reading this night"),
                         Ui.stat(c, "Average HR", Ui.fmt(hr.average, 0), "bpm", Ui.HEART, "Of its " + hr.points.size() + " readings this night")));

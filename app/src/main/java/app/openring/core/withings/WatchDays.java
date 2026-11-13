@@ -161,6 +161,73 @@ public final class WatchDays {
         }
     }
 
+    /**
+     * Whether the watch tells REM sleep from light sleep (owner's report of 13 November: the Steel HR sends awake, light and deep
+     * only). The rule: true as soon as any of its stored sleep records is REM. A watch that never sent one shows "Light and REM"
+     * as one stage, without a REM row, REM warnings or a REM part in the sleep score; a later watch that does send REM is
+     * shown with it from its first such record on, nothing to switch.
+     */
+    public static boolean tellsRem(List<Records.Sleep> rows) {
+        for (Records.Sleep s : rows) if (s.stage == Records.REM) return true;
+        return false;
+    }
+
+    /**
+     * Which nights tell REM from light sleep, decided per night (code review of #389: one REM record anywhere used to switch REM
+     * on for the whole history, so every old Steel HR night got a REM part of 0). Each watch that ever sent a REM record tells
+     * REM from its first REM record to the end of its last sleep piece; a night tells REM when it reaches into such a span.
+     * So the nights of a Steel HR keep "Light and REM" whether it was worn before or after a watch with REM, and a watch
+     * with REM is shown with it from its first such record on.
+     */
+    public static final class Rem {
+        /** Every night tells REM (the ring's rule, and a person without any watch sleep row). */
+        public static final Rem ALWAYS = new Rem(new long[][] {{Long.MIN_VALUE, Long.MAX_VALUE}});
+        /** No night tells REM. */
+        public static final Rem NEVER = new Rem(new long[0][]);
+        private final long[][] spans;
+
+        /** From spans {from, to} (unix seconds), one per watch that sent REM. */
+        public Rem(long[][] spans) {
+            this.spans = spans.clone();
+        }
+
+        /** From each watch's own sleep rows: a span from its first REM record to the end of its last piece, none without REM. */
+        @SafeVarargs
+        public static Rem of(List<Records.Sleep>... devices) {
+            List<long[]> out = new ArrayList<long[]>();
+            for (List<Records.Sleep> rows : devices) {
+                long first = Long.MAX_VALUE, end = Long.MIN_VALUE;
+                for (Records.Sleep s : rows) {
+                    if (s.stage == Records.REM) first = Math.min(first, s.start);
+                    end = Math.max(end, s.start + Math.max(0, s.dur));
+                }
+                if (first != Long.MAX_VALUE) out.add(new long[] {first, Math.max(first + 1, end)});
+            }
+            return new Rem(out.toArray(new long[0][]));
+        }
+
+        /** {@link #ALWAYS} for true, {@link #NEVER} for false (one answer for every night, as before the review). */
+        public static Rem of(boolean rem) {
+            return rem ? ALWAYS : NEVER;
+        }
+
+        /** The night tells REM from light sleep: it reaches into the span of a watch that sent REM. */
+        public boolean tells(Night n) {
+            return n != null && tells(n.start, n.end);
+        }
+
+        /** A night from {@code start} to {@code end} (unix seconds) tells REM. */
+        public boolean tells(long start, long end) {
+            for (long[] s : spans) if (start < s[1] && end > s[0]) return true;
+            return false;
+        }
+
+        /** Any watch sent REM. */
+        public boolean any() {
+            return spans.length > 0;
+        }
+    }
+
     /** Gaps up to this long between sleep pieces join them into one night (seconds). */
     public static final long JOIN_S = 2 * 3600;
 
@@ -193,6 +260,48 @@ public final class WatchDays {
             i = j + 1;
         }
         return best;
+    }
+
+    /**
+     * The nights of every day from {@code first} to {@code last}, each exactly what {@link #nightFor} gives for that day, but with
+     * the rows sorted and joined once instead of once per day (a year of nights for Further analysis). Days without a night are
+     * missing.
+     */
+    public static TreeMap<LocalDate, Night> nights(List<Records.Sleep> rows, LocalDate first, LocalDate last, Zones z) {
+        List<Records.Sleep> s = new ArrayList<Records.Sleep>(rows);
+        Collections.sort(s, new Comparator<Records.Sleep>() {
+            @Override
+            public int compare(Records.Sleep a, Records.Sleep b) {
+                return Long.compare(a.start, b.start);
+            }
+        });
+        TreeMap<LocalDate, int[]> best = new TreeMap<LocalDate, int[]>();
+        TreeMap<LocalDate, long[]> span = new TreeMap<LocalDate, long[]>();
+        int i = 0;
+        while (i < s.size()) {
+            int j = i;
+            long end = s.get(i).start + Math.max(0, s.get(i).dur);
+            while (j + 1 < s.size() && s.get(j + 1).start - end <= JOIN_S) {
+                j++;
+                end = Math.max(end, s.get(j).start + Math.max(0, s.get(j).dur));
+            }
+            long start = s.get(i).start;
+            java.time.ZonedDateTime e = Instant.ofEpochSecond(end).atZone(z.at(end));
+            LocalDate day = e.toLocalDate();
+            long[] b = span.get(day);
+            // the rule of nightFor: before 18:00, longer than none, and only a longer stretch replaces the first one found
+            if (!day.isBefore(first) && !day.isAfter(last) && e.getHour() < 18 && end > start && (b == null || end - start > b[1] - b[0])) {
+                span.put(day, new long[] {start, end});
+                best.put(day, new int[] {i, j});
+            }
+            i = j + 1;
+        }
+        TreeMap<LocalDate, Night> out = new TreeMap<LocalDate, Night>();
+        for (Map.Entry<LocalDate, int[]> e : best.entrySet()) {
+            long[] b = span.get(e.getKey());
+            out.put(e.getKey(), night(s.subList(e.getValue()[0], e.getValue()[1] + 1), b[0], b[1]));
+        }
+        return out;
     }
 
     private static Night night(List<Records.Sleep> pieces, long start, long end) {
@@ -229,6 +338,58 @@ public final class WatchDays {
      * average of the readings. The watch measures only now and then, so these are its readings, nothing filled in between.
      */
     public static NightHeart heartIn(List<Records.Heart> rows, long start, long end) {
+        return heartScan(rows, start, end);
+    }
+
+    /**
+     * The heart rates sorted by time once, so each night takes its readings by a binary search instead of going through every
+     * row (code review of #389: Further analysis over two years went through every heart rate for each of 730 nights). The
+     * sort is stable, so readings at the same moment keep their order and {@link #in} gives what {@link #heartIn} gave.
+     */
+    public static final class HeartIndex {
+        private final List<Records.Heart> rows;
+        private final long[] t;
+
+        public HeartIndex(List<Records.Heart> heart) {
+            rows = new ArrayList<Records.Heart>(heart);
+            Collections.sort(rows, new Comparator<Records.Heart>() {
+                @Override
+                public int compare(Records.Heart a, Records.Heart b) {
+                    return Long.compare(a.t, b.t);
+                }
+            });
+            t = new long[rows.size()];
+            for (int i = 0; i < t.length; i++) t[i] = rows.get(i).t;
+        }
+
+        /** As {@link WatchDays#heartIn}: the readings from {@code start} to {@code end}, both included. */
+        public NightHeart in(long start, long end) {
+            NightHeart h = new NightHeart();
+            int lo = 0, hi = t.length;
+            while (lo < hi) {
+                int m = (lo + hi) >>> 1;
+                if (t[m] < start) lo = m + 1;
+                else hi = m;
+            }
+            long sum = 0;
+            int n = 0;
+            for (int i = lo; i < t.length && t[i] <= end; i++) {
+                Records.Heart x = rows.get(i);
+                h.points.add(new long[] {x.t, x.bpm});
+                sum += x.bpm;
+                n++;
+                if (h.lowest < 0 || x.bpm < h.lowest) {
+                    h.lowest = x.bpm;
+                    h.lowestAt = x.t;
+                }
+            }
+            if (n > 0) h.average = sum / (double) n;
+            return h;
+        }
+    }
+
+    /** One night's readings by going through every row: fine for a few nights, {@link HeartIndex} for many. */
+    private static NightHeart heartScan(List<Records.Heart> rows, long start, long end) {
         NightHeart h = new NightHeart();
         List<Records.Heart> s = new ArrayList<Records.Heart>();
         for (Records.Heart x : rows) if (x.t >= start && x.t <= end) s.add(x);
@@ -341,16 +502,24 @@ public final class WatchDays {
         public final SortedMap<LocalDate, Integer> steps, metres, kcal, climb, battery;
         /** The newest battery reading, or null ({@link #newestBattery}). */
         public final Records.Battery newestBattery;
+        /** Which nights tell REM from light sleep ({@link Rem}, per night). */
+        public final Rem rem;
         private final TreeMap<LocalDate, List<Records.Heart>> heart = new TreeMap<LocalDate, List<Records.Heart>>();
         private final TreeMap<LocalDate, List<Records.Workout>> workouts = new TreeMap<LocalDate, List<Records.Workout>>();
         private final List<Records.Sleep> sleep;
         private final List<Records.Battery> batteryRows;
         private final List<Records.Steps> stepRows;
-        private final List<Records.Heart> heartRows;
+        private final HeartIndex heartIndex;
         private final Zones zones;
 
         public Index(List<Records.Steps> steps, List<Records.Moves> moves, List<Records.Heart> heart, List<Records.Workout> workouts,
                 List<Records.Sleep> sleep, List<Records.Battery> battery, Zones z) {
+            this(steps, moves, heart, workouts, sleep, battery, z, Rem.of(sleep));
+        }
+
+        /** As above, with the REM rule of every stored watch ({@code WatchStore.rem}, which knows the rows of each watch). */
+        public Index(List<Records.Steps> steps, List<Records.Moves> moves, List<Records.Heart> heart, List<Records.Workout> workouts,
+                List<Records.Sleep> sleep, List<Records.Battery> battery, Zones z, Rem rem) {
             this.zones = z;
             this.steps = Collections.unmodifiableSortedMap(stepsPerDay(steps, z));
             this.metres = Collections.unmodifiableSortedMap(metresPerDay(steps, z));
@@ -358,9 +527,10 @@ public final class WatchDays {
             this.climb = Collections.unmodifiableSortedMap(climbPerDay(moves, z));
             this.battery = Collections.unmodifiableSortedMap(batteryPerDay(battery, z));
             this.newestBattery = newestBattery(battery);
+            this.rem = rem;
             this.sleep = new ArrayList<Records.Sleep>(sleep);
             this.stepRows = new ArrayList<Records.Steps>(steps);
-            this.heartRows = new ArrayList<Records.Heart>(heart);
+            this.heartIndex = new HeartIndex(heart);
             this.batteryRows = new ArrayList<Records.Battery>(battery);
             // the rows themselves (no copies), grouped in their order, then sorted per day by time like heartOn and
             // workoutsOn (a stable sort, so rows with the same time keep the same order)
@@ -420,7 +590,7 @@ public final class WatchDays {
 
         /** As {@link WatchDays#heartIn} for a night. */
         public NightHeart heartIn(Night n) {
-            return WatchDays.heartIn(heartRows, n.start, n.end);
+            return heartIndex.in(n.start, n.end);
         }
 
         /** As {@link WatchDays#dropPerDay} on the battery rows. */

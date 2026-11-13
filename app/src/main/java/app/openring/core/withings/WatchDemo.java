@@ -149,6 +149,14 @@ public final class WatchDemo {
      * 10 at night (every 5 in a workout), and a battery that falls about 3 % a day and was charged once.
      */
     public static List<Msg> history(LocalDate today, int days, long now, ZoneId zone, Random r) {
+        return history(today, days, now, zone, r, true);
+    }
+
+    /**
+     * As above; without {@code rem} the watch sends no REM record, as the Steel HR (owner's report of 13 November): its REM pieces
+     * come as light sleep, every other value the same. Demo mode's watch is made that way.
+     */
+    public static List<Msg> history(LocalDate today, int days, long now, ZoneId zone, Random r, boolean rem) {
         List<long[]> idx = new ArrayList<long[]>();
         List<byte[][]> recs = new ArrayList<byte[][]>();
         List<byte[][]> hrs = new ArrayList<byte[][]>();
@@ -165,7 +173,7 @@ public final class WatchDemo {
                 for (int[] p : plan) {
                     if (t >= wake) break;
                     int dur = (int) Math.min(p[1] * 60L, wake - t);
-                    recs.add(new byte[][] {time(t), duration(dur), sleep(p[0])});
+                    recs.add(new byte[][] {time(t), duration(dur), sleep(p[0] == Records.REM && !rem ? Records.LIGHT : p[0])});
                     idx.add(new long[] {t});
                     t += dur;
                 }

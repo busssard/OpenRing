@@ -496,6 +496,29 @@ public final class WatchStore {
     }
 
     /**
+     * Only the watch's sleep pieces and heart rates from {@code from} to {@code to} (the same rule as {@link #window}), for Further
+     * analysis of the watch's nights over a year or all time, where the steps are not needed.
+     */
+    public static app.openring.core.MainDevice.Watch nightRows(Db db, double from, double to) {
+        app.openring.core.MainDevice.Watch w = new app.openring.core.MainDevice.Watch();
+        SQLiteDatabase d = db.getReadableDatabase();
+        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+        Cursor c = d.rawQuery("SELECT t, bpm FROM watch_hr WHERE t >= ? AND t < ? ORDER BY t", a);
+        try {
+            while (c.moveToNext()) w.heart.add(new Records.Heart(c.getLong(0), c.getInt(1)));
+        } finally {
+            c.close();
+        }
+        c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.sleep.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
+        } finally {
+            c.close();
+        }
+        return w;
+    }
+
+    /**
      * What the ring's stored results give for the main device rule: the day summary's steps, distance, movement per
      * quarter hour and heart rate line, and every night or nap in {@code nights} that reaches the day ({@code from} to
      * {@code to}). Reads only; a missing summary gives NaN and empty values.
@@ -525,6 +548,42 @@ public final class WatchStore {
         } finally {
             c.close();
         }
+    }
+
+    /**
+     * Which nights tell REM from light sleep ({@code WatchDays.Rem}, code review of #389): each watch that ever sent a REM record,
+     * from its first REM record to the end of its last sleep piece; the nights of a watch that never did (the Steel HR) show
+     * "Light and REM", whether it was worn before or after one with REM. Every night without any watch sleep row, so nothing
+     * changes for a person without a watch.
+     */
+    public static app.openring.core.withings.WatchDays.Rem rem(Db db) {
+        if (db.count("SELECT COUNT(*) FROM (SELECT 1 FROM watch_sleep LIMIT 1)") == 0) return app.openring.core.withings.WatchDays.Rem.ALWAYS;
+        List<long[]> spans = new ArrayList<long[]>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT MIN(CASE WHEN stage = " + Records.REM + " THEN start END), MAX(start + dur) FROM watch_sleep"
+                + " GROUP BY device", null);
+        try {
+            while (c.moveToNext()) {
+                if (c.isNull(0)) continue;
+                long first = c.getLong(0);
+                spans.add(new long[] {first, Math.max(first + 1, c.getLong(1))});
+            }
+        } finally {
+            c.close();
+        }
+        return new app.openring.core.withings.WatchDays.Rem(spans.toArray(new long[0][]));
+    }
+
+    /** Only the watch's sleep pieces that reach into {@code from} to {@code to} (sleep debt reads 104 days of nights, not their steps). */
+    public static List<Records.Sleep> sleepRows(Db db, double from, double to) {
+        List<Records.Sleep> out = new ArrayList<Records.Sleep>();
+        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) out.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
+        } finally {
+            c.close();
+        }
+        return out;
     }
 
     /** True when any watch message is stored. */
