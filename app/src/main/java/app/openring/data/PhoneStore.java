@@ -56,27 +56,41 @@ public final class PhoneStore {
 
     /**
      * Stores one reading into the real history (never the demo file, issue #329), with its boot's intervals worked out again,
-     * in one transaction. Holds Db's class lock, the lock a restore's file swap holds, so the reading never lands in a file
-     * half swapped. Returns {@link #BUSY} without writing while an analysis runs (its transaction would hold the write for
-     * minutes): the counter keeps counting, so the next reading loses nothing, only one interval is longer.
+     * in one transaction. Through {@code Db.beginWrite}, which a restore's file swap waits for, so the reading never lands in
+     * a file half swapped; Db's class lock is not held while SQLite's write is awaited (code review of the device choice: an
+     * automatic backup's copy of the history holds it for seconds, and every {@code Db.get} on the main thread would wait).
+     * Returns {@link #BUSY} without writing while an analysis runs (its transaction would hold the write for minutes) or a
+     * restore swaps the file: the counter keeps counting, so the next reading loses nothing, only one interval is longer.
      * {@code minGapS} &gt; 0: skipped ({@link #TOO_SOON}) when the newest reading of the same boot is younger than that.
      */
     public static int record(Context c, PhoneSteps.Reading r, long minGapS) {
-        synchronized (Db.class) {
-            if (Analyzer.running()) return BUSY;
-            return add(Db.real(c), r, minGapS);
+        if (Analyzer.running()) return BUSY;
+        Db db = Db.beginWrite(c);
+        if (db == null) return BUSY;
+        try {
+            return add(db, r, minGapS);
+        } finally {
+            Db.endWrite();
         }
     }
 
     /**
      * True when this phone's newest reading of boot {@code boot} is less than {@code minGapS} old at {@code elapsedMs}: the app
-     * opening then does not switch the sensor on at all (review of #367). Reads the real history.
+     * opening then does not switch the sensor on at all (review of #367). Reads the real history, like {@link #record}
+     * without Db's class lock; false while a restore swaps the file (the store checks again).
      */
     public static boolean recent(Context c, String device, long boot, long elapsedMs, long minGapS) {
-        synchronized (Db.class) {
-            return newestElapsed(Db.real(c).getReadableDatabase(), device, boot) > elapsedMs - minGapS * 1000;
+        Db db = Db.beginWrite(c);
+        if (db == null) return false;
+        try {
+            return newestElapsed(db.getReadableDatabase(), device, boot) > elapsedMs - minGapS * 1000;
+        } finally {
+            Db.endWrite();
         }
     }
+
+    /** Tests only: runs inside {@link #add}'s transaction, after the reading is written (a write that takes long). */
+    static volatile Runnable whileWriting;
 
     /** As {@link #record}, into {@code db} itself (the tests, the demo). */
     static int add(Db db, final PhoneSteps.Reading r, long minGapS) {
@@ -91,6 +105,8 @@ public final class PhoneStore {
             } else {
                 d.execSQL("INSERT OR IGNORE INTO phone_readings(device, boot, elapsed, counter, wall) VALUES (?, ?, ?, ?, ?)",
                         new Object[] {r.device, r.boot, r.elapsed, r.counter, r.wall});
+                Runnable hook = whileWriting;
+                if (hook != null) hook.run();
                 // a new boot's first reading may count since its start (a restart seen): its device is worked out again
                 if (String.valueOf(PhoneSteps.RULE).equals(kv(d))) rebuildDevice(d, r.device);
                 else rebuildAll(d);

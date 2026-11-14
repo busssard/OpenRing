@@ -247,7 +247,7 @@ public final class Demo {
      * messages and decoded by the same code as a real watch's. Written into {@code db}, the demo file, never the real one.
      */
     static void watch(final Db db, LocalDate today, final long now, ZoneId zone) {
-        final List<app.openring.core.withings.WatchDemo.Msg> msgs = app.openring.core.withings.WatchDemo.history(today, 35, now, zone, new Random(251));
+        final List<app.openring.core.withings.WatchDemo.Msg> msgs = app.openring.core.withings.WatchDemo.history(today, 35, now, zone, new Random(251), false);
         db.inTransaction(new Runnable() {
             @Override
             public void run() {

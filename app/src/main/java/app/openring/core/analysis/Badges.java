@@ -28,8 +28,8 @@ import app.openring.core.Texts;
  * 4 weeks before, with at least {@link #RESTFUL_WEEK_NIGHTS} nights in the week and {@link #MIN_NIGHTS} in the 4 weeks;
  * at most once in 7 days, and on a date with a night.</li>
  * <li><b>Recovered</b>: readiness back to its mean of the 4 weeks before the dip's first day, after at least
- * {@link #LOW_DAYS} days in a row below that mean minus one standard deviation; readiness on all of these days, at least
- * {@link #MIN_DAYS} days with readiness in the 4 weeks.</li>
+ * {@link #LOW_DAYS} days in a row below that mean minus one standard deviation, on the first day back at most
+ * {@link #BACK_WITHIN} days after the dip; readiness on all of these days, at least {@link #MIN_DAYS} days with readiness in the 4 weeks.</li>
  * <li><b>Phone free evening</b>: at most {@link #PHONE_FREE_MAX} minutes on the phone in the hour before the main
  * night's start; for {@link #PHONE_FREE_OF} such evenings in 7 days (at most once in 7 days) or for the first one after
  * 7 evenings that were all read and had more.</li>
@@ -110,6 +110,8 @@ public final class Badges {
     public static final int MIN_DAYS = 14;
     /** Recovered: days in a row below the usual minus one standard deviation. */
     public static final int LOW_DAYS = 2;
+    /** Recovered: back to the usual at most this many days after the dip's last day. */
+    public static final int BACK_WITHIN = 7;
     /** Phone free evening: minutes allowed (a look at the clock), and evenings needed in 7 days. */
     public static final int PHONE_FREE_MAX = 2, PHONE_FREE_OF = 3;
     /** Above your usual: steps this share above the mean of the last {@link #USUAL_DAYS} worn days. */
@@ -403,38 +405,48 @@ public final class Badges {
     }
 
     /**
-     * The dip is the run of days with readiness right before {@code i} that are below the usual minus one standard
-     * deviation, the usual being the mean of the 28 days before the run's first day (so the dip never counts in its own
-     * usual). The shortest run whose day before is not low (or has no readiness) is the dip; it needs {@link #LOW_DAYS}.
+     * The dip is a run of days below the usual minus one standard deviation, the usual being the mean of the 28 days before
+     * the run's first day (so the dip never counts in its own usual). It needs {@link #LOW_DAYS} days and must have ended at
+     * most {@link #BACK_WITHIN} days before {@code i}; the days in between have a readiness and are still under the usual,
+     * so {@code i} is the first day back (owner's report, 13 November: before, only the very next day counted, and a day a
+     * tenth of a point under the usual meant no badge, although readiness was back the day after).
      */
     private static void recovered(Day[] at, int i, Badge[][] got) {
         Day d = at[i];
         if (!readiness(d)) return;
-        for (int len = 1; len <= MONTH && i - len >= 0; len++) {
-            int start = i - len;
-            if (!readiness(at[start])) return;
-            double[] v = new double[MONTH];
-            int k = 0;
-            for (int j = Math.max(0, start - MONTH); j < start; j++) if (readiness(at[j])) v[k++] = at[j].readiness;
-            if (k < MIN_DAYS) continue;
-            double[] have = java.util.Arrays.copyOf(v, k);
-            double mean = Stats.mean(have), low = mean - Stats.sd(have);
-            boolean allLow = true;
-            double lowest = Double.NaN;
-            for (int j = start; j < i; j++) {
-                if (!(at[j].readiness < low)) allLow = false;
-                if (Double.isNaN(lowest) || at[j].readiness < lowest) lowest = at[j].readiness;
+        for (int gap = 0; gap <= BACK_WITHIN && i - gap - 1 >= 0; gap++) {
+            int end = i - gap; // the dip's days are before end
+            if (gap > 0 && !readiness(at[end])) return; // a day without readiness between dip and today
+            for (int len = 1; len <= MONTH && end - len >= 0; len++) {
+                int start = end - len;
+                if (!readiness(at[start])) break;
+                double[] v = new double[MONTH];
+                int k = 0;
+                for (int j = Math.max(0, start - MONTH); j < start; j++) if (readiness(at[j])) v[k++] = at[j].readiness;
+                if (k < MIN_DAYS) continue;
+                double[] have = java.util.Arrays.copyOf(v, k);
+                double mean = Stats.mean(have), low = mean - Stats.sd(have);
+                boolean allLow = true;
+                double lowest = Double.NaN;
+                for (int j = start; j < end; j++) {
+                    if (!(at[j].readiness < low)) allLow = false;
+                    if (Double.isNaN(lowest) || at[j].readiness < lowest) lowest = at[j].readiness;
+                }
+                if (!allLow) break; // a day of the run is not low: no dip of this length or longer ends here
+                boolean before = start > 0 && readiness(at[start - 1]) && at[start - 1].readiness < low;
+                if (before) continue; // the dip began earlier
+                if (len < LOW_DAYS || d.readiness < mean) break;
+                // i is the first day back: the days between the dip and i are still under the usual
+                boolean first = true;
+                for (int j = end; j < i; j++) if (at[j].readiness >= mean) first = false;
+                if (!first) return;
+                String dip = len == LOW_DAYS ? Math.round(at[end - 2].readiness) + " and " + Math.round(at[end - 1].readiness)
+                        : "lowest " + Math.round(lowest);
+                String text = "Readiness " + Math.round(d.readiness) + ", back to your usual " + Math.round(mean) + " (the " + WEEKS
+                        + " weeks before) after " + len + " low days in a row (" + dip + ")";
+                got[i][RECOVERED] = new Badge(d.date, RECOVERED, d.readiness, mean, len, null, text);
+                return;
             }
-            if (!allLow) return; // a day of the run is not low: no dip of this length or longer either
-            boolean before = start > 0 && readiness(at[start - 1]) && at[start - 1].readiness < low;
-            if (before) continue; // the dip began earlier
-            if (len < LOW_DAYS || d.readiness < mean) return;
-            String dip = len == LOW_DAYS ? Math.round(at[i - 2].readiness) + " and " + Math.round(at[i - 1].readiness)
-                    : "lowest " + Math.round(lowest);
-            String text = "Readiness " + Math.round(d.readiness) + ", back to your usual " + Math.round(mean) + " (the " + WEEKS
-                    + " weeks before) after " + len + " low days in a row (" + dip + ")";
-            got[i][RECOVERED] = new Badge(d.date, RECOVERED, d.readiness, mean, len, null, text);
-            return;
         }
     }
 

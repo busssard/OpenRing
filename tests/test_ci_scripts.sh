@@ -291,6 +291,13 @@ check "branches: commits after closing keep it" 'echo "$out" | grep -qx "keep fe
 check "branches: no pull request yet stays" 'echo "$out" | grep -qx "keep wip/no-pr (no pull request yet)"'
 check "branches: main, dev, screenshots and badges always stay" '[ "$(echo "$out" | grep -c "(always kept)")" = 4 ] && ! echo "$out" | grep -q "^delete \(main\|dev\|badges\|screenshots-preview\) "'
 check "branches: exactly two deleted" '[ "$(echo "$out" | grep -c "^delete ")" = 2 ]'
+python3 - "$bc/plan.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["in_dev"] = ["feat/moved"]; json.dump(d, open(sys.argv[1], "w"))
+PY
+out=$(python3 .github/scripts/stale_branches.py --plan "$bc/plan.json")
+check "branches: a merged branch whose later commits are all in dev is deleted" 'echo "$out" | grep -qx "delete feat/moved (merged, and the later commits are in dev too)"'
+check "branches: in dev does not delete an open or unmerged branch" 'echo "$out" | grep -qx "keep feat/open (an open pull request uses it)" && echo "$out" | grep -q "^keep feat/closed-new "'
 rm -rf "$bc"
 
 echo "CI scripts: $passes passed, $fails failed"

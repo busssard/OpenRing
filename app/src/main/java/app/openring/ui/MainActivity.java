@@ -198,6 +198,25 @@ public final class MainActivity extends Activity implements RingManager.Listener
     private boolean preparingDemo;
     /** Scroll position to return to while stepping through days, -1 when none is pending. */
     private int wantedY = -1;
+    /**
+     * Screen test, demo mode only (extra {@code card}, underscores for spaces): the page opens scrolled to the first text that
+     * starts with it, so a shot of a card near the end of a long page needs no swipes (the watch statistics). Null for none.
+     */
+    private String cardPending;
+
+    /** The top of the first text inside {@code v} that starts with {@code start}, relative to {@code v}; -1 when none. */
+    static int textTop(View v, String start) {
+        if (v instanceof TextView && ((TextView) v).getText().toString().startsWith(start)) return 0;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View ch = g.getChildAt(i);
+                int t = textTop(ch, start);
+                if (t >= 0) return ch.getTop() + t;
+            }
+        }
+        return -1;
+    }
 
     void stepDay(LocalDate d) {
         if (wantedY < 0) wantedY = scroll.getScrollY();
@@ -237,6 +256,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
         if (i.getBooleanExtra("analysis", false)) Pages.analysisOpen = true;
         if (i.hasExtra("period")) Pages.analysisPeriod = i.getIntExtra("period", 1);
+        String card = i.getStringExtra("card");
+        cardPending = card != null && Prefs.of(this).demo() ? card.replace('_', ' ') : null;
         String day = i.getStringExtra("day");
         if (day != null) {
             try {
@@ -510,8 +531,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // allowed in the app's settings after Sync found it blocked: that sync starts now, also right after a recent one (#186)
         boolean allowedNow = !prefs.demo() && permissionBlocked && Permissions.granted(this);
         if (!prefs.demo() && Permissions.granted(this)) permissionBlocked = quietDenial = false;
-        // without a ring by choice (issue #329) nothing needs Bluetooth: it is asked for when a ring is added
-        if (!prefs.demo() && keyState != app.openring.core.KeyState.NO_RING && !Permissions.granted(this) && !askedPermissions) {
+        // just this phone (issue #329) needs no Bluetooth: it is asked for when a ring is added; a watch needs it, also
+        // without a ring (code review of the device choice)
+        if (app.openring.core.SyncPlan.asksBluetooth(prefs.demo(), keyState, prefs.watchAddress() != null) && !Permissions.granted(this) && !askedPermissions) {
             askedPermissions = true;
             Permissions.request(this);
         }
@@ -540,8 +562,12 @@ public final class MainActivity extends Activity implements RingManager.Listener
         updateStatus();
         load();
         boolean recent = app.openring.core.BackgroundJob.recent(System.currentTimeMillis() / 1000, prefs.lastSync(), prefs.lastAttempt());
-        if (!prefs.demo() && app.openring.core.KeyState.syncs(keyState) && (!recent || allowedNow) && !RingManager.get(this).busy() && Permissions.granted(this))
+        if (allowedNow && prefs.watchAddress() != null) {
+            // allowed in the app's settings after Sync with a watch found it blocked: that Sync goes on (watch, then the ring)
+            sync();
+        } else if (!prefs.demo() && app.openring.core.KeyState.syncs(keyState) && (!recent || allowedNow) && !RingManager.get(this).busy() && Permissions.granted(this)) {
             SyncService.start(this);
+        }
     }
 
     @Override
@@ -704,11 +730,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
         final int y = wantedY >= 0 ? wantedY : scroll.getScrollY();
         scroll.removeAllViews();
         scroll.addView(content);
+        final View shown = content;
         scroll.post(new Runnable() {
             @Override
             public void run() {
                 scroll.scrollTo(0, y);
                 if (scroll.getScrollY() >= y) wantedY = -1;
+                // the screen test's card (demo mode only): once it is on the page, scroll to it a little below the top
+                int top = cardPending == null ? -1 : textTop(shown, cardPending);
+                if (top >= 0) {
+                    scroll.scrollTo(0, Math.max(0, top - Ui.dp(MainActivity.this, 12)));
+                    cardPending = null;
+                }
             }
         });
         for (int i = 0; i < nav.getChildCount(); i++) {
@@ -856,17 +889,31 @@ public final class MainActivity extends Activity implements RingManager.Listener
             load();
             return;
         }
-        if (Permissions.granted(this) && app.openring.core.KeyState.syncs(keyState) && !RingManager.get(this).busy() && Prefs.of(this).lastSync() == 0)
+        boolean fromSync = syncAsked;
+        syncAsked = false;
+        // asked by Sync (ring or watch) and allowed: that Sync goes on (code review of the device choice), else the first
+        // ring sync after pairing starts as before
+        boolean granted = Permissions.granted(this);
+        if (!(fromSync && granted) && granted && app.openring.core.KeyState.syncs(keyState) && !RingManager.get(this).busy() && Prefs.of(this).lastSync() == 0)
             SyncService.start(this);
         if (Prefs.of(this).demo()) return;
         // the same rule as Find my ring: a refusal after an earlier one, without explanation, means Android no longer asks (#140, #186)
         app.openring.core.PermissionAsk.Answer a = Permissions.answer(this, perms, results, quietDenial);
-        boolean fromSync = syncAsked;
-        syncAsked = false;
-        if (!fromSync) return;
-        quietDenial = a.quiet;
-        permissionBlocked = a.blocked;
-        if (a.blocked) askSettings();
+        if (fromSync) {
+            quietDenial = a.quiet;
+            permissionBlocked = a.blocked;
+        }
+        switch (app.openring.core.SyncPlan.afterAnswer(fromSync, granted, a.blocked)) {
+            case app.openring.core.SyncPlan.GO_ON:
+                permissionBlocked = quietDenial = false;
+                sync();
+                break;
+            case app.openring.core.SyncPlan.TO_SETTINGS:
+                askSettings();
+                break;
+            default:
+                break;
+        }
     }
 
     /** Setup at "Connect your ring", for a saved key this phone cannot read (issue #199); the saved key stays until a new one works. */
@@ -878,7 +925,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     void askSettings() {
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Bluetooth access")
-                .setMessage("Sync needs Bluetooth access to reach your ring. " + app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
+                .setMessage(app.openring.core.SyncPlan.accessText(app.openring.core.SyncPlan.of(false, keyState, Prefs.of(this).watchAddress() != null)) + " "
+                        + app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
                 .setPositiveButton(app.openring.core.PermissionAsk.SETTINGS_BUTTON, new android.content.DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(android.content.DialogInterface d, int w) {
@@ -986,7 +1034,14 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * ring syncs right after (core/SyncPlan); {@code note}: shown after a good watch sync instead of "Watch synced".
      */
     void syncWatch(final boolean thenRing, final String note) {
+        // Bluetooth access as for the ring (code review of the device choice): refused for good, the way to the app
+        // settings; else Android's dialog, and once allowed this Sync goes on (onRequestPermissionsResult)
         if (!Permissions.granted(this)) {
+            if (permissionBlocked) {
+                askSettings();
+                return;
+            }
+            syncAsked = true;
             Permissions.request(this);
             return;
         }

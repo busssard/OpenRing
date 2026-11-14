@@ -29,7 +29,8 @@ import app.openring.core.analysis.cycleforecast.Methods;
  * next logged day starts a new one. Without a mark a period is over after {@link #OPEN_DAYS} days without a log.
  * Spotting never starts or extends a period, and a removal mark ("Nothing", flow -1) counts as no entry.</li>
  * <li><b>Cycles</b>: start to next start. A cycle more than {@link #FAR} days from the median of all cycles is left out
- * of the typical length and the spread ("maybe a period was not logged").</li>
+ * of the typical length and the spread ("maybe a period was not logged"), unless half of the cycles or more are that far
+ * (then none is left out, {@code Methods.leftOut}).</li>
  * <li><b>Typical length</b>: of the last {@link #WINDOW} cycles kept, the median while there are fewer than
  * {@link #TRIM_FROM}, from then on the mean without the shortest and the longest. Spread: their standard deviation.</li>
  * <li><b>Next start</b>: the last start plus the typical length, give or take max(1, round(1.28 × SD)), which holds
@@ -119,7 +120,7 @@ public final class Cycles {
     public static final class Cycle {
         public final LocalDate start, next;
         public final int length;
-        /** More than {@link #FAR} days from the median: not in the estimate. */
+        /** More than {@link #FAR} days from the median (and fewer than half are): not in the estimate. */
         public final boolean leftOut;
 
         Cycle(LocalDate start, LocalDate next, boolean leftOut) {
@@ -222,8 +223,8 @@ public final class Cycles {
         List<Cycle> all = new ArrayList<Cycle>();
         int[] lengths = new int[Math.max(0, periods.size() - 1)];
         for (int i = 0; i + 1 < periods.size(); i++) lengths[i] = (int) ChronoUnit.DAYS.between(periods.get(i).start, periods.get(i + 1).start);
-        double median = median(lengths);
-        for (int i = 0; i + 1 < periods.size(); i++) all.add(new Cycle(periods.get(i).start, periods.get(i + 1).start, Math.abs(lengths[i] - median) > FAR));
+        boolean[] far = Methods.leftOut(lengths);
+        for (int i = 0; i + 1 < periods.size(); i++) all.add(new Cycle(periods.get(i).start, periods.get(i + 1).start, far[i]));
         cycles = Collections.unmodifiableList(all);
         List<Cycle> kept = new ArrayList<Cycle>();
         for (Cycle c : all) if (!c.leftOut) kept.add(c);
@@ -533,7 +534,7 @@ public final class Cycles {
      * every later one), give or take {@code max(range, round(sqrt(r1² + (k - 1) × rc²)))}: r1 the next period's range,
      * rc the calendar's (1.28 × SD, or {@link #WIDE} days under {@link #FEW} cycles). Each cycle's own variation adds up, so
      * on the calendar alone the range grows with the square root of k. Its ovulation is {@link #luteal} days before, give
-     * or take {@code max(3, round(sqrt(rk² + (1.28 × luteal spread)²)))}.
+     * or take {@code max(3, round(sqrt(rk² + (1.28 × luteal spread)²)))}, never less than the next one's.
      */
     public List<Ahead> ahead(LocalDate until) {
         List<Ahead> out = new ArrayList<Ahead>();
@@ -545,7 +546,8 @@ public final class Cycles {
             LocalDate start = anchor.plusDays((long) (k - 1) * step);
             double rk = Math.sqrt(rangeExact * rangeExact + (k - 1) * calendarRangeExact * calendarRangeExact);
             int r = Math.max(range, (int) Math.round(rk));
-            int or = Math.max(OVULATION_MIN, (int) Math.round(Math.sqrt(rk * rk + lut * lut)));
+            // never narrower than a nearer cycle's (the next one's may rest on another spread)
+            int or = Math.max(ovulationRange, Math.max(OVULATION_MIN, (int) Math.round(Math.sqrt(rk * rk + lut * lut))));
             LocalDate ov = start.minusDays(luteal);
             LocalDate first = ov.minusDays(Math.max(or, FERTILE_BEFORE));
             if (start.minusDays(r).isAfter(until) && first.isAfter(until)) break;
@@ -704,10 +706,30 @@ public final class Cycles {
             return when + "From the ovulation your temperature shows plus " + lutealWords() + ". The calendar alone says "
                     + span(calendarNext.minusDays(calendarRange), calendarNext.plusDays(calendarRange), loc) + ".";
         }
+        if (used.size() < FEW && cycles.size() >= FEW) {
+            // cycles were logged, but far ones are left out (code review of dev dadbb71: not "until you have logged 3")
+            if (methodId != Methods.OPEN_RING && !forecast.fallback) return when + coverage();
+            // only 3 cycles with 1 left out get here: fewer than half are ever left out (Methods.leftOut)
+            return when + "Only " + used.size() + " of your " + cycles.size() + " cycles count (the other lies far from the rest, maybe a period was not logged), "
+                    + "so the range is wider.";
+        }
         if (used.isEmpty()) return when + "Until you have logged " + FEW + " cycles, this uses a typical cycle of " + DEFAULT_LENGTH + " days and a wider range.";
         if (used.size() < FEW) return when + "Until you have logged " + FEW + " cycles, this uses your own " + Texts.count(used.size(), "cycle", "cycles")
                 + " and a wider range.";
-        return when + "About 4 in 5 periods start within such a range.";
+        return when + coverage();
+    }
+
+    /**
+     * What the range holds (code review of dev dadbb71): drip style's is drip's fixed 1 or 2 days, not a share of periods; the
+     * others aim at about 4 in 5. With {@link Backtest#MIN_SCORED} past periods checked, how often the start really fell in it.
+     */
+    String coverage() {
+        String s = methodId == Methods.DRIP && !forecast.fallback
+                ? "drip style shows " + Texts.count(calendarRange, "day", "days") + " each side of the most likely day, its fixed rule, not a share of periods."
+                : "About 4 in 5 periods start within such a range.";
+        Backtest.Score sc = cycles.size() > Backtest.FROM ? backtest().of(methodId) : null;
+        if (sc != null && sc.n >= Backtest.MIN_SCORED) s += " On " + sc.n + " of your past periods the start fell in it " + (sc.hits == 1 ? "once." : sc.hits + " times.");
+        return s;
     }
 
     /**
@@ -802,7 +824,10 @@ public final class Cycles {
         if (ends.contains(d)) sb.append(", marked as the end of a period");
         Period p = periodOn(d);
         int cd = cycleDay(d);
+        List<Ahead> ahead = ahead(d);
+        LocalDate from = expectedStartBefore(ahead, d);
         if (p != null) sb.append("\nDay ").append(ChronoUnit.DAYS.between(p.start, d) + 1).append(" of the period from ").append(date(p.start, loc));
+        else if (from != null) sb.append("\nCycle day ").append(ChronoUnit.DAYS.between(from, d) + 1).append(" if the period starts on ").append(weekday(from, loc));
         else if (cd > 0) sb.append("\nCycle day ").append(cd);
         if (inExpected(d)) {
             sb.append("\nIn the expected next period (").append(span(next.minusDays(range), next.plusDays(range), loc)).append("): ");
@@ -824,7 +849,7 @@ public final class Cycles {
         if (estimates() && d.equals(next)) sb.append("\nThe most likely first day of the next period.");
         if (estimates() && d.equals(ovulation)) sb.append(method == MEASURED ? "\nThe measured ovulation day." : "\nThe most likely ovulation day.");
         // the cycles after the next one (owner's feedback of 11 November)
-        for (Ahead a : on(ahead(d), d)) {
+        for (Ahead a : on(ahead, d)) {
             if (a.k == 1) continue;
             String which = " (" + (a.k - 1) + (a.k == 2 ? " cycle" : " cycles") + " after the next)";
             if (a.inPeriod(d)) {
@@ -840,7 +865,19 @@ public final class Cycles {
         return sb.toString();
     }
 
-    // ------------------------------------------------------- "Your cycles" (phase 1a2): the analysis over time
+    /**
+     * For a day after today: the newest expected start on or before it that is not before today ({@code list} from
+     * {@link #ahead}), else null. Its cycle day counts from there, not from the last logged start (code review of dev
+     * dadbb71: two cycles ahead read "Cycle day 85").
+     */
+    LocalDate expectedStartBefore(List<Ahead> list, LocalDate d) {
+        if (!d.isAfter(today)) return null;
+        LocalDate from = null;
+        for (Ahead a : list) if (!a.start.isAfter(d) && !a.start.isBefore(today)) from = a.start;
+        return from;
+    }
+
+        // ------------------------------------------------------- "Your cycles" (phase 1a2): the analysis over time
 
     /** Average, spread (sample standard deviation), shortest and longest of some whole numbers of days or points. */
     public static final class Summary {

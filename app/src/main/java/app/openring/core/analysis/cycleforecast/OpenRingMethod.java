@@ -3,8 +3,8 @@ package app.openring.core.analysis.cycleforecast;
 import app.openring.core.analysis.Cycles;
 
 /**
- * Open Ring's rule since #252, unchanged: cycles more than {@link Cycles#FAR} days from the middle value of all are left
- * out; of the newest {@link Cycles#WINDOW} kept, the median under {@link Cycles#TRIM_FROM} cycles, from then on the mean
+ * Open Ring's rule since #252: cycles more than {@link Cycles#FAR} days from the middle value of all are left out, unless
+ * half of them or more are ({@link Methods#leftOut}); of the newest {@link Cycles#WINDOW} kept, the median under {@link Cycles#TRIM_FROM} cycles, from then on the mean
  * without the shortest and the longest; the range 1.28 standard deviations each way, {@link Cycles#WIDE} days under
  * {@link Cycles#FEW} cycles.
  */

@@ -255,9 +255,16 @@ public final class Prefs {
     public boolean noRing() { return sp.getBoolean("no_ring", false); }
     public void setNoRing(boolean b) { sp.edit().putBoolean("no_ring", b).commit(); }
     /**
+     * Used without a ring key on purpose: the choice without a ring, or a watch added ({@code core/Start.noRing}, the rule
+     * {@link #keyState} counts with since #373). The one rule wherever a missing key is fine: backups, automatic backups,
+     * going back to a copy and their texts in Settings (code review of the device choice).
+     */
+    public boolean withoutRing() { return app.openring.core.Start.noRing(noRing(), watchAddress() != null); }
+    /**
      * The path picked on Getting started (issue #373, {@code core/Start}): none yet, a ring, a watch or just this phone. The
-     * watch and the phone also set {@link #setNoRing}, at the tap, so a setup left half way never leads back to the ring setup.
-     * In the backup; an older backup without it keeps the phone's.
+     * tap stores only this choice; {@link #setNoRing} comes when the watch or the phone path is done (after About you,
+     * {@code SetupActivity.finishWithout}). A setup left before that (during Bluetooth access or About you) shows Getting
+     * started again, where the person picks once more. In the backup; an older backup without it keeps the phone's.
      */
     public int startChoice() { return app.openring.core.Start.valid(sp.getInt("start_choice", app.openring.core.Start.NONE)); }
     public void setStartChoice(int c) { sp.edit().putInt("start_choice", app.openring.core.Start.valid(c)).commit(); }
@@ -270,12 +277,38 @@ public final class Prefs {
         synchronized (NO_READING_LOCK) {
             String id = sp.getString("phone_device", null);
             if (id != null) return id;
-            byte[] b = new byte[8];
-            new java.security.SecureRandom().nextBytes(b);
-            id = app.openring.core.Hex.encode(b);
+            id = newPhoneDevice();
             sp.edit().putString("phone_device", id).commit();
             return id;
         }
+    }
+
+    /**
+     * This phone's id for a reading now ({@code boot} the boot key, {@code elapsedMs} the time since the start, {@code wall}
+     * unix seconds), with the phone's state noted as the mark (code review of the device choice). Android's phone to phone
+     * transfer copies these settings to a new phone, also with {@code allowBackup} off; the mark then does not fit
+     * ({@code core/PhoneSteps.samePhone}) and the new phone gets its own id, so its readings are never differenced against the
+     * old phone's (which stay as they are, under the old id). Written to disk before it is returned.
+     */
+    public String phoneDevice(long boot, long elapsedMs, double wall) {
+        synchronized (NO_READING_LOCK) {
+            String id = sp.getString("phone_device", null);
+            boolean marked = sp.contains("phone_device_wall");
+            if (id == null || !app.openring.core.PhoneSteps.samePhone(sp.getLong("phone_device_boot", 0), sp.getLong("phone_device_elapsed", 0),
+                    marked ? sp.getLong("phone_device_wall", 0) / 1000.0 : 0, boot, elapsedMs, wall)) id = newPhoneDevice();
+            sp.edit().putString("phone_device", id).putLong("phone_device_boot", boot).putLong("phone_device_elapsed", elapsedMs)
+                    .putLong("phone_device_wall", Math.round(wall * 1000)).commit();
+            return id;
+        }
+    }
+
+    /** The stored id as it is, null before the first reading (for the log line when it changes). */
+    public String phoneDeviceStored() { return sp.getString("phone_device", null); }
+
+    private static String newPhoneDevice() {
+        byte[] b = new byte[8];
+        new java.security.SecureRandom().nextBytes(b);
+        return app.openring.core.Hex.encode(b);
     }
     /** Physical activity was asked for once (a later "not allowed" is then a refusal, not "not asked yet"). */
     public boolean phoneAsked() { return sp.getBoolean("phone_asked", false); }
@@ -445,7 +478,7 @@ public final class Prefs {
      */
     public int keyState() {
         // an added watch counts as no ring while no key is stored (issue #373): a watch only phone never opens the ring setup
-        return app.openring.core.KeyState.of(hasKey(), loadKey() != null, app.openring.core.Start.noRing(noRing(), watchAddress() != null));
+        return app.openring.core.KeyState.of(hasKey(), loadKey() != null, withoutRing());
     }
 
     /**
@@ -455,7 +488,7 @@ public final class Prefs {
      * {@code KeyState.opensSetup} or {@code KeyState.syncs}, which need {@link #keyState}.
      */
     public int ringState() {
-        return app.openring.core.KeyState.ofStored(hasKey(), app.openring.core.Start.noRing(noRing(), watchAddress() != null));
+        return app.openring.core.KeyState.ofStored(hasKey(), withoutRing());
     }
 
     /** Why the last stored key could not be read (exception and message, for the Bluetooth log), null when none failed. */

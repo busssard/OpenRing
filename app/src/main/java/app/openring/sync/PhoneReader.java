@@ -70,17 +70,22 @@ public final class PhoneReader {
     }
 
     private static int readLocked(Context c, String why, long minGapS) {
-        String device = Prefs.of(c).phoneDevice();
         int bootCount = -1;
         try {
             bootCount = android.provider.Settings.Global.getInt(c.getContentResolver(), android.provider.Settings.Global.BOOT_COUNT, -1);
         } catch (RuntimeException e) {
             // the stand in from the start time is used (core/PhoneSteps.bootKey)
         }
+        long nowEl = SystemClock.elapsedRealtime();
+        double nowWall = System.currentTimeMillis() / 1000.0;
+        long key = PhoneSteps.bootKey(bootCount, nowWall, nowEl);
+        // the id with the phone's state as its mark: settings moved to a new phone give that phone its own id (code review)
+        Prefs prefs = Prefs.of(c);
+        String before = prefs.phoneDeviceStored();
+        String device = prefs.phoneDevice(key, nowEl, nowWall);
+        if (before != null && !before.equals(device)) log(c, "phone steps: another phone than the last reading (settings moved to a new phone?), its readings get their own id");
         // a reading of this boot less than minGapS old: the sensor is not even switched on (review of #367)
         if (minGapS > 0) {
-            long nowEl = SystemClock.elapsedRealtime();
-            long key = PhoneSteps.bootKey(bootCount, System.currentTimeMillis() / 1000.0, nowEl);
             try {
                 if (PhoneStore.recent(c, device, key, nowEl, minGapS)) return PhoneStore.TOO_SOON;
             } catch (RuntimeException e) {

@@ -905,6 +905,8 @@ public class PipelineTest {
         store251();
         fixes332();
         cursor251();
+        pendingDecode251();
+        lostPiece251();
         decoder3For251();
         restore251();
         large251();
@@ -919,7 +921,12 @@ public class PipelineTest {
         phoneLarge329();
         phoneTwoPhones329();
         phoneNoRingBackup329();
+        watchHistory();
+        watchReview389();
         startDevices373();
+        phoneMovedReview();
+        watchOnlyBackupReview();
+        phoneWriteLockReview();
         badges265();
         phase1a2_252();
         methods383();
@@ -12893,6 +12900,149 @@ public class PipelineTest {
         clean254();
     }
 
+    /** What the watch sync does with the stored messages before it connects (outside the ring lock). */
+    static void beforeSync251(Db db) {
+        app.openring.data.WatchStore.ensureDecoded(db);
+        app.openring.data.WatchStore.decodePending(db, -1);
+    }
+
+    /** What the watch sync does with the stored messages after a session. */
+    static void afterSession251(Db db, long session) {
+        app.openring.data.WatchStore.decodePending(db, session);
+    }
+
+    /**
+     * Review of dadbb71 (Could improve): a session whose decoding failed (a full disk) kept its raw messages undecoded until
+     * the next decoder, even though later syncs worked, so the Watch page missed them. Now the next sync decodes every
+     * session behind the newest one decoded first. Made up messages only.
+     */
+    static void pendingDecode251() throws Exception {
+        Context c = phone254("openring251-pending");
+        Db db = Db.get(c);
+        beforeSync251(db);
+        for (int i = 0; i < made251(T251, 90).size(); i++) app.openring.data.WatchStore.addRaw(db, 1000, i, DEV251, made251(T251, 90).get(i), T251 + 86400);
+        afterSession251(db, 1000);
+        // session 2000: stored, its decoding fails
+        List<byte[]> s2 = made251(T251 + 86400, 87);
+        beforeSync251(db);
+        for (int i = 0; i < s2.size(); i++) app.openring.data.WatchStore.addRaw(db, 2000, i, DEV251, s2.get(i), T251 + 2 * 86400);
+        String before = watchRows251(db);
+        db.getWritableDatabase().execSQL("CREATE TRIGGER full251 BEFORE INSERT ON watch_hr BEGIN SELECT RAISE(ABORT, 'disk full'); END");
+        Throwable got = null;
+        try {
+            afterSession251(db, 2000);
+        } catch (RuntimeException e) {
+            got = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER full251");
+        check("#251 pending: a failed decode keeps the session's raw messages, no row of it written", got != null && watchRows251(db).equals(before), got);
+        // the next sync: session 3000 stored and decoded
+        beforeSync251(db);
+        List<byte[]> s3 = made251(T251 + 2 * 86400, 84);
+        for (int i = 0; i < s3.size(); i++) app.openring.data.WatchStore.addRaw(db, 3000, i, DEV251, s3.get(i), T251 + 3 * 86400);
+        afterSession251(db, 3000);
+        String rows = watchRows251(db);
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#251 pending: the next sync decodes the session whose decoding failed, the same rows as decoding everything", rows.equals(watchRows251(db)), null);
+        check("#251 pending: the newest decoded session is noted", "3000".equals(db.kv("watch_decoded_session", null)), db.kv("watch_decoded_session", null));
+        // two sessions behind, a stop while the second is decoded: the first is kept and noted, the second waits, nothing skipped
+        for (long s : new long[] {4000, 5000}) {
+            List<byte[]> m = made251(T251 + (s / 1000) * 86400, 80);
+            for (int i = 0; i < m.size(); i++) app.openring.data.WatchStore.addRaw(db, s, i, DEV251, m.get(i), T251 + (s / 1000 + 1) * 86400);
+        }
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop251b BEFORE INSERT ON watch_hr WHEN NEW.t >= " + (T251 + 5 * 86400) + " BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        got = null;
+        try {
+            beforeSync251(db);
+        } catch (RuntimeException e) {
+            got = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER stop251b");
+        check("#251 pending: a stop half way keeps what was decoded, the note stays before the session that failed", got != null
+                && "4000".equals(db.kv("watch_decoded_session", null)) && db.count("SELECT COUNT(*) FROM watch_hr WHERE t >= " + (T251 + 5 * 86400)) == 0
+                && db.count("SELECT COUNT(*) FROM watch_hr WHERE t >= " + (T251 + 4 * 86400)) > 0, db.kv("watch_decoded_session", null));
+        beforeSync251(db);
+        String all = watchRows251(db);
+        beforeSync251(db);
+        afterSession251(db, 5000);
+        String twice = watchRows251(db);
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#251 pending: resumed, every session decoded, running it again changes nothing", all.equals(twice) && all.equals(watchRows251(db))
+                && "5000".equals(db.kv("watch_decoded_session", null)), null);
+        // an older version (no note): every message is decoded again once, with the same rows, then not again
+        String raw = rawRows251(db);
+        db.getWritableDatabase().execSQL("DELETE FROM kv WHERE k = 'watch_decoded_session'");
+        check("#251 pending: from an older version the history is decoded again once, the same rows and raw messages",
+                app.openring.data.WatchStore.ensureDecoded(db) && watchRows251(db).equals(all) && rawRows251(db).equals(raw) && "5000".equals(db.kv("watch_decoded_session", null)), null);
+        check("#251 pending: and not again", !app.openring.data.WatchStore.ensureDecoded(db), null);
+        // pairing another ring empties kv: decoded again once, every watch row the same
+        db.resetRingData();
+        check("#251 pending: after pairing another ring the watch is decoded again once, every row the same", app.openring.data.WatchStore.ensureDecoded(db)
+                && watchRows251(db).equals(all) && "5000".equals(db.kv("watch_decoded_session", null)), null);
+        // a restore of an older backup: the phone's newer session merged, all decoded and noted
+        byte[] full = backup252(c);
+        List<byte[]> s6 = made251(T251 + 6 * 86400, 70);
+        for (int i = 0; i < s6.size(); i++) app.openring.data.WatchStore.addRaw(db, 6000, i, DEV251, s6.get(i), T251 + 7 * 86400);
+        afterSession251(db, 6000);
+        String phone = watchRows251(db);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#251 pending: a restore keeps the phone's sessions, all decoded and noted", r.ok && watchRows251(db).equals(phone)
+                && "6000".equals(db.kv("watch_decoded_session", null)) && !app.openring.data.WatchStore.ensureDecoded(db), r.message);
+        clean254();
+    }
+
+    /**
+     * Review of dadbb71 (Should fix): bytes lost on the way during a data answer are stored as they came under the request's
+     * type, so the answer counts as cut off when the session is decoded, when every row is worked out again and after a
+     * restore: its start never moves past records that were not stored. They give no rows; the next whole answer moves the
+     * start as before. Made up messages only.
+     */
+    static void lostPiece251() throws Exception {
+        Context c = phone254("openring251-lost");
+        Db db = Db.get(c);
+        int ACT = app.openring.core.withings.Proto.ACTIVITY;
+        long now = T251 + 3 * 86400L, month = now - 30 * 86400L;
+        // the reviewer's example: records at T, T+1000, T+2000, one per message; the first two lost on the way, the third whole with the end
+        List<byte[][]> recs = new ArrayList<byte[][]>();
+        for (int i = 0; i < 3; i++) recs.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251 + i * 1000), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(10 + i, 7)});
+        List<byte[]> answer = app.openring.core.withings.WatchDemo.answer(ACT, recs, 1);
+        byte[] lost1 = new byte[answer.get(0).length + 2];
+        System.arraycopy(answer.get(0), 0, lost1, 0, answer.get(0).length);
+        System.arraycopy(answer.get(1), 0, lost1, answer.get(0).length, 2);
+        byte[] lost2 = Arrays.copyOfRange(answer.get(1), 2, answer.get(1).length);
+        app.openring.data.WatchStore.addRaw(db, 1000, 0, DEV251, app.openring.core.withings.WatchDemo.batteryReply(80, 2, 3900), T251 + 86400);
+        app.openring.data.WatchStore.addDamaged(db, 1000, 1, DEV251, lost1, ACT, T251 + 86400);
+        app.openring.data.WatchStore.addDamaged(db, 1000, 2, DEV251, lost2, ACT, T251 + 86400);
+        app.openring.data.WatchStore.addRaw(db, 1000, 3, DEV251, answer.get(2), T251 + 86400);
+        app.openring.data.WatchStore.addDamaged(db, 1000, 4, DEV251, new byte[] {9, 9}, -1, T251 + 86400);
+        afterSession251(db, 1000);
+        check("#251 lost piece: the answer that lost a piece moves no start", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month,
+                app.openring.data.WatchStore.since(db, DEV251, ACT, now));
+        check("#251 lost piece: the whole message's record is stored, the damaged bytes give no row", db.count("SELECT COUNT(*) FROM watch_steps") == 1
+                && db.count("SELECT COUNT(*) FROM watch_steps WHERE start = " + (T251 + 2000)) == 1, db.count("SELECT COUNT(*) FROM watch_steps"));
+        check("#251 lost piece: every byte kept as it came, under the request's type", db.count("SELECT COUNT(*) FROM watch_raw WHERE type = " + ACT) == 3
+                && db.count("SELECT COUNT(*) FROM watch_raw WHERE type = -1") == 1 && db.count("SELECT COUNT(*) FROM watch_raw") == 5, null);
+        String rows = watchRows251(db);
+        db.getWritableDatabase().execSQL("DELETE FROM kv WHERE k LIKE 'watch_cursor_%'");
+        check("#251 lost piece: worked out again from the raw messages, still no start", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month, null);
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#251 lost piece: decoding everything again gives the same rows and no start", watchRows251(db).equals(rows)
+                && app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month, null);
+        byte[] full = backup252(c);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#251 lost piece: after a restore the same rows and still no start", r.ok && watchRows251(db).equals(rows)
+                && app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month, r.message);
+        // the next sync asks again from the same start and gets the answer whole: the start moves as before
+        for (int i = 0; i < answer.size(); i++) app.openring.data.WatchStore.addRaw(db, 2000, i, DEV251, answer.get(i), T251 + 2 * 86400);
+        afterSession251(db, 2000);
+        check("#251 lost piece: the next whole answer stores every record and moves the start", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == T251 + 2000 - 7200
+                && db.count("SELECT COUNT(*) FROM watch_steps") == 3, app.openring.data.WatchStore.since(db, DEV251, ACT, now));
+        clean254();
+    }
+
     /**
      * The owner's report of 11 November, data safety of decoder 3 (distance in centimetres): a history stored by decoder 2
      * (distance taken as metres, 100 times too large) is worked out again from the kept raw messages: the raw messages stay
@@ -13732,10 +13882,14 @@ public class PipelineTest {
         check("#373 no watch, no key, no choice: Getting started", p.keyState() == app.openring.core.KeyState.NONE
                 && app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
         check("#373 no choice stored yet", p.startChoice() == app.openring.core.Start.NONE, p.startChoice());
+        // the tap on the watch stores only the choice (SetupActivity); left during Bluetooth access or About you: Getting
+        // started again (code review of the device choice: this test set no_ring here, which only finishWithout does)
         p.setStartChoice(app.openring.core.Start.WATCH);
+        check("#373 the watch chosen, its setup left before About you was done: Getting started again", p.startChoice() == app.openring.core.Start.WATCH
+                && !p.noRing() && app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
+        // About you done (finishWithout): no ring, the app, also before the watch is added
         p.setNoRing(true);
-        check("#373 the watch chosen, its setup left half way: the app", p.startChoice() == app.openring.core.Start.WATCH
-                && !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
+        check("#373 the watch path past About you: the app", !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
         p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
         // a backup of a watch only phone carries the choice and no key; a restore elsewhere goes on with the watch
         byte[] full = backup252(c);
@@ -13778,6 +13932,169 @@ public class PipelineTest {
         p.setNoRing(false);
         if (key != null) p.saveKey(key);
         restart242();
+    }
+
+    /**
+     * Code review of the device choice, finding 1: Android's phone to phone transfer copies the settings (with the phone's own
+     * id) and the history to a new phone. The new phone, also at boot 40 but only an hour up, gets its own id at its first
+     * reading, so no interval is differenced against the old phone's readings, which stay exactly as they were.
+     */
+    static void phoneMovedReview() throws Exception {
+        Context c = phone254("openring-review-moved");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        Db db = Db.get(c);
+        double w0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        long tenDays = 10 * 86_400_000L, hour = 3_600_000L;
+        // an id from before this version has no mark: it is kept at the first reading, which notes the mark
+        String legacy = p.phoneDevice();
+        String oldId = p.phoneDevice(40, tenDays, w0);
+        check("moved: an id from before the mark is kept (an update changes nothing)", legacy.equals(oldId), legacy + " " + oldId);
+        check("moved: the next reading of the old phone keeps its id", oldId.equals(p.phoneDevice(40, tenDays + hour, w0 + 3600)), null);
+        app.openring.data.PhoneStore.addAll(db, Arrays.asList(new app.openring.core.PhoneSteps.Reading(oldId, 40, tenDays, 50000, w0),
+                new app.openring.core.PhoneSteps.Reading(oldId, 40, tenDays + hour, 50500, w0 + 3600)));
+        String oldRows = phoneRows329(db);
+        // the same settings and history on the new phone: boot 40, an hour up, two days later
+        String newId = p.phoneDevice(40, hour, w0 + 2 * 86400);
+        check("moved: the new phone gets its own id at its first reading, and keeps it", !newId.equals(oldId)
+                && newId.equals(p.phoneDevice(40, 2 * hour, w0 + 2 * 86400 + 3600)) && newId.equals(p.phoneDeviceStored()), oldId + " " + newId);
+        app.openring.data.PhoneStore.addAll(db, Arrays.asList(new app.openring.core.PhoneSteps.Reading(newId, 40, hour, 800, w0 + 2 * 86400),
+                new app.openring.core.PhoneSteps.Reading(newId, 40, 2 * hour, 1500, w0 + 2 * 86400 + 3600)));
+        check("moved: no interval made up across the two phones (the 48,500 steps)", db.count("SELECT COUNT(*) FROM phone_steps WHERE steps > 10000") == 0
+                && db.count("SELECT SUM(steps) FROM phone_steps") == 500 + 700, phoneRows329(db));
+        String all = phoneRows329(db);
+        boolean kept = true;
+        for (String line : oldRows.split("\n")) if (!line.equals("--") && !line.isEmpty()) kept &= all.contains(line + "\n");
+        check("moved: the old phone's readings and interval stay exactly as they were", kept && phoneCount329(db, "phone_readings") == 4, all);
+        String json = new String(zipEntry(backup252(c), "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8);
+        check("moved: the id and its mark are never in a backup", !json.contains("phone_device") && !json.contains(newId), null);
+        clean254();
+    }
+
+    /**
+     * Code review of the device choice, finding 2: a person who picked the ring, added a watch, then used "Use a different key
+     * or ring" is watch only (Prefs.keyState gives NO_RING) without the choice to go without a ring. Backups refused ("no ring
+     * key saved on this phone"), the automatic ones stopped, and the restore asked for a key.
+     */
+    static void watchOnlyBackupReview() throws Exception {
+        Context c = phone254("openring-review-watch-backup");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        byte[] key = p.loadKey();
+        Db db = Db.get(c);
+        someLog252(db);
+        p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
+        p.clearKey();
+        p.setNoRing(false);
+        check("watch only: no key, no choice, a watch: no ring", p.keyState() == app.openring.core.KeyState.NO_RING && p.withoutRing() && !p.noRing(), p.keyState());
+        java.io.File fdir = Files.createTempDirectory("folder-review").toFile();
+        try {
+            byte[] full = backup252(c);
+            org.json.JSONObject o = new org.json.JSONObject(new String(zipEntry(full, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
+            check("watch only: a backup is saved without a key, marked so", !o.has("key") && o.optBoolean("no_key") && o.optBoolean("no_ring"), o.keySet());
+            Folder242 folder = new Folder242(fdir);
+            app.openring.data.AutoBackup.folderChosen(c, "content://test/tree/W373", "W373");
+            p.setBackupDays(1);
+            app.openring.data.AutoBackup.Outcome ao = app.openring.data.AutoBackup.run(c, folder, 1780000000L, false, null);
+            check("watch only: the automatic backup writes its copy", ao.error == null && ao.written.size() == 1, ao.error);
+            restart242();
+            Context other = phone254("openring-review-watch-restore");
+            app.openring.data.Prefs q = app.openring.data.Prefs.of(other);
+            q.clearKey();
+            app.openring.data.Backup.Result r = app.openring.data.Backup.read(other, new java.io.ByteArrayInputStream(full));
+            check("watch only: the restore goes on without a ring and does not ask for a key", r.ok && q.keyState() == app.openring.core.KeyState.NO_RING
+                    && q.watchAddress() != null && r.message.endsWith(app.openring.data.Backup.NO_KEY_NO_RING), r.message);
+            q.forgetWatch();
+            // without the watch and without the choice the old rule stays: no key, no backup
+            p.forgetWatch();
+            boolean refused = false;
+            try {
+                backup252(c);
+            } catch (java.io.IOException e) {
+                refused = true;
+            }
+            check("watch only: no watch, no key, no choice: still no backup", refused, null);
+        } finally {
+            p.forgetWatch();
+            if (key != null) p.saveKey(key);
+            rmTree(fdir);
+            clean254();
+        }
+    }
+
+    /**
+     * Code review of the device choice, finding 5: a phone reading waited for SQLite's write while holding Db's class lock, so
+     * every Db.get on the main thread waited behind it (an automatic backup's copy holds the write for seconds). Now Db.get
+     * stays free while a reading is written, and a restore's swap waits for the reading, which it then carries over.
+     */
+    static void phoneWriteLockReview() throws Exception {
+        final Context c = phone254("openring-review-lock");
+        Db db = Db.get(c);
+        final double w0 = LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond();
+        final String dev = "lockphone";
+        app.openring.data.PhoneStore.addAll(db, Arrays.asList(new app.openring.core.PhoneSteps.Reading(dev, 5, 3_600_000, 100, w0)));
+        final long events = db.eventCount();
+        final java.io.File snap = app.openring.data.Exporter.snapshot(c);
+        final java.util.concurrent.CountDownLatch inWrite = new java.util.concurrent.CountDownLatch(1), release = new java.util.concurrent.CountDownLatch(1);
+        java.lang.reflect.Field hook = app.openring.data.PhoneStore.class.getDeclaredField("whileWriting");
+        hook.setAccessible(true);
+        hook.set(null, new Runnable() {
+            @Override
+            public void run() {
+                inWrite.countDown();
+                try {
+                    release.await(20, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        final int[] stored = {-1};
+        final Throwable[] err = {null};
+        Thread w = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                stored[0] = app.openring.data.PhoneStore.record(c, new app.openring.core.PhoneSteps.Reading(dev, 5, 7_200_000, 400, w0 + 3600), 0);
+            }
+        });
+        Thread g = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                Db.get(c);
+            }
+        });
+        Thread rs = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Db.replaceWith(c, snap, events);
+                } catch (Throwable t) {
+                    err[0] = t;
+                }
+            }
+        });
+        boolean getFree, restoreWaited;
+        try {
+            w.start();
+            inWrite.await(20, java.util.concurrent.TimeUnit.SECONDS);
+            g.start();
+            g.join(3000);
+            getFree = !g.isAlive();
+            rs.start();
+            rs.join(1000);
+            restoreWaited = rs.isAlive();
+        } finally {
+            release.countDown();
+            w.join(20000);
+            g.join(20000);
+            rs.join(60000);
+            hook.set(null, null);
+        }
+        check("write lock: Db.get (the main thread) does not wait while a phone reading is written", getFree, null);
+        check("write lock: a restore's swap waits for the reading, then works", restoreWaited && err[0] == null && stored[0] == app.openring.data.PhoneStore.STORED, err[0]);
+        Db after = Db.get(c);
+        check("write lock: the reading written meanwhile is carried into the restored history", phoneCount329(after, "phone_readings") == 2
+                && after.count("SELECT SUM(steps) FROM phone_steps") == 300, phoneRows329(after));
+        app.openring.data.Exporter.release(snap);
+        clean254();
     }
 
     /**
@@ -13838,5 +14155,155 @@ public class PipelineTest {
         check("#329b a day load during an analysis writes nothing, the next one works the intervals out", phoneCount329(rdb, "phone_steps") == 0
                 && app.openring.data.PhoneStore.forDay(rdb, t0, t0 + 86400).intervals.size() > 0 && phoneCount329(rdb, "phone_steps") == 23, null);
         clean254();
+    }
+
+    /**
+     * The statistics without a ring (owner's report of 13 November): the demo's made up watch read from the demo file gives the
+     * 30 days of charts with each day's dial scores, Further analysis of its nights, and the night objects the ring's screens
+     * show. Reading only: nothing in the file changes.
+     */
+    static void watchHistory() throws Exception {
+        Context c = phone254("openring-watchstats");
+        LocalDate today = LocalDate.now();
+        app.openring.data.Demo.enter(c, null, today, System.currentTimeMillis() / 1000);
+        Db demo = Db.get(c);
+        String before = watchRows251(demo) + "|" + demo.count("SELECT COUNT(*) FROM kv") + "|" + demo.count("SELECT COUNT(*) FROM nights");
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        LocalDate first = today.minusDays(29);
+        double from = app.openring.core.DeviceHistory.rowsFrom(first, z), to = today.plusDays(1).atStartOfDay(z).toEpochSecond();
+        app.openring.core.MainDevice.Watch w = app.openring.data.WatchStore.window(demo, from, to);
+        app.openring.core.MainDevice.Watch n = app.openring.data.WatchStore.nightRows(demo, from, to);
+        boolean same = n.sleep.size() == w.sleep.size() && n.heart.size() == w.heart.size() && n.steps.isEmpty() && n.workouts.isEmpty();
+        for (int i = 0; same && i < n.sleep.size(); i++) same = n.sleep.get(i).start == w.sleep.get(i).start && n.sleep.get(i).dur == w.sleep.get(i).dur
+                && n.sleep.get(i).stage == w.sleep.get(i).stage;
+        for (int i = 0; same && i < n.heart.size(); i++) same = n.heart.get(i).t == w.heart.get(i).t && n.heart.get(i).bpm == w.heart.get(i).bpm;
+        check("watch statistics: the night rows are the window's sleep pieces and heart rates, nothing else", same && !n.sleep.isEmpty(), n.sleep.size());
+        // the demo's watch is like the owner's Steel HR: no REM record, so its nights show Light and REM together
+        app.openring.core.withings.WatchDays.Rem rem = app.openring.data.WatchStore.rem(demo);
+        check("watch statistics: the demo's watch, like the Steel HR, never sends REM", !rem.any() && !app.openring.core.withings.WatchDays.tellsRem(w.sleep), null);
+        app.openring.core.DeviceHistory.DayZones fz = app.openring.core.DeviceHistory.fixed(z);
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(app.openring.core.MainDevice.WATCH, first, today, fz, w, null, 10000, 40, rem);
+        int nights = 0;
+        double asleep = 0, score = 0, low = 0;
+        int scored = 0, lows = 0;
+        for (LocalDate d = first; !d.isAfter(today); d = d.plusDays(1)) {
+            app.openring.core.DeviceHistory.NightRow r = h.night(d);
+            if (r == null) continue;
+            nights++;
+            asleep += r.night.asleepMin();
+            if (!Double.isNaN(r.score)) {
+                score += r.score;
+                scored++;
+            }
+            if (r.lowest > 0) {
+                low += r.lowest;
+                lows++;
+            }
+        }
+        check("watch statistics: the demo watch has a night nearly every day of the 30", nights >= 25, nights);
+        LocalDate y = today.minusDays(1);
+        double ds = y.atStartOfDay(z).toEpochSecond(), de = y.plusDays(1).atStartOfDay(z).toEpochSecond();
+        app.openring.core.DeviceScores.Result dial = app.openring.core.DeviceScores.of(app.openring.core.MainDevice.WATCH, y, z,
+                app.openring.data.WatchStore.window(demo, ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600 - 86400, de), null, 10000, 40, rem);
+        app.openring.core.DeviceScores.Result inChart = h.result(y);
+        check("watch statistics: without REM the sleep score leaves REM out and says why", inChart.sleep.get("rem") == null && inChart.sleep.get("deep") != null
+                && leftKeys379(inChart.sleepLeft).contains("rem"), null);
+        check("watch statistics: yesterday in the charts is yesterday's dial (read from the file as the day load does)",
+                dial.value("sleep") == inChart.value("sleep") && dial.value("readiness") == inChart.value("readiness")
+                && dial.value("activity_score") == inChart.value("activity_score") && dial.steps == inChart.steps && !Double.isNaN(dial.value("readiness")),
+                dial.value("readiness") + " " + inChart.value("readiness"));
+        app.openring.data.SleepHistory sh = app.openring.data.WatchHistory.load(demo, first.toString(), today.toString(), fz, z, 40, rem);
+        check("watch statistics: Further analysis of the demo's watch shows Light and REM together", sh.lightRem, null);
+        check("watch statistics: Further analysis of the month has the charts' nights", sh.nights == nights, sh.nights + " " + nights);
+        check("watch statistics: its averages are the nights' (asleep, score, lowest heart rate)", Math.abs(sh.asleepMin - asleep / nights) < 1e-6
+                && Math.abs(sh.score - score / scored) < 1e-6 && Math.abs(sh.lowestHr - low / lows) < 1e-6, sh.asleepMin + " " + sh.score + " " + sh.lowestHr);
+        check("watch statistics: usual sleep times, stages and an average night", !Double.isNaN(sh.bedtimeMin) && !Double.isNaN(sh.wakeMin)
+                && sh.deepMin > 0 && sh.lightMin > 0 && sh.remMin == 0 && !Double.isNaN(sh.wakeUps) && Double.isNaN(sh.hrv), sh.bedtimeMin);
+        app.openring.data.SleepHistory allTime = app.openring.data.WatchHistory.load(demo, "2000-01-01", today.toString(), fz, z, 40, rem);
+        check("watch statistics: All time holds every night of the watch", allTime.nights >= sh.nights && allTime.nights >= 30, allTime.nights);
+        app.openring.data.SleepHistory empty = app.openring.data.WatchHistory.load(demo, "2001-01-01", "2001-02-01", fz, z, 40, rem);
+        check("watch statistics: a period without nights is empty", empty.nights == 0, empty.nights);
+        app.openring.core.DeviceHistory.NightRow r = h.night(y);
+        org.json.JSONObject o = app.openring.data.WatchHistory.nightJson(r);
+        check("watch statistics: the night as the ring's night fields", Json.stages(o).length == r.night.stages.length && Json.stages(o)[0] == r.night.stages[0]
+                && Json.d(o, "asleep_min") == r.night.asleepMin() && Json.d(o, "in_bed_min") == r.night.inBedMin() && o.optString("day").equals(y.toString())
+                && o.optJSONObject("score").optInt("value") == (int) r.score && Json.d(o, "lowest_hr") == r.lowest && Json.d(o, "lowest_hr_time") == r.lowestAt
+                && Json.d(o, "sleep_start") == r.fields.sleepStart && !o.has("avg_hrv") && !o.has("spo2") && o.optBoolean("light_rem")
+                && z.getId().equals(o.optString("zone")), o.toString().length());
+        check("watch statistics: reading changes nothing in the file", before.equals(watchRows251(demo) + "|" + demo.count("SELECT COUNT(*) FROM kv") + "|"
+                + demo.count("SELECT COUNT(*) FROM nights")), null);
+        app.openring.data.Prefs.of(c).setDemo(false);
+        clean254();
+    }
+
+    /** Seven hours ending at 07:00 on {@code day} for watch {@code device}, its last two hours REM or (the Steel HR's kind) light. */
+    static void sleep389(Db db, String device, LocalDate day, boolean rem, java.time.ZoneId z) {
+        long end = day.atTime(7, 0).atZone(z).toEpochSecond(), t = end - 7 * 3600;
+        int[][] p = {{app.openring.core.withings.Records.LIGHT, 3}, {app.openring.core.withings.Records.DEEP, 2},
+            {rem ? app.openring.core.withings.Records.REM : app.openring.core.withings.Records.LIGHT, 2}};
+        for (int[] x : p) {
+            db.getWritableDatabase().execSQL("INSERT INTO watch_sleep(device, start, dur, stage) VALUES (?, ?, ?, ?)", new Object[] {device, t, x[1] * 3600, x[0]});
+            t += x[1] * 3600L;
+        }
+    }
+
+    /**
+     * Code review of #389, read from a file: REM is decided per watch and night (a Steel HR keeps Light and REM before and after
+     * a watch with REM), the sleep pieces of the 104 days sleep debt reads, and each day's zone as the day load gives it to its dial.
+     */
+    static void watchReview389() throws Exception {
+        Context c = phone254("openring-review389");
+        Db db = Db.get(c);
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        LocalDate today = LocalDate.now();
+        check("review #389: without any watch sleep every night tells REM (nothing changes without a watch)",
+                app.openring.data.WatchStore.rem(db) == app.openring.core.withings.WatchDays.Rem.ALWAYS, null);
+        for (int order = 0; order < 2; order++) {
+            db.getWritableDatabase().execSQL("DELETE FROM watch_sleep");
+            // order 0: the Steel HR first, then a watch with REM; order 1 the other way round
+            for (int k = 60; k >= 0; k--) {
+                boolean late = k <= 30;
+                boolean remWatch = order == 0 ? late : !late;
+                sleep389(db, remWatch ? "scan" : "steel", today.minusDays(k), remWatch, z);
+            }
+            String before = watchRows251(db);
+            app.openring.core.withings.WatchDays.Rem rem = app.openring.data.WatchStore.rem(db);
+            app.openring.core.withings.WatchDays.Zones zz = app.openring.core.withings.WatchDays.zones(null, z);
+            List<app.openring.core.withings.Records.Sleep> rows = app.openring.data.WatchStore.sleepRows(db, 0, Double.MAX_VALUE);
+            boolean ok = rem.any() && rows.size() == 61 * 3 && before.equals(watchRows251(db));
+            for (int k = 60; k >= 0; k--) {
+                app.openring.core.withings.WatchDays.Night n = app.openring.core.withings.WatchDays.nightFor(rows, today.minusDays(k), zz);
+                boolean remWatch = order == 0 ? k <= 30 : k > 30;
+                ok &= n != null && rem.tells(n) == remWatch;
+            }
+            check("review #389: REM per watch and night, " + (order == 0 ? "a Steel HR before a watch with REM" : "a watch with REM before a Steel HR"), ok, rows.size());
+        }
+        double a = today.minusDays(10).atStartOfDay(z).toEpochSecond(), b = today.minusDays(5).atStartOfDay(z).toEpochSecond();
+        List<app.openring.core.withings.Records.Sleep> part = app.openring.data.WatchStore.sleepRows(db, a, b);
+        boolean inside = !part.isEmpty();
+        for (int i = 0; i < part.size(); i++) inside &= part.get(i).start < b && part.get(i).start + part.get(i).dur > a && (i == 0 || part.get(i - 1).start <= part.get(i).start);
+        check("review #389: the sleep pieces that reach into a span, oldest first", inside && part.size() == 15, part.size());
+        // the zone of each day: as the day load gives it to the dial (the zone noted at its noon, else the phone's)
+        double t0 = today.minusDays(40).atStartOfDay(z).toEpochSecond();
+        db.noteZone(t0, "Europe/Zurich");
+        db.noteZone(t0 + 10 * 86400, "America/New_York");
+        db.noteZone(t0 + 17 * 86400, "Europe/Zurich");
+        app.openring.core.DeviceHistory.DayZones dz = app.openring.data.WatchHistory.dayZones(db, z);
+        boolean zonesOk = true;
+        int ny = 0;
+        for (int k = 50; k >= 0; k--) {
+            LocalDate d = today.minusDays(k);
+            java.time.ZoneId want = Json.dayZone(null, db.zoneAt(Json.noon(d, z)), z);
+            zonesOk &= dz.of(d).equals(want) && dz.of(d) == dz.of(d);
+            if (want.getId().equals("America/New_York")) ny++;
+        }
+        check("review #389: each day's zone is its dial's (the zone noted at its noon), a trip included", zonesOk && ny >= 6, ny);
+        clean254();
+    }
+
+    static String leftKeys379(List<app.openring.core.DeviceScores.Left> l) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.DeviceScores.Left x : l) b.append(b.length() == 0 ? "" : ",").append(x.key);
+        return b.toString();
     }
 }

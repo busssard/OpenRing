@@ -41,12 +41,15 @@ public final class Records {
     /**
      * The newest record time in the messages of one data answer (one request in one session, its own type), or -1 when
      * the answer did not reach its end part: only a whole answer may move where the next request of that kind starts.
-     * 0 for a whole answer without records. Messages the watch sent on its own are not part of an answer.
+     * 0 for a whole answer without records. Messages the watch sent on its own are not part of an answer. Bytes that are no
+     * {@link Frame#whole whole} message (a Bluetooth piece lost on the way, stored with the answer they came in) make the
+     * answer count as cut off even when its end part came: records in them were never decoded (review of dadbb71).
      */
     public static long newestComplete(List<byte[]> answer) {
         boolean end = false;
         long newest = 0;
         for (byte[] m : answer) {
+            if (!Frame.whole(m)) return -1;
             if (Frame.fromWatch(m)) continue;
             for (Frame.Part p : Frame.parts(m)) {
                 if (p.type == Proto.END) end = true;
@@ -143,8 +146,13 @@ public final class Records {
         public int unknown;
     }
 
-    /** Decodes one message the watch sent at {@code captured} (unix seconds) into {@code out}. */
+    /**
+     * Decodes one message the watch sent at {@code captured} (unix seconds) into {@code out}. Bytes that are no
+     * {@link Frame#whole whole} message (a piece lost on the way, kept as it came) give nothing: where their records start
+     * and end is not known. Every message stored before they were kept is whole, so the rows of older data stay the same.
+     */
     public static void decode(byte[] msg, long captured, Decoded out) {
+        if (!Frame.whole(msg)) return;
         int type = Frame.type(msg);
         if (type == Proto.HELLO) {
             Proto.Hello h = Proto.hello(msg);

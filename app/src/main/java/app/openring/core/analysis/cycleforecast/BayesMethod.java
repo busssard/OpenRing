@@ -14,9 +14,12 @@ package app.openring.core.analysis.cycleforecast;
  * cycle" with "two cycles in one" (a period not logged), each with its chance and a Student t spread (heavier
  * tails than the normal, so an irregular person's long cycle stays one cycle). The chance of a missed log starts at
  * {@link #SKIP_A} in {@link #SKIP_A} + {@link #SKIP_B} (their starting values) and is learnt from the cycles seen.
- * When two cycles explain it better, it counts as two cycles of half its length.</li>
+ * When two cycles explain it better, it counts as two cycles of half its length. Only once it has seen {@link #SKIP_FROM} of
+ * her cycles, and only when each half fits her own mean within {@link #CLIP} spreads: before that the mean is still mostly
+ * the study's 29.3 days, and a person with steady 50 day cycles would have each split into two of 25 (code review of
+ * dev dadbb71).</li>
  * <li><b>Any other far cycle</b> (more than {@link #CLIP} spreads from what the model expected) is pulled to that edge, so
- * one odd cycle cannot drag the mean.</li>
+ * one odd cycle cannot drag the mean. Also only from {@link #SKIP_FROM} cycles on; her first cycles count as they are.</li>
  * <li><b>The range</b> holds about 4 in 5: the Student t quantile for the cycles seen times the spread of the next cycle
  * (her own spread plus the uncertainty of her mean), so it is wider while it knows little.</li>
  * </ul>
@@ -26,6 +29,8 @@ final class BayesMethod implements Method {
     static final double KAPPA0 = (SIGMA0 / TAU0) * (SIGMA0 / TAU0);
     static final double SKIP_A = 2, SKIP_B = 20;
     static final double CLIP = 3;
+    /** A cycle may count as two (a missed log) only after this many of her own cycles. */
+    static final int SKIP_FROM = app.openring.core.analysis.Cycles.FEW;
 
     @Override
     public int id() {
@@ -69,13 +74,18 @@ final class BayesMethod implements Method {
             double v1 = s2 * (1 + 1 / s.kappa), v2 = s2 * (2 + 4 / s.kappa);
             // Student t, not normal: with few cycles or an irregular person a long cycle is still one cycle more often
             double one = (1 - p) * student(l, s.mu, v1, s.nu), two = p * student(l, 2 * s.mu, v2, s.nu);
-            if (two > one) {
+            // her own mean, not the study's start: enough cycles, and the halves look like her cycles
+            boolean halvesFit = Math.abs(l / 2 - s.mu) <= CLIP * Math.sqrt(v1);
+            if (s.seen >= SKIP_FROM && halvesFit && two > one) {
                 s.add(l / 2, 2);
                 s.skipped++;
                 s.asTwo.add(i);
-            } else {
+            } else if (s.seen >= SKIP_FROM) {
                 double edge = CLIP * Math.sqrt(v1);
                 s.add(Math.max(s.mu - edge, Math.min(s.mu + edge, l)), 1);
+            } else {
+                s.add(l, 1); // her first cycles as they are: far from the study's start is not far from her
+
             }
             s.seen++;
         }

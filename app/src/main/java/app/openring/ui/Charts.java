@@ -258,6 +258,30 @@ public final class Charts {
             hrDot.setColor(Ui.HEART);
         }
 
+        private boolean lightRem;
+
+        /**
+         * A watch that does not tell REM from light sleep (owner's report of 13 November): three rows, Awake, "Light and REM" (one
+         * colour) and Deep, no empty REM row.
+         */
+        public Hypnogram lightRem(boolean on) {
+            lightRem = on;
+            return this;
+        }
+
+        private int lv(int s) {
+            if (!lightRem) return level(s);
+            return s == 4 ? 0 : s == 3 || s == 2 ? 1 : s == 1 ? 2 : -1;
+        }
+
+        private String nameOf(int s) {
+            return lightRem && (s == 2 || s == 3) ? "Light and REM" : name(s);
+        }
+
+        private int colorOf(int s) {
+            return lightRem && s == 3 ? Ui.STAGE_LIGHT : color(s);
+        }
+
         static int level(int s) {
             switch (s) {
                 case 4: return 0;
@@ -296,10 +320,17 @@ public final class Charts {
             float axisBottom = bottom;
             // with heart rate: the stages above, the heart rate band below, one time axis
             if (heart != null) bottom = axisBottom * 0.62f;
-            float rowH = bottom / 4f;
-            String[] names = {"Awake", "REM", "Light", "Deep"};
-            for (int i = 0; i < 4; i++) {
-                cv.drawText(names[i], 0, rowH * i + rowH * 0.62f, txt);
+            int rows = lightRem ? 3 : 4;
+            float rowH = bottom / rows;
+            String[] names = lightRem ? new String[] {"Awake", "Light", "Deep"} : new String[] {"Awake", "REM", "Light", "Deep"};
+            for (int i = 0; i < rows; i++) {
+                if (lightRem && i == 1) {
+                    // "Light and REM" in two lines, it does not fit the label column in one
+                    cv.drawText("Light and", 0, rowH * i + rowH * 0.45f, txt);
+                    cv.drawText("REM", 0, rowH * i + rowH * 0.45f + txt.getTextSize() * 1.1f, txt);
+                } else {
+                    cv.drawText(names[i], 0, rowH * i + rowH * 0.62f, txt);
+                }
                 cv.drawLine(labelW, rowH * (i + 1), w, rowH * (i + 1), grid);
             }
             int n = stages.length;
@@ -312,7 +343,7 @@ public final class Charts {
             link.setColor(Ui.alpha(Ui.TEXT_2, 0.45f));
             int prevLevel = -1;
             for (int k = 0; k < n; k++) {
-                int lv = level(stages[k]);
+                int lv = lv(stages[k]);
                 if (lv >= 0 && prevLevel >= 0 && lv != prevLevel) {
                     float x = labelW + k * cw;
                     cv.drawLine(x, rowH * prevLevel + rowH * 0.5f, x, rowH * lv + rowH * 0.5f, link);
@@ -324,9 +355,9 @@ public final class Charts {
                 int s = stages[i];
                 int j = i;
                 while (j < n && stages[j] == s) j++;
-                int lv = level(s);
+                int lv = lv(s);
                 if (lv >= 0) {
-                    p.setColor(color(s));
+                    p.setColor(colorOf(s));
                     r.set(labelW + i * cw, rowH * lv + rowH * 0.18f, labelW + j * cw, rowH * lv + rowH * 0.82f);
                     cv.drawRoundRect(r, rad, rad, p);
                 }
@@ -340,12 +371,12 @@ public final class Charts {
             if (!Float.isNaN(scrubX)) {
                 int k = (int) Math.max(0, Math.min(n - 1, Math.floor((scrubX - labelW) / cw)));
                 int a = k, b = k + 1;
-                while (a > 0 && stages[a - 1] == stages[k]) a--;
-                while (b < n && stages[b] == stages[k]) b++;
+                while (a > 0 && (stages[a - 1] == stages[k] || lightRem && lv(stages[a - 1]) == 1 && lv(stages[k]) == 1)) a--;
+                while (b < n && (stages[b] == stages[k] || lightRem && lv(stages[b]) == 1 && lv(stages[k]) == 1)) b++;
                 double ep = (end - start) / n;
                 double ta = start + a * ep, tb = start + b * ep;
                 // in the hour that happens twice when the clocks go back, "(first time)" or "(second time)" (issue #97)
-                String label = app.openring.core.analysis.ClockChange.roundedStageTip(zone, start + (k + 0.5) * ep, name(stages[k]), ta, tb);
+                String label = app.openring.core.analysis.ClockChange.roundedStageTip(zone, start + (k + 0.5) * ep, nameOf(stages[k]), ta, tb);
                 if (heart != null) {
                     long[] near = nearest(heart, start + (k + 0.5) * ep);
                     label += near == null ? "\nNo heart rate reading near this time" : "\nHeart rate " + near[1] + " bpm at " + clock(near[0]);
@@ -767,7 +798,7 @@ public final class Charts {
 
     // ----------------------------------------------------------------------- bar chart
 
-    public static final class BarChart extends View {
+    public static final class BarChart extends Scrub {
         private final double[] values;
         private final String[] labels;
         private final int color;
@@ -776,6 +807,20 @@ public final class Charts {
         private final Paint bar = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG), ref = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF r = new RectF();
         private String format = "%.0f";
+        /** The readout of each bar when touched; null: the chart does not answer touch (as before). */
+        private String[] tips;
+
+        /** Touch or slide along the bars to read each one (the watch's 7 and 30 day charts). */
+        public BarChart tips(String[] t) {
+            tips = t;
+            return this;
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent e) {
+            // without tips the chart ignores touch, so the page scrolls as it always did
+            return tips != null && super.onTouchEvent(e);
+        }
 
         public BarChart(Context c, double[] values, String[] labels, int color) {
             super(c);
@@ -836,6 +881,100 @@ public final class Charts {
                 float y = (float) (bottom - target / max * (bottom - top));
                 cv.drawLine(0, y, w, y, ref);
             }
+            if (tips != null && !Float.isNaN(scrubX) && n > 0) {
+                int i = (int) Math.max(0, Math.min(n - 1, Math.floor(scrubX / slot)));
+                if (i < tips.length && tips[i] != null) drawTip(cv, slot * i + slot / 2, Ui.dp(getContext(), 22), bottom, tips[i]);
+            }
+        }
+    }
+
+    // --------------------------------------------------------------- sleep times
+
+    /**
+     * One night per day as a bar from falling asleep (top) to waking up (bottom) on a clock axis, the newest at the right
+     * (the watch's sleep times, 30 days). Touch or slide to read a night; days without one stay empty.
+     */
+    public static final class SleepTimes extends Scrub {
+        private final double[] bed, wake;
+        private final String[] tips, dates;
+        private final ZoneId zone;
+        private final Paint bar = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+
+        /** {@code bed} and {@code wake}: unix seconds per day, NaN for none; {@code dates}: the axis label of each day. */
+        public SleepTimes(Context c, double[] bed, double[] wake, String[] tips, String[] dates, ZoneId zone) {
+            super(c);
+            this.bed = bed;
+            this.wake = wake;
+            this.tips = tips;
+            this.dates = dates;
+            this.zone = zone;
+            txt.setColor(Ui.TEXT_3);
+            txt.setTextSize(Ui.dp(c, 10));
+            grid.setColor(Ui.LINE);
+            grid.setStrokeWidth(1);
+            grid.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 3), Ui.dp(c, 4)}, 0));
+        }
+
+        /** Minutes after noon of the day before, so an evening lies above the morning after it. */
+        private double offset(double unix) {
+            ZonedDateTime z = Instant.ofEpochSecond((long) Math.floor(unix)).atZone(zone);
+            double m = z.getHour() * 60 + z.getMinute();
+            return (m - 720 + 1440) % 1440;
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth(), h = getHeight();
+            float left = Ui.dp(getContext(), 34), bottom = h - Ui.dp(getContext(), 18), top = Ui.dp(getContext(), 26);
+            int n = bed.length;
+            double lo = Double.NaN, hi = Double.NaN;
+            double[] a = new double[n], b = new double[n];
+            for (int i = 0; i < n; i++) {
+                a[i] = Double.NaN;
+                if (Double.isNaN(bed[i]) || Double.isNaN(wake[i]) || wake[i] <= bed[i]) continue;
+                a[i] = offset(bed[i]);
+                b[i] = a[i] + (wake[i] - bed[i]) / 60.0;
+                lo = Double.isNaN(lo) ? a[i] : Math.min(lo, a[i]);
+                hi = Double.isNaN(hi) ? b[i] : Math.max(hi, b[i]);
+            }
+            txt.setTextAlign(Paint.Align.CENTER);
+            if (Double.isNaN(lo)) {
+                cv.drawText("No nights from the watch yet", w / 2, h / 2, txt);
+                return;
+            }
+            lo = Math.floor(lo / 60) * 60;
+            hi = Math.ceil(hi / 60) * 60;
+            if (hi - lo < 360) hi = lo + 360;
+            // three clock labels on the left: the earliest hour, the middle, the latest
+            txt.setTextAlign(Paint.Align.LEFT);
+            for (int k = 0; k <= 2; k++) {
+                double m = lo + (hi - lo) * k / 2;
+                m = Math.round(m / 60) * 60;
+                float y = (float) (top + (m - lo) / (hi - lo) * (bottom - top));
+                cv.drawLine(left, y, w, y, grid);
+                int clock = (int) ((m + 720) % 1440);
+                cv.drawText(String.format(Locale.getDefault(), "%02d:00", clock / 60), 0, y + Ui.dp(getContext(), 3), txt);
+            }
+            float slot = (w - left) / Math.max(1, n);
+            float bw = Math.max(Ui.dp(getContext(), 2), Math.min(slot * 0.6f, Ui.dp(getContext(), 14)));
+            int touched = Float.isNaN(scrubX) ? -1 : (int) Math.max(0, Math.min(n - 1, Math.floor((scrubX - left) / slot)));
+            for (int i = 0; i < n; i++) {
+                if (Double.isNaN(a[i])) continue;
+                float cx = left + slot * i + slot / 2;
+                float y0 = (float) (top + (a[i] - lo) / (hi - lo) * (bottom - top)), y1 = (float) (top + (b[i] - lo) / (hi - lo) * (bottom - top));
+                bar.setColor(i == n - 1 || i == touched ? Ui.SLEEP : Ui.alpha(Ui.SLEEP, 0.5f));
+                r.set(cx - bw / 2, y0, cx + bw / 2, Math.max(y0 + 2, y1));
+                cv.drawRoundRect(r, bw / 3, bw / 3, bar);
+            }
+            float base = h - Ui.dp(getContext(), 3);
+            txt.setTextAlign(Paint.Align.LEFT);
+            if (n > 0) cv.drawText(dates[0], left, base, txt);
+            txt.setTextAlign(Paint.Align.CENTER);
+            if (n > 2) cv.drawText(dates[n / 2], left + slot * (n / 2) + slot / 2, base, txt);
+            txt.setTextAlign(Paint.Align.RIGHT);
+            if (n > 1) cv.drawText(dates[n - 1], w, base, txt);
+            if (touched >= 0 && touched < tips.length && tips[touched] != null) drawTip(cv, left + slot * touched + slot / 2, Ui.dp(getContext(), 22), bottom, tips[touched]);
         }
     }
 
@@ -936,6 +1075,21 @@ public final class Charts {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint();
         private final int a, b;
 
+        private boolean lightRem;
+
+        /** The watch's nights without REM: "Light and REM" as one stage in the bars, the legend and the readout. */
+        public Pattern lightRem(boolean on) {
+            lightRem = on;
+            return this;
+        }
+
+        /** The share of stage {@code k} of {@code order} at {@code bin}, light with REM and REM as none when they are one stage. */
+        private double share(int bin, int stage) {
+            if (!lightRem) return sp.share(bin, stage);
+            if (stage == 3) return 0;
+            return stage == 2 ? sp.share(bin, 2) + sp.share(bin, 3) : sp.share(bin, stage);
+        }
+
         public Pattern(Context c, app.openring.core.analysis.SleepPattern sp) {
             super(c);
             this.sp = sp;
@@ -973,7 +1127,7 @@ public final class Charts {
                 int bin = a + i;
                 float y = bottom;
                 for (int k = 0; k < 4; k++) {
-                    float hh = (float) (sp.share(bin, order[k]) * (bottom - top));
+                    float hh = (float) (share(bin, order[k]) * (bottom - top));
                     if (hh <= 0) continue;
                     p.setColor(k == 3 ? Ui.alpha(colors[k], 0.6f) : colors[k]);
                     cv.drawRect(left + i * bw, y - hh, left + (i + 1) * bw + 0.5f, y, p);
@@ -993,15 +1147,16 @@ public final class Charts {
             }
             // legend, or the readout at the touched time
             float ly = h - Ui.dp(getContext(), 4);
-            String[] names = {"Deep", "Light", "REM", "Awake"};
+            String[] names = {"Deep", lightRem ? "Light and REM" : "Light", "REM", "Awake"};
             if (!Float.isNaN(scrubX)) {
                 int i = (int) Math.max(0, Math.min(n - 1, Math.floor((scrubX - left) / bw)));
                 int bin = a + i;
                 int cm = app.openring.core.analysis.SleepPattern.clockMin(bin);
                 StringBuilder sb = new StringBuilder();
                 for (int k = 0; k < 4; k++) {
+                    if (lightRem && k == 2) continue;
                     if (k > 0) sb.append(", ");
-                    sb.append(names[k]).append(' ').append(Math.round(sp.share(bin, order[k]) * 100)).append('%');
+                    sb.append(names[k]).append(' ').append(Math.round(share(bin, order[k]) * 100)).append('%');
                 }
                 drawTip(cv, left + (i + 0.5f) * bw, top, bottom, String.format(Locale.getDefault(), "%02d:%02d  in bed %d%%",
                         cm / 60, cm % 60, Math.round(sp.inBed(bin) * 100)));
@@ -1014,6 +1169,7 @@ public final class Charts {
             float x = left;
             txt.setTextAlign(Paint.Align.LEFT);
             for (int k = 0; k < 4; k++) {
+                if (lightRem && k == 2) continue;
                 p.setColor(colors[k]);
                 cv.drawCircle(x + Ui.dp(getContext(), 4), ly - Ui.dp(getContext(), 3.5f), Ui.dp(getContext(), 4), p);
                 cv.drawText(names[k], x + Ui.dp(getContext(), 11), ly, txt);

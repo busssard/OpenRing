@@ -43,6 +43,13 @@ public final class Session {
     /** Stores one message at once; an IOException ends the session (nothing more is asked). */
     public interface Sink {
         void received(byte[] msg) throws IOException;
+
+        /**
+         * Stores bytes the link could not put together into a whole message (a Bluetooth piece lost on the way), as they
+         * came, under {@code type}: the request whose answer they came in, so that answer counts as cut off also when it is
+         * read again from the stored messages; -1 when no data answer was running.
+         */
+        void damaged(byte[] bytes, int type) throws IOException;
     }
 
     public interface Log {
@@ -183,6 +190,13 @@ public final class Session {
         public boolean activityDone, movementDone, heartDone, doneSent;
         /** The keys of the steps that got their answer (data steps: their end), in order. */
         public final Set<String> done = new LinkedHashSet<String>();
+        /**
+         * The keys of the data steps whose end came but which lost a piece on the way: not done, their start does not move
+         * (review of dadbb71).
+         */
+        public final Set<String> cut = new LinkedHashSet<String>();
+        /** Bytes handed on that were no whole message (each stored as it came). */
+        public int damaged;
         /** The key of the step the session ended in, null when none or all were done. */
         public String failedStep;
         /** How the sign in went ({@link #SIGN_IN_NONE}, {@link #SIGN_IN_SENT}, {@link #SIGN_IN_ACCEPTED}). */
@@ -239,7 +253,7 @@ public final class Session {
                     if (s == null) {
                         // keep reading: the watch's own messages are stored meanwhile
                         byte[] m = link.next(1);
-                        if (m != null) {
+                        if (m != null && !damaged(m, -1, null, r, sink, log)) {
                             take(m, r, sink, log);
                             own(link, m, r, log);
                         }
@@ -302,6 +316,7 @@ public final class Session {
                         log.log("watch: no answer to sync done");
                         break;
                     }
+                    if (damaged(m, -1, null, r, sink, log)) continue;
                     take(m, r, sink, log);
                     if (Frame.type(m) == Proto.SYNC_DONE) break;
                 }
@@ -364,6 +379,26 @@ public final class Session {
             log.log("watch: storing a message failed (" + e.getClass().getSimpleName() + ")");
             throw new Ended(NOT_STORED);
         }
+    }
+
+    /**
+     * True when {@code m} is no whole message but bytes the link had to drop (a piece lost on the way): they are stored as
+     * they came, under {@code type} (the running data request, -1 for none), and counted. The log names the step and the
+     * length, never a value.
+     */
+    private static boolean damaged(byte[] m, int type, String key, Result r, Sink sink, Log log) throws Ended {
+        if (Frame.whole(m)) return false;
+        r.received++;
+        r.bytes += m.length;
+        r.damaged++;
+        try {
+            sink.damaged(m, type);
+        } catch (IOException e) {
+            log.log("watch: storing a message failed (" + e.getClass().getSimpleName() + ")");
+            throw new Ended(NOT_STORED);
+        }
+        log.log("watch: " + m.length + " bytes lost on the way" + (key != null ? " during " + key + ", the answer counts as cut off" : "") + ", stored as they came");
+        return true;
     }
 
     /** The watch's own sync ask gets the empty answer once per session (as Gadgetbridge does); other own messages are only stored. */
@@ -473,6 +508,10 @@ public final class Session {
                 log.log("watch: no answer to " + s.key + " within " + Math.max(1, answerMs / 1000) + " s");
                 throw new Ended(NO_ANSWER);
             }
+            if (damaged(m, -1, null, r, sink, log)) {
+                check(gate, end);
+                continue;
+            }
             take(m, r, sink, log);
             int t = Frame.type(m);
             log.log("watch: got " + Frame.hexType(t) + (Frame.fromWatch(m) ? " (the watch's own)" : "") + ", " + m.length + " bytes, "
@@ -506,13 +545,18 @@ public final class Session {
                 log.log("watch: no answer to " + s.key + ", going on");
                 return;
             }
+            if (damaged(m, -1, null, r, sink, log)) continue;
             take(m, r, sink, log);
             own(link, m, r, log);
             if (Frame.type(m) == s.type && !Frame.fromWatch(m)) return;
         }
     }
 
-    /** Sends a data request and takes its answers until one holds the end part; true when the end came. */
+    /**
+     * Sends a data request and takes its answers until one holds the end part; true when the end came whole. When a piece
+     * of the answer was lost on the way, its end still ends the step, but the step is not done ({@link Result#cut}): the
+     * session goes on and the request starts from the same point next time.
+     */
     private static boolean data(Link link, Step s, Result r, Gate gate, Sink sink, Log log, long end, Plan plan)
             throws IOException, InterruptedException, Ended {
         long silenceMs = plan.silenceMs;
@@ -520,6 +564,7 @@ public final class Session {
         send(link, s, r, log);
         int n = 0;
         long bytes = 0;
+        boolean lost = false;
         // the part types of the answers and how often each came: names the kinds of records, never a value
         Map<Integer, Integer> parts = new TreeMap<Integer, Integer>();
         try {
@@ -534,6 +579,11 @@ public final class Session {
                     }
                     log.log("watch: " + s.key + ": nothing more within " + Math.max(1, silenceMs / 1000) + " s, no end part");
                     throw new Ended(NO_ANSWER);
+                }
+                if (damaged(m, s.type, s.key, r, sink, log)) {
+                    lost = true;
+                    check(gate, end);
+                    continue;
                 }
                 take(m, r, sink, log);
                 int t = Frame.type(m);
@@ -560,6 +610,12 @@ public final class Session {
                 if (Frame.has(m, Proto.END)) {
                     log.log("watch: " + s.key + ": " + n + " messages, " + bytes + " bytes, end reached");
                     log.log("watch: " + s.key + " part types: " + partList(parts));
+                    if (lost) {
+                        log.log("watch: " + s.key + ": a piece was lost on the way, the answer counts as cut off and is asked again from the same start");
+                        r.cut.add(s.key);
+                        progress(plan, s.key, FAILED);
+                        return false;
+                    }
                     return true;
                 }
                 check(gate, end);

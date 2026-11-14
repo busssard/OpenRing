@@ -64,13 +64,6 @@ public final class WatchSync {
     public static final String NOT_CONNECTED = "The watch did not connect. Keep it next to the phone, press its button and try again.";
     public static final String FAILED = "The watch sync failed. Settings, Help, Data check and log shows why.";
 
-    /** Set when Android stops the background job; the session ends between two messages. */
-    private static volatile boolean stopAsked;
-
-    public static void stop() {
-        stopAsked = true;
-    }
-
     /** True while a watch sync runs. */
     public static boolean running() {
         return RingGate.RING.watch.isLocked();
@@ -82,7 +75,16 @@ public final class WatchSync {
      * that did not start because the ring was busy is no attempt: the background job tries again at its next run.
      */
     public static String run(final Context ctx) {
-        return run(ctx, SYNC, null, null);
+        return run(ctx, SYNC, null, null, null);
+    }
+
+    /**
+     * {@link #run(Context)} for the background job: {@code stop} is the job's own ticket, so when Android stops the job
+     * ({@link RingManager#cancelSync}) this session ends between two messages, also when the stop came before it started,
+     * and a setup or alarm the person started meanwhile is never ended by it (review of dadbb71).
+     */
+    public static String run(final Context ctx, RingManager.SyncTicket stop) {
+        return run(ctx, SYNC, null, null, stop);
     }
 
     /** What a session does: a sync, the first setup (then the first sync), the alarm only, the hand calibration. */
@@ -93,12 +95,12 @@ public final class WatchSync {
      * and the first sync, in one connection. {@code progress} hears each step. Null when all was done, else the sentence.
      */
     public static String setup(Context ctx, Session.Progress progress) {
-        return run(ctx, SETUP, progress, null);
+        return run(ctx, SETUP, progress, null, null);
     }
 
     /** Sends the alarm as the app has it ({@link Prefs#watchAlarm}) in a short session of its own. */
     public static String alarm(Context ctx) {
-        return run(ctx, ALARM, null, null);
+        return run(ctx, ALARM, null, null, null);
     }
 
     /**
@@ -106,7 +108,7 @@ public final class WatchSync {
      * early one) calibration mode is switched off and the phone's time sent.
      */
     public static String hands(Context ctx, Session.More more, Session.Progress progress) {
-        return run(ctx, HANDS, progress, more);
+        return run(ctx, HANDS, progress, more, null);
     }
 
     /** What the watch is told about the person, from the app's profile and the phone's settings. */
@@ -125,7 +127,7 @@ public final class WatchSync {
         return w;
     }
 
-    static String run(final Context ctx, final int mode, final Session.Progress progress, final Session.More more) {
+    static String run(final Context ctx, final int mode, final Session.Progress progress, final Session.More more, final RingManager.SyncTicket stop) {
         final Prefs p = Prefs.of(ctx);
         final RingManager ring = RingManager.get(ctx);
         if (p.demo()) return DEMO;
@@ -133,16 +135,20 @@ public final class WatchSync {
         if (address == null) return NO_WATCH;
         final BluetoothAdapter a = RingScanner.adapter(ctx);
         if (a == null || !a.isEnabled()) return BLUETOOTH_OFF;
+        // stopped before it began: no attempt, the job tries again at its next run
+        if (stop != null && stop.stopped()) return Session.STOPPED;
         if (!RingGate.RING.watch.tryLock()) return ALREADY;
         try {
-            stopAsked = false;
+            // before the ring lock: a full re decode after a new decoder can take long, and a ring sync waits at most 15 s
+            String early = decodeStored(ctx, ring, mode);
+            if (early != null) return early;
             final String[] out = {null};
             final long attempt = System.currentTimeMillis() / 1000;
             boolean ran = ring.whileRingFree(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        out[0] = locked(ctx, a, address, ring, mode, progress, more);
+                        out[0] = locked(ctx, a, address, ring, mode, progress, more, stop);
                     } catch (RuntimeException e) {
                         // Bluetooth switched off meanwhile, a permission taken back, a full disk
                         ring.log("watch: failed (" + e.getClass().getSimpleName() + ")");
@@ -166,16 +172,38 @@ public final class WatchSync {
         }
     }
 
+    /**
+     * Decodes what is stored and not decoded yet, with the watch lock held but not the ring lock (review of dadbb71): every
+     * message again after a new decoder ({@link WatchStore#ensureDecoded}), and the sessions whose decoding failed before
+     * ({@link WatchStore#decodePending}). Null to go on, else the sentence to return. A failure here is logged and the sync
+     * goes on: storing what the watch sends comes first, the decoding is tried again next time.
+     */
+    private static String decodeStored(Context ctx, RingManager ring, int mode) {
+        Db db = Db.get(ctx);
+        // demo mode was turned on meanwhile: never into the demo file (the ring's rule, issue #185)
+        if (Db.DEMO.equals(db.fileName) || Prefs.of(ctx).demo()) return DEMO;
+        if (!db.holdForRing()) return mode == HANDS ? LONG_RUN_HANDS : mode == ALARM ? LONG_RUN_ALARM : LONG_RUN;
+        try {
+            if (WatchStore.ensureDecoded(db)) ring.log("watch: every stored message decoded again (a new decoder or an older version)");
+            Records.Decoded d = WatchStore.decodePending(db, -1);
+            if (!d.steps.isEmpty() || !d.heart.isEmpty() || !d.battery.isEmpty() || d.name != null) ring.log("watch: decoded the messages of an earlier sync that were not decoded yet");
+        } catch (RuntimeException e) {
+            ring.log("watch: decoding the stored messages failed (" + e.getClass().getSimpleName() + "), tried again with the next sync");
+        } finally {
+            db.releaseForRing();
+        }
+        return null;
+    }
+
     /** The sync itself, with the ring lock and the watch lock held. */
     private static String locked(Context ctx, BluetoothAdapter a, final String address, final RingManager ring, int mode, Session.Progress progress,
-            Session.More more) throws InterruptedException {
+            Session.More more, final RingManager.SyncTicket stop) throws InterruptedException {
         final Db db = Db.get(ctx);
         // demo mode was turned on meanwhile: never into the demo file (the ring's rule, issue #185)
         if (Db.DEMO.equals(db.fileName) || Prefs.of(ctx).demo()) return DEMO;
         if (!db.holdForRing()) return mode == HANDS ? LONG_RUN_HANDS : mode == ALARM ? LONG_RUN_ALARM : LONG_RUN;
         Link link = new Link(ring);
         try {
-            if (WatchStore.ensureDecoded(db)) ring.log("watch: a new decoder, every stored message decoded again");
             BluetoothDevice device = a.getRemoteDevice(address);
             ring.log("watch: paired with this phone: " + (device.getBondState() == BluetoothDevice.BOND_BONDED ? "yes" : "no"));
             String problem = link.open(ctx, device);
@@ -232,13 +260,22 @@ public final class WatchSync {
 
                 @Override
                 public boolean stopped() {
-                    return stopAsked || Thread.currentThread().isInterrupted();
+                    return stop != null && stop.stopped() || Thread.currentThread().isInterrupted();
                 }
             }, new Session.Sink() {
                 @Override
                 public void received(byte[] msg) throws IOException {
                     try {
                         WatchStore.addRaw(db, session, seq[0]++, address, msg, captured);
+                    } catch (RuntimeException e) {
+                        throw new IOException(e);
+                    }
+                }
+
+                @Override
+                public void damaged(byte[] bytes, int type) throws IOException {
+                    try {
+                        WatchStore.addDamaged(db, session, seq[0]++, address, bytes, type, captured);
                     } catch (RuntimeException e) {
                         throw new IOException(e);
                     }
@@ -254,12 +291,15 @@ public final class WatchSync {
             if (r.done.contains(WatchSetup.FINISHED)) prefs.setWatchSetupAt(now);
             if (r.done.contains(WatchSetup.HANDS_STOP)) prefs.setWatchCalibrating(false);
             if (seq[0] > 0) {
-                Records.Decoded d = WatchStore.decodeSession(db, session);
+                // this session, and any earlier one whose decoding failed and is still behind (oldest first)
+                Records.Decoded d = WatchStore.decodePending(db, session);
                 WatchStore.noteDevice(db, address, d.name, d.firmware >= 0 ? String.valueOf(d.firmware) : null, captured);
                 // counts only, never a value
                 ring.log("watch: stored " + seq[0] + " messages, decoded " + d.steps.size() + " step records, " + d.heart.size() + " heart rates, "
                         + d.sleep.size() + " sleep pieces, " + d.workouts.size() + " workouts, " + d.battery.size() + " charge readings, " + d.moves.size() + " intensity and climb records"
-                        + (d.unknown > 0 ? ", " + d.unknown + " records not known yet" : ""));
+                        + (d.unknown > 0 ? ", " + d.unknown + " records not known yet" : "")
+                        + (r.damaged > 0 ? ", " + r.damaged + " pieces lost on the way kept as they came" : "")
+                        + (r.cut.isEmpty() ? "" : ", asked again from the same start: " + String.join(", ", r.cut)));
             }
             if (mode == HANDS) return WatchSetup.handsResult(r.ended, handsStarted[0], r.done.contains(WatchSetup.HANDS_STOP));
             return r.ended;
@@ -346,11 +386,12 @@ public final class WatchSync {
 
         private void piece(BluetoothGattCharacteristic c, byte[] v) {
             if (!CHANNEL.equals(c.getUuid()) || v == null) return;
-            byte[] m;
+            List<byte[]> out;
             synchronized (assembler) {
-                m = assembler.feed(v.clone());
+                out = assembler.take(v.clone());
             }
-            if (m != null) messages.offer(m);
+            // bytes it had to drop too, in order: the session stores them and counts their answer as cut off (review of dadbb71)
+            for (byte[] m : out) messages.offer(m);
         }
 
         /** Connects, finds the channel, asks for the MTU and switches its notifications on; null when ready, else the sentence. */
