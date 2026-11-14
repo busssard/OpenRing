@@ -473,6 +473,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 target.setText(String.valueOf(p.targetKcal()));
                 // the tracker follows the saved profile until its switch is touched (issue #252)
                 periodSwitch(p);
+                fillPeriodCard();
                 reanalyse(true);
             }
         });
@@ -793,6 +794,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (card == null) return;
         final Prefs p = Prefs.of(this);
         card.removeAllViews();
+        // only shown when the tracker is (owner's report, 13 November: a man saw all its settings); the switch "Show the
+        // period tracker" in the profile card brings it back, and nothing logged is deleted while it is hidden
+        boolean shown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
+        card.setVisibility(shown ? View.VISIBLE : View.GONE);
+        if (!shown) return;
         card.addView(Ui.caption(this, "Period tracker"));
         card.addView(Ui.gap(this, 4));
         prediction(card, p);
@@ -1537,6 +1543,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             @Override
             public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
                 p.setPeriodChoice(on ? 1 : 0);
+                fillPeriodCard();
             }
         });
     }
