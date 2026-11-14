@@ -530,6 +530,10 @@ else echo "::warning::watch statistics step: Steps, last 7 days was not on scree
 launch --ei tab 3 --ei devices 1 --es card "WORKOUTS,_LAST_30";    shot activity-watch-only-workouts
 launch --ei tab 4 --ei devices 1 --es card "RESTING_HEART_RATE,_30"; shot body-watch-only-stats
 launch --ei tab 3 --ei devices 2 --es card "STEPS,_LAST_7";        shot activity-phone-only-stats
+# The Screen tab with only the watch (owner's report of 14 November, extra devices 1, demo mode only): the 14 days with the
+# watch's nights in purple and the green first look, and the day's numbers (first look, before bed, in the night) from them
+launch --ei tab 5 --ei devices 1 --es card LAST_14_DAYS;            shot screen-watch-only-days
+launch --ei tab 5 --ei devices 1 --es card THIS_DAY;                shot screen-watch-only-numbers
 # A time left out because someone else wore the ring (issue #254), last: the example changes the demo's results for
 # every shot after it. left_out leaves out the day before yesterday 13:00 to 17:00, only in demo mode (the demo file),
 # then the analysis runs again: the Body tab shows the grey band on Heart rate today, Today the Left out card, and

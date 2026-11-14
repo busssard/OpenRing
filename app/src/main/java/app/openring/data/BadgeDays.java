@@ -43,13 +43,22 @@ public final class BadgeDays {
      */
     public static List<Badges.Badge> badges(final Db db, LocalDate from, final LocalDate to, final int ownTarget, final Set<String> excluded,
             final LocalDate today, final double now) {
+        return badges(db, from, to, ownTarget, excluded, today, now, ShownNights.Devices.RING);
+    }
+
+    /**
+     * As above with the nights of {@code dev}'s main device, filled by the other, and without a ring the watch's or the phone's
+     * days for the scores and steps ({@link #read}, owner's report of 14 November).
+     */
+    public static List<Badges.Badge> badges(final Db db, LocalDate from, final LocalDate to, final int ownTarget, final Set<String> excluded,
+            final LocalDate today, final double now, final ShownNights.Devices dev) {
         final ZoneId phone = ZoneId.systemDefault();
         return Badges.recent(new Badges.Reader() {
             @Override
             public List<Badges.Day> from(LocalDate start) {
-                return read(db, start, to, ownTarget, excluded, today, now, phone);
+                return read(db, start, to, ownTarget, excluded, today, now, phone, dev);
             }
-        }, from, to, first(db, today), today);
+        }, from, to, first(db, today, dev), today);
     }
 
     /** The Badges page's history: every badge, and how many nights with a sleep score there are. */
@@ -65,15 +74,27 @@ public final class BadgeDays {
 
     /** Every badge of the whole history (the Badges page), from the first stored day or the first read of the usage log. */
     public static History all(Db db, int ownTarget, Set<String> excluded, LocalDate today, double now) {
-        List<Badges.Day> days = read(db, first(db, today), today, ownTarget, excluded, today, now, ZoneId.systemDefault());
+        return all(db, ownTarget, excluded, today, now, ShownNights.Devices.RING);
+    }
+
+    /** As above with the devices of {@link #badges(Db, LocalDate, LocalDate, int, Set, LocalDate, double, ShownNights.Devices)}. */
+    public static History all(Db db, int ownTarget, Set<String> excluded, LocalDate today, double now, ShownNights.Devices dev) {
+        List<Badges.Day> days = read(db, first(db, today, dev), today, ownTarget, excluded, today, now, ZoneId.systemDefault(), dev);
         return new History(Badges.of(days, today), nights(days));
     }
 
     /** The first date with a day summary or a read of the usage log (in the phone's zone); {@code today} without any. */
     static LocalDate first(Db db, LocalDate today) {
+        return first(db, today, ShownNights.Devices.RING);
+    }
+
+    /** As above; without a ring also the day of the device's first record (the watch's, or the phone's first interval). */
+    static LocalDate first(Db db, LocalDate today, ShownNights.Devices dev) {
         LocalDate f = today;
         String d = db.firstDay();
         if (d != null) f = min(f, parse(d));
+        LocalDate dd = ShownNights.firstDay(db, dev.history, ZoneId.systemDefault());
+        if (dd != null) f = min(f, dd);
         List<double[]> reads = ScreenDays.reads(db);
         if (!reads.isEmpty() && reads.get(0)[0] > 0) {
             LocalDate r = java.time.Instant.ofEpochSecond((long) Math.floor(reads.get(0)[0])).atZone(ZoneId.systemDefault()).toLocalDate();
@@ -96,20 +117,33 @@ public final class BadgeDays {
      */
     public static List<Badges.Day> read(Db db, LocalDate from, LocalDate to, int ownTarget, Set<String> excluded, LocalDate today,
             double now, ZoneId phone) {
+        return read(db, from, to, ownTarget, excluded, today, now, phone, ShownNights.Devices.RING);
+    }
+
+    /**
+     * As above with {@code dev} (owner's report of 14 November): each day's night is the one the Screen tab shows
+     * ({@link ShownNights}), so the phone free evening counts the watch's night too. Without a ring ({@code dev.history} not
+     * -1) a day without the ring's summary takes the device's day as its dial has it ({@link app.openring.core.DeviceHistory}):
+     * readiness, the sleep score of its night, steps and the minutes worn. Burn against the activity target stays the ring's
+     * (its movement analysis), so Goal reached needs a ring.
+     */
+    public static List<Badges.Day> read(Db db, LocalDate from, LocalDate to, int ownTarget, Set<String> excluded, LocalDate today,
+            double now, ZoneId phone, ShownNights.Devices dev) {
         List<Badges.Day> out = new ArrayList<Badges.Day>();
         if (to.isBefore(from)) return out;
         Map<String, JSONObject> days = new HashMap<String, JSONObject>();
-        for (String[] r : db.daysJson(from.toString(), to.toString())) {
-            JSONObject o = Json.parse(r[1]);
-            if (o != null) days.put(r[0], o);
+        if (dev.ring) {
+            for (String[] r : db.daysJson(from.toString(), to.toString())) {
+                JSONObject o = Json.parse(r[1]);
+                if (o != null) days.put(r[0], o);
+            }
         }
         // the main night of each day, the newest one when a day has two, as DayData and the Screen tab take it
-        Map<String, JSONObject> nights = new HashMap<String, JSONObject>();
-        for (String js : db.nightsJson(from.toString(), to.toString(), true)) {
-            JSONObject o = Json.parse(js);
-            if (o != null) nights.put(o.optString("day"), o);
-        }
         List<Object[]> zones = db.zones();
+        app.openring.core.DeviceHistory.DayZones dayZones = dayZones(zones, phone);
+        Map<String, JSONObject> nights = new HashMap<String, JSONObject>();
+        for (JSONObject o : ShownNights.main(db, from, to, dev, dayZones)) nights.put(o.optString("day"), o);
+        app.openring.core.DeviceHistory h = dev.history < 0 ? null : history(db, from, to, dev, dayZones);
         LeftOut left = db.leftOut();
         List<double[]> reads = ScreenDays.reads(db);
         double qFrom = from.minusDays(1).atStartOfDay(phone).toEpochSecond() - 2 * 86400, qTo = to.plusDays(1).atStartOfDay(phone).toEpochSecond() + 2 * 86400;
@@ -136,6 +170,15 @@ public final class BadgeDays {
                 b.activeKcal = Json.d(day, "active_kcal");
                 b.targetKcal = Json.d(day, "target_kcal");
                 b.goalLowered = Badges.goalLowered(ownTarget, b.targetKcal, b.readiness);
+            } else if (h != null) {
+                // without a ring the device's day, as its dials show it (a day the ring has a summary keeps the ring's)
+                int i = h.index(d);
+                b.readiness = h.readiness[i];
+                if (h.night(d) != null) b.sleepScore = h.sleep[i];
+                b.steps = h.steps[i];
+                b.coveredMin = h.wornMin[i];
+                b.restMin = 0;
+                b.with = h.device == app.openring.core.MainDevice.WATCH ? "your watch" : "this phone";
             }
             // a day analysed while it ran keeps its numbers "so far" (total_until) until it is analysed again
             b.running = !d.isBefore(today) || day != null && day.has("total_until");
@@ -151,6 +194,39 @@ public final class BadgeDays {
             out.add(b);
         }
         return out;
+    }
+
+    /** The zone of each day as the day load gives it (its noted zone at noon, else the phone's); a night's own zone wins in {@link #read}. */
+    static app.openring.core.DeviceHistory.DayZones dayZones(final List<Object[]> zones, final ZoneId phone) {
+        final HashMap<LocalDate, ZoneId> seen = new HashMap<LocalDate, ZoneId>();
+        return new app.openring.core.DeviceHistory.DayZones() {
+            @Override
+            public ZoneId of(LocalDate day) {
+                ZoneId z = seen.get(day);
+                if (z == null) seen.put(day, z = Json.dayZone(null, Db.zoneIn(zones, Json.noon(day, phone)), phone));
+                return z;
+            }
+        };
+    }
+
+    /**
+     * The device's days from {@code first} to {@code last} as the day load works them out for its dials and charts (rows from 35
+     * days before the first day), read once for the whole range.
+     */
+    static app.openring.core.DeviceHistory history(Db db, LocalDate first, LocalDate last, ShownNights.Devices dev,
+            app.openring.core.DeviceHistory.DayZones zones) {
+        double from = app.openring.core.DeviceHistory.rowsFrom(first, last, zones);
+        double to = last.plusDays(1).atStartOfDay(zones.of(last)).toEpochSecond();
+        app.openring.core.MainDevice.Watch w = null;
+        app.openring.core.MainDevice.Phone ph = null;
+        app.openring.core.withings.WatchDays.Rem rem = app.openring.core.withings.WatchDays.Rem.ALWAYS;
+        if (dev.history == app.openring.core.MainDevice.WATCH && WatchStore.any(db)) {
+            w = WatchStore.window(db, from, to);
+            rem = WatchStore.rem(db);
+        } else if (dev.history == app.openring.core.MainDevice.PHONE && PhoneStore.any(db)) {
+            ph = PhoneStore.window(db, from + 86400, to);
+        }
+        return app.openring.core.DeviceHistory.of(dev.history, first, last, zones, w, ph, dev.goal, dev.age, rem);
     }
 
     /**

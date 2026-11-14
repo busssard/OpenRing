@@ -146,6 +146,11 @@ public final class Badges {
         public boolean leftOut;
         /** The day had not ended when it was analysed (its summary has {@code total_until}): no day badge. */
         public boolean running;
+        /**
+         * What counted the day's steps and wear, for the texts: "the ring", or without a ring "your watch" or "this phone" (owner's
+         * report of 14 November).
+         */
+        public String with = "the ring";
 
         public Day(LocalDate date) {
             this.date = date;
@@ -484,7 +489,7 @@ public final class Badges {
         long more = Math.round((d.steps / mean - 1) * 100);
         // the usual is shown to the nearest 100, like the step counts themselves (estimates); the share uses the exact mean
         String text = Math.round(d.steps) + " steps, " + more + "% more than your usual " + Math.round(mean / 100) * 100 + " (your last " + days
-                + " days with the ring)";
+                + " days with " + d.with + ")";
         got[i][ABOVE_USUAL] = new Badge(d.date, ABOVE_USUAL, d.steps, mean, days, null, text);
     }
 

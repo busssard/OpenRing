@@ -295,6 +295,10 @@ public final class Pages {
         if (debt != null && debt.optBoolean("valid")) {
             double m = debt.optDouble("debt_min", 0);
             if (m >= 180) sb.append("You carry about ").append(Ui.hm(m)).append(" of sleep debt. ");
+        } else if (debt == null && HistoryViews.watch(d)) {
+            // only the watch: its sleep debt by the ring's rule, the number of the Sleep tab (owner's report of 14 November)
+            double[] w = d.deviceHistory.debt(d.date);
+            if (w[1] > 0 && w[0] >= 180) sb.append("You carry about ").append(Ui.hm(w[0])).append(" of sleep debt. ");
         }
         if (sb.length() == 0) sb.append("Synced and analysed on this phone. Nothing left the device.");
         return sb.toString().trim();
@@ -1484,6 +1488,8 @@ public final class Pages {
         card.addView(Ui.text(c, "One row per day, midnight to midnight, newest on top. Blue: phone in use. Purple: sleep. "
                 + "Green dot: first look after waking up. Right: the day's screen time, or -- when it is not known "
                 + "(the day itself says why). Tap a day to open it.", 12, Ui.TEXT_2, Ui.REGULAR));
+        // where the sleep came from when the watch gave a night (owner's report of 14 November); nothing new with only the ring
+        if (in.watchNights) card.addView(Ui.text(c, in.ringNights ? Explain.SCREEN_WATCH_SOME : Explain.SCREEN_WATCH_NIGHTS, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
     }
 

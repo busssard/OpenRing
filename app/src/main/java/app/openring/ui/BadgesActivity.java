@@ -98,7 +98,8 @@ public final class BadgesActivity extends Activity {
                 try {
                     Prefs p = Prefs.of(ctx);
                     Db db = Db.get(ctx);
-                    l.history = BadgeDays.all(db, p.targetKcal(), p.screenExcluded(), l.today, System.currentTimeMillis() / 1000.0);
+                    // the nights and, without a ring, the days of the watch or the phone, as Today's badges (owner's report of 14 November)
+                    l.history = BadgeDays.all(db, p.targetKcal(), p.screenExcluded(), l.today, System.currentTimeMillis() / 1000.0, DayData.shownNow(ctx));
                     l.seen = BadgeViews.seen(db);
                     // opening the page marks every badge as seen; written here, before Today can load again
                     BadgeViews.writeSeen(db, Badges.newest(l.history.badges));

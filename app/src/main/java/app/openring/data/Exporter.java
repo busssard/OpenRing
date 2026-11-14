@@ -36,9 +36,20 @@ public final class Exporter {
         app.openring.core.analysis.LeftOut left = db.leftOut();
         java.time.ZoneId z = java.time.ZoneId.systemDefault();
         List<String[]> days = db.daysJson("0000-00-00", "9999-99-99");
+        // without a ring the watch's or the phone's days go in too, on the dates the ring has no summary (owner's report of 14
+        // November: a watch only export held only its header); with a ring the file is exactly the ring's, as before
+        Prefs p = Prefs.of(c);
+        // demo mode has its made up ring, so its file stays the ring's
+        int device = app.openring.core.DeviceHistory.device(p.demo() || app.openring.core.KeyState.hasRing(p.ringState()), p.watchAddress() != null,
+                PhoneStore.any(db));
+        java.util.TreeMap<String, String> extra = device < 0 ? new java.util.TreeMap<String, String>()
+                : deviceRows(db, device, p.watchGoal(), p.age(), java.time.LocalDate.now(), left, z);
         for (String[] d : days) {
             JSONObject o = Json.parse(d[1]);
             if (o == null) continue;
+            // the device's rows of earlier dates first, so the file stays in date order
+            while (!extra.isEmpty() && extra.firstKey().compareTo(d[0]) < 0) w.write(extra.pollFirstEntry().getValue());
+            extra.remove(d[0]);
             StringBuilder row = new StringBuilder();
             for (String col : COLS) {
                 Object v = o.opt(col);
@@ -50,7 +61,41 @@ public final class Exporter {
             row.append(leftOutMin(left, d[0], left.isEmpty() ? z : dayZone(db, d[0], z))).append('\n');
             w.write(row.toString());
         }
+        for (String row : extra.values()) w.write(row);
         w.flush();
+    }
+
+    /**
+     * The CSV rows of the watch's or the phone's days ({@code device}) from its first record to {@code today}, by date: the numbers
+     * the screens show for them (sleep score, time asleep and the lowest heart rate of the night, steps, readiness, activity
+     * score, as each day's dial), the ring's other columns empty. Days without any value are left out.
+     */
+    public static java.util.TreeMap<String, String> deviceRows(Db db, int device, int goal, double age, java.time.LocalDate today,
+            app.openring.core.analysis.LeftOut left, java.time.ZoneId z) {
+        java.util.TreeMap<String, String> out = new java.util.TreeMap<String, String>();
+        java.time.LocalDate first = ShownNights.firstDay(db, device, z);
+        if (first == null || first.isAfter(today)) return out;
+        app.openring.core.DeviceHistory.DayZones zones = WatchHistory.dayZones(db, z);
+        ShownNights.Devices dev = new ShownNights.Devices(device, false, device == app.openring.core.MainDevice.WATCH, device, goal, age);
+        app.openring.core.DeviceHistory h = BadgeDays.history(db, first, today, dev, zones);
+        for (java.time.LocalDate d = first; !d.isAfter(today); d = d.plusDays(1)) {
+            int i = h.index(d);
+            double[] v = {h.sleep[i], h.asleepMin[i], h.rhr[i], h.steps[i], h.readiness[i], h.activity[i]};
+            boolean any = false;
+            for (double x : v) any |= !Double.isNaN(x);
+            if (!any) continue;
+            String[] cell = new String[v.length];
+            for (int k = 0; k < v.length; k++) cell[k] = Double.isNaN(v[k]) ? "" : String.valueOf(Math.round(v[k]));
+            StringBuilder row = new StringBuilder();
+            for (String col : COLS) {
+                String x = "date".equals(col) ? d.toString() : "sleep_score".equals(col) ? cell[0] : "asleep_min".equals(col) ? cell[1]
+                        : "rhr".equals(col) ? cell[2] : "steps".equals(col) ? cell[3] : "";
+                row.append(x).append(',');
+            }
+            row.append(cell[4]).append(',').append(cell[5]).append(',').append(leftOutMin(left, d.toString(), z)).append('\n');
+            out.put(d.toString(), row.toString());
+        }
+        return out;
     }
 
     /**

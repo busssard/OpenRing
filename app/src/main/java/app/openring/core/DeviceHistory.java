@@ -117,6 +117,11 @@ public final class DeviceHistory {
     public final double[] steps, kcal, workoutMin, activity, sleep, readiness, asleepMin, rhr, dayHr;
     /** Workouts started on each day. */
     public final int[] workouts;
+    /**
+     * Minutes of each day the device was worn (the phone: counting), its worn quarter hours times 15, 0 for none: the badges'
+     * worn day (owner's report of 14 November), as the ring's covered and rest minutes.
+     */
+    public final double[] wornMin;
     /** The scores of each day, as {@link DeviceScores#of} gives them. */
     private final DeviceScores.Result[] results;
     /** Every night from {@link #DEBT_BACK} days before {@link #first} to {@link #last}, null where none. */
@@ -142,6 +147,7 @@ public final class DeviceHistory {
         rhr = nan(n);
         dayHr = nan(n);
         workouts = new int[n];
+        wornMin = new double[n];
         results = new DeviceScores.Result[n];
         nightsFirst = first.minusDays(DEBT_BACK);
         nights = new NightRow[n + DEBT_BACK];
@@ -348,6 +354,7 @@ public final class DeviceHistory {
             h.activity[k] = r.value("activity_score");
             h.sleep[k] = r.value("sleep");
             h.readiness[k] = r.value("readiness");
+            h.wornMin[k] = window[off].wornQ * 15.0;
             if (h.nights[i] != null) {
                 h.nights[i].score = h.sleep[k];
                 h.asleepMin[k] = h.nights[i].night.asleepMin();

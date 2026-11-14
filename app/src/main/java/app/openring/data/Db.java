@@ -1152,7 +1152,11 @@ public final class Db extends SQLiteOpenHelper {
     public String latestDayWithPhone() {
         String ring = latestDay();
         double stop = PhoneStore.newestStop(getReadableDatabase());
-        if (Double.isNaN(stop)) return ring;
+        // the watch's newest step, sleep or heart rate record too (owner's report of 14 November), so a person with only the
+        // watch follows the day its sync brought; without any watch row nothing changes
+        stop = Math.max(Double.isNaN(stop) ? -1 : stop, count("SELECT COALESCE(MAX(m), -1) FROM (SELECT MAX(start + dur) AS m FROM watch_steps"
+                + " UNION ALL SELECT MAX(start + dur) FROM watch_sleep UNION ALL SELECT MAX(t) + 1 FROM watch_hr)"));
+        if (!(stop > 0)) return ring;
         // an interval ends at its reading; one that ends exactly at midnight belongs to the day before
         String phone = java.time.Instant.ofEpochSecond((long) Math.ceil(stop) - 1).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString();
         return ring == null || phone.compareTo(ring) > 0 ? phone : ring;

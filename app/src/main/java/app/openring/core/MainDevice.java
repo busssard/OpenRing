@@ -115,6 +115,17 @@ public final class MainDevice {
         return false;
     }
 
+    /**
+     * Which device's night a day shows: {@link #WATCH} when the watch has one and is the main device or the ring has none, else
+     * {@link #RING} when the ring has one, else -1. The phone has no night, so with the phone as main device the ring's night
+     * comes first. One rule for the Sleep tab ({@link #of}) and every other screen that shows a day's night: the Screen tab and
+     * the badges (owner's report of 14 November: with only the watch the Screen tab showed no sleep).
+     */
+    public static int nightFrom(int main, boolean ringNight, boolean watchNight) {
+        if (watchNight && (valid(main) == WATCH || !ringNight)) return WATCH;
+        return ringNight ? RING : -1;
+    }
+
     /** A device's name in a sentence ("your watch"). */
     public static String name(int device) {
         return device == WATCH ? "your watch" : device == PHONE ? "your phone" : "your ring";
@@ -489,7 +500,7 @@ public final class MainDevice {
             }
         });
         WatchDays.Night wn = watch.sleep.isEmpty() ? null : WatchDays.nightFor(watch.sleep, date, z);
-        if (d.main == WATCH || !ring.night) d.watchNight = wn;
+        if (nightFrom(d.main, ring.night, wn != null) == WATCH) d.watchNight = wn;
         if (d.watchNight != null) d.watchNightHeart = WatchDays.heartIn(watch.heart, d.watchNight.start, d.watchNight.end);
         List<Source> sources = new ArrayList<Source>();
         sources.add(ring(ring, from, to, zone));

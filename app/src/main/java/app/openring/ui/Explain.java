@@ -851,11 +851,18 @@ public final class Explain {
                 + "so its lowest is a little higher than the true one and the estimate a little lower. A rough guide, not a lab test.";
     }
 
+    // ---- every route that read only the ring's nights (owner's report of 14 November, data/ShownNights) ----
+
+    /** Under the Screen tab's 14 days when the sleep in them is the watch's. */
+    public static final String SCREEN_WATCH_NIGHTS = "Sleep: the nights your watch recorded, the same as on the Sleep tab.";
+    /** As above when some nights are the ring's and some the watch's. */
+    public static final String SCREEN_WATCH_SOME = "Some nights come from your watch, as on the Sleep tab: where it is the main device, or your ring has no night.";
+
     /** Every text of the statistics without a ring, for the tests. */
     public static String[] historyTexts() {
         return new String[] {NO_VALUE, NEEDS_RING_TITLE, WATCH_IN_BED, WATCH_LATENCY, WATCH_WAKE_UPS, WATCH_DEBT_BUILDING, WATCH_DEBT, WATCH_SLEEP_TIMES,
             WATCH_NO_NIGHTS, WATCH_NO_HEART, NO_STEPS_YET, WATCH_SCORE_MONTH, WATCH_READY_WEEK, ACTIVITY_WEEK_DEVICE, WATCH_KCAL, WATCH_WORKOUTS_MONTH,
             WATCH_RHR, WATCH_DAY_HR, LIGHT_REM, SLEEP_NEEDS_RING, ACTIVITY_NEEDS_RING, BODY_NEEDS_RING, WATCH_ANALYSIS, vo2maxWatch(Double.NaN, true),
-            vo2maxWatch(Double.NaN, false), vo2maxWatch(5, true), vo2maxWatch(45, true)};
+            vo2maxWatch(Double.NaN, false), vo2maxWatch(5, true), vo2maxWatch(45, true), SCREEN_WATCH_NIGHTS, SCREEN_WATCH_SOME};
     }
 }
