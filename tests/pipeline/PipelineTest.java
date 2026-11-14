@@ -905,6 +905,8 @@ public class PipelineTest {
         store251();
         fixes332();
         cursor251();
+        pendingDecode251();
+        lostPiece251();
         decoder3For251();
         restore251();
         large251();
@@ -12895,6 +12897,149 @@ public class PipelineTest {
         // Delete all: the starts go with the messages
         Analyzer.deleteAll(c);
         check("#251 cursor: after Delete all a request starts a month back again", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month, null);
+        clean254();
+    }
+
+    /** What the watch sync does with the stored messages before it connects (outside the ring lock). */
+    static void beforeSync251(Db db) {
+        app.openring.data.WatchStore.ensureDecoded(db);
+        app.openring.data.WatchStore.decodePending(db, -1);
+    }
+
+    /** What the watch sync does with the stored messages after a session. */
+    static void afterSession251(Db db, long session) {
+        app.openring.data.WatchStore.decodePending(db, session);
+    }
+
+    /**
+     * Review of dadbb71 (Could improve): a session whose decoding failed (a full disk) kept its raw messages undecoded until
+     * the next decoder, even though later syncs worked, so the Watch page missed them. Now the next sync decodes every
+     * session behind the newest one decoded first. Made up messages only.
+     */
+    static void pendingDecode251() throws Exception {
+        Context c = phone254("openring251-pending");
+        Db db = Db.get(c);
+        beforeSync251(db);
+        for (int i = 0; i < made251(T251, 90).size(); i++) app.openring.data.WatchStore.addRaw(db, 1000, i, DEV251, made251(T251, 90).get(i), T251 + 86400);
+        afterSession251(db, 1000);
+        // session 2000: stored, its decoding fails
+        List<byte[]> s2 = made251(T251 + 86400, 87);
+        beforeSync251(db);
+        for (int i = 0; i < s2.size(); i++) app.openring.data.WatchStore.addRaw(db, 2000, i, DEV251, s2.get(i), T251 + 2 * 86400);
+        String before = watchRows251(db);
+        db.getWritableDatabase().execSQL("CREATE TRIGGER full251 BEFORE INSERT ON watch_hr BEGIN SELECT RAISE(ABORT, 'disk full'); END");
+        Throwable got = null;
+        try {
+            afterSession251(db, 2000);
+        } catch (RuntimeException e) {
+            got = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER full251");
+        check("#251 pending: a failed decode keeps the session's raw messages, no row of it written", got != null && watchRows251(db).equals(before), got);
+        // the next sync: session 3000 stored and decoded
+        beforeSync251(db);
+        List<byte[]> s3 = made251(T251 + 2 * 86400, 84);
+        for (int i = 0; i < s3.size(); i++) app.openring.data.WatchStore.addRaw(db, 3000, i, DEV251, s3.get(i), T251 + 3 * 86400);
+        afterSession251(db, 3000);
+        String rows = watchRows251(db);
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#251 pending: the next sync decodes the session whose decoding failed, the same rows as decoding everything", rows.equals(watchRows251(db)), null);
+        check("#251 pending: the newest decoded session is noted", "3000".equals(db.kv("watch_decoded_session", null)), db.kv("watch_decoded_session", null));
+        // two sessions behind, a stop while the second is decoded: the first is kept and noted, the second waits, nothing skipped
+        for (long s : new long[] {4000, 5000}) {
+            List<byte[]> m = made251(T251 + (s / 1000) * 86400, 80);
+            for (int i = 0; i < m.size(); i++) app.openring.data.WatchStore.addRaw(db, s, i, DEV251, m.get(i), T251 + (s / 1000 + 1) * 86400);
+        }
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop251b BEFORE INSERT ON watch_hr WHEN NEW.t >= " + (T251 + 5 * 86400) + " BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        got = null;
+        try {
+            beforeSync251(db);
+        } catch (RuntimeException e) {
+            got = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER stop251b");
+        check("#251 pending: a stop half way keeps what was decoded, the note stays before the session that failed", got != null
+                && "4000".equals(db.kv("watch_decoded_session", null)) && db.count("SELECT COUNT(*) FROM watch_hr WHERE t >= " + (T251 + 5 * 86400)) == 0
+                && db.count("SELECT COUNT(*) FROM watch_hr WHERE t >= " + (T251 + 4 * 86400)) > 0, db.kv("watch_decoded_session", null));
+        beforeSync251(db);
+        String all = watchRows251(db);
+        beforeSync251(db);
+        afterSession251(db, 5000);
+        String twice = watchRows251(db);
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#251 pending: resumed, every session decoded, running it again changes nothing", all.equals(twice) && all.equals(watchRows251(db))
+                && "5000".equals(db.kv("watch_decoded_session", null)), null);
+        // an older version (no note): every message is decoded again once, with the same rows, then not again
+        String raw = rawRows251(db);
+        db.getWritableDatabase().execSQL("DELETE FROM kv WHERE k = 'watch_decoded_session'");
+        check("#251 pending: from an older version the history is decoded again once, the same rows and raw messages",
+                app.openring.data.WatchStore.ensureDecoded(db) && watchRows251(db).equals(all) && rawRows251(db).equals(raw) && "5000".equals(db.kv("watch_decoded_session", null)), null);
+        check("#251 pending: and not again", !app.openring.data.WatchStore.ensureDecoded(db), null);
+        // pairing another ring empties kv: decoded again once, every watch row the same
+        db.resetRingData();
+        check("#251 pending: after pairing another ring the watch is decoded again once, every row the same", app.openring.data.WatchStore.ensureDecoded(db)
+                && watchRows251(db).equals(all) && "5000".equals(db.kv("watch_decoded_session", null)), null);
+        // a restore of an older backup: the phone's newer session merged, all decoded and noted
+        byte[] full = backup252(c);
+        List<byte[]> s6 = made251(T251 + 6 * 86400, 70);
+        for (int i = 0; i < s6.size(); i++) app.openring.data.WatchStore.addRaw(db, 6000, i, DEV251, s6.get(i), T251 + 7 * 86400);
+        afterSession251(db, 6000);
+        String phone = watchRows251(db);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#251 pending: a restore keeps the phone's sessions, all decoded and noted", r.ok && watchRows251(db).equals(phone)
+                && "6000".equals(db.kv("watch_decoded_session", null)) && !app.openring.data.WatchStore.ensureDecoded(db), r.message);
+        clean254();
+    }
+
+    /**
+     * Review of dadbb71 (Should fix): bytes lost on the way during a data answer are stored as they came under the request's
+     * type, so the answer counts as cut off when the session is decoded, when every row is worked out again and after a
+     * restore: its start never moves past records that were not stored. They give no rows; the next whole answer moves the
+     * start as before. Made up messages only.
+     */
+    static void lostPiece251() throws Exception {
+        Context c = phone254("openring251-lost");
+        Db db = Db.get(c);
+        int ACT = app.openring.core.withings.Proto.ACTIVITY;
+        long now = T251 + 3 * 86400L, month = now - 30 * 86400L;
+        // the reviewer's example: records at T, T+1000, T+2000, one per message; the first two lost on the way, the third whole with the end
+        List<byte[][]> recs = new ArrayList<byte[][]>();
+        for (int i = 0; i < 3; i++) recs.add(new byte[][] {app.openring.core.withings.WatchDemo.time(T251 + i * 1000), app.openring.core.withings.WatchDemo.duration(900),
+            app.openring.core.withings.WatchDemo.steps(10 + i, 7)});
+        List<byte[]> answer = app.openring.core.withings.WatchDemo.answer(ACT, recs, 1);
+        byte[] lost1 = new byte[answer.get(0).length + 2];
+        System.arraycopy(answer.get(0), 0, lost1, 0, answer.get(0).length);
+        System.arraycopy(answer.get(1), 0, lost1, answer.get(0).length, 2);
+        byte[] lost2 = Arrays.copyOfRange(answer.get(1), 2, answer.get(1).length);
+        app.openring.data.WatchStore.addRaw(db, 1000, 0, DEV251, app.openring.core.withings.WatchDemo.batteryReply(80, 2, 3900), T251 + 86400);
+        app.openring.data.WatchStore.addDamaged(db, 1000, 1, DEV251, lost1, ACT, T251 + 86400);
+        app.openring.data.WatchStore.addDamaged(db, 1000, 2, DEV251, lost2, ACT, T251 + 86400);
+        app.openring.data.WatchStore.addRaw(db, 1000, 3, DEV251, answer.get(2), T251 + 86400);
+        app.openring.data.WatchStore.addDamaged(db, 1000, 4, DEV251, new byte[] {9, 9}, -1, T251 + 86400);
+        afterSession251(db, 1000);
+        check("#251 lost piece: the answer that lost a piece moves no start", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month,
+                app.openring.data.WatchStore.since(db, DEV251, ACT, now));
+        check("#251 lost piece: the whole message's record is stored, the damaged bytes give no row", db.count("SELECT COUNT(*) FROM watch_steps") == 1
+                && db.count("SELECT COUNT(*) FROM watch_steps WHERE start = " + (T251 + 2000)) == 1, db.count("SELECT COUNT(*) FROM watch_steps"));
+        check("#251 lost piece: every byte kept as it came, under the request's type", db.count("SELECT COUNT(*) FROM watch_raw WHERE type = " + ACT) == 3
+                && db.count("SELECT COUNT(*) FROM watch_raw WHERE type = -1") == 1 && db.count("SELECT COUNT(*) FROM watch_raw") == 5, null);
+        String rows = watchRows251(db);
+        db.getWritableDatabase().execSQL("DELETE FROM kv WHERE k LIKE 'watch_cursor_%'");
+        check("#251 lost piece: worked out again from the raw messages, still no start", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month, null);
+        app.openring.data.WatchStore.decodeAgain(db);
+        check("#251 lost piece: decoding everything again gives the same rows and no start", watchRows251(db).equals(rows)
+                && app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month, null);
+        byte[] full = backup252(c);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#251 lost piece: after a restore the same rows and still no start", r.ok && watchRows251(db).equals(rows)
+                && app.openring.data.WatchStore.since(db, DEV251, ACT, now) == month, r.message);
+        // the next sync asks again from the same start and gets the answer whole: the start moves as before
+        for (int i = 0; i < answer.size(); i++) app.openring.data.WatchStore.addRaw(db, 2000, i, DEV251, answer.get(i), T251 + 2 * 86400);
+        afterSession251(db, 2000);
+        check("#251 lost piece: the next whole answer stores every record and moves the start", app.openring.data.WatchStore.since(db, DEV251, ACT, now) == T251 + 2000 - 7200
+                && db.count("SELECT COUNT(*) FROM watch_steps") == 3, app.openring.data.WatchStore.since(db, DEV251, ACT, now));
         clean254();
     }
 

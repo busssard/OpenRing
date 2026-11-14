@@ -773,12 +773,18 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   otherwise "The ring is busy right now", and the job tries at its next run). It does not mark the ring busy, so a sync by
   hand, Live or a game is not refused but waits for the lock as usual. Between two messages, and every 250 ms while it
   waits for one, the session asks `RingGate.ringWanted()` (a ring task queued on `op`, or a ring sync counted): then it
-  sends "sync done", closes and gives the ring back within about 2 s, far inside the 15 s a ring sync waits. The download takes `Db.holdForRing` like a ring
+  sends "sync done", closes and gives the ring back within about 2 s, far inside the 15 s a ring sync waits. The
+  background job hands its own `SyncTicket` to the watch sync: Android stopping that job ends that session only (also a
+  stop that came before it started), never a setup, alarm or hand setting the person started. The download takes `Db.holdForRing` like a ring
   task, so a long analysis is waited for ("Re analysing your history, the watch syncs after it"). Never in demo mode.
 * **Link:** its own (`WatchSync.Link`, not `GattLink`): `TRANSPORT_LE` to the saved address (15 s), the phone's existing bond
   (the Withings app made it; no bond is asked for), `CONNECTION_PRIORITY_HIGH` only for this session, MTU 119 asked
   (pieces follow what the watch gives), notifications on `0x24`, every request written to `0x24` in pieces of MTU minus 3,
-  each piece waiting for its write confirmation; `Frame.Assembler` joins the answer's pieces.
+  each piece waiting for its write confirmation; `Frame.Assembler` joins the answer's pieces. Bytes it has to drop (a piece
+  that runs past a message's end, or one without the start byte while no message is open) are handed on too
+  (`Assembler.take`, never `Frame.whole`): the session stores them as they came (`WatchStore.addDamaged`, under the type of
+  the data request running, -1 outside one), they give no rows, and that answer counts as cut off even when its end part
+  came, so its start does not move past records that were never stored (review of dadbb71). The session goes on.
 * **Session** (`core/withings/Session`, JVM tested against a made up watch): the hello, then a list of steps
   (`core/withings/WatchSetup` builds them: the first setup, each sync, the alarm, the hand calibration; see the watch setup
   below), and always "sync done" last while the link is up. Each request waits for its
@@ -791,8 +797,12 @@ report has "Use this watch for syncing" when the device shows the Withings servi
   message, captured) keeps every message as it came, also two equal ones; `watch_devices`; and the rows worked out from
   the messages by `core/withings/Records` (`watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery`,
   keyed by device and time, UTC seconds), so the same message twice adds nothing. kv `watch_decoder` holds
-  `Records.VERSION`; a new decoder works every row out again in one transaction before the next sync, the old rows stay until
-  then. Each request (activity, movement, heart rate) starts at T, the newest record of its own last whole answers (one that
+  `Records.VERSION`; a new decoder works every row out again in one transaction before the next sync (with the watch lock,
+  before the ring lock is taken, so a ring sync never waits for it), the old rows stay until then. kv
+  `watch_decoded_session` notes the newest session decoded with all before it, in the transaction that stores its rows; a
+  session whose decoding failed (a full disk) stays behind it and the next sync decodes it first (`WatchStore.decodePending`,
+  oldest first, stopping at the first failure). Without the note (an older version, pairing another ring) every message is
+  decoded again once. Each request (activity, movement, heart rate) starts at T, the newest record of its own last whole answers (one that
   reached the end part `0x0100`) minus 2 hours, a month back when it never had one (owner's report of 11 November: before,
   T came from the stored rows of any answer, so heart rates inside an activity answer moved the heart rate request on, and
   an answer cut off after another one was never asked again). T is noted in kv `watch_cursor_<type>_<address>` in the

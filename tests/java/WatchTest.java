@@ -51,6 +51,8 @@ public class WatchTest {
         mainDeviceSources();
         mainDevicePhone329();
         deviceScores379();
+        lostPiece();
+        stopAndDecodeOutsideTheRingLock();
         deviceHistory();
         review389();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
@@ -136,6 +138,28 @@ public class WatchTest {
         byte[] over = Arrays.copyOf(rest, rest.length + 2);
         check("assembler: a message longer than its length is dropped, not shifted into the next", as.feed(over) == null && as.dropped == 2 && !as.pending());
         check("assembler: the next message comes out whole after that", Arrays.equals(as.feed(b), b));
+        // review of dadbb71: what is dropped is handed on, never whole, so the session knows a piece was lost
+        check("whole: a made message is whole, a cut or longer one and stray bytes are not", Frame.whole(a) && Frame.whole(Frame.message(0x0111))
+                && !Frame.whole(Arrays.copyOf(a, a.length - 1)) && !Frame.whole(Arrays.copyOf(a, a.length + 1)) && !Frame.whole(new byte[] {5, 6})
+                && !Frame.whole(null) && !Frame.whole(new byte[] {1, 1}));
+        Frame.Assembler tk = new Frame.Assembler();
+        byte[] stray = {5, 6};
+        List<byte[]> t1 = tk.take(stray);
+        check("take: a stray piece is handed on as it came, not whole", t1.size() == 1 && Arrays.equals(t1.get(0), stray) && !Frame.whole(t1.get(0)) && tk.dropped == 1);
+        check("take: half a message hands on nothing", tk.take(Arrays.copyOfRange(a, 0, 3)).isEmpty() && tk.pending());
+        List<byte[]> t2 = tk.take(over);
+        byte[] both = new byte[a.length + 2];
+        System.arraycopy(a, 0, both, 0, a.length);
+        check("take: a message that runs past its end is handed on with the extra bytes, not whole", t2.size() == 1 && Arrays.equals(t2.get(0), both)
+                && !Frame.whole(t2.get(0)) && tk.dropped == 2 && !tk.pending());
+        List<byte[]> t3 = tk.take(b);
+        check("take: a whole message comes out alone", t3.size() == 1 && Arrays.equals(t3.get(0), b) && tk.take(new byte[0]).isEmpty() && tk.take(null).isEmpty());
+        check("records: bytes that are no whole message give no rows and no start", Records.newestComplete(Arrays.asList(Arrays.copyOf(b, b.length + 2), b)) == -1
+                && Records.newestComplete(Collections.singletonList(b)) == 1000, Records.newestComplete(Collections.singletonList(b)));
+        Records.Decoded dd = new Records.Decoded();
+        Records.decode(Arrays.copyOf(b, b.length + 2), 1, dd);
+        Records.decode(Arrays.copyOfRange(b, 1, b.length), 1, dd);
+        check("records: damaged bytes decode to nothing", dd.steps.isEmpty() && dd.heart.isEmpty() && dd.unknown == 0);
     }
 
     // --------------------------------------------------------------------------------- requests
@@ -316,12 +340,29 @@ public class WatchTest {
 
     static final class Store implements Session.Sink {
         final List<byte[]> got = new ArrayList<byte[]>();
+        /** The type each stored row gets (the message's own, or for damaged bytes the request they came in). */
+        final List<Integer> types = new ArrayList<Integer>();
         int failAt = -1;
 
         @Override
         public void received(byte[] msg) throws IOException {
             if (failAt >= 0 && got.size() == failAt) throw new IOException("disk full");
             got.add(msg);
+            types.add(Frame.type(msg));
+        }
+
+        @Override
+        public void damaged(byte[] bytes, int type) throws IOException {
+            if (failAt >= 0 && got.size() == failAt) throw new IOException("disk full");
+            got.add(bytes);
+            types.add(type);
+        }
+
+        /** The stored rows of {@code type}, in order (what {@code WatchStore} reads as one answer). */
+        List<byte[]> of(int type) {
+            List<byte[]> out = new ArrayList<byte[]>();
+            for (int i = 0; i < got.size(); i++) if (types.get(i) == type) out.add(got.get(i));
+            return out;
         }
     }
 
@@ -1453,6 +1494,113 @@ public class WatchTest {
         boolean same = again.size() == msgs.size();
         for (int i = 0; same && i < msgs.size(); i++) same = Arrays.equals(again.get(i).body, msgs.get(i).body);
         check("demo: the same every time", same);
+    }
+
+    // ------------------------------------------------------------------------- lost piece (review of dadbb71)
+
+    /**
+     * A made up watch whose activity answer comes in Bluetooth pieces through the {@link Frame.Assembler}, as the phone's
+     * link puts them together: the last 3 bytes of the answer's first message and the first 2 of its second come in one
+     * piece. The Assembler cannot use that piece, so both messages are lost on the way.
+     */
+    static final class PieceWatch extends FakeWatch {
+        final Frame.Assembler as = new Frame.Assembler();
+        final Deque<byte[]> handed = new ArrayDeque<byte[]>();
+        boolean cut;
+
+        @Override
+        public byte[] next(long ms) throws IOException {
+            if (handed.isEmpty()) {
+                byte[] m = super.next(ms);
+                if (m == null) return null;
+                if (!cut && Frame.type(m) == Proto.ACTIVITY && inbox.peek() != null && Frame.type(inbox.peek()) == Proto.ACTIVITY) {
+                    cut = true;
+                    byte[] m2 = inbox.poll();
+                    byte[] joined = new byte[5];
+                    System.arraycopy(m, m.length - 3, joined, 0, 3);
+                    System.arraycopy(m2, 0, joined, 3, 2);
+                    hand(Arrays.copyOfRange(m, 0, m.length - 3));
+                    hand(joined);
+                    hand(Arrays.copyOfRange(m2, 2, m2.length));
+                } else {
+                    hand(m);
+                }
+            }
+            return handed.poll();
+        }
+
+        void hand(byte[] piece) {
+            handed.addAll(as.take(piece));
+        }
+    }
+
+    /**
+     * Review of dadbb71 (Should fix): an answer that lost a middle message on the way but still got its end part counted as
+     * whole, so its start moved past records that were never stored. Records at 1000, 2000 and 3000 in three messages; the
+     * first two are lost: the answer must count as cut off (its start stays), what came is stored, the session goes on.
+     */
+    static void lostPiece() throws Exception {
+        PieceWatch w = new PieceWatch();
+        List<byte[][]> recs = new ArrayList<byte[][]>();
+        for (int i = 1; i <= 3; i++) recs.add(new byte[][] {WatchDemo.time(i * 1000), WatchDemo.duration(900), WatchDemo.steps(10 * i, 7)});
+        List<byte[]> answer = WatchDemo.answer(Proto.ACTIVITY, recs, 1);
+        w.answers.put(Proto.ACTIVITY, answer);
+        check("lost piece: the made up answer is three messages, the second's rest starts without a start byte", answer.size() == 3 && (answer.get(1)[2] & 0xff) != Frame.START);
+        Store st = new Store();
+        Lines log = new Lines();
+        Session.Result r = Session.run(w, plan(), new Gate(), st, log);
+        check("lost piece: the activity answer counts as cut off", !r.done.contains(Session.ACTIVITY) && !r.activityDone, r.done);
+        check("lost piece: the stored activity answer moves no start", Records.newestComplete(st.of(Proto.ACTIVITY)) == -1, Records.newestComplete(st.of(Proto.ACTIVITY)));
+        java.io.ByteArrayOutputStream sent = new java.io.ByteArrayOutputStream(), kept = new java.io.ByteArrayOutputStream();
+        for (byte[] m : answer) sent.write(m, 0, m.length);
+        for (byte[] m : st.of(Proto.ACTIVITY)) kept.write(m, 0, m.length);
+        check("lost piece: every byte of the answer is stored as it came, the damaged bytes too", Arrays.equals(sent.toByteArray(), kept.toByteArray()), st.of(Proto.ACTIVITY).size());
+        check("lost piece: the session goes on, the movement and heart rate answers whole, sync done sent",
+                r.ended == null && r.done.contains(Session.MOVEMENT) && r.done.contains(Session.HEART) && r.doneSent, r.ended);
+        Records.Decoded d = new Records.Decoded();
+        for (byte[] m : st.of(Proto.ACTIVITY)) Records.decode(m, 1, d);
+        check("lost piece: the whole third message is decoded, the damaged bytes give no rows", d.steps.size() == 1 && d.steps.get(0).start == 3000, d.steps.size());
+        boolean named = false, value = false;
+        for (String l : log.lines) {
+            named |= l.contains("lost on the way") && l.contains(Session.ACTIVITY);
+            value |= l.contains("3000") || l.contains("2000");
+        }
+        check("lost piece: the log names it, never a value", named && !value, log.lines);
+        check("lost piece: counted as damaged", r.damaged == 2 && r.cut.contains(Session.ACTIVITY) && r.cut.size() == 1, r.damaged);
+        // stray bytes outside a data answer: stored without a request, every step done as before
+        FakeWatch w2 = new FakeWatch();
+        byte[] stray = {9, 9, 9};
+        w2.answer(Proto.BATTERY, stray, WatchDemo.batteryReply(80, 2, 3900));
+        Store st2 = new Store();
+        r = Session.run(w2, plan(), new Gate(), st2, new Lines());
+        check("lost piece: stray bytes during a simple step are stored under no request, the session is complete",
+                r.ended == null && r.activityDone && r.heartDone && r.cut.isEmpty() && st2.of(-1).size() == 1 && Arrays.equals(st2.of(-1).get(0), stray), r.ended);
+        // storing the damaged bytes fails: the session ends as with any message that could not be stored
+        PieceWatch w3 = new PieceWatch();
+        w3.answers.put(Proto.ACTIVITY, answer);
+        Store st3 = new Store();
+        st3.failAt = 5;
+        r = Session.run(w3, plan(), new Gate(), st3, new Lines());
+        check("lost piece: damaged bytes that cannot be stored end the session", Session.NOT_STORED.equals(r.ended) && !r.activityDone, r.ended);
+    }
+
+    /**
+     * Review of dadbb71 (Could improve, Android code, so read from the source): a job's stop belongs to that job's call
+     * (a static flag cleared at the start of each run lost a stop, and a job's stop ended a setup the person started), and
+     * the full re decode after a new decoder runs before the ring lock is taken (a ring sync waits at most 15 s for it).
+     */
+    static void stopAndDecodeOutsideTheRingLock() throws Exception {
+        String root = "app/src/main/java/app/openring/";
+        String ws = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ble/WatchSync.java").toPath()), "UTF-8");
+        String job = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "sync/SyncJob.java").toPath()), "UTF-8");
+        check("stop: no stop flag shared by every watch session", !ws.contains("static volatile boolean stopAsked") && !ws.contains("public static void stop()"));
+        check("stop: the job hands its own ticket to the watch sync, which reads it", job.contains("WatchSync.run(SyncJob.this, t)") && !job.contains("WatchSync.stop()")
+                && ws.contains("stop != null && stop.stopped()"));
+        int run = ws.indexOf("static String run(final Context ctx, final int mode"), lock = ws.indexOf("ring.whileRingFree(", run), locked = ws.indexOf("private static String locked(");
+        int decode = ws.indexOf("decodeStored(", run);
+        check("decode: the stored messages are decoded before the ring lock is taken", run > 0 && decode > run && decode < lock, decode + " " + lock);
+        int lockedEnd = ws.indexOf("static Session.Plan plan(", locked);
+        check("decode: no full re decode while the ring lock is held", locked > 0 && lockedEnd > locked && !ws.substring(locked, lockedEnd).contains("ensureDecoded"));
     }
 
     // ------------------------------------------------------------------------------------- gate
