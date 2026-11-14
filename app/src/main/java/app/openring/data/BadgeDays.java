@@ -83,13 +83,11 @@ public final class BadgeDays {
         return new History(Badges.of(days, today), nights(days));
     }
 
-    /** The first date with a day summary or a read of the usage log (in the phone's zone); {@code today} without any. */
-    static LocalDate first(Db db, LocalDate today) {
-        return first(db, today, ShownNights.Devices.RING);
-    }
-
-    /** As above; without a ring also the day of the device's first record (the watch's, or the phone's first interval). */
-    static LocalDate first(Db db, LocalDate today, ShownNights.Devices dev) {
+    /**
+     * The first date with a day summary or a read of the usage log (in the phone's zone), and without a ring the day of the
+     * device's first record (the watch's, or the phone's first interval); {@code today} without any.
+     */
+    public static LocalDate first(Db db, LocalDate today, ShownNights.Devices dev) {
         LocalDate f = today;
         String d = db.firstDay();
         if (d != null) f = min(f, parse(d));

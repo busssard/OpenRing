@@ -14444,6 +14444,33 @@ public class PipelineTest {
                 rows.size() >= 20 && cells.length == 22 && cells[0].equals(y.toString()) && cells[1].equals(String.valueOf(Math.round(h.sleep[h.index(y)])))
                 && cells[2].equals(String.valueOf(Math.round(h.asleepMin[h.index(y)]))) && cells[9].equals(String.valueOf(Math.round(h.steps[h.index(y)])))
                 && cells[19].equals(String.valueOf(Math.round(h.readiness[h.index(y)]))) && cells[4].isEmpty() && cells[10].isEmpty(), yRow);
+        // ---- only the phone: no night, its steps and minutes counting stand in for the badges and the export
+        app.openring.data.ShownNights.Devices phoneOnly = new app.openring.data.ShownNights.Devices(app.openring.core.MainDevice.PHONE, false, false,
+                app.openring.core.MainDevice.PHONE, 10000, 40);
+        app.openring.core.MainDevice.Phone pw = app.openring.data.PhoneStore.window(demo, app.openring.core.DeviceHistory.rowsFrom(first, y, dz) + 86400,
+                y.plusDays(1).atStartOfDay(z).toEpochSecond());
+        app.openring.core.DeviceHistory hp = app.openring.core.DeviceHistory.of(app.openring.core.MainDevice.PHONE, first, y, dz, null, pw, 10000, 40,
+                app.openring.core.withings.WatchDays.Rem.ALWAYS);
+        List<app.openring.core.analysis.Badges.Day> pd = app.openring.data.BadgeDays.read(demo, first, y, 0, ex, today, now, z, phoneOnly);
+        boolean phoneDays = true;
+        int phoneSteps = 0;
+        for (app.openring.core.analysis.Badges.Day d : pd) {
+            int i = hp.index(d.date);
+            phoneDays &= same265(d.steps, hp.steps[i]) && d.coveredMin == hp.wornMin[i] && Double.isNaN(d.sleepScore) && Double.isNaN(d.eveningMin)
+                    && "this phone".equals(d.with);
+            if (!Double.isNaN(d.steps)) phoneSteps++;
+        }
+        check("routes #251: badges with only the phone: its steps and minutes counting, no night", phoneDays && phoneSteps >= 15, phoneSteps);
+        check("routes #251: only the phone: the first badge date reaches its first interval", !app.openring.data.BadgeDays.first(demo, today, phoneOnly).isAfter(
+                app.openring.data.ShownNights.firstDay(demo, app.openring.core.MainDevice.PHONE, z)), null);
+        java.util.TreeMap<String, String> prow = app.openring.data.Exporter.deviceRows(demo, app.openring.core.MainDevice.PHONE, 10000, 40, y, demo.leftOut(), z);
+        String[] pc = prow.get(y.toString()) == null ? new String[0] : prow.get(y.toString()).trim().split(",", -1);
+        check("routes #251: the export with only the phone: steps and the activity score, no sleep", pc.length == 22 && pc[1].isEmpty()
+                && pc[9].equals(String.valueOf(Math.round(hp.steps[hp.index(y)]))), prow.get(y.toString()));
+        app.openring.data.ScreenDays.Info pin = app.openring.data.ScreenDays.info(demo, y, z, 180, ex, 0, phoneOnly);
+        check("routes #251: the Screen tab with only the phone has no night (the phone has none)", pin.rows.length == 14 && pin.nights.isEmpty()
+                && Double.isNaN(pin.sleepStart) && !pin.watchNights && !pin.ringNights, pin.nights.size());
+
         check("routes #251: reading changes nothing in the file", stored.equals(watchRows251(demo) + "|" + demo.count("SELECT COUNT(*) FROM kv") + "|"
                 + demo.count("SELECT COUNT(*) FROM nights") + "|" + demo.count("SELECT COUNT(*) FROM days")), null);
 
