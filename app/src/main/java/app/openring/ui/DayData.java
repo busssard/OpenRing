@@ -93,6 +93,11 @@ public final class DayData {
     /** The devices the tabs are built for (issue #373, {@code core/Start}); never null after {@link #load}. */
     public app.openring.core.Start.Has has = new app.openring.core.Start.Has(true, false, false);
     /**
+     * The battery of each added device, ring first (Today, right under the scores; owner's wish of 15 November). Empty with only
+     * the phone or when the readings cannot be read.
+     */
+    public final List<app.openring.core.DeviceBattery.Status> batteries = new ArrayList<app.openring.core.DeviceBattery.Status>();
+    /**
      * The main device and the devices whose results show (owner's report of 14 November): the one source of the nights of the
      * Screen tab and the badges ({@code data/ShownNights}), the main device of {@link #merged}. Never null after {@link #load}.
      */
@@ -268,7 +273,34 @@ public final class DayData {
             if (o != null && !hideRing) d.history.put(r[0], o);
         }
         d.merge(c, db);
+        try {
+            d.batteries(c, db, System.currentTimeMillis() / 1000);
+        } catch (RuntimeException e) {
+            // Today shows no battery rows; the readings stay where they are (Settings, the Watch page)
+            d.batteries.clear();
+            d.ok = failed(c, date, "battery", e);
+        }
         return d;
+    }
+
+    /**
+     * Works out {@link #batteries} from the stored readings (nothing is written): the ring's {@code battery} table with Settings'
+     * newer read of the ring when there is one (not in demo mode, whose ring is made up), and the watch's {@code watch_battery}.
+     * A ring only when one is paired (or the demo's), a watch only when one is added (or the demo's).
+     */
+    void batteries(Context c, Db db, long now) {
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        long span = app.openring.core.DeviceBattery.WINDOW_S + app.openring.core.DeviceBattery.OLD_S;
+        if (has.ring && !app.openring.core.KeyState.addRingInstead(p.demo(), p.ringState())) {
+            List<app.openring.core.DeviceBattery.Reading> rows = db.batteryRows(span);
+            long newest = rows.isEmpty() ? 0 : rows.get(rows.size() - 1).t;
+            // Settings reads the ring's battery without storing it: that read when it is newer
+            if (!p.demo() && p.battery() >= 0 && p.batteryAt() > newest) rows.add(new app.openring.core.DeviceBattery.Reading(p.batteryAt(), p.battery(), -1));
+            batteries.add(app.openring.core.DeviceBattery.of(app.openring.core.DeviceBattery.RING, rows, now));
+        }
+        if (has.watch) {
+            batteries.add(app.openring.core.DeviceBattery.of(app.openring.core.DeviceBattery.WATCH, app.openring.data.WatchStore.batteryRows(db, span), now));
+        }
     }
 
     /**

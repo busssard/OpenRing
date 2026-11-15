@@ -3922,6 +3922,8 @@ public class CoreTest {
     static void settingsBlocks() {
         eq("settings blocks: stages is in the Ring block", SettingsBlocks.of("stages"), SettingsBlocks.RING);
         eq("settings blocks: watch is in the Watch block", SettingsBlocks.of("watch"), SettingsBlocks.WATCH);
+        eq("settings blocks: ring (Today's battery row) is the Ring block", SettingsBlocks.of("ring"), SettingsBlocks.RING);
+        check("settings blocks: ring opens the Ring block only", SettingsBlocks.startsOpen(SettingsBlocks.RING, "ring") && !SettingsBlocks.startsOpen(SettingsBlocks.WATCH, "ring"));
         for (String s : new String[] {"top", "blocks", "period", "screen", "games", "backups", "advanced", "nonsense", ""})
             eq("settings blocks: " + s + " is outside the blocks", SettingsBlocks.of(s), SettingsBlocks.NONE);
         eq("settings blocks: no extra is outside the blocks", SettingsBlocks.of(null), SettingsBlocks.NONE);
