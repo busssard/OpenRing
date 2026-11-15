@@ -55,6 +55,7 @@ public class WatchTest {
         stopAndDecodeOutsideTheRingLock();
         deviceHistory();
         review389();
+        routes251();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -3289,5 +3290,95 @@ public class WatchTest {
         List<Long> out = new ArrayList<Long>();
         for (WatchDemo.Msg m : msgs) out.add(m.captured);
         return out;
+    }
+
+    // ------------------------------------------------------------- every route that read only the ring (14 November)
+
+    /**
+     * The owner's report of 14 November (the Screen tab showed no sleep with only the watch): one rule for which device's night a
+     * day shows, the one the Sleep tab uses, and the minutes worn of the device's days that the badges count.
+     */
+    static void routes251() {
+        int[] mains = {MainDevice.RING, MainDevice.WATCH, MainDevice.PHONE, 7};
+        boolean table = true;
+        StringBuilder bad = new StringBuilder();
+        for (int main : mains) {
+            for (int r = 0; r < 2; r++) {
+                for (int w = 0; w < 2; w++) {
+                    boolean ring = r == 1, watch = w == 1;
+                    // the rule as #319 wrote it in MainDevice.of: the watch's night when the watch is main or the ring has none
+                    int want = watch && (main == MainDevice.WATCH || !ring) ? MainDevice.WATCH : ring ? MainDevice.RING : -1;
+                    int got = MainDevice.nightFrom(main, ring, watch);
+                    if (got != want) {
+                        table = false;
+                        bad.append(main).append(ring).append(watch).append("->").append(got).append(' ');
+                    }
+                }
+            }
+        }
+        check("routes: the night shown is the main device's, else the other's (every main device, with and without each night)", table, bad);
+        check("routes: with only the ring its night, always", MainDevice.nightFrom(MainDevice.RING, true, false) == MainDevice.RING
+                && MainDevice.nightFrom(MainDevice.WATCH, true, false) == MainDevice.RING && MainDevice.nightFrom(MainDevice.PHONE, true, false) == MainDevice.RING);
+        check("routes: with only the watch its night, whatever the main device", MainDevice.nightFrom(MainDevice.RING, false, true) == MainDevice.WATCH
+                && MainDevice.nightFrom(MainDevice.PHONE, false, true) == MainDevice.WATCH && MainDevice.nightFrom(MainDevice.WATCH, false, true) == MainDevice.WATCH);
+        check("routes: no night from either, none", MainDevice.nightFrom(MainDevice.WATCH, false, false) == -1);
+
+        // the Sleep tab's day (MainDevice.of) shows the watch's night exactly when the rule says so
+        final ZoneId z = DS_ZONE;
+        Records.Decoded dec = dhDemo(10);
+        boolean same = true;
+        int watchShown = 0;
+        for (int main : mains) {
+            for (int r = 0; r < 2; r++) {
+                for (int k = 0; k < 5; k++) {
+                    LocalDate d = DS_DAY.minusDays(k);
+                    double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+                    MainDevice.Ring ring = new MainDevice.Ring();
+                    ring.night = r == 1;
+                    MainDevice.Watch w = dhWindow(dec, d);
+                    MainDevice.Day day = MainDevice.of(main, d, ds, de, z, ring, w, new MainDevice.Phone());
+                    WatchDays.Night wn = WatchDays.nightFor(w.sleep, d, DeviceScoresZones.of(z));
+                    int rule = MainDevice.nightFrom(day.main, ring.night, wn != null);
+                    same &= (day.watchNight != null) == (rule == MainDevice.WATCH);
+                    if (day.watchNight != null) watchShown++;
+                }
+            }
+        }
+        check("routes: the Sleep tab's night follows the same rule (each main device, ring night or not, 5 days)", same && watchShown > 0, watchShown);
+
+        // minutes worn per day: the worn quarter hours of the day the dial reads, times 15 (watch and phone)
+        LocalDate first = DS_DAY.minusDays(9);
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, z, dhAll(dec), null, 9000, 41);
+        boolean worn = true;
+        int wornDays = 0;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            double want = app.openring.core.DeviceScores.day(MainDevice.WATCH, ds, de, z, dhWindow(dec, d), null).wornQ * 15.0;
+            worn &= h.wornMin[h.index(d)] == want;
+            if (want >= 720) wornDays++;
+        }
+        check("routes: the watch's minutes worn are its worn quarter hours of each day, as the dial counts them", worn && wornDays >= 5, wornDays);
+        List<double[]> ph = dhPhone(20);
+        MainDevice.Phone all = new MainDevice.Phone();
+        all.intervals.addAll(ph);
+        app.openring.core.DeviceHistory hp = app.openring.core.DeviceHistory.of(MainDevice.PHONE, first, DS_DAY, z, null, all, 9000, 41);
+        boolean pw = true;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            pw &= hp.wornMin[hp.index(d)] == app.openring.core.DeviceScores.day(MainDevice.PHONE, ds, de, z, null, dhPhoneWindow(ph, d)).wornQ * 15.0;
+        }
+        check("routes: the phone's minutes counting likewise", pw && hp.wornMin[hp.index(DS_DAY)] > 0, hp.wornMin[hp.index(DS_DAY)]);
+    }
+
+    /** One zone for every moment, as the day load gives MainDevice.of. */
+    static final class DeviceScoresZones {
+        static WatchDays.Zones of(final ZoneId z) {
+            return new WatchDays.Zones() {
+                @Override
+                public ZoneId at(double unix) {
+                    return z;
+                }
+            };
+        }
     }
 }

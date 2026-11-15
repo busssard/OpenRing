@@ -165,6 +165,8 @@ public final class DataCheck {
         // the nights themselves, counts and dates only (issue #40): which day each sleep period was given
         // to is what the screens go by; times, minutes and scores are health values and stay out
         t.append(nightSummary(db.nightsJson(today.minusDays(NIGHT_DAYS - 1).toString(), "9999-12-31", false), today, NIGHT_DAYS));
+        // the watch's nights the screens show (owner's report of 14 November): which days have one, counts and dates only
+        t.append(ShownNights.checkLines(db, today, ZoneId.systemDefault()));
         r.text = t.toString();
         return r;
     }

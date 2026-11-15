@@ -115,6 +115,11 @@ public final class ScreenDays {
         public ZoneId zone = ZoneId.systemDefault();
     }
 
+    /** A night of the watch ({@link ShownNights}): Withings' own night in the ring's fields. */
+    static boolean fromWatch(JSONObject night) {
+        return night != null && "watch".equals(night.optString("source"));
+    }
+
     /** Everything the Screen tab and the Today ring show for one date. */
     public static final class Info {
         public LocalDate date;
@@ -147,6 +152,8 @@ public final class ScreenDays {
         /** The same sessions as the clock draws them, each at least as long as the chosen minimum (same order). */
         public List<double[]> shown = Collections.emptyList();
         public Map<String, List<double[]>> dayApps = Collections.emptyMap();
+        /** Some night in the rows comes from the watch, some from the ring (owner's report of 14 November): the line under the rows says so. */
+        public boolean watchNights, ringNights;
     }
 
     /** As below, with the clock and rows showing each session exactly as long as it was. */
@@ -163,8 +170,23 @@ public final class ScreenDays {
         return info(db, date, zone, goalMin, excluded, minShowS, nowS());
     }
 
-    /** As above at the moment {@code now} (unix seconds): a past day read only part way is not known. */
+    /** As above at the moment {@code now} (unix seconds): a past day read only part way is not known. Only the ring's nights. */
     public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded, double minShowS, double now) {
+        return info(db, date, zone, goalMin, excluded, minShowS, now, ShownNights.Devices.RING);
+    }
+
+    /**
+     * As above with the nights of {@code dev}'s main device, filled by the other ({@link ShownNights}, owner's report of 14
+     * November): with only the watch its nights give the sleep in the rows and on the clock, the first look, the hour before bed,
+     * the night and the score's night part. With only the ring exactly as above.
+     */
+    public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded, double minShowS, ShownNights.Devices dev) {
+        return info(db, date, zone, goalMin, excluded, minShowS, nowS(), dev);
+    }
+
+    /** As above at the moment {@code now} (unix seconds). */
+    public static Info info(Db db, LocalDate date, ZoneId zone, int goalMin, Set<String> excluded, double minShowS, double now,
+            ShownNights.Devices dev) {
         Info in = new Info();
         in.date = date;
         in.zone = zone;
@@ -178,12 +200,16 @@ public final class ScreenDays {
         // main nights touching the rows, by the day they belong to
         List<double[]> nights = new ArrayList<double[]>();
         java.util.Map<String, double[]> byDay = new java.util.HashMap<String, double[]>();
-        for (String js : db.nightsJson(firstRow.toString(), date.plusDays(1).toString(), true)) {
-            JSONObject o = Json.parse(js);
+        // the watch's nights each in their day's zone, the shown day in the zone the Screen tab draws it in (as the Sleep tab)
+        app.openring.core.DeviceHistory.DayZones zones = dev.watch
+                ? ShownNights.with(WatchHistory.dayZones(db, ZoneId.systemDefault()), date, zone) : app.openring.core.DeviceHistory.fixed(zone);
+        for (JSONObject o : ShownNights.main(db, firstRow, date.plusDays(1), dev, zones)) {
             double[] n = span(o);
             if (n == null) continue;
             nights.add(n);
             byDay.put(o.optString("day"), n);
+            if (fromWatch(o)) in.watchNights = true;
+            else in.ringNights = true;
             qFrom = Math.min(qFrom, n[0] - ScreenScore.BEDTIME_WINDOW_S);
         }
         List<double[]> raw = db.screen(qFrom, qTo);

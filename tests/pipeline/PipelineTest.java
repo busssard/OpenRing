@@ -923,6 +923,7 @@ public class PipelineTest {
         phoneNoRingBackup329();
         watchHistory();
         watchReview389();
+        routes251();
         startDevices373();
         phoneMovedReview();
         watchOnlyBackupReview();
@@ -14305,5 +14306,239 @@ public class PipelineTest {
         StringBuilder b = new StringBuilder();
         for (app.openring.core.DeviceScores.Left x : l) b.append(b.length() == 0 ? "" : ",").append(x.key);
         return b.toString();
+    }
+
+    /** The Screen tab of {@code date} as text: the day's night parts, the score, each row's nights, total and first look. */
+    static String screenText251(app.openring.data.ScreenDays.Info in) {
+        StringBuilder b = new StringBuilder();
+        b.append(in.date).append(' ').append(in.sleepStart).append(' ').append(in.sleepEnd).append(' ').append(in.bedMin).append(' ').append(in.nightMin)
+                .append(' ').append(in.firstLook).append(' ').append(in.score == null ? "-" : in.score.value + "/" + in.score.bedtime + "/" + in.score.night)
+                .append(' ').append(in.watchNights).append(in.ringNights);
+        for (double[] n : in.nights) b.append(" n").append(n[0]).append('-').append(n[1]);
+        for (app.openring.data.ScreenDays.Row r : in.rows) {
+            b.append("\n  ").append(r.date).append(' ').append(r.totalMin).append(' ').append(r.firstLook);
+            for (double[] n : r.nights) b.append(" n").append(n[0]).append('-').append(n[1]);
+            double f = 0;
+            for (double x : r.nightFill) f += x;
+            b.append(" fill ").append(f);
+        }
+        return b.toString();
+    }
+
+    static String badgeText251(List<app.openring.core.analysis.Badges.Day> days) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.analysis.Badges.Day d : days) {
+            b.append(d.date).append(' ').append(d.sleepScore).append(' ').append(d.readiness).append(' ').append(d.steps).append(' ').append(d.coveredMin)
+                    .append(' ').append(d.restMin).append(' ').append(d.activeKcal).append(' ').append(d.targetKcal).append(' ').append(d.screenMin).append(' ')
+                    .append(d.eveningMin).append(' ').append(d.running).append(d.leftOut).append(d.goalLowered).append(' ').append(d.with).append('\n');
+        }
+        return b.toString();
+    }
+
+    /**
+     * The owner's report of 14 November: with only the watch the Screen tab's 14 days showed no sleep and no first look, since
+     * every route but the Sleep tab read only the ring's nights. One source now ({@code data/ShownNights}): the main device's
+     * night, filled by the other, for the Screen tab, the badges, the Data check and the export. With only the ring, everything
+     * is exactly as before.
+     */
+    static void routes251() throws Exception {
+        Context c = phone254("openring-routes251");
+        LocalDate today = LocalDate.now();
+        double now = System.currentTimeMillis() / 1000.0;
+        app.openring.data.Demo.enter(c, null, today, (long) now);
+        Db demo = Db.get(c);
+        app.openring.data.Prefs prefs = app.openring.data.Prefs.of(c);
+        java.util.Set<String> ex = prefs.screenExcluded();
+        java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        String stored = watchRows251(demo) + "|" + demo.count("SELECT COUNT(*) FROM kv") + "|" + demo.count("SELECT COUNT(*) FROM nights") + "|"
+                + demo.count("SELECT COUNT(*) FROM days");
+        LocalDate y = today.minusDays(1);
+        app.openring.data.ShownNights.Devices watchOnly = new app.openring.data.ShownNights.Devices(app.openring.core.MainDevice.WATCH, false, true,
+                app.openring.core.MainDevice.WATCH, 10000, 40);
+        app.openring.data.ShownNights.Devices ringMain = new app.openring.data.ShownNights.Devices(app.openring.core.MainDevice.RING, true, true, -1, 10000, 40);
+        app.openring.data.ShownNights.Devices watchMain = new app.openring.data.ShownNights.Devices(app.openring.core.MainDevice.WATCH, true, true, -1, 10000, 40);
+        app.openring.core.DeviceHistory.DayZones dz = app.openring.data.ShownNights.with(app.openring.data.WatchHistory.dayZones(demo, z), y, z);
+
+        // the Sleep tab's watch nights (the day load's DeviceHistory), to hold the Screen tab against
+        LocalDate first = y.minusDays(20);
+        app.openring.core.MainDevice.Watch w = app.openring.data.WatchStore.window(demo, app.openring.core.DeviceHistory.rowsFrom(first, y, dz),
+                y.plusDays(1).atStartOfDay(z).toEpochSecond());
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(app.openring.core.MainDevice.WATCH, first, y, dz, w, null, 10000, 40,
+                app.openring.data.WatchStore.rem(demo));
+
+        // ---- with only the watch (the demo shown as without a ring): sleep, first look, before bed and the night from the watch
+        app.openring.data.ScreenDays.Info in = app.openring.data.ScreenDays.info(demo, y, z, 180, ex, 0, now, watchOnly);
+        int withNight = 0, looks = 0;
+        boolean sameAsSleep = true;
+        for (app.openring.data.ScreenDays.Row r : in.rows) {
+            app.openring.core.DeviceHistory.NightRow n = h.night(r.date);
+            if (n == null || r.date.isAfter(y)) continue;
+            boolean has = false;
+            for (double[] x : r.nights) has |= x[0] == n.fields.sleepStart && x[1] == n.fields.sleepEnd;
+            sameAsSleep &= has;
+            if (!r.nights.isEmpty()) withNight++;
+            if (!Double.isNaN(r.firstLook)) looks++;
+        }
+        app.openring.core.DeviceHistory.NightRow yn = h.night(y);
+        check("routes #251: with only the watch the Screen tab's 14 days show its nights, each the Sleep tab's night of that day (purple)",
+                sameAsSleep && withNight >= 12, withNight);
+        check("routes #251: ... and the first look after waking on those days (green dot)", looks >= 10, looks);
+        check("routes #251: the day itself: the watch's night, the hour before bed, the night and the score's night parts",
+                yn != null && in.sleepStart == yn.fields.sleepStart && in.sleepEnd == yn.fields.sleepEnd && !Double.isNaN(in.bedMin) && !Double.isNaN(in.nightMin)
+                && !Double.isNaN(in.firstLook) && in.score != null && !Double.isNaN(in.score.bedtime) && in.watchNights && !in.ringNights, screenText251(in));
+        boolean dial = false;
+        for (double[] n : in.nights) dial |= n[0] == yn.fields.sleepStart;
+        check("routes #251: the clock shows the watch's night too", dial, in.nights.size());
+
+        // ---- the ring as main device with the watch: the ring's nights as before; main watch: the watch's
+        app.openring.data.ScreenDays.Info ringOnly = app.openring.data.ScreenDays.info(demo, y, z, 180, ex, 0, now);
+        app.openring.data.ScreenDays.Info ringFirst = app.openring.data.ScreenDays.info(demo, y, z, 180, ex, 0, now, ringMain);
+        int ringDays = 0;
+        for (app.openring.data.ScreenDays.Row r : ringOnly.rows) if (!r.nights.isEmpty()) ringDays++;
+        check("routes #251: ring as main device: every day the ring has a night shows exactly the ring's nights (the demo's ring has one each day)",
+                screenText251(ringFirst).replace("truetrue", "falsetrue").equals(screenText251(ringOnly)) && ringDays >= 13, ringDays);
+        app.openring.data.ScreenDays.Info watchFirst = app.openring.data.ScreenDays.info(demo, y, z, 180, ex, 0, now, watchMain);
+        check("routes #251: watch as main device: its nights, as the Sleep tab shows them then", watchFirst.sleepStart == yn.fields.sleepStart
+                && watchFirst.watchNights, screenText251(watchFirst));
+
+        // ---- the badges count the same evenings as the Screen tab, and without a ring the watch's days as their dials
+        List<app.openring.core.analysis.Badges.Day> bd = app.openring.data.BadgeDays.read(demo, first, y, 0, ex, today, now, z, watchOnly);
+        boolean evenings = true, scores = true;
+        int evening = 0, ready = 0, sleepScores = 0;
+        for (app.openring.core.analysis.Badges.Day d : bd) {
+            if (d.date.isBefore(y.minusDays(9))) continue;
+            app.openring.data.ScreenDays.Info di = app.openring.data.ScreenDays.info(demo, d.date, z, 180, ex, 0, now, watchOnly);
+            evenings &= same265(d.eveningMin, di.bedMin);
+            if (!Double.isNaN(d.eveningMin)) evening++;
+            int i = h.index(d.date);
+            scores &= same265(d.readiness, h.readiness[i]) && same265(d.steps, h.steps[i]) && d.coveredMin == h.wornMin[i] && d.restMin == 0
+                    && same265(d.sleepScore, h.night(d.date) == null ? Double.NaN : h.sleep[i]) && Double.isNaN(d.activeKcal) && "your watch".equals(d.with);
+            if (!Double.isNaN(d.readiness)) ready++;
+            if (!Double.isNaN(d.sleepScore)) sleepScores++;
+        }
+        check("routes #251: badges with only the watch: each evening is the Screen tab's hour before bed of the watch's night", evenings && evening >= 8, evening);
+        check("routes #251: badges with only the watch: readiness, sleep score, steps and the minutes worn are each day's dial", scores && ready >= 8
+                && sleepScores >= 8, ready + " " + sleepScores);
+        app.openring.core.DeviceScores.Result dialY = app.openring.core.DeviceScores.of(app.openring.core.MainDevice.WATCH, y, z,
+                app.openring.data.WatchStore.window(demo, y.atStartOfDay(z).toEpochSecond() - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600 - 86400,
+                        y.plusDays(1).atStartOfDay(z).toEpochSecond()), null, 10000, 40, app.openring.data.WatchStore.rem(demo));
+        check("routes #251: yesterday's badge readiness is yesterday's dial", bd.get(bd.size() - 1).readiness == dialY.value("readiness"),
+                bd.get(bd.size() - 1).readiness + " " + dialY.value("readiness"));
+        List<app.openring.core.analysis.Badges.Badge> got = app.openring.core.analysis.Badges.of(bd, today);
+        boolean noGoal = true;
+        for (app.openring.core.analysis.Badges.Badge b : got) noGoal &= b.kind != app.openring.core.analysis.Badges.GOAL;
+        check("routes #251: Goal reached stays the ring's (its burn against the target)", noGoal, got.size());
+
+        // ---- the Data check: the watch's nights by day, counts and dates only
+        String lines = app.openring.data.ShownNights.checkLines(demo, today, z);
+        int watchDays = 0;
+        for (String l : lines.split("\n")) if (l.trim().matches("\\d{4}-\\d{2}-\\d{2}: watch( and ring)?")) watchDays++;
+        check("routes #251: the Data check lists the watch's nights per day, counts and dates only (no clock time, minutes or score)",
+                lines.contains("Watch nights of the last 14 days") && watchDays >= 12 && !lines.matches("(?s).*\\d{1,2}:\\d{2}.*") && !lines.contains("score"), lines);
+
+        // ---- the export without a ring: the watch's days with the numbers the dials show
+        java.util.TreeMap<String, String> rows = app.openring.data.Exporter.deviceRows(demo, app.openring.core.MainDevice.WATCH, 10000, 40, y, demo.leftOut(), z);
+        String yRow = rows.get(y.toString());
+        String[] cells = yRow == null ? new String[0] : yRow.trim().split(",", -1);
+        check("routes #251: the export holds the watch's days: sleep score, time asleep, lowest heart rate, steps, readiness, activity score",
+                rows.size() >= 20 && cells.length == 22 && cells[0].equals(y.toString()) && cells[1].equals(String.valueOf(Math.round(h.sleep[h.index(y)])))
+                && cells[2].equals(String.valueOf(Math.round(h.asleepMin[h.index(y)]))) && cells[9].equals(String.valueOf(Math.round(h.steps[h.index(y)])))
+                && cells[19].equals(String.valueOf(Math.round(h.readiness[h.index(y)]))) && cells[4].isEmpty() && cells[10].isEmpty(), yRow);
+        // ---- only the phone: no night, its steps and minutes counting stand in for the badges and the export
+        app.openring.data.ShownNights.Devices phoneOnly = new app.openring.data.ShownNights.Devices(app.openring.core.MainDevice.PHONE, false, false,
+                app.openring.core.MainDevice.PHONE, 10000, 40);
+        app.openring.core.MainDevice.Phone pw = app.openring.data.PhoneStore.window(demo, app.openring.core.DeviceHistory.rowsFrom(first, y, dz) + 86400,
+                y.plusDays(1).atStartOfDay(z).toEpochSecond());
+        app.openring.core.DeviceHistory hp = app.openring.core.DeviceHistory.of(app.openring.core.MainDevice.PHONE, first, y, dz, null, pw, 10000, 40,
+                app.openring.core.withings.WatchDays.Rem.ALWAYS);
+        List<app.openring.core.analysis.Badges.Day> pd = app.openring.data.BadgeDays.read(demo, first, y, 0, ex, today, now, z, phoneOnly);
+        boolean phoneDays = true;
+        int phoneSteps = 0;
+        for (app.openring.core.analysis.Badges.Day d : pd) {
+            int i = hp.index(d.date);
+            phoneDays &= same265(d.steps, hp.steps[i]) && d.coveredMin == hp.wornMin[i] && Double.isNaN(d.sleepScore) && Double.isNaN(d.eveningMin)
+                    && "this phone".equals(d.with);
+            if (!Double.isNaN(d.steps)) phoneSteps++;
+        }
+        check("routes #251: badges with only the phone: its steps and minutes counting, no night", phoneDays && phoneSteps >= 15, phoneSteps);
+        check("routes #251: only the phone: the first badge date reaches its first interval", !app.openring.data.BadgeDays.first(demo, today, phoneOnly).isAfter(
+                app.openring.data.ShownNights.firstDay(demo, app.openring.core.MainDevice.PHONE, z)), null);
+        java.util.TreeMap<String, String> prow = app.openring.data.Exporter.deviceRows(demo, app.openring.core.MainDevice.PHONE, 10000, 40, y, demo.leftOut(), z);
+        String[] pc = prow.get(y.toString()) == null ? new String[0] : prow.get(y.toString()).trim().split(",", -1);
+        check("routes #251: the export with only the phone: steps and the activity score, no sleep", pc.length == 22 && pc[1].isEmpty()
+                && pc[9].equals(String.valueOf(Math.round(hp.steps[hp.index(y)]))), prow.get(y.toString()));
+        app.openring.data.ScreenDays.Info pin = app.openring.data.ScreenDays.info(demo, y, z, 180, ex, 0, phoneOnly);
+        check("routes #251: the Screen tab with only the phone has no night (the phone has none)", pin.rows.length == 14 && pin.nights.isEmpty()
+                && Double.isNaN(pin.sleepStart) && !pin.watchNights && !pin.ringNights, pin.nights.size());
+
+        check("routes #251: reading changes nothing in the file", stored.equals(watchRows251(demo) + "|" + demo.count("SELECT COUNT(*) FROM kv") + "|"
+                + demo.count("SELECT COUNT(*) FROM nights") + "|" + demo.count("SELECT COUNT(*) FROM days")), null);
+
+        // ---- the ring has no night one day: the watch's fills it (main ring), the others stay the ring's
+        LocalDate gap = y.minusDays(3);
+        demo.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ? AND main = 1", new Object[] {gap.toString()});
+        app.openring.data.ScreenDays.Info filled = app.openring.data.ScreenDays.info(demo, y, z, 180, ex, 0, now, ringMain);
+        app.openring.data.ScreenDays.Info ringGap = app.openring.data.ScreenDays.info(demo, y, z, 180, ex, 0, now);
+        boolean fill = true;
+        for (int i = 0; i < filled.rows.length; i++) {
+            app.openring.data.ScreenDays.Row a = filled.rows[i], b = ringGap.rows[i];
+            if (a.date.equals(gap)) {
+                boolean has = false;
+                for (double[] x : a.nights) has |= x[1] == h.night(gap).fields.sleepEnd;
+                fill &= has && !Double.isNaN(a.firstLook) && Double.isNaN(b.firstLook);
+            } else if (!a.date.equals(gap.minusDays(1))) {
+                fill &= screenRow251(a).equals(screenRow251(b));
+            }
+        }
+        check("routes #251: ring as main device, a day without its night takes the watch's (the Sleep tab's rule), every other day the ring's",
+                fill && filled.watchNights && filled.ringNights, screenText251(filled));
+
+        // ---- with only the ring (no watch row): everything exactly as before, through the new source too
+        db251NoWatch(demo);
+        boolean ringSame = true;
+        for (int k = 0; k < 20; k++) {
+            LocalDate d = today.minusDays(k);
+            String a = screenText251(app.openring.data.ScreenDays.info(demo, d, z, 180, ex, 0, now));
+            ringSame &= a.equals(screenText251(app.openring.data.ScreenDays.info(demo, d, z, 180, ex, 0, now, ringMain)))
+                    && a.equals(screenText251(app.openring.data.ScreenDays.info(demo, d, z, 180, ex, 0, now, watchMain)));
+        }
+        check("routes #251: only the ring: the Screen tab of 20 days is the same with any main device (no watch row)", ringSame, null);
+        List<String> raw = demo.nightsJson(today.minusDays(40).toString(), today.toString(), true);
+        List<org.json.JSONObject> viaSource = app.openring.data.ShownNights.main(demo, today.minusDays(40), today, ringMain,
+                app.openring.core.DeviceHistory.fixed(z));
+        boolean list = raw.size() == viaSource.size();
+        for (int i = 0; list && i < raw.size(); i++) list = Json.parse(raw.get(i)).toString().equals(viaSource.get(i).toString());
+        check("routes #251: only the ring: the source's nights are the stored main nights, in their order", list && raw.size() >= 30, raw.size());
+        String b0 = badgeText251(app.openring.data.BadgeDays.read(demo, today.minusDays(40), today, 0, ex, today, now, z));
+        check("routes #251: only the ring: the badges' days are the same with the devices given", b0.equals(badgeText251(app.openring.data.BadgeDays.read(demo,
+                today.minusDays(40), today, 0, ex, today, now, z, ringMain))), null);
+        check("routes #251: only the ring: the Data check has no watch night lines", app.openring.data.ShownNights.checkLines(demo, today, z).isEmpty(), null);
+        app.openring.data.Prefs.of(c).setDemo(false);
+
+        // the main screen follows the watch's newest day too (a person with only the watch), never an older one
+        Context c2 = phone254("openring-routes251-latest");
+        Db db2 = Db.get(c2);
+        String ringLatest = db2.latestDayWithPhone();
+        check("routes #251: without a watch row the followed day is the ring's, as before", ringLatest != null && ringLatest.equals(db2.latestDay()), ringLatest);
+        long noon = today.atTime(12, 0).atZone(z).toEpochSecond();
+        db2.getWritableDatabase().execSQL("INSERT INTO watch_hr(device, t, bpm) VALUES ('w', ?, 60)", new Object[] {noon});
+        check("routes #251: a watch reading today moves the followed day to today", today.toString().equals(db2.latestDayWithPhone()), db2.latestDayWithPhone());
+        db2.getWritableDatabase().execSQL("DELETE FROM watch_hr");
+        db2.getWritableDatabase().execSQL("INSERT INTO watch_sleep(device, start, dur, stage) VALUES ('w', ?, 3600, 1)", new Object[] {LocalDate.parse(ringLatest).minusDays(5).atTime(2, 0).atZone(z).toEpochSecond()});
+        check("routes #251: an older watch night leaves the ring's newer day", ringLatest.equals(db2.latestDayWithPhone()), db2.latestDayWithPhone());
+        clean254();
+    }
+
+    static String screenRow251(app.openring.data.ScreenDays.Row r) {
+        StringBuilder b = new StringBuilder().append(r.date).append(' ').append(r.totalMin).append(' ').append(r.firstLook);
+        for (double[] n : r.nights) b.append(" n").append(n[0]).append('-').append(n[1]);
+        return b.toString();
+    }
+
+    /** Empties the watch's rows of a test file (a person with only the ring). */
+    static void db251NoWatch(Db db) {
+        for (String t : new String[] {"watch_raw", "watch_devices", "watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery", "watch_moves"}) {
+            db.getWritableDatabase().execSQL("DELETE FROM " + t);
+        }
     }
 }
