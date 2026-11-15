@@ -724,7 +724,7 @@ public final class Explain {
             + "morning (Settings, Watch). HRV, blood oxygen and breathing need a ring.";
 
     /** Under the battery rows on Today (owner's wish of 15 November). */
-    public static final String BATTERY_TODAY = "The level each device sent at its last reading (the ring at each sync). "
+    public static final String BATTERY_TODAY = "The last level each device sent, read at its syncs. "
             + "Days left come from how fast it fell since the last charge, only when it fell steadily. Tap a row for its history.";
 
     public static final String WATCH_BATTERY = "The watch's battery at the last sync of each day. A jump up is a charge.";
