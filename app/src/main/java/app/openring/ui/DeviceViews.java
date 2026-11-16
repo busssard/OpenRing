@@ -68,6 +68,9 @@ final class DeviceViews {
         double sc = d.score("screen");
         row.addView(Pages.ringButton(c, sc, "Screen", Ui.OXY, nav, Pages.SCREEN, Double.isNaN(sc) && !Pages.screenReady(c) ? "Tap to set up" : null), Ui.weight(1));
         card.addView(row);
+        // the watch's battery right under the scores (owner's wish of 15 November); nothing with only the phone
+        View bat = BatteryViews.rows(c, d);
+        if (bat != null) card.addView(bat);
         card.addView(Ui.gap(c, 8));
         TextView t = Ui.text(c, d.has.watch ? app.openring.core.DeviceScores.TODAY_WATCH : app.openring.core.DeviceScores.TODAY_PHONE, 12, Ui.TEXT_2, Ui.REGULAR);
         t.setGravity(Gravity.CENTER);

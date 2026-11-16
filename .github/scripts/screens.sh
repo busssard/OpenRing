@@ -142,6 +142,8 @@ else
   echo "::warning::issue #69 step: no cut off demo was finished after opening again (the preparation may have ended before the app was)"
 fi
 shot today 2
+# the battery of the demo's ring and watch right under the score rings (owner's wish of 15 November) is in the today shot
+# above, the watch's alone in today-watch-only below, none in today-phone-only
 # the compact Recent badges row under the score rings (issue #265) is in the today shot above, each badge framed in the
 # colour of its tab (owner's wish of 12 November)
 
@@ -359,6 +361,7 @@ launch --es settings top;                   shot settings
 # their own block first
 launch --es settings blocks;                shot settings-blocks
 launch --es settings stages;                shot settings-stage-detail
+launch --es settings ring;                  shot settings-ring   # where a tap on Today's ring battery row leads
 # Count phone use as awake switched off and on (issue #204): when the nights are analysed again the
 # preview above redraws, its phone line goes away and comes back without leaving the page. The card
 # opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view,

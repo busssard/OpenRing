@@ -151,7 +151,8 @@ public final class Demo {
         Db db = Db.get(c);
         // built completely today: nothing to do. Not "the newest day is today", which is still
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
-        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db) && PhoneStore.any(db)) return false;
+        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db) && PhoneStore.any(db)
+                && db.count("SELECT COUNT(*) FROM battery") > 0) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll(Db.DEMO_BUILD);
         ZoneId zone = ZoneId.systemDefault();
@@ -172,10 +173,26 @@ public final class Demo {
         periods(db, today, now);
         watch(db, today, now, zone);
         phone(db, today, now, zone);
+        ringBattery(db, today, now, zone);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
         db.put(BUILT, today.toString());
         return true;
+    }
+
+    /**
+     * The demo ring's battery readings (Today's battery row, owner's wish of 15 November): one every 3 hours, charged yesterday
+     * in its charger time ({@code core/DeviceBattery.demoRing}). Only into the demo file, as every demo row.
+     */
+    static void ringBattery(final Db db, LocalDate today, long now, ZoneId zone) {
+        final List<app.openring.core.DeviceBattery.Reading> rows = app.openring.core.DeviceBattery.demoRing(now, 35,
+                (long) at(today.minusDays(1), CHARGE_FROM_H, zone), (long) at(today.minusDays(1), CHARGE_TO_H, zone));
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                for (app.openring.core.DeviceBattery.Reading r : rows) db.addBattery(r.t, r.pct);
+            }
+        });
     }
 
     /** The demo ring's charging time yesterday, clock hours (issue #251): no movement, no heart rate, no temperature. */
