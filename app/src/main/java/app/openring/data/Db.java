@@ -1574,6 +1574,22 @@ public final class Db extends SQLiteOpenHelper {
         getWritableDatabase().insertWithOnConflict("battery", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
+    /**
+     * The ring's battery readings of the last {@code span} seconds before its newest one, oldest first (Today's battery row,
+     * {@code core/DeviceBattery}); empty without any. Reads only.
+     */
+    public List<app.openring.core.DeviceBattery.Reading> batteryRows(long span) {
+        List<app.openring.core.DeviceBattery.Reading> out = new ArrayList<app.openring.core.DeviceBattery.Reading>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT unix, pct FROM battery WHERE unix >= (SELECT MAX(unix) FROM battery) - ? ORDER BY unix",
+                new String[] {String.valueOf(span)});
+        try {
+            while (c.moveToNext()) out.add(new app.openring.core.DeviceBattery.Reading(c.getLong(0), c.getInt(1), -1));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     /** What a database file holds, read without the app's helper (no upgrade, nothing written). */
     public static final class Info {
         /** The file exists and could be read. */

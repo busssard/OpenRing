@@ -17,11 +17,11 @@ public final class SettingsBlocks {
 
     /**
      * The block that holds the card named by the {@code settings} extra ({@code top}, {@code blocks}, {@code period},
-     * {@code stages}, {@code watch}, {@code screen}, {@code games}, {@code backups} or {@code advanced}); NONE for a card
+     * {@code ring} (the Ring block itself, from Today's battery row), {@code stages}, {@code watch}, {@code screen}, {@code games}, {@code backups} or {@code advanced}); NONE for a card
      * outside the blocks, an unknown name or null.
      */
     public static int of(String section) {
-        if ("stages".equals(section)) return RING;
+        if ("stages".equals(section) || "ring".equals(section)) return RING;
         if ("watch".equals(section)) return WATCH;
         if ("phone".equals(section)) return PHONE;
         return NONE;

@@ -936,6 +936,7 @@ public class PipelineTest {
         drip252();
         dripLarge252();
         syncStart334();
+        batteryToday();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -12519,6 +12520,60 @@ public class PipelineTest {
         return sb.toString();
     }
 
+    /**
+     * Today's battery rows (owner's wish of 15 November): the readers of the stored readings (ring and watch) read only the span
+     * before the newest reading, oldest first, the watch's state 0 as charging and only the watch that sent the newest; the demo
+     * file gets made up ring readings, and both demo devices give a row with days left. Nothing new is stored by a real sync.
+     */
+    static void batteryToday() throws Exception {
+        Context c = phone254("openring-battery-today");
+        Db db = Db.get(c);
+        long span = app.openring.core.DeviceBattery.WINDOW_S + app.openring.core.DeviceBattery.OLD_S;
+        check("battery today: no readings, empty rows", db.batteryRows(span).isEmpty() && app.openring.data.WatchStore.batteryRows(db, span).isEmpty(), null);
+        long t = 1_800_000_000L;
+        db.addBattery(t - span - 1, 99);
+        db.addBattery(t - span, 90);
+        db.addBattery(t - 3600, 60);
+        db.addBattery(t, 58);
+        List<app.openring.core.DeviceBattery.Reading> ring = db.batteryRows(span);
+        check("battery today: the ring's readings of the span before the newest, oldest first",
+                ring.size() == 3 && ring.get(0).t == t - span && ring.get(0).pct == 90 && ring.get(2).t == t && ring.get(2).pct == 58
+                        && ring.get(0).charging == -1, ring.size());
+        check("battery today: reading changes nothing", db.count("SELECT COUNT(*) FROM battery") == 4, null);
+        android.database.sqlite.SQLiteDatabase w = db.getWritableDatabase();
+        w.execSQL("INSERT INTO watch_battery(device, t, pct, state, mv) VALUES ('old watch', " + (t - 7200) + ", 20, 2, 3200)");
+        w.execSQL("INSERT INTO watch_battery(device, t, pct, state, mv) VALUES ('" + DEV251 + "', " + (t - 86400) + ", 70, 2, 3700)");
+        w.execSQL("INSERT INTO watch_battery(device, t, pct, state, mv) VALUES ('" + DEV251 + "', " + t + ", 75, 0, 3750)");
+        w.execSQL("INSERT INTO watch_battery(device, t, pct, state, mv) VALUES ('" + DEV251 + "', " + (t - span - 5) + ", 99, 2, 3990)");
+        List<app.openring.core.DeviceBattery.Reading> watch = app.openring.data.WatchStore.batteryRows(db, span);
+        check("battery today: the watch's readings, only the newest watch's, state 0 as charging",
+                watch.size() == 2 && watch.get(0).pct == 70 && watch.get(0).charging == 0 && watch.get(1).pct == 75 && watch.get(1).charging == 1, watch.size());
+
+        // the demo: made up ring readings in the demo file, both devices with a row
+        Context dc = freshDb("openring-battery-demo");
+        MADE_254.add(dc);
+        LocalDate day = LocalDate.parse("2026-11-15");
+        long now = day.atTime(10, 0).atZone(ZoneId.systemDefault()).toEpochSecond();
+        app.openring.data.Demo.enter(dc, null, day, now);
+        Db dd = Db.get(dc);
+        List<app.openring.core.DeviceBattery.Reading> dr = dd.batteryRows(span);
+        boolean every3h = dr.size() > 10;
+        for (int i = 1; i < dr.size(); i++) every3h &= dr.get(i).t - dr.get(i - 1).t == 3 * 3600;
+        check("battery today: the demo ring, a reading every 3 hours, the last before now", every3h && dr.get(dr.size() - 1).t <= now - 600, dr.size());
+        double from = day.minusDays(1).atTime(14, 0).atZone(ZoneId.systemDefault()).toEpochSecond();
+        boolean charged = false;
+        for (int i = 1; i < dr.size(); i++) charged |= dr.get(i).t >= from && dr.get(i).pct - dr.get(i - 1).pct >= app.openring.core.DeviceBattery.CHARGE_RISE && dr.get(i).t <= from + 2 * 3600;
+        check("battery today: the demo ring charged in its charger time yesterday", charged, null);
+        app.openring.core.DeviceBattery.Status rs = app.openring.core.DeviceBattery.of(app.openring.core.DeviceBattery.RING, dr, now);
+        app.openring.core.DeviceBattery.Status ws = app.openring.core.DeviceBattery.of(app.openring.core.DeviceBattery.WATCH,
+                app.openring.data.WatchStore.batteryRows(dd, span), now);
+        System.out.println("    battery today demo: ring " + rs.value() + " (" + rs.note() + "), watch " + ws.value() + " (" + ws.note() + ")");
+        check("battery today: the demo ring and watch both with a fresh level and days left", rs.newest != null && !rs.old && !Double.isNaN(rs.daysLeft)
+                && ws.newest != null && !ws.old && !Double.isNaN(ws.daysLeft) && !rs.warn() && !ws.warn(), rs.note() + " " + ws.note());
+        check("battery today: a demo built again the same day stays", !app.openring.data.Demo.enter(dc, null, day, now + 600), null);
+        clean254();
+    }
+
     static long watchCount251(Db db, String table) {
         return db.count("SELECT COUNT(*) FROM " + table);
     }
@@ -14386,8 +14441,14 @@ public class PipelineTest {
      */
     static void routes251() throws Exception {
         Context c = phone254("openring-routes251");
-        LocalDate today = LocalDate.now();
-        double now = System.currentTimeMillis() / 1000.0;
+        // never at night: between about 23:00 and 06:30 the demo watch's night in progress belongs to the next day and overlaps
+        // the day before's row, so the checks below depended on the hour the tests ran (red apk checks every night). From 22:00
+        // to 07:00 the test runs as if it were the last 22:00 that has passed (a moment in the past, as the demo's ring needs).
+        java.time.ZonedDateTime clock = java.time.ZonedDateTime.now();
+        if (clock.getHour() >= 22) clock = clock.withHour(22).withMinute(0).withSecond(0).withNano(0);
+        else if (clock.getHour() < 7) clock = clock.minusDays(1).withHour(22).withMinute(0).withSecond(0).withNano(0);
+        LocalDate today = clock.toLocalDate();
+        double now = clock.toEpochSecond();
         app.openring.data.Demo.enter(c, null, today, (long) now);
         Db demo = Db.get(c);
         app.openring.data.Prefs prefs = app.openring.data.Prefs.of(c);

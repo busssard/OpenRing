@@ -599,6 +599,23 @@ public final class WatchStore {
         return r;
     }
 
+    /**
+     * The battery readings of the watch that sent the newest one, from {@code span} seconds before it, oldest first (Today's
+     * battery row, {@code core/DeviceBattery}); a reading with state 0 is the watch charging. Empty without any. Reads only.
+     */
+    public static List<app.openring.core.DeviceBattery.Reading> batteryRows(Db db, long span) {
+        List<app.openring.core.DeviceBattery.Reading> out = new ArrayList<app.openring.core.DeviceBattery.Reading>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT b.t, b.pct, b.state FROM watch_battery b,"
+                + " (SELECT device, t FROM watch_battery ORDER BY t DESC LIMIT 1) n WHERE b.device = n.device AND b.t >= n.t - ? ORDER BY b.t",
+                new String[] {String.valueOf(span)});
+        try {
+            while (c.moveToNext()) out.add(new app.openring.core.DeviceBattery.Reading(c.getLong(0), c.getInt(1), c.getInt(2) == 0 ? 1 : 0));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     /** The newest battery reading as {percent, unix seconds}, null for none (Settings, Watch). */
     public static long[] newestBattery(Db db) {
         Cursor c = db.getReadableDatabase().rawQuery("SELECT pct, t FROM watch_battery ORDER BY t DESC LIMIT 1", null);

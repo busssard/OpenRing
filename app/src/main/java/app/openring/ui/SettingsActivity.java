@@ -2097,14 +2097,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Opens at a card when started with the extra {@code section} ("blocks", "profile" (from the watch setup), "period", "stages", "watch", "screen", "games",
+     * Opens at a card when started with the extra {@code section} ("blocks", "ring" (the Ring block opened, from Today's battery row), "profile" (from the watch setup), "period", "stages", "watch", "screen", "games",
      * "backups" or "advanced"), used by the screen test. A card inside the Ring or Watch block was opened with its block in
      * onCreate ({@link app.openring.core.SettingsBlocks#startsOpen}); "blocks" shows both blocks closed at the top.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "blocks".equals(section) ? ringBlock.card : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
+        final View card = "blocks".equals(section) || "ring".equals(section) ? ringBlock.card : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
                 : "watch".equals(section) ? watchCard : "phone".equals(section) ? phoneCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;

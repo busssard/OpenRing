@@ -61,6 +61,9 @@ public final class Pages {
         double sc = d.score("screen");
         row.addView(ringButton(c, sc, "Screen", Ui.OXY, nav, SCREEN, Double.isNaN(sc) && !screenReady(c) ? "Tap to set up" : null), Ui.weight(1));
         rings.addView(row);
+        // the battery of each device right under the scores (owner's wish of 15 November)
+        View bat = BatteryViews.rows(c, d);
+        if (bat != null) rings.addView(bat);
         // without a ring by choice (issue #329) the button adds one instead
         final boolean noRing = PhoneViews.noRing(c);
         TextView find = Ui.smallButton(c, noRing ? app.openring.core.KeyState.ADD_RING : "Find my ring", Ui.OXY); // issue #74

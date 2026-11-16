@@ -732,6 +732,10 @@ public final class Explain {
             + "sleep, the heart rate through the night and a sleep score worked out from them. Wear the watch in bed and sync it in the "
             + "morning (Settings, Watch). HRV, blood oxygen and breathing need a ring.";
 
+    /** Under the battery rows on Today (owner's wish of 15 November). */
+    public static final String BATTERY_TODAY = "The last level each device sent, read at its syncs. "
+            + "Days left come from how fast it fell since the last charge, only when it fell steadily. Tap a row for its history.";
+
     public static final String WATCH_BATTERY = "The watch's battery at the last sync of each day. A jump up is a charge.";
 
     public static final String WATCH_DROP = "How much the battery fell per day over the last 7 days, charges left out. "
