@@ -14398,8 +14398,14 @@ public class PipelineTest {
      */
     static void routes251() throws Exception {
         Context c = phone254("openring-routes251");
-        LocalDate today = LocalDate.now();
-        double now = System.currentTimeMillis() / 1000.0;
+        // never at night: between about 23:00 and 06:30 the demo watch's night in progress belongs to the next day and overlaps
+        // the day before's row, so the checks below depended on the hour the tests ran (red apk checks every night). From 22:00
+        // to 07:00 the test runs as if it were the last 22:00 that has passed (a moment in the past, as the demo's ring needs).
+        java.time.ZonedDateTime clock = java.time.ZonedDateTime.now();
+        if (clock.getHour() >= 22) clock = clock.withHour(22).withMinute(0).withSecond(0).withNano(0);
+        else if (clock.getHour() < 7) clock = clock.minusDays(1).withHour(22).withMinute(0).withSecond(0).withNano(0);
+        LocalDate today = clock.toLocalDate();
+        double now = clock.toEpochSecond();
         app.openring.data.Demo.enter(c, null, today, (long) now);
         Db demo = Db.get(c);
         app.openring.data.Prefs prefs = app.openring.data.Prefs.of(c);
