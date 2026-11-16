@@ -213,11 +213,16 @@ public final class Ui {
      * the screen being rebuilt (Find my ring's {@code helpOpen} pattern). Empty or null texts are skipped.
      */
     public static LinearLayout howItWorks(Context c, final boolean[] open, java.util.List<String> texts) {
+        return howItWorks(c, open, texts, "How it works");
+    }
+
+    /** {@link #howItWorks} with another title on its row ("Why this line" on Today's Your day card). */
+    public static LinearLayout howItWorks(Context c, final boolean[] open, java.util.List<String> texts, final String title) {
         LinearLayout box = vbox(c);
         box.addView(divider(c));
         final LinearLayout row = hbox(c);
         row.setMinimumHeight(dp(c, 48));
-        row.addView(text(c, "How it works", 14, TEXT_2, MEDIUM), weight(1));
+        row.addView(text(c, title, 14, TEXT_2, MEDIUM), weight(1));
         final android.widget.ImageView chevron = new android.widget.ImageView(c);
         chevron.setImageResource(app.openring.R.drawable.ic_chevron_right);
         chevron.setImageTintList(ColorStateList.valueOf(TEXT_3));
@@ -235,21 +240,21 @@ public final class Ui {
             body.addView(t);
         }
         box.addView(body, matchWrap());
-        showHow(row, chevron, body, open[0]);
+        showHow(row, chevron, body, open[0], title);
         row.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 open[0] = !open[0];
-                showHow(row, chevron, body, open[0]);
+                showHow(row, chevron, body, open[0], title);
             }
         });
         return box;
     }
 
-    private static void showHow(View row, View chevron, View body, boolean open) {
+    private static void showHow(View row, View chevron, View body, boolean open, String title) {
         body.setVisibility(open ? View.VISIBLE : View.GONE);
         chevron.setRotation(open ? -90 : 90);
-        row.setContentDescription(open ? "How it works, expanded" : "How it works, collapsed");
+        row.setContentDescription(open ? title + ", expanded" : title + ", collapsed");
     }
 
     /** Label over a big value with a unit, for stat tiles. */

@@ -120,15 +120,10 @@ public final class Pages {
             e.addView(b, Ui.matchWrap());
             root.addView(e);
         } else {
-            LinearLayout digest = Ui.card(c);
-            digest.addView(Ui.caption(c, "Your day"));
-            digest.addView(Ui.gap(c, 6));
-            // without a ring (issue #329) the day is the phone's steps: no "keep wearing your ring"
-            digest.addView(Ui.text(c, noRing ? "Steps counted by this phone" : headline(d), 20, Ui.TEXT, Ui.LIGHT));
-            digest.addView(Ui.gap(c, 6));
-            digest.addView(Ui.body(c, noRing ? "Sleep and readiness need a ring or a watch. Everything is worked out on this phone, nothing left the device."
-                    : digest(d)));
-            root.addView(digest);
+            // the day's facts and a line that changes every day (owner's wish of 16 November); without a ring (issue #329) the
+            // phone's steps, with the note that sleep and readiness need a ring or a watch
+            root.addView(dayCard(c, d, !noRing, noRing ? "Sleep and readiness need a ring or a watch. Everything is worked out on this phone, nothing left the device."
+                    : null));
 
             LinearLayout stats = Ui.card(c);
             stats.addView(Ui.caption(c, "Key metrics"));
@@ -198,16 +193,9 @@ public final class Pages {
             if (app.openring.core.Start.DEVICE_SCORES.equals(k)) {
                 root.addView(DeviceViews.scoresWithout(c, d, nav));
                 if (!d.badges.isEmpty()) root.addView(BadgeViews.row(c, d, nav));
-                // the day in a sentence from the watch's readiness, as with a ring (owner's report of 13 November)
-                if (d.has.watch && !Double.isNaN(d.score("readiness"))) {
-                    LinearLayout digest = Ui.card(c);
-                    digest.addView(Ui.caption(c, "Your day"));
-                    digest.addView(Ui.gap(c, 6));
-                    digest.addView(Ui.text(c, headline(d), 20, Ui.TEXT, Ui.LIGHT));
-                    digest.addView(Ui.gap(c, 6));
-                    digest.addView(Ui.body(c, digest(d)));
-                    root.addView(digest);
-                }
+                // the day in a sentence and a line, as with a ring (owner's report of 13 November, wish of 16 November): the
+                // watch's numbers, or the phone's steps and screen time
+                root.addView(dayCard(c, d, d.has.watch && !Double.isNaN(d.score("readiness")), null));
             } else if (app.openring.core.Start.FINISH_WATCH.equals(k)) {
                 root.addView(DeviceViews.finishWatch(c));
             } else if (app.openring.core.Start.WATCH_DAY.equals(k)) {
@@ -274,7 +262,96 @@ public final class Pages {
         return "Keep wearing your ring to build your picture.";
     }
 
-    static String digest(DayData d) {
+    /** Whether "Why this line" is open on Today's Your day card; kept while the screen is rebuilt (extra {@code day_line_why}). */
+    static final boolean[] dayWhyOpen = {false};
+
+    /**
+     * Today's "Your day" card (owner's wish of 16 November, {@code core/DayLine}): the sentence with the day's facts, the line
+     * of the day, the readiness sentence ({@code withDigest}) or {@code note}, and "Why this line" with each check of the tree.
+     * A tap on the card opens or closes it.
+     */
+    static View dayCard(Context c, DayData d, boolean withDigest, String note) {
+        app.openring.core.DayLine.Result r = dayLine(c, d);
+        // out of date: nothing below pretends to know the day
+        String more = r.decision.branch == app.openring.core.DayLine.STALE ? null
+                : withDigest ? digest(d, true, r.decision.branch == app.openring.core.DayLine.DEBT) : note;
+        final LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Your day"));
+        card.addView(Ui.gap(c, 6));
+        card.addView(Ui.body(c, r.decision.evidence));
+        card.addView(Ui.gap(c, 8));
+        card.addView(Ui.text(c, r.line, 20, Ui.TEXT, Ui.LIGHT));
+        if (more != null && !more.isEmpty()) {
+            card.addView(Ui.gap(c, 8));
+            card.addView(Ui.text(c, more, 13, Ui.TEXT_2, Ui.REGULAR));
+        }
+        card.addView(Ui.gap(c, 6));
+        List<String> why = new java.util.ArrayList<String>();
+        why.add("Checked from the top, the first that fits picks the line:");
+        why.addAll(r.why());
+        why.add(Explain.DAY_LINE);
+        final LinearLayout how = Ui.howItWorks(c, dayWhyOpen, why, "Why this line");
+        card.addView(how, Ui.matchWrap());
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // the row of "Why this line" (after its divider) opens and closes it
+                how.getChildAt(1).performClick();
+            }
+        });
+        return card;
+    }
+
+    /**
+     * The facts of the day for {@link #dayCard}: the ring's stored day, else the watch's or the phone's days, with the sync age,
+     * the screen, a badge of the day and the period phase. The line is noted in the display memory only for today.
+     */
+    static app.openring.core.DayLine.Result dayLine(Context c, DayData d) {
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        java.time.LocalDate today = java.time.LocalDate.now();
+        boolean isToday = d.date.equals(today);
+        app.openring.core.DayLine.Facts f;
+        if (d.has.ring && (d.day != null || d.night != null)) {
+            f = app.openring.data.DayLines.ring(d.date, isToday, d.day, d.night, d.history);
+        } else if (d.deviceHistory != null) {
+            f = app.openring.core.DayLine.fromDevice(d.deviceHistory, d.date, isToday);
+        } else {
+            f = new app.openring.core.DayLine.Facts();
+            f.date = d.date;
+            f.isToday = isToday;
+            f.device = d.has.ring ? app.openring.core.DayLine.RING : d.has.watch ? app.openring.core.DayLine.WATCH : app.openring.core.DayLine.PHONE;
+            if (d.merged != null) f.steps = d.merged.steps;
+        }
+        // the demo never counts as out of date; a ring or a watch without a sync yet says so
+        if (!p.demo() && f.device != app.openring.core.DayLine.PHONE) {
+            long t = f.device == app.openring.core.DayLine.WATCH ? p.watchLastOk() : p.lastSync();
+            f.neverSynced = t == 0;
+            f.sinceSyncH = t == 0 ? Double.NaN : Math.max(0, System.currentTimeMillis() / 1000.0 - t) / 3600.0;
+        }
+        if (d.screen != null) {
+            f.bedScreenMin = d.screen.bedMin;
+            f.nightScreenMin = d.screen.nightMin;
+            if (d.screen.day != null) f.screenMin = d.screen.day.totalMin;
+        }
+        for (app.openring.core.analysis.Badges.Badge b : d.badges) {
+            if (b.date.equals(d.date)) {
+                f.badge = app.openring.core.analysis.Badges.NAMES[b.kind];
+                break;
+            }
+        }
+        if (d.periodShown && d.periods != null) f.periodPhase = d.periods.phase(d.date);
+        String stored = p.dayLineSeen();
+        app.openring.core.DayLine.Memory m = app.openring.core.DayLine.Memory.parse(stored);
+        app.openring.core.DayLine.Result r = app.openring.core.DayLine.of(f, m, isToday, Locale.getDefault());
+        if (isToday && !m.toString().equals(stored)) p.setDayLineSeen(m.toString());
+        return r;
+    }
+
+    /**
+     * The readiness sentence and the sleep debt under the day's line (no filler when {@code forLine}), without the sleep debt
+     * when the line said it ({@code noDebt}).
+     */
+    static String digest(DayData d, boolean forLine, boolean noDebt) {
         StringBuilder sb = new StringBuilder();
         JSONObject rd = d.scoreObj("readiness");
         if (rd != null) {
@@ -292,7 +369,9 @@ public final class Pages {
             if (rd.optBoolean("provisional")) sb.append("Your baselines are still forming, so scores will become more personal over the next two weeks. ");
         }
         JSONObject debt = d.day == null ? null : d.day.optJSONObject("sleep_debt");
-        if (debt != null && debt.optBoolean("valid")) {
+        if (noDebt) {
+            // the day's sentence above already gives the sleep debt
+        } else if (debt != null && debt.optBoolean("valid")) {
             double m = debt.optDouble("debt_min", 0);
             if (m >= 180) sb.append("You carry about ").append(Ui.hm(m)).append(" of sleep debt. ");
         } else if (debt == null && HistoryViews.watch(d)) {
@@ -300,7 +379,8 @@ public final class Pages {
             double[] w = d.deviceHistory.debt(d.date);
             if (w[1] > 0 && w[0] >= 180) sb.append("You carry about ").append(Ui.hm(w[0])).append(" of sleep debt. ");
         }
-        if (sb.length() == 0) sb.append("Synced and analysed on this phone. Nothing left the device.");
+        // under the day's line the card has its own sentence, so no filler
+        if (sb.length() == 0 && !forLine) sb.append("Synced and analysed on this phone. Nothing left the device.");
         return sb.toString().trim();
     }
 

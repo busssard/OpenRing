@@ -667,6 +667,7 @@ public class PipelineTest {
         app.openring.data.Prefs dp = app.openring.data.Prefs.of(phone2);
         check("demo leaves maps out, the real list stays", dp.screenExcluded().contains(app.openring.data.Demo.MAPS), dp.screenExcluded());
         demoBadges(demo, dp, demoToday, demoNow);
+        demoDayLines(demo, demoToday);
         java.time.ZoneId z = java.time.ZoneId.systemDefault();
         int mapsDays = 0;
         app.openring.data.ScreenDays.Info di = null;
@@ -3075,6 +3076,48 @@ public class PipelineTest {
             if (!same265(d.screenMin, tab) || !same265(d.eveningMin, in.bedMin)) bad.add(d.date + " " + d.screenMin + "/" + tab + " " + d.eveningMin + "/" + in.bedMin);
         }
         return bad;
+    }
+
+    /**
+     * Today's Your day line (owner's wish of 16 November) on every demo day: the ring's facts from the stored summaries
+     * ({@code data/DayLines}) give a sentence and a line each day, the story of the demo reaches several branches, and the
+     * usual values come from the nights before.
+     */
+    static void demoDayLines(Db demo, LocalDate today) {
+        LocalDate first = LocalDate.parse(demo.firstDay());
+        java.util.Map<String, JSONObject> days = new java.util.HashMap<String, JSONObject>();
+        for (String[] r : demo.daysJson(first.minusDays(30).toString(), today.toString())) days.put(r[0], Json.parse(r[1]));
+        int[] per = new int[app.openring.core.DayLine.BRANCHES];
+        List<String> bad = new ArrayList<String>();
+        app.openring.core.DayLine.Memory mem = new app.openring.core.DayLine.Memory();
+        java.util.Set<String> lines = new java.util.HashSet<String>();
+        app.openring.core.DayLine.Facts last = null;
+        for (LocalDate d = first.plusDays(1); !d.isAfter(today); d = d.plusDays(1)) {
+            JSONObject night = null;
+            for (String s : demo.nightsJson(d.toString(), d.toString(), true)) night = Json.parse(s);
+            java.util.Map<String, JSONObject> hist = new java.util.HashMap<String, JSONObject>();
+            for (java.util.Map.Entry<String, JSONObject> e : days.entrySet()) {
+                LocalDate k = LocalDate.parse(e.getKey());
+                if (!k.isAfter(d) && k.isAfter(d.minusDays(31))) hist.put(e.getKey(), e.getValue());
+            }
+            app.openring.core.DayLine.Facts f = app.openring.data.DayLines.ring(d, d.equals(today), days.get(d.toString()), night, hist);
+            app.openring.core.DayLine.Result r = app.openring.core.DayLine.of(f, mem, true, java.util.Locale.UK);
+            per[r.decision.branch]++;
+            lines.add(r.line);
+            if (r.line == null || r.decision.evidence == null || r.decision.evidence.isEmpty()) bad.add(d + " no line");
+            System.out.println("    day line " + d + " " + app.openring.core.DayLine.NAMES[r.decision.branch] + ": " + r.decision.evidence + " | " + r.line);
+            last = f;
+        }
+        check("day line demo: every demo day has a sentence and a line", bad.isEmpty(), bad);
+        int branches = 0;
+        for (int n : per) if (n > 0) branches++;
+        check("day line demo: the demo's story reaches several branches", branches >= 4, Arrays.toString(per));
+        check("day line demo: no line twice in the demo's days (fewer than 30 of them in a row)", lines.size() == (int) java.time.temporal.ChronoUnit.DAYS.between(first, today)
+                || java.time.temporal.ChronoUnit.DAYS.between(first, today) > app.openring.core.DayLine.NO_REPEAT_DAYS, lines.size());
+        check("day line demo: the newest day has its usual resting heart rate and HRV, scores and the days before", last != null && !Double.isNaN(last.rhrUsual)
+                && !Double.isNaN(last.hrvUsual) && !Double.isNaN(last.readiness) && !Double.isNaN(last.sleepScore) && last.readinessBefore.length == 29
+                && !Double.isNaN(last.readinessBefore[28]) && !Double.isNaN(last.needMin), last == null ? null : last.rhrUsual + " " + last.hrvUsual);
+        check("day line demo: the demo is never out of date (no sync age)", per[app.openring.core.DayLine.STALE] == 0, per[app.openring.core.DayLine.STALE]);
     }
 
     static void demoBadges(Db demo, app.openring.data.Prefs prefs, LocalDate today, long now) {
