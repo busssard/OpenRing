@@ -157,7 +157,7 @@ public final class DayLine {
         String sync = f.device == PHONE ? "the phone counts by itself" : f.neverSynced ? "never synced" : Double.isNaN(f.sinceSyncH) ? null
                 : "last sync " + ago(f.sinceSyncH);
         if (!f.isToday && f.device != PHONE) sync = "an earlier day";
-        if (add(d, STALE, stale, sync == null ? "no data" : sync)) {
+        if (add(d, STALE, stale, sync == null ? "no sync time known" : sync)) {
             String dev = f.device == WATCH ? "watch" : "ring";
             d.evidence = f.neverSynced ? "Your " + dev + " has not synced yet, so this day is not known."
                     : "Your " + dev + " last synced " + ago(f.sinceSyncH) + ", so today's numbers are not in yet.";
@@ -203,7 +203,9 @@ public final class DayLine {
         // 6. good nights in a row
         int nights = f.sleepScore >= Scores.GOOD ? 1 + run(f.sleepBefore, true) : 0;
         if (add(d, NIGHTS, nights >= NIGHT_STREAK, Double.isNaN(f.sleepScore) ? "no data" : Texts.count(nights, "good night", "good nights") + " in a row")) {
-            d.evidence = nights + " good nights in a row (sleep score " + Scores.GOOD + " or more).";
+            // every night known was good: the streak may be longer than the days the facts hold
+            boolean all = nights == f.sleepBefore.length + 1 && f.sleepBefore.length >= 29;
+            d.evidence = (all ? "At least " : "") + nights + " good nights in a row (sleep score " + Scores.GOOD + " or more).";
             return d;
         }
         // 7. goal reached days in a row (today counts once it is reached)
@@ -281,13 +283,13 @@ public final class DayLine {
         return p.isEmpty() ? "no data" : join(p);
     }
 
-    /** "Readiness 78, sleep score 81 and 7h 20m asleep." or, for the phone, "4,210 steps so far and 2h 5m on the screen." */
+    /** "Readiness 78, sleep score 81 and 7h 20m asleep." or, for the phone, "4210 steps so far and 2h 5m on the screen" (as the Steps tile). */
     static String plain(Facts f, Locale loc) {
         List<String> p = new ArrayList<String>();
         if (!Double.isNaN(f.readiness)) p.add("readiness " + Math.round(f.readiness));
         if (!Double.isNaN(f.sleepScore)) p.add("sleep score " + Math.round(f.sleepScore));
         if (!Double.isNaN(f.asleepMin)) p.add(Texts.minutes(f.asleepMin) + " asleep");
-        if (p.size() < 2 && !Double.isNaN(f.steps)) p.add(String.format(loc, "%,d", Math.round(f.steps)) + " steps" + (f.isToday ? " so far" : ""));
+        if (p.size() < 2 && !Double.isNaN(f.steps)) p.add(Math.round(f.steps) + " steps" + (f.isToday ? " so far" : ""));
         if (p.size() < 2 && !Double.isNaN(f.screenMin)) p.add(Texts.minutes(f.screenMin) + " on the screen");
         if (p.isEmpty()) return "Not much measured yet for this day.";
         String s = join(p);

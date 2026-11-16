@@ -178,6 +178,7 @@ public class DayLineTest {
         DayLine.Facts unknown = day();
         unknown.sinceSyncH = Double.NaN;
         check("day line tree: an unknown sync age is not out of date", dec(unknown).branch == DayLine.ORDINARY);
+        eq("day line why: an unknown sync age says so", dec(unknown).checks.get(0).line(), "Data out of date: no, no sync time known");
 
         // 2. strain
         DayLine.Facts s1 = day();
@@ -268,6 +269,12 @@ public class DayLineTest {
         branch("4 good nights exactly", n, DayLine.NIGHTS, "4 good nights in a row (sleep score 70 or more).");
         n.sleepBefore = new double[] {75, 60, 72};
         check("day line tree: 2 good nights is no streak", dec(n).branch != DayLine.NIGHTS);
+        double[] month = new double[29];
+        Arrays.fill(month, 80);
+        n.sleepBefore = month;
+        branch("every night of the month good", n, DayLine.NIGHTS, "At least 30 good nights in a row (sleep score 70 or more).");
+        month[0] = 60;
+        branch("29 good nights", n, DayLine.NIGHTS, "29 good nights in a row (sleep score 70 or more).");
         n.sleepScore = 65;
         n.sleepBefore = new double[] {75, 75, 75, 75};
         check("day line tree: a poor night today ends the streak", dec(n).branch != DayLine.NIGHTS);
@@ -328,9 +335,9 @@ public class DayLineTest {
         po.goalName = "Step goal";
         po.steps = 4210;
         po.screenMin = 125;
-        branch("the phone only", po, DayLine.ORDINARY, "4,210 steps so far and 2h 5m on the screen.");
+        branch("the phone only", po, DayLine.ORDINARY, "4210 steps so far and 2h 5m on the screen.");
         po.isToday = false;
-        eq("day line tree: an earlier day has no so far", dec(po).evidence, "4,210 steps and 2h 5m on the screen.");
+        eq("day line tree: an earlier day has no so far", dec(po).evidence, "4210 steps and 2h 5m on the screen.");
         po.goalBefore = new boolean[] {true, true, true};
         branch("the phone's step goal", po, DayLine.ACTIVE, "Step goal reached 3 days in a row.");
         DayLine.Facts none = new DayLine.Facts();
@@ -340,7 +347,7 @@ public class DayLineTest {
         all.readiness = Double.NaN;
         all.sleepScore = Double.NaN;
         all.asleepMin = Double.NaN;
-        eq("day line tree: the ring without scores says steps", dec(all).evidence, "4,210 steps so far and 2h 5m on the screen.");
+        eq("day line tree: the ring without scores says steps", dec(all).evidence, "4210 steps so far and 2h 5m on the screen.");
 
         // the why list: names, yes and no, the last text
         DayLine.Result res = DayLine.of(d1, new DayLine.Memory(), false, EN);
