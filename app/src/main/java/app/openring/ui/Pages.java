@@ -322,6 +322,12 @@ public final class Pages {
             f.device = d.has.ring ? app.openring.core.DayLine.RING : d.has.watch ? app.openring.core.DayLine.WATCH : app.openring.core.DayLine.PHONE;
             if (d.merged != null) f.steps = d.merged.steps;
         }
+        // the app's step goal (the watch's setting, 10,000 unless changed) and the clock for "today after 15:00"
+        if (f.device == app.openring.core.DayLine.RING) f.stepGoal = p.watchGoal();
+        if (isToday) {
+            java.time.LocalTime now = java.time.ZonedDateTime.now(d.zone).toLocalTime();
+            f.hourNow = now.getHour() + now.getMinute() / 60.0;
+        }
         // the demo never counts as out of date; a ring or a watch without a sync yet says so
         if (!p.demo() && f.device != app.openring.core.DayLine.PHONE) {
             long t = f.device == app.openring.core.DayLine.WATCH ? p.watchLastOk() : p.lastSync();

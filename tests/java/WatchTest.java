@@ -2926,6 +2926,9 @@ public class WatchTest {
         check("day line: the watch's days before (up to 29) and its goal", wf.readinessBefore.length == Math.min(wi, 29) && same(wf.readinessBefore[wf.readinessBefore.length - 1], h.readiness[wi - 1])
                 && same(wf.sleepBefore[0], h.sleep[wi - wf.sleepBefore.length]) && wf.goalBefore[wf.goalBefore.length - 1] == (h.steps[wi - 1] >= 9000)
                 && Boolean.valueOf(h.steps[wi] >= 9000).equals(wf.goalToday), java.util.Arrays.toString(wf.goalBefore));
+        check("day line: the watch's step goal and the steps of the days before (not worn: none)", wf.stepGoal == 9000
+                && wf.stepsBefore.length == wf.readinessBefore.length && (h.wornMin[wi - 1] > 0 ? same(wf.stepsBefore[wf.stepsBefore.length - 1], h.steps[wi - 1])
+                : Double.isNaN(wf.stepsBefore[wf.stepsBefore.length - 1])), wf.stepGoal + " " + java.util.Arrays.toString(wf.stepsBefore));
         double[] wd = h.debt(DS_DAY);
         check("day line: the watch's sleep debt and need, as its Sleep tab", wd[1] > 0 ? same(wf.debtMin, wd[0]) && same(wf.needMin, wd[2] * 60)
                 : Double.isNaN(wf.debtMin), wf.debtMin + " " + wd[0]);

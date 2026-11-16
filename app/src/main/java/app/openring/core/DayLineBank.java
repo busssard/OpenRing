@@ -169,6 +169,25 @@ public final class DayLineBank {
         "Strong people rest without guilt. Practise that too.",
     };
 
+    /** Behind on steps and nothing says rest: inviting, one small concrete step each, never guilt. */
+    static final String[] MOVE = {
+        "Ten minutes of walking is enough to start. Go before the thought fades.",
+        "Take the stairs today. Every step up is a small promise kept.",
+        "Ask someone to walk with you. Movement shared is lighter and kinder.",
+        "Put on one song you love and move until it ends.",
+        "Get off one stop early and let the last part of the way be yours.",
+        "Stand up once an hour today. Small motions add up to a moving life.",
+        "Nobody needs a perfect workout. Once around the block will do.",
+        "Take your next phone call on your feet, better still walking.",
+        "The body was made to move. Give it a little of what it was made for.",
+        "Start smaller than feels worthwhile, then do it again tomorrow.",
+        "Yesterday is done. A walk after lunch today can still be yours.",
+        "Fresh air, two feet, fifteen minutes. That is the whole plan.",
+        "You owe nobody steps. You owe yourself a little movement.",
+        "Walk to the shop instead of driving, if you can. The errand becomes a gift.",
+        "Motion first, motivation later. It usually works in that order.",
+    };
+
     /** A logged period day, when the period tracker shows: kind lines only. */
     static final String[] PERIOD = {
         "Be kind to yourself today. It is a fair thing to ask.",
@@ -240,7 +259,7 @@ public final class DayLineBank {
     };
 
     /** The lists by branch, in the order of {@link DayLine}'s branch numbers. */
-    static final String[][] BY_BRANCH = {STALE, STRAIN, DEBT, RECOVERED, BADGE, NIGHTS, ACTIVE, SCREEN, REST, PERIOD, LOW, GOOD, WEEKEND,
+    static final String[][] BY_BRANCH = {STALE, STRAIN, DEBT, RECOVERED, BADGE, NIGHTS, ACTIVE, SCREEN, REST, MOVE, PERIOD, LOW, GOOD, WEEKEND,
         ORDINARY};
 
     /** The lines of branch {@code b} (a {@link DayLine} branch number), or {@link #ANY} for {@link DayLine#ANY}. */

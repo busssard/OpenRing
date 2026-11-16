@@ -16,7 +16,9 @@ public final class Explain {
             + "is one of more than 150 short thoughts written for Open Ring, one list for each case. It is picked by the date, so it stays "
             + "the same all day and changes tomorrow, and none comes back within 30 days. Signs of strain means your night temperature "
             + "is at least 0.5 °C above your usual, with your resting heart rate 3 bpm above it or your HRV 15 % under it. That is a "
-            + "reason to take it easy, not a diagnosis. These lines are encouragement, not medical advice.";
+            + "reason to take it easy, not a diagnosis. Time to move means yesterday under 60 % of your step goal, the last 3 days "
+            + "under 70 % on average, or today after 15:00 under half of it; never after hard training, with readiness under 50 or "
+            + "on a period day. These lines are encouragement, not medical advice.";
 
     public static final String SLEEP = "The sleep score sums up how long and how well you slept: total sleep, how much of the "
             + "time in bed you were asleep, how calm the night was, your deep and REM sleep, how fast you fell asleep and whether "

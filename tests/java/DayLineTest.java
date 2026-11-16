@@ -117,6 +117,7 @@ public class DayLineTest {
         int fewest = Integer.MAX_VALUE;
         for (int b = 0; b < DayLine.BRANCHES; b++) fewest = Math.min(fewest, DayLineBank.of(b).length);
         check("day line bank: every branch has 10 to 15 lines of its own", fewest >= 10, fewest);
+        check("day line bank: 12 to 15 lines for time to move", DayLineBank.of(DayLine.MOVE).length >= 12 && DayLineBank.of(DayLine.MOVE).length <= 15);
         check("day line bank: 20 or more lines for any day", DayLineBank.ANY.length >= 20, DayLineBank.ANY.length);
         // a branch with the lines for any day always has more than 30 to choose from (the no repeat rule can always hold)
         check("day line bank: every branch with the lines for any day has more than 30", fewest + DayLineBank.ANY.length > DayLine.NO_REPEAT_DAYS);
@@ -305,7 +306,62 @@ public class DayLineTest {
         rt.readiness = 88;
         check("day line tree: hard yesterday with readiness 88 is a strong day, not rest", dec(rt).branch == DayLine.GOOD, dec(rt).branch);
 
-        // 10. period day
+        // 10. time to move (owner's question of 16 November)
+        DayLine.Facts mv = day();
+        mv.stepsBefore = new double[] {9000, 8000, 4200};
+        branch("4200 steps yesterday", mv, DayLine.MOVE, "4200 steps yesterday, 42 % of your 10000.");
+        mv.stepsBefore = new double[] {6000, 5500, 4200};
+        branch("three low days", mv, DayLine.MOVE, "4200 steps yesterday, 42 % of your 10000. Three days under your goal.");
+        mv.stepsBefore = new double[] {6500, 6500, 7000};
+        branch("the last 3 days under 70 %", mv, DayLine.MOVE, "The last 3 days averaged 6667 steps, 67 % of your 10000.");
+        DayLine.Facts mt = day();
+        mt.stepsBefore = new double[] {9000, 9500, 8000};
+        mt.steps = 3100;
+        mt.hourNow = 15.5;
+        branch("today at 15:30 under half", mt, DayLine.MOVE, "3100 steps so far today, 31 % of your 10000.");
+        mt.hourNow = 14.9;
+        check("day line move: today before 15:00 is too early", dec(mt).branch != DayLine.MOVE, dec(mt).branch);
+        mt.hourNow = 18;
+        mt.isToday = false;
+        check("day line move: the today rule is only for today", dec(mt).branch != DayLine.MOVE);
+        DayLine.Facts mk = day();
+        mk.stepsBefore = new double[] {9000, 9500, 6100};
+        check("day line move: 61 % yesterday and 82 % on average is fine", dec(mk).branch != DayLine.MOVE, dec(mk).evidence);
+        mk.stepGoal = 12000;
+        check("day line move: the person's own goal counts (6100 of 12000)", dec(mk).branch == DayLine.MOVE, dec(mk).evidence);
+        DayLine.Facts mh = day();
+        mh.stepsBefore = new double[] {3000, 3000, 3000};
+        mh.hardYesterdayMin = 70;
+        check("day line move: after hard training yesterday it is rest, not move", dec(mh).branch == DayLine.REST, dec(mh).branch);
+        mh.readiness = 90;
+        check("day line move: never after hard training, even with readiness 90", dec(mh).branch != DayLine.MOVE, dec(mh).branch);
+        DayLine.Facts ml = day();
+        ml.stepsBefore = new double[] {3000, 3000, 3000};
+        ml.readiness = 45;
+        check("day line move: never with readiness under 50", dec(ml).branch == DayLine.LOW, dec(ml).branch);
+        ml.readiness = 50;
+        check("day line move: readiness 50 may move", dec(ml).branch == DayLine.MOVE, dec(ml).branch);
+        DayLine.Facts mp = day();
+        mp.stepsBefore = new double[] {3000, 3000, 3000};
+        mp.periodPhase = "period day 1";
+        branch("a period day with few steps is a period day", mp, DayLine.PERIOD, null);
+        check("day line move: the why list says the period day says rest", dec(mp).checks.get(9).line().endsWith("but a period day says rest"), dec(mp).checks.get(9).line());
+        DayLine.Facts mn = day();
+        mn.stepsBefore = new double[] {Double.NaN, Double.NaN, Double.NaN};
+        mn.steps = Double.NaN;
+        check("day line move: no step data, no move", dec(mn).branch == DayLine.ORDINARY && dec(mn).checks.get(9).line().equals("Time to move: no, no step data"),
+                dec(mn).checks.get(9).line());
+        mn.stepsBefore = new double[] {8000, Double.NaN, 9000};
+        check("day line move: a day not worn is not a day of few steps", dec(mn).branch == DayLine.ORDINARY, dec(mn).branch);
+        DayLine.Facts ms = day();
+        ms.stepsBefore = new double[] {3000, 3000, 3000};
+        ms.bedScreenMin = 40;
+        check("day line move: late phone use comes before it", dec(ms).branch == DayLine.SCREEN);
+        ms.bedScreenMin = 0;
+        ms.asleepMin = 300;
+        check("day line move: short on sleep comes before it", dec(ms).branch == DayLine.DEBT);
+
+        // 11. period day
         DayLine.Facts p = day();
         p.periodPhase = "period day 2";
         branch("a logged period day", p, DayLine.PERIOD, "Day 2 of your period, from your log.");

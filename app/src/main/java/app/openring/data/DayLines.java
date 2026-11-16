@@ -10,7 +10,7 @@ import app.openring.core.DayLine;
 /**
  * The ring's facts for Today's "Your day" line ({@code core/DayLine}) from the stored day summaries: the day, its night and the
  * 30 days before it (the screens' {@code DayData.history}). The usual resting heart rate and HRV are the median of the nights
- * before. The caller adds the sync age, the screen, the badge and the period phase. Tested in the pipeline test on the demo.
+ * before. The caller adds the sync age, the step goal and the clock, the screen, the badge and the period phase. Tested in the pipeline test on the demo.
  */
 public final class DayLines {
     private DayLines() {}
@@ -48,11 +48,14 @@ public final class DayLines {
         f.readinessBefore = new double[n];
         f.sleepBefore = new double[n];
         f.goalBefore = new boolean[n];
+        f.stepsBefore = new double[n];
         for (int k = 0; k < n; k++) {
             JSONObject o = history.get(date.minusDays(n - k).toString());
             f.readinessBefore[k] = value(o, "readiness");
             f.sleepBefore[k] = Json.d(o, "sleep_score");
             f.goalBefore[k] = reached(o);
+            // a day without the ring is not a day of few steps (issue #44's worn rule)
+            f.stepsBefore[k] = o != null && app.openring.core.analysis.Scores.worn(o.optDouble("covered_min", 0)) ? Json.d(o, "steps") : Double.NaN;
         }
         if (day != null && day.has("active_kcal") && day.has("target_kcal")) {
             f.goalToday = reached(day) ? Boolean.TRUE : isToday ? null : Boolean.FALSE;

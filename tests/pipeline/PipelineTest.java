@@ -3116,7 +3116,7 @@ public class PipelineTest {
                 || java.time.temporal.ChronoUnit.DAYS.between(first, today) > app.openring.core.DayLine.NO_REPEAT_DAYS, lines.size());
         check("day line demo: the newest day has its usual resting heart rate and HRV, scores and the days before", last != null && !Double.isNaN(last.rhrUsual)
                 && !Double.isNaN(last.hrvUsual) && !Double.isNaN(last.readiness) && !Double.isNaN(last.sleepScore) && last.readinessBefore.length == 29
-                && !Double.isNaN(last.readinessBefore[28]) && !Double.isNaN(last.needMin), last == null ? null : last.rhrUsual + " " + last.hrvUsual);
+                && !Double.isNaN(last.readinessBefore[28]) && !Double.isNaN(last.needMin) && !Double.isNaN(last.stepsBefore[28]), last == null ? null : last.rhrUsual + " " + last.hrvUsual);
         check("day line demo: the demo is never out of date (no sync age)", per[app.openring.core.DayLine.STALE] == 0, per[app.openring.core.DayLine.STALE]);
     }
 

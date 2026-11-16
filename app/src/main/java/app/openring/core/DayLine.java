@@ -23,16 +23,16 @@ public final class DayLine {
 
     /** The branches, in the order the tree checks them; the first that fits wins. */
     public static final int STALE = 0, STRAIN = 1, DEBT = 2, RECOVERED = 3, BADGE = 4, NIGHTS = 5, ACTIVE = 6, SCREEN = 7, REST = 8,
-            PERIOD = 9, LOW = 10, GOOD = 11, WEEKEND = 12, ORDINARY = 13;
-    public static final int BRANCHES = 14;
+            MOVE = 9, PERIOD = 10, LOW = 11, GOOD = 12, WEEKEND = 13, ORDINARY = 14;
+    public static final int BRANCHES = 15;
     /** The list for any day ({@link DayLineBank#ANY}), used once a branch's own lines were all shown lately. */
     public static final int ANY = -1;
     /** Keys for the line ids and the memory. */
-    static final String[] KEYS = {"stale", "strain", "debt", "recovered", "badge", "nights", "active", "screen", "rest", "period", "low", "good",
+    static final String[] KEYS = {"stale", "strain", "debt", "recovered", "badge", "nights", "active", "screen", "rest", "move", "period", "low", "good",
         "weekend", "ordinary"};
     /** The names the "Why this line" list shows. */
     public static final String[] NAMES = {"Data out of date", "Signs of strain", "Short on sleep", "Recovered after low days", "Badge earned",
-        "Good nights in a row", "Goal reached days in a row", "Late phone use", "Rest after hard training", "Period", "A lower day", "A strong day",
+        "Good nights in a row", "Goal reached days in a row", "Late phone use", "Rest after hard training", "Time to move", "Period", "A lower day", "A strong day",
         "Weekend", "An ordinary day"};
 
     // ------------------------------------------------------------------------------- the rules (numbers in one place)
@@ -55,6 +55,13 @@ public final class DayLine {
     public static final double BED_SCREEN_MIN = 30, NIGHT_SCREEN_MIN = 15;
     /** Hard training yesterday: this many minutes of medium and high activity (the watch: workouts). */
     public static final double HARD_MIN = 60;
+    /**
+     * Time to move: yesterday under this share of the step goal, the last {@link #MOVE_DAYS} days on average under
+     * {@link #MOVE_AVG}, or today from {@link #MOVE_HOUR} o'clock under {@link #MOVE_TODAY} of it; never with readiness
+     * under {@link #MOVE_READINESS}.
+     */
+    public static final double MOVE_YESTERDAY = 0.6, MOVE_AVG = 0.7, MOVE_TODAY = 0.5, MOVE_HOUR = 15, MOVE_READINESS = 50;
+    public static final int MOVE_DAYS = 3;
     /** A line is not shown again within this many days. */
     public static final int NO_REPEAT_DAYS = 30;
 
@@ -84,6 +91,11 @@ public final class DayLine {
         public double hardYesterdayMin = Double.NaN;
         /** Phone use in the hour before the night's sleep and during it (minutes). */
         public double bedScreenMin = Double.NaN, nightScreenMin = Double.NaN;
+        /** The step goal (the app's one, 10,000 unless changed) and the steps of the days before (NaN: not worn). */
+        public int stepGoal = 10000;
+        public double[] stepsBefore = new double[0];
+        /** The local clock time now as hours (15.5 is 15:30), only for today; NaN otherwise. */
+        public double hourNow = Double.NaN;
         /** Steps and screen minutes of the day, for the plain day's sentence. */
         public double steps = Double.NaN, screenMin = Double.NaN;
         /** The name of a badge earned on this day, else null. */
@@ -231,25 +243,66 @@ public final class DayLine {
                     + (Double.isNaN(f.readiness) ? "." : ", and readiness is " + Math.round(f.readiness) + " today.");
             return d;
         }
-        // 10. a logged period day (only when the tracker shows; kind lines only)
+        // 10. time to move: behind on steps and nothing says rest (not after hard training, not a low readiness, not a period day)
         int pd = periodDay(f.periodPhase);
+        double y = f.stepsBefore.length == 0 ? Double.NaN : f.stepsBefore[f.stepsBefore.length - 1];
+        double avg = Double.NaN;
+        if (f.stepsBefore.length >= MOVE_DAYS) {
+            double sum = 0;
+            for (int i = f.stepsBefore.length - MOVE_DAYS; i < f.stepsBefore.length; i++) sum += f.stepsBefore[i];
+            avg = sum / MOVE_DAYS; // NaN when one of them was not worn
+        }
+        double g = f.stepGoal;
+        boolean yLow = g > 0 && y < MOVE_YESTERDAY * g, avgLow = g > 0 && avg < MOVE_AVG * g;
+        boolean todayLow = g > 0 && f.isToday && f.hourNow >= MOVE_HOUR && f.steps < MOVE_TODAY * g;
+        String restWhy = f.hardYesterdayMin >= HARD_MIN ? "hard training yesterday" : f.readiness < MOVE_READINESS ? "readiness under " + (int) MOVE_READINESS
+                : pd > 0 ? "a period day" : null;
+        boolean move = (yLow || avgLow || todayLow) && restWhy == null;
+        String moveFacts;
+        if (g <= 0 || Double.isNaN(y) && Double.isNaN(avg) && Double.isNaN(f.steps)) moveFacts = "no step data";
+        else {
+            List<String> p = new ArrayList<String>();
+            if (!Double.isNaN(y)) p.add("yesterday " + Math.round(y));
+            if (!Double.isNaN(avg)) p.add("last " + MOVE_DAYS + " days " + Math.round(avg) + " on average");
+            if (f.isToday && !Double.isNaN(f.steps)) p.add("today " + Math.round(f.steps) + " so far");
+            p.add("goal " + Math.round(g));
+            moveFacts = join(p) + (restWhy != null && (yLow || avgLow || todayLow) ? ", but " + restWhy + " says rest" : "");
+        }
+        if (add(d, MOVE, move, moveFacts)) {
+            List<String> s = new ArrayList<String>();
+            long goal = Math.round(g);
+            if (todayLow) s.add(Math.round(f.steps) + " steps so far today, " + pct(f.steps, g) + " of your " + goal + ".");
+            if (yLow) s.add(Math.round(y) + " steps yesterday, " + pct(y, g) + " of your " + goal + ".");
+            if (avgLow && s.size() < 2) {
+                int low3 = 0;
+                for (int k = f.stepsBefore.length - MOVE_DAYS; k < f.stepsBefore.length; k++) if (f.stepsBefore[k] < g) low3++;
+                if (s.isEmpty()) s.add("The last " + MOVE_DAYS + " days averaged " + Math.round(avg) + " steps, " + pct(avg, g) + " of your " + goal + ".");
+                else if (low3 == MOVE_DAYS) s.add("Three days under your goal.");
+                else s.add("The last " + MOVE_DAYS + " days averaged " + Math.round(avg) + " steps, " + pct(avg, g) + " of it.");
+            }
+            StringBuilder sb = new StringBuilder();
+            for (String x : s) sb.append(sb.length() == 0 ? "" : " ").append(x);
+            d.evidence = sb.toString();
+            return d;
+        }
+        // 11. a logged period day (only when the tracker shows; kind lines only)
         if (add(d, PERIOD, pd > 0, f.periodPhase == null ? "not shown" : pd > 0 ? "day " + pd : "not a period day")) {
             d.evidence = "Day " + pd + " of your period, from your log.";
             return d;
         }
-        // 11. a lower day: readiness under Good (without readiness, the sleep score)
+        // 12. a lower day: readiness under Good (without readiness, the sleep score)
         double score = !Double.isNaN(f.readiness) ? f.readiness : f.sleepScore;
         String what = !Double.isNaN(f.readiness) ? "Readiness" : "Sleep score";
         if (add(d, LOW, score < Scores.GOOD, Double.isNaN(score) ? "no data" : what.toLowerCase(Locale.ROOT) + " " + Math.round(score))) {
             d.evidence = what + " is " + Math.round(score) + " today, under " + Scores.GOOD + ".";
             return d;
         }
-        // 12. a strong day
+        // 13. a strong day
         if (add(d, GOOD, score >= Scores.OPTIMAL, Double.isNaN(score) ? "no data" : what.toLowerCase(Locale.ROOT) + " " + Math.round(score))) {
             d.evidence = plain(f, loc);
             return d;
         }
-        // 13. and 14. a plain day, the weekend or a weekday
+        // 14. and 15. a plain day, the weekend or a weekday
         DayOfWeek w = f.date.getDayOfWeek();
         boolean weekend = w == DayOfWeek.SATURDAY || w == DayOfWeek.SUNDAY;
         add(d, WEEKEND, weekend, w.getDisplayName(java.time.format.TextStyle.FULL, Locale.ENGLISH));
@@ -308,6 +361,11 @@ public final class DayLine {
     static String ago(double h) {
         if (h < 48) return Texts.count(Math.max(1, Math.round(h)), "hour", "hours") + " ago";
         return Texts.count(Math.round(h / 24), "day", "days") + " ago";
+    }
+
+    /** "42 %". */
+    private static String pct(double v, double of) {
+        return Math.round(100 * v / of) + " %";
     }
 
     private static double nz(double v) {
@@ -377,6 +435,10 @@ public final class DayLine {
         boolean[] g = new boolean[n];
         for (int k = 0; k < n; k++) g[k] = h.steps[i - n + k] >= h.goal;
         f.goalBefore = g;
+        f.stepGoal = h.goal;
+        f.stepsBefore = java.util.Arrays.copyOfRange(h.steps, i - n, i);
+        // a day the watch was not worn (or the phone did not count) is not a day of few steps
+        for (int k = 0; k < n; k++) if (!(h.wornMin[i - n + k] > 0)) f.stepsBefore[k] = Double.NaN;
         f.goalToday = Double.isNaN(h.steps[i]) ? null : h.steps[i] >= h.goal ? Boolean.TRUE : isToday ? null : Boolean.FALSE;
         if (i > 0) f.hardYesterdayMin = h.workoutMin[i - 1];
         if (h.device != PHONE) {

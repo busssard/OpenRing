@@ -511,7 +511,8 @@ not know the `-nokey` name and leave those files alone.
 3 bpm above or HRV 15 % under the median of the nights before; after ovulation both must be off), short on sleep (90
 minutes under the need or 4 hours of debt), recovered (readiness Good after 2 days under it), a badge of the day, 4 good
 nights or 3 goal days in a row, late phone use (30 minutes before sleep or 15 in the night), rest after 60 hard minutes
-yesterday, a logged period day (only with the tracker), a lower or strong day, the weekend, an ordinary day. The facts
+yesterday, time to move (yesterday under 60 % of the step goal, the last 3 worn days under 70 % on average, or today
+after 15:00 under half; never after hard training, with readiness under 50 or on a period day), a logged period day (only with the tracker), a lower or strong day, the weekend, an ordinary day. The facts
 come from the stored day summaries (`data/DayLines`, ring) or `DeviceHistory` (watch, phone); nothing is stored but the
 display memory of the lines shown (`Prefs.dayLineSeen`, not in backups). The card shows the sentence with the facts, then
 one line of `core/DayLineBank`, picked by date and branch; the memory keeps a line from coming back within 30 days.
