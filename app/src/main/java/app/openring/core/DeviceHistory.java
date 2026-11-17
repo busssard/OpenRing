@@ -413,7 +413,8 @@ public final class DeviceHistory {
      * The watch's rows sorted by start, so each day takes only those near it ({@link #near}): every rule of a day
      * ({@link DeviceScores#day}: the day's records, worn within 30 minutes of one, sleep pieces that reach into it) looks no
      * further than {@link #NEAR_S}, so the day comes out the same as with all rows, without going through all of them for
-     * each of the some 90 days.
+     * each of the some 90 days. The sleep pieces too: with the whole history (Badges, the export) going through every piece
+     * for each day took most of the time (about 37,000 pieces for 3 years, three looks a day).
      */
     static final class Sorted {
         private final List<Records.Steps> steps;
@@ -421,6 +422,10 @@ public final class DeviceHistory {
         private final List<Records.Workout> workouts;
         private final List<Records.Sleep> sleep;
         private final long[] stepT, heartT, workT;
+        /** The sleep pieces' indexes in {@link #sleep} by start (ties in list order), their starts, and the longest piece (seconds, at least 0). */
+        private final int[] sleepByStart;
+        private final long[] sleepT;
+        private final long sleepLongest;
 
         Sorted(MainDevice.Watch w) {
             steps = new ArrayList<Records.Steps>(w.steps);
@@ -451,6 +456,27 @@ public final class DeviceHistory {
             for (int i = 0; i < heartT.length; i++) heartT[i] = heart.get(i).t;
             workT = new long[workouts.size()];
             for (int i = 0; i < workT.length; i++) workT[i] = workouts.get(i).start;
+            final List<Records.Sleep> pieces = sleep;
+            Integer[] order = new Integer[pieces.size()];
+            long longest = 0;
+            for (int i = 0; i < order.length; i++) {
+                order[i] = i;
+                longest = Math.max(longest, Math.max(0, pieces.get(i).dur));
+            }
+            // a stable sort: pieces with the same start keep their order
+            Arrays.sort(order, new java.util.Comparator<Integer>() {
+                @Override
+                public int compare(Integer a, Integer b) {
+                    return Long.compare(pieces.get(a).start, pieces.get(b).start);
+                }
+            });
+            sleepByStart = new int[order.length];
+            sleepT = new long[order.length];
+            for (int i = 0; i < order.length; i++) {
+                sleepByStart[i] = order[i];
+                sleepT[i] = pieces.get(order[i]).start;
+            }
+            sleepLongest = longest;
         }
 
         /** First index with a time at or after {@code t}. */
@@ -475,9 +501,39 @@ public final class DeviceHistory {
             for (int i = lower(stepT, a); i < stepT.length && stepT[i] < b; i++) out.steps.add(steps.get(i));
             for (int i = lower(heartT, a); i < heartT.length && heartT[i] < b; i++) out.heart.add(heart.get(i));
             for (int i = lower(workT, a); i < workT.length && workT[i] < b; i++) out.workouts.add(workouts.get(i));
-            for (Records.Sleep s : sleep) if (s.start < b && s.start + Math.max(0, s.dur) > a) out.sleep.add(s);
+            addSleep(out.sleep, a, b);
             return out;
         }
+
+        /**
+         * The sleep pieces that start before {@code b} and end after {@code a}, in their order in the list. A piece that ends after
+         * {@code a} starts after {@code a} minus the longest piece, so only the pieces starting from there to {@code b} are looked
+         * at (by start), with the same test as before; the ones found are put back in list order.
+         */
+        void addSleep(List<Records.Sleep> out, double a, double b) {
+            int[] found = new int[8];
+            int n = 0;
+            for (int i = lower(sleepT, a - sleepLongest); i < sleepT.length && sleepT[i] < b; i++) {
+                Records.Sleep s = sleep.get(sleepByStart[i]);
+                if (s.start < b && s.start + Math.max(0, s.dur) > a) {
+                    if (n == found.length) found = Arrays.copyOf(found, n * 2);
+                    found[n++] = sleepByStart[i];
+                }
+            }
+            Arrays.sort(found, 0, n);
+            for (int i = 0; i < n; i++) out.add(sleep.get(found[i]));
+        }
+    }
+
+    /**
+     * The sleep pieces each look {from, to, cut} takes from the watch's rows, as each day of {@link #of} does (tests: the same pieces
+     * in the same order as going through every piece).
+     */
+    public static List<List<Records.Sleep>> sleepNear(MainDevice.Watch w, double[][] looks) {
+        Sorted rows = new Sorted(w);
+        List<List<Records.Sleep>> out = new ArrayList<List<Records.Sleep>>();
+        for (double[] l : looks) out.add(rows.near(l[0], l[1], l[2]).sleep);
+        return out;
     }
 
     /**

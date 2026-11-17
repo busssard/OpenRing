@@ -54,6 +54,7 @@ public class WatchTest {
         lostPiece();
         stopAndDecodeOutsideTheRingLock();
         deviceHistory();
+        sleepNear();
         review389();
         routes251();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
@@ -2866,6 +2867,89 @@ public class WatchTest {
     static boolean same(double a, double b) {
         return Double.isNaN(a) ? Double.isNaN(b) : Math.abs(a - b) < 1e-9;
     }
+
+    /**
+     * The sleep pieces a day of {@code DeviceHistory.of} looks at come from an index by start (code health): the same pieces in the
+     * same list order as going through every piece, as the code did before, on a long made up history with odd pieces (overlapping,
+     * days long, no or a negative length, the same start, not in order); and the whole history of 400 days is as on dev.
+     */
+    static void sleepNear() throws Exception {
+        java.util.Random rnd = new java.util.Random(4711);
+        ZoneId z = DS_ZONE;
+        MainDevice.Watch w = new MainDevice.Watch();
+        for (int d = 730; d >= 0; d--) {
+            long t = at(DS_DAY.minusDays(d + 1), 22, rnd.nextInt(60), z) + 60L * rnd.nextInt(60);
+            int pieces = 5 + rnd.nextInt(30);
+            for (int i = 0; i < pieces; i++) {
+                int dur = 60 * (1 + rnd.nextInt(40));
+                w.sleep.add(new Records.Sleep(t, dur, rnd.nextInt(4)));
+                if (rnd.nextInt(20) == 0) w.sleep.add(new Records.Sleep(t, dur / 2, Records.AWAKE)); // the same start
+                if (rnd.nextInt(25) == 0) w.sleep.add(new Records.Sleep(t + 30, 0, Records.LIGHT)); // no length
+                if (rnd.nextInt(25) == 0) w.sleep.add(new Records.Sleep(t + 60, -600, Records.LIGHT)); // a negative length
+                if (rnd.nextInt(30) == 0) w.sleep.add(new Records.Sleep(t - 1800, 3 * 3600, Records.LIGHT)); // overlapping
+                t += dur;
+            }
+        }
+        w.sleep.add(new Records.Sleep(at(DS_DAY.minusDays(300), 12, 0, z), 3 * 86400, Records.AWAKE)); // three days long
+        java.util.Collections.shuffle(w.sleep, rnd); // not in order
+        // every look a day of the history takes (for the day, and up to its end), and looks that end or start right at a piece's edge
+        List<double[]> looks = new ArrayList<double[]>();
+        for (LocalDate d = DS_DAY.minusDays(735); !d.isAfter(DS_DAY.plusDays(2)); d = d.plusDays(1)) {
+            double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            looks.add(new double[] {from, to, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {from, to, to});
+        }
+        for (int i = 0; i < 2000; i++) {
+            Records.Sleep s = w.sleep.get(rnd.nextInt(w.sleep.size()));
+            double end = s.start + Math.max(0, s.dur);
+            // a = end exactly (the piece is out), b = start exactly (out), and half a second either side
+            looks.add(new double[] {end + 86400, end + 86400 + 3600, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {end + 86400 - 0.5, end + 90000, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {s.start - 90000, s.start - 86400, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {s.start - 90000, s.start - 86400 + 0.5, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {s.start - 200000, s.start + 100000, s.start + rnd.nextInt(3) - 1});
+        }
+        List<List<Records.Sleep>> got = app.openring.core.DeviceHistory.sleepNear(w, looks.toArray(new double[0][]));
+        int diff = 0, pieces = 0;
+        String firstDiff = null;
+        for (int i = 0; i < looks.size(); i++) {
+            double[] l = looks.get(i);
+            // the code before: every piece for each look (DeviceHistory.Sorted.near on dev)
+            double a = l[0] - 86400, b = Math.min(l[1] + 86400, l[2]);
+            List<Records.Sleep> old = new ArrayList<Records.Sleep>();
+            for (Records.Sleep s : w.sleep) if (s.start < b && s.start + Math.max(0, s.dur) > a) old.add(s);
+            pieces += old.size();
+            boolean same = old.size() == got.get(i).size();
+            for (int j = 0; same && j < old.size(); j++) same = old.get(j) == got.get(i).get(j);
+            if (!same) {
+                diff++;
+                if (firstDiff == null) firstDiff = java.util.Arrays.toString(l) + ": " + old.size() + " / " + got.get(i).size();
+            }
+        }
+        check("sleep near: every look takes the same pieces in the same order as going through every piece (" + looks.size() + " looks)", diff == 0, firstDiff);
+        check("sleep near: the looks found pieces (the test is not empty)", pieces > looks.size() * 10, pieces);
+        List<List<Records.Sleep>> none = app.openring.core.DeviceHistory.sleepNear(new MainDevice.Watch(), new double[][] {{0, 86400, Double.POSITIVE_INFINITY}});
+        check("sleep near: no pieces, no pieces", none.get(0).isEmpty());
+
+        // the whole history over 400 days as on dev (before the index): every day's scores, nights and sums
+        MainDevice.Watch hw = dsWatch(400 + app.openring.core.DeviceHistory.DEBT_BACK + 40, 150, true, true);
+        hw.sleep.addAll(w.sleep);
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(MainDevice.WATCH, DS_DAY.minusDays(399), DS_DAY, z, hw, null, 9000, 41);
+        StringBuilder all = new StringBuilder();
+        for (LocalDate d = DS_DAY.minusDays(399); !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            int k = h.index(d);
+            all.append(d).append(dsText(h.result(d))).append('|').append(h.steps[k]).append('|').append(h.kcal[k]).append('|').append(h.workouts[k])
+                    .append('|').append(h.workoutMin[k]).append('|').append(h.wornMin[k]).append('|').append(h.dayHr[k]).append('|').append(h.asleepMin[k])
+                    .append('|').append(h.rhr[k]).append('\n');
+        }
+        int k0 = h.index(DS_DAY);
+        check("sleep near: the 400 days have scores and nights (the fingerprint is not of empty days)", !Double.isNaN(h.sleep[k0]) && !Double.isNaN(h.readiness[k0])
+                && !Double.isNaN(h.asleepMin[k0]) && !Double.isNaN(h.activity[0]), h.sleep[k0] + " " + h.readiness[k0] + " " + h.asleepMin[k0]);
+        check("sleep near: 400 days of watch history are as on dev (fingerprint)", sha(all.toString()).equals(NEAR_FINGERPRINT), sha(all.toString()));
+    }
+
+    /** {@link #sleepNear}'s 400 days, worked out on dev before the index (7eb2352). */
+    static final String NEAR_FINGERPRINT = "add8032caabdd638835a606bfc421f0fbc5cfaa568740d62e2dbd29319204644";
 
     static void deviceHistory() throws Exception {
         final ZoneId z = DS_ZONE;
