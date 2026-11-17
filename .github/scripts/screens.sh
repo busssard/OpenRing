@@ -127,7 +127,9 @@ log "ending the app while the demo is prepared, opening it again from the launch
 adb shell pm clear $PKG >/dev/null
 for perm in BLUETOOTH_SCAN BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant $PKG android.permission.$perm 2>/dev/null; done
 launch --ez demo true
-sleep 1
+# ended half a second after the screen shows (launch waits for it): with a whole second the slow runner of PR #400 let
+# the preparation finish first, and the step found nothing cut off to finish
+sleep 0.5
 adb shell am force-stop $PKG
 sleep 1
 adb shell am start -W -n $MAIN -a android.intent.action.MAIN -c android.intent.category.LAUNCHER >/dev/null
@@ -242,9 +244,7 @@ done
 [ -n "$y" ] || echo "::warning::issue #252 step: the Resting heart rate chart was not found on Body, body-trends shows where the swipes ended"
 shot body-trends 1
 # the battery lines on Today folded open (owner's wish of 17 November): what the numbers mean and the way to each history
-launch --ei tab 0; sleep 3
-if touch_desc "Battery, Ring" 50; then shot today-battery-open 1
-else echo "::warning::battery step: the battery lines were not on screen to open them"; fi
+launch --ei tab 0 --ez battery_open true;   shot today-battery-open 2
 # Today's compact period card near the bottom (issue #252)
 launch --ei tab 0; sleep 3
 swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1

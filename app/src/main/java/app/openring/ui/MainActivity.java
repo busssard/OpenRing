@@ -296,6 +296,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         // screen test: "Why this line" opened on Today's Your day card (owner's wish of 16 November), demo mode only
         if (i.getBooleanExtra("day_line_why", false) && Prefs.of(this).demo()) Pages.dayWhyOpen[0] = true;
+        // the battery lines on Today folded open (owner's wish of 17 November), for the screen test
+        if (i.getBooleanExtra("battery_open", false) && Prefs.of(this).demo()) BatteryViews.open[0] = true;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)

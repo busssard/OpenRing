@@ -106,7 +106,8 @@ Your cycles and on the night temperature card on Body; closed is the default, is
 demo mode only: the Period card's calendar opens this many months after the shown day's month, with the expected cycles there;
 owner's feedback of 11 November on #252).
 
-One for Today: `day_line_why` (boolean, demo mode only: Why this line opened on the Your day card, each check of
+Two for Today: `battery_open` (boolean, demo mode only: the battery lines under the scores folded open, owner's wish of 17
+November) and `day_line_why` (boolean, demo mode only: Why this line opened on the Your day card, each check of
 `core/DayLine`'s tree; owner's wish of 16 November).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
