@@ -264,18 +264,20 @@ touch_desc() {  # $1 the start of a content description, $2 where to tap in perc
 # Body's one temperature chart carries the cycle (owner's feedback of 11 November): period days, the measured rise, the
 # expected period and ovulation range ahead, touched at 60 % of its width (a night after the demo's measured ovulation:
 # date, temperature, cycle day and phase). It sits above Your cycles, so it comes first.
-launch --ei tab 4; sleep 3
-scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 40 || echo "::warning::period step: the temperature chart with the cycle was not found on Body"
+launch --ei tab 4 --es card TEMPERATURE_DEVIATION_AND_YOUR_CYCLE; sleep 3
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 3 || echo "::warning::period step: the temperature chart with the cycle was not found on Body"
 if touch_desc "Night temperature since" 60; then shot body-period-temp 1
 else echo "::warning::period step: the temperature chart with the cycle was not on screen to touch it"; shot body-period-temp 1; fi
-scroll_to "YOUR CYCLES" 40 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
+launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
+scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1
 if touch_desc "Cycle lengths"; then shot body-cycles-touch 1
 else echo "::warning::issue #252 step skipped: the cycle length chart was not on screen to touch it"; fi
 # issue #383: "How close the estimates were" after Your cycles: each prediction method's error and range hits on the demo's
 # 3 made up years (the one in use marked), then the chart of each period's error with the method in use, touched at 70 %
 # of its width (a period: expected day, how many days later or earlier, inside or outside the range)
-scroll_to "HOW CLOSE THE ESTIMATES WERE" 50 || echo "::warning::issue #383 step: the card How close the estimates were was not found on Body"
+launch --ei tab 4 --es card HOW_CLOSE_THE_ESTIMATES_WERE; sleep 3
+scroll_to "HOW CLOSE THE ESTIMATES WERE" 3 || echo "::warning::issue #383 step: the card How close the estimates were was not found on Body"
 shot body-period-accuracy 1
 scroll_to "Each period, " 12 || echo "::warning::issue #383 step: the chart of each period's error was not found"
 if touch_desc "Days each period came" 70; then shot body-period-accuracy-touch 1
@@ -284,19 +286,19 @@ else echo "::warning::issue #383 step skipped: the chart of each period's error 
 # was found, the own time from ovulation to the period, a line under each cycle), the Period card's measured lines, and the
 # rise marked on the night temperature line (baseline, ringed high nights, the ovulation line), opened touched on its first
 # high night (extra period_rise, demo mode only)
-launch --ei tab 4; sleep 3
-scroll_to "Ovulation from your temperature" 40 || echo "::warning::issue #252 phase 2 step: Ovulation from your temperature was not found on Body"
+launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
+scroll_to "Ovulation from your temperature" 8 || echo "::warning::issue #252 phase 2 step: Ovulation from your temperature was not found on Body"
 shot body-cycles-ovulation 1
-launch --ei tab 4; sleep 3
+launch --ei tab 4 --es card PERIOD; sleep 3
 scroll_to "Likely fertile days were" 6 || echo "::warning::issue #252 phase 2 step: the measured lines were not found on the Period card"
 shot body-period-measured 1
-launch --ei tab 4 --ez period_rise true; sleep 3
-scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 40 || echo "::warning::issue #252 phase 2 step: the temperature chart with the cycle was not found on Body"
+launch --ei tab 4 --ez period_rise true --es card TEMPERATURE_DEVIATION_AND_YOUR_CYCLE; sleep 3
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 3 || echo "::warning::issue #252 phase 2 step: the temperature chart with the cycle was not found on Body"
 shot body-period-rise 1
 # How it works at the bottom of the Period card, opened (extra period_how, demo mode only): the shots above show it
 # closed, as everyone sees it first (owner's feedback of 3 November, issue #252)
-launch --ei tab 4 --ez period_how true; sleep 3
-scroll_to "How it works" 12 || echo "::warning::issue #252 step: How it works was not found on the Period card"
+launch --ei tab 4 --ez period_how true --es card PERIOD; sleep 3
+scroll_to "How it works" 8 || echo "::warning::issue #252 step: How it works was not found on the Period card"
 shot body-period-how 1
 # the same launch opens How it works in Your cycles and on the night temperature card too (issue #363). Every card on
 # Body ends with a "How it works" row, so the one of Your cycles is the last such row above its list's "Cycle length
@@ -310,7 +312,8 @@ how_above() {  # $1 the start of a text in an opened list: the top of the last "
     | sed 's/bounds="\[[0-9]*,\([0-9]*\)\].*/\1/' | awk -v t="$t" '$1 < t' | tail -1
 }
 cycles_how=0
-scroll_to "YOUR CYCLES" 40 || echo "::warning::issue #363 step: the Your cycles card was not found on Body"
+launch --ei tab 4 --ez period_how true --es card YOUR_CYCLES; sleep 3
+scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #363 step: the Your cycles card was not found on Body"
 for i in $(seq 1 12); do
   y=$(how_above "Cycle length chart")
   if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 3 )) ]; then cycles_how=1; break; fi
@@ -320,8 +323,8 @@ done
 shot body-cycles-how 1
 # the temperature chart with the cycle sits above Your cycles: a fresh launch, then slow swipes until its How it works
 # text (opened) is in the upper half
-launch --ei tab 4 --ez period_how true; sleep 3
-scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 40 || echo "::warning::issue #363 step: the temperature chart with the cycle was not found on Body"
+launch --ei tab 4 --ez period_how true --es card TEMPERATURE_DEVIATION_AND_YOUR_CYCLE; sleep 3
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 3 || echo "::warning::issue #363 step: the temperature chart with the cycle was not found on Body"
 for i in $(seq 1 6); do
   y=$(ui_dump | grep -o 'text="[^"]*In many people it rises[^"]*"[^>]*bounds="[^"]*"' | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p)
   if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 2 )) ]; then break; fi
