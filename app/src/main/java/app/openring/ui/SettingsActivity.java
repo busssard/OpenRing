@@ -71,11 +71,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
     /** Where the Ring card's counts go once read (issue #198); a newer page has a newer one. */
     private LinearLayout countsBox;
     /**
-     * The Ring and Watch blocks (owner's wish of 3 November): closed every time Settings opens, unless it is opened at one
-     * of their cards; open or closed stays while this screen is rebuilt or the phone turns, nothing is stored.
+     * The Ring, Watch and Phone blocks (owner's wish of 3 November) and every other section (17 November), all the same
+     * {@link Fold}: closed every time Settings opens, unless it is opened at one of their cards; open or closed stays while this
+     * screen is rebuilt or the phone turns (the titles of the open ones), nothing is stored.
      */
-    private Block ringBlock, watchBlock, phoneBlock;
-    private boolean ringOpen, watchOpen, phoneOpen;
+    private Fold ringBlock, watchBlock, phoneBlock, profFold, periodFold, screenFold, backupsFold;
+    private final java.util.HashSet<String> openFolds = new java.util.HashSet<String>();
+    /** The sections of the page built now, for jumps that open the one holding a card. */
+    private final java.util.List<Fold> folds = new java.util.ArrayList<Fold>();
     /** The Phone block's section (issue #329): steps from this phone, the last reading, the main device when it lives here. */
     private LinearLayout phoneCard;
     /**
@@ -106,14 +109,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
         s.addView(root);
         setContentView(s);
         String section = getIntent().getStringExtra("section");
-        ringOpen = app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.RING, section);
-        watchOpen = app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.WATCH, section);
-        phoneOpen = app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.PHONE, section);
+        if (app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.RING, section)) openFolds.add(app.openring.core.SettingsBlocks.RING_TITLE);
+        if (app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.WATCH, section)) openFolds.add(app.openring.core.SettingsBlocks.WATCH_TITLE);
+        if (app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.PHONE, section)) openFolds.add(app.openring.core.SettingsBlocks.PHONE_TITLE);
         sectionDone = !app.openring.core.SettingsBlocks.jumpOnBuild(section, b != null, false);
         if (b != null) { // the phone was turned: typed numbers and choices come back (issue #133)
-            ringOpen = b.getBoolean("ring_open", ringOpen);
-            watchOpen = b.getBoolean("watch_open", watchOpen);
-            phoneOpen = b.getBoolean("phone_open", phoneOpen);
+            java.util.ArrayList<String> was = b.getStringArrayList("open_folds");
+            if (was != null) {
+                openFolds.clear();
+                openFolds.addAll(was);
+            }
             drafts = Drafts.fromArray(b.getStringArray("drafts"));
             sexChoice = b.getInt("sex", -1);
             detailChoice = b.getInt("detail", -1);
@@ -143,9 +148,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         out.putStringArray("drafts", drafts.toArray());
         out.putInt("sex", sexChoice);
         out.putInt("detail", detailChoice);
-        out.putBoolean("ring_open", ringOpen);
-        out.putBoolean("watch_open", watchOpen);
-        out.putBoolean("phone_open", phoneOpen);
+        out.putStringArrayList("open_folds", new java.util.ArrayList<String>(openFolds));
         out.putLong("left_from", leftFrom);
         out.putLong("left_to", leftTo);
         // a switch or read still running would leave the saved states wrong: the new page shows "?" then
@@ -215,7 +218,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     @Override
     public void onRingStatus() {
         if (status != null) status.setText(RingManager.get(this).status());
-        if (ringBlock != null) ringBlock.status.setText(ringStatus(Prefs.of(this))); // a sync that ended changes its last sync
+        if (ringBlock != null) ringBlock.setStatus(ringStatus(Prefs.of(this))); // a sync that ended changes its last sync
     }
 
     /**
@@ -240,6 +243,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     private void buildPage() {
         final Prefs p = Prefs.of(this);
+        folds.clear();
         previewGen++; // a sync, Delete or going back may have changed the nights: the stage preview is read again
         LinearLayout top = Ui.hbox(this);
         top.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -286,7 +290,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 }
             });
             root.addView(demo);
-            root.addView(updatesCard());
+            root.addView(updatesCard().view);
             // the ring's block: the demo has no ring to sync or switch, only the stage detail (its preview is the demo's night)
             ringBlock = block(app.openring.core.SettingsBlocks.RING);
             LinearLayout demoRing = Ui.vbox(this);
@@ -294,39 +298,30 @@ public final class SettingsActivity extends Activity implements RingManager.List
             ringBlock.add(demoRing);
             stagesCard = stageDetailCard(p);
             ringBlock.add(stagesCard);
-            root.addView(ringBlock.card);
+            root.addView(ringBlock.view);
             watchBlock = block(app.openring.core.SettingsBlocks.WATCH);
             watchCard = watchCard();
             watchBlock.add(watchCard);
-            root.addView(watchBlock.card);
+            root.addView(watchBlock.view);
             phoneBlock = block(app.openring.core.SettingsBlocks.PHONE);
             phoneBlock.add(phoneCard());
-            root.addView(phoneBlock.card);
-            periodCard = Ui.card(this);
-            fillPeriodCard();
-            root.addView(periodCard);
-            screenCard = Ui.card(this);
-            fillScreenCard(p);
-            root.addView(screenCard);
-            gamesCard = app.openring.ui.games.GamesActivity.settingsCard(this);
-            root.addView(gamesCard);
-            backupsCard = Ui.card(this);
-            fillBackupsCard(p);
-            root.addView(backupsCard);
-            advancedCard = Ui.card(this);
-            fillAdvancedCard();
-            root.addView(advancedCard);
-            LinearLayout about = Ui.card(this);
-            about.addView(Ui.caption(this, "About"));
-            about.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
-            root.addView(about);
+            root.addView(phoneBlock.view);
+            addPeriodFold();
+            addScreenFold(p);
+            addGamesFold(p);
+            addBackupsFold(p);
+            addAdvancedFold();
+            Fold about = fold(app.openring.core.SettingsBlocks.ABOUT, app.openring.core.SettingsBlocks.aboutStatus(version()));
+            about.body.addView(Ui.body(this, "Open Ring " + version() + ". Local first companion for the Oura Ring. Not affiliated with Oura Health. Not a medical device."));
+            root.addView(about.view);
             scrollToSection();
             return;
         }
 
         // ---- updates ----
-        LinearLayout updates = updatesCard();
-        root.addView(updates);
+        Fold upd = updatesCard();
+        LinearLayout updates = upd.body;
+        root.addView(upd.view);
 
         // ---- the Ring block (owner's wish of 3 November): the ring, its stage detail, measurements, key and ring actions ----
         ringBlock = block(app.openring.core.SettingsBlocks.RING);
@@ -428,22 +423,22 @@ public final class SettingsActivity extends Activity implements RingManager.List
             });
             ringBlock.add(ringDanger);
         }
-        root.addView(ringBlock.card);
+        root.addView(ringBlock.view);
 
         // ---- the Watch block (issue #251) ----
         watchBlock = block(app.openring.core.SettingsBlocks.WATCH);
         watchCard = watchCard();
         watchBlock.add(watchCard);
-        root.addView(watchBlock.card);
+        root.addView(watchBlock.view);
 
         // ---- the Phone block (issue #329): steps from this phone ----
         phoneBlock = block(app.openring.core.SettingsBlocks.PHONE);
         phoneBlock.add(phoneCard());
-        root.addView(phoneBlock.card);
+        root.addView(phoneBlock.view);
 
         // ---- profile ----
-        LinearLayout prof = profCard = Ui.card(this);
-        prof.addView(Ui.caption(this, "Profile and goals"));
+        profFold = fold(app.openring.core.SettingsBlocks.PROFILE, profileStatus(p));
+        LinearLayout prof = profCard = profFold.body;
         prof.addView(Ui.text(this, "Used for calories, goals and the sleep you need at your age.", 12, Ui.TEXT_3, Ui.REGULAR));
         LinearLayout body = Ui.hbox(this);
         body.setGravity(android.view.Gravity.BOTTOM); // inputs stay level when a label wraps
@@ -471,6 +466,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 weight.setText(String.valueOf(p.weightKg()));
                 height.setText(String.valueOf(p.heightCm()));
                 target.setText(String.valueOf(p.targetKcal()));
+                if (profFold != null) profFold.setStatus(profileStatus(p));
                 // the tracker follows the saved profile until its switch is touched (issue #252)
                 periodSwitch(p);
                 fillPeriodCard();
@@ -519,25 +515,20 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams obl = Ui.matchWrap();
         obl.setMargins(0, Ui.dp(this, 8), 0, 0);
         prof.addView(openBadges, obl);
-        root.addView(prof);
+        root.addView(profFold.view);
 
         // ---- period tracker: the reminder and "My periods have stopped" (issue #252, phase 1a2) ----
-        periodCard = Ui.card(this);
-        fillPeriodCard();
-        root.addView(periodCard);
+        addPeriodFold();
 
         // ---- screen time ----
-        screenCard = Ui.card(this);
-        fillScreenCard(p);
-        root.addView(screenCard);
+        addScreenFold(p);
 
         // ---- ring games (issue #15) ----
-        gamesCard = app.openring.ui.games.GamesActivity.settingsCard(this);
-        root.addView(gamesCard);
+        addGamesFold(p);
 
         // ---- a backup file of the app (the key, settings, with history if wanted); its key half is in the Ring block ----
-        LinearLayout file = Ui.card(this);
-        file.addView(Ui.caption(this, "Backup file"));
+        Fold fileFold = fold(app.openring.core.SettingsBlocks.FILE, app.openring.core.SettingsBlocks.FILE_STATUS);
+        LinearLayout file = fileFold.body;
         file.addView(Ui.body(this, "A backup file restores the app on a new phone from the setup screen (Restore from a backup)."));
         file.addView(Ui.gap(this, 10));
         file.addView(Ui.text(this, "Save a backup file", 12, Ui.TEXT_3, Ui.REGULAR));
@@ -568,16 +559,14 @@ public final class SettingsActivity extends Activity implements RingManager.List
         } else {
             file.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself. The full backup also holds your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
         }
-        root.addView(file);
+        root.addView(fileFold.view);
 
         // ---- automatic backups (issue #242) ----
-        backupsCard = Ui.card(this);
-        fillBackupsCard(p);
-        root.addView(backupsCard);
+        addBackupsFold(p);
 
         // ---- data ----
-        LinearLayout data = Ui.card(this);
-        data.addView(Ui.caption(this, "Export"));
+        Fold dataFold = fold(app.openring.core.SettingsBlocks.EXPORT, app.openring.core.SettingsBlocks.EXPORT_STATUS);
+        LinearLayout data = dataFold.body;
         data.addView(Ui.body(this, "For spreadsheets or your own analysis. These files hold no key. The full database also holds your period log."));
         exportRow = pair(data, "Daily summaries (CSV)", Ui.TEXT_2, new Runnable() {
             @Override
@@ -593,11 +582,11 @@ public final class SettingsActivity extends Activity implements RingManager.List
         exportNote = Ui.text(this, "", 13, Ui.OXY, Ui.MEDIUM);
         exportNote.setPadding(0, Ui.dp(this, 6), 0, 0);
         data.addView(exportNote);
-        root.addView(data);
+        root.addView(dataFold.view);
 
         // ---- help ----
-        LinearLayout help = Ui.card(this);
-        help.addView(Ui.caption(this, "Help and diagnostics"));
+        Fold helpFold = fold(app.openring.core.SettingsBlocks.HELP, app.openring.core.SettingsBlocks.HELP_STATUS);
+        LinearLayout help = helpFold.body;
         help.addView(Ui.body(this, "Data check follows your data from the ring to the screens and shows where it stops. Safe to share. "
                 + "Re analyse works out all nights and days again from the stored ring data. With a long history this can take a few minutes."));
         LinearLayout helpRow = pair(help, "Data check and log", Ui.READY, new Runnable() {
@@ -615,17 +604,15 @@ public final class SettingsActivity extends Activity implements RingManager.List
         reanalyseNote = Ui.text(this, Texts.REANALYSING, 13, Ui.OXY, Ui.MEDIUM);
         reanalyseNote.setPadding(0, Ui.dp(this, 6), 0, 0);
         help.addView(reanalyseNote);
-        root.addView(help);
+        root.addView(helpFold.view);
         showJobState();
 
         // ---- advanced: a time someone else wore the ring (issue #254) ----
-        advancedCard = Ui.card(this);
-        fillAdvancedCard();
-        root.addView(advancedCard);
+        addAdvancedFold();
 
         // ---- danger: what concerns this phone's data (the ring's own actions are in the Ring block) ----
-        LinearLayout danger = Ui.card(this);
-        danger.addView(Ui.caption(this, "Careful"));
+        Fold dangerFold = fold(app.openring.core.SettingsBlocks.CAREFUL, app.openring.core.SettingsBlocks.CAREFUL_STATUS);
+        LinearLayout danger = dangerFold.body;
         danger.addView(Ui.text(this, "This asks before it does anything.", 12, Ui.TEXT_3, Ui.REGULAR));
         small(danger, "Delete all local data", Ui.WARN, new Runnable() {
             @Override
@@ -638,18 +625,18 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 });
             }
         });
-        root.addView(danger);
+        root.addView(dangerFold.view);
 
-        LinearLayout about = Ui.card(this);
-        about.addView(Ui.caption(this, "About"));
+        Fold aboutFold = fold(app.openring.core.SettingsBlocks.ABOUT, app.openring.core.SettingsBlocks.aboutStatus(version()));
+        LinearLayout about = aboutFold.body;
         about.addView(Ui.body(this, "Open Ring " + version() + ". A local first companion for Oura Ring 3, 4 and 5. Protocol and algorithms ported from open_oura and open_health "
                 + "(MIT, Thomas Marchand), with notes from ringverse, OpenStrap, BrightOura and the Gadgetbridge Ring 4 work. The Screen tab follows the idea of ScreenTime by Markus Fisch. Not affiliated with Oura Health. "
                 + "Not a medical device."));
-        root.addView(about);
+        root.addView(aboutFold.view);
         // a chip to a part of the Ring or Watch block opens that block first
         String[] sections = {"Updates", "Ring", "Sleep stages", "Measurements", "Ring key", "Watch", "Phone", "Profile", "Period", "Screen time", "Games", "Backup file", "Backups",
             "Export", "Help", "Advanced", "Careful", "About"};
-        View[] targets = {updates, ringBlock.card, stagesCard, feat, key, watchBlock.card, phoneBlock.card, prof, periodCard, screenCard, gamesCard, file, backupsCard, data, help, advancedCard,
+        View[] targets = {updates, ringBlock.view, stagesCard, feat, key, watchBlock.view, phoneBlock.view, prof, periodCard, screenCard, gamesCard, file, backupsCard, data, help, advancedCard,
             danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
@@ -797,10 +784,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // only shown when the tracker is (owner's report, 13 November: a man saw all its settings); the switch "Show the
         // period tracker" in the profile card brings it back, and nothing logged is deleted while it is hidden
         boolean shown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
-        card.setVisibility(shown ? View.VISIBLE : View.GONE);
+        // the whole section hides; the body's own visibility is the fold's (open or closed)
+        (periodFold != null && periodFold.body == card ? periodFold.view : card).setVisibility(shown ? View.VISIBLE : View.GONE);
         if (!shown) return;
-        card.addView(Ui.caption(this, "Period tracker"));
-        card.addView(Ui.gap(this, 4));
+        if (periodFold != null) periodFold.setStatus(app.openring.core.SettingsBlocks.periodStatus(p.periodRemindDays()));
         prediction(card, p);
         card.addView(Ui.gap(this, 14));
         card.addView(Ui.text(this, "Remind me before my period", 14, Ui.TEXT, Ui.REGULAR));
@@ -1082,7 +1069,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (card == null) return;
         final Prefs p = Prefs.of(this);
         card.removeAllViews();
-        if (watchBlock != null) watchBlock.status.setText(watchStatus(p)); // the header follows a sync, a forget or a new watch
+        if (watchBlock != null) watchBlock.setStatus(watchStatus(p)); // the header follows a sync, a forget or a new watch
         // the watch setup (issue #251): find, pair, sign in, send the setup; the alarm and the hands
         action(card, p.watchSetupAt() > 0 || p.demo() ? "Watch setup, alarm and hands" : "Set up the watch", Ui.OXY, new Runnable() {
             @Override
@@ -1303,7 +1290,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         final Prefs p = Prefs.of(this);
         card.removeAllViews();
         boolean demo = p.demo(), sensor = app.openring.sync.PhoneReader.hasSensor(this), allowed = app.openring.sync.PhoneReader.allowed(this);
-        if (phoneBlock != null) phoneBlock.status.setText(phoneStatus(p, Double.NaN));
+        if (phoneBlock != null) phoneBlock.setStatus(phoneStatus(p, Double.NaN));
         String state = demo ? "On, made up demo steps" : !sensor ? "No, this phone has no step counter" : !allowed ? "Off, Physical activity was not allowed" : "On";
         card.addView(line(app.openring.core.PhoneSteps.TITLE, state));
         if (!demo && sensor && !allowed) {
@@ -1336,7 +1323,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         if (isFinishing() || isDestroyed()) return;
                         last.removeAllViews();
                         last.addView(line("Last reading", got <= 0 ? "none yet" : ago((long) got)));
-                        if (phoneBlock != null) phoneBlock.status.setText(phoneStatus(Prefs.of(SettingsActivity.this), got));
+                        if (phoneBlock != null) phoneBlock.setStatus(phoneStatus(Prefs.of(SettingsActivity.this), got));
                     }
                 });
             }
@@ -1390,7 +1377,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (card == null) return;
         keepTyped(); // a goal being typed stays when the card is filled again (issue #133)
         card.removeAllViews();
-        card.addView(Ui.caption(this, "Screen time"));
+        if (screenFold != null) screenFold.setStatus(screenStatus(p));
         card.addView(Ui.body(this, "When you used this phone (from unlocking until the screen goes off). It has its own tab (Screen) and helps the sleep analysis. "
                 + "Android only shares this after you switch on Open Ring under usage access in Android's settings. "
                 + "It stays on this phone like everything else."));
@@ -1418,6 +1405,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             public void run() {
                 p.setScreenGoalMin(SetupActivity.num(goal, InputLimit.SCREEN_GOAL_MIN));
                 goal.setText(String.valueOf(p.screenGoalMin())); // what was really saved
+                if (screenFold != null) screenFold.setStatus(screenStatus(p));
                 say("Goal saved");
             }
         });
@@ -1578,13 +1566,64 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return col;
     }
 
-    /** Small card at the top: installed version and a button that opens the releases page (issues #7, #14). */
-    LinearLayout updatesCard() {
-        LinearLayout card = Ui.card(this);
-        card.addView(Ui.caption(this, "Updates"));
-        card.addView(Ui.gap(this, 4));
-        addUpdateRow(card);
-        return card;
+    /** Small section at the top: installed version and a button that opens the releases page (issues #7, #14). */
+    Fold updatesCard() {
+        Fold f = fold(app.openring.core.SettingsBlocks.UPDATES, app.openring.core.SettingsBlocks.updatesStatus(version()));
+        addUpdateRow(f.body);
+        return f;
+    }
+
+    /** The Period tracker section; hidden with the tracker (fillPeriodCard). */
+    void addPeriodFold() {
+        periodFold = fold(app.openring.core.SettingsBlocks.PERIOD, app.openring.core.SettingsBlocks.periodStatus(Prefs.of(this).periodRemindDays()));
+        periodCard = periodFold.body;
+        fillPeriodCard();
+        root.addView(periodFold.view);
+    }
+
+    /** The Screen time section. */
+    void addScreenFold(Prefs p) {
+        screenFold = fold(app.openring.core.SettingsBlocks.SCREEN, screenStatus(p));
+        screenCard = screenFold.body;
+        fillScreenCard(p);
+        root.addView(screenFold.view);
+    }
+
+    /** The Ring games section (issue #15). */
+    void addGamesFold(Prefs p) {
+        Fold f = fold(app.openring.core.SettingsBlocks.GAMES, app.openring.core.KeyState.addRingInstead(p.demo(), p.ringState())
+                ? app.openring.core.SettingsBlocks.GAMES_NO_RING : app.openring.core.SettingsBlocks.GAMES_STATUS);
+        gamesCard = f.body;
+        app.openring.ui.games.GamesActivity.fill(this, gamesCard);
+        root.addView(f.view);
+    }
+
+    /** The Automatic backups section (issue #242). */
+    void addBackupsFold(Prefs p) {
+        backupsFold = fold(app.openring.core.SettingsBlocks.BACKUPS, backupsStatus(p));
+        backupsCard = backupsFold.body;
+        fillBackupsCard(p);
+        root.addView(backupsFold.view);
+    }
+
+    /** The Advanced section: a time someone else wore the ring (issue #254). */
+    void addAdvancedFold() {
+        Fold f = fold(app.openring.core.SettingsBlocks.ADVANCED, app.openring.core.SettingsBlocks.ADVANCED_STATUS);
+        advancedCard = f.body;
+        fillAdvancedCard();
+        root.addView(f.view);
+    }
+
+    String profileStatus(Prefs p) {
+        return app.openring.core.SettingsBlocks.profileStatus(p.age(), p.sex(), p.weightKg(), p.heightCm());
+    }
+
+    String screenStatus(Prefs p) {
+        return app.openring.core.SettingsBlocks.screenStatus(p.demo(), ScreenUse.supported(), ScreenUse.allowed(this), p.screenGoalMin());
+    }
+
+    String backupsStatus(Prefs p) {
+        return app.openring.core.SettingsBlocks.backupsStatus(p.demo(), p.backupFolder() != null, p.backupDays(), p.backupFolderName());
     }
 
     /** One choice of a chip row. */
@@ -1637,7 +1676,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         };
         java.time.ZoneId z = java.time.ZoneId.systemDefault();
         long now = System.currentTimeMillis() / 1000;
-        card.addView(Ui.caption(this, Backups.TITLE));
+        if (backupsFold != null) backupsFold.setStatus(backupsStatus(p));
         if (demo) card.addView(Ui.text(this, Backups.DEMO, 12, Ui.OXY, Ui.REGULAR));
         String folder = demo ? "Backups" : p.backupFolderName();
         if (!demo && p.backupFolder() == null) {
@@ -1787,8 +1826,6 @@ public final class SettingsActivity extends Activity implements RingManager.List
             leftFrom = today.minusDays(1).atStartOfDay(z).toEpochSecond();
             leftTo = today.atStartOfDay(z).toEpochSecond();
         }
-        card.addView(Ui.caption(this, "Advanced"));
-        card.addView(Ui.gap(this, 4));
         card.addView(Ui.text(this, "Leave out a time when someone else wore the ring", 15, Ui.TEXT, Ui.MEDIUM));
         card.addView(Ui.gap(this, 4));
         card.addView(Ui.body(this, "Their nights and values are left out of your charts, scores and usual values. The ring's data stays stored, "
@@ -2104,7 +2141,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
      */
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
-        final View card = "blocks".equals(section) || "ring".equals(section) ? ringBlock.card : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
+        final View card = "blocks".equals(section) || "ring".equals(section) ? ringBlock.view : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
                 : "watch".equals(section) ? watchCard : "phone".equals(section) ? phoneCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
@@ -2117,81 +2154,32 @@ public final class SettingsActivity extends Activity implements RingManager.List
         jumpTo(card, false);
     }
 
-    // ------------------------------------------------------------------- the Ring and Watch blocks (owner's wish, 3 November)
+    // ------------------------------------------------------------------- the blocks and sections (owner's wishes, 3 and 17 November)
 
-    /** One device block: a card with a header (title, a one line status, a chevron) that opens and closes its sections. */
-    static final class Block {
-        final int which;
-        final LinearLayout card, head, body;
-        final TextView status;
-        final android.widget.ImageView chevron;
-        boolean open;
-
-        Block(int which, LinearLayout card, LinearLayout head, LinearLayout body, TextView status, android.widget.ImageView chevron) {
-            this.which = which;
-            this.card = card;
-            this.head = head;
-            this.body = body;
-            this.status = status;
-            this.chevron = chevron;
-        }
-
-        /** Adds a section below the ones there, with a line between them. */
-        void add(View section) {
-            if (body.getChildCount() > 0) body.addView(Ui.divider(card.getContext()));
-            body.addView(section, Ui.matchWrap());
-        }
-
-        /** Whether {@code v} is this block's card or inside it. */
-        boolean holds(View v) {
-            for (View c = v; c != null; c = c.getParent() instanceof View ? (View) c.getParent() : null) if (c == card) return true;
-            return false;
-        }
-    }
-
-    /** The Ring or Watch block, open or closed as this screen had it (closed when Settings opens). */
-    Block block(final int which) {
-        boolean ringOne = which == app.openring.core.SettingsBlocks.RING;
-        boolean phoneOne = which == app.openring.core.SettingsBlocks.PHONE;
-        Prefs p = Prefs.of(this);
-        LinearLayout card = Ui.card(this);
-        LinearLayout head = Ui.hbox(this);
-        head.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        LinearLayout words = Ui.vbox(this);
-        words.addView(Ui.text(this, ringOne ? app.openring.core.SettingsBlocks.RING_TITLE : phoneOne ? app.openring.core.SettingsBlocks.PHONE_TITLE
-                : app.openring.core.SettingsBlocks.WATCH_TITLE, 17, Ui.TEXT, Ui.MEDIUM));
-        TextView st = Ui.text(this, ringOne ? ringStatus(p) : phoneOne ? phoneStatus(p, Double.NaN) : watchStatus(p), 13, Ui.TEXT_2, Ui.REGULAR);
-        words.addView(st);
-        head.addView(words, Ui.weight(1));
-        android.widget.ImageView chev = new android.widget.ImageView(this);
-        chev.setImageResource(app.openring.R.drawable.ic_chevron_right);
-        chev.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
-        head.addView(chev, new LinearLayout.LayoutParams(Ui.dp(this, 28), Ui.dp(this, 28)));
-        card.addView(head, Ui.matchWrap());
-        LinearLayout body = Ui.vbox(this);
-        body.setPadding(0, Ui.dp(this, 14), 0, 0);
-        card.addView(body, Ui.matchWrap());
-        final Block b = new Block(which, card, head, body, st, chev);
-        show(b, ringOne ? ringOpen : phoneOne ? phoneOpen : watchOpen);
-        head.setOnClickListener(new View.OnClickListener() {
+    /**
+     * A section of the page as the shared {@link Fold} card: its title, a one line status and a chevron, closed until tapped,
+     * open or closed as this screen had it (closed when Settings opens).
+     */
+    Fold fold(final String title, String status) {
+        final boolean[] open = {openFolds.contains(title)};
+        Fold f = Fold.card(this, title, status, open);
+        f.onChange(new Runnable() {
             @Override
-            public void onClick(View v) {
-                show(b, !b.open);
+            public void run() {
+                if (open[0]) openFolds.add(title);
+                else openFolds.remove(title);
             }
         });
-        return b;
+        folds.add(f);
+        return f;
     }
 
-    /** Opens or closes a block; only this screen remembers it (closed again the next time Settings opens). */
-    void show(Block b, boolean open) {
-        b.open = open;
-        b.body.setVisibility(open ? View.VISIBLE : View.GONE);
-        b.chevron.setRotation(open ? 270 : 90); // down when closed, up when open
-        b.head.setContentDescription((b.which == app.openring.core.SettingsBlocks.RING ? "Ring" : b.which == app.openring.core.SettingsBlocks.PHONE ? "Phone" : "Watch")
-                + (open ? ", open, tap to close" : ", closed, tap to open"));
-        if (b.which == app.openring.core.SettingsBlocks.RING) ringOpen = open;
-        else if (b.which == app.openring.core.SettingsBlocks.PHONE) phoneOpen = open;
-        else watchOpen = open;
+    /** The Ring, Watch or Phone block (issue #330): a section whose parts come one under the other with a line between. */
+    Fold block(final int which) {
+        Prefs p = Prefs.of(this);
+        if (which == app.openring.core.SettingsBlocks.RING) return fold(app.openring.core.SettingsBlocks.RING_TITLE, ringStatus(p));
+        if (which == app.openring.core.SettingsBlocks.PHONE) return fold(app.openring.core.SettingsBlocks.PHONE_TITLE, phoneStatus(p, Double.NaN));
+        return fold(app.openring.core.SettingsBlocks.WATCH_TITLE, watchStatus(p));
     }
 
     String ringStatus(Prefs p) {
@@ -2210,7 +2198,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
      * opened block has its height (CLAUDE.md lesson: restore the scroll in post(), after layout).
      */
     void jumpTo(final View target, final boolean smooth) {
-        for (Block b : new Block[] {ringBlock, watchBlock, phoneBlock}) if (b != null && !b.open && b.holds(target) && target != b.card) show(b, true);
+        // the section holding the card opens first; a section's own details scroll to its header
+        View at = target;
+        for (Fold f : folds) {
+            if (!f.isOpen() && f.holds(target) && target != f.view) f.show(true);
+            if (f.body == target) at = f.view;
+        }
+        final View to = at;
         final android.view.ViewTreeObserver vto = scroll.getViewTreeObserver();
         vto.addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
             @Override
@@ -2219,7 +2213,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 scroll.post(new Runnable() {
                     @Override
                     public void run() {
-                        int y = topOnPage(target) - Ui.dp(SettingsActivity.this, 8);
+                        int y = topOnPage(to) - Ui.dp(SettingsActivity.this, 8);
                         if (smooth) scroll.smoothScrollTo(0, y);
                         else scroll.scrollTo(0, y);
                     }

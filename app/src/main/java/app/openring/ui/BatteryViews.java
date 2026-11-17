@@ -14,27 +14,55 @@ import app.openring.core.DeviceBattery;
 
 /**
  * The battery of each added device on Today, right under the scores (owner's wish of 15 November): a small battery drawn in
- * code, the device's name, the last level with how old it is, and "charging", "charge soon" or the days left. A tap opens where
- * the battery's history is: the ring's block in Settings, the Watch page. The numbers come from {@code core/DeviceBattery}.
+ * code, the device's name, the last level with how old it is, and "charging", "charge soon" or the days left, one line each. A tap
+ * folds open what the numbers mean and the way to each battery's history (the ring's block in Settings, the Watch page). The
+ * numbers come from {@code core/DeviceBattery}.
  */
 final class BatteryViews {
     private BatteryViews() {}
 
-    /** The rows with their one line explanation, or null without any device (only the phone). */
+    /** Whether the battery's details are open on Today; kept while the screen is rebuilt, closed when the app starts. */
+    static final boolean[] open = {false};
+
+    /**
+     * One compact line per device that folds open (owner's wish of 17 November: "everything visible in one line"), or null
+     * without any device (only the phone). Open: the explanation of the numbers and the way to each device's history.
+     */
     static View rows(final Context c, DayData d) {
         if (d.batteries.isEmpty()) return null;
-        LinearLayout box = Ui.vbox(c);
-        box.addView(Ui.divider(c));
-        for (DeviceBattery.Status s : d.batteries) box.addView(row(c, s));
-        TextView why = Ui.text(c, Explain.BATTERY_TODAY, 11, Ui.TEXT_3, Ui.REGULAR);
-        why.setPadding(0, Ui.dp(c, 4), 0, 0);
-        box.addView(why);
-        return box;
+        LinearLayout lines = Ui.vbox(c);
+        StringBuilder said = new StringBuilder("Battery");
+        for (DeviceBattery.Status s : d.batteries) {
+            lines.addView(row(c, s));
+            said.append(", ").append(s.name()).append(' ').append(s.value()).append(s.note() == null ? "" : ", " + s.note());
+        }
+        Fold f = Fold.inline(c, lines, said.toString(), open, true);
+        f.note(Explain.BATTERY_TODAY);
+        LinearLayout ways = Ui.hbox(c);
+        for (final DeviceBattery.Status s : d.batteries) {
+            TextView b = Ui.textButton(c, s.name() + " " + Explain.BATTERY_HISTORY, Ui.OXY);
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    history(c, s.device);
+                }
+            });
+            ways.addView(b);
+        }
+        f.body.addView(ways, Ui.matchWrap());
+        return f.view;
     }
 
+    /** Where a device's battery history is: the ring's block in Settings, the Watch page. */
+    static void history(Context c, int device) {
+        if (device == DeviceBattery.WATCH) c.startActivity(new Intent(c, WatchPageActivity.class));
+        else c.startActivity(new Intent(c, SettingsActivity.class).putExtra("section", "ring"));
+    }
+
+    /** One device's line: the battery drawn, the name, the level and its age, and the days left (or charging) at the end. */
     static View row(final Context c, final DeviceBattery.Status s) {
         LinearLayout row = Ui.hbox(c);
-        row.setPadding(0, Ui.dp(c, 5), 0, Ui.dp(c, 5));
+        row.setPadding(0, Ui.dp(c, 3), 0, Ui.dp(c, 3));
         int color = s.warn() ? Ui.WARN : s.newest == null || s.old ? Ui.TEXT_3 : Ui.READY;
         LinearLayout.LayoutParams il = new LinearLayout.LayoutParams(Ui.dp(c, 24), Ui.dp(c, 13));
         il.setMargins(0, 0, Ui.dp(c, 10), 0);
@@ -42,20 +70,13 @@ final class BatteryViews {
         TextView name = Ui.text(c, s.name(), 14, Ui.TEXT, Ui.MEDIUM);
         name.setPadding(0, 0, Ui.dp(c, 8), 0);
         row.addView(name);
-        row.addView(Ui.text(c, s.value(), 14, s.warn() ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR));
+        row.addView(Fold.oneLine(Ui.text(c, s.value(), 14, s.warn() ? Ui.WARN : Ui.TEXT_2, Ui.REGULAR)));
         String note = s.note();
-        TextView n = Ui.text(c, note == null ? "" : note, 12, s.warn() ? Ui.WARN : s.charging || s.rising ? Ui.GOOD : Ui.TEXT_3, Ui.REGULAR);
+        TextView n = Fold.oneLine(Ui.text(c, note == null ? "" : note, 12, s.warn() ? Ui.WARN : s.charging || s.rising ? Ui.GOOD : Ui.TEXT_3, Ui.REGULAR));
         n.setGravity(Gravity.END);
         LinearLayout.LayoutParams nl = Ui.weight(1);
         nl.setMargins(Ui.dp(c, 8), 0, 0, 0);
         row.addView(n, nl);
-        row.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (s.device == DeviceBattery.WATCH) c.startActivity(new Intent(c, WatchPageActivity.class));
-                else c.startActivity(new Intent(c, SettingsActivity.class).putExtra("section", "ring"));
-            }
-        });
         return row;
     }
 

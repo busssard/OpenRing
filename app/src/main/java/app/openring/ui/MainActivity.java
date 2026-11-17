@@ -296,6 +296,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         // screen test: "Why this line" opened on Today's Your day card (owner's wish of 16 November), demo mode only
         if (i.getBooleanExtra("day_line_why", false) && Prefs.of(this).demo()) Pages.dayWhyOpen[0] = true;
+        // the battery lines on Today folded open (owner's wish of 17 November), for the screen test
+        if (i.getBooleanExtra("battery_open", false) && Prefs.of(this).demo()) BatteryViews.open[0] = true;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)
@@ -744,6 +746,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     scroll.scrollTo(0, Math.max(0, top - Ui.dp(MainActivity.this, 12)));
                     cardPending = null;
                 }
+                if (tab == Pages.TODAY && np.demo()) firstScreen(shown);
             }
         });
         for (int i = 0; i < nav.getChildCount(); i++) {
@@ -752,6 +755,20 @@ public final class MainActivity extends Activity implements RingManager.Listener
             ((ImageView) item.getChildAt(0)).setImageTintList(ColorStateList.valueOf(col));
             ((TextView) item.getChildAt(1)).setTextColor(col);
         }
+    }
+
+    /**
+     * For the screen test (demo mode only, owner's wish of 17 November): logs where Today's day line ends on the page and how
+     * much of the page the first screen shows, so screens.sh can check the sentence and the line need no scrolling.
+     */
+    void firstScreen(View content) {
+        View line = content.findViewWithTag(Pages.DAY_LINE_TAG);
+        if (line == null || line.getHeight() == 0 || scroll.getHeight() == 0) return;
+        int bottom = line.getHeight();
+        for (View v = line; v != null && v != content; v = v.getParent() instanceof View ? (View) v.getParent() : null) bottom += v.getTop();
+        String preview = DayData.preview == app.openring.core.Start.PREVIEW_WATCH ? "watch" : DayData.preview == app.openring.core.Start.PREVIEW_PHONE ? "phone" : "ring";
+        android.util.Log.i("OpenRing", "today first screen (" + preview + "): the line ends at " + bottom + " of " + scroll.getHeight() + " px, "
+                + (bottom <= scroll.getHeight() ? "fits" : "cut"));
     }
 
     String syncLine() {

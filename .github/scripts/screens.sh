@@ -127,7 +127,9 @@ log "ending the app while the demo is prepared, opening it again from the launch
 adb shell pm clear $PKG >/dev/null
 for perm in BLUETOOTH_SCAN BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant $PKG android.permission.$perm 2>/dev/null; done
 launch --ez demo true
-sleep 1
+# ended half a second after the screen shows (launch waits for it): with a whole second the slow runner of PR #400 let
+# the preparation finish first, and the step found nothing cut off to finish
+sleep 0.5
 adb shell am force-stop $PKG
 sleep 1
 adb shell am start -W -n $MAIN -a android.intent.action.MAIN -c android.intent.category.LAUNCHER >/dev/null
@@ -142,10 +144,25 @@ else
   echo "::warning::issue #69 step: no cut off demo was finished after opening again (the preparation may have ended before the app was)"
 fi
 shot today 2
-# the battery of the demo's ring and watch right under the score rings (owner's wish of 15 November) is in the today shot
-# above, the watch's alone in today-watch-only below, none in today-phone-only
-# the compact Recent badges row under the score rings (issue #265) is in the today shot above, each badge framed in the
-# colour of its tab (owner's wish of 12 November)
+# Today's first screen (owner's wish of 17 November): the day's sentence and line must be on it without scrolling, with a
+# ring, only a watch and only the phone, with the demo's badges. The app logs in demo mode where the line ends on the page
+# and how much the first screen shows (MainActivity.firstScreen); a line that does not fit fails the run at the end
+FIRST_CUT=0
+first_screen() {  # $1 ring, watch or phone: the newest measurement of that Today
+  local l
+  l=$(adb logcat -d -s OpenRing:I 2>/dev/null | grep "today first screen ($1)" | tail -1)
+  if [ -z "$l" ]; then echo "::warning::Today ($1): no first screen measurement in the log"; return 0; fi
+  log "${l#*: }"
+  case "$l" in
+    *", fits"*) ;;
+    *) echo "::error::Today ($1): the day's sentence and line are not on the first screen: ${l#*: }"; FIRST_CUT=1 ;;
+  esac
+}
+first_screen ring
+# the battery of the demo's ring and watch right under the score rings, one folded line each (owner's wishes of 15 and 17
+# November), is in the today shot above (today-battery-open below opens it), the watch's alone in today-watch-only, none in
+# today-phone-only. Recent badges come after Your day, each badge chip the same size in two columns (owner's wish of 17
+# November), framed in the colour of its tab (12 November); today-period below shows them
 # Today's Your day card (owner's wish of 16 November): the sentence with the day's facts, the line of the day, and Why this
 # line opened (extra day_line_why, demo mode only: each check of the tree, top to bottom); then the same card with only the
 # watch and only the phone (extra devices, nothing stored)
@@ -226,6 +243,8 @@ for i in $(seq 1 14); do
 done
 [ -n "$y" ] || echo "::warning::issue #252 step: the Resting heart rate chart was not found on Body, body-trends shows where the swipes ended"
 shot body-trends 1
+# the battery lines on Today folded open (owner's wish of 17 November): what the numbers mean and the way to each history
+launch --ei tab 0 --ez battery_open true;   shot today-battery-open 2
 # Today's compact period card near the bottom (issue #252)
 launch --ei tab 0; sleep 3
 swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
@@ -367,20 +386,23 @@ swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 launch --ez badges true;                    shot badges 4
 swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
 launch --es settings top;                   shot settings
-# the Ring and Watch blocks closed, as every time Settings opens (owner's wish of 3 November); stages and watch below open
-# their own block first
+# every section folded, as every time Settings opens (owner's wishes of 3 and 17 November: a title, one status line and a
+# chevron each); stages, watch, period and the others below open their own section first
 launch --es settings blocks;                shot settings-blocks
 launch --es settings stages;                shot settings-stage-detail
 launch --es settings ring;                  shot settings-ring   # where a tap on Today's ring battery row leads
 # Count phone use as awake switched off and on (issue #204): when the nights are analysed again the
 # preview above redraws, its phone line goes away and comes back without leaving the page. The card
 # opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view,
-# and short ones after it while the switch is still below (the closed Watch block sits in between).
+# and short ones after it while the switch is still below (the closed Watch and Phone blocks and the Period tracker sit in
+# between). The Screen time section is closed like every section (owner's wish of 17 November): its header is tapped open
+# once it is on screen.
 adb shell input swipe 30 1700 30 900 1500; sleep 1
 phone_line() { ui_dump | grep -q "on the phone, shown as awake"; }
 switch_shown() { ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tail -1 | { read b; [ -n "$b" ] && [ "$b" -lt "${SCREEN_H:-2400}" ]; }; }
-for i in 1 2 3; do
+for i in 1 2 3 4 5 6; do
   switch_shown && break
+  if ui_dump | grep -q 'content-desc="Screen time, [^"]*closed, tap to open"' && touch_desc "Screen time, " 50; then sleep 1; continue; fi
   adb shell input swipe 30 1500 30 1250 1000; sleep 1
 done
 tap_phone_switch() {  # fails when the switch is not listed or its middle is off the screen
@@ -472,6 +494,7 @@ launch --ei tab 0 --ei main_device 0;       sleep 3
 # watch (issue #379) and the watch's day; Ready, Sleep and Activity with the watch's score, then each one's Contributors
 # and Left out (what the score could not use and why)
 launch --ei tab 0 --ei devices 1;           shot today-watch-only
+first_screen watch
 launch --ei tab 2 --ei devices 1;           shot ready-watch-only
 scroll_to "CONTRIBUTORS" 6 || echo "::warning::issue #379 step: Contributors was not found on Ready with only the watch"
 shot ready-watch-only-parts 1
@@ -483,6 +506,7 @@ scroll_to "CONTRIBUTORS" 14 || echo "::warning::issue #379 step: Contributors wa
 shot activity-watch-only-parts 1
 # Only the phone (extra devices 2): Today with the Activity and Screen dials, Activity with the score from the phone's steps
 launch --ei tab 0 --ei devices 2;           shot today-phone-only
+first_screen phone
 launch --ei tab 3 --ei devices 2;           shot activity-phone-only
 # Steps from this phone (issue #329, phase 1b): the demo's made up phone readings (in the demo file only) as light bars under
 # the ring's steps per hour on Activity, then touched in the afternoon (the readout names the ring's hour and the phone's
@@ -581,6 +605,10 @@ fi
 log "no leaked dialogs"
 # two named shots that are the same picture: one of them did not get to its card or state (issue #160)
 ./.github/scripts/same_shots.sh "$OUT" || exit 1
+if [ "$FIRST_CUT" = 1 ]; then
+  echo "::error::Today's sentence and line need scrolling on the first screen (see the lines above)"
+  exit 1
+fi
 if [ "$DIRTY" = 1 ]; then
   echo "::error::some screenshots show a system dialog; not publishing them as README pictures"
   exit 1
