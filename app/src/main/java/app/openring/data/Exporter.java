@@ -24,21 +24,33 @@ public final class Exporter {
     private static final String[] COLS = {"date", "sleep_score", "asleep_min", "rhr", "hrv", "temp", "temp_dev", "breath", "spo2", "steps",
         "active_kcal", "total_kcal", "distance_m", "low_min", "medium_min", "high_min", "inactive_min", "target_kcal", "vo2max"};
 
+    /**
+     * One row per day. With the export choice "Include life factors" (issue #292, Settings, Export; off by default, as the
+     * person's own and private) one more column per tag ({@code core/LifeTags.csvColumns}: Intimacy only with its own
+     * tick), 1 on each day it was logged, and a row for each tagged day that has no other row. Without the choice the file
+     * is exactly as before: no tag, no tag name, no extra row.
+     */
     public static void dailyCsv(Context c, OutputStream os) throws IOException {
         Writer w = new OutputStreamWriter(os, StandardCharsets.UTF_8);
+        Db db = Db.get(c);
+        Prefs p = Prefs.of(c);
+        // the tags only with the choice; their names and days are never read without it
+        java.util.Map<String, String> lifeCols = p.csvLife() ? app.openring.core.LifeTags.csvColumns(LifeLog.known(db), true, p.csvIntimacy())
+                : new java.util.LinkedHashMap<String, String>();
+        java.util.TreeMap<java.time.LocalDate, List<String>> lifeDays = lifeCols.isEmpty() ? new java.util.TreeMap<java.time.LocalDate, List<String>>() : LifeLog.all(db);
+        Rows out = new Rows(w, lifeCols, lifeDays);
         StringBuilder head = new StringBuilder();
         for (String col : COLS) head.append(col).append(',');
         // the last column: minutes of the day left out because someone else wore the ring (issue #254). The other
         // columns never hold left out data: the analysis drops it before anything is stored
-        head.append("readiness_score,activity_score,left_out_min\n");
-        w.write(head.toString());
-        Db db = Db.get(c);
+        head.append("readiness_score,activity_score,left_out_min");
+        for (String h : lifeCols.values()) head.append(',').append(h);
+        w.write(head.append('\n').toString());
         app.openring.core.analysis.LeftOut left = db.leftOut();
         java.time.ZoneId z = java.time.ZoneId.systemDefault();
         List<String[]> days = db.daysJson("0000-00-00", "9999-99-99");
         // without a ring the watch's or the phone's days go in too, on the dates the ring has no summary (owner's report of 14
         // November: a watch only export held only its header); with a ring the file is exactly the ring's, as before
-        Prefs p = Prefs.of(c);
         // demo mode has its made up ring, so its file stays the ring's
         int device = app.openring.core.DeviceHistory.device(p.demo() || app.openring.core.KeyState.hasRing(p.ringState()), p.watchAddress() != null,
                 PhoneStore.any(db));
@@ -48,7 +60,7 @@ public final class Exporter {
             JSONObject o = Json.parse(d[1]);
             if (o == null) continue;
             // the device's rows of earlier dates first, so the file stays in date order
-            while (!extra.isEmpty() && extra.firstKey().compareTo(d[0]) < 0) w.write(extra.pollFirstEntry().getValue());
+            while (!extra.isEmpty() && extra.firstKey().compareTo(d[0]) < 0) out.write(extra.firstKey(), extra.pollFirstEntry().getValue());
             extra.remove(d[0]);
             StringBuilder row = new StringBuilder();
             for (String col : COLS) {
@@ -59,10 +71,70 @@ public final class Exporter {
             row.append(r == null ? "" : String.valueOf(r.optInt("value"))).append(',');
             row.append(a == null ? "" : String.valueOf(a.optInt("value"))).append(',');
             row.append(leftOutMin(left, d[0], left.isEmpty() ? z : dayZone(db, d[0], z))).append('\n');
-            w.write(row.toString());
+            out.write(d[0], row.toString());
         }
-        for (String row : extra.values()) w.write(row);
+        for (java.util.Map.Entry<String, String> e : extra.entrySet()) out.write(e.getKey(), e.getValue());
+        out.rest();
         w.flush();
+    }
+
+    /**
+     * The rows of the daily CSV in date order, each with its life factor cells when the choice is on (issue #292): a tagged
+     * day without a row of its own gets one with only its date and its tags, written before the next later row.
+     */
+    static final class Rows {
+        private final Writer w;
+        private final java.util.Map<String, String> cols;
+        private final java.util.TreeMap<java.time.LocalDate, List<String>> days;
+
+        Rows(Writer w, java.util.Map<String, String> cols, java.util.TreeMap<java.time.LocalDate, List<String>> days) {
+            this.w = w;
+            this.cols = cols;
+            this.days = days;
+        }
+
+        /** {@code row} of {@code date} (it ends with a line break), the tag only days before it first. */
+        void write(String date, String row) throws IOException {
+            if (cols.isEmpty()) {
+                w.write(row);
+                return;
+            }
+            java.time.LocalDate d = null;
+            try {
+                d = java.time.LocalDate.parse(date);
+            } catch (RuntimeException e) {
+                // not a date: written without tags, as before
+            }
+            if (d != null) {
+                while (!days.isEmpty() && days.firstKey().isBefore(d)) {
+                    java.util.Map.Entry<java.time.LocalDate, List<String>> e = days.pollFirstEntry();
+                    w.write(empty(e.getKey().toString()) + cells(e.getValue()) + "\n");
+                }
+            }
+            List<String> tags = d == null ? null : days.remove(d);
+            w.write(row.substring(0, row.length() - 1) + cells(tags) + "\n");
+        }
+
+        /** The tagged days after the last row. */
+        void rest() throws IOException {
+            if (cols.isEmpty()) return;
+            for (java.util.Map.Entry<java.time.LocalDate, List<String>> e : days.entrySet()) w.write(empty(e.getKey().toString()) + cells(e.getValue()) + "\n");
+            days.clear();
+        }
+
+        /** A row of {@code date} with every other column empty. */
+        private static String empty(String date) {
+            StringBuilder b = new StringBuilder(date);
+            for (int i = 1; i < COLS.length + 3; i++) b.append(',');
+            return b.toString();
+        }
+
+        /** ",1,,1" for the columns in order: 1 when the day has the tag. */
+        private String cells(List<String> tags) {
+            StringBuilder b = new StringBuilder();
+            for (String k : cols.keySet()) b.append(',').append(tags != null && tags.contains(k) ? "1" : "");
+            return b.toString();
+        }
     }
 
     /**

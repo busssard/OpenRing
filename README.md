@@ -39,6 +39,8 @@ Not affiliated with Oura, not a medical device.
 * Steps counted by your phone itself (about once an hour, nothing leaves the phone). They fill the
   time the ring was not worn, and with steps, screen time and the period tracker the app is useful
   without a ring too ("Just this phone" when you start)
+* Life factors: tap what a day was like (meditation, alcohol, stress, a holiday, your own), and see it
+  next to the night after and as a month. Stored only on this phone
 * Find my ring, when the ring is lost at home (see below)
 * Nights keep the time zone you slept in, so a trip does not move your other nights
 * Touch the night timeline, the heart rate and trend lines or the screen time clock to see the exact

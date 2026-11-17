@@ -170,6 +170,14 @@ launch --ei tab 0 --es card YOUR_DAY;                         shot today-line 2
 launch --ei tab 0 --es card YOUR_DAY --ez day_line_why true;  shot today-line-why 1
 launch --ei tab 0 --ei devices 1 --es card YOUR_DAY;          shot today-line-watch 2
 launch --ei tab 0 --ei devices 2 --es card YOUR_DAY;          shot today-line-phone 2
+# Life factors (issue #292, phase 1): Today's row "What was today like?" right after Your day (the demo logged Meditation
+# today), its More opened (extra life_more, demo mode only: All factors, Several days, Add your own, Choose the chips), the
+# line beside last night on Sleep ("Before this night: ..."), the Readiness morning, and Body's month view touched in the
+# middle of its width (a tap reads the day). Made up tags of the demo file only, never Intimacy
+launch --ei tab 0 --es card WHAT_WAS_TODAY_LIKE;                    shot today-life 2
+launch --ei tab 0 --es card WHAT_WAS_TODAY_LIKE --ez life_more true; shot today-life-more 2
+launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
+launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
@@ -287,6 +295,11 @@ launch --ei tab 4 --es card TEMPERATURE_DEVIATION_AND_YOUR_CYCLE; sleep 3
 scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 3 || echo "::warning::period step: the temperature chart with the cycle was not found on Body"
 if touch_desc "Night temperature since" 60; then shot body-period-temp 1
 else echo "::warning::period step: the temperature chart with the cycle was not on screen to touch it"; shot body-period-temp 1; fi
+launch --ei tab 4 --es card LIFE_FACTORS; sleep 3
+scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body"
+shot body-life 1
+if touch_desc "Life factors calendar" 50; then shot body-life-touch 1
+else echo "::warning::issue #292 step skipped: the life factors calendar was not on screen to touch it"; fi
 launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
 scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1
