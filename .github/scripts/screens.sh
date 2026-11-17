@@ -298,8 +298,11 @@ else echo "::warning::period step: the temperature chart with the cycle was not 
 launch --ei tab 4 --es card LIFE_FACTORS; sleep 3
 scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body"
 shot body-life 1
-if touch_desc "Life factors calendar" 50; then shot body-life-touch 1
-else echo "::warning::issue #292 step skipped: the life factors calendar was not on screen to touch it"; fi
+# a day read as a touch reads it: yesterday (extra life_read, days before today, demo mode only), which has the demo's Alcohol
+# and Meditation; computed in the app, so it is a past day with tags on any date CI runs (a fixed tap point is not)
+launch --ei tab 4 --es card LIFE_FACTORS --ei life_read 1; sleep 3
+scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body for the read day"
+shot body-life-touch 1
 launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
 scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1

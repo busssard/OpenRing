@@ -43,6 +43,12 @@ final class LifeCard {
     /** The month Body's calendar shows, kept while the page is rebuilt; it follows the shown date when that changes. */
     static YearMonth month;
     private static LocalDate monthFor;
+    /**
+     * Screen test (extra {@code life_read}, demo mode only): Body's month view opens with the day this many days before today
+     * read, as a touch on it would (the month it lies in, its frame, its line). A computed day, so the shot reads a past day
+     * with tags whatever the weekday or month CI runs on. -1: none.
+     */
+    static int readPending = -1;
 
     /**
      * What one change wrote, so Undo can put every row back in the same file. It names the database it wrote into: after a
@@ -546,6 +552,12 @@ final class LifeCard {
             monthFor = d.date;
         }
         final LocalDate today = LocalDate.now();
+        LocalDate readNow = null;
+        if (readPending >= 0) {
+            readNow = today.minusDays(readPending);
+            readPending = -1;
+            month = YearMonth.from(readNow);
+        }
         final TextView title = Ui.text(c, "", 15, Ui.TEXT, Ui.MEDIUM);
         title.setGravity(Gravity.CENTER);
         final TextView readout = Ui.text(c, LifeTags.MONTH_HINT, 12, Ui.TEXT_2, Ui.REGULAR);
@@ -592,6 +604,10 @@ final class LifeCard {
         card.addView(readout);
         card.addView(Ui.gap(c, 8));
         card.addView(counts);
+        if (readNow != null) {
+            cal.read(readNow);
+            readout.setText(LifeTags.dayLine(readNow, d.life.names(d.lifeDays.get(readNow)), today, Locale.getDefault()));
+        }
         card.addView(Ui.gap(c, 8));
         card.addView(Ui.text(c, LifeTags.NO_EFFECT_YET, 12, Ui.TEXT_3, Ui.REGULAR));
         List<String> how = new ArrayList<String>();

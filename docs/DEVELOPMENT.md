@@ -112,7 +112,8 @@ November) and `day_line_why` (boolean, demo mode only: Why this line opened on t
 
 One for the life factors: `life_more` (boolean, demo mode only: Today's row "What was today like?" opens with its More,
 All factors and the ways on; issue #292). With `card WHAT_WAS` the row is at the top (also for a past day, "What was this day like?"); `card LIFE_FACTORS` opens
-Sleep, Readiness or Body at their life factors card.
+Sleep, Readiness or Body at their life factors card; `life_read` (int, demo mode only: Body's month view opens with the day
+this many days before today read, as a touch would read it, in that day's month).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.

@@ -29,6 +29,12 @@ final class LifeCalendar extends MonthView {
         this.today = today;
     }
 
+    /** Shows {@code day} as read (the frame a touch draws), without a touch: Body opened with a day read (screen test). */
+    void read(LocalDate day) {
+        readDay = day;
+        invalidate();
+    }
+
     @Override
     protected void onDraw(Canvas cv) {
         Context c = getContext();
