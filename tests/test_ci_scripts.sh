@@ -300,5 +300,20 @@ check "branches: a merged branch whose later commits are all in dev is deleted" 
 check "branches: in dev does not delete an open or unmerged branch" 'echo "$out" | grep -qx "keep feat/open (an open pull request uses it)" && echo "$out" | grep -q "^keep feat/closed-new "'
 rm -rf "$bc"
 
+# ---- short release notes (.github/scripts/release_notes.py): one line per change note
+rn=$(mktemp -d)
+printf '%s\n' '* A new start: Getting started, then pick a device. More text here.' '* Second bullet that is left out.' > "$rn/a.md"
+printf '%s\n' '' '* Your phone counts steps too: allow Physical activity and the app reads the counter about once an hour, which is a lot of words that go on and on past the limit for one line.' > "$rn/b.md"
+printf '%s\n' '* A new start: Getting started, then pick a device. Same first line again.' > "$rn/c.md"
+out=$(python3 .github/scripts/release_notes.py "$rn/a.md" "$rn/b.md" "$rn/c.md" "$rn/missing.md")
+check "notes: one line per note, its first sentence" 'echo "$out" | head -1 | grep -qx "\* A new start: Getting started, then pick a device."'
+check "notes: a long first sentence is cut at a word, at most 140 characters" '[ "$(echo "$out" | sed -n 2p | wc -m)" -le 144 ] && echo "$out" | sed -n 2p | grep -q "…$"'
+check "notes: a second bullet and a repeated line are left out, a missing file is skipped" '[ "$(echo "$out" | wc -l)" = 2 ] && ! echo "$out" | grep -q "Second bullet"'
+check "notes: no files gives nothing" '[ -z "$(python3 .github/scripts/release_notes.py)" ]'
+check "notes: the stable and the nightly notes both use it" '[ "$(grep -c "release_notes.py" .github/workflows/build.yml)" = 2 ]'
+check "ci: a pull request branch is built once (push only for dev and main)" 'grep -q "branches: \[dev, main\]" .github/workflows/build.yml'
+check "ci: the emulator skips pull requests that change nothing the app is built from" 'grep -q "steps.scope.outputs.run == .true." .github/workflows/emulator.yml && [ "$(grep -c "steps.scope.outputs.run == .true." .github/workflows/emulator.yml)" -ge 6 ]'
+rm -rf "$rn"
+
 echo "CI scripts: $passes passed, $fails failed"
 [ "$fails" = 0 ]

@@ -48,6 +48,12 @@ completely, then read the two guides it points to before changing anything:
    the change really looks right and fix it if not. New screens or states: extend
    `.github/scripts/screens.sh`.
 6. Do not send APK files in chat; GitHub builds them.
+7. **Save CI minutes (owner, 17 November: the checks ran out of GitHub's budget).** Every push to a pull request
+   costs a 20 minute emulator run plus a build. So: bundle what belongs together into one pull request (one per
+   owner request or issue, review fixes as extra commits on the open PR, not a new PR each); test everything locally
+   first and push once when done, not after every step; at most one empty commit to retry a stuck emulator; never
+   push in a loop. A pull request that changes only docs, tests, change notes or workflows skips the emulator run
+   by itself (`emulator.yml`), and pull request branches are built once (`build.yml` pushes only build `dev` and `main`).
 
 ## Design instincts (what the owner kept pushing for; do it without being asked)
 Check every plan and PR against these before showing it:
