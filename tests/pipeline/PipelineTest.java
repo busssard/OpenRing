@@ -3378,24 +3378,29 @@ public class PipelineTest {
      * mean and highest point, with every stored point inside the day the chart draws, and the day's lowest stays near
      * the night's lowest (5 minute averages); the line also holds the next night from bedtime to midnight, so an early
      * bedtime before a calmer night (the story's best night, for example) may bring it down to that night's lowest, never
-     * lower. That holds for whole nights only: a night the demo cut short at its
-     * {@code now} falls and rises within minutes, so a quarter hour sits above its 5 minute low (issue #123). Such days
-     * are left out of the second check; {@code wantCut} is how many there must be.
+     * lower, and only when the day's lowest point lies in that next night (issue #406). That holds for whole nights only:
+     * a night the demo cut short at its {@code now} falls and rises within minutes, so a quarter hour sits above its
+     * 5 minute low (issue #123). Such days are left out of the second check; {@code wantCut} is how many there must be.
      */
     static void dayHeartChecks(Db db, long now, String label, int wantCut) {
         int days = 0, matched = 0, nearNight = 0, withNight = 0, cut = 0;
         String bad = "", bad72 = "";
         java.util.Map<String, Double> nightLow = new java.util.HashMap<String, Double>();
+        List<String> dayKeys = new ArrayList<String>();
+        List<JSONObject> dayRows = new ArrayList<JSONObject>();
         for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
             if (o != null) nightLow.put(r[0], Json.d(o, "rhr"));
+            dayKeys.add(r[0]);
+            dayRows.add(o);
         }
-        for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
-            JSONObject o = Json.parse(r[1]);
+        for (int k = 0; k < dayKeys.size(); k++) {
+            String key = dayKeys.get(k);
+            JSONObject o = dayRows.get(k);
             if (o == null || o.optJSONArray("hr_day") == null) continue;
             days++;
             app.openring.core.analysis.TS line = Json.series(o.optJSONArray("hr_day"));
-            LocalDate day = LocalDate.parse(r[0]);
+            LocalDate day = LocalDate.parse(key);
             // what the Body tab shows: worked out from the stored line over the day the chart draws
             app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line,
                     day.atStartOfDay(ZoneId.systemDefault()).toEpochSecond(), day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toEpochSecond());
@@ -3404,24 +3409,32 @@ public class PipelineTest {
                     && Math.abs(avg - line.mean()) < 0.01;
             for (int i = 0; i < line.size(); i++) if (line.v(i) > high + 1e-9 || line.v(i) < low - 1e-9) ok = false;
             if (ok) matched++;
-            else bad += r[0] + " ";
+            else bad += key + " ";
             double night = Json.d(o, "rhr");
             if (Double.isNaN(night)) continue;
-            if (cutShort(db, r[0], now)) {
+            if (cutShort(db, key, now)) {
                 cut++;
                 continue;
             }
             withNight++;
             // the day's line also holds the start of the next night (from bedtime to midnight): an early bedtime before a
-            // calmer night can dip below this day's own night, never below the lower of the two nights
+            // calmer night can dip below this day's own night, never below the lower of the two nights. That is allowed only
+            // when the day's lowest point lies in the next night (issue #406): a lowest point earlier in the day must stay
+            // near the day's own night, so a line shifted by a night or missing its own morning still fails.
             Double next = nightLow.get(day.plusDays(1).toString());
-            double floor = next == null || Double.isNaN(next) ? night : Math.min(night, next);
+            double nextStart = nightStart(db, day.plusDays(1).toString());
+            double lowAt = Double.NaN;
+            for (int i = 0; i < line.size(); i++) if (line.v(i) <= line.min() + 1e-9) lowAt = line.t(i); // the latest lowest point
+            // a point stands for its quarter hour (time in the middle): it counts as in the next night when its quarter reaches it
+            boolean inNext = next != null && !Double.isNaN(next) && !Double.isNaN(nextStart) && lowAt + 450 > nextStart;
+            double floor = inNext ? Math.min(night, next) : night;
             if (low >= floor - 3 && low <= night + 3) nearNight++;
-            else bad72 += r[0] + " (lowest " + low + ", night " + night + ", next " + next + ") ";
+            else bad72 += key + " (lowest " + low + " at " + clockOf(lowAt) + ", night " + night + ", next "
+                    + (next == null || Double.isNaN(next) ? "none" : next + " from " + clockOf(nextStart)) + ") ";
         }
         check(label + ": Highest and Lowest are the drawn line's highest and lowest point, Average its mean (#72)",
                 days >= 28 && matched == days, matched + " of " + days + " " + bad);
-        check(label + ": the day's lowest within 3 bpm of the night's lowest, or of the next night's when that starts lower before midnight (#72)",
+        check(label + ": the day's lowest within 3 bpm of the night's lowest, or of the next night's when the lowest point lies in that lower night (#72, #406)",
                 withNight >= 28 && nearNight == withNight && cut == wantCut, nearNight + " of " + withNight + ", " + cut + " night cut short left out " + bad72);
     }
 
@@ -3444,6 +3457,18 @@ public class PipelineTest {
         }
         check(label + ": days with a night show the night as rest (#112)", nights >= 28 && restDays == nights && cut == wantCut,
                 restDays + " of " + nights + ", " + cut + " night cut short left out");
+    }
+
+    /** Start of the main night of {@code day} (unix seconds), NaN when there is none. */
+    static double nightStart(Db db, String day) {
+        List<String> ns = db.nightsJson(day, day, true);
+        return ns.isEmpty() ? Double.NaN : Json.d(Json.parse(ns.get(0)), "start");
+    }
+
+    /** "HH:mm" in the phone's zone for a failure message, "--" when unknown. */
+    static String clockOf(double t) {
+        return Double.isNaN(t) ? "--" : java.time.Instant.ofEpochSecond((long) t).atZone(ZoneId.systemDefault()).toLocalTime()
+                .withSecond(0).withNano(0).toString();
     }
 
     /** Whether the main night of {@code day} ended less than 2 hours before the demo's {@code now}: cut short by it (issue #123). */
