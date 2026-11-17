@@ -207,6 +207,22 @@ public final class Ui {
     }
 
     /**
+     * A plain text button without an outline (13 sp, at least 40 dp high for the finger), for a way somewhere that should not
+     * take the room of a big button (owner's wish of 17 November: Add a ring and Find my ring on Today).
+     */
+    public static TextView textButton(Context c, String label, int color) {
+        TextView b = text(c, label, 13, color, MEDIUM);
+        b.setGravity(Gravity.CENTER_VERTICAL);
+        int ph = dp(c, 10), pv = dp(c, 8);
+        b.setPadding(ph, pv, ph, pv);
+        b.setMinHeight(dp(c, 40));
+        b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(color, 0.25f)), null, rounded(0xFFFFFFFF, dp(c, 10))));
+        b.setClickable(true);
+        b.setFocusable(true);
+        return b;
+    }
+
+    /**
      * "How it works" at the bottom of a card or screen (issue #252, owner's feedback of 3 November): a thin line, then a
      * full width row with a chevron (down when closed, up when open, as the last worn row in Find my ring) that shows or
      * hides {@code texts} under it. Closed by default; {@code open[0]} holds the state, kept by the screen so it survives
@@ -218,43 +234,15 @@ public final class Ui {
 
     /** {@link #howItWorks} with another title on its row ("Why this line" on Today's Your day card). */
     public static LinearLayout howItWorks(Context c, final boolean[] open, java.util.List<String> texts, final String title) {
-        LinearLayout box = vbox(c);
-        box.addView(divider(c));
-        final LinearLayout row = hbox(c);
-        row.setMinimumHeight(dp(c, 48));
-        row.addView(text(c, title, 14, TEXT_2, MEDIUM), weight(1));
-        final android.widget.ImageView chevron = new android.widget.ImageView(c);
-        chevron.setImageResource(app.openring.R.drawable.ic_chevron_right);
-        chevron.setImageTintList(ColorStateList.valueOf(TEXT_3));
-        row.addView(chevron, new LinearLayout.LayoutParams(dp(c, 22), dp(c, 22)));
-        row.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(TEXT_2, 0.2f)), null, rounded(0xFFFFFFFF, dp(c, 10))));
-        row.setClickable(true);
-        row.setFocusable(true);
-        box.addView(row, matchWrap());
-        final LinearLayout body = vbox(c);
-        for (String s : texts) {
-            if (s == null || s.isEmpty()) continue;
-            // the style of the notes under numbers (PeriodCard.note): the section reads as secondary
-            TextView t = text(c, s, 12, TEXT_3, REGULAR);
-            t.setPadding(0, dp(c, 2), 0, dp(c, 8));
-            body.addView(t);
-        }
-        box.addView(body, matchWrap());
-        showHow(row, chevron, body, open[0], title);
-        row.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                open[0] = !open[0];
-                showHow(row, chevron, body, open[0], title);
-            }
-        });
-        return box;
+        return howFold(c, open, texts, title).view;
     }
 
-    private static void showHow(View row, View chevron, View body, boolean open, String title) {
-        body.setVisibility(open ? View.VISIBLE : View.GONE);
-        chevron.setRotation(open ? -90 : 90);
-        row.setContentDescription(open ? title + ", expanded" : title + ", collapsed");
+    /** {@link #howItWorks} as the shared {@link Fold} (owner's wish of 17 November: every fold looks and behaves the same). */
+    static Fold howFold(Context c, final boolean[] open, java.util.List<String> texts, final String title) {
+        Fold f = Fold.inline(c, title, null, open, true);
+        // the style of the notes under numbers (PeriodCard.note): the section reads as secondary
+        for (String s : texts) f.note(s);
+        return f;
     }
 
     /** Label over a big value with a unit, for stat tiles. */

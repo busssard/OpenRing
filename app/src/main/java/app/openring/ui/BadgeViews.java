@@ -88,8 +88,37 @@ final class BadgeViews {
         dl.setMargins(0, 0, Ui.dp(c, 7), 0);
         line.addView(disc, dl);
         TextView name = Ui.text(c, Badges.NAMES[kind], sp, level == NOT_YET ? Ui.blend(col, Ui.TEXT_2, 0.5f) : col, Ui.MEDIUM);
+        // two lines at most, so a long name never makes one badge bigger than the rest (owner's wish of 17 November)
+        name.setMaxLines(2);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         line.addView(name, Ui.weight(1));
         return line;
+    }
+
+    /**
+     * One badge chip, the same on Today and the Badges page (owner's wish of 17 November): the title line, then {@code when}
+     * (the date, or how often) with New after it. Its frame is set by the caller; an {@link EqualGrid} gives all chips one size.
+     */
+    static LinearLayout chip(Context c, int kind, int level, String when, boolean fresh) {
+        LinearLayout chip = Ui.vbox(c);
+        int p = Ui.dp(c, 8);
+        chip.setPadding(Ui.dp(c, 10), p, Ui.dp(c, 10), p);
+        chip.addView(title(c, kind, 14, level), Ui.matchWrap());
+        LinearLayout line = Ui.hbox(c);
+        TextView w = Ui.text(c, when, 12, level == NOT_YET ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR);
+        w.setMaxLines(2);
+        w.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        line.addView(w, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        if (fresh) {
+            TextView n = Ui.text(c, Explain.BADGES_NEW, 12, Ui.GOOD, Ui.MEDIUM);
+            n.setPadding(Ui.dp(c, 8), 0, 0, 0);
+            line.addView(n);
+        }
+        chip.addView(line, Ui.matchWrap());
+        chip.setBackground(frame(c, kind, level, false));
+        chip.setClickable(true);
+        chip.setFocusable(true);
+        return chip;
     }
 
     /** Reads kv {@link #SEEN}; null when never set or unreadable. Call off the main thread. */
@@ -147,29 +176,13 @@ final class BadgeViews {
         readout.setMinLines(2);
         final LinearLayout[] chips = new LinearLayout[list.size()];
         final int[] selected = {0};
-        LinearLayout line = null;
+        // two columns of chips of one size (owner's wish of 17 November): a long name takes two lines at most and makes every
+        // chip that tall, never one chip bigger than the others
+        EqualGrid grid = new EqualGrid(c, 2, 8);
         for (int i = 0; i < list.size(); i++) {
             final Badges.Badge b = list.get(i);
-            if (i % 2 == 0) {
-                line = Ui.hbox(c);
-                LinearLayout.LayoutParams ll = Ui.matchWrap();
-                ll.setMargins(0, Ui.dp(c, 8), 0, 0);
-                card.addView(line, ll);
-            }
-            LinearLayout chip = Ui.vbox(c);
-            int p = Ui.dp(c, 8);
-            chip.setPadding(Ui.dp(c, 10), p, Ui.dp(c, 10), p);
-            chip.addView(title(c, b.kind, 14, Badges.thisWeek(b.date, today) ? RECENT : EARLIER), Ui.matchWrap());
-            LinearLayout when = Ui.hbox(c);
-            when.addView(Ui.text(c, Explain.badgeWhen(b.date, today), 12, Ui.TEXT_2, Ui.REGULAR));
-            if (Badges.isNew(b, d.badgesSeen)) {
-                TextView fresh = Ui.text(c, Explain.BADGES_NEW, 12, Ui.GOOD, Ui.MEDIUM);
-                fresh.setPadding(Ui.dp(c, 8), 0, 0, 0);
-                when.addView(fresh);
-            }
-            chip.addView(when);
-            chip.setClickable(true);
-            chip.setFocusable(true);
+            LinearLayout chip = chip(c, b.kind, Badges.thisWeek(b.date, today) ? RECENT : EARLIER, Explain.badgeWhen(b.date, today),
+                    Badges.isNew(b, d.badgesSeen));
             chip.setContentDescription(Badges.NAMES[b.kind] + ", " + Explain.badgeWhen(b.date, today) + ". Shows its numbers below.");
             final int idx = i;
             chip.setOnClickListener(new View.OnClickListener() {
@@ -180,12 +193,11 @@ final class BadgeViews {
                 }
             });
             chips[i] = chip;
-            LinearLayout.LayoutParams cl = Ui.weight(1);
-            cl.setMargins(i % 2 == 0 ? 0 : Ui.dp(c, 4), 0, i % 2 == 0 ? Ui.dp(c, 4) : 0, 0);
-            line.addView(chip, cl);
+            grid.addView(chip);
         }
-        // an odd count keeps the last chip half wide
-        if (list.size() % 2 == 1 && line != null) line.addView(new View(c), Ui.weight(1));
+        LinearLayout.LayoutParams gl = Ui.matchWrap();
+        gl.setMargins(0, Ui.dp(c, 8), 0, 0);
+        card.addView(grid, gl);
         LinearLayout.LayoutParams rl = Ui.matchWrap();
         rl.setMargins(0, Ui.dp(c, 10), 0, 0);
         card.addView(readout, rl);

@@ -53,8 +53,8 @@ final class DeviceViews {
 
     /**
      * Today's top without a ring (issue #379): the dials of the scores from the watch (readiness, sleep, activity) or from the
-     * phone (activity), each opening its tab, with the Screen ring; the line where they come from; the button(s) to add a
-     * device (a watch too when there is none).
+     * phone (activity), each opening its tab, with the Screen ring, and the watch's battery folded into one line under them. Where
+     * the scores come from and the ways to add a device are in {@link #deviceNote}, under Your day (owner's wish of 17 November).
      */
     static View scoresWithout(Context c, DayData d, Pages.Nav nav) {
         LinearLayout card = Ui.card(c);
@@ -71,11 +71,43 @@ final class DeviceViews {
         // the watch's battery right under the scores (owner's wish of 15 November); nothing with only the phone
         View bat = BatteryViews.rows(c, d);
         if (bat != null) card.addView(bat);
-        card.addView(Ui.gap(c, 8));
-        TextView t = Ui.text(c, d.has.watch ? app.openring.core.DeviceScores.TODAY_WATCH : app.openring.core.DeviceScores.TODAY_PHONE, 12, Ui.TEXT_2, Ui.REGULAR);
-        t.setGravity(Gravity.CENTER);
-        card.addView(t);
-        addButtons(c, card, !d.has.watch);
+        return card;
+    }
+
+    /** Whether the note on scores without a ring is open on Today; kept while the screen is rebuilt. */
+    static final boolean[] noteOpen = {false};
+
+    /**
+     * Under Your day without a ring (owner's wish of 17 November): where the scores come from in one short line that folds open
+     * to the whole text, and the ways to add a ring (and a watch, with only the phone) as small text buttons.
+     */
+    static View deviceNote(final Context c, DayData d) {
+        LinearLayout card = Ui.card(c);
+        card.setPadding(card.getPaddingLeft(), Ui.dp(c, 6), card.getPaddingRight(), Ui.dp(c, 6));
+        Fold f = Fold.inline(c, d.has.watch ? app.openring.core.DeviceScores.TODAY_WATCH_SHORT : app.openring.core.DeviceScores.TODAY_PHONE_SHORT,
+                null, noteOpen, false);
+        f.note(d.has.watch ? app.openring.core.DeviceScores.TODAY_WATCH : app.openring.core.DeviceScores.TODAY_PHONE);
+        card.addView(f.view, Ui.matchWrap());
+        LinearLayout ways = Ui.hbox(c);
+        TextView ring = Ui.textButton(c, app.openring.core.KeyState.ADD_RING, Ui.SLEEP);
+        ring.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                PhoneViews.addRing(c);
+            }
+        });
+        ways.addView(ring);
+        if (!d.has.watch) {
+            TextView w = Ui.textButton(c, Start.ADD_WATCH, Ui.OXY);
+            w.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    addWatch(c);
+                }
+            });
+            ways.addView(w);
+        }
+        card.addView(ways, Ui.matchWrap());
         return card;
     }
 

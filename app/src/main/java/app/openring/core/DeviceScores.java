@@ -441,6 +441,9 @@ public final class DeviceScores {
     /** Today's line under the dials. */
     public static final String TODAY_WATCH = "Scores from your watch, with fewer signals than with a ring. Tap one to see what it used.";
     public static final String TODAY_PHONE = "Activity score from this phone's steps. Sleep and readiness need a ring or a watch.";
+    /** The same in one short line on Today, folded open to the whole text (owner's wish of 17 November). */
+    public static final String TODAY_WATCH_SHORT = "Scores from your watch, fewer signals than a ring",
+            TODAY_PHONE_SHORT = "Activity from this phone's steps, no sleep yet";
     public static final String WATCH_NO_NIGHT = Start.NO_WATCH_NIGHT;
     public static final String WATCH_NO_READINESS = "Readiness from your watch shows the morning after a night with the watch on.";
     public static final String PHONE_NO_NIGHT = "Sleep and readiness need a ring or a watch.";
@@ -476,7 +479,7 @@ public final class DeviceScores {
     /** Every fixed text above and the reasons, for the tests (plain, no dashes as punctuation). */
     public static List<String> texts() {
         List<String> out = new ArrayList<String>();
-        String[] fixed = {FROM_WATCH, FROM_PHONE, FEWER, TODAY_WATCH, TODAY_PHONE, WATCH_NO_NIGHT, WATCH_NO_READINESS, PHONE_NO_NIGHT,
+        String[] fixed = {FROM_WATCH, FROM_PHONE, FEWER, TODAY_WATCH, TODAY_PHONE, TODAY_WATCH_SHORT, TODAY_PHONE_SHORT, WATCH_NO_NIGHT, WATCH_NO_READINESS, PHONE_NO_NIGHT,
             WATCH_NO_ACTIVITY, PHONE_NO_ACTIVITY, LEFT_TITLE, REM_LEFT, NOTHING_LEFT, RING_ADDS, PROVISIONAL, version(78), goalLine(8412, 10000, Locale.US)};
         for (String s : fixed) out.add(s);
         for (String[][] parts : new String[][][] {ACTIVITY_PARTS, SLEEP_PARTS, READINESS_PARTS}) {

@@ -80,20 +80,14 @@ public final class GamesActivity extends Activity implements RingManager.MotionL
 
     /**
      * The Ring games card in Settings (issue #15): a test of the ring's motion, always there, and
-     * a switch that shows the games and their controls. Back from a game returns to Settings.
+     * a switch that shows the games and their controls. Back from a game returns to Settings. Builds the section again (after
+     * the switch, or back from a game with a new best score); {@code card} is the body of the section, whose header says Ring
+     * games (owner's wish of 17 November).
      */
-    public static LinearLayout settingsCard(final Activity a) {
-        final LinearLayout card = Ui.card(a);
-        fill(a, card);
-        return card;
-    }
-
-    /** Builds the card again (after the switch, or back from a game with a new best score). */
     public static void fill(final Activity a, final LinearLayout card) {
         card.removeAllViews();
         final SharedPreferences sp = a.getSharedPreferences("games", Context.MODE_PRIVATE);
         final app.openring.data.Prefs p = app.openring.data.Prefs.of(a);
-        card.addView(Ui.caption(a, "Ring games"));
         if (app.openring.core.KeyState.addRingInstead(p.demo(), p.ringState())) {
             // without a ring by choice (issue #329): the way to add one instead of games that cannot connect
             card.addView(Ui.body(a, app.openring.core.KeyState.NO_RING_GAMES));

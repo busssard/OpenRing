@@ -9980,7 +9980,8 @@ public class CoreTest {
     static void periodSettingsHidden() throws Exception {
         String src = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("app/src/main/java/app/openring/ui/SettingsActivity.java")), "UTF-8");
         int at = src.indexOf("void fillPeriodCard() {");
-        String body = src.substring(at, src.indexOf("card.addView(Ui.caption(this, \"Period tracker\"));", at));
+        // the section's header says Period tracker (owner's wish of 17 November), so the card starts with the prediction
+        String body = src.substring(at, src.indexOf("prediction(card, p);", at));
         check("settings: the Period tracker card is hidden unless the tracker is shown", body.contains("Cycles.shown(p.periodChoice(), p.sex(), p.demo())")
                 && body.contains("View.GONE") && body.contains("if (!shown) return;"));
         check("settings: the card follows the switch and a saved profile", src.contains("p.setPeriodChoice(on ? 1 : 0);\n                fillPeriodCard();")
@@ -10156,8 +10157,9 @@ public class CoreTest {
             check("#373 the watch and the phone set no ring before the app opens, the watch setup on top", fw > 0
                     && setup.indexOf("p.setNoRing(true);", fw) > fw && setup.indexOf("p.setNoRing(true);", fw) < setup.indexOf("startActivities(", fw)
                     && setup.indexOf("new Intent(this, WatchSetupActivity.class)", fw) > fw);
-            check("#373 Today without a ring takes its cards from Start", pages.contains("if (!d.has.ring) return todayWithout(c, d, nav, syncLine);")
-                    && pages.contains("app.openring.core.Start.cards(TODAY, d.has)"));
+            // owner's wish of 17 November: one order for every device, built on Start.cards in core/TodayCards
+            check("#373 Today takes its cards from TodayCards, which asks Start", pages.contains("app.openring.core.TodayCards.of(d.has, ")
+                    && !pages.contains("todayWithout("));
             check("#373 the old first screen button is gone", !setup.contains("KeyState.USE_WITHOUT"));
         } catch (IOException e) {
             check("#373 sources readable", false, e);
