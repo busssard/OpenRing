@@ -44,9 +44,13 @@ final class LifeCard {
     static YearMonth month;
     private static LocalDate monthFor;
 
-    /** What one change wrote, so Undo can put every row back in the same file. */
+    /**
+     * What one change wrote, so Undo can put every row back in the same file. It names the database it wrote into: after a
+     * restore or going back to a copy (a new {@code Db}), or Delete all (which clears it, {@link #forget}), Undo writes nothing.
+     */
     static final class Undo {
         final boolean demo;
+        final Db db;
         final String tag;
         final List<String> days;
         /** Each day's row before, null where there was none. */
@@ -54,13 +58,19 @@ final class LifeCard {
         final String text;
         final long at = System.currentTimeMillis();
 
-        Undo(boolean demo, String tag, List<String> days, List<LifeLog.Row> before, String text) {
+        Undo(Db db, boolean demo, String tag, List<String> days, List<LifeLog.Row> before, String text) {
+            this.db = db;
             this.demo = demo;
             this.tag = tag;
             this.days = days;
             this.before = before;
             this.text = text;
         }
+    }
+
+    /** Delete all, a restore or going back to a copy: the last change belongs to a file that is gone, so no Undo for it. */
+    static void forget() {
+        undo = null;
     }
 
     static int year() {
@@ -254,6 +264,8 @@ final class LifeCard {
                 p.day(LocalDate.of(y, m + 1, dom));
             }
         }, at.getYear(), at.getMonthValue() - 1, at.getDayOfMonth());
+        // days still to come cannot be picked (several days end today at the latest)
+        dlg.getDatePicker().setMaxDate(System.currentTimeMillis());
         dlg.setTitle(title);
         dlg.show();
     }
@@ -269,7 +281,7 @@ final class LifeCard {
         }
         final int n = LifeTags.span(from, to).size();
         new android.app.AlertDialog.Builder(c).setTitle(LifeTags.spanLine(t.name, from, to, year(), Locale.getDefault()))
-                .setMessage("One entry on each of the " + n + (n == 1 ? " day." : " days.") + " A day can be taken away again with its chip.")
+                .setMessage("One entry on each of the " + n + (n == 1 ? " day." : " days.") + " To take a day away, open that day and tap its chip.")
                 .setPositiveButton("Log", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dlg, int w) {
@@ -282,7 +294,7 @@ final class LifeCard {
                                 for (String x : days) before.add(LifeLog.row(db, x, t.key));
                                 LifeLog.setSpan(db, from, to, t.key, System.currentTimeMillis(), System.currentTimeMillis() / 1000.0);
                                 String text = LifeTags.spanDone(t.name, from, to, year(), Locale.getDefault());
-                                undo = new Undo(demo, t.key, days, before, text);
+                                undo = new Undo(db, demo, t.key, days, before, text);
                                 return null;
                             }
                         });
@@ -412,7 +424,7 @@ final class LifeCard {
                 days.add(key);
                 List<LifeLog.Row> rows = new ArrayList<LifeLog.Row>();
                 rows.add(before);
-                undo = new Undo(demo, t.key, days, rows, LifeTags.tapLine(t.name, on, day, year(), Locale.getDefault()));
+                undo = new Undo(db, demo, t.key, days, rows, LifeTags.tapLine(t.name, on, day, year(), Locale.getDefault()));
                 return null;
             }
         });
@@ -456,6 +468,8 @@ final class LifeCard {
                 try {
                     if (Prefs.of(ctx).demo() != u.demo) return false;
                     final Db db = Db.get(ctx);
+                    // the file was swapped since (a restore, going back to a copy): its rows are not the ones changed
+                    if (db != u.db) return false;
                     final double now = System.currentTimeMillis() / 1000.0;
                     db.inTransaction(new Runnable() {
                         @Override

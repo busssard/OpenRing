@@ -37,7 +37,15 @@ public final class Exporter {
         // the tags only with the choice; their names and days are never read without it
         java.util.Map<String, String> lifeCols = p.csvLife() ? app.openring.core.LifeTags.csvColumns(LifeLog.known(db), true, p.csvIntimacy())
                 : new java.util.LinkedHashMap<String, String>();
-        java.util.TreeMap<java.time.LocalDate, List<String>> lifeDays = lifeCols.isEmpty() ? new java.util.TreeMap<java.time.LocalDate, List<String>>() : LifeLog.all(db);
+        java.util.TreeMap<java.time.LocalDate, List<String>> lifeDays = new java.util.TreeMap<java.time.LocalDate, List<String>>();
+        if (!lifeCols.isEmpty()) {
+            // only the ticked tags: a day with none of them (an Intimacy only day without its tick) gets no row of its own
+            for (java.util.Map.Entry<java.time.LocalDate, List<String>> e : LifeLog.all(db).entrySet()) {
+                List<String> kept = new java.util.ArrayList<String>(e.getValue());
+                kept.retainAll(lifeCols.keySet());
+                if (!kept.isEmpty()) lifeDays.put(e.getKey(), kept);
+            }
+        }
         Rows out = new Rows(w, lifeCols, lifeDays);
         StringBuilder head = new StringBuilder();
         for (String col : COLS) head.append(col).append(',');

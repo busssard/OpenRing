@@ -14816,7 +14816,13 @@ public class PipelineTest {
         app.openring.core.LifeTags.Known k = app.openring.data.LifeLog.known(db);
         check("#292 a removed own tag: off the card and out of All factors, its day kept, its name still read", k.all.get(own).removed
                 && !k.chips().toString().contains(own) && app.openring.data.LifeLog.on(db, "2019-03-05").contains(own) && k.name(own).equals("late dinner"), k.all);
-        check("#292 a name is free again once its tag was removed", app.openring.data.LifeLog.addOwn(db, "late dinner", 1560000000000L) != null, null);
+        String back = app.openring.data.LifeLog.addOwn(db, "Late Dinner", 1560000000000L);
+        app.openring.core.LifeTags.Known kb = app.openring.data.LifeLog.known(db);
+        check("#292 the name of a removed own tag brings that tag back with its days, no second key with the same name (review of #292)",
+                own.equals(back) && !kb.all.get(own).removed && kb.all.get(own).chip && kb.name(own).equals("late dinner")
+                        && app.openring.data.LifeLog.on(db, "2019-03-05").contains(own)
+                        && db.count("SELECT COUNT(*) FROM life_tags WHERE name = 'late dinner' COLLATE NOCASE") == 1, back);
+        check("#292 a tag brought back is in force again: the same name a third time is refused", app.openring.data.LifeLog.addOwn(db, "late dinner", 1570000000000L) == null, null);
         app.openring.data.LifeLog.setChips(db, Arrays.asList(app.openring.core.LifeTags.TRAVEL, twin, app.openring.core.LifeTags.ALCOHOL), 400);
         List<String> chips = new ArrayList<String>();
         for (app.openring.core.LifeTags.Tag t : app.openring.data.LifeLog.known(db).chips()) chips.add(t.key);
@@ -15034,6 +15040,7 @@ public class PipelineTest {
         check("#292 a tagged day without a summary gets a row: only its date and its own tag", march5 != null
                 && march5.equals("2019-03-05" + repeat292(",", 21) + ",,,,,,,,,1"), march5);
         check("#292 a tag taken off is no 1 (and a day with only that gives no row)", march2 == null, march2);
+        check("#292 a day with only Intimacy, not ticked: no row with its date (review of #292)", !csvText292(c).contains("\n2019-03-04,"), null);
         check("#292 a ring day with Meditation: its numbers and a 1 under life_meditation", ring != null && ring.split(",", -1)[22].equals("1")
                 && !ring.split(",", -1)[1].isEmpty(), ring);
         boolean ordered = true;

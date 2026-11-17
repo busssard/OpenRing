@@ -174,8 +174,8 @@ launch --ei tab 0 --ei devices 2 --es card YOUR_DAY;          shot today-line-ph
 # today), its More opened (extra life_more, demo mode only: All factors, Several days, Add your own, Choose the chips), the
 # line beside last night on Sleep ("Before this night: ..."), the Readiness morning, and Body's month view touched in the
 # middle of its width (a tap reads the day). Made up tags of the demo file only, never Intimacy
-launch --ei tab 0 --es card WHAT_WAS_TODAY_LIKE;                    shot today-life 2
-launch --ei tab 0 --es card WHAT_WAS_TODAY_LIKE --ez life_more true; shot today-life-more 2
+launch --ei tab 0 --es card WHAT_WAS;                                 shot today-life 2
+launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
 launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
 launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
 

@@ -217,12 +217,21 @@ public final class LifeLog {
 
     /**
      * A new own tag named {@code typed} (cleaned by {@code LifeTags.cleanName}), on Today's row, made at {@code millis}. Returns
-     * its key, or null when the name cannot be a tag or an own tag in force already has it (any case).
+     * its key, or null when the name cannot be a tag or an own tag in force already has it (any case). The name of a removed
+     * own tag (any case) brings that one back with its days and its first spelling.
      */
     public static String addOwn(Db db, String typed, long millis) {
         String name = LifeTags.cleanName(typed);
         if (name == null) return null;
-        for (LifeTags.Tag t : known(db).own()) if (t.name.equalsIgnoreCase(name)) return null;
+        LifeTags.Known k = known(db);
+        for (LifeTags.Tag t : k.own()) if (t.name.equalsIgnoreCase(name)) return null;
+        // the name of a removed own tag brings that tag back (with its days), never a second key with the same name
+        for (LifeTags.Tag t : k.all.values()) {
+            if (t.removed && t.name.equalsIgnoreCase(name)) {
+                db.getWritableDatabase().execSQL("UPDATE life_tags SET gone = 0, shown = 1, ord = NULL, made = ? WHERE key = ?", new Object[] {millis / 1000.0, t.key});
+                return t.key;
+            }
+        }
         String key = LifeTags.ownKey(millis);
         // two tags in the same millisecond (only a test can do that): the next free number
         while (count(db, key) > 0) key = LifeTags.ownKey(++millis);

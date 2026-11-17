@@ -1580,6 +1580,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
      */
     void addCsvChoices(LinearLayout data, final Fold fold, Prefs p) {
         final android.widget.CheckBox life = new android.widget.CheckBox(this), intimacy = new android.widget.CheckBox(this);
+        // tinted like Setup's tick box, so the box shows on the dark card
+        life.setButtonTintList(android.content.res.ColorStateList.valueOf(Ui.LIFE));
+        intimacy.setButtonTintList(android.content.res.ColorStateList.valueOf(Ui.LIFE));
         life.setText(app.openring.core.LifeTags.CSV_CHOICE);
         life.setTextColor(Ui.TEXT);
         life.setChecked(p.csvLife());
@@ -2151,6 +2154,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             protected String doInBackground(Void... v) {
                 try {
                     Backup.Result r = AutoBackup.goBack(app, file, progress);
+                    LifeCard.forget();
                     RingManager.get(app).log("go back to " + file + ": " + r.message);
                     return r.message;
                 } catch (Exception e) {
@@ -2691,6 +2695,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         @Override
                         public void run() {
                             Analyzer.deleteAll(app);
+                            // the last life factor change belongs to the deleted file (issue #292)
+                            LifeCard.forget();
                             // the copies before updates hold the same history; the folder's copies stay (issue #242)
                             BeforeUpdate.deleteAll(app);
                         }

@@ -111,7 +111,7 @@ November) and `day_line_why` (boolean, demo mode only: Why this line opened on t
 `core/DayLine`'s tree; owner's wish of 16 November).
 
 One for the life factors: `life_more` (boolean, demo mode only: Today's row "What was today like?" opens with its More,
-All factors and the ways on; issue #292). With `card WHAT_WAS_TODAY_LIKE` the row is at the top; `card LIFE_FACTORS` opens
+All factors and the ways on; issue #292). With `card WHAT_WAS` the row is at the top (also for a past day, "What was this day like?"); `card LIFE_FACTORS` opens
 Sleep, Readiness or Body at their life factors card.
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
