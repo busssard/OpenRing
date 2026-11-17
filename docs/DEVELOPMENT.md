@@ -10,7 +10,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `app/src/main/java/app/openring/` | The app (plain Java, no third party libraries). Packages explained in ARCHITECTURE.md |
 | `app/src/main/res/` | Icons (vector drawables), app name, theme. All screens are built in code, there are no layouts |
 | `app/src/main/AndroidManifest.xml` | Permissions, activities, services. Must never request `INTERNET` |
-| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383) and `BatteryTest.java` (Today's battery rows, `core/DeviceBattery`) run after it |
+| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383), `BatteryTest.java` (Today's battery rows, `core/DeviceBattery`) and `DayLineTest.java` (Today's Your day line: its decision tree, the line bank's rules, no line again within 30 days) run after it |
 | `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh` |
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
@@ -105,6 +105,9 @@ Two more extras for the period tracker: `period_how` (boolean, demo mode only: H
 Your cycles and on the night temperature card on Body; closed is the default, issues #252 and #363) and `period_month` (int,
 demo mode only: the Period card's calendar opens this many months after the shown day's month, with the expected cycles there;
 owner's feedback of 11 November on #252).
+
+One for Today: `day_line_why` (boolean, demo mode only: Why this line opened on the Your day card, each check of
+`core/DayLine`'s tree; owner's wish of 16 November).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.

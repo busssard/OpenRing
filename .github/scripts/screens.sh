@@ -146,6 +146,13 @@ shot today 2
 # above, the watch's alone in today-watch-only below, none in today-phone-only
 # the compact Recent badges row under the score rings (issue #265) is in the today shot above, each badge framed in the
 # colour of its tab (owner's wish of 12 November)
+# Today's Your day card (owner's wish of 16 November): the sentence with the day's facts, the line of the day, and Why this
+# line opened (extra day_line_why, demo mode only: each check of the tree, top to bottom); then the same card with only the
+# watch and only the phone (extra devices, nothing stored)
+launch --ei tab 0 --es card YOUR_DAY;                         shot today-line 2
+launch --ei tab 0 --es card YOUR_DAY --ez day_line_why true;  shot today-line-why 1
+launch --ei tab 0 --ei devices 1 --es card YOUR_DAY;          shot today-line-watch 2
+launch --ei tab 0 --ei devices 2 --es card YOUR_DAY;          shot today-line-phone 2
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1

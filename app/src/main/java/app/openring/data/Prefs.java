@@ -116,6 +116,13 @@ public final class Prefs {
     public void setPeriodMethod(int m) {
         sp.edit().putInt("period_method", app.openring.core.analysis.cycleforecast.Methods.valid(m) ? m : app.openring.core.analysis.cycleforecast.Methods.BEST).apply();
     }
+    /**
+     * The "Your day" lines shown lately ({@code core/DayLine.Memory}): display memory only, so a line is not shown again within
+     * 30 days. Demo mode keeps its own; not in backups.
+     */
+    public String dayLineSeen() { return sp.getString(demo() ? "day_line_seen_demo" : "day_line_seen", null); }
+    public void setDayLineSeen(String s) { sp.edit().putString(demo() ? "day_line_seen_demo" : "day_line_seen", s).apply(); }
+
     /** The cycle already reminded of (the start of its period), so one cycle never gets two; not in a backup. */
     public String periodRemindSent() { return sp.getString("period_remind_sent", null); }
     /** Written to disk before it returns, before the notification is posted, so a stop in between never sends twice. */

@@ -2916,6 +2916,37 @@ public class WatchTest {
         check("history: the phone has no nights, calories or workouts", hp.night(DS_DAY) == null && Double.isNaN(hp.kcal[29]) && hp.workouts[29] == 0
                 && Double.isNaN(hp.workoutMin[29]) && Double.isNaN(hp.sleep[29]) && !Double.isNaN(hp.steps[29]) && !Double.isNaN(hp.activity[28]), hp.steps[29]);
 
+        // ---- Today's Your day line from the watch's and the phone's days (owner's wish of 16 November)
+        app.openring.core.DayLine.Facts wf = app.openring.core.DayLine.fromDevice(h, DS_DAY, false);
+        int wi = h.index(DS_DAY);
+        check("day line: the watch's facts are its own numbers of the day", wf.device == MainDevice.WATCH && same(wf.readiness, h.readiness[wi])
+                && same(wf.sleepScore, h.sleep[wi]) && same(wf.asleepMin, h.asleepMin[wi]) && same(wf.rhr, h.rhr[wi]) && same(wf.steps, h.steps[wi])
+                && same(wf.hardYesterdayMin, h.workoutMin[wi - 1]) && "Step goal".equals(wf.goalName) && Double.isNaN(wf.tempDev) && Double.isNaN(wf.hrv),
+                wf.readiness + " " + wf.sleepScore + " " + wf.steps);
+        check("day line: the watch's days before (up to 29) and its goal", wf.readinessBefore.length == Math.min(wi, 29) && same(wf.readinessBefore[wf.readinessBefore.length - 1], h.readiness[wi - 1])
+                && same(wf.sleepBefore[0], h.sleep[wi - wf.sleepBefore.length]) && wf.goalBefore[wf.goalBefore.length - 1] == (h.steps[wi - 1] >= 9000)
+                && Boolean.valueOf(h.steps[wi] >= 9000).equals(wf.goalToday), java.util.Arrays.toString(wf.goalBefore));
+        check("day line: the watch's step goal and the steps of the days before (not worn: none)", wf.stepGoal == 9000
+                && wf.stepsBefore.length == wf.readinessBefore.length && (h.wornMin[wi - 1] > 0 ? same(wf.stepsBefore[wf.stepsBefore.length - 1], h.steps[wi - 1])
+                : Double.isNaN(wf.stepsBefore[wf.stepsBefore.length - 1])), wf.stepGoal + " " + java.util.Arrays.toString(wf.stepsBefore));
+        double[] wd = h.debt(DS_DAY);
+        check("day line: the watch's sleep debt and need, as its Sleep tab", wd[1] > 0 ? same(wf.debtMin, wd[0]) && same(wf.needMin, wd[2] * 60)
+                : Double.isNaN(wf.debtMin), wf.debtMin + " " + wd[0]);
+        check("day line: the watch's usual resting heart rate from its nights", !Double.isNaN(wf.rhrUsual), wf.rhrUsual);
+        check("day line: the watch's day gets a sentence and a line", app.openring.core.DayLine.of(wf, new app.openring.core.DayLine.Memory(), false,
+                java.util.Locale.UK).line != null);
+        app.openring.core.DayLine.Facts pf = app.openring.core.DayLine.fromDevice(hp, DS_DAY, true);
+        check("day line: the phone's facts are its steps, no sleep, no debt", pf.device == MainDevice.PHONE && same(pf.steps, hp.steps[29])
+                && Double.isNaN(pf.sleepScore) && Double.isNaN(pf.debtMin) && Double.isNaN(pf.asleepMin), pf.steps);
+        pf.sinceSyncH = 500;
+        check("day line: the phone's day is never out of date and says its steps", app.openring.core.DayLine.decide(pf, java.util.Locale.UK).branch
+                != app.openring.core.DayLine.STALE && app.openring.core.DayLine.decide(pf, java.util.Locale.UK).evidence.contains("steps"),
+                app.openring.core.DayLine.decide(pf, java.util.Locale.UK).evidence);
+        app.openring.core.DayLine.Facts outside = app.openring.core.DayLine.fromDevice(h, DS_DAY.plusDays(3), false);
+        check("day line: a day outside the watch's days has no numbers", Double.isNaN(outside.readiness) && Double.isNaN(outside.steps));
+        app.openring.core.DayLine.Facts firstDay = app.openring.core.DayLine.fromDevice(h, first, false);
+        check("day line: the first day has no days before", firstDay.readinessBefore.length == 0 && Double.isNaN(firstDay.hardYesterdayMin));
+
         // ---- each series is the watch's own number of the day
         Map<LocalDate, Integer> steps = WatchDays.stepsPerDay(dec.steps, zones), kcal = WatchDays.kcalPerDay(dec.steps, zones);
         boolean ok = true;
