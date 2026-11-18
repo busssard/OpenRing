@@ -1900,14 +1900,7 @@ public final class Pages {
     }
 
     static TS daysSeries(DayData d, String field, int n) {
-        TS ts = new TS();
-        double[] v = d.series(field, n);
-        for (int i = 0; i < n; i++) {
-            if (Double.isNaN(v[i])) continue;
-            double t = d.date.minusDays(n - 1 - i).atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond() + 43200;
-            ts.add(t, v[i]);
-        }
-        return ts;
+        return app.openring.data.DaySeries.of(d.date, d.series(field, n));
     }
 
     static View hero(Context c, double score, String label, int color, String sub) {
