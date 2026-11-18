@@ -916,7 +916,7 @@ public final class Explain {
             + "of the morning it ends, as on Sleep. The middle half leaves out the quarter of days with the lowest and the quarter with "
             + "the highest values, so one odd night does not move the band. Steps and active calories count only days the device was "
             + "worn for an hour or more, screen time only days the phone recorded completely; days without are left out, not zero. "
-            + "Today counts once it is over. Nothing here changes your stored numbers.";
+            + "Today's steps, calories and screen time count once the day is over. Nothing here changes your stored numbers.";
 
     public static final String TRENDS_COMPARE_CAPTION = "This month against the last";
     /** Under the comparison: what the range in brackets means. */

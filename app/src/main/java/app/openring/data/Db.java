@@ -2118,7 +2118,7 @@ public final class Db extends SQLiteOpenHelper {
 
     /**
      * As {@link #clearResults()}, keeping the nights and days filed up to {@code keepUntil} (an ISO date) when it is not null:
-     * only demo mode passes one, for its made up year before the five weeks, which has no raw events to be worked out from
+     * only the analysis of the demo file passes one, for its made up year before the five weeks, which has no raw events to be worked out from
      * again (issue #374, {@code Demo.YEAR_UNTIL}).
      */
     public void clearResults(String keepUntil) {

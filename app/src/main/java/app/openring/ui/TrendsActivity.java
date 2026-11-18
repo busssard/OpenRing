@@ -29,13 +29,17 @@ import app.openring.data.TrendDays;
  */
 public final class TrendsActivity extends Activity {
     /** Extras: the group to open at ({@code Trends.G_SLEEP} and so on), the shown day (yyyy-mm-dd), and for the screen test a measure and period. */
-    static final String GROUP = "group", DAY = "day", MEASURE = "measure", PERIOD = "period";
+    static final String GROUP = "group", DAY = "day", MEASURE = "measure", PERIOD = "period", TOUCHED = "touched";
 
     private LinearLayout body;
     private int group, measure = -1, period = Trends.MONTHS, loads;
     private LocalDate shownDay, today;
-    private boolean demo, preselect = true;
+    /** A day of the period touched on the chart (kept through a chip change, a reload and a turn of the phone), null for none. */
+    private LocalDate touched;
+    private boolean demo;
     private List<Trends.Day> days;
+    /** What the days were read from ({@code TrendDays.stamp} with the day and the devices): read again only when it differs. */
+    private String stamp;
     private final boolean[] howOpen = {false};
 
     @Override
@@ -54,10 +58,19 @@ public final class TrendsActivity extends Activity {
         } catch (RuntimeException e) {
             shownDay = null;
         }
+        // opened from a day of an earlier week, month or year: that period touched
+        LocalDate now = LocalDate.now();
+        if (shownDay != null && Trends.start(shownDay, period).isBefore(Trends.start(now, period))) touched = shownDay;
         if (b != null) {
             group = b.getInt(GROUP, group);
             measure = b.getInt(MEASURE, measure);
             period = b.getInt(PERIOD, period);
+            String t = b.getString(TOUCHED);
+            try {
+                touched = t == null ? null : LocalDate.parse(t);
+            } catch (RuntimeException e) {
+                touched = null;
+            }
         }
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(Ui.BG);
@@ -94,12 +107,13 @@ public final class TrendsActivity extends Activity {
         out.putInt(GROUP, group);
         out.putInt(MEASURE, measure);
         out.putInt(PERIOD, period);
+        if (touched != null) out.putString(TOUCHED, touched.toString());
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        // again on every return: a sync may have brought new nights meanwhile; the page shows the old ones until then
+        // on every return, but the history is read again only when something changed (a sync, an analysis, another day)
         load();
     }
 
@@ -107,13 +121,15 @@ public final class TrendsActivity extends Activity {
     static final class Loaded {
         List<Trends.Day> days;
         LocalDate today;
-        boolean failed;
+        String stamp;
+        boolean failed, same;
     }
 
     void load() {
         final int mine = ++loads;
         final android.content.Context ctx = getApplicationContext();
         demo = Prefs.of(this).demo();
+        final String before = days == null ? null : stamp;
         new AsyncTask<Void, Void, Loaded>() {
             @Override
             protected Loaded doInBackground(Void... v) {
@@ -121,9 +137,19 @@ public final class TrendsActivity extends Activity {
                 l.today = LocalDate.now();
                 try {
                     Prefs p = Prefs.of(ctx);
+                    Db db = Db.get(ctx);
                     // the devices as the tabs show them: the ring, the watch's nights, without a ring the watch's or the phone's days
-                    l.days = TrendDays.read(Db.get(ctx), l.today, System.currentTimeMillis() / 1000.0, p.screenExcluded(), DayData.shownNow(ctx),
-                            ZoneId.systemDefault());
+                    app.openring.data.ShownNights.Devices dev = DayData.shownNow(ctx);
+                    l.stamp = TrendDays.stamp(db) + "|" + l.today + "|" + p.screenExcluded() + "|" + dev.main + dev.ring + dev.watch + dev.history
+                            + "|" + ZoneId.systemDefault().getId();
+                    if (l.stamp.equals(before)) {
+                        l.same = true;
+                        return l;
+                    }
+                    int[] skipped = new int[1];
+                    l.days = TrendDays.read(db, l.today, System.currentTimeMillis() / 1000.0, p.screenExcluded(), dev, ZoneId.systemDefault(), skipped);
+                    // a stored night or day that could not be read is left out; the log says how many, never which or what
+                    if (skipped[0] > 0) app.openring.ble.RingManager.get(ctx).log("trends: " + skipped[0] + " stored nights or days could not be read, left out");
                 } catch (Throwable e) {
                     l.failed = true;
                     try {
@@ -138,7 +164,7 @@ public final class TrendsActivity extends Activity {
 
             @Override
             protected void onPostExecute(Loaded l) {
-                if (mine != loads || isFinishing() || isDestroyed()) return;
+                if (mine != loads || isFinishing() || isDestroyed() || l.same) return;
                 if (l.failed || l.days == null) {
                     body.removeAllViews();
                     LinearLayout card = Ui.card(TrendsActivity.this);
@@ -148,6 +174,7 @@ public final class TrendsActivity extends Activity {
                 }
                 days = l.days;
                 today = l.today;
+                stamp = l.stamp;
                 fill();
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
@@ -166,9 +193,10 @@ public final class TrendsActivity extends Activity {
 
     /** A row of chips that scrolls sideways when it is wider than the screen. */
     HorizontalScrollView chipRow(String[] names, int current, int color, final Pick pick) {
-        HorizontalScrollView sv = new HorizontalScrollView(this);
+        final HorizontalScrollView sv = new HorizontalScrollView(this);
         sv.setHorizontalScrollBarEnabled(false);
         LinearLayout row = Ui.hbox(this);
+        TextView picked = null;
         for (int i = 0; i < names.length; i++) {
             final int k = i;
             TextView chip = Ui.button(this, names[i], i == current ? color : Ui.TEXT_3, false);
@@ -184,8 +212,18 @@ public final class TrendsActivity extends Activity {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             lp.setMargins(0, 0, Ui.dp(this, 6), 0);
             row.addView(chip, lp);
+            if (i == current) picked = chip;
         }
         sv.addView(row);
+        // the picked chip in view (a measure far right in its row), once the row has its size
+        final TextView shown = picked;
+        if (shown != null) sv.post(new Runnable() {
+            @Override
+            public void run() {
+                int right = shown.getRight() + Ui.dp(TrendsActivity.this, 16);
+                if (right > sv.getWidth()) sv.scrollTo(right - sv.getWidth(), 0);
+            }
+        });
         return sv;
     }
 
@@ -261,13 +299,11 @@ public final class TrendsActivity extends Activity {
             @Override
             public void picked(int index) {
                 readout.setText(index >= 0 ? Trends.readout(view, index, l) : newest(view, l));
+                // kept by its first day, so another period or a reload touches the period holding it
+                touched = index >= 0 ? view.buckets.get(index).start : null;
             }
         });
-        // opened from a day of an earlier period: that period touched (the month of the shown day, once per open)
-        if (preselect && shownDay != null && today != null && Trends.start(shownDay, period).isBefore(Trends.start(today, period))) {
-            chart.select(view.indexOf(shownDay));
-        }
-        preselect = false;
+        if (touched != null) chart.select(view.indexOf(touched));
         card.addView(chart, Ui.sized(this, -1, 230));
         card.addView(Ui.gap(this, 8));
         readout.setText(newest(view, l));

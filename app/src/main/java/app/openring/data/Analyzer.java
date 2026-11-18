@@ -480,8 +480,9 @@ public final class Analyzer {
             int waited = db.beginLongRun();
             if (waited > 0) log.log("a long analysis: waited for a ring task to store its data");
         }
-        // demo mode keeps its made up year before the five weeks (issue #374): it has no raw events to analyse; null elsewhere
-        final String keepUntil = all && prefs.demo() ? db.kv(Demo.YEAR_UNTIL, null) : null;
+        // the demo file keeps its made up year before the five weeks (issue #374): it has no raw events to analyse. Only the demo
+        // file, whatever a setting or a stray kv row says (code review of #413): the person's own history is always rebuilt whole
+        final String keepUntil = all && Db.DEMO.equals(db.fileName) ? db.kv(Demo.YEAR_UNTIL, null) : null;
         try {
             // one transaction for all results (issue #230): the old nights and days stay, also for the screens reading
             // meanwhile, until the new ones are all stored; any stop or failure rolls back to them

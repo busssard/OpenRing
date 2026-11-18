@@ -615,7 +615,9 @@ public class PipelineTest {
         check("ring finder: the demo ring reads as worn, confirmed by heart rate (#94)", demoLast.state == app.openring.core.analysis.LastWorn.WORN
                 && !Double.isNaN(demoLast.skinC) && !demoLast.justOn && !Double.isNaN(demoLast.lastHr), demoLast.state + " " + demoLast.skinC + " " + demoLast.lastHr);
         // issue #374: the made up year before the five weeks is results only; the five weeks are analysed from raw events
-        String yearUntil = demo.kv(app.openring.data.Demo.YEAR_UNTIL, "0000-00-00");
+        String yearUntil = demo.kv(app.openring.data.Demo.YEAR_UNTIL, null);
+        check("#374 demo: its made up year is noted", yearUntil != null, null);
+        if (yearUntil == null) yearUntil = "0000-01-01";
         long demoNights = demo.count("SELECT COUNT(*) FROM nights WHERE main = 1 AND day > '" + yearUntil + "'");
         check("demo has about five weeks of nights after its made up year", demoNights >= 28 && demoNights <= 36, demoNights + " nights in " + (System.currentTimeMillis() - t) + " ms");
         app.openring.data.SleepHistory dh = app.openring.data.SleepHistory.load(demo, "2000-01-01", "2100-01-01", java.time.ZoneId.systemDefault());

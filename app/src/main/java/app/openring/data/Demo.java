@@ -236,7 +236,12 @@ public final class Demo {
             else if (warmDays.contains(LocalDate.parse(r[0]))) warm.add(pair);
             else cool.add(pair);
         }
-        if (warm.isEmpty() || cool.isEmpty() || ill.isEmpty()) return;
+        if (warm.isEmpty() || cool.isEmpty() || ill.isEmpty()) {
+            // no made up year: Trends then says it needs two months (only if the five weeks lacked a cold or a cycle phase)
+            android.util.Log.w("OpenRing", "demo: no made up year, nights to copy missing (" + warm.size() + " warm, " + cool.size() + " cool, "
+                    + ill.size() + " ill)");
+            return;
+        }
         Comparator<org.json.JSONObject[]> byAsleep = new Comparator<org.json.JSONObject[]>() {
             @Override
             public int compare(org.json.JSONObject[] a, org.json.JSONObject[] b) {

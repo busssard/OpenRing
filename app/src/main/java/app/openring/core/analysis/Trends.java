@@ -439,7 +439,7 @@ public final class Trends {
             case ASLEEP: return "Time asleep each night, without the time awake in bed.";
             case BEDTIME: return "The clock time you fell asleep each night.";
             case WAKE: return "The clock time you woke up for the day.";
-            case REGULARITY: return "How much your bedtime moves from night to night (its spread). Under 30 min is very regular.";
+            case REGULARITY: return "How much your bedtime moves from night to night (its spread). Under 30 min is very regular, as Further analysis says.";
             case WAKE_UPS: return "Wake ups each night. " + WakeUps.averageLine(detail) + ".";
             case SLEEP_SCORE: return "The sleep score of each night, 0 to 100.";
             case READINESS: return "Readiness of each day, 0 to 100.";

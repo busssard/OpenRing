@@ -40,6 +40,12 @@ public final class TrendDays {
 
     /** Every date from the first day with any data to {@code today}, oldest first (empty days included, all NaN). */
     public static List<Trends.Day> read(Db db, LocalDate today, double now, Set<String> excluded, ShownNights.Devices dev, ZoneId phone) {
+        return read(db, today, now, excluded, dev, phone, new int[1]);
+    }
+
+    /** As above; {@code skipped[0]} counts the stored days and nights that could not be read (left out, for the log). */
+    public static List<Trends.Day> read(Db db, LocalDate today, double now, Set<String> excluded, ShownNights.Devices dev, ZoneId phone,
+            final int[] skipped) {
         LocalDate first = first(db, today, dev, phone);
         List<Trends.Day> out = new ArrayList<Trends.Day>();
         Map<LocalDate, Trends.Day> by = new HashMap<LocalDate, Trends.Day>();
@@ -53,6 +59,7 @@ public final class TrendDays {
             for (String[] r : db.daysJson(from, to)) {
                 Trends.Day x = by.get(BadgeDays.parse(r[0]));
                 Map<String, String> o = fields(r[1]);
+                if (o == null) skipped[0]++;
                 if (x == null || o == null) continue;
                 fromDay(x, o);
             }
@@ -67,7 +74,10 @@ public final class TrendDays {
                 public void accept(String s) {
                     // only the top level fields are read, not the stages and series (most of a night's text)
                     Map<String, String> o = fields(s);
-                    if (o == null || !o.containsKey("day")) return;
+                    if (o == null || !o.containsKey("day")) {
+                        skipped[0]++;
+                        return;
+                    }
                     LocalDate d = BadgeDays.parse(text(o.get("day")));
                     ring.put(d, night(o, fallback));
                     if (o.containsKey("zone")) ringZone.put(d, text(o.get("zone")));
@@ -83,7 +93,7 @@ public final class TrendDays {
             JSONObject w = watch.get(x.date);
             boolean useWatch = w != null && MainDevice.nightFrom(dev.main, r != null, true) == MainDevice.WATCH;
             if (useWatch) {
-                double[] n = night(fields(w.toString()), noted.of(x.date));
+                double[] n = night(w, noted.of(x.date));
                 setNight(x, n, Trends.WATCH);
                 // the watch's night replaces the ring's for the sleep numbers, as on Sleep
                 x.v[Trends.ASLEEP] = Double.NaN;
@@ -131,6 +141,27 @@ public final class TrendDays {
         return out;
     }
 
+    /**
+     * A short text that changes whenever what {@link #read} reads may have changed: the last analysis, the stored nights and days,
+     * the screen sessions and reads, the apps, the zones, the watch's and the phone's rows. Trends reads the history again only
+     * when it differs from the last read (code review of #413), so coming back to the page keeps the period touched. A table
+     * that cannot be counted gives "?".
+     */
+    public static String stamp(Db db) {
+        StringBuilder b = new StringBuilder(db.fileName).append('|').append(db.kv("last_analysis", "")).append('|').append(db.kv("analyzed_until", ""));
+        String[] q = {"SELECT COUNT(*) FROM nights", "SELECT COUNT(*) FROM days", "SELECT COALESCE(MAX(stop), 0) FROM screen", "SELECT COUNT(*) FROM screen",
+            "SELECT COALESCE(MAX(stop), 0) FROM screen_reads", "SELECT COUNT(*) FROM apps", "SELECT COUNT(*) FROM zones",
+            "SELECT COUNT(*) FROM watch_sleep", "SELECT COUNT(*) FROM watch_steps", "SELECT COUNT(*) FROM watch_hr", "SELECT COUNT(*) FROM phone_steps"};
+        for (String x : q) {
+            try {
+                b.append('|').append(db.count(x));
+            } catch (RuntimeException e) {
+                b.append("|?");
+            }
+        }
+        return b.toString();
+    }
+
     /** The ring's day summary (its top level fields): its values, steps and active calories only on a worn day. */
     static void fromDay(Trends.Day x, Map<String, String> o) {
         x.set(Trends.ASLEEP, num(o.get("asleep_min")), Trends.RING);
@@ -162,6 +193,15 @@ public final class TrendDays {
         return new double[] {SleepHistory.clockOf(num(o.get("sleep_start")), nz), SleepHistory.clockOf(num(o.get("sleep_end")), nz),
             Double.isNaN(wakes) ? Double.NaN : (int) wakes, Double.isNaN(detail) ? -1 : (int) detail,
             num(o.get("asleep_min")), score >= 0 ? (int) score : Double.NaN};
+    }
+
+    /** As above from a night already parsed (the watch's, worked out on each read). */
+    static double[] night(JSONObject o, ZoneId zone) {
+        ZoneId nz = Json.zone(o, zone);
+        JSONObject sc = o.optJSONObject("score");
+        return new double[] {SleepHistory.clockOf(Json.d(o, "sleep_start"), nz), SleepHistory.clockOf(Json.d(o, "sleep_end"), nz),
+            o.has("awakenings") ? o.optInt("awakenings") : Double.NaN, o.has("stage_detail") ? o.optInt("stage_detail") : -1,
+            Json.d(o, "asleep_min"), sc != null && sc.has("value") && sc.optInt("value", -1) >= 0 ? sc.optInt("value") : Double.NaN};
     }
 
     // ------------------------------------------------------------------ the top level of a stored JSON object
@@ -257,9 +297,44 @@ public final class TrendDays {
         }
     }
 
-    /** A raw string without its quotes (the zone and day texts hold no escapes). */
+    /**
+     * A raw string without its quotes and with its escapes read (Android's org.json writes "/" as "\/", so a stored zone is
+     * "Europe\/Zurich"; code review of #413). Anything else as it is.
+     */
     public static String text(String raw) {
-        return raw != null && raw.length() >= 2 && raw.charAt(0) == '"' ? raw.substring(1, raw.length() - 1) : raw;
+        if (raw == null || raw.length() < 2 || raw.charAt(0) != '"') return raw;
+        String in = raw.substring(1, raw.length() - 1);
+        if (in.indexOf('\\') < 0) return in;
+        StringBuilder b = new StringBuilder(in.length());
+        for (int i = 0; i < in.length(); i++) {
+            char c = in.charAt(i);
+            if (c != '\\' || i + 1 >= in.length()) {
+                b.append(c);
+                continue;
+            }
+            char e = in.charAt(++i);
+            switch (e) {
+                case 'b': b.append('\b'); break;
+                case 'f': b.append('\f'); break;
+                case 'n': b.append('\n'); break;
+                case 'r': b.append('\r'); break;
+                case 't': b.append('\t'); break;
+                case 'u':
+                    if (i + 4 < in.length()) {
+                        try {
+                            b.append((char) Integer.parseInt(in.substring(i + 1, i + 5), 16));
+                            i += 4;
+                            break;
+                        } catch (NumberFormatException ignored) {
+                            // kept as written below
+                        }
+                    }
+                    b.append('\\').append(e);
+                    break;
+                default: b.append(e); // a quote, a backslash or a slash
+            }
+        }
+        return b.toString();
     }
 
     static void setNight(Trends.Day x, double[] n, int src) {

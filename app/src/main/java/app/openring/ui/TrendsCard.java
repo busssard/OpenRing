@@ -22,9 +22,13 @@ final class TrendsCard {
         c.startActivity(i);
     }
 
-    /** Adds the card at the end of a tab's page; nothing on Today or for a tab that asks for a device first. */
+    /**
+     * Adds the card at the end of a tab's page; nothing on Today, nor on Sleep and Ready while they only ask for a device (with
+     * only the phone, Activity and Screen still get it: its steps and screen time have trends; code review of #413).
+     */
     static void add(final Context c, LinearLayout root, final DayData d, final int tab) {
-        if (tab == Pages.TODAY || d == null || PhoneViews.needsDevice(c, d)) return;
+        if (tab == Pages.TODAY || d == null) return;
+        if ((tab == Pages.SLEEP || tab == Pages.READINESS) && PhoneViews.needsDevice(c, d)) return;
         LinearLayout card = Ui.card(c);
         LinearLayout row = Ui.hbox(c);
         LinearLayout text = Ui.vbox(c);

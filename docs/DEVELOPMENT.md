@@ -153,7 +153,9 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
 * **Demo data:** `data/Demo.java` generates five weeks in the ring's own format; keep it realistic,
   it is what screenshots and visitors see. Before them it adds about 11 months of made up results only (`Demo.olderYear`, issue
   #374: copies of its own analysed nights and days at new dates, with a change built in), so Trends has a year; Re analyse all
-  keeps them (`Demo.YEAR_UNTIL`), and checks of the five weeks start after them. Keep its story too (a busy month, an easy last week, a short cold, a best
+  keeps them (`Demo.YEAR_UNTIL`, only in the demo file), and checks of the five weeks start after them. The five weeks are analysed
+  before the year is added; after Re analyse all in demo mode their baselines include the year (readiness, temperature deviation,
+  sleep debt and the symptom radar of the day summaries change, the nights do not). Keep its story too (a busy month, an easy last week, a short cold, a best
   night, quiet days and phone free evenings; issue #265), so it earns every kind of badge on any day (the pipeline test
   checks that). The tests' own histories (`Demo.history` without the story) stay exactly as before #265.
 

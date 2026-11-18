@@ -61,6 +61,8 @@ public class TrendsPipelineTest {
         screenPerDay();
         demoYear();
         clockChangeAndTrip();
+        realReanalyse();
+        stamp();
         threeYears();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -116,6 +118,13 @@ public class TrendsPipelineTest {
         int refused = 0;
         for (String b : bad) if (TrendDays.fields(b) == null) refused++;
         check("#374 fields: anything that is not a whole object gives null (the night is skipped)", refused == bad.length, refused + " of " + bad.length);
+        // Android's org.json writes "/" as "\/" (code review of #413): a stored zone reads as the zone, every escape as its character
+        check("#374 text: escaped slashes in zones", "Europe/Zurich".equals(TrendDays.text("\"Europe\\/Zurich\""))
+                && "America/New_York".equals(TrendDays.text("\"America\\/New_York\"")), TrendDays.text("\"Europe\\/Zurich\""));
+        check("#374 text: the zone it gives is known", app.openring.core.analysis.ClockChange.zone(TrendDays.text("\"Europe\\/Zurich\"")) != null, null);
+        String esc = TrendDays.text("\"a\\\"b\\\\c\\nd\\te\\rf\\bg\\fh\\u00e9i\\u12\"");
+        check("#374 text: quote, backslash, line breaks, tabs and \\u escapes read as org.json reads them; a broken \\u kept",
+                esc.equals("a\"b\\c\nd\te\rf\bg\fh\u00e9i\\u12") && esc.equals(Json.parse("{\"x\":\"a\\\"b\\\\c\\nd\\te\\rf\\bg\\fh\\u00e9i\\\\u12\"}").optString("x")), esc.length());
         check("#374 fields: a text or object is not a number", Double.isNaN(TrendDays.num("\"5\"")) && Double.isNaN(TrendDays.num("{}")) && Double.isNaN(TrendDays.num("[1]"))
                 && Double.isNaN(TrendDays.num("")) && Double.isNaN(TrendDays.num(null)) && Double.isNaN(TrendDays.num("x1")) && TrendDays.text("5").equals("5"), null);
     }
@@ -465,9 +474,70 @@ public class TrendsPipelineTest {
             }
         }
         check("#374 trip: every night in its own day with the clock of the zone it was slept in", ok == all && inNy >= 4, ok + " of " + all + ", " + inNy + " in New York");
+        // as Android stores them: org.json there writes the zones' slashes as \/ (code review of #413); the same bedtimes
+        tdb.getWritableDatabase().execSQL("UPDATE nights SET json = replace(replace(json, 'America/New_York', 'America\\/New_York'), 'Europe/Zurich', 'Europe\\/Zurich')");
+        long escaped = tdb.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%America\\/New_York%'");
+        List<Trends.Day> again = TrendDays.read(tdb, tday, end1, new TreeSet<String>(), ShownNights.Devices.RING, zh);
+        int sameBed = 0, cmp = 0;
+        for (int i = 0; i < trip.size(); i++) {
+            double a = trip.get(i).v[Trends.BEDTIME], b = again.get(i).v[Trends.BEDTIME];
+            if (Double.isNaN(a)) continue;
+            cmp++;
+            if (a == b) sameBed++;
+        }
+        check("#374 trip with zones stored as \"America\\/New_York\": the same bedtimes in New York clock time", escaped >= 4 && sameBed == cmp && cmp == all,
+                escaped + " escaped, " + sameBed + " of " + cmp);
         Trends.View tw = Trends.of(trip, Trends.BEDTIME, Trends.MONTHS, tday);
         double[] r = tw.range();
         check("#374 trip: bedtimes in New York stay evening times, the band no wider than a few hours", r[1] - r[0] < 4 * 60, r[0] + " " + r[1]);
+    }
+
+    /**
+     * Data safety (code review of #413): Re analyse all of the person's own database deletes and rebuilds every night and day,
+     * also with a kv row demo_year_until in it (only the demo file keeps its made up year).
+     */
+    static void realReanalyse() throws Exception {
+        ZoneId z = ZoneId.of("Europe/Zurich");
+        long t0 = LocalDate.parse("2026-09-01").atStartOfDay(z).toEpochSecond(), end = t0 + 11 * 86400L + 12 * 3600;
+        Context c = freshDb("trends-real");
+        Db db = Db.get(c);
+        check("#374 the person's own file", Db.REAL.equals(db.fileName), db.fileName);
+        putBoot(db, Demo.history(t0, 10, end, z, new Random(21)), 1, t0, end);
+        Analyzer.runAll(c, null);
+        List<String> nights = db.nightsJson("2000-01-01", "2100-01-01", false);
+        List<String[]> days = db.daysJson("2000-01-01", "2100-01-01");
+        // a stray night and day before the events, and the demo's key in the kv table
+        List<Object[]> stray = new ArrayList<Object[]>();
+        double s = LocalDate.parse("2026-07-01").atTime(23, 0).atZone(z).toEpochSecond();
+        stray.add(new Object[] {s, s + 7 * 3600, "2026-07-02", 1, 80, "{\"day\":\"2026-07-02\",\"main\":true,\"start\":" + s + "}"});
+        db.replaceNights(s - 1, s + 1, stray);
+        db.putDay("2026-07-02", "{\"date\":\"2026-07-02\",\"steps\":1000}");
+        db.put(Demo.YEAR_UNTIL, "2026-08-30");
+        Analyzer.runAll(c, null);
+        List<String> nights2 = db.nightsJson("2000-01-01", "2100-01-01", false);
+        List<String[]> days2 = db.daysJson("2000-01-01", "2100-01-01");
+        boolean sameDays = days.size() == days2.size();
+        for (int i = 0; sameDays && i < days.size(); i++) sameDays = days.get(i)[0].equals(days2.get(i)[0]) && days.get(i)[1].equals(days2.get(i)[1]);
+        check("#374 data safety: Re analyse all of the own file deletes everything stored, also with demo_year_until in its kv",
+                db.nightsJson("2026-07-02", "2026-07-02", false).isEmpty() && db.dayJson("2026-07-02") == null, null);
+        check("#374 data safety: and rebuilds the same nights and days as before", nights.equals(nights2) && sameDays, nights.size() + " " + nights2.size());
+    }
+
+    /** Trends reads the history again only when its stamp changed: the same database gives the same stamp, a new row another. */
+    static void stamp() throws Exception {
+        Context c = freshDb("trends-stamp");
+        Db db = Db.get(c);
+        String a = TrendDays.stamp(db), b = TrendDays.stamp(db);
+        db.putDay("2026-07-02", "{\"date\":\"2026-07-02\",\"steps\":1000}");
+        String d = TrendDays.stamp(db);
+        List<double[]> s = new ArrayList<double[]>();
+        s.add(new double[] {1.8e9, 1.8e9 + 60});
+        db.putScreen(s);
+        String e = TrendDays.stamp(db);
+        db.put("last_analysis", 12345);
+        String f = TrendDays.stamp(db);
+        System.out.println("    #374 stamp " + f);
+        check("#374 stamp: unchanged without a change, new after a day, a screen session and an analysis", a.equals(b) && !a.equals(d) && !d.equals(e) && !e.equals(f), a + " / " + f);
     }
 
     /** Three years of nights and days (copies of the demo's) and of screen sessions: read and grouped under 1.5 s. */
