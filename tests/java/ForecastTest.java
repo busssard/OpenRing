@@ -264,7 +264,8 @@ public class ForecastTest {
     static final String[][] BEFORE = {
         // changed on purpose by the margin and the temperature rule (design round of #383, phase 1); before: d7a57493e6e9913b, 8f397f5e86e9fa7d
         {"Best for you, calendar", "f5bd6bb4e3c11948"},
-        {"Best for you, temperature", "4fff7f0461946475"},
+        // and once more by the review of #412 (the temperature line in one sentence, "as close as the calendar"); before: 4fff7f0461946475
+        {"Best for you, temperature", "dc377626c5c56b08"},
         {"Follows your last cycle, calendar", "e90423cb13d5775d"},
         {"Follows your last cycle, temperature", "a973dced7a5d960a"},
         {"Learns from every cycle, calendar", "831eff51a8271cea"},
@@ -826,12 +827,22 @@ public class ForecastTest {
         }
         check("#383 drip style picked: each replayed cycle's calendar is drip style's own next start on that day", cal, prb.cases);
         String use = app.openring.ui.Explain.periodTempUse(picked);
-        check("#383 the card names the mix and says why the temperature is used", use.equals("drip style picked, with your night temperature on top. "
-                + "Your night temperature is used on top of the method picked, because on " + prb.n() + " past cycles it was "
+        check("#383 the card names the mix and says why the temperature is used, in one sentence", use.equals("Best for you picked drip style and adds your night "
+                + "temperature on top, because on " + prb.n() + " past cycles it was "
                 + String.format(Locale.getDefault(), "%.1f", prb.mae) + " days off on average, the calendar " + String.format(Locale.getDefault(), "%.1f", prb.calendarMae) + "."), use);
         check("#383 and the Period card's How it works names it too", picked.method != Cycles.MEASURED
                 && app.openring.ui.Explain.periodRange(picked).startsWith("Next period: your last start plus " + picked.step
                 + " days from drip style (picked for you, with your night temperature on top). "), app.openring.ui.Explain.periodRange(picked));
+        String f = String.format(Locale.getDefault(), "%.1f", 1.2);
+        check("#383 the temperature line: other methods, a tie with the calendar, too few cycles", app.openring.ui.Explain.periodTempWords(false, 7, 1.2, 2.4)
+                .equals("Your night temperature is used on top of the method picked, because on 7 past cycles it was " + f + " days off on average, the calendar "
+                + String.format(Locale.getDefault(), "%.1f", 2.4) + ".")
+                && app.openring.ui.Explain.periodTempWords(false, 7, 1.2, 1.2).equals("Your night temperature is used on top of the method picked, because on 7 past cycles "
+                + "it was as close as the calendar (" + f + " days off on average).")
+                && app.openring.ui.Explain.periodTempWords(true, 5, 1.24, 1.21).equals("Best for you picked drip style and adds your night temperature on top, because on 5 "
+                + "past cycles it was as close as the calendar (" + f + " days off on average).")
+                && app.openring.ui.Explain.periodTempWords(true, 1, 0, 3).equals("Best for you picked drip style and adds your night temperature on top until 3 past cycles "
+                + "can show whether it is closer (now 1)."), app.openring.ui.Explain.periodTempWords(false, 7, 1.2, 1.2));
         check("#383 no such line for a method chosen by hand or without the temperature", app.openring.ui.Explain.periodTempUse(hand) == null
                 && app.openring.ui.Explain.periodTempUse(Cycles.of(log(dh), null, today).withMethod(Methods.BEST)) == null);
 
@@ -851,7 +862,9 @@ public class ForecastTest {
                 && app.openring.ui.Explain.ordinal(5).equals("5th") && app.openring.ui.Explain.ordinal(10).equals("10th") && app.openring.ui.Explain.ordinal(11).equals("11th")
                 && app.openring.ui.Explain.ordinal(12).equals("12th") && app.openring.ui.Explain.ordinal(22).equals("22nd") && app.openring.ui.Explain.ordinal(113).equals("113th"));
         check("#383 How it works counts from the constants", app.openring.ui.Explain.periodAccuracyHow().get(0).contains("from the 5th on")
-                && app.openring.ui.Explain.periodAccuracyHow().get(1).contains("from your 10th period on at the earliest"), app.openring.ui.Explain.periodAccuracyHow().get(1));
+                && app.openring.ui.Explain.periodAccuracyHow().get(1).startsWith("Best for you: the method that was closest on average, if it was at least a quarter of a day "
+                + "closer than Open Ring over at least 6 periods, else Open Ring. Smaller differences are luck. So it can leave Open Ring from your 10th period on at the earliest."),
+                app.openring.ui.Explain.periodAccuracyHow().get(1));
         List<String> texts = new ArrayList<String>(Arrays.asList(use, Methods.line(Methods.DRIP), Methods.how(Methods.DRIP), hand.riseOff(), app.openring.ui.Explain.periodPick(demo),
                 app.openring.ui.Explain.periodBestNow(picked), app.openring.ui.Explain.periodRange(picked), app.openring.ui.Explain.periodBestNow(demo)));
         texts.addAll(app.openring.ui.Explain.periodAccuracyHow());

@@ -387,21 +387,31 @@ public final class Explain {
     }
 
     /**
-     * With Best for you and the temperature in use: why, from its own backtest ("Your night temperature is used on top of the
-     * method picked, because on 7 past cycles it was 1.2 days off on average, the calendar 2.4."), and with drip style picked
-     * the mix named first; else null.
+     * With Best for you and the temperature in use: why, from its own backtest ({@link #periodTempWords}); else null.
      */
     public static String periodTempUse(app.openring.core.analysis.Cycles cy) {
         if (cy.choice != app.openring.core.analysis.cycleforecast.Methods.BEST || !cy.riseUsed) return null;
         app.openring.core.analysis.RiseBacktest rb = cy.riseBacktest();
         if (rb == null) return null;
-        String mix = cy.methodId == app.openring.core.analysis.cycleforecast.Methods.DRIP ? "drip style picked, with your night temperature on top. " : "";
-        if (rb.n() < app.openring.core.analysis.RiseBacktest.MIN) {
-            return mix + "Your night temperature is used on top of the method picked until " + app.openring.core.analysis.RiseBacktest.MIN
-                    + " past cycles can show whether it is closer (now " + rb.n() + ").";
+        return periodTempWords(cy.methodId == app.openring.core.analysis.cycleforecast.Methods.DRIP, rb.n(), rb.mae, rb.calendarMae);
+    }
+
+    /**
+     * One sentence on why Best for you uses the night temperature: "Your night temperature is used on top of the method picked,
+     * because on 7 past cycles it was 1.2 days off on average, the calendar 2.4."; with drip style picked "Best for you picked drip
+     * style and adds your night temperature on top, because ..."; when both read the same with one decimal (the rule allows a tie)
+     * "because on 7 past cycles it was as close as the calendar (1.2 days off on average)"; with fewer than
+     * {@code RiseBacktest.MIN} cycles "until 3 past cycles can show whether it is closer (now 1)".
+     */
+    public static String periodTempWords(boolean drip, int n, double mae, double calendarMae) {
+        String s = drip ? "Best for you picked drip style and adds your night temperature on top" : "Your night temperature is used on top of the method picked";
+        if (n < app.openring.core.analysis.RiseBacktest.MIN) {
+            return s + " until " + app.openring.core.analysis.RiseBacktest.MIN + " past cycles can show whether it is closer (now " + n + ").";
         }
-        return mix + "Your night temperature is used on top of the method picked, because on " + rb.n() + " past cycles it was " + fmt1(rb.mae)
-                + " days off on average, the calendar " + fmt1(rb.calendarMae) + ".";
+        if (fmt1(mae).equals(fmt1(calendarMae))) {
+            return s + ", because on " + n + " past cycles it was as close as the calendar (" + fmt1(mae) + " days off on average).";
+        }
+        return s + ", because on " + n + " past cycles it was " + fmt1(mae) + " days off on average, the calendar " + fmt1(calendarMae) + ".";
     }
 
     /** Settings, under the choices: which method Best for you uses now and why (from the backtest of the open log). */
@@ -446,7 +456,8 @@ public final class Explain {
                 + "that day, and says when the period will start. The difference to the day you logged is its error. Nothing after that "
                 + "day is used. A cycle more than 10 days from the middle value of the ones before it (probably a period that was not "
                 + "logged) is not counted, every method misses those.");
-        out.add("Best for you: the method with the smallest average error, on a tie Open Ring. " + PERIOD_PICK_MARGIN + " So it can leave Open Ring from your "
+        out.add("Best for you: the method that was closest on average, if it was at least a quarter of a day closer than Open Ring over at least "
+                + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED + " periods, else Open Ring. Smaller differences are luck. So it can leave Open Ring from your "
                 + ordinal(periodBestFrom()) + " period on at the earliest. You can pick another in Settings, Period tracker, Prediction.");
         for (int id : app.openring.core.analysis.cycleforecast.Methods.CHOICES) if (id != app.openring.core.analysis.cycleforecast.Methods.BEST) out.add(app.openring.core.analysis.cycleforecast.Methods.how(id));
         out.add("With your temperature: each past cycle with a rise is replayed with only the log and the temperatures up to the first day the "
