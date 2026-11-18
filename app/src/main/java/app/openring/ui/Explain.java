@@ -369,7 +369,8 @@ public final class Explain {
 
     /**
      * When Best for you stays with Open Ring although another method was a little closer: "drip style was 0.2 days closer, too
-     * little to switch.", under 0.1 days "less than 0.1 days closer" (the card shows one decimal); else null.
+     * little to switch."; under 0.1 days "only a few hundredths of a day closer (the days off above are rounded)", since the card's
+     * rounded numbers may read 1.4 and 1.3 for a lead of 0.03; else null.
      */
     public static String periodStay(app.openring.core.analysis.Cycles cy) {
         app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
@@ -377,7 +378,8 @@ public final class Explain {
         int c = bt.closest();
         if (c == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING || bt.best() != app.openring.core.analysis.cycleforecast.Methods.OPEN_RING) return null;
         double lead = bt.lead(c);
-        return app.openring.core.analysis.cycleforecast.Methods.name(c) + " was " + (lead < 0.1 ? "less than 0.1 days" : fmt1(lead) + " days") + " closer, too little to switch.";
+        return app.openring.core.analysis.cycleforecast.Methods.name(c) + " was " + (lead < 0.1 ? "only a few hundredths of a day closer (the days off above are rounded)"
+                : fmt1(lead) + " days closer") + ", too little to switch.";
     }
 
     /** On the card How close the estimates were, under the methods: the margin, and why Best for you stayed with Open Ring. */

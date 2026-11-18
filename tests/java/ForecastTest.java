@@ -263,9 +263,11 @@ public class ForecastTest {
      */
     static final String[][] BEFORE = {
         // changed on purpose by the margin and the temperature rule (design round of #383, phase 1); before: d7a57493e6e9913b, 8f397f5e86e9fa7d
-        {"Best for you, calendar", "f5bd6bb4e3c11948"},
+        // and the stay line under 0.1 days ("only a few hundredths of a day closer", emulator shots of #412); before: f5bd6bb4e3c11948
+        {"Best for you, calendar", "26175e035f3230d3"},
         // and once more by the review of #412 (the temperature line in one sentence, "as close as the calendar"); before: 4fff7f0461946475
-        {"Best for you, temperature", "dc377626c5c56b08"},
+        // and the stay line under 0.1 days; before: dc377626c5c56b08
+        {"Best for you, temperature", "ed6948149ea3290c"},
         {"Follows your last cycle, calendar", "e90423cb13d5775d"},
         {"Follows your last cycle, temperature", "a973dced7a5d960a"},
         {"Learns from every cycle, calendar", "831eff51a8271cea"},
@@ -616,7 +618,7 @@ public class ForecastTest {
         check("#383 texts: no dashes as punctuation", !dashes);
         String now = app.openring.ui.Explain.periodBestNow(cy);
         check("#383 Settings names the method Best for you uses and why it stayed with Open Ring", now.equals("Best for you uses Open Ring now: "
-                + String.format(Locale.getDefault(), "%.1f", cy.backtest().of(Methods.OPEN_RING).mae) + " days off on average over 33 of your past periods. Learns from every cycle was less than 0.1 days closer, too little to switch."), now);
+                + String.format(Locale.getDefault(), "%.1f", cy.backtest().of(Methods.OPEN_RING).mae) + " days off on average over 33 of your past periods. Learns from every cycle was only a few hundredths of a day closer (the days off above are rounded), too little to switch."), now);
         Cycles bayes = cy.withMethod(Methods.BAYES);
         String range = app.openring.ui.Explain.periodRange(bayes);
         check("#383 How it works on the card: the method, its range and how it did", range.startsWith("Next period: your last start plus " + bayes.step + " days from Learns from every cycle.")
@@ -846,10 +848,11 @@ public class ForecastTest {
         check("#383 no such line for a method chosen by hand or without the temperature", app.openring.ui.Explain.periodTempUse(hand) == null
                 && app.openring.ui.Explain.periodTempUse(Cycles.of(log(dh), null, today).withMethod(Methods.BEST)) == null);
 
-        // the texts: the stay line, under 0.1 days "less than 0.1", the period Best for you can start from
+        // the texts: the stay line, under 0.1 days "only a few hundredths", the period Best for you can start from
         Cycles demo = Cycles.of(Cycles.demoHistory(LocalDate.of(2026, 11, 12)), null, LocalDate.of(2026, 11, 12)).withMethod(Methods.BEST);
-        check("#383 the card under the methods: the margin, and less than 0.1 days for the demo's 0.03", app.openring.ui.Explain.periodPick(demo).equals(
-                app.openring.ui.Explain.PERIOD_PICK_MARGIN + " Learns from every cycle was less than 0.1 days closer, too little to switch."), app.openring.ui.Explain.periodPick(demo));
+        check("#383 the card under the methods: the margin, and a few hundredths of a day for the demo's 0.03", app.openring.ui.Explain.periodPick(demo).equals(
+                app.openring.ui.Explain.PERIOD_PICK_MARGIN + " Learns from every cycle was only a few hundredths of a day closer (the days off above are rounded), "
+                + "too little to switch."), app.openring.ui.Explain.periodPick(demo));
         int[] small = random(20, 29, 2.6, 1); // Follows your last cycle 0.12 days closer (2 days over 17 periods)
         Cycles alt = Cycles.of(log(small), null, lastStart(small).plusDays(3)).withMethod(Methods.BEST);
         String stay = app.openring.ui.Explain.periodStay(alt);
