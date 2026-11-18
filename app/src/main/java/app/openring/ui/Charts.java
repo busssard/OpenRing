@@ -1613,10 +1613,6 @@ public final class Charts {
             return app.openring.core.analysis.Trends.value(view.measure, v, Locale.getDefault());
         }
 
-        private float x(java.time.LocalDate d, long from, long span, float left, float w) {
-            return (float) (left + (d.toEpochDay() - from + 0.5) / span * (w - left));
-        }
-
         private float y(double v, double lo, double hi, float top, float bottom) {
             return (float) (bottom - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (bottom - top));
         }
@@ -1647,19 +1643,19 @@ public final class Charts {
                 cv.drawText(ys[i], 0, yy + Ui.dp(getContext(), 3), txt);
             }
             java.util.List<app.openring.core.analysis.Trends.Bucket> bs = view.buckets;
-            long from = bs.get(0).start.toEpochDay(), span = bs.get(bs.size() - 1).end.toEpochDay() - from + 1;
-            // every day as a faint dot: the evidence behind each period's dot
+            // one column of the same width per period, its dot in the middle and its days spread over it (Trends.View.dayOffset)
+            float slot = (w - left) / bs.size();
             float small = Ui.dp(getContext(), 1.6f);
             for (int i = 0; i < view.dayDates.size(); i++) {
-                cv.drawCircle(x(view.dayDates.get(i), from, span, left, w), y(view.dayValues.get(i), lo, hi, top, bottom), small, day);
+                float dx = left + slot * (view.dayBucket.get(i) + 0.5f) + (float) (view.dayOffset.get(i) * slot);
+                cv.drawCircle(dx, y(view.dayValues.get(i), lo, hi, top, bottom), small, day);
             }
-            float slot = (w - left) / bs.size();
             float half = Math.max(Ui.dp(getContext(), 1.5f), Math.min(Ui.dp(getContext(), 7), slot * 0.32f));
             float[] xs = new float[bs.size()];
             float px = Float.NaN, py = Float.NaN;
             for (int i = 0; i < bs.size(); i++) {
                 app.openring.core.analysis.Trends.Bucket b = bs.get(i);
-                xs[i] = (float) (left + ((b.start.toEpochDay() + b.end.toEpochDay()) / 2.0 - from + 0.5) / span * (w - left));
+                xs[i] = left + slot * (i + 0.5f);
                 if (Double.isNaN(b.value)) {
                     px = Float.NaN;
                     continue;

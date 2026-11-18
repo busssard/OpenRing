@@ -161,6 +161,13 @@ public final class Trends {
         public final List<Bucket> buckets = new ArrayList<Bucket>();
         /** The days with a value and their value as drawn (clock times unwrapped around {@link #centre}). */
         public final List<LocalDate> dayDates = new ArrayList<LocalDate>();
+        /**
+         * Where each day's small dot goes: the period it belongs to, and its place in that period's column, from -0.4 (its
+         * first day with a value) to 0.4 (its last), 0 for a period with one day. Each period has a column of the same width with
+         * its dot in the middle, so a day's dot is always next to its period's dot (a year with only its last six weeks too).
+         */
+        public final List<Integer> dayBucket = new ArrayList<Integer>();
+        public final List<Double> dayOffset = new ArrayList<Double>();
         public final List<Double> dayValues = new ArrayList<Double>();
         /** Clock measures: the middle of the whole history's times; values are drawn as this plus up to 12 hours either way. */
         public double centre = Double.NaN;
@@ -254,6 +261,7 @@ public final class Trends {
             if (b.n > 0) fill(b, v, kind, out.centre);
             // a spread's small dots: how far each bedtime was from the period's own clock average (none for a lone night)
             double mid = kind == SPREAD && b.n > 1 ? ClockAverage.of(v)[0] : Double.NaN;
+            int startAt = out.dayDates.size();
             for (Day d : with) {
                 if (d.date.isBefore(s) || d.date.isAfter(e)) continue;
                 double x = d.v[col];
@@ -262,6 +270,19 @@ public final class Trends {
                 if (Double.isNaN(x)) continue;
                 out.dayDates.add(d.date);
                 out.dayValues.add(x);
+            }
+            // the days of this period spread over its column by date, from its first day with a value to its last
+            int count = out.dayDates.size() - startAt;
+            if (count > 0) {
+                long a = out.dayDates.get(startAt).toEpochDay(), z = a;
+                for (int j = startAt; j < out.dayDates.size(); j++) {
+                    a = Math.min(a, out.dayDates.get(j).toEpochDay());
+                    z = Math.max(z, out.dayDates.get(j).toEpochDay());
+                }
+                for (int j = startAt; j < out.dayDates.size(); j++) {
+                    out.dayBucket.add(out.buckets.size());
+                    out.dayOffset.add(z == a ? 0.0 : 0.4 * (2.0 * (out.dayDates.get(j).toEpochDay() - a) - (z - a)) / (z - a));
+                }
             }
             out.buckets.add(b);
         }

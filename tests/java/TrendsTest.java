@@ -93,6 +93,10 @@ public class TrendsTest {
         Trends.View y = Trends.of(d, Trends.ASLEEP, Trends.YEARS, LocalDate.parse("2026-05-01"));
         eq("years: one", y.buckets.size(), 1);
         check("a year of 4 days is hollow (under 60)", y.buckets.get(0).hollow);
+        // a year with only its last days: they spread over its whole column around its dot, not where they fall in the year
+        near("first day of a period at the left of its column", y.dayOffset.get(0), -0.4, 1e-12);
+        near("last day of a period at the right of its column", y.dayOffset.get(3), 0.4, 1e-12);
+        eq("one day alone sits under its period's dot", Trends.of(d.subList(3, 4), Trends.ASLEEP, Trends.YEARS, LocalDate.parse("2026-05-01")).dayOffset.get(0), 0.0);
         eq("indexOf", m.indexOf(LocalDate.parse("2026-04-15")), 1);
         eq("indexOf outside", m.indexOf(LocalDate.parse("2025-04-15")), -1);
         eq("axis labels", Trends.axisLabel(LocalDate.parse("2026-03-23"), Trends.WEEKS) + "|" + Trends.axisLabel(LocalDate.parse("2026-03-01"), Trends.MONTHS)
@@ -164,6 +168,16 @@ public class TrendsTest {
             eq("periods add up to every day (" + Trends.PERIOD_NAMES[p] + ")", cnt, n);
             near("weighted means give the all time mean (" + Trends.PERIOD_NAMES[p] + ")", ws / cnt, sum / n, 1e-9);
             eq("one faint dot per day (" + Trends.PERIOD_NAMES[p] + ")", v.dayValues.size(), n);
+            // each day's small dot in its own period's column, in date order, from -0.4 to 0.4 of the column
+            boolean inside = v.dayBucket.size() == n && v.dayOffset.size() == n;
+            for (int i = 0; inside && i < n; i++) {
+                Trends.Bucket bk = v.buckets.get(v.dayBucket.get(i));
+                LocalDate dd = v.dayDates.get(i);
+                double off = v.dayOffset.get(i);
+                inside = !dd.isBefore(bk.start) && !dd.isAfter(bk.end) && off >= -0.4 - 1e-12 && off <= 0.4 + 1e-12
+                        && (i == 0 || !v.dayBucket.get(i).equals(v.dayBucket.get(i - 1)) || off > v.dayOffset.get(i - 1));
+            }
+            check("each day's dot in its own period's column, in date order (" + Trends.PERIOD_NAMES[p] + ")", inside);
         }
     }
 

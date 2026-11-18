@@ -269,6 +269,7 @@ public final class Demo {
             }
             LocalDate from = LocalDate.parse(src[1].optString("date", src[0].optString("day")));
             org.json.JSONObject night = moved(src[0], from, d, zone), day = moved(src[1], from, d, zone);
+            varySleep(night, day, new Random(374L * 104729 + d.toEpochDay()));
             // a clock change day has 23 or 25 hours: the hour more or less is inactive, as the analysis counts every real minute
             double extra = minutes(d, zone) - minutes(from, zone);
             if (extra != 0 && day.has("inactive_min")) {
@@ -279,6 +280,9 @@ public final class Demo {
             if (!Double.isNaN(steps)) {
                 // more steps in summer (the most in mid July), few while ill
                 double f = sick ? 0.35 : 1 + 0.3 * Math.max(0, Math.cos(2 * Math.PI * (d.getDayOfYear() - 196) / 365.0));
+                // and each copy its own day: 0.85 to 1.15 more or less, from its own seed (the picks above stay as they were), so
+                // the same few demo days copied again do not draw lines of equal values (owner's review of the screenshots)
+                f *= 0.85 + 0.3 * new Random(374L * 7919 + d.toEpochDay()).nextDouble();
                 double active = Json.d(day, "active_kcal");
                 Json.put(day, "steps", (Object) Long.valueOf(Math.round(steps * f)));
                 if (day.has("distance_m")) Json.put(day, "distance_m", Math.round(Json.d(day, "distance_m") * f * 10) / 10.0);
@@ -302,6 +306,30 @@ public final class Demo {
                 db.put(YEAR_UNTIL, until);
             }
         });
+    }
+
+    /**
+     * A copied night a little longer or shorter (0.97 to 1.03 of its time asleep, from its own seed), so the few demo nights
+     * copied again do not draw lines of equal values (owner's review of the screenshots). The minutes come from or go to the
+     * time awake in bed (never under 5 minutes awake), so the night still adds up: deep, light and REM in proportion, the
+     * efficiency, the Total sleep line of its score and the day's time asleep. Its stages and score stay as copied.
+     */
+    static void varySleep(org.json.JSONObject night, org.json.JSONObject day, Random r) {
+        double asleep = Json.d(night, "asleep_min"), awake = Json.d(night, "awake_min"), inBed = Json.d(night, "in_bed_min");
+        if (!(asleep > 0) || Double.isNaN(awake)) return;
+        double delta = Math.min(asleep * (0.06 * r.nextDouble() - 0.03), awake - 5);
+        double now = asleep + delta, k = now / asleep;
+        Json.put(night, "asleep_min", now);
+        Json.put(night, "awake_min", awake - delta);
+        for (String f : new String[] {"deep_min", "light_min", "rem_min"}) if (night.has(f)) Json.put(night, f, Json.d(night, f) * k);
+        if (inBed > 0) Json.put(night, "efficiency", Math.round(now / inBed * 10000) / 100.0);
+        org.json.JSONObject sc = night.optJSONObject("score");
+        org.json.JSONArray parts = sc == null ? null : sc.optJSONArray("contributors");
+        for (int i = 0; parts != null && i < parts.length(); i++) {
+            org.json.JSONObject p = parts.optJSONObject(i);
+            if (p != null && "Total sleep".equals(p.optString("label"))) Json.put(p, "detail", app.openring.core.analysis.Scores.hm(now));
+        }
+        if (day.has("asleep_min")) Json.put(day, "asleep_min", now);
     }
 
     /** Real minutes of {@code d} in {@code zone}: 1440, or 1380 and 1500 on the days the clocks change. */
