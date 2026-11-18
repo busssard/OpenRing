@@ -26,7 +26,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 11;
+    static final int VERSION = 12;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -163,6 +163,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo9(db);
         upgradeTo10(db);
         upgradeTo11(db);
+        upgradeTo12(db);
     }
 
     @Override
@@ -177,6 +178,17 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 9) upgradeTo9(db);
         if (oldV < 10) upgradeTo10(db);
         if (oldV < 11) upgradeTo11(db);
+        if (oldV < 12) upgradeTo12(db);
+    }
+
+    /**
+     * v12: life factors (issue #292, phase 1), see {@link LifeLog}: {@code life_days}, the tags of each calendar day (removal
+     * marks kept, never deleted), and {@code life_tags}, the person's own tags and chips. Only adds tables, each on its own
+     * ({@code IF NOT EXISTS}): safe to run twice, and an upgrade stopped after the first goes on with the second. No existing
+     * table or row changes; older files (and restored older backups) get them empty.
+     */
+    private static void upgradeTo12(SQLiteDatabase db) {
+        LifeLog.create12(db);
     }
 
     /**
@@ -1639,6 +1651,8 @@ public final class Db extends SQLiteOpenHelper {
         {"watch_moves", 10, new String[] {"device", "start", "met", "up", "down"}},
         {"phone_readings", 11, new String[] {"device", "boot", "elapsed", "counter", "wall"}},
         {"phone_steps", 11, new String[] {"device", "boot", "elapsed", "start", "stop", "steps"}},
+        {"life_days", 12, new String[] {"day", "tag", "time", "span", "made", "gone"}},
+        {"life_tags", 12, new String[] {"key", "name", "shown", "ord", "made", "gone"}},
     };
 
     /**
@@ -1789,7 +1803,9 @@ public final class Db extends SQLiteOpenHelper {
      *
      * The one thing carried over (issue #252): the period log typed on this phone cannot be downloaded again, so its rows
      * (days with their removal marks, ends, imported temperatures and imports) are read before the swap and written into
-     * the restored file, the phone's row winning on the same day, before {@code .old} goes. Ring data is never merged. A
+     * the restored file, the phone's row winning on the same day, before {@code .old} goes. The life factors (issue #292,
+     * {@link LifeLog}) go the same way: every day and tag row of the phone, removal marks included, wins over the backup's.
+     * Ring data is never merged. A
      * damaged phone file (Android's {@code SQLiteDatabaseCorruptException}, at the open or in a period table) is what a
      * restore is for (#255, #266): it is replaced without its period log, which cannot be read reliably, and the result
      * says so. Any other error on the way to the phone's log refuses the restore before anything moves
@@ -1840,6 +1856,7 @@ public final class Db extends SQLiteOpenHelper {
         Periods.Rows phoneLog = null;
         WatchStore.Rows phoneWatch = null;
         List<Object[]> phoneSteps = null;
+        LifeLog.Rows phoneLife = null;
         boolean logDamaged = false;
         if (instance != null) {
             try {
@@ -1854,6 +1871,8 @@ public final class Db extends SQLiteOpenHelper {
                 phoneWatch = WatchStore.read(instance.getReadableDatabase());
                 // the phone's step readings (issue #329): no ring or backup can bring them back
                 phoneSteps = PhoneStore.read(instance.getReadableDatabase());
+                // the life factors typed on this phone (issue #292): like the period log, nothing can bring them back
+                phoneLife = LifeLog.read(instance.getReadableDatabase());
                 mergeStep(MERGE_READ);
             } catch (RuntimeException e) {
                 // a damaged file (at the open or in a period table) has no log that can be read: it is replaced without it,
@@ -1862,6 +1881,7 @@ public final class Db extends SQLiteOpenHelper {
                 phoneLog = null;
                 phoneWatch = null;
                 phoneSteps = null;
+                phoneLife = null;
                 logDamaged = true;
             } catch (java.io.IOException e) {
                 // nothing moved yet: the phone keeps everything as it is; the person is told it was the phone's log, not the backup
@@ -1889,6 +1909,8 @@ public final class Db extends SQLiteOpenHelper {
             if (phoneWatch != null) WatchStore.merge(instance.getWritableDatabase(), phoneWatch);
             // the phone's step readings the backup lacks (insert, never replace), then its intervals worked out again (issue #329)
             if (phoneSteps != null) PhoneStore.merge(instance.getWritableDatabase(), phoneSteps);
+            // the phone's life factors win over the backup's on the same day and tag, removal marks included (issue #292)
+            if (phoneLife != null) LifeLog.merge(instance.getWritableDatabase(), phoneLife);
             mergeStep(MERGE_PHONE);
             // a failed shrink noted in the backup's file (issue #299) is not true here: the restored file is compact
             instance.getWritableDatabase().delete("kv", "k = ?", new String[] {DataCheck.SHRINK_ERROR});
@@ -1945,7 +1967,7 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     /** The steps of the period merge in {@link #replaceWith} (issue #252), where a test can stop it. */
-    static final String MERGE_READ = "read", MERGE_WRITE = "write", MERGE_PHONE = "phone", MERGE_DONE = "done";
+    static final String MERGE_READ = "read", MERGE_WRITE = "write", MERGE_LIFE = "life", MERGE_PHONE = "phone", MERGE_DONE = "done";
     /** Tests only: the merge throws at this step, as a failure there would. */
     static volatile String failMergeAt;
 
@@ -1981,9 +2003,9 @@ public final class Db extends SQLiteOpenHelper {
     /**
      * The tables that do not belong to one ring and stay when a different ring is paired: the period log
      * ({@link Periods#TABLES}, issue #252), the watch's data ({@link WatchStore#TABLES}, issue #251) and the phone's own
-     * steps ({@link PhoneStore#TABLES}, issue #329).
+     * steps ({@link PhoneStore#TABLES}, issue #329) and the life factors ({@link LifeLog#TABLES}, issue #292).
      */
-    static final String[] KEPT_TABLES = join(join(Periods.TABLES, WatchStore.TABLES), PhoneStore.TABLES);
+    static final String[] KEPT_TABLES = join(join(join(Periods.TABLES, WatchStore.TABLES), PhoneStore.TABLES), LifeLog.TABLES);
 
     /**
      * The tables of one ring's history and what was worked out from it, emptied when a different ring is paired

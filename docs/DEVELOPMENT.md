@@ -10,7 +10,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `app/src/main/java/app/openring/` | The app (plain Java, no third party libraries). Packages explained in ARCHITECTURE.md |
 | `app/src/main/res/` | Icons (vector drawables), app name, theme. All screens are built in code, there are no layouts |
 | `app/src/main/AndroidManifest.xml` | Permissions, activities, services. Must never request `INTERNET` |
-| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383), `BatteryTest.java` (Today's battery rows, `core/DeviceBattery`), `DayLineTest.java` (Today's Your day line: its decision tree, the line bank's rules, no line again within 30 days) and `TodayTest.java` (the order of Today's cards, `core/TodayCards`; the equal badge grid, `core/Grid`; the status line of each Settings section) and `TrendsTest.java` (Trends' weeks, months and years, the middle half, bedtimes across midnight and this month against the last, `core/analysis/Trends`, issue #374) run after it |
+| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383), `BatteryTest.java` (Today's battery rows, `core/DeviceBattery`), `DayLineTest.java` (Today's Your day line: its decision tree, the line bank's rules, no line again within 30 days) and `TodayTest.java` (the order of Today's cards, `core/TodayCards`; the equal badge grid, `core/Grid`; the status line of each Settings section) and `LifeTest.java` (the life factors of `core/LifeTags`, issue #292: keys, chips, own tags, several days, texts, CSV columns, demo tags) and `TrendsTest.java` (Trends' weeks, months and years, the middle half, bedtimes across midnight and this month against the last, `core/analysis/Trends`, issue #374) run after it |
 | `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh`; `TrendsPipelineTest.java` (Trends' values per day for the ring, the watch and the phone, screen time per day, the demo year, 3 years under 1.5 s) runs after `PipelineTest` |
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
@@ -113,6 +113,11 @@ Three for Trends (issue #374; it only reads, so no demo mode needed): `trends` (
 Two for Today: `battery_open` (boolean, demo mode only: the battery lines under the scores folded open, owner's wish of 17
 November) and `day_line_why` (boolean, demo mode only: Why this line opened on the Your day card, each check of
 `core/DayLine`'s tree; owner's wish of 16 November).
+
+One for the life factors: `life_more` (boolean, demo mode only: Today's row "What was today like?" opens with its More,
+All factors and the ways on; issue #292). With `card WHAT_WAS` the row is at the top (also for a past day, "What was this day like?"); `card LIFE_FACTORS` opens
+Sleep, Readiness or Body at their life factors card; `life_read` (int, demo mode only: Body's month view opens with the day
+this many days before today read, as a touch would read it, in that day's month).
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.
