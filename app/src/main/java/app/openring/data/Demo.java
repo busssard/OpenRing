@@ -176,8 +176,186 @@ public final class Demo {
         ringBattery(db, today, now, zone);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
+        // the year before the ring's five weeks, as results only (Trends, issue #374); a second or two, no step of its own
+        olderYear(db, today, zone);
         db.put(BUILT, today.toString());
         return true;
+    }
+
+    // ------------------------------------------------------------------ the year before (Trends, issue #374)
+
+    /** Days of made up results before the five weeks: about 11 months. */
+    public static final int YEAR_DAYS = 334;
+    /**
+     * Key in {@code kv} (only in the demo file): the last day of the made up results, which Re analyse all keeps
+     * ({@code Db.clearResults}): they have no raw events to be worked out from again.
+     */
+    public static final String YEAR_UNTIL = "demo_year_until";
+    /** The made up story of the year: from this many months before today the nights are about 25 minutes longer. */
+    public static final int LONGER_FROM_MONTHS = 4;
+    /** The made up week of illness ends this many days before the year's last day. */
+    public static final int ILL_BACK = 150, ILL_DAYS = 7;
+
+    /** The first day of the made up week of illness. */
+    public static LocalDate illFrom(LocalDate today) {
+        return yearLast(today).minusDays(ILL_BACK + ILL_DAYS - 1);
+    }
+
+    /** The last day of the made up year: two days before the five weeks begin, so no night of the year reaches them. */
+    public static LocalDate yearLast(LocalDate today) {
+        return today.minusDays(35 + 2);
+    }
+
+    /**
+     * About 11 months of made up day and night results before the five weeks (issue #374), so Trends has a year to show: copies
+     * of the demo's own analysed nights and days (each with its stages, series and score, so an older night opens as a full
+     * night), moved to their new date at the same clock times. Copies are picked so the year has a story: nights after
+     * ovulation from the demo's warm nights (the period tracker sees each cycle's rise), the nights from
+     * {@link #LONGER_FROM_MONTHS} months ago from the longer ones (about 25 minutes more sleep), more steps in summer, and one
+     * week of illness ({@link #ILL_DAYS} copies of the nights of the demo's cold: warmer, a higher heart rate, a lower HRV; few
+     * steps). Results only,
+     * no raw events (like a history from before the ring); {@link #history} and the five weeks stay exactly as they are.
+     * Only into {@code db}, the demo file.
+     */
+    static void olderYear(final Db db, LocalDate today, final ZoneId zone) {
+        LocalDate last = yearLast(today), first = last.minusDays(YEAR_DAYS - 1);
+        // the sources: the analysed demo days with their main night, not the first (no baselines yet) nor today (not over)
+        List<org.json.JSONObject[]> warm = new ArrayList<org.json.JSONObject[]>(), cool = new ArrayList<org.json.JSONObject[]>(),
+                ill = new ArrayList<org.json.JSONObject[]>();
+        java.util.Set<LocalDate> warmDays = app.openring.core.analysis.Cycles.demoWarmNights(today);
+        for (String[] r : db.daysJson(today.minusDays(33).toString(), today.minusDays(1).toString())) {
+            org.json.JSONObject day = Json.parse(r[1]);
+            List<String> n = db.nightsJson(r[0], r[0], true);
+            if (day == null || n.size() != 1 || !day.has("temp_dev") || !day.has("readiness")) continue;
+            org.json.JSONObject night = Json.parse(n.get(0));
+            if (night == null) continue;
+            org.json.JSONObject[] pair = {night, day};
+            if (Json.d(day, "temp_dev") >= COLD_C / 2) ill.add(pair);
+            else if (warmDays.contains(LocalDate.parse(r[0]))) warm.add(pair);
+            else cool.add(pair);
+        }
+        if (warm.isEmpty() || cool.isEmpty() || ill.isEmpty()) return;
+        Comparator<org.json.JSONObject[]> byAsleep = new Comparator<org.json.JSONObject[]>() {
+            @Override
+            public int compare(org.json.JSONObject[] a, org.json.JSONObject[] b) {
+                return Double.compare(Json.d(a[0], "asleep_min"), Json.d(b[0], "asleep_min"));
+            }
+        };
+        Collections.sort(warm, byAsleep);
+        Collections.sort(cool, byAsleep);
+        java.util.Set<LocalDate> luteal = lutealDays(today);
+        LocalDate longer = today.minusMonths(LONGER_FROM_MONTHS), illFrom = illFrom(today);
+        final List<Object[]> nights = new ArrayList<Object[]>();
+        final List<String[]> days = new ArrayList<String[]>();
+        for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1)) {
+            Random r = new Random(374L * 100000 + d.toEpochDay());
+            boolean sick = !d.isBefore(illFrom) && d.isBefore(illFrom.plusDays(ILL_DAYS));
+            org.json.JSONObject[] src;
+            if (sick) {
+                src = ill.get(r.nextInt(ill.size()));
+            } else {
+                List<org.json.JSONObject[]> pool = luteal.contains(d) ? warm : cool;
+                // the shorter 75 % before the change, the longer 75 % from it: about 25 minutes more sleep
+                int k = Math.max(1, (int) Math.ceil(pool.size() * 0.75));
+                int i = r.nextInt(k);
+                src = pool.get(d.isBefore(longer) ? i : pool.size() - k + i);
+            }
+            LocalDate from = LocalDate.parse(src[1].optString("date", src[0].optString("day")));
+            org.json.JSONObject night = moved(src[0], from, d, zone), day = moved(src[1], from, d, zone);
+            // a clock change day has 23 or 25 hours: the hour more or less is inactive, as the analysis counts every real minute
+            double extra = minutes(d, zone) - minutes(from, zone);
+            if (extra != 0 && day.has("inactive_min")) {
+                Json.put(day, "inactive_min", Math.max(0, Json.d(day, "inactive_min") + extra));
+                if (day.has("day_min")) Json.put(day, "day_min", minutes(d, zone));
+            }
+            double steps = Json.d(day, "steps");
+            if (!Double.isNaN(steps)) {
+                // more steps in summer (the most in mid July), few while ill
+                double f = sick ? 0.35 : 1 + 0.3 * Math.max(0, Math.cos(2 * Math.PI * (d.getDayOfYear() - 196) / 365.0));
+                double active = Json.d(day, "active_kcal");
+                Json.put(day, "steps", (Object) Long.valueOf(Math.round(steps * f)));
+                if (day.has("distance_m")) Json.put(day, "distance_m", Math.round(Json.d(day, "distance_m") * f * 10) / 10.0);
+                if (!Double.isNaN(active)) {
+                    Json.put(day, "active_kcal", Math.round(active * f * 100) / 100.0);
+                    if (day.has("total_kcal")) Json.put(day, "total_kcal", Math.round((Json.d(day, "total_kcal") + active * (f - 1)) * 1000) / 1000.0);
+                }
+            }
+            org.json.JSONObject sc = night.optJSONObject("score");
+            nights.add(new Object[] {Json.d(night, "start"), Json.d(night, "end"), d.toString(), 1,
+                sc != null && sc.has("value") ? sc.optInt("value") : null, night.toString()});
+            days.add(new String[] {d.toString(), day.toString()});
+        }
+        final double a = first.minusDays(1).atStartOfDay(zone).toEpochSecond(), b = last.plusDays(1).atStartOfDay(zone).toEpochSecond();
+        final String until = last.toString();
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                db.replaceNights(a, b, nights);
+                for (String[] x : days) db.putDay(x[0], x[1]);
+                db.put(YEAR_UNTIL, until);
+            }
+        });
+    }
+
+    /** Real minutes of {@code d} in {@code zone}: 1440, or 1380 and 1500 on the days the clocks change. */
+    static double minutes(LocalDate d, ZoneId zone) {
+        return (d.plusDays(1).atStartOfDay(zone).toEpochSecond() - d.atStartOfDay(zone).toEpochSecond()) / 60.0;
+    }
+
+    /**
+     * The days after ovulation of every cycle of the demo's whole period log ({@code Cycles.demoHistory}), as
+     * {@code Cycles.demoWarmNights} gives them for its newest cycles: the {@code Cycles.LUTEAL} days before each period.
+     */
+    static java.util.Set<LocalDate> lutealDays(LocalDate today) {
+        app.openring.core.analysis.Cycles c = app.openring.core.analysis.Cycles.of(app.openring.core.analysis.Cycles.demoHistory(today), null, today);
+        java.util.Set<LocalDate> out = new java.util.HashSet<LocalDate>();
+        List<LocalDate> starts = new ArrayList<LocalDate>();
+        for (app.openring.core.analysis.Cycles.Period p : c.periods) starts.add(p.start);
+        if (c.next != null) starts.add(c.next);
+        for (int i = 1; i < starts.size(); i++) {
+            LocalDate s = starts.get(i);
+            for (LocalDate d = s.minusDays(app.openring.core.analysis.Cycles.LUTEAL - 1); d.isBefore(s); d = d.plusDays(1)) out.add(d);
+        }
+        return out;
+    }
+
+    /**
+     * A copy of a stored night or day of {@code from} moved to {@code to}: every time in it (unix seconds within three days of
+     * {@code from}) at the same clock time {@code to} days later in {@code zone}, its {@code day} and {@code date} the new date.
+     */
+    public static org.json.JSONObject moved(org.json.JSONObject o, LocalDate from, LocalDate to, ZoneId zone) {
+        double lo = from.minusDays(3).atStartOfDay(zone).toEpochSecond(), hi = from.plusDays(4).atStartOfDay(zone).toEpochSecond();
+        long days = to.toEpochDay() - from.toEpochDay();
+        org.json.JSONObject out = (org.json.JSONObject) move(o, lo, hi, days, zone);
+        if (out.has("day")) Json.put(out, "day", to.toString());
+        if (out.has("date")) Json.put(out, "date", to.toString());
+        return out;
+    }
+
+    static Object move(Object v, double lo, double hi, long days, ZoneId zone) {
+        if (v instanceof org.json.JSONObject) {
+            org.json.JSONObject o = (org.json.JSONObject) v, out = new org.json.JSONObject();
+            java.util.Iterator<String> keys = o.keys();
+            while (keys.hasNext()) {
+                String k = keys.next();
+                Json.put(out, k, move(o.opt(k), lo, hi, days, zone));
+            }
+            return out;
+        }
+        if (v instanceof org.json.JSONArray) {
+            org.json.JSONArray a = (org.json.JSONArray) v, out = new org.json.JSONArray();
+            for (int i = 0; i < a.length(); i++) out.put(move(a.opt(i), lo, hi, days, zone));
+            return out;
+        }
+        if (v instanceof Number) {
+            double x = ((Number) v).doubleValue();
+            if (x >= lo && x < hi) {
+                long s = (long) Math.floor(x);
+                double shifted = java.time.Instant.ofEpochSecond(s).atZone(zone).plusDays(days).toEpochSecond() + (x - s);
+                return v instanceof Double || v instanceof Float || v instanceof java.math.BigDecimal ? (Object) shifted : (Object) (long) shifted;
+            }
+        }
+        return v;
     }
 
     /**

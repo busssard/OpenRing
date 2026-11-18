@@ -89,6 +89,37 @@ public final class ScreenDays {
         return out;
     }
 
+    /**
+     * Counted screen time of every day from {@code from} to {@code to} (Trends, issue #374), oldest first, NaN for a day the
+     * usage log was not read for completely (it is unknown, not zero). Counted as the Screen tab counts a day
+     * ({@link #info}): without the apps in {@code excluded}, each day in its own zone ({@code zones}, the zone the Screen tab
+     * shows it in). One read of the sessions and the apps for the whole range, sorted once, and each day takes only the
+     * sessions that reach it ({@link BadgeDays.Window}), so years of sessions stay one pass.
+     */
+    public static double[] perDay(Db db, LocalDate from, LocalDate to, Set<String> excluded, double now,
+            app.openring.core.DeviceHistory.DayZones zones) {
+        int n = (int) java.time.temporal.ChronoUnit.DAYS.between(from, to) + 1;
+        double[] out = new double[Math.max(0, n)];
+        java.util.Arrays.fill(out, Double.NaN);
+        if (n <= 0) return out;
+        List<double[]> reads = reads(db);
+        if (reads.isEmpty()) return out;
+        // two days more on each side: a day in a zone far from the phone's starts up to 14 hours away
+        double qFrom = from.atStartOfDay(zones.of(from)).toEpochSecond() - 2 * 86400.0;
+        double qTo = to.plusDays(1).atStartOfDay(zones.of(to)).toEpochSecond() + 2 * 86400.0;
+        List<double[]> raw = db.screen(qFrom, qTo);
+        List<double[]> counted = counted(raw, excluded.isEmpty() ? null : ScreenTime.ranges(db.apps(qFrom, qTo), excluded));
+        BadgeDays.Window w = new BadgeDays.Window(counted);
+        for (int i = 0; i < n; i++) {
+            LocalDate d = from.plusDays(i);
+            ZoneId z = zones.of(d);
+            double a = d.atStartOfDay(z).toEpochSecond(), b = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            if (ScreenTime.coverage(reads, a, b, now) != ScreenTime.COVERED) continue;
+            out[i] = ScreenTime.minutes(w.reaching(a, b), a, b);
+        }
+        return out;
+    }
+
     /** True when any screen session is stored. */
     public static boolean any(Db db) {
         return db.screenStart(true) >= 0;
