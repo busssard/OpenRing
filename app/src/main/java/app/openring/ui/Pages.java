@@ -64,6 +64,9 @@ public final class Pages {
             } else if (app.openring.core.TodayCards.DAY.equals(k)) {
                 View day = d.has.ring ? ringDay(c, d, nav, noRing) : dayCard(c, d, d.has.watch && !Double.isNaN(d.score("readiness")), null);
                 if (day != null) root.addView(day);
+            } else if (app.openring.core.TodayCards.LIFE.equals(k)) {
+                // life factors (issue #292): one tap chips for the day shown, right after Your day
+                root.addView(LifeCard.today(c, d, nav));
             } else if (app.openring.core.TodayCards.DEVICE_NOTE.equals(k)) {
                 root.addView(DeviceViews.deviceNote(c, d));
             } else if (app.openring.core.TodayCards.LEFT_OUT.equals(k)) {
@@ -531,6 +534,9 @@ public final class Pages {
             if (d.anyNight) root.addView(furtherAnalysis(c, d));
             return root;
         }
+        // what was logged for the day before this night (issue #292): "Before this night: Alcohol, Meditation."
+        View life = LifeCard.night(c, d, nav);
+        if (life != null) root.addView(life);
 
         LinearLayout hyp = Ui.card(c);
         hyp.addView(Ui.caption(c, "Sleep depth through the night"));
@@ -674,6 +680,8 @@ public final class Pages {
         } else if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
+        View life = LifeCard.night(c, d, nav);
+        if (life != null) root.addView(life);
         LinearLayout hyp = Ui.card(c);
         hyp.addView(Ui.caption(c, "Sleep depth through the night"));
         hyp.addView(Ui.gap(c, 10));
@@ -1083,7 +1091,7 @@ public final class Pages {
 
     // ===================================================================== READINESS
 
-    public static View readiness(Context c, DayData d) {
+    public static View readiness(Context c, DayData d, Nav nav) {
         // no ring and no watch (issue #329): one card instead of empty charts
         if (PhoneViews.needsDevice(c, d)) return DeviceViews.needDevice(c);
         LinearLayout root = Ui.vbox(c);
@@ -1094,6 +1102,8 @@ public final class Pages {
             String none = d.devices == null || d.devices.readinessNone == null ? app.openring.core.DeviceScores.WATCH_NO_READINESS : d.devices.readinessNone;
             root.addView(hero(c, d.score("readiness"), "Readiness", Ui.READY, scored ? headline(d) : none,
                     scored ? app.openring.core.DeviceScores.FEWER : null));
+            View life = LifeCard.morning(c, d, nav);
+            if (life != null) root.addView(life);
             if (scored) {
                 if (sc.optBoolean("provisional")) {
                     LinearLayout note = Ui.card(c);
@@ -1110,6 +1120,9 @@ public final class Pages {
         }
         root.addView(hero(c, d.score("readiness"), "Readiness", Ui.READY,
                 sc == null ? "Readiness appears the morning after a night with the ring on" : headline(d), d.watchVersion("readiness")));
+        // what was logged the day before (issue #292): "Logged yesterday: Alcohol." Shown beside the number, never in it
+        View life = LifeCard.morning(c, d, nav);
+        if (life != null) root.addView(life);
         root.addView(infoCard(c, "What is readiness?", Explain.READINESS));
         if (sc == null) {
             LinearLayout how = Ui.card(c);
@@ -1739,6 +1752,7 @@ public final class Pages {
                 root.addView(PeriodAnalysis.cycles(c, d));
                 if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
             }
+            root.addView(LifeCard.body(c, d));
             return root;
         }
         if (ring) root.addView(rightNow(c, d.now));
@@ -1864,6 +1878,8 @@ public final class Pages {
             // how close each prediction method was on these cycles (issue #383)
             if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
         }
+        // the life factors logged on Today, as a month (issue #292): the evidence itself, no effect worked out yet
+        root.addView(LifeCard.body(c, d));
         return root;
     }
 
