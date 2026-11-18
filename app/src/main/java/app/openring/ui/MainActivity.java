@@ -204,14 +204,25 @@ public final class MainActivity extends Activity implements RingManager.Listener
      */
     private String cardPending;
 
-    /** The top of the first text inside {@code v} that starts with {@code start}, relative to {@code v}; -1 when none. */
+    /**
+     * The top of the first text inside {@code v} that starts with {@code start}, relative to {@code v}; -1 when none. Without
+     * an exact match the case is ignored (a tile's title is a caption in capitals, "Further analysis" since issue of 18 November).
+     */
     static int textTop(View v, String start) {
-        if (v instanceof TextView && ((TextView) v).getText().toString().startsWith(start)) return 0;
+        int t = textTop(v, start, false);
+        return t >= 0 ? t : textTop(v, start, true);
+    }
+
+    private static int textTop(View v, String start, boolean anyCase) {
+        if (v instanceof TextView) {
+            String s = ((TextView) v).getText().toString();
+            if (anyCase ? s.toLowerCase(java.util.Locale.ROOT).startsWith(start.toLowerCase(java.util.Locale.ROOT)) : s.startsWith(start)) return 0;
+        }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) {
                 View ch = g.getChildAt(i);
-                int t = textTop(ch, start);
+                int t = textTop(ch, start, anyCase);
                 if (t >= 0) return ch.getTop() + t;
             }
         }
@@ -254,7 +265,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
     void handleExtras(Intent i) {
         if (i == null) return;
         if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
-        if (i.getBooleanExtra("analysis", false)) Pages.analysisOpen = true;
+        // screen test, demo mode only: every tab in the standard layout (owner's wish of 18 November), before anything below
+        if (i.getBooleanExtra("layout_reset", false) && Prefs.of(this).demo()) Prefs.of(this).resetTiles(null);
+        // Further analysis shown open once (its tile is folded in the standard layout); nothing is saved
+        if (i.getBooleanExtra("analysis", false)) Tiles.openOnce.add(app.openring.core.Layout.tab(Pages.SLEEP) + ":" + Pages.ANALYSIS_KEY);
         if (i.hasExtra("period")) Pages.analysisPeriod = i.getIntExtra("period", 1);
         String card = i.getStringExtra("card");
         cardPending = card != null && Prefs.of(this).demo() ? card.replace('_', ' ') : null;
@@ -681,6 +695,13 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
     void render() {
         if (data == null) return;
+        // a tile held under the finger: the page is replaced once it is let go (owner's wish of 18 November)
+        if (Tiles.waitForDrop(new Runnable() {
+            @Override
+            public void run() {
+                if (!isFinishing() && !isDestroyed()) render();
+            }
+        })) return;
         View content;
         switch (tab) {
             case Pages.SLEEP:
@@ -701,6 +722,14 @@ public final class MainActivity extends Activity implements RingManager.Listener
             default:
                 content = Pages.today(this, data, this, syncLine());
         }
+        // every card a tile that folds and moves, in the order and with the folds the person left (owner's wish of 18 November);
+        // before the notices below, which are not tiles
+        if (content instanceof LinearLayout) Tiles.arrange(this, scroll, tab, (LinearLayout) content, new Runnable() {
+            @Override
+            public void run() {
+                render();
+            }
+        });
         // no copy could be made before this update (issue #242): said once on Today, until OK
         final Prefs np = Prefs.of(this);
         if (tab == Pages.TODAY && !np.demo() && np.beforeUpdateUnseen() && content instanceof LinearLayout) {

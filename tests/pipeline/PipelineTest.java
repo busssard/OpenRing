@@ -930,6 +930,7 @@ public class PipelineTest {
         watchOnlyBackupReview();
         phoneWriteLockReview();
         badges265();
+        tilesLayout();
         phase1a2_252();
         methods383();
         rise252();
@@ -12267,6 +12268,85 @@ public class PipelineTest {
     }
 
     static byte[] zip252(String json) throws Exception {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));
+            z.write(json.getBytes("UTF-8"));
+            z.closeEntry();
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * The tiles of every tab (owner's wish of 18 November): the person's order and folds travel with a backup, the demo's never;
+     * an older backup without them keeps the phone's layout; a broken value in a backup keeps only real keys; reset clears one
+     * tab or all, demo mode only its own. Display only: the history and its results are not touched.
+     */
+    static void tilesLayout() throws Exception {
+        Context c = freshDb("openring-tiles");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.saveKey(app.openring.core.Hex.parseKey("4431967d8bacc2659743142b68391d9a"));
+        check("tiles: the standard layout at first", p.tileOrder("today") == null && p.tileFolds("today") == null, null);
+        p.setTileOrder("today", "day|scores|life");
+        p.setTileFolds("today", "-scores");
+        p.setTileFolds("sleep", "+further analysis");
+        // demo mode keeps its own layout, the person's stays as it was
+        p.setDemo(true);
+        check("tiles: demo mode starts standard", p.tileOrder("today") == null && p.tileFolds("today") == null, null);
+        p.setTileOrder("today", "life|day");
+        p.resetTiles(null);
+        check("tiles: a reset in demo mode resets only the demo's", p.tileOrder("today") == null && "day|scores|life".equals(p.tileOrderReal("today")), null);
+        p.setTileOrder("today", "life|day");
+        p.setDemo(false);
+        check("tiles: the person's layout is back after the demo", "day|scores|life".equals(p.tileOrder("today")) && "-scores".equals(p.tileFolds("today")), null);
+        java.io.ByteArrayOutputStream ko = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, ko, false);
+        String json = new String(zipEntry(ko.toByteArray(), "openring-backup.json"), "UTF-8");
+        check("tiles: the backup holds the person's layout, not the demo's", json.contains("day|scores|life") && !json.contains("life|day"), null);
+        Context b = freshDb("openring-tiles-restore");
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(ko.toByteArray()));
+        app.openring.data.Prefs pb = app.openring.data.Prefs.of(b);
+        check("tiles: a restore brings the order and the folds", r.ok && "day|scores|life".equals(pb.tileOrder("today")) && "-scores".equals(pb.tileFolds("today"))
+                && "+further analysis".equals(pb.tileFolds("sleep")) && pb.tileOrder("sleep") == null, r.message);
+        // an older backup (no layout): the phone keeps its own
+        pb.setTileOrder("body", "period|score");
+        String old = removeKey(json, "layout");
+        app.openring.data.Backup.Result r2 = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(zipJson(old)));
+        check("tiles: an older backup without a layout keeps the phone's", r2.ok && !old.contains("\"layout\"") && "period|score".equals(pb.tileOrder("body"))
+                && "day|scores|life".equals(pb.tileOrder("today")), r2.message);
+        // a backup with the standard layout everywhere puts the phone back to standard
+        p.resetTiles(null);
+        java.io.ByteArrayOutputStream std = new java.io.ByteArrayOutputStream();
+        app.openring.data.Backup.write(c, std, false);
+        app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(std.toByteArray()));
+        check("tiles: a backup in the standard layout restores the standard", pb.tileOrder("body") == null && pb.tileOrder("today") == null && pb.tileFolds("today") == null, null);
+        // a broken layout in a backup: only real keys are kept, nothing fails
+        org.json.JSONObject o = new org.json.JSONObject(json);
+        org.json.JSONObject bad = new org.json.JSONObject();
+        bad.put("today", new org.json.JSONObject().put("order", "Day|day|| x |scores|day").put("folds", "*a|-scores|+|-Bad"));
+        bad.put("nonsense", "yes");
+        bad.put("sleep", 5);
+        o.put("layout", bad);
+        app.openring.data.Backup.Result r3 = app.openring.data.Backup.read(b, new java.io.ByteArrayInputStream(zipJson(o.toString())));
+        check("tiles: a broken layout keeps only real keys", r3.ok && "day|x|scores".equals(pb.tileOrder("today")) && "-scores".equals(pb.tileFolds("today"))
+                && pb.tileOrder("sleep") == null, r3.message + " " + pb.tileOrder("today") + " " + pb.tileFolds("today"));
+        // reset of one tab leaves the others
+        pb.setTileOrder("sleep", "score|day");
+        pb.resetTiles("today");
+        check("tiles: a reset of one tab leaves the others", pb.tileOrder("today") == null && pb.tileFolds("today") == null && "score|day".equals(pb.tileOrder("sleep")), null);
+        rmTree(c.dir);
+        rmTree(b.dir);
+    }
+
+    /** {@code json} without its top level {@code key}. */
+    static String removeKey(String json, String key) throws Exception {
+        org.json.JSONObject o = new org.json.JSONObject(json);
+        o.remove(key);
+        return o.toString();
+    }
+
+    /** A backup file that holds only {@code json}. */
+    static byte[] zipJson(String json) throws Exception {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
             z.putNextEntry(new java.util.zip.ZipEntry("openring-backup.json"));

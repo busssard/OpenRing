@@ -59,6 +59,7 @@ public final class Pages {
         final boolean noRing = PhoneViews.noRing(c);
         View left = d.has.ring ? leftOutCard(c, d) : null;
         for (String k : app.openring.core.TodayCards.of(d.has, !d.badges.isEmpty(), left != null, d.periodShown)) {
+            int before = root.getChildCount();
             if (app.openring.core.TodayCards.SCORES.equals(k)) {
                 root.addView(d.has.ring ? ringScores(c, d, nav, noRing) : DeviceViews.scoresWithout(c, d, nav));
             } else if (app.openring.core.TodayCards.DAY.equals(k)) {
@@ -89,12 +90,37 @@ public final class Pages {
                 // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
                 root.addView(PeriodCard.today(c, d, nav));
             }
+            // the tiles (owner's wish of 18 November): Today's own keys, so a tile keeps its place whatever its caption says
+            if (root.getChildCount() == before + 1) todayTile(root.getChildAt(before), k, d);
         }
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
         root.addView(foot);
         return root;
+    }
+
+    /** Names a tile of Today by its {@code core/TodayCards} key, with a title where the card has no caption of its own. */
+    static void todayTile(View card, String k, DayData d) {
+        String key = app.openring.core.Layout.key(k);
+        if (app.openring.core.TodayCards.SCORES.equals(k)) Tiles.name(card, key, "Scores", scoresLine(d));
+        else if (app.openring.core.TodayCards.DEVICE_NOTE.equals(k)) Tiles.name(card, key, "About these scores", null);
+        else if (app.openring.core.TodayCards.FINISH_WATCH.equals(k)) Tiles.name(card, key, "Your watch", app.openring.core.Start.FINISH_TITLE);
+        else if (app.openring.core.TodayCards.LIVE.equals(k)) Tiles.name(card, key, "Live heart rate", null);
+        else Tiles.spec(card).key = key;
+    }
+
+    /** The folded Scores tile's line: "Readiness 94, sleep 89, activity 99, screen 87", the scores there are. */
+    static String scoresLine(DayData d) {
+        String[] keys = {"readiness", "sleep", "activity_score", "screen"}, names = {"Readiness", "Sleep", "Activity", "Screen"};
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < keys.length; i++) {
+            double v = d.score(keys[i]);
+            if (Double.isNaN(v)) continue;
+            if (b.length() > 0) b.append(", ");
+            b.append(b.length() == 0 ? names[i] : names[i].toLowerCase(Locale.getDefault())).append(' ').append(Math.round(v));
+        }
+        return b.length() == 0 ? null : b.toString();
     }
 
     /** The ring's four score dials, the battery in one folded line per device under them, and Find my ring as a small button. */
@@ -808,28 +834,30 @@ public final class Pages {
     static boolean analysisOpen;
     static int analysisPeriod = 1; // 0 week, 1 month, 2 year, 3 all time
 
+    /** Further analysis' tile key on Sleep (its fold is the tile's, owner's wish of 18 November). */
+    static final String ANALYSIS_KEY = "further analysis";
+
+    /**
+     * Further analysis: averages over a period, folded by default. Its header is the tile's (ui/Tiles), so it folds, moves and
+     * stays open or folded as every other tile; it calculates only while open.
+     */
     static View furtherAnalysis(final Context c, final DayData d) {
         final LinearLayout card = Ui.card(c);
-        LinearLayout head = Ui.hbox(c);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout ht = Ui.vbox(c);
-        ht.addView(Ui.h2(c, "Further analysis"));
-        ht.addView(Ui.text(c, "Your average night and typical values over a week, month, year or all time", 12, Ui.TEXT_3, Ui.REGULAR));
-        head.addView(ht, Ui.weight(1));
-        final TextView arrow = Ui.text(c, analysisOpen ? "\u25B4" : "\u25BE", 20, Ui.TEXT_2, Ui.REGULAR);
-        head.addView(arrow);
-        card.addView(head);
         final LinearLayout body = Ui.vbox(c);
         card.addView(body);
-        head.setClickable(true);
-        head.setOnClickListener(new View.OnClickListener() {
+        analysisOpen = Tiles.open(c, SLEEP, ANALYSIS_KEY, false);
+        Tiles.Spec s = Tiles.spec(card);
+        s.key = ANALYSIS_KEY;
+        s.title = "Further analysis";
+        s.summary = "Your average night and typical values over a week, month, year or all time";
+        s.standardOpen = false;
+        s.listener = new Tiles.Listener() {
             @Override
-            public void onClick(View v) {
-                analysisOpen = !analysisOpen;
-                arrow.setText(analysisOpen ? "\u25B4" : "\u25BE");
+            public void folded(boolean open) {
+                analysisOpen = open;
                 fillAnalysis(c, d, body);
             }
-        });
+        };
         fillAnalysis(c, d, body, true);
         return card;
     }
@@ -1252,6 +1280,7 @@ public final class Pages {
                 String fill = stepsLine(d);
                 if (fill != null) sc.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
                 if (phoneCounted(d)) sc.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
+                Tiles.summary(sc, "Steps " + Ui.fmt(m.steps, 0));
                 root.addView(sc);
             }
             // the watch's steps per hour, touch readable (owner's report of 11 November)
@@ -1291,6 +1320,9 @@ public final class Pages {
         }
         // phone steps in the total are spread evenly over each interval between two readings (issue #329)
         if (phoneCounted(d)) goal.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
+        // folded (owner's wish of 18 November): the day's steps and active burn, as the tiles above show them
+        double steps = d.merged == null ? Json.d(day, "steps") : d.merged.steps;
+        Tiles.summary(goal, "Steps " + Ui.fmt(steps, 0) + ", active burn " + Ui.fmt(active, 0) + " kcal");
         root.addView(goal);
         // the watch's steps per hour when its steps are the day's (owner's report of 11 November)
         View hours = PhoneViews.watchDayCard(c, d);
@@ -1611,6 +1643,8 @@ public final class Pages {
                 + "(the day itself says why). Tap a day to open it.", 12, Ui.TEXT_2, Ui.REGULAR));
         // where the sleep came from when the watch gave a night (owner's report of 14 November); nothing new with only the ring
         if (in.watchNights) card.addView(Ui.text(c, in.ringNights ? Explain.SCREEN_WATCH_SOME : Explain.SCREEN_WATCH_NIGHTS, 12, Ui.TEXT_3, Ui.REGULAR));
+        // one key whatever the number of days in the caption, so the tile keeps its place (owner's wish of 18 November)
+        Tiles.spec(card).key = "last days";
         return card;
     }
 
@@ -1952,7 +1986,8 @@ public final class Pages {
             n.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
             card.addView(n);
         }
-        return card;
+        // a tile like every other (owner's wish of 18 November): folded it says the score and its word, else the line under it
+        return Tiles.name(card, "score", label + " score", Double.isNaN(score) ? sub : Math.round(score) + ", " + Scores.verdict((int) score));
     }
 
     static View contributors(Context c, JSONObject score, int color, String title) {
@@ -1992,6 +2027,13 @@ public final class Pages {
             String key = o.optString("key"), why = device ? Explain.ofDevice(key, watch) : null;
             card.addView(Ui.contributor(c, o.optString("label"), detail, o.optDouble("score"), color, why != null ? why : Explain.of(key)));
         }
+        // folded (owner's wish of 18 November): the contributor that pulls the score down most, as its row rates it
+        JSONObject low = null;
+        for (int i = 0; i < cs.length(); i++) {
+            JSONObject o = cs.optJSONObject(i);
+            if (o != null && !Double.isNaN(o.optDouble("score")) && (low == null || o.optDouble("score") < low.optDouble("score"))) low = o;
+        }
+        if (low != null) Tiles.summary(card, "Lowest: " + low.optString("label") + ", " + Scores.rating(low.optDouble("score")).toLowerCase(Locale.getDefault()));
         return card;
     }
 

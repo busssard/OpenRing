@@ -79,7 +79,10 @@ shot() {
   log "shot $1 ($(stat -c %s "$OUT/$1.png") bytes)"
 }
 swipe_up() { adb shell input swipe 30 1700 30 500 300; sleep 1; }  # along the left margin, never a tap on a night
-launch() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
+# Every step starts with every tab in the standard layout (owner's wish of 18 November: tiles move and fold, and stay so);
+# the extra is for demo mode only. launch_kept keeps the layout the steps before made (the tiles steps below).
+launch() { adb shell am start -S -W -n $MAIN --ez layout_reset true "$@" >/dev/null; }
+launch_kept() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
 
 log "first start: setup"
 launch
@@ -256,6 +259,64 @@ launch --ei tab 0 --ez battery_open true;   shot today-battery-open 2
 # Today's compact period card near the bottom (issue #252)
 launch --ei tab 0; sleep 3
 swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
+# The tiles of every tab (owner's wish of 18 November): holding a tile's title lifts it, it follows the finger and the other
+# tiles make room; letting go keeps the new place. A real touch, step by step: down on Your day's title, held a second (the
+# long press), moved up in steps, the shot while it is still held, then up above the scores and let go. Then held and let go
+# without moving (the menu: Move up, Move down, Fold), then three tiles folded with a tap on their titles, each with its key
+# number in one line. The order and folds stay (checked after a fresh start), "Back to the standard layout" is at the end of
+# the tab, and Settings, Layout of the tabs, has Reset layout with its question; Reset puts everything back.
+text_mid() {  # $1 the exact text: "x y" of its middle; fails when not on screen
+  local b
+  b=$(ui_dump | grep -o "text=\"$1\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  echo "$(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))"
+}
+text_y() { local m; m=$(text_mid "$1") || return 1; echo "${m#* }"; }
+launch --ei tab 0; sleep 3
+if xy=$(text_mid "YOUR DAY"); then
+  set -- $xy
+  dx=540; dy=$2
+  adb shell input motionevent DOWN $dx $dy >/dev/null
+  sleep 1.2
+  for step in 1 2 3 4; do dy=$(( dy - 110 )); adb shell input motionevent MOVE $dx $dy >/dev/null; done
+  sleep 0.5
+  adb exec-out screencap -p > "$OUT/today-tile-lifted.png"; log "shot today-tile-lifted (held mid drag)"
+  while [ "$dy" -gt 420 ]; do dy=$(( dy - 110 )); adb shell input motionevent MOVE $dx $dy >/dev/null; done
+  adb shell input motionevent UP $dx $dy >/dev/null
+  shot today-tile-moved 2
+  yd=$(text_y "YOUR DAY"); ys=$(text_y "SCORES")
+  if [ -n "$yd" ] && [ -n "$ys" ] && [ "$yd" -lt "$ys" ]; then log "Your day moved above the scores"
+  else echo "::warning::tiles step: Your day did not land above the scores (Your day at ${yd:-?}, Scores at ${ys:-?})"; fi
+  # held and let go without moving: the menu
+  if xy=$(text_mid "SCORES"); then
+    set -- $xy
+    adb shell input swipe 540 $2 540 $2 1200; shot today-tile-menu 2
+    adb shell input keyevent KEYCODE_BACK; sleep 1
+  else echo "::warning::tiles step: the Scores title was not on screen for the menu"; fi
+  # three tiles folded with a tap on their titles
+  for t in "SCORES" "YOUR DAY" "WHAT WAS TODAY LIKE?"; do
+    if xy=$(text_mid "$t"); then adb shell input tap 540 ${xy#* }; sleep 1
+    else echo "::warning::tiles step: the title $t was not on screen to fold it"; fi
+  done
+  shot today-tiles-folded 2
+  # a fresh start keeps the order and the folds
+  launch_kept --ei tab 0; sleep 3
+  if ui_dump | grep -q 'text="Readiness [0-9]'; then log "the folded Scores tile stays folded after a fresh start"
+  else echo "::warning::tiles step: after a fresh start the Scores tile was not folded with its line of scores"; fi
+  launch_kept --ei tab 0 --es card Back_to_the_standard; shot today-layout-end 2
+  launch_kept --es settings layout;           shot settings-layout 2
+  if tap_text "Reset layout"; then
+    shot settings-layout-reset 2
+    tap_text "Reset" || tap_text "RESET" || echo "::warning::tiles step: the question's Reset button was not found"
+    sleep 1
+    launch_kept --ei tab 0; sleep 3
+    if ui_dump | grep -q 'text="Readiness [0-9]'; then echo "::warning::tiles step: Reset layout left the Scores tile folded"
+    else log "Reset layout put Today back to the standard layout"; fi
+  else echo "::warning::tiles step: Reset layout was not found in Settings"; fi
+else
+  echo "::warning::tiles step: the title Your day was not on Today's first screen"
+fi
 # Phase 1a2 of #252 at the end of Body: "Your cycles" (cycle day, next period, the cycle length dots next to the typical
 # length, then period length and amount), touched on the newest cycle dot, and the night temperature line next to the
 # cycles (the demo's nights are warmer after ovulation), touched on its newest night. Slow swipes until the caption is in
