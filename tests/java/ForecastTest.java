@@ -88,6 +88,7 @@ public class ForecastTest {
         demo();
         texts();
         review();
+        fairPick();
         System.out.println("forecast: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -257,11 +258,13 @@ public class ForecastTest {
 
     /**
      * The fingerprints of {@link #fingerprints} worked out with the code of dev before the clean ups (shared statistics,
-     * {@code measured} reusing the backtest, the RiseBacktest factory step), which must not change any of them.
+     * {@code measured} reusing the backtest, the RiseBacktest factory step), which must not change any of them. The margin and the
+     * temperature rule after them change only Best for you and drip style's temperature, as marked; every other choice is the same.
      */
     static final String[][] BEFORE = {
-        {"Best for you, calendar", "d7a57493e6e9913b"},
-        {"Best for you, temperature", "8f397f5e86e9fa7d"},
+        // changed on purpose by the margin and the temperature rule (design round of #383, phase 1); before: d7a57493e6e9913b, 8f397f5e86e9fa7d
+        {"Best for you, calendar", "f5bd6bb4e3c11948"},
+        {"Best for you, temperature", "4fff7f0461946475"},
         {"Follows your last cycle, calendar", "e90423cb13d5775d"},
         {"Follows your last cycle, temperature", "a973dced7a5d960a"},
         {"Learns from every cycle, calendar", "831eff51a8271cea"},
@@ -271,7 +274,8 @@ public class ForecastTest {
         {"Recent cycles count more, calendar", "9982cb3586c15222"},
         {"Recent cycles count more, temperature", "ad6b8060d0e6ff0a"},
         {"drip style, calendar", "f7aba84b4df6ac1b"},
-        {"drip style, temperature", "ed1324e4238be86d"},
+        // drip style chosen by hand: its temperature replay now sits on drip style, and it says "chosen by hand"; before: ed1324e4238be86d
+        {"drip style, temperature", "c0a3c7f37790149d"},
         {"of, calendar", "768ada8954912a1b"},
         {"of, temperature", "da908dd899895aeb"},
     };
@@ -542,8 +546,8 @@ public class ForecastTest {
         check("#383 the temperature backtest of Best for you equals the one run on a finished Cycles with that method", byHand.riseBacktest().cases.toString().equals(rb.cases.toString())
                 && byHand.riseBacktest().mae == rb.mae && byHand.riseBacktest().calendarMae == rb.calendarMae, byHand.riseBacktest().cases + " / " + rb.cases);
         Cycles drip = Cycles.of(log(h), null, today).withMethod(Methods.DRIP).measured(ring, null);
-        check("#383 drip style never uses the temperature, its replay sits on Open Ring", !drip.riseUsed && drip.method == Cycles.CALENDAR
-                && drip.riseBacktest().method == Methods.OPEN_RING && drip.riseOff().startsWith("drip style uses start days only"));
+        check("#383 drip style chosen by hand never uses the temperature, its replay sits on drip style", !drip.riseUsed && drip.method == Cycles.CALENDAR
+                && drip.riseBacktest().method == Methods.DRIP && drip.riseOff().equals("drip style chosen by hand uses start days only, not your temperature."), drip.riseOff());
         check("#383 without temperatures there is no replay", Cycles.of(log(h), null, today).withMethod(Methods.BEST).riseBacktest() == null
                 && Cycles.of(log(h), null, today).withMethod(Methods.BEST).measured(null, null).riseBacktest().n() == 0);
         Cycles kept = Cycles.of(log(h), null, today).withMethod(Methods.BAYES).measured(ring, null);
@@ -562,8 +566,8 @@ public class ForecastTest {
         StringBuilder sb = new StringBuilder();
         for (Backtest.Score s : bt.scores) sb.append(String.format(Locale.ROOT, "%s %.2f days off, %d of %d in range; ", Methods.name(s.method), s.mae, s.hits, s.n));
         System.out.println("    #383 demo backtest: " + sb);
-        check("#383 demo: Best for you picks Learns from every cycle (closest on the made up years), not Open Ring", cy.methodId == Methods.BAYES
-                && bt.of(Methods.BAYES).mae < bt.of(Methods.OPEN_RING).mae, sb);
+        check("#383 demo: Learns from every cycle is closest on the made up years, by less than the margin, so Best for you stays with Open Ring",
+                bt.closest() == Methods.BAYES && bt.lead(Methods.BAYES) > 0 && bt.lead(Methods.BAYES) < Backtest.MARGIN && cy.methodId == Methods.OPEN_RING, sb);
         check("#383 demo: drip style is furthest off and hits its narrow range least", bt.of(Methods.DRIP).mae >= bt.of(Methods.OPEN_RING).mae
                 && bt.of(Methods.DRIP).hits < bt.of(Methods.OPEN_RING).hits, sb);
         TreeMap<LocalDate, Double> mouth = new TreeMap<LocalDate, Double>();
@@ -599,6 +603,8 @@ public class ForecastTest {
         LocalDate today = LocalDate.of(2026, 11, 12);
         Cycles cy = Cycles.of(Cycles.demoHistory(today), null, today).withMethod(Methods.BEST);
         all.add(app.openring.ui.Explain.periodBestNow(cy));
+        all.add(app.openring.ui.Explain.periodPick(cy));
+        all.add(app.openring.ui.Explain.PERIOD_PICK_MARGIN);
         all.add(app.openring.ui.Explain.periodRange(cy));
         all.addAll(app.openring.ui.Explain.periodCardHow(cy));
         boolean dashes = false;
@@ -608,13 +614,15 @@ public class ForecastTest {
         }
         check("#383 texts: no dashes as punctuation", !dashes);
         String now = app.openring.ui.Explain.periodBestNow(cy);
-        check("#383 Settings names the method Best for you uses, its error and Open Ring's", now.startsWith("Best for you uses Learns from every cycle now: ")
-                && now.contains("days off on average over 33 of your past periods, Open Ring "), now);
-        String range = app.openring.ui.Explain.periodRange(cy);
-        check("#383 How it works on the card: the method, its range and how it did", range.startsWith("Next period: your last start plus " + cy.step + " days from Learns from every cycle (picked for you).")
+        check("#383 Settings names the method Best for you uses and why it stayed with Open Ring", now.equals("Best for you uses Open Ring now: "
+                + String.format(Locale.getDefault(), "%.1f", cy.backtest().of(Methods.OPEN_RING).mae) + " days off on average over 33 of your past periods. Learns from every cycle was less than 0.1 days closer, too little to switch."), now);
+        Cycles bayes = cy.withMethod(Methods.BAYES);
+        String range = app.openring.ui.Explain.periodRange(bayes);
+        check("#383 How it works on the card: the method, its range and how it did", range.startsWith("Next period: your last start plus " + bayes.step + " days from Learns from every cycle.")
                 && range.contains("On 33 of your past periods it was "), range);
         Cycles few = Cycles.of(log(30, 28), null, lastStart(30, 28).plusDays(2)).withMethod(Methods.BEST);
-        check("#383 Settings before 3 periods can be checked", app.openring.ui.Explain.periodBestNow(few).startsWith("Best for you uses Open Ring until 3 of your periods"),
+        check("#383 Settings before 6 periods can be checked, the period it starts from built from the constants (3 + 6 + 1)", app.openring.ui.Explain.periodBestNow(few)
+                .equals("Best for you uses Open Ring until 6 of your periods can be checked (from the 10th period on; now 0).") && app.openring.ui.Explain.periodBestFrom() == 10,
                 app.openring.ui.Explain.periodBestNow(few));
         check("#383 How it works lists every method once", app.openring.ui.Explain.periodAccuracyHow().size() == Methods.ALL.length + 5);
         check("#383 Settings' names", Methods.name(Methods.BEST).equals("Best for you") && Methods.name(Methods.DRIP).equals("drip style")
@@ -710,5 +718,170 @@ public class ForecastTest {
                 tc.withMethod(Methods.BAYES).expectedLine(en));
         Backtest altB = Backtest.run(new int[] {21, 45, 21, 45, 21, 45, 21, 45, 21, 45});
         check("#383 review: the backtest scores such cycles too, not every one as far", altB.scored() > 0, altB.scored() + " " + altB.farOut);
+    }
+
+    // ------------------------------------------------ the design round of #383, phase 1: a fair pick
+
+    /** A stand in method: for the cycle at index i it expects {@code expect[i]} days (through Open Ring's rule on 5 such cycles). */
+    static final class Fixed implements Method {
+        final int id;
+        final int[] expect;
+
+        Fixed(int id, int[] expect) {
+            this.id = id;
+            this.expect = expect;
+        }
+
+        @Override
+        public int id() {
+            return id;
+        }
+
+        @Override
+        public Forecast predict(int[] lengths) {
+            return Methods.get(Methods.OPEN_RING).predict(rep(expect[lengths.length], 5));
+        }
+    }
+
+    /** Expects 28 days for every cycle of {@code n}, but {@code off} days more for the first {@code k} scored ones. */
+    static int[] expect(int n, int k, int off) {
+        int[] e = rep(28, n);
+        for (int i = Backtest.FROM; i < Backtest.FROM + k; i++) e[i] = 28 + off;
+        return e;
+    }
+
+    /** Best for you with Open Ring {@code open} and drip style {@code drip} days off in total over {@code scored} cycles of 28 days. */
+    static Backtest margin(int scored, int open, int drip) {
+        int n = Backtest.FROM + scored;
+        return Backtest.run(rep(28, n), new Method[] {new Fixed(Methods.OPEN_RING, expect(n, open, 1)), new Fixed(Methods.DRIP, expect(n, drip, 1))});
+    }
+
+    static void fairPick() {
+        // the margin: errors are whole days, so the mean error moves in steps of 1 / n
+        Backtest m8 = margin(8, 2, 0);
+        check("#383 margin: 8 scored, Open Ring 2 days off in total, drip style none: exactly 0.25 days closer switches", m8.scored() == 8
+                && m8.lead(Methods.DRIP) == 0.25 && m8.best() == Methods.DRIP, m8.lead(Methods.DRIP));
+        Backtest m8b = margin(8, 1, 0);
+        check("#383 margin: 8 scored, 0.125 days closer stays with Open Ring", m8b.best() == Methods.OPEN_RING && m8b.closest() == Methods.DRIP);
+        Backtest m24 = margin(25, 11, 5), m28 = margin(25, 12, 5);
+        check("#383 margin: 25 scored, 0.24 days closer stays with Open Ring", m24.scored() == 25 && Math.abs(m24.lead(Methods.DRIP) - 0.24) < 1e-9
+                && m24.best() == Methods.OPEN_RING && m24.closest() == Methods.DRIP, m24.lead(Methods.DRIP));
+        check("#383 margin: 25 scored, 0.28 days closer switches", Math.abs(m28.lead(Methods.DRIP) - 0.28) < 1e-9 && m28.best() == Methods.DRIP, m28.lead(Methods.DRIP));
+        boolean under = true;
+        for (int k = 1; k < Backtest.MIN_SCORED; k++) under &= margin(k, k, 0).best() == Methods.OPEN_RING && margin(k, k, 0).lead(Methods.DRIP) == 1.0;
+        check("#383 margin: under 6 scored cycles always Open Ring, even a whole day closer", Backtest.MIN_SCORED == 6 && under && margin(6, 6, 0).best() == Methods.DRIP);
+        check("#383 closest and lead without scored cycles or without Open Ring: Open Ring and no number", Backtest.run(new int[] {28, 29}).closest() == Methods.OPEN_RING
+                && Double.isNaN(Backtest.run(new int[] {28, 29}).lead(Methods.DRIP)) && Double.isNaN(margin(8, 2, 0).lead(99))
+                && Double.isNaN(Backtest.run(rep(28, 12), new Method[] {new Fixed(Methods.DRIP, rep(28, 12))}).lead(Methods.DRIP))
+                && Backtest.run(rep(28, 12), new Method[0]).best() == Methods.OPEN_RING);
+        check("#383 margin: the texts say a quarter of a day, and the rule is 0.25", Backtest.MARGIN == 0.25 && app.openring.ui.Explain.PERIOD_PICK_MARGIN.equals(
+                "Best for you uses another method only when it was at least a quarter of a day closer on average, over at least 6 periods. Smaller differences are luck."));
+
+        // a tie between two methods other than Open Ring: the one listed first in Methods.ALL (drip style before smoothing)
+        int n = Backtest.FROM + 10;
+        Backtest tie = Backtest.run(rep(28, n), new Method[] {new Fixed(Methods.OPEN_RING, expect(n, 6, 1)), new Fixed(Methods.DRIP, expect(n, 0, 1)),
+                new Fixed(Methods.SMOOTH, expect(n, 0, 1))});
+        check("#383 a tie between drip style and Recent cycles count more, both clearly closer: drip style, listed first", tie.best() == Methods.DRIP
+                && tie.of(Methods.DRIP).mae == tie.of(Methods.SMOOTH).mae && tie.lead(Methods.SMOOTH) == 0.6);
+
+        // the cycle right after a skipped one (a period that was not logged): not left out, each method with its own rule
+        int[] skip = cat(rep(28, 8), new int[] {56}, rep(28, 6));
+        Backtest sk = Backtest.run(skip);
+        Backtest.Score so = sk.of(Methods.OPEN_RING), sd = sk.of(Methods.DRIP);
+        int after = -1, at56 = -1;
+        for (int j = 0; j < so.n; j++) {
+            if (so.index[j] == 9) after = j;
+            if (so.index[j] == 8) at56 = j;
+        }
+        check("#383 after a skipped period: the 56 day cycle is not scored, the one after it is", sk.farOut == 1 && at56 < 0 && after >= 0, Arrays.toString(so.index));
+        check("#383 after a skipped period: Open Ring leaves the 56 out and expects 28, drip style counts it and expects more", after >= 0 && so.expected[after] == 28
+                && sd.expected[after] == (int) Math.round((28 * 8 + 56) / 9.0) && so.late(after) == 0, after >= 0 ? so.expected[after] + " / " + sd.expected[after] : "");
+
+        // Backtest.run with 130 cycles (10 years) in a moment
+        int[] ten = random(130, 29, 3, 77);
+        Backtest.run(ten);
+        long t0 = System.nanoTime();
+        Backtest tb = Backtest.run(ten);
+        long ms = (System.nanoTime() - t0) / 1000000;
+        System.out.println("    #383 backtest of 130 cycles: " + ms + " ms");
+        check("#383 backtest of 130 cycles: under 0.5 s on the JVM", ms < 500 && tb.scored() > 120, ms);
+
+        // the temperature follows the choice, not the method: drip style picked by Best for you keeps it, chosen by hand not
+        int[] dh = random(20, 29, 6, 29); // the first seed where drip style wins clearly (a search over seeds)
+        LocalDate today = lastStart(dh).plusDays(6);
+        TreeMap<LocalDate, Double> ring = nights(dh, rep(13, dh.length), today, 4);
+        Cycles picked = Cycles.of(log(dh), null, today).withMethod(Methods.BEST).measured(ring, null);
+        Cycles hand = Cycles.of(log(dh), null, today).withMethod(Methods.DRIP).measured(ring, null);
+        RiseBacktest prb = picked.riseBacktest();
+        check("#383 Best for you picks drip style here, by at least the margin", picked.methodId == Methods.DRIP && picked.backtest().lead(Methods.DRIP) >= Backtest.MARGIN,
+                picked.backtest().lead(Methods.DRIP));
+        check("#383 drip style picked by Best for you: the temperature is used (its own backtest decides)", picked.riseUsed && prb.helps() && prb.n() >= RiseBacktest.MIN
+                && prb.method == Methods.DRIP, prb.mae + " / " + prb.calendarMae);
+        check("#383 drip style chosen by hand: no temperature, and it says why", !hand.riseUsed && hand.method == Cycles.CALENDAR
+                && hand.riseOff().equals("drip style chosen by hand uses start days only, not your temperature."), hand.riseOff());
+        boolean cal = !prb.cases.isEmpty();
+        for (RiseBacktest.Case c : prb.cases) {
+            Cycles then = Cycles.of(new TreeMap<LocalDate, Integer>(log(dh).headMap(c.day, true)), null, c.day).withMethod(Methods.DRIP);
+            cal &= c.calendar.equals(then.calendarNext) && c.calendarRange == then.calendarRange;
+        }
+        check("#383 drip style picked: each replayed cycle's calendar is drip style's own next start on that day", cal, prb.cases);
+        String use = app.openring.ui.Explain.periodTempUse(picked);
+        check("#383 the card names the mix and says why the temperature is used", use.equals("drip style picked, with your night temperature on top. "
+                + "Your night temperature is used on top of the method picked, because on " + prb.n() + " past cycles it was "
+                + String.format(Locale.getDefault(), "%.1f", prb.mae) + " days off on average, the calendar " + String.format(Locale.getDefault(), "%.1f", prb.calendarMae) + "."), use);
+        check("#383 and the Period card's How it works names it too", picked.method != Cycles.MEASURED
+                && app.openring.ui.Explain.periodRange(picked).startsWith("Next period: your last start plus " + picked.step
+                + " days from drip style (picked for you, with your night temperature on top). "), app.openring.ui.Explain.periodRange(picked));
+        check("#383 no such line for a method chosen by hand or without the temperature", app.openring.ui.Explain.periodTempUse(hand) == null
+                && app.openring.ui.Explain.periodTempUse(Cycles.of(log(dh), null, today).withMethod(Methods.BEST)) == null);
+
+        // the texts: the stay line, under 0.1 days "less than 0.1", the period Best for you can start from
+        Cycles demo = Cycles.of(Cycles.demoHistory(LocalDate.of(2026, 11, 12)), null, LocalDate.of(2026, 11, 12)).withMethod(Methods.BEST);
+        check("#383 the card under the methods: the margin, and less than 0.1 days for the demo's 0.03", app.openring.ui.Explain.periodPick(demo).equals(
+                app.openring.ui.Explain.PERIOD_PICK_MARGIN + " Learns from every cycle was less than 0.1 days closer, too little to switch."), app.openring.ui.Explain.periodPick(demo));
+        int[] small = random(20, 29, 2.6, 1); // Follows your last cycle 0.12 days closer (2 days over 17 periods)
+        Cycles alt = Cycles.of(log(small), null, lastStart(small).plusDays(3)).withMethod(Methods.BEST);
+        String stay = app.openring.ui.Explain.periodStay(alt);
+        double lead = alt.backtest().lead(Methods.TREND);
+        check("#383 the stay line with one decimal from 0.1 days on", alt.methodId == Methods.OPEN_RING && alt.backtest().closest() == Methods.TREND && lead >= 0.1
+                && lead < Backtest.MARGIN && ("Follows your last cycle was " + String.format(Locale.getDefault(), "%.1f", lead) + " days closer, too little to switch.").equals(stay), lead + " " + stay);
+        check("#383 no stay line when Best for you switched or is not chosen", app.openring.ui.Explain.periodStay(picked) == null
+                && app.openring.ui.Explain.periodStay(demo.withMethod(Methods.OPEN_RING)) == null);
+        check("#383 ordinals", app.openring.ui.Explain.ordinal(1).equals("1st") && app.openring.ui.Explain.ordinal(2).equals("2nd") && app.openring.ui.Explain.ordinal(3).equals("3rd")
+                && app.openring.ui.Explain.ordinal(5).equals("5th") && app.openring.ui.Explain.ordinal(10).equals("10th") && app.openring.ui.Explain.ordinal(11).equals("11th")
+                && app.openring.ui.Explain.ordinal(12).equals("12th") && app.openring.ui.Explain.ordinal(22).equals("22nd") && app.openring.ui.Explain.ordinal(113).equals("113th"));
+        check("#383 How it works counts from the constants", app.openring.ui.Explain.periodAccuracyHow().get(0).contains("from the 5th on")
+                && app.openring.ui.Explain.periodAccuracyHow().get(1).contains("from your 10th period on at the earliest"), app.openring.ui.Explain.periodAccuracyHow().get(1));
+        List<String> texts = new ArrayList<String>(Arrays.asList(use, Methods.line(Methods.DRIP), Methods.how(Methods.DRIP), hand.riseOff(), app.openring.ui.Explain.periodPick(demo),
+                app.openring.ui.Explain.periodBestNow(picked), app.openring.ui.Explain.periodRange(picked), app.openring.ui.Explain.periodBestNow(demo)));
+        texts.addAll(app.openring.ui.Explain.periodAccuracyHow());
+        boolean dashes = false;
+        for (String t : texts) if (t == null || t.contains(" - ") || t.contains(" – ") || t.contains("—") || t.contains("–")) {
+            dashes = true;
+            System.out.println("  dash in: " + t);
+        }
+        check("#383 the new texts have no dashes as punctuation", !dashes);
+
+        // how often the pick changes: on regular made up histories (SD 2.6 days, 40 cycles), the pick after every logged start
+        int now = 0, before = 0, never = 0;
+        for (long seed = 500; seed < 600; seed++) {
+            int[] h = random(40, 29, 2.6, seed);
+            int a = -1, b = -1, fa = 0, fb = 0;
+            for (int k = 0; k <= h.length; k++) {
+                Backtest bt = Backtest.run(Arrays.copyOf(h, k));
+                // before the margin: the closest from 3 scored cycles on
+                int x = bt.best(), y = bt.scored() < 3 ? Methods.OPEN_RING : bt.closest();
+                if (a >= 0 && x != a) fa++;
+                if (b >= 0 && y != b) fb++;
+                a = x;
+                b = y;
+            }
+            now += fa;
+            before += fb;
+            if (fa == 0) never++;
+        }
+        System.out.println("    #383 flips of Best for you over 100 regular histories of 40 cycles: " + now + " with the margin, " + before + " before; "
+                + never + " never change");
+        check("#383 the margin flips Best for you at most about half as often on regular cycles", now * 2 <= before + 10 && never >= 40, now + " / " + before + ", never " + never);
     }
 }

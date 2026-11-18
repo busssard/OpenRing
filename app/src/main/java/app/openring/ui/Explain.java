@@ -320,8 +320,10 @@ public final class Explain {
      * it did on the person's own cycles.
      */
     public static String periodMethodRange(app.openring.core.analysis.Cycles cy) {
+        boolean best = cy.choice == app.openring.core.analysis.cycleforecast.Methods.BEST;
         StringBuilder sb = new StringBuilder("Next period: your last start plus ").append(cy.step).append(" days from ")
-                .append(app.openring.core.analysis.cycleforecast.Methods.name(cy.methodId)).append(cy.choice == app.openring.core.analysis.cycleforecast.Methods.BEST ? " (picked for you)" : "").append(". ");
+                .append(app.openring.core.analysis.cycleforecast.Methods.name(cy.methodId))
+                .append(best && cy.riseUsed ? " (picked for you, with your night temperature on top)" : best ? " (picked for you)" : "").append(". ");
         if (cy.forecast.fallback) sb.append("With few cycles of your own it uses Open Ring's rule for now. ");
         else sb.append("Give or take ").append(cy.range).append(cy.range == 1 ? " day: " : " days: ").append(app.openring.core.analysis.cycleforecast.Methods.rangeWords(cy.methodId)).append(". ");
         app.openring.core.analysis.cycleforecast.Backtest.Score sc = cy.backtest().of(cy.methodId);
@@ -346,6 +348,62 @@ public final class Explain {
         return String.format(java.util.Locale.getDefault(), "%.1f", v);
     }
 
+    /** "1st", "2nd", "3rd", "10th", "21st", "112th". */
+    public static String ordinal(int n) {
+        int t = n % 100, u = n % 10;
+        String end = t >= 11 && t <= 13 ? "th" : u == 1 ? "st" : u == 2 ? "nd" : u == 3 ? "rd" : "th";
+        return n + end;
+    }
+
+    /**
+     * The period from which Best for you can leave Open Ring: the first scored cycle has {@code Backtest.FROM} cycles before it,
+     * and it needs {@code Backtest.MIN_SCORED} scored ones, each ended by the next period (10th with 3 and 6), if none is left out.
+     */
+    public static int periodBestFrom() {
+        return app.openring.core.analysis.cycleforecast.Backtest.FROM + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED + 1;
+    }
+
+    /** How Best for you decides between the methods (design round of issue #383), from the constants. */
+    public static final String PERIOD_PICK_MARGIN = "Best for you uses another method only when it was at least a quarter of a day closer on average, over at least "
+            + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED + " periods. Smaller differences are luck.";
+
+    /**
+     * When Best for you stays with Open Ring although another method was a little closer: "drip style was 0.2 days closer, too
+     * little to switch.", under 0.1 days "less than 0.1 days closer" (the card shows one decimal); else null.
+     */
+    public static String periodStay(app.openring.core.analysis.Cycles cy) {
+        app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
+        if (cy.choice != app.openring.core.analysis.cycleforecast.Methods.BEST || bt.scored() < app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED) return null;
+        int c = bt.closest();
+        if (c == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING || bt.best() != app.openring.core.analysis.cycleforecast.Methods.OPEN_RING) return null;
+        double lead = bt.lead(c);
+        return app.openring.core.analysis.cycleforecast.Methods.name(c) + " was " + (lead < 0.1 ? "less than 0.1 days" : fmt1(lead) + " days") + " closer, too little to switch.";
+    }
+
+    /** On the card How close the estimates were, under the methods: the margin, and why Best for you stayed with Open Ring. */
+    public static String periodPick(app.openring.core.analysis.Cycles cy) {
+        String stay = periodStay(cy);
+        return stay == null ? PERIOD_PICK_MARGIN : PERIOD_PICK_MARGIN + " " + stay;
+    }
+
+    /**
+     * With Best for you and the temperature in use: why, from its own backtest ("Your night temperature is used on top of the
+     * method picked, because on 7 past cycles it was 1.2 days off on average, the calendar 2.4."), and with drip style picked
+     * the mix named first; else null.
+     */
+    public static String periodTempUse(app.openring.core.analysis.Cycles cy) {
+        if (cy.choice != app.openring.core.analysis.cycleforecast.Methods.BEST || !cy.riseUsed) return null;
+        app.openring.core.analysis.RiseBacktest rb = cy.riseBacktest();
+        if (rb == null) return null;
+        String mix = cy.methodId == app.openring.core.analysis.cycleforecast.Methods.DRIP ? "drip style picked, with your night temperature on top. " : "";
+        if (rb.n() < app.openring.core.analysis.RiseBacktest.MIN) {
+            return mix + "Your night temperature is used on top of the method picked until " + app.openring.core.analysis.RiseBacktest.MIN
+                    + " past cycles can show whether it is closer (now " + rb.n() + ").";
+        }
+        return mix + "Your night temperature is used on top of the method picked, because on " + rb.n() + " past cycles it was " + fmt1(rb.mae)
+                + " days off on average, the calendar " + fmt1(rb.calendarMae) + ".";
+    }
+
     /** Settings, under the choices: which method Best for you uses now and why (from the backtest of the open log). */
     public static String periodBestNow(app.openring.core.analysis.Cycles cy) {
         app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
@@ -353,13 +411,17 @@ public final class Explain {
         String s;
         if (bt.scored() < app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED) {
             s = "Best for you uses Open Ring until " + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED
-                    + " of your periods can be checked (from the 5th period on; now " + bt.scored() + ").";
+                    + " of your periods can be checked (from the " + ordinal(periodBestFrom()) + " period on; now " + bt.scored() + ").";
         } else {
             app.openring.core.analysis.cycleforecast.Backtest.Score b = bt.of(best), o = bt.of(app.openring.core.analysis.cycleforecast.Methods.OPEN_RING);
             s = "Best for you uses " + app.openring.core.analysis.cycleforecast.Methods.name(best) + " now: " + fmt1(b.mae) + " days off on average over " + yourPeriods(b.n)
                     + (best == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING ? "." : ", Open Ring " + fmt1(o.mae) + ".");
+            String stay = periodStay(cy);
+            if (stay != null) s += " " + stay;
         }
-        if (cy.rise != null && !cy.riseUsed && app.openring.core.analysis.cycleforecast.Methods.usesTemperature(cy.methodId)) s += " " + cy.riseOff();
+        if (cy.rise != null && !cy.riseUsed) s += " " + cy.riseOff();
+        String temp = periodTempUse(cy);
+        if (temp != null) s += " " + temp;
         return s;
     }
 
@@ -380,17 +442,17 @@ public final class Explain {
     /** How it works of "How close the estimates were": the test, the pick, each method, the temperature, the research. */
     public static java.util.List<String> periodAccuracyHow() {
         java.util.List<String> out = new java.util.ArrayList<String>();
-        out.add("How it is tested: for each of your periods from the 5th on, every method gets only the cycles before it, as if it were "
+        out.add("How it is tested: for each of your periods from the " + ordinal(app.openring.core.analysis.cycleforecast.Backtest.FROM + 2) + " on, every method gets only the cycles before it, as if it were "
                 + "that day, and says when the period will start. The difference to the day you logged is its error. Nothing after that "
                 + "day is used. A cycle more than 10 days from the middle value of the ones before it (probably a period that was not "
                 + "logged) is not counted, every method misses those.");
-        out.add("Best for you: the method with the smallest average error, on a tie Open Ring. Until " + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED
-                + " periods can be checked it stays with Open Ring. A method ahead by a fraction of a day may just have been lucky, so look at "
-                + "the numbers too. You can pick another in Settings, Period tracker, Prediction.");
+        out.add("Best for you: the method with the smallest average error, on a tie Open Ring. " + PERIOD_PICK_MARGIN + " So it can leave Open Ring from your "
+                + ordinal(periodBestFrom()) + " period on at the earliest. You can pick another in Settings, Period tracker, Prediction.");
         for (int id : app.openring.core.analysis.cycleforecast.Methods.CHOICES) if (id != app.openring.core.analysis.cycleforecast.Methods.BEST) out.add(app.openring.core.analysis.cycleforecast.Methods.how(id));
         out.add("With your temperature: each past cycle with a rise is replayed with only the log and the temperatures up to the first day the "
                 + "app would have shown the estimate from it (the ovulation day plus your own days to the period), and compared with the "
-                + "calendar on that same day. It is used with every method but drip style. Best for you leaves it out only when at least "
+                + "calendar on that same day. It is used on top of every method, also when Best for you picks drip style. Only drip style "
+                + "chosen by hand uses start days only, as drip does. Best for you leaves it out only when at least "
                 + app.openring.core.analysis.RiseBacktest.MIN + " cycles say it was further off.");
         out.add("From research: one person's cycles vary by about 2.6 days on average (Bull and others, 2019, 612,613 cycles), so even a perfect "
                 + "method misses by about 2 days for most people. In large app data, neural networks were no better than the average of the "

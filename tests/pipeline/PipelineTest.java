@@ -12233,8 +12233,13 @@ public class PipelineTest {
                 && results252(db).equals(results) && db.count("SELECT COUNT(*) FROM kv") == kv, nexts);
         app.openring.core.analysis.Cycles best = app.openring.data.Periods.measured(db, base.withMethod(app.openring.core.analysis.cycleforecast.Methods.BEST), ZoneId.systemDefault());
         app.openring.core.analysis.Cycles ro = app.openring.data.Periods.readReal(c, today, null).withMethod(app.openring.core.analysis.cycleforecast.Methods.BEST);
+        // the demo's 3 years: Learns from every cycle is closest by less than the margin of #383's design round, so Best for you is Open Ring
         check("#383 the reminder's read only helper gives the screens' estimate with the method", ro.next.equals(best.next) && ro.range == best.range
-                && ro.methodId == best.methodId && best.methodId != app.openring.core.analysis.cycleforecast.Methods.OPEN_RING, ro.next + " / " + best.next);
+                && ro.methodId == best.methodId && best.methodId == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING, ro.next + " / " + best.next);
+        app.openring.core.analysis.Cycles bayes = app.openring.data.Periods.measured(db, base.withMethod(app.openring.core.analysis.cycleforecast.Methods.BAYES), ZoneId.systemDefault());
+        app.openring.core.analysis.Cycles rb = app.openring.data.Periods.readReal(c, today, null).withMethod(app.openring.core.analysis.cycleforecast.Methods.BAYES);
+        check("#383 and with a method other than Open Ring", rb.next.equals(bayes.next) && rb.range == bayes.range
+                && rb.methodId == app.openring.core.analysis.cycleforecast.Methods.BAYES && bayes.methodId == rb.methodId, rb.next + " / " + bayes.next);
 
         app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         boolean def = p.periodMethod() == app.openring.core.analysis.cycleforecast.Methods.BEST;

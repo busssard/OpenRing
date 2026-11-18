@@ -175,9 +175,10 @@ public final class Cycles {
     /** The cycle length the calendar counts with: the method's expected length in whole days ({@link #length} for Open Ring). */
     public final int step;
     /**
-     * Whether this cycle's temperature rise and the own time from ovulation to the period change the estimate: not for drip
-     * style (start days only), and not for Best for you when at least {@link RiseBacktest#MIN} cycles show the measured
-     * estimate was further off than the calendar ({@link RiseBacktest#helps}).
+     * Whether this cycle's temperature rise and the own time from ovulation to the period change the estimate ({@link #riseAllowed}):
+     * not for drip style chosen by hand (start days only, as drip), and not for Best for you when at least {@link RiseBacktest#MIN}
+     * cycles show the measured estimate was further off than the calendar ({@link RiseBacktest#helps}), whatever calendar method
+     * Best for you picked (design round of issue #383).
      */
     public final boolean riseUsed;
     /** The nights the rise was found in, kept for the backtest's replay; null for {@link #of} alone. */
@@ -256,7 +257,7 @@ public final class Cycles {
         waiting = last != null && running == null && ChronoUnit.DAYS.between(last.start, today) > 2L * length;
         double s = forecast.spread;
         this.rise = rise;
-        boolean allowed = rise != null && (temp == TEMP_ON || Methods.usesTemperature(methodId));
+        boolean allowed = rise != null && riseAllowed(this.choice, temp);
         // Best for you lets the temperature's own backtest decide: worked out by make() on a first Cycles of the same log, so
         // this one never leaves the constructor half built
         riseAsks = allowed && temp == TEMP_AUTO && this.choice == Methods.BEST;
@@ -287,6 +288,15 @@ public final class Cycles {
         }
         this.stoppedSince = stoppedSince;
         stopped = stoppedSince != null && running == null && (last == null || last.last.isBefore(stoppedSince));
+    }
+
+    /**
+     * The one rule for whether the temperature may change the estimate, from Settings' choice (design round of issue #383): always,
+     * unless drip style was chosen by hand (it uses start days only, as drip does); forced on for the replay of
+     * {@link RiseBacktest}. Under that, Best for you still lets the temperature's own backtest decide.
+     */
+    static boolean riseAllowed(int choice, int temp) {
+        return choice != Methods.DRIP || temp == TEMP_ON;
     }
 
     /**
@@ -355,8 +365,8 @@ public final class Cycles {
     }
 
     /**
-     * How close the measured estimate would have been, on top of the method in use (drip style: on top of Open Ring),
-     * worked out once; null without temperatures ({@link #measured} not called).
+     * How close the measured estimate would have been, on top of the calendar method in use ({@link #methodId}), worked out
+     * once; null without temperatures ({@link #measured} not called).
      */
     public synchronized RiseBacktest riseBacktest() {
         if (rise == null) return null;
@@ -721,14 +731,14 @@ public final class Cycles {
 
     /**
      * What the range holds (code review of dev dadbb71): drip style's is drip's fixed 1 or 2 days, not a share of periods; the
-     * others aim at about 4 in 5. With {@link Backtest#MIN_SCORED} past periods checked, how often the start really fell in it.
+     * others aim at about 4 in 5. With {@link Backtest#SHOWN_FROM} past periods checked, how often the start really fell in it.
      */
     String coverage() {
         String s = methodId == Methods.DRIP && !forecast.fallback
                 ? "drip style shows " + Texts.count(calendarRange, "day", "days") + " each side of the most likely day, its fixed rule, not a share of periods."
                 : "About 4 in 5 periods start within such a range.";
         Backtest.Score sc = cycles.size() > Backtest.FROM ? backtest().of(methodId) : null;
-        if (sc != null && sc.n >= Backtest.MIN_SCORED) s += " On " + sc.n + " of your past periods the start fell in it " + (sc.hits == 1 ? "once." : sc.hits + " times.");
+        if (sc != null && sc.n >= Backtest.SHOWN_FROM) s += " On " + sc.n + " of your past periods the start fell in it " + (sc.hits == 1 ? "once." : sc.hits + " times.");
         return s;
     }
 
@@ -760,11 +770,11 @@ public final class Cycles {
     }
 
     /**
-     * Why the temperature does not change the estimate (issue #383): drip style uses start days only, or on the person's
-     * own cycles the measured estimate was further off than the calendar.
+     * Why the temperature does not change the estimate (issue #383): drip style chosen by hand uses start days only, or on the
+     * person's own cycles the measured estimate was further off than the calendar.
      */
     public String riseOff() {
-        if (!Methods.usesTemperature(methodId)) return "drip style uses start days only, not your temperature.";
+        if (!riseAllowed(choice, TEMP_AUTO)) return "drip style chosen by hand uses start days only, not your temperature.";
         RiseBacktest t = riseTest;
         if (t == null) return "Your temperature is not used for this estimate.";
         return "Your temperature is not used: on " + Texts.count(t.n(), "past cycle", "past cycles") + " the estimate from it was further off than the calendar.";
