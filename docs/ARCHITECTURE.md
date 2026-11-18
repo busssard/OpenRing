@@ -136,12 +136,13 @@ Nothing leaves the phone: the app has no internet permission.
 | `period_temps`, `period_imports` | The drip import (phase 1b of #252, version 8): one imported basal temperature per day (`day`, `time` as HH:MM, `c` in °C, `excluded`, `src`, `gone`), and one row per import (`id` its time in milliseconds, `made`, `days`, `temps`, `gone`). Undoing an import writes `gone` 1 on the import and its temperatures (a removal mark like a day's -1, never a delete), so a restore of an older backup cannot bring them back |
 | `battery`, `kv` | Battery history (one row per read: each sync and Find my ring; Settings' read stays in `Prefs` only), shown on Today under the scores with the watch's `watch_battery` (`core/DeviceBattery`); small key value state (cursor, analysis progress, errors) |
 | `watch_raw`, `watch_devices`, `watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery` | The Withings watch (version 9, issue #251): every message as it came, the watch, and the rows worked out from the messages; see Withings watch below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
+| `life_days`, `life_tags` | Life factors (version 12, issue #292): one row per calendar day and tag (`day` yyyy-mm-dd, `tag` a fixed key such as `meditation` or `own:<id>`, `time` empty in phase 1, `span` the id shared by the days of one several day entry, `made`, `gone` 1 a removal mark, never a delete), and one row per tag the person changed (`key`, `name` of an own tag, `shown` on Today's row 1 or 0, `ord` its place, `made`, `gone` 1 an own tag removed, its days kept). Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Life factors below |
 | `phone_readings`, `phone_steps` | Steps from this phone (version 11, issue #329): every reading of the phone's step counter as it came (`boot` count and `elapsed` ms as the key, `counter`, `wall`), only ever added to, and the intervals worked out from them (`boot`, `elapsed` of the end reading, `start`, `stop`, `steps`); see Steps from this phone below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
 
 The period tables are the one part of the file the person types and no ring can send again. Pairing a different ring
 (`Db.resetRingData`, every table in `Db.RING_TABLES`) keeps them; Delete all local data (`Db.resetAll`) wipes them with the
 rest. Both lists come from `Db.SCHEMA` (issue #272): `Db.ALL_TABLES` is every table, `Db.RING_TABLES` every table except
-the keep list `Db.KEPT_TABLES` (`Periods.TABLES`, the watch's `WatchStore.TABLES`, issue #251, and the phone's `PhoneStore.TABLES`, issue #329), so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
+the keep list `Db.KEPT_TABLES` (`Periods.TABLES`, the watch's `WatchStore.TABLES`, issue #251, the phone's `PhoneStore.TABLES`, issue #329, and the life factors' `LifeLog.TABLES`, issue #292), so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
 test fills every table that really is in the file (`sqlite_master`, not `SCHEMA`) and checks Delete all empties each.
 After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(TRUNCATE)` (in WAL mode a checkpoint
 before VACUUM leaves the file at full size), so the file gives the history's space back; an error there never reaches
@@ -336,6 +337,30 @@ anything. Going back to a phone copy (`AutoBackup.goBack`) needs no key either. 
 `...-nokey.zip` (`Backups.withoutKey`), and `Backups.folderToDelete` never deletes the newest copy with the key for one
 without it: it stays beside the kept copies until a copy with the key is written again (review of #340). Older versions do
 not know the `-nokey` name and leave those files alone.
+
+**Life factors (issue #292, phase 1).** What a day was like, logged by the person: `core/LifeTags` holds the keys (Meditation,
+Alcohol, Caffeine late, Stress, Hard workout on Today's row by default; Intimacy, Holiday, Illness and Travel also offered; own
+tags `own:<millis>` with a cleaned name of at most 30 characters), the texts, several days turned into dates and the CSV
+columns; `data/LifeLog` the two tables of version 12 (`LifeLog.create12`, each `CREATE TABLE IF NOT EXISTS` on its own, so the
+upgrade is safe twice and resumes after a stop). A tag is a calendar day, never a moment, so travel and clock changes never
+move it; a tag of day D belongs to the night that starts on the evening of D: Sleep of D + 1 shows "Before this night: ...",
+Readiness of D + 1 "Logged yesterday: ...". A tap on a chip writes one statement in the background (`LifeLog.set`), taking a
+tag off keeps a removal mark; Several days writes one row per date with one span id in one transaction (`LifeLog.setSpan`);
+Undo puts each row back as it was (a day that had none gets a removal mark). Logging starts no analysis and changes no score
+(phase 1 does not touch `Analyzer` or readiness; the pipeline test analyses the demo with every tag on every day and gets the
+same nights and days). `DayData` reads every day in force (`LifeLog.all`, 11,000 rows of five years in about 0.04 s on the JVM)
+and the chips (`LifeLog.known`); an error there shows a sentence on the cards and logs the error's kind only. Today's row
+(`ui/LifeCard`) sits right after Your day (`core/TodayCards.LIFE`), so the measured first screen does not move; More holds All
+factors, Several days, Add your own, Choose the chips on the card and Remove one of your own. Body ends with the month view
+(`ui/LifeCalendar` on the shared `MonthView`: a dot per tag, touch reads a day, the month's counts under it). Privacy: never
+in the Data check (`DataCheck` reads named tables only), the log (error kinds only) or a notification (nothing in `sync/`
+reads them); in the daily CSV only with the export choice "Include life factors" (`Prefs.csvLife`, off by default, on this
+phone only, not in a backup), Intimacy only with its own tick (`Prefs.csvIntimacy`); then one column per tag, 1 on its days,
+and a row for a tagged day without a summary. Backups and the full database carry them; Android's own cloud backup is off
+(`android:allowBackup="false"`, kept by a pipeline test). Restore: `Db.replaceWith` reads both tables before the swap
+(`LifeLog.read`) and writes them into the restored file in one transaction after the period log, the watch and the phone's
+steps (`LifeLog.merge`, `INSERT OR REPLACE`: the phone wins on the same day and tag, removal marks included); any failure puts
+the old file back. Demo mode writes made up tags (`LifeTags.demo`, never Intimacy) into the demo file only.
 
 ## Automatic backups (issue #242)
 

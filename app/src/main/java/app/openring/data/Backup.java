@@ -242,9 +242,9 @@ public final class Backup {
     static final String BROKEN = "This file is damaged or is not an Open Ring backup, nothing was changed.";
     static final String NOT_OPENED = "The history in this backup could not be opened. Your history on this phone was kept, nothing was changed.";
     /** The phone's own period log could not be read before the swap (review of #275): the backup is not to blame. */
-    public static final String PERIODS_UNREADABLE = "The period log or the watch data on this phone could not be read, nothing was changed.";
+    public static final String PERIODS_UNREADABLE = "The period log, life factors or watch data on this phone could not be read, nothing was changed.";
     /** Added to the restore's result when the phone's file was damaged and its period log was left behind (review of #275). */
-    public static final String PERIODS_DAMAGED = "The period log and the watch data on this phone were damaged and could not be kept, those of the backup are in place.";
+    public static final String PERIODS_DAMAGED = "The period log, life factors and watch data on this phone were damaged and could not be kept, those of the backup are in place.";
     /** Re dating after a sync moves times by minutes, a sync adds hours. */
     static final double SLACK_S = 3600;
 

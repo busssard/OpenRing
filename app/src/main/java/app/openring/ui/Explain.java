@@ -627,6 +627,29 @@ public final class Explain {
     public static final String BADGES_SCREEN_ACCESS = "Phone free evening and Calm screen day come from your screen time. For that, switch on "
             + "Open Ring in Android's usage access list (the button takes you there). It stays on this phone.";
     public static final String BADGES_SCREEN_OLD = "Phone free evening and Calm screen day come from your screen time, which needs Android 9 or newer.";
+    // ------------------------------------------------------------------ life factors (issue #292, phase 1)
+
+    /** Today's row, How it works: what a tag is and where it shows. */
+    public static final String LIFE_ROW = "A tap logs a factor for the day shown, a second tap takes it away. A factor of one day "
+            + "belongs to the night that starts that evening: it shows beside that night on Sleep and on Readiness the morning after.";
+    /** Several days, own tags, chips. */
+    public static final String LIFE_MORE = "Several days logs one factor on every day of a stretch, for a holiday or an illness. "
+            + "Your own factors and the chips you choose stay until you change them; removing one of your own keeps the days you logged.";
+    /** Privacy. */
+    public static final String LIFE_PRIVATE = "Life factors are stored only on this phone. They are in your full backups and the full database "
+            + "export, never in the Data check, the log or a notification, and in the daily CSV only when you tick Include life factors.";
+    /** Body's month view: the dots. */
+    public static final String LIFE_MONTH = "Each dot under a day is one factor you logged for it. The count under the calendar is the number "
+            + "of days in that month with each factor.";
+    /** What phase 1 does not do. */
+    public static final String LIFE_NO_EFFECT = "Nothing here changes a score. Open Ring does not yet work out what a factor goes with: a "
+            + "pattern needs many days with and without it, and would show what goes together, not what caused it.";
+
+    /** Every life factor text, for the tests (plain, no dashes). */
+    public static String[] lifeTexts() {
+        return new String[] {LIFE_ROW, LIFE_MORE, LIFE_PRIVATE, LIFE_MONTH, LIFE_NO_EFFECT};
+    }
+
     public static final String SHOW_BADGES = "Show badges";
     public static final String SHOW_BADGES_NOTE = "Shows Recent badges on Today. Badges are worked out from your data each time, "
             + "so switching this off deletes nothing.";

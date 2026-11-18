@@ -47,6 +47,12 @@ public final class DayData {
     public final List<app.openring.core.analysis.Badges.Badge> badges = new ArrayList<app.openring.core.analysis.Badges.Badge>();
     /** The newest badge date already seen (kv {@code badges_seen}); later ones are marked New. Null when none was seen. */
     public LocalDate badgesSeen;
+    /** Life factors (issue #292): the known tags and chips, null when they could not be read. */
+    public app.openring.core.LifeTags.Known life;
+    /** Every day with a life factor in force, its tags by key. A few thousand rows even after years, read in the background. */
+    public final java.util.TreeMap<LocalDate, List<String>> lifeDays = new java.util.TreeMap<LocalDate, List<String>>();
+    /** False when the life factors could not be read (the cards say so; the screens' other numbers are unaffected). */
+    public boolean lifeOk = true;
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
     /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
@@ -254,6 +260,18 @@ public final class DayData {
             // the card says it could not be read. Not through failed(): the Data check names nothing of the period log, and
             // the log gets the error's kind only, never a date or an amount (issue #252)
             app.openring.ble.RingManager.get(c).log("day load: the period log could not be read: " + e.getClass().getSimpleName());
+        }
+        try {
+            // life factors (issue #292): the person's own tags, the same in every file; demo mode reads the demo's
+            d.life = app.openring.data.LifeLog.known(db);
+            d.lifeDays.putAll(app.openring.data.LifeLog.all(db));
+        } catch (RuntimeException e) {
+            // the cards say they could not be read. Not through failed(): the Data check names nothing of the tags, and the log
+            // gets the error's kind only, never a tag, a name or a date
+            d.life = null;
+            d.lifeDays.clear();
+            d.lifeOk = false;
+            app.openring.ble.RingManager.get(c).log("day load: the life factors could not be read: " + e.getClass().getSimpleName());
         }
         try {
             // the Recent badges row on Today (issue #265): one read of the 7 days and the weeks before them

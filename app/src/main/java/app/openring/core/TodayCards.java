@@ -30,6 +30,11 @@ public final class TodayCards {
     public static final String LIVE = Start.LIVE;
     /** The period tracker's card. */
     public static final String PERIOD = "period";
+    /**
+     * Life factors (issue #292): "What was today like?" with one tap chips for the day shown, right after Your day, so the
+     * measured first screen (the scores and Your day) does not move; for every device, as the tags are the person's own.
+     */
+    public static final String LIFE = "life";
 
     /**
      * Today's cards for {@code h}, top to bottom. {@code badges}: there are badges of the last 7 days; {@code leftOut}: part of
@@ -41,6 +46,7 @@ public final class TodayCards {
         List<String> out = new ArrayList<String>();
         out.add(SCORES);
         out.add(DAY);
+        out.add(LIFE);
         if (!h.ring) out.add(DEVICE_NOTE);
         if (leftOut) out.add(LEFT_OUT);
         if (dev.contains(FINISH_WATCH)) out.add(FINISH_WATCH);
