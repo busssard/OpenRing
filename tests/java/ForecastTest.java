@@ -78,6 +78,7 @@ public class ForecastTest {
 
     public static void main(String[] args) {
         openRingUnchanged();
+        sameAsBefore();
         methods();
         bayes();
         backtest();
@@ -125,6 +126,177 @@ public class ForecastTest {
             total++;
         }
         check("#383 Open Ring as a method: the same next start, range, ovulation and its range as before on " + total + " histories", same == total, same + " of " + total);
+    }
+
+    /**
+     * The histories the clean ups of the design round (issue #383, phase 1) are checked on: the 45 of {@link #openRingUnchanged}
+     * and 400 more from fixed seeds (0 to 45 cycles, 24 to 34 days, regular to irregular, some with a missed log, some
+     * alternating or drifting). Made up only.
+     */
+    static List<int[]> histories() {
+        List<int[]> hs = new ArrayList<int[]>();
+        hs.add(new int[0]);
+        hs.add(new int[] {31});
+        hs.add(new int[] {27, 33});
+        hs.add(new int[] {28, 29, 30});
+        hs.add(new int[] {28, 58, 29, 27});
+        hs.add(new int[] {20, 60});
+        hs.add(rep(28, 15));
+        hs.add(cat(random(30, 29, 2.5, 1), new int[] {57}, random(5, 29, 2.5, 2)));
+        for (int s = 3; s < 40; s++) hs.add(random(s, 28 + s % 4, 1 + s % 5, s));
+        for (int s = 0; s < 400; s++) {
+            Random r = new Random(1000 + s);
+            int n = r.nextInt(46);
+            int[] h = random(n, 24 + r.nextInt(11), 0.5 + 5.5 * r.nextDouble(), 2000 + s);
+            int kind = s % 8;
+            for (int i = 0; i < n; i++) {
+                if (kind == 5 && r.nextInt(9) == 0) h[i] *= 2; // a period that was not logged
+                if (kind == 6) h[i] = (i % 2 == 0 ? 25 : 32) + r.nextInt(3) - 1; // alternating
+                if (kind == 7) h[i] = Math.max(18, h[i] - i / 5); // slowly shorter
+            }
+            hs.add(h);
+        }
+        return hs;
+    }
+
+    /** Nights by the day their morning falls on, 0.3 °C warmer after each made up ovulation ({@code luteal} days before the next start). */
+    static TreeMap<LocalDate, Double> warmNights(int[] lengths, int luteal, LocalDate to, long seed) {
+        Random r = new Random(seed);
+        Set<LocalDate> warm = new HashSet<LocalDate>();
+        LocalDate s = C0;
+        for (int l : lengths) {
+            LocalDate next = s.plusDays(l);
+            for (LocalDate d = next.minusDays(luteal - 1); d.isBefore(next); d = d.plusDays(1)) warm.add(d);
+            s = next;
+        }
+        // the running cycle: warmer from a made up ovulation on its day 29 minus the luteal days
+        for (LocalDate d = s.plusDays(29 - luteal); !d.isAfter(to); d = d.plusDays(1)) warm.add(d);
+        TreeMap<LocalDate, Double> out = new TreeMap<LocalDate, Double>();
+        for (LocalDate d = C0; !d.isAfter(to); d = d.plusDays(1)) if (r.nextInt(10) > 0) out.put(d, 36.3 + 0.06 * r.nextGaussian() + (warm.contains(d) ? 0.3 : 0));
+        return out;
+    }
+
+    /** Everything a screen shows of one estimate: the numbers, every card text, the touch text of the expected day, the backtests. */
+    static void describe(StringBuilder sb, Cycles cy, boolean best) {
+        Locale en = Locale.ENGLISH;
+        if (cy.method == Cycles.MEASURED) seen[0]++;
+        if (cy.rise != null && !cy.riseUsed) seen[1]++;
+        if (cy.methodId != Methods.OPEN_RING && cy.choice == Methods.BEST) seen[2]++;
+        if (cy.method == Cycles.OWN_LUTEAL) seen[3]++;
+        sb.append(cy.next).append('|').append(cy.range).append('|').append(cy.rangeExact).append('|').append(cy.calendarNext).append('|').append(cy.calendarRange)
+                .append('|').append(cy.ovulation).append('|').append(cy.ovulationRange).append('|').append(cy.method).append('|').append(cy.methodId)
+                .append('|').append(cy.step).append('|').append(cy.typical).append('|').append(cy.sd).append('|').append(cy.length).append('|').append(cy.riseUsed)
+                .append('|').append(cy.luteal).append('|').append(cy.lutealSpread).append('|').append(cy.forecast).append('\n');
+        sb.append(cy.status(en)).append('|').append(cy.statusNote(en)).append('|').append(cy.dayLine(en)).append('|').append(cy.nextLine()).append('|')
+                .append(cy.expectedLine(en)).append('|').append(cy.ovulationLine(en)).append('|').append(cy.fertileLine(en)).append('|')
+                .append(cy.regularityLine()).append('|').append(cy.unusualLine(en)).append('\n');
+        if (cy.next != null) {
+            sb.append(cy.describe(cy.next, en)).append('|').append(cy.ahead(cy.today.plusDays(120))).append('\n');
+            sb.append(app.openring.ui.Explain.periodRange(cy)).append('|').append(app.openring.ui.Explain.periodOvulation(cy)).append('\n');
+        }
+        for (Backtest.Score s : cy.backtest().scores) sb.append(s).append(Arrays.toString(s.expected)).append(Arrays.toString(s.range)).append(';');
+        sb.append('\n');
+        if (best) sb.append(app.openring.ui.Explain.periodBestNow(cy)).append('\n');
+        if (cy.rise != null) {
+            RiseBacktest rb = cy.riseBacktest();
+            sb.append(rb.method).append('|').append(rb.mae).append('|').append(rb.calendarMae).append('|').append(rb.hits).append('|').append(rb.calendarHits)
+                    .append('|').append(rb.cases).append('|').append(cy.riseOff()).append('\n');
+            for (RiseBacktest.Case c : rb.cases) sb.append(c.range).append(',').append(c.calendarRange).append(';');
+        }
+    }
+
+    /**
+     * A fingerprint (SHA-256, first 16 hex digits) of everything {@link #describe} shows, per Settings choice ({@code of} alone
+     * is the app before #383), on {@link #histories}: the calendar on every history, the temperature on the first 45 and every
+     * tenth of the seeded ones.
+     */
+    static Map<String, String> fingerprints() throws Exception {
+        Locale before = Locale.getDefault();
+        Locale.setDefault(Locale.ENGLISH); // the card texts write their decimals in the phone's language
+        try {
+            return fingerprintsEn();
+        } finally {
+            Locale.setDefault(before);
+        }
+    }
+
+    /** What {@link #describe} counted: measured estimates, temperature left out, Best for you not on Open Ring, own luteal days. */
+    static final int[] seen = new int[4];
+
+    static Map<String, String> fingerprintsEn() throws Exception {
+        Map<String, StringBuilder> text = new TreeMap<String, StringBuilder>();
+        int[] choices = {-1, Methods.BEST, Methods.OPEN_RING, Methods.DRIP, Methods.SMOOTH, Methods.TREND, Methods.BAYES};
+        List<int[]> hs = histories();
+        for (int k = 0; k < hs.size(); k++) {
+            int[] h = hs.get(k);
+            LocalDate today = lastStart(h).plusDays(3 + k % 40);
+            Cycles base = Cycles.of(log(h), null, today);
+            boolean temp = k < 45 || k % 10 == 0;
+            TreeMap<LocalDate, Double> ring = temp ? warmNights(h, 11 + k % 5, today, k) : null;
+            for (int ch : choices) {
+                String name = ch < 0 ? "of" : Methods.name(ch);
+                Cycles cy = ch < 0 ? base : base.withMethod(ch);
+                StringBuilder sb = text.get(name + ", calendar");
+                if (sb == null) text.put(name + ", calendar", sb = new StringBuilder());
+                describe(sb, cy, ch == Methods.BEST);
+                if (!temp) continue;
+                sb = text.get(name + ", temperature");
+                if (sb == null) text.put(name + ", temperature", sb = new StringBuilder());
+                describe(sb, cy.measured(ring, null), ch == Methods.BEST);
+            }
+        }
+        Map<String, String> out = new TreeMap<String, String>();
+        for (Map.Entry<String, StringBuilder> e : text.entrySet()) {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(e.getValue().toString().getBytes("UTF-8"));
+            StringBuilder hex = new StringBuilder();
+            for (int i = 0; i < 8; i++) hex.append(String.format("%02x", d[i] & 0xff));
+            out.put(e.getKey(), hex.toString());
+        }
+        return out;
+    }
+
+    /**
+     * The fingerprints of {@link #fingerprints} worked out with the code of dev before the clean ups (shared statistics,
+     * {@code measured} reusing the backtest, the RiseBacktest factory step), which must not change any of them.
+     */
+    static final String[][] BEFORE = {
+        {"Best for you, calendar", "d7a57493e6e9913b"},
+        {"Best for you, temperature", "8f397f5e86e9fa7d"},
+        {"Follows your last cycle, calendar", "e90423cb13d5775d"},
+        {"Follows your last cycle, temperature", "a973dced7a5d960a"},
+        {"Learns from every cycle, calendar", "831eff51a8271cea"},
+        {"Learns from every cycle, temperature", "7efe6c4fbb3c2501"},
+        {"Open Ring, calendar", "768ada8954912a1b"},
+        {"Open Ring, temperature", "da908dd899895aeb"},
+        {"Recent cycles count more, calendar", "9982cb3586c15222"},
+        {"Recent cycles count more, temperature", "ad6b8060d0e6ff0a"},
+        {"drip style, calendar", "f7aba84b4df6ac1b"},
+        {"drip style, temperature", "ed1324e4238be86d"},
+        {"of, calendar", "768ada8954912a1b"},
+        {"of, temperature", "da908dd899895aeb"},
+    };
+
+    /** The clean ups of #383 phase 1 change nothing a screen shows, on 445 histories, with and without the temperature. */
+    static void sameAsBefore() {
+        try {
+            long t0 = System.nanoTime();
+            Map<String, String> now = fingerprints();
+            System.out.println("    #383 fingerprints of " + histories().size() + " histories: " + (System.nanoTime() - t0) / 1000000 + " ms");
+            System.out.println("    #383 fingerprints cover " + seen[0] + " measured estimates, " + seen[1] + " with the temperature left out, " + seen[2]
+                    + " where Best for you left Open Ring, " + seen[3] + " with the own days from ovulation");
+            check("#383 phase 1: the histories reach every state (measured, temperature left out, another method picked, own luteal days)",
+                    seen[0] > 0 && seen[1] > 0 && seen[2] > 0 && seen[3] > 0, Arrays.toString(seen));
+            boolean all = BEFORE.length == now.size();
+            for (String[] b : BEFORE) all &= b[1].equals(now.get(b[0]));
+            // when one differs, the new fingerprints to read (and, for a change meant to change them, to paste above)
+            if (!all) for (Map.Entry<String, String> e : now.entrySet()) System.out.println("        {\"" + e.getKey() + "\", \"" + e.getValue() + "\"},");
+            for (String[] b : BEFORE) {
+                check("#383 phase 1: " + b[0] + " shows the same as before on " + histories().size() + " histories", b[1].equals(now.get(b[0])), now.get(b[0]) + " instead of " + b[1]);
+            }
+            check("#383 phase 1: every choice is compared", BEFORE.length == now.size(), BEFORE.length + " of " + now.size());
+        } catch (Exception e) {
+            check("#383 phase 1: fingerprints " + e, false);
+        }
     }
 
     static void methods() {
