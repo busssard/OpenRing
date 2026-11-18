@@ -188,6 +188,8 @@ public final class Cycles {
      */
     private Backtest backtest;
     private RiseBacktest riseTest;
+    /** Whether the temperature's own backtest decides {@link #riseUsed} (Best for you, temperatures in, not forced on). */
+    private final boolean riseAsks;
     /** Temperature: decided by the choice and the backtest, or always on (the replay of {@link RiseBacktest}). */
     static final int TEMP_AUTO = 0, TEMP_ON = 1;
     /** The days from ovulation to the next period the estimate uses: {@link #LUTEAL}, or the own middle value. */
@@ -209,7 +211,7 @@ public final class Cycles {
     public final boolean stopped;
 
     private Cycles(Map<LocalDate, Integer> logged, Collection<LocalDate> marks, LocalDate today, LocalDate stoppedSince, TempRise.Analysis rise,
-            TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, int choice, int temp, Backtest known) {
+            TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, int choice, int temp, Backtest known, RiseBacktest riseKnown) {
         this.today = today;
         this.ring = ring;
         this.mouth = mouth;
@@ -255,7 +257,10 @@ public final class Cycles {
         double s = forecast.spread;
         this.rise = rise;
         boolean allowed = rise != null && (temp == TEMP_ON || Methods.usesTemperature(methodId));
-        if (allowed && temp == TEMP_AUTO && this.choice == Methods.BEST) riseTest = RiseBacktest.run(this);
+        // Best for you lets the temperature's own backtest decide: worked out by make() on a first Cycles of the same log, so
+        // this one never leaves the constructor half built
+        riseAsks = allowed && temp == TEMP_AUTO && this.choice == Methods.BEST;
+        riseTest = riseKnown;
         riseUsed = allowed && (riseTest == null || riseTest.helps());
         boolean own = riseUsed && rise.ownLuteal();
         luteal = own ? rise.lutealDays() : LUTEAL;
@@ -285,16 +290,29 @@ public final class Cycles {
     }
 
     /**
+     * Builds the estimate; for Best for you with temperatures in two steps: a first Cycles without the temperature's backtest,
+     * {@link RiseBacktest#run} on it (it replays the log and the nights, which that first one already holds in full), then the
+     * Cycles that uses its answer. So {@code this} never leaves a constructor (Experiment view of issue #383).
+     */
+    private static Cycles make(Map<LocalDate, Integer> logged, Collection<LocalDate> marks, LocalDate today, LocalDate stoppedSince, TempRise.Analysis rise,
+            TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, int choice, int temp, Backtest known) {
+        Cycles first = new Cycles(logged, marks, today, stoppedSince, rise, ring, mouth, choice, temp, known, null);
+        if (!first.riseAsks) return first;
+        RiseBacktest test = RiseBacktest.run(first);
+        return new Cycles(first.flows, first.ends, today, stoppedSince, rise, ring, mouth, choice, temp, first.knownBacktest(), test);
+    }
+
+    /**
      * The estimate on {@code today} from the logged days ({@code logged}: day to amount, {@link #REMOVED} to
      * {@link #HEAVY}; anything else is no entry) and the end marks.
      */
     public static Cycles of(Map<LocalDate, Integer> logged, Collection<LocalDate> ends, LocalDate today) {
-        return new Cycles(logged, ends, today, null, null, null, null, Methods.OPEN_RING, TEMP_AUTO, null);
+        return make(logged, ends, today, null, null, null, null, Methods.OPEN_RING, TEMP_AUTO, null);
     }
 
     /** As above, with the day the person said "My periods have stopped" ({@code stoppedSince}, null when not). */
     public static Cycles of(Map<LocalDate, Integer> logged, Collection<LocalDate> ends, LocalDate today, LocalDate stoppedSince) {
-        return new Cycles(logged, ends, today, stoppedSince, null, null, null, Methods.OPEN_RING, TEMP_AUTO, null);
+        return make(logged, ends, today, stoppedSince, null, null, null, Methods.OPEN_RING, TEMP_AUTO, null);
     }
 
     /**
@@ -302,7 +320,7 @@ public final class Cycles {
      * an unknown id (a backup from a newer version) is Open Ring. Display only: the log is the same.
      */
     public Cycles withMethod(int choice) {
-        return new Cycles(flows, ends, today, stoppedSince, rise, ring, mouth, choice, TEMP_AUTO, knownBacktest());
+        return make(flows, ends, today, stoppedSince, rise, ring, mouth, choice, TEMP_AUTO, knownBacktest());
     }
 
     /**
@@ -314,8 +332,8 @@ public final class Cycles {
         TreeSet<LocalDate> e = new TreeSet<LocalDate>(full.ends.headSet(day, true));
         TreeMap<LocalDate, Double> r = full.ring == null ? null : new TreeMap<LocalDate, Double>(full.ring.headMap(day, true));
         TreeMap<LocalDate, Double> m = full.mouth == null ? null : new TreeMap<LocalDate, Double>(full.mouth.headMap(day, true));
-        Cycles base = new Cycles(f, e, day, null, null, null, null, method, TEMP_ON, null);
-        return new Cycles(f, e, day, null, TempRise.analyse(base, r, m, true), r, m, method, TEMP_ON, null);
+        Cycles base = make(f, e, day, null, null, null, null, method, TEMP_ON, null);
+        return make(f, e, day, null, TempRise.analyse(base, r, m, true), r, m, method, TEMP_ON, null);
     }
 
     /** Every cycle's length in days, oldest first (those left out too): what the prediction methods get. */
@@ -352,7 +370,7 @@ public final class Cycles {
      * drip left out not in it). Either may be empty or null; with neither it is the calendar estimate.
      */
     public Cycles measured(TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth) {
-        return new Cycles(flows, ends, today, stoppedSince, TempRise.analyse(this, ring, mouth), ring, mouth, choice, TEMP_AUTO, knownBacktest());
+        return make(flows, ends, today, stoppedSince, TempRise.analyse(this, ring, mouth), ring, mouth, choice, TEMP_AUTO, knownBacktest());
     }
 
     /** {@code day} (yyyy-mm-dd) as a date, null when it is null or not a date (a setting from an older or damaged file). */

@@ -537,6 +537,10 @@ public class ForecastTest {
                 bad.ovulationLine(Locale.ENGLISH));
         Cycles chosen = Cycles.of(log(steady), null, t2).withMethod(Methods.OPEN_RING).measured(wr, null);
         check("#383 a chosen method keeps the temperature (only Best for you decides by the backtest)", chosen.riseUsed);
+        // the design round's clean up: Best for you's replay runs on a Cycles built in full (make), the same as one run later
+        Cycles byHand = Cycles.of(log(h), null, today).withMethod(cy.methodId).measured(ring, null);
+        check("#383 the temperature backtest of Best for you equals the one run on a finished Cycles with that method", byHand.riseBacktest().cases.toString().equals(rb.cases.toString())
+                && byHand.riseBacktest().mae == rb.mae && byHand.riseBacktest().calendarMae == rb.calendarMae, byHand.riseBacktest().cases + " / " + rb.cases);
         Cycles drip = Cycles.of(log(h), null, today).withMethod(Methods.DRIP).measured(ring, null);
         check("#383 drip style never uses the temperature, its replay sits on Open Ring", !drip.riseUsed && drip.method == Cycles.CALENDAR
                 && drip.riseBacktest().method == Methods.OPEN_RING && drip.riseOff().startsWith("drip style uses start days only"));
