@@ -298,6 +298,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("day_line_why", false) && Prefs.of(this).demo()) Pages.dayWhyOpen[0] = true;
         // the battery lines on Today folded open (owner's wish of 17 November), for the screen test
         if (i.getBooleanExtra("battery_open", false) && Prefs.of(this).demo()) BatteryViews.open[0] = true;
+        // the life factors row's More opened on Today (issue #292), for the screen test, demo mode only
+        if (i.getBooleanExtra("life_more", false) && Prefs.of(this).demo()) LifeCard.moreOpen[0] = true;
+        // Body's life factors month view with a past day read (issue #292): days before today, demo mode only
+        LifeCard.readPending = Prefs.of(this).demo() ? Math.max(-1, i.getIntExtra("life_read", -1)) : -1;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)
@@ -683,7 +687,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 content = Pages.sleep(this, data, this);
                 break;
             case Pages.READINESS:
-                content = Pages.readiness(this, data);
+                content = Pages.readiness(this, data, this);
                 break;
             case Pages.ACTIVITY:
                 content = Pages.activity(this, data);
