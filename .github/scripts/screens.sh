@@ -338,10 +338,11 @@ scroll_to() {  # $1 caption text, $2 the most swipes. Done once the caption is i
   done
   return 1
 }
+# a tile's header reads its title too ("Steps, last 7 days, ..., open, tap to close"): only the chart itself is touched
 touch_desc() {  # $1 the start of a content description, $2 where to tap in percent of its width from the left (default:
   # 10 px inside the right end), in the middle; fails when not on screen
   local b at=${2:-}
-  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -v -e 'tap to close"' -e 'tap to open"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b
   [ $# -eq 4 ] || return 1
   local y=$(( ($2 + $4) / 2 )) x=$(( $3 - 10 ))
@@ -573,12 +574,15 @@ launch --ei tab 0 --ei main_device 0;       sleep 3
 launch --ei tab 0 --ei devices 1;           shot today-watch-only
 first_screen watch
 launch --ei tab 2 --ei devices 1;           shot ready-watch-only
+launch --ei tab 2 --ei devices 1 --es card CONTRIBUTORS; sleep 3
 scroll_to "CONTRIBUTORS" 6 || echo "::warning::issue #379 step: Contributors was not found on Ready with only the watch"
 shot ready-watch-only-parts 1
 launch --ei tab 1 --ei devices 1;           shot sleep-watch-only
+launch --ei tab 1 --ei devices 1 --es card CONTRIBUTORS; sleep 3
 scroll_to "CONTRIBUTORS" 10 || echo "::warning::issue #379 step: Contributors was not found on Sleep with only the watch"
 shot sleep-watch-only-parts 1
 launch --ei tab 3 --ei devices 1;           shot activity-watch-only
+launch --ei tab 3 --ei devices 1 --es card CONTRIBUTORS; sleep 3
 scroll_to "CONTRIBUTORS" 14 || echo "::warning::issue #379 step: Contributors was not found on Activity with only the watch"
 shot activity-watch-only-parts 1
 # Only the phone (extra devices 2): Today with the Activity and Screen dials, Activity with the score from the phone's steps
@@ -592,7 +596,7 @@ launch --ei tab 3 --ei devices 2;           shot activity-phone-only
 # Activity with the phone's own steps. Back to Ring after, so the shots below stay as they were
 tap_desc_at() {  # $1 the start of a content description, $2 percent of its width from the left: taps there, in the middle
   local b
-  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -v -e 'tap to close"' -e 'tap to open"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b $2
   [ $# -eq 5 ] || return 1
   local y=$(( ($2 + $4) / 2 ))

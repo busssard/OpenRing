@@ -133,6 +133,8 @@ final class Tiles {
         View view;
         Fold fold;
         TextView summary;
+        /** The space under the tile's content while open (the card's own); folded, the header needs less. */
+        int bottom;
     }
 
     /**
@@ -243,6 +245,7 @@ final class Tiles {
             card.setBackground(null);
             int top = Math.min(card.getPaddingTop(), Ui.dp(c, 4));
             outer.setPadding(card.getPaddingLeft(), top, card.getPaddingRight(), card.getPaddingBottom());
+            t.bottom = card.getPaddingBottom();
             card.setPadding(0, 0, 0, 0);
             ViewGroup.LayoutParams lp = card.getLayoutParams();
             outer.setLayoutParams(lp != null ? lp : Ui.matchWrap());
@@ -287,13 +290,22 @@ final class Tiles {
         /** Shows the tile open or folded; after {@link #arrange} has set the saved states, a change is saved (the person did it). */
         void show(Tile t, boolean open) {
             if (t.fold.isOpen() != open) t.fold.show(open); // calls folded()
+            look(t);
+        }
+
+        /** Folded: the one line summary, and only a little space under the header, so a folded tab stays compact. */
+        void look(Tile t) {
+            boolean open = t.fold.isOpen();
             t.summary.setVisibility(!open && t.summary.getText().length() > 0 ? View.VISIBLE : View.GONE);
+            View v = t.view;
+            int b = open ? t.bottom : Math.min(t.bottom, Ui.dp(c, 6));
+            if (v.getPaddingBottom() != b) v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), b);
         }
 
         /** After a tap on the header: the summary, the saved state, the reset button, the page's own listener. */
         void folded(Tile t) {
             boolean open = t.fold.isOpen();
-            t.summary.setVisibility(!open && t.summary.getText().length() > 0 ? View.VISIBLE : View.GONE);
+            look(t);
             if (!loading) {
                 Prefs p = Prefs.of(c);
                 p.setTileFolds(tabName, Layout.fold(p.tileFolds(tabName), t.key, open));
@@ -391,7 +403,7 @@ final class Tiles {
             View v = t.view;
             v.animate().cancel();
             v.setTranslationZ(Ui.dp(c, 12));
-            v.animate().scaleX(1.03f).scaleY(1.03f).alpha(0.88f).setDuration(120).start();
+            v.animate().scaleX(1.03f).scaleY(1.03f).alpha(0.94f).setDuration(120).start();
             return true;
         }
 
