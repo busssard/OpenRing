@@ -16,7 +16,7 @@ if grep -q '^import android' app/src/main/java/app/openring/ui/Explain.java; the
   echo "FAIL  ui/Explain.java imports Android; keep it plain Java (CoreTest compiles it) or drop it from tests/run_tests.sh"
   exit 1
 fi
-javac -source 8 -target 8 -Xlint:-options -d "$OUT" $(find app/src/main/java/app/openring/core -name '*.java') app/src/main/java/app/openring/ui/Explain.java tests/java/CoreTest.java tests/java/FinderTest.java tests/java/WatchTest.java tests/java/ForecastTest.java tests/java/BatteryTest.java tests/java/DayLineTest.java tests/java/TodayTest.java
+javac -source 8 -target 8 -Xlint:-options -d "$OUT" $(find app/src/main/java/app/openring/core -name '*.java') app/src/main/java/app/openring/ui/Explain.java tests/java/CoreTest.java tests/java/FinderTest.java tests/java/WatchTest.java tests/java/ForecastTest.java tests/java/BatteryTest.java tests/java/DayLineTest.java tests/java/TodayTest.java tests/java/TrendsTest.java
 java $JAVA_OPTS -cp "$OUT" CoreTest
 java $JAVA_OPTS -cp "$OUT" FinderTest
 java $JAVA_OPTS -cp "$OUT" WatchTest
@@ -24,5 +24,6 @@ java $JAVA_OPTS -cp "$OUT" ForecastTest
 java $JAVA_OPTS -cp "$OUT" BatteryTest
 java $JAVA_OPTS -cp "$OUT" DayLineTest
 java $JAVA_OPTS -cp "$OUT" TodayTest
+java $JAVA_OPTS -cp "$OUT" TrendsTest
 # the emulator CI scripts: publishing the screenshots, the identical shot check (issues #57, #160)
 bash tests/test_ci_scripts.sh
