@@ -360,9 +360,8 @@ public final class Ui {
         return String.format(Locale.getDefault(), "%." + dp + "f", v);
     }
 
+    /** "7h 12m", "--" when unknown ({@link app.openring.core.Texts#hm}, which the JVM tests check). */
     public static String hm(double minutes) {
-        if (Double.isNaN(minutes)) return "--";
-        long m = Math.round(minutes);
-        return (m / 60) + "h " + (m % 60) + "m";
+        return app.openring.core.Texts.hm(minutes);
     }
 }

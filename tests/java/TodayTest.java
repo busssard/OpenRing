@@ -1,4 +1,6 @@
 import app.openring.core.Grid;
+import app.openring.core.SleepHero;
+import app.openring.core.Texts;
 import app.openring.core.SettingsBlocks;
 import app.openring.core.Start;
 import app.openring.core.TodayCards;
@@ -34,6 +36,7 @@ public class TodayTest {
         grid();
         statuses();
         sources();
+        sleepHero();
         System.out.println("today: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -148,5 +151,45 @@ public class TodayTest {
         check("the badges on the Badges page sit in the equal grid, as the same chip", badgesPage.contains("EqualGrid grid = new EqualGrid(this, 2, 8);")
                 && badgesPage.contains("BadgeViews.chip(this, k, levels[k], counts[k], false)"));
         check("a badge name takes two lines at most", badges.contains("name.setMaxLines(2);"));
+    }
+
+    /** The time asleep first on Sleep (issue #409): the hero's big line and the line under it, for the ring's and the watch's night. */
+    static void sleepHero() throws Exception {
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        // a ring night over midnight: 23:10 to 07:05 local (winter, UTC+1), 432 min asleep, 475 min in bed
+        double start = java.time.ZonedDateTime.of(2026, 11, 16, 23, 10, 0, 0, z).toEpochSecond();
+        double end = java.time.ZonedDateTime.of(2026, 11, 17, 7, 5, 0, 0, z).toEpochSecond();
+        eq("ring night: the time asleep as the big line", SleepHero.asleep(432), "7h 12m asleep");
+        eq("ring night over midnight: times and time in bed", SleepHero.window(start, end, 475, z), "23:10 to 07:05, 7h 55m in bed");
+        // the stored asleep_min is fractional: the big line rounds it as Details does (Ui.hm is Texts.hm)
+        for (double m : new double[] {0, 0.4, 29.5, 59.6, 60, 431.7, 432.2, 719.5, 1000}) {
+            eq("the minutes are Ui.hm of asleep_min, " + m, SleepHero.asleep(m), Texts.hm(m) + " asleep");
+        }
+        eq("under an hour still in hours and minutes", SleepHero.asleep(45), "0h 45m asleep");
+        // a watch night: whole minutes and unix seconds as longs, the same helper
+        long ws = (long) start + 20 * 60, we = (long) end - 5 * 60;
+        eq("watch night: big line", SleepHero.asleep(401), "6h 41m asleep");
+        eq("watch night: times and time in bed", SleepHero.window(ws, we, 450, z), "23:30 to 07:00, 7h 30m in bed");
+        // no time in bed (Pages.shownInBed gives -1 for a night without an end): only the times
+        eq("no time in bed: only the times", SleepHero.window(start, end, -1, z), "23:10 to 07:05");
+        eq("time in bed unknown: only the times", SleepHero.window(start, end, Double.NaN, z), "23:10 to 07:05");
+        eq("a night without an end: as the old line, no time in bed", SleepHero.window(start, Double.NaN, -1, z), "23:10 to --");
+        check("time asleep unknown: no big line", SleepHero.asleep(Double.NaN) == null && SleepHero.asleep(-1) == null);
+        eq("clock times rounded to the minute like the timeline", SleepHero.window(start + 40, end - 20, 475, z), "23:11 to 07:05, 7h 55m in bed");
+        for (String t : new String[] {SleepHero.asleep(432), SleepHero.window(start, end, 475, z), SleepHero.window(start, end, -1, z)}) {
+            check("no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
+        eq("Texts.hm unknown", Texts.hm(Double.NaN), "--");
+
+        String ui = src("ui/Ui.java"), pages = src("ui/Pages.java"), history = src("ui/HistoryViews.java");
+        check("Ui.hm is Texts.hm", ui.contains("return app.openring.core.Texts.hm(minutes);"));
+        check("the ring's and the watch's hero use the helper", pages.contains("app.openring.core.SleepHero.asleep(Json.d(n, \"asleep_min\"))")
+                && pages.contains("app.openring.core.SleepHero.window(Json.d(n, \"start\"), Json.d(n, \"end\"), shownInBed(n), nz)")
+                && pages.contains("app.openring.core.SleepHero.asleep(wn.asleepMin())")
+                && pages.contains("app.openring.core.SleepHero.window(wn.start, wn.end, wn.inBedMin(), nz)"));
+        check("the ring's Details start with Total sleep, then Time in bed", pages.indexOf("Ui.stat(c, \"Total sleep\", Ui.hm(Json.d(n, \"asleep_min\"))")
+                < pages.indexOf("Ui.stat(c, \"Time in bed\", Ui.hm(shownInBed(n)") && pages.contains("Ui.stat(c, \"Total sleep\", Ui.hm(Json.d(n, \"asleep_min\"))"));
+        check("the watch's Details start with Total sleep, then Time in bed", history.contains("Ui.stat(c, \"Total sleep\", Ui.hm(r.night.asleepMin())")
+                && history.indexOf("\"Total sleep\"") < history.indexOf("\"Time in bed\""));
     }
 }
