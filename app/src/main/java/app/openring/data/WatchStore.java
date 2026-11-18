@@ -468,31 +468,11 @@ public final class WatchStore {
     public static Data load(Db db) {
         Data out = new Data();
         SQLiteDatabase d = db.getReadableDatabase();
-        Cursor c = d.rawQuery("SELECT start, dur, steps, metres, kcal FROM watch_steps ORDER BY start", null);
-        try {
-            while (c.moveToNext()) out.steps.add(new Records.Steps(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4)));
-        } finally {
-            c.close();
-        }
-        c = d.rawQuery("SELECT t, bpm FROM watch_hr ORDER BY t", null);
-        try {
-            while (c.moveToNext()) out.heart.add(new Records.Heart(c.getLong(0), c.getInt(1)));
-        } finally {
-            c.close();
-        }
-        c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep ORDER BY start", null);
-        try {
-            while (c.moveToNext()) out.sleep.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
-        } finally {
-            c.close();
-        }
-        c = d.rawQuery("SELECT start, dur, kind, steps, metres, kcal FROM watch_workouts ORDER BY start", null);
-        try {
-            while (c.moveToNext()) out.workouts.add(new Records.Workout(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4), c.getInt(5)));
-        } finally {
-            c.close();
-        }
-        c = d.rawQuery("SELECT t, pct, state, mv FROM watch_battery ORDER BY t", null);
+        readSteps(d, "", null, out.steps);
+        readHeart(d, "", null, out.heart);
+        readSleep(d, "", null, out.sleep);
+        readWorkouts(d, "", null, out.workouts);
+        Cursor c = d.rawQuery("SELECT t, pct, state, mv FROM watch_battery ORDER BY t", null);
         try {
             while (c.moveToNext()) out.battery.add(new Records.Battery(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3)));
         } finally {
@@ -524,33 +504,12 @@ public final class WatchStore {
     public static app.openring.core.MainDevice.Watch window(Db db, double from, double to) {
         app.openring.core.MainDevice.Watch w = new app.openring.core.MainDevice.Watch();
         SQLiteDatabase d = db.getReadableDatabase();
-        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
-        Cursor c = d.rawQuery("SELECT start, dur, steps, metres, kcal FROM watch_steps WHERE start >= ? AND start < ? ORDER BY start", a);
-        try {
-            while (c.moveToNext()) w.steps.add(new Records.Steps(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4)));
-        } finally {
-            c.close();
-        }
-        c = d.rawQuery("SELECT t, bpm FROM watch_hr WHERE t >= ? AND t < ? ORDER BY t", a);
-        try {
-            while (c.moveToNext()) w.heart.add(new Records.Heart(c.getLong(0), c.getInt(1)));
-        } finally {
-            c.close();
-        }
-        // a night's pieces start the evening before; the day load asks from a day earlier. The cast: an expression has no
-        // column affinity, so a text parameter would never compare as a number
-        c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
-        try {
-            while (c.moveToNext()) w.sleep.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
-        } finally {
-            c.close();
-        }
-        c = d.rawQuery("SELECT start, dur, kind, steps, metres, kcal FROM watch_workouts WHERE start >= ? AND start < ? ORDER BY start", a);
-        try {
-            while (c.moveToNext()) w.workouts.add(new Records.Workout(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4), c.getInt(5)));
-        } finally {
-            c.close();
-        }
+        String[] a = span(from, to);
+        readSteps(d, STARTS_IN, a, w.steps);
+        readHeart(d, HEART_IN, a, w.heart);
+        // a night's pieces start the evening before; the day load asks from a day earlier
+        readSleep(d, REACHES_IN, a, w.sleep);
+        readWorkouts(d, STARTS_IN, a, w.workouts);
         return w;
     }
 
@@ -561,19 +520,9 @@ public final class WatchStore {
     public static app.openring.core.MainDevice.Watch nightRows(Db db, double from, double to) {
         app.openring.core.MainDevice.Watch w = new app.openring.core.MainDevice.Watch();
         SQLiteDatabase d = db.getReadableDatabase();
-        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
-        Cursor c = d.rawQuery("SELECT t, bpm FROM watch_hr WHERE t >= ? AND t < ? ORDER BY t", a);
-        try {
-            while (c.moveToNext()) w.heart.add(new Records.Heart(c.getLong(0), c.getInt(1)));
-        } finally {
-            c.close();
-        }
-        c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
-        try {
-            while (c.moveToNext()) w.sleep.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
-        } finally {
-            c.close();
-        }
+        String[] a = span(from, to);
+        readHeart(d, HEART_IN, a, w.heart);
+        readSleep(d, REACHES_IN, a, w.sleep);
         return w;
     }
 
@@ -652,14 +601,65 @@ public final class WatchStore {
     /** Only the watch's sleep pieces that reach into {@code from} to {@code to} (sleep debt reads 104 days of nights, not their steps). */
     public static List<Records.Sleep> sleepRows(Db db, double from, double to) {
         List<Records.Sleep> out = new ArrayList<Records.Sleep>();
-        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
-        Cursor c = db.getReadableDatabase().rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        readSleep(db.getReadableDatabase(), REACHES_IN, span(from, to), out);
+        return out;
+    }
+
+    // ------------------------------------------------------------------ the readers of each kind of row, shared by the methods above
+
+    /** Records that start in the span: {@code start} from the first argument, before the second. */
+    private static final String STARTS_IN = " WHERE start >= ? AND start < ?";
+    /** Heart rates taken in the span. */
+    private static final String HEART_IN = " WHERE t >= ? AND t < ?";
+    /**
+     * Sleep pieces that reach into the span. The cast: an expression has no column affinity, so a text parameter would never
+     * compare as a number (each copy of this query had to keep it; now there is one).
+     */
+    private static final String REACHES_IN = " WHERE start + dur > CAST(? AS INTEGER) AND start < ?";
+
+    /** The query arguments of a span in unix seconds: its start rounded down, its end rounded up. */
+    private static String[] span(double from, double to) {
+        return new String[] {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+    }
+
+    /** Adds the step records {@code where} says ("" for all), oldest first. */
+    private static void readSteps(SQLiteDatabase d, String where, String[] a, List<Records.Steps> out) {
+        Cursor c = d.rawQuery("SELECT start, dur, steps, metres, kcal FROM watch_steps" + where + " ORDER BY start", a);
+        try {
+            while (c.moveToNext()) out.add(new Records.Steps(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4)));
+        } finally {
+            c.close();
+        }
+    }
+
+    /** Adds the heart rates {@code where} says ("" for all), oldest first. */
+    private static void readHeart(SQLiteDatabase d, String where, String[] a, List<Records.Heart> out) {
+        Cursor c = d.rawQuery("SELECT t, bpm FROM watch_hr" + where + " ORDER BY t", a);
+        try {
+            while (c.moveToNext()) out.add(new Records.Heart(c.getLong(0), c.getInt(1)));
+        } finally {
+            c.close();
+        }
+    }
+
+    /** Adds the sleep pieces {@code where} says ("" for all), oldest first. */
+    private static void readSleep(SQLiteDatabase d, String where, String[] a, List<Records.Sleep> out) {
+        Cursor c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep" + where + " ORDER BY start", a);
         try {
             while (c.moveToNext()) out.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
         } finally {
             c.close();
         }
-        return out;
+    }
+
+    /** Adds the workouts {@code where} says ("" for all), oldest first. */
+    private static void readWorkouts(SQLiteDatabase d, String where, String[] a, List<Records.Workout> out) {
+        Cursor c = d.rawQuery("SELECT start, dur, kind, steps, metres, kcal FROM watch_workouts" + where + " ORDER BY start", a);
+        try {
+            while (c.moveToNext()) out.add(new Records.Workout(c.getLong(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4), c.getInt(5)));
+        } finally {
+            c.close();
+        }
     }
 
     /** True when any watch message is stored. */
