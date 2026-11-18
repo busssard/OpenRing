@@ -471,6 +471,10 @@ public class ForecastTest {
         check("#383 Best for you with one cycle: Open Ring, give or take 5", few.methodId == Methods.OPEN_RING && few.range == Cycles.WIDE && few.next.equals(lastStart(30).plusDays(30)));
         check("#383 the touch text names the method when it is not Open Ring", best.describe(best.next, Locale.ENGLISH).contains("(Follows your last cycle)"),
                 best.describe(best.next, Locale.ENGLISH));
+        // the design round's clean up: the same log's backtest is handed on, not run again (the scores are the same object)
+        Cycles bm = best.measured(nights(alt, rep(13, alt.length), today, 3), null);
+        check("#383 measured() and withMethod() reuse the backtest of the same log", bm.backtest() == best.backtest() && bm.methodId == best.methodId
+                && best.withMethod(Methods.BEST).backtest() == best.backtest() && base.withMethod(Methods.DRIP).backtest() != null);
         Cycles none = Cycles.of(new TreeMap<LocalDate, Integer>(), null, today).withMethod(Methods.BEST);
         check("#383 an empty log: no estimate, nothing breaks", none.next == null && none.backtest().scored() == 0 && none.riseBacktest() == null);
     }

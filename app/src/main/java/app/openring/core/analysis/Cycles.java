@@ -182,7 +182,10 @@ public final class Cycles {
     public final boolean riseUsed;
     /** The nights the rise was found in, kept for the backtest's replay; null for {@link #of} alone. */
     final TreeMap<LocalDate, Double> ring, mouth;
-    /** The backtests, worked out once when asked ({@link #backtest}, {@link #riseBacktest}), or for Best for you at once. */
+    /**
+     * The backtests, worked out once when asked ({@link #backtest}, {@link #riseBacktest}), or for Best for you at once; the
+     * calendar's is handed on to the Cycles {@link #measured} and {@link #withMethod} make of the same log.
+     */
     private Backtest backtest;
     private RiseBacktest riseTest;
     /** Temperature: decided by the choice and the backtest, or always on (the replay of {@link RiseBacktest}). */
@@ -206,7 +209,7 @@ public final class Cycles {
     public final boolean stopped;
 
     private Cycles(Map<LocalDate, Integer> logged, Collection<LocalDate> marks, LocalDate today, LocalDate stoppedSince, TempRise.Analysis rise,
-            TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, int choice, int temp) {
+            TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, int choice, int temp, Backtest known) {
         this.today = today;
         this.ring = ring;
         this.mouth = mouth;
@@ -237,7 +240,9 @@ public final class Cycles {
         // the prediction method (issue #383): Open Ring's own rule gives exactly the numbers above
         this.choice = Methods.valid(choice) ? choice : Methods.OPEN_RING;
         int[] lens = lengths();
-        if (this.choice == Methods.BEST) backtest = Backtest.run(lens);
+        // the same log gives the same backtest: measured() and withMethod() hand on one already worked out
+        backtest = known;
+        if (this.choice == Methods.BEST && backtest == null) backtest = Backtest.run(lens);
         methodId = this.choice == Methods.BEST ? backtest.best() : this.choice;
         forecast = Methods.get(methodId).predict(lens);
         step = forecast.days();
@@ -284,12 +289,12 @@ public final class Cycles {
      * {@link #HEAVY}; anything else is no entry) and the end marks.
      */
     public static Cycles of(Map<LocalDate, Integer> logged, Collection<LocalDate> ends, LocalDate today) {
-        return new Cycles(logged, ends, today, null, null, null, null, Methods.OPEN_RING, TEMP_AUTO);
+        return new Cycles(logged, ends, today, null, null, null, null, Methods.OPEN_RING, TEMP_AUTO, null);
     }
 
     /** As above, with the day the person said "My periods have stopped" ({@code stoppedSince}, null when not). */
     public static Cycles of(Map<LocalDate, Integer> logged, Collection<LocalDate> ends, LocalDate today, LocalDate stoppedSince) {
-        return new Cycles(logged, ends, today, stoppedSince, null, null, null, Methods.OPEN_RING, TEMP_AUTO);
+        return new Cycles(logged, ends, today, stoppedSince, null, null, null, Methods.OPEN_RING, TEMP_AUTO, null);
     }
 
     /**
@@ -297,7 +302,7 @@ public final class Cycles {
      * an unknown id (a backup from a newer version) is Open Ring. Display only: the log is the same.
      */
     public Cycles withMethod(int choice) {
-        return new Cycles(flows, ends, today, stoppedSince, rise, ring, mouth, choice, TEMP_AUTO);
+        return new Cycles(flows, ends, today, stoppedSince, rise, ring, mouth, choice, TEMP_AUTO, knownBacktest());
     }
 
     /**
@@ -309,8 +314,8 @@ public final class Cycles {
         TreeSet<LocalDate> e = new TreeSet<LocalDate>(full.ends.headSet(day, true));
         TreeMap<LocalDate, Double> r = full.ring == null ? null : new TreeMap<LocalDate, Double>(full.ring.headMap(day, true));
         TreeMap<LocalDate, Double> m = full.mouth == null ? null : new TreeMap<LocalDate, Double>(full.mouth.headMap(day, true));
-        Cycles base = new Cycles(f, e, day, null, null, null, null, method, TEMP_ON);
-        return new Cycles(f, e, day, null, TempRise.analyse(base, r, m, true), r, m, method, TEMP_ON);
+        Cycles base = new Cycles(f, e, day, null, null, null, null, method, TEMP_ON, null);
+        return new Cycles(f, e, day, null, TempRise.analyse(base, r, m, true), r, m, method, TEMP_ON, null);
     }
 
     /** Every cycle's length in days, oldest first (those left out too): what the prediction methods get. */
@@ -323,6 +328,11 @@ public final class Cycles {
     /** How close each method would have been on this log (issue #383), worked out once. */
     public synchronized Backtest backtest() {
         if (backtest == null) backtest = Backtest.run(lengths());
+        return backtest;
+    }
+
+    /** The backtest if it was worked out already, else null: handed to a Cycles of the same log so it is not run again. */
+    private synchronized Backtest knownBacktest() {
         return backtest;
     }
 
@@ -342,7 +352,7 @@ public final class Cycles {
      * drip left out not in it). Either may be empty or null; with neither it is the calendar estimate.
      */
     public Cycles measured(TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth) {
-        return new Cycles(flows, ends, today, stoppedSince, TempRise.analyse(this, ring, mouth), ring, mouth, choice, TEMP_AUTO);
+        return new Cycles(flows, ends, today, stoppedSince, TempRise.analyse(this, ring, mouth), ring, mouth, choice, TEMP_AUTO, knownBacktest());
     }
 
     /** {@code day} (yyyy-mm-dd) as a date, null when it is null or not a date (a setting from an older or damaged file). */
