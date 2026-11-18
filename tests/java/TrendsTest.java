@@ -95,6 +95,8 @@ public class TrendsTest {
         check("a year of 4 days is hollow (under 60)", y.buckets.get(0).hollow);
         eq("indexOf", m.indexOf(LocalDate.parse("2026-04-15")), 1);
         eq("indexOf outside", m.indexOf(LocalDate.parse("2025-04-15")), -1);
+        eq("axis labels", Trends.axisLabel(LocalDate.parse("2026-03-23"), Trends.WEEKS) + "|" + Trends.axisLabel(LocalDate.parse("2026-03-01"), Trends.MONTHS)
+                + "|" + Trends.axisLabel(LocalDate.parse("2026-01-01"), Trends.YEARS), "23 Mar|Mar 2026|2026");
         eq("labels", Trends.label(LocalDate.parse("2026-03-23"), Trends.WEEKS) + "|" + Trends.label(LocalDate.parse("2026-03-01"), Trends.MONTHS)
                 + "|" + Trends.label(LocalDate.parse("2026-01-01"), Trends.YEARS), "Week of 23 Mar 2026|March 2026|2026");
     }
@@ -412,6 +414,9 @@ public class TrendsTest {
         for (String n : Trends.GROUP_NAMES) TEXTS.add(n);
         for (String n : Trends.PERIOD_NAMES) TEXTS.add(n);
         TEXTS.add(Trends.TOO_FEW_NOW);
+        for (String x : new String[] {app.openring.ui.Explain.TRENDS, app.openring.ui.Explain.TRENDS_CARD, app.openring.ui.Explain.TRENDS_CARD_TITLE,
+            app.openring.ui.Explain.TRENDS_LINK, app.openring.ui.Explain.TRENDS_COMPARE, app.openring.ui.Explain.TRENDS_COMPARE_CAPTION,
+            app.openring.ui.Explain.TRENDS_DEMO, app.openring.ui.Explain.TRENDS_FAILED}) TEXTS.add(x);
         boolean ok = true;
         for (String x : TEXTS) {
             if (x.contains(" - ") || x.contains("–") || x.contains("—") || x.contains(" -") && !x.contains(" -0")) {

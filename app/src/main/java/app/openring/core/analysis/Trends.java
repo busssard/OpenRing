@@ -126,6 +126,14 @@ public final class Trends {
         return String.valueOf(start.getYear());
     }
 
+    /** The short label under the chart: "2 Mar", "Mar 2026", "2026". */
+    public static String axisLabel(LocalDate start, int period) {
+        String mon = start.getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
+        if (period == WEEKS) return start.getDayOfMonth() + " " + mon;
+        if (period == MONTHS) return mon + " " + start.getYear();
+        return String.valueOf(start.getYear());
+    }
+
     static String monthName(LocalDate d) {
         return d.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH);
     }
