@@ -1,5 +1,6 @@
 import app.openring.core.Hex;
 import app.openring.core.MainDevice;
+import app.openring.core.PhoneSteps;
 import app.openring.core.RingGate;
 import app.openring.core.withings.*;
 
@@ -41,12 +42,21 @@ public class WatchTest {
         setupMessages();
         setupSession();
         days();
+        dayIndex();
         due();
         demo();
         gate();
         mainDevice();
         mainDeviceEdges();
         mainDeviceSources();
+        mainDevicePhone329();
+        deviceScores379();
+        lostPiece();
+        stopAndDecodeOutsideTheRingLock();
+        deviceHistory();
+        sleepNear();
+        review389();
+        routes251();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -130,6 +140,28 @@ public class WatchTest {
         byte[] over = Arrays.copyOf(rest, rest.length + 2);
         check("assembler: a message longer than its length is dropped, not shifted into the next", as.feed(over) == null && as.dropped == 2 && !as.pending());
         check("assembler: the next message comes out whole after that", Arrays.equals(as.feed(b), b));
+        // review of dadbb71: what is dropped is handed on, never whole, so the session knows a piece was lost
+        check("whole: a made message is whole, a cut or longer one and stray bytes are not", Frame.whole(a) && Frame.whole(Frame.message(0x0111))
+                && !Frame.whole(Arrays.copyOf(a, a.length - 1)) && !Frame.whole(Arrays.copyOf(a, a.length + 1)) && !Frame.whole(new byte[] {5, 6})
+                && !Frame.whole(null) && !Frame.whole(new byte[] {1, 1}));
+        Frame.Assembler tk = new Frame.Assembler();
+        byte[] stray = {5, 6};
+        List<byte[]> t1 = tk.take(stray);
+        check("take: a stray piece is handed on as it came, not whole", t1.size() == 1 && Arrays.equals(t1.get(0), stray) && !Frame.whole(t1.get(0)) && tk.dropped == 1);
+        check("take: half a message hands on nothing", tk.take(Arrays.copyOfRange(a, 0, 3)).isEmpty() && tk.pending());
+        List<byte[]> t2 = tk.take(over);
+        byte[] both = new byte[a.length + 2];
+        System.arraycopy(a, 0, both, 0, a.length);
+        check("take: a message that runs past its end is handed on with the extra bytes, not whole", t2.size() == 1 && Arrays.equals(t2.get(0), both)
+                && !Frame.whole(t2.get(0)) && tk.dropped == 2 && !tk.pending());
+        List<byte[]> t3 = tk.take(b);
+        check("take: a whole message comes out alone", t3.size() == 1 && Arrays.equals(t3.get(0), b) && tk.take(new byte[0]).isEmpty() && tk.take(null).isEmpty());
+        check("records: bytes that are no whole message give no rows and no start", Records.newestComplete(Arrays.asList(Arrays.copyOf(b, b.length + 2), b)) == -1
+                && Records.newestComplete(Collections.singletonList(b)) == 1000, Records.newestComplete(Collections.singletonList(b)));
+        Records.Decoded dd = new Records.Decoded();
+        Records.decode(Arrays.copyOf(b, b.length + 2), 1, dd);
+        Records.decode(Arrays.copyOfRange(b, 1, b.length), 1, dd);
+        check("records: damaged bytes decode to nothing", dd.steps.isEmpty() && dd.heart.isEmpty() && dd.unknown == 0);
     }
 
     // --------------------------------------------------------------------------------- requests
@@ -179,9 +211,9 @@ public class WatchTest {
 
     static void records() {
         byte[] act = Frame.message(Proto.ACTIVITY,
-                WatchDemo.time(1000), WatchDemo.duration(900), WatchDemo.steps(420, 300), WatchDemo.calories(17),
+                WatchDemo.time(1000), WatchDemo.duration(900), WatchDemo.steps(420, 30000), WatchDemo.calories(17),
                 WatchDemo.time(2000), WatchDemo.duration(1500), WatchDemo.sleep(Records.DEEP),
-                WatchDemo.time(3000), WatchDemo.duration(2100), WatchDemo.workout(2), WatchDemo.steps(5000, 5500), WatchDemo.calories(380),
+                WatchDemo.time(3000), WatchDemo.duration(2100), WatchDemo.workout(2), WatchDemo.steps(5000, 550000), WatchDemo.calories(380),
                 WatchDemo.time(4000), WatchDemo.heart(55),
                 WatchDemo.time(5000), Frame.part(Proto.REC_RUN, new byte[0]), WatchDemo.duration(60),
                 WatchDemo.time(6000), Frame.part(Proto.REC_SWIM, new byte[0]),
@@ -194,7 +226,7 @@ public class WatchTest {
                 && d.steps.get(0).metres == 300 && d.steps.get(0).kcal == 17, d.steps.size());
         check("records: a sleep piece", d.sleep.size() == 1 && d.sleep.get(0).start == 2000 && d.sleep.get(0).dur == 1500 && d.sleep.get(0).stage == Records.DEEP);
         check("records: a workout with its own steps, not in the steps list", d.workouts.size() == 3 && d.workouts.get(0).kind == 2 && d.workouts.get(0).steps == 5000
-                && d.workouts.get(0).kcal == 380 && d.workouts.get(0).dur == 2100, d.workouts.size());
+                && d.workouts.get(0).kcal == 380 && d.workouts.get(0).dur == 2100 && d.workouts.get(0).metres == 5500, d.workouts.size());
         check("records: the watch's running and swimming marks are workouts", d.workouts.get(1).kind == Records.RUN && d.workouts.get(2).kind == Records.SWIM);
         check("records: a heart rate in an otherwise empty record (how the watch sends sleep heart rate)", d.heart.size() == 1 && d.heart.get(0).t == 4000
                 && d.heart.get(0).bpm == 55, d.heart.size());
@@ -310,12 +342,29 @@ public class WatchTest {
 
     static final class Store implements Session.Sink {
         final List<byte[]> got = new ArrayList<byte[]>();
+        /** The type each stored row gets (the message's own, or for damaged bytes the request they came in). */
+        final List<Integer> types = new ArrayList<Integer>();
         int failAt = -1;
 
         @Override
         public void received(byte[] msg) throws IOException {
             if (failAt >= 0 && got.size() == failAt) throw new IOException("disk full");
             got.add(msg);
+            types.add(Frame.type(msg));
+        }
+
+        @Override
+        public void damaged(byte[] bytes, int type) throws IOException {
+            if (failAt >= 0 && got.size() == failAt) throw new IOException("disk full");
+            got.add(bytes);
+            types.add(type);
+        }
+
+        /** The stored rows of {@code type}, in order (what {@code WatchStore} reads as one answer). */
+        List<byte[]> of(int type) {
+            List<byte[]> out = new ArrayList<byte[]>();
+            for (int i = 0; i < got.size(); i++) if (types.get(i) == type) out.add(got.get(i));
+            return out;
         }
     }
 
@@ -613,7 +662,7 @@ public class WatchTest {
         Records.decode(m, 2000, d);
         check("records: movement answers decode, with intensity and climb", d.steps.size() == 2 && d.steps.get(0).kcal == 20 && d.moves.size() == 1
                 && d.moves.get(0).start == 100 && d.moves.get(0).met == 33 && d.moves.get(0).up == 12 && d.moves.get(0).down == 9, d.moves.size());
-        check("records: decoder version 2", Records.VERSION == 2);
+        check("records: decoder version 3 (distance in centimetres)", Records.VERSION == 3);
         WatchDays.Zones utc = WatchDays.zones(new ArrayList<Object[]>(), ZoneId.of("UTC"));
         List<Records.Steps> rows = Arrays.asList(new Records.Steps(100, 900, 500, 380, 20), new Records.Steps(1000, 900, 50, 30, 3), new Records.Steps(90000, 900, 5, 3, 7));
         List<Records.Moves> mv2 = Arrays.asList(new Records.Moves(100, 33, 12, 9), new Records.Moves(1000, 10, 0, 4), new Records.Moves(90000, 5, 6, 0));
@@ -654,8 +703,8 @@ public class WatchTest {
         Lines log = new Lines();
         Session.Result r = Session.run(w, plan, new Gate(), new Store(), log);
         List<Integer> order = Arrays.asList(Proto.HELLO, Proto.CONNECT, Proto.SET_LOCALE, Proto.SET_TIME, Proto.SET_USER, Proto.SET_GOAL, Proto.SET_UNIT, Proto.SET_UNIT,
-                Proto.SET_SCREENS, Proto.SET_ALARM, Proto.ALARM_ON, Proto.BATTERY, Proto.SETUP_FINISHED, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE, Proto.SYNC_DONE);
-        check("setup session: every step in order, the first sync after setup finished, sync done last", r.ended == null && w.types().equals(order), w.types());
+                Proto.SET_SCREENS, Proto.BATTERY, Proto.SETUP_FINISHED, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE, Proto.SET_ALARM, Proto.ALARM_ON, Proto.SYNC_DONE);
+        check("setup session: every step in order, the first sync after setup finished, the alarm after the data, sync done last", r.ended == null && w.types().equals(order), w.types());
         check("setup session: each step started and done, setup finished among them", heard.events.contains(WatchSetup.FINISHED + " " + Session.DONE)
                 && heard.events.contains(Session.HEART + " " + Session.DONE) && heard.events.indexOf(Session.HELLO + " " + Session.STARTED) == 0
                 && r.done.contains(WatchSetup.ALARM_ON) && r.movementDone, heard.events);
@@ -688,6 +737,27 @@ public class WatchTest {
         w = new FakeWatch();
         Session.run(w, sp, new Gate(), new Store(), new Lines());
         check("sync: a pending alarm that was switched off sends only off", w.types().contains(Proto.ALARM_ON) && !w.types().contains(Proto.SET_ALARM));
+
+        // the owner's Steel HR (log of 11 November) sets the alarm but never answers 0x0145: the sync goes on, the data came first
+        WatchSetup.Alarm on = new WatchSetup.Alarm();
+        on.on = true;
+        sp.steps = WatchSetup.sync(sp, profile(), on, 5);
+        w = new FakeWatch();
+        w.silent.add(Proto.SET_ALARM);
+        w.silent.add(Proto.ALARM_ON);
+        Lines quiet = new Lines();
+        r = Session.run(w, sp, new Gate(), new Store(), quiet);
+        check("sync: a watch silent to the alarm still syncs, the data requests come before the alarm", r.ended == null && w.types().equals(Arrays.asList(Proto.HELLO,
+                Proto.CONNECT, Proto.BATTERY, Proto.SET_TIME, Proto.SET_USER, Proto.SET_GOAL, Proto.SET_UNIT, Proto.SET_UNIT, Proto.ACTIVITY, Proto.MOVEMENT, Proto.HEART_RATE,
+                Proto.SET_ALARM, Proto.ALARM_ON, Proto.SYNC_DONE)), w.types() + " " + r.ended);
+        check("sync: the alarm counts as sent without an answer, the log says it went on", r.done.contains(WatchSetup.ALARM_ON)
+                && joined(quiet.lines).contains("no answer to alarm, going on"), quiet.lines);
+        Session.Plan silentAlarm = plan();
+        silentAlarm.steps = WatchSetup.alarmOnly(on);
+        w = new FakeWatch();
+        w.silent.add(Proto.SET_ALARM);
+        r = Session.run(w, silentAlarm, new Gate(), new Store(), new Lines());
+        check("alarm: a watch silent to the alarm does not end the session", r.ended == null && r.done.contains(WatchSetup.ALARM), r.ended);
 
         // a watch that does not know a setup message: the session ends at it and says which
         w = new FakeWatch();
@@ -1184,16 +1254,18 @@ public class WatchTest {
         // a night of three pieces with a gap, ending on the morning of d
         long bed = midnight - 3600;
         List<Records.Sleep> sl = new ArrayList<Records.Sleep>(Arrays.asList(new Records.Sleep(bed, 1800, Records.LIGHT), new Records.Sleep(bed + 1800, 1200, Records.DEEP),
-                new Records.Sleep(bed + 3600, 900, Records.REM), new Records.Sleep(bed + 5400, 600, 1)));
+                new Records.Sleep(bed + 3600, 900, Records.REM), new Records.Sleep(bed + 5400, 600, 9)));
         // a nap in the afternoon of d: its end is after 18:00? no, at 15:30; shorter than the night, so the night wins
         sl.add(new Records.Sleep(midnight + 14 * 3600, 1800, Records.LIGHT));
         WatchDays.Night n = WatchDays.nightFor(sl, d, z);
         check("days: the night joins pieces across a short gap", n != null && n.start == bed && n.end == bed + 6000, n == null ? null : n.end - n.start);
-        check("days: minutes per stage", n.deepMin == 20 && n.lightMin == 30 && n.remMin == 15 && n.otherMin == 10 && n.asleepMin() == 65, n.deepMin + " " + n.lightMin);
+        check("days: minutes per stage", n.deepMin == 20 && n.lightMin == 30 && n.remMin == 15 && n.awakeMin == 0 && n.otherMin == 35 && n.asleepMin() == 65
+                && n.inBedMin() == n.stages.length, n.deepMin + " " + n.lightMin);
         check("days: per minute stages in the app's digits, the gap and the unknown code as 0", n.stages.length == 100 && n.stages[0] == 2 && n.stages[30] == 1
                 && n.stages[52] == 0 && n.stages[60] == 3 && n.stages[95] == 0, n.stages.length);
         check("days: no night on a day without sleep", WatchDays.nightFor(sl, d.plusDays(3), z) == null);
-        check("days: stage codes", WatchDays.stage(Records.DEEP) == 1 && WatchDays.stage(Records.LIGHT) == 2 && WatchDays.stage(Records.REM) == 3 && WatchDays.stage(1) == 0);
+        check("days: stage codes", WatchDays.stage(Records.DEEP) == 1 && WatchDays.stage(Records.LIGHT) == 2 && WatchDays.stage(Records.REM) == 3 && WatchDays.stage(9) == 0);
+        sleep251();
         // battery: the last reading of each day and the drop per day without the charge
         List<Records.Battery> bat = Arrays.asList(new Records.Battery(midnight + 7 * 3600, 90, 2, 0), new Records.Battery(midnight + 86400 + 7 * 3600, 86, 2, 0),
                 new Records.Battery(midnight + 86400 + 19 * 3600, 100, 0, 0), new Records.Battery(midnight + 2 * 86400 + 7 * 3600, 98, 2, 0));
@@ -1204,6 +1276,148 @@ public class WatchTest {
         check("days: too few readings for a drop", Double.isNaN(WatchDays.dropPerDay(bat.subList(0, 1), 0))
                 && Double.isNaN(WatchDays.dropPerDay(Arrays.asList(bat.get(0), new Records.Battery(bat.get(0).t + 3600, 89, 2, 0)), 0)));
         check("days: the newest battery reading", WatchDays.newestBattery(bat).pct == 98 && WatchDays.newestBattery(new ArrayList<Records.Battery>()) == null);
+    }
+
+    // -------------------------------------------------------------------------------- day index
+
+    /** One night's sleep, written out so two can be compared field by field. */
+    static String nightText(WatchDays.Night n) {
+        return n == null ? "none" : n.start + "-" + n.end + " " + Arrays.toString(n.stages) + " " + n.deepMin + "/" + n.lightMin + "/" + n.remMin + "/" + n.otherMin;
+    }
+
+    static String heartText(List<long[]> l) {
+        StringBuilder b = new StringBuilder();
+        for (long[] x : l) b.append(x[0]).append(':').append(x[1]).append(' ');
+        return b.toString();
+    }
+
+    static String workoutText(List<Records.Workout> l) {
+        StringBuilder b = new StringBuilder();
+        for (Records.Workout w : l) b.append(System.identityHashCode(w)).append(' ');
+        return b.toString();
+    }
+
+    /**
+     * Synthetic watch rows (no real data): {@code days} days with a heart rate every 10 minutes, a steps and a moves row
+     * every 15 minutes, a night of sleep pieces, two workouts and a few battery readings a day, in the order a merge of
+     * syncs could leave them (some rows out of order, some times twice), and a trip: Zurich, then New York, then Tokyo.
+     */
+    static Object[] watchHistory(int days, long seed) {
+        Random r = new Random(seed);
+        long t0 = ZonedDateTime.of(2025, 3, 20, 0, 0, 0, 0, ZoneId.of("Europe/Zurich")).toEpochSecond();
+        List<Records.Steps> st = new ArrayList<Records.Steps>();
+        List<Records.Moves> mv = new ArrayList<Records.Moves>();
+        List<Records.Heart> hr = new ArrayList<Records.Heart>();
+        List<Records.Workout> wo = new ArrayList<Records.Workout>();
+        List<Records.Sleep> sl = new ArrayList<Records.Sleep>();
+        List<Records.Battery> bt = new ArrayList<Records.Battery>();
+        for (int d = 0; d < days; d++) {
+            long day = t0 + d * 86400L;
+            for (long t = day; t < day + 86400; t += 600) hr.add(new Records.Heart(t + r.nextInt(60), 45 + r.nextInt(90)));
+            if (d % 7 == 3) Collections.swap(hr, hr.size() - 1, hr.size() - 30);
+            hr.add(new Records.Heart(day + 12 * 3600, 70 + r.nextInt(5)));
+            for (long t = day; t < day + 86400; t += 900) {
+                st.add(new Records.Steps(t, 900, r.nextInt(300), r.nextInt(250), r.nextInt(20)));
+                mv.add(new Records.Moves(t, r.nextInt(40), r.nextInt(4), r.nextInt(3)));
+            }
+            wo.add(new Records.Workout(day + 18 * 3600 + r.nextInt(3600), 1800 + r.nextInt(3000), 2, r.nextInt(6000), r.nextInt(5000), r.nextInt(400)));
+            wo.add(new Records.Workout(day + 7 * 3600 + r.nextInt(3600), 600, 6, 0, 0, 50));
+            long bed = day + 22 * 3600 + r.nextInt(5400);
+            int[] codes = {Records.LIGHT, Records.DEEP, Records.REM, 1};
+            for (long t = bed; t < bed + 7 * 3600; t += 1200) sl.add(new Records.Sleep(t, 1200, codes[r.nextInt(4)]));
+            for (int k = 0; k < 4; k++) bt.add(new Records.Battery(day + k * 6 * 3600 + r.nextInt(600), 100 - (d * 3 + k) % 90, 2, 0));
+        }
+        Collections.reverse(bt);
+        Collections.swap(wo, 0, wo.size() - 1);
+        double mid = t0 + days / 2 * 86400.0, late = t0 + (days - 10) * 86400.0;
+        List<Object[]> zoneRows = Arrays.asList(new Object[] {(double) t0, mid, "Europe/Zurich"}, new Object[] {mid + 3600, late, "America/New_York"},
+                new Object[] {late + 3600, late + 86400.0 * 30, "Asia/Tokyo"});
+        return new Object[] {st, mv, hr, wo, sl, bt, WatchDays.zones(zoneRows, ZoneId.of("Europe/Zurich")), LocalDate.of(2025, 3, 19)};
+    }
+
+    /**
+     * The Watch page's per day answers worked out once ({@code WatchDays.Index}) are exactly the ones the functions gave on
+     * each tap before: every day of a synthetic history with a trip, every card's numbers, the same rows in the same order.
+     */
+    @SuppressWarnings("unchecked")
+    static void dayIndex() {
+        int days = 120;
+        Object[] h = watchHistory(days, 7);
+        List<Records.Steps> st = (List<Records.Steps>) h[0];
+        List<Records.Moves> mv = (List<Records.Moves>) h[1];
+        List<Records.Heart> hr = (List<Records.Heart>) h[2];
+        List<Records.Workout> wo = (List<Records.Workout>) h[3];
+        List<Records.Sleep> sl = (List<Records.Sleep>) h[4];
+        List<Records.Battery> bt = (List<Records.Battery>) h[5];
+        WatchDays.Zones z = (WatchDays.Zones) h[6];
+        LocalDate first = (LocalDate) h[7];
+        WatchDays.Index ix = new WatchDays.Index(st, mv, hr, wo, sl, bt, z);
+        check("index: steps, distance, calories, climb and battery per day are the functions' maps", ix.steps.equals(WatchDays.stepsPerDay(st, z))
+                && ix.metres.equals(WatchDays.metresPerDay(st, z)) && ix.kcal.equals(WatchDays.kcalPerDay(st, z))
+                && ix.climb.equals(WatchDays.climbPerDay(mv, z)) && ix.battery.equals(WatchDays.batteryPerDay(bt, z)));
+        check("index: the newest battery reading is the same row", ix.newestBattery == WatchDays.newestBattery(bt));
+        int same = 0, withHeart = 0, withNight = 0, withWorkout = 0;
+        for (int i = 0; i < days + 4; i++) {
+            LocalDate d = first.plusDays(i);
+            long upTo = WatchDays.dayStart(d.plusDays(1), z);
+            boolean ok = heartText(ix.heartOn(d)).equals(heartText(WatchDays.heartOn(hr, d, z)))
+                    && workoutText(ix.workoutsOn(d)).equals(workoutText(WatchDays.workoutsOn(wo, d, z)))
+                    && nightText(ix.nightFor(d)).equals(nightText(WatchDays.nightFor(sl, d, z)))
+                    && Double.compare(ix.dropPerDay(upTo - 7 * 86400L), WatchDays.dropPerDay(bt, upTo - 7 * 86400L)) == 0;
+            if (ok) same++;
+            else System.out.println("  index differs on " + d);
+            if (!ix.heartOn(d).isEmpty()) withHeart++;
+            if (ix.nightFor(d) != null) withNight++;
+            if (!ix.workoutsOn(d).isEmpty()) withWorkout++;
+        }
+        check("index: heart rates, workouts, the night and the battery drop of every day are the same, in the same order", same == days + 4, same);
+        check("index: the history really has heart rates, nights and workouts on most days (a test with data)", withHeart >= days && withNight >= days - 2 && withWorkout >= days, withHeart + " " + withNight + " " + withWorkout);
+        // the lists handed out are copies: the page cannot change the index by accident
+        LocalDate busy = first.plusDays(10);
+        ix.heartOn(busy).clear();
+        ix.workoutsOn(busy).clear();
+        check("index: a day's lists are copies", !ix.heartOn(busy).isEmpty() && !ix.workoutsOn(busy).isEmpty());
+        int refused = 0;
+        for (java.util.SortedMap<LocalDate, Integer> m : java.util.Arrays.asList(ix.steps, ix.metres, ix.kcal, ix.climb, ix.battery)) {
+            try { m.put(busy, 1); } catch (UnsupportedOperationException ex) { refused++; }
+        }
+        check("index: the per day maps are read only (shared while the page is open)", refused == 5, refused + " of 5");
+        WatchDays.Index none = new WatchDays.Index(new ArrayList<Records.Steps>(), new ArrayList<Records.Moves>(), new ArrayList<Records.Heart>(),
+                new ArrayList<Records.Workout>(), new ArrayList<Records.Sleep>(), new ArrayList<Records.Battery>(), z);
+        check("index: no rows, empty answers as the functions give", none.steps.isEmpty() && none.newestBattery == null && none.heartOn(busy).isEmpty()
+                && none.workoutsOn(busy).isEmpty() && none.nightFor(busy) == null && Double.isNaN(none.dropPerDay(0)));
+
+        // the cost of a tap on another day: before, the functions over the whole history; now, a look up (one year of rows)
+        Object[] y = watchHistory(365, 11);
+        List<Records.Steps> yst = (List<Records.Steps>) y[0];
+        List<Records.Moves> ymv = (List<Records.Moves>) y[1];
+        List<Records.Heart> yhr = (List<Records.Heart>) y[2];
+        List<Records.Workout> ywo = (List<Records.Workout>) y[3];
+        List<Records.Sleep> ysl = (List<Records.Sleep>) y[4];
+        List<Records.Battery> ybt = (List<Records.Battery>) y[5];
+        WatchDays.Zones yz = (WatchDays.Zones) y[6];
+        LocalDate yd = ((LocalDate) y[7]).plusDays(200);
+        int taps = 5;
+        long a = System.nanoTime();
+        int sink = 0;
+        for (int k = 0; k < taps; k++) {
+            LocalDate d = yd.plusDays(k);
+            sink += WatchDays.stepsPerDay(yst, yz).size() + WatchDays.metresPerDay(yst, yz).size() + WatchDays.kcalPerDay(yst, yz).size() + WatchDays.climbPerDay(ymv, yz).size()
+                    + WatchDays.workoutsOn(ywo, d, yz).size() + WatchDays.heartOn(yhr, d, yz).size() + (WatchDays.nightFor(ysl, d, yz) == null ? 0 : 1)
+                    + WatchDays.batteryPerDay(ybt, yz).size() + (WatchDays.newestBattery(ybt) == null ? 0 : 1) + (int) WatchDays.dropPerDay(ybt, 0);
+        }
+        long b = System.nanoTime();
+        WatchDays.Index yix = new WatchDays.Index(yst, ymv, yhr, ywo, ysl, ybt, yz);
+        long c = System.nanoTime();
+        for (int k = 0; k < taps; k++) {
+            LocalDate d = yd.plusDays(k);
+            sink += yix.steps.size() + yix.metres.size() + yix.kcal.size() + yix.climb.size() + yix.workoutsOn(d).size() + yix.heartOn(d).size()
+                    + (yix.nightFor(d) == null ? 0 : 1) + yix.battery.size() + (yix.newestBattery == null ? 0 : 1) + (int) yix.dropPerDay(0);
+        }
+        long e = System.nanoTime();
+        System.out.println(String.format(Locale.US, "    index: one year (%d heart, %d steps rows): a tap took %.1f ms before, %.2f ms now; built once in %.1f ms on the loading thread (%d)",
+                yhr.size(), yst.size(), (b - a) / 1e6 / taps, (e - c) / 1e6 / taps, (c - b) / 1e6, sink % 10));
+        // only printed: a wall clock check can fail on a busy runner, the equality checks above prove the change
     }
 
     // -------------------------------------------------------------------------------------- due
@@ -1282,6 +1496,113 @@ public class WatchTest {
         boolean same = again.size() == msgs.size();
         for (int i = 0; same && i < msgs.size(); i++) same = Arrays.equals(again.get(i).body, msgs.get(i).body);
         check("demo: the same every time", same);
+    }
+
+    // ------------------------------------------------------------------------- lost piece (review of dadbb71)
+
+    /**
+     * A made up watch whose activity answer comes in Bluetooth pieces through the {@link Frame.Assembler}, as the phone's
+     * link puts them together: the last 3 bytes of the answer's first message and the first 2 of its second come in one
+     * piece. The Assembler cannot use that piece, so both messages are lost on the way.
+     */
+    static final class PieceWatch extends FakeWatch {
+        final Frame.Assembler as = new Frame.Assembler();
+        final Deque<byte[]> handed = new ArrayDeque<byte[]>();
+        boolean cut;
+
+        @Override
+        public byte[] next(long ms) throws IOException {
+            if (handed.isEmpty()) {
+                byte[] m = super.next(ms);
+                if (m == null) return null;
+                if (!cut && Frame.type(m) == Proto.ACTIVITY && inbox.peek() != null && Frame.type(inbox.peek()) == Proto.ACTIVITY) {
+                    cut = true;
+                    byte[] m2 = inbox.poll();
+                    byte[] joined = new byte[5];
+                    System.arraycopy(m, m.length - 3, joined, 0, 3);
+                    System.arraycopy(m2, 0, joined, 3, 2);
+                    hand(Arrays.copyOfRange(m, 0, m.length - 3));
+                    hand(joined);
+                    hand(Arrays.copyOfRange(m2, 2, m2.length));
+                } else {
+                    hand(m);
+                }
+            }
+            return handed.poll();
+        }
+
+        void hand(byte[] piece) {
+            handed.addAll(as.take(piece));
+        }
+    }
+
+    /**
+     * Review of dadbb71 (Should fix): an answer that lost a middle message on the way but still got its end part counted as
+     * whole, so its start moved past records that were never stored. Records at 1000, 2000 and 3000 in three messages; the
+     * first two are lost: the answer must count as cut off (its start stays), what came is stored, the session goes on.
+     */
+    static void lostPiece() throws Exception {
+        PieceWatch w = new PieceWatch();
+        List<byte[][]> recs = new ArrayList<byte[][]>();
+        for (int i = 1; i <= 3; i++) recs.add(new byte[][] {WatchDemo.time(i * 1000), WatchDemo.duration(900), WatchDemo.steps(10 * i, 7)});
+        List<byte[]> answer = WatchDemo.answer(Proto.ACTIVITY, recs, 1);
+        w.answers.put(Proto.ACTIVITY, answer);
+        check("lost piece: the made up answer is three messages, the second's rest starts without a start byte", answer.size() == 3 && (answer.get(1)[2] & 0xff) != Frame.START);
+        Store st = new Store();
+        Lines log = new Lines();
+        Session.Result r = Session.run(w, plan(), new Gate(), st, log);
+        check("lost piece: the activity answer counts as cut off", !r.done.contains(Session.ACTIVITY) && !r.activityDone, r.done);
+        check("lost piece: the stored activity answer moves no start", Records.newestComplete(st.of(Proto.ACTIVITY)) == -1, Records.newestComplete(st.of(Proto.ACTIVITY)));
+        java.io.ByteArrayOutputStream sent = new java.io.ByteArrayOutputStream(), kept = new java.io.ByteArrayOutputStream();
+        for (byte[] m : answer) sent.write(m, 0, m.length);
+        for (byte[] m : st.of(Proto.ACTIVITY)) kept.write(m, 0, m.length);
+        check("lost piece: every byte of the answer is stored as it came, the damaged bytes too", Arrays.equals(sent.toByteArray(), kept.toByteArray()), st.of(Proto.ACTIVITY).size());
+        check("lost piece: the session goes on, the movement and heart rate answers whole, sync done sent",
+                r.ended == null && r.done.contains(Session.MOVEMENT) && r.done.contains(Session.HEART) && r.doneSent, r.ended);
+        Records.Decoded d = new Records.Decoded();
+        for (byte[] m : st.of(Proto.ACTIVITY)) Records.decode(m, 1, d);
+        check("lost piece: the whole third message is decoded, the damaged bytes give no rows", d.steps.size() == 1 && d.steps.get(0).start == 3000, d.steps.size());
+        boolean named = false, value = false;
+        for (String l : log.lines) {
+            named |= l.contains("lost on the way") && l.contains(Session.ACTIVITY);
+            value |= l.contains("3000") || l.contains("2000");
+        }
+        check("lost piece: the log names it, never a value", named && !value, log.lines);
+        check("lost piece: counted as damaged", r.damaged == 2 && r.cut.contains(Session.ACTIVITY) && r.cut.size() == 1, r.damaged);
+        // stray bytes outside a data answer: stored without a request, every step done as before
+        FakeWatch w2 = new FakeWatch();
+        byte[] stray = {9, 9, 9};
+        w2.answer(Proto.BATTERY, stray, WatchDemo.batteryReply(80, 2, 3900));
+        Store st2 = new Store();
+        r = Session.run(w2, plan(), new Gate(), st2, new Lines());
+        check("lost piece: stray bytes during a simple step are stored under no request, the session is complete",
+                r.ended == null && r.activityDone && r.heartDone && r.cut.isEmpty() && st2.of(-1).size() == 1 && Arrays.equals(st2.of(-1).get(0), stray), r.ended);
+        // storing the damaged bytes fails: the session ends as with any message that could not be stored
+        PieceWatch w3 = new PieceWatch();
+        w3.answers.put(Proto.ACTIVITY, answer);
+        Store st3 = new Store();
+        st3.failAt = 5;
+        r = Session.run(w3, plan(), new Gate(), st3, new Lines());
+        check("lost piece: damaged bytes that cannot be stored end the session", Session.NOT_STORED.equals(r.ended) && !r.activityDone, r.ended);
+    }
+
+    /**
+     * Review of dadbb71 (Could improve, Android code, so read from the source): a job's stop belongs to that job's call
+     * (a static flag cleared at the start of each run lost a stop, and a job's stop ended a setup the person started), and
+     * the full re decode after a new decoder runs before the ring lock is taken (a ring sync waits at most 15 s for it).
+     */
+    static void stopAndDecodeOutsideTheRingLock() throws Exception {
+        String root = "app/src/main/java/app/openring/";
+        String ws = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ble/WatchSync.java").toPath()), "UTF-8");
+        String job = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "sync/SyncJob.java").toPath()), "UTF-8");
+        check("stop: no stop flag shared by every watch session", !ws.contains("static volatile boolean stopAsked") && !ws.contains("public static void stop()"));
+        check("stop: the job hands its own ticket to the watch sync, which reads it", job.contains("WatchSync.run(SyncJob.this, t)") && !job.contains("WatchSync.stop()")
+                && ws.contains("stop != null && stop.stopped()"));
+        int run = ws.indexOf("static String run(final Context ctx, final int mode"), lock = ws.indexOf("ring.whileRingFree(", run), locked = ws.indexOf("private static String locked(");
+        int decode = ws.indexOf("decodeStored(", run);
+        check("decode: the stored messages are decoded before the ring lock is taken", run > 0 && decode > run && decode < lock, decode + " " + lock);
+        int lockedEnd = ws.indexOf("static Session.Plan plan(", locked);
+        check("decode: no full re decode while the ring lock is held", locked > 0 && lockedEnd > locked && !ws.substring(locked, lockedEnd).contains("ensureDecoded"));
     }
 
     // ------------------------------------------------------------------------------------- gate
@@ -1851,7 +2172,7 @@ public class WatchTest {
         } catch (IllegalArgumentException e) {
             threw = true;
         }
-        check("#329 sources: a third device is refused until the phone exists", threw);
+        check("#329 sources: a second source of the same device is refused", threw);
         threw = false;
         try {
             MainDevice.numbers(d, Arrays.asList(ws), from, to);
@@ -1860,26 +2181,1319 @@ public class WatchTest {
         }
         check("#329 sources: the main device must be in the list", threw);
 
-        // the stored codes: phone reserved, nothing stored or shown changes
-        check("#329 codes: ring 0, watch 1, phone 2 reserved", MainDevice.RING == 0 && MainDevice.WATCH == 1 && MainDevice.PHONE == 2);
-        check("#329 codes: the phone is not a choice yet, a stored 2 is the ring", MainDevice.valid(MainDevice.PHONE) == MainDevice.RING && !MainDevice.known(MainDevice.PHONE)
-                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(-1) && !MainDevice.known(7));
-        check("#329 codes: Settings offers ring and watch, in that order", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH}));
+        // the stored codes (phase 1b: the phone is a choice now; phase 1a only reserved 2 and read it as the ring)
+        check("#329 codes: ring 0, watch 1, phone 2", MainDevice.RING == 0 && MainDevice.WATCH == 1 && MainDevice.PHONE == 2);
+        check("#329b codes: the phone is a choice, a stored 2 stays 2, anything else unknown is the ring", MainDevice.valid(MainDevice.PHONE) == MainDevice.PHONE
+                && MainDevice.known(MainDevice.PHONE) && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(-1) && !MainDevice.known(7)
+                && MainDevice.valid(7) == MainDevice.RING && MainDevice.valid(-1) == MainDevice.RING);
+        check("#329b codes: Settings offers ring, watch and phone, in that order", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH, MainDevice.PHONE}));
         int[] mine = MainDevice.choices();
-        mine[0] = MainDevice.PHONE;
-        mine[1] = 7;
-        check("#329 codes: changing a copy changes neither the choices nor known()", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH})
-                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && !MainDevice.known(7) && !MainDevice.known(MainDevice.PHONE));
+        mine[0] = 7;
+        mine[1] = 8;
+        mine[2] = 9;
+        check("#329 codes: changing a copy changes neither the choices nor known()", Arrays.equals(MainDevice.choices(), new int[] {MainDevice.RING, MainDevice.WATCH, MainDevice.PHONE})
+                && MainDevice.known(MainDevice.RING) && MainDevice.known(MainDevice.WATCH) && MainDevice.known(MainDevice.PHONE) && !MainDevice.known(7));
         Set<String> labels = new HashSet<String>();
         boolean labelled = true;
         for (int c : MainDevice.choices()) {
             String l = MainDevice.label(c);
             labelled &= l != null && !l.isEmpty() && plain(l) && labels.add(l);
         }
-        check("#329 codes: every choice has its own label", labelled && labels.equals(new HashSet<String>(Arrays.asList("Ring", "Watch"))), labels);
-        check("#329 codes: the reserved phone has its label ready", "Phone".equals(MainDevice.label(MainDevice.PHONE)));
+        check("#329 codes: every choice has its own label", labelled && labels.equals(new HashSet<String>(Arrays.asList("Ring", "Watch", "Phone"))), labels);
+        check("#329 codes: the phone's label", "Phone".equals(MainDevice.label(MainDevice.PHONE)));
+        // without the phone's data (of() with no phone source) a stored 2 is still the ring's day, as in phase 1a
         MainDevice.Day asPhone = MainDevice.of(MainDevice.PHONE, day, from, to, z, ring, srcWatch(day, 99, 99));
         MainDevice.Day asRing = MainDevice.of(MainDevice.RING, day, from, to, z, ring, srcWatch(day, 99, 99));
-        check("#329 codes: a day asked for with 2 is the ring's day", asPhone.main == MainDevice.RING && srcPrint(asPhone).equals(srcPrint(asRing)));
+        check("#329 codes: a day asked for with 2 but no phone source is the ring's day", asPhone.main == MainDevice.RING && srcPrint(asPhone).equals(srcPrint(asRing)));
+    }
+
+    /** One phone interval {start, stop, steps} from clock hours of {@code d} in MD_ZONE. */
+    static double[] ph(LocalDate d, double fromH, double toH, double steps) {
+        return new double[] {srcAt(d, fromH), srcAt(d, toH), steps};
+    }
+
+    /** The phone's share of {@code p} in the quarter hours {@code lo} to {@code hi} (excluded) of the day from {@code from}. */
+    static double phoneShare(MainDevice.Phone p, double from, int lo, int hi) {
+        double sum = 0;
+        for (double[] i : p.intervals) sum += PhoneSteps.share(i[0], i[1], i[2], from + lo * 900, from + hi * 900);
+        return sum;
+    }
+
+    /** Issue #329, phase 1b: the phone as a third source. Ring and watch results stay the same; the phone fills last. */
+    static void mainDevicePhone329() throws Exception {
+        ZoneId z = MD_ZONE;
+        // an empty phone source changes nothing on any of the fingerprint days, with ring or watch as main device
+        boolean same = true;
+        for (Object[] c : srcCases()) {
+            LocalDate d = (LocalDate) c[1];
+            double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            for (int main : new int[] {MainDevice.RING, MainDevice.WATCH}) {
+                String without = srcPrint(MainDevice.of(main, d, from, to, z, (MainDevice.Ring) c[2], (MainDevice.Watch) c[3]));
+                String with = srcPrint(MainDevice.of(main, d, from, to, z, (MainDevice.Ring) c[2], (MainDevice.Watch) c[3], new MainDevice.Phone()));
+                same &= without.equals(with);
+                if (!without.equals(with)) System.out.println("  differs: " + c[0] + " / " + main + "\n    " + without + "\n    " + with);
+            }
+        }
+        check("#329b phone: an empty phone leaves every ring and watch day exactly as it was", same);
+
+        LocalDate day = MD_DAY;
+        double from = mdFrom(day, z), to = mdFrom(day.plusDays(1), z);
+        MainDevice.Phone phone = new MainDevice.Phone();
+        phone.intervals.add(ph(day, 13, 14 + 2 / 60.0, 300));
+        phone.intervals.add(ph(day, 14 + 2 / 60.0, 15 + 4 / 60.0, 412));
+        phone.intervals.add(ph(day, 15 + 4 / 60.0, 17, 600));
+        MainDevice.Source ps = MainDevice.phone(phone, from, to);
+        int on = 0;
+        for (boolean b : ps.worn) if (b) on++;
+        check("#329b phone source: covers 13:00 to 17:00, its total is all its steps, an estimate without a day of its own", ps.kind == MainDevice.PHONE && ps.present
+                && on == 16 && ps.worn[52] && !ps.worn[51] && ps.worn[67] && !ps.worn[68] && Math.abs(ps.steps - 1312) < 1e-6 && ps.estimate && !ps.ownDay && ps.rows
+                && ps.line().size() == 0, on + " " + ps.steps);
+        double lent = 0;
+        for (double[] p : ps.parts) lent += p[1];
+        check("#329b phone source: lends its steps spread over the quarter hours", ps.parts.size() == 16 && Math.abs(lent - 1312) < 1e-6, lent);
+        MainDevice.Source none = MainDevice.phone(new MainDevice.Phone(), from, to);
+        check("#329b phone source without intervals: absent, no total", !none.present && Double.isNaN(none.steps) && none.parts.isEmpty());
+
+        // ring main, off 14:00 to 16:00, no watch: the phone fills exactly those quarter hours, spread evenly, about
+        MainDevice.Ring ring = srcRing(day, 14, 16, 6543);
+        MainDevice.Day r = MainDevice.of(MainDevice.RING, day, from, to, z, ring, null, phone);
+        long want = Math.round(phoneShare(phone, from, 56, 64));
+        check("#329b ring main: the phone fills only the two hours off the finger", r.main == MainDevice.RING && Math.round(r.phoneSteps()) == want
+                && bits(r.steps, 6543 + (double) want) && r.fillSteps == 0 && r.stepFill.isEmpty() && r.fills.size() == 1, r.phoneSteps() + " " + want + " " + r.steps);
+        check("#329b ring main: the existing line style names the phone", ("Includes about " + String.format(Locale.US, "%,d", want)
+                + " steps from your phone, 14:00 to 16:00, when your ring was not worn.").equals(MainDevice.stepsLine(r, z, Locale.US)), MainDevice.stepsLine(r, z, Locale.US));
+        check("#329b ring main: the tile says some came from the phone", "Estimated from your movement, some counted by your phone".equals(MainDevice.stepsNote(r)), MainDevice.stepsNote(r));
+        check("#329b ring main: the phone has no heart rate, the ring's line stays", r.hr == ring.hr && r.hrFill.isEmpty() && MainDevice.heartLine(r, z) == null);
+        check("#329b ring main: the evidence keeps the day's phone intervals", r.phone.size() == 3 && r.base == MainDevice.RING);
+
+        // ring and watch: the watch fills the ring's gap first, the phone only where neither was worn
+        MainDevice.Watch watch = srcWatch(day, 14.75, 15.25);
+        MainDevice.Day rw = MainDevice.of(MainDevice.RING, day, from, to, z, ring, watch, phone);
+        MainDevice.Day rwNo = MainDevice.of(MainDevice.RING, day, from, to, z, ring, watch);
+        check("#329b ring and watch: the watch covers the gap, the phone adds nothing", rw.phoneSteps() == 0 && bits(rw.steps, rwNo.steps) && bits(rw.fillSteps, rwNo.fillSteps)
+                && srcPrint(rw).equals(srcPrint(rwNo)), rw.phoneSteps());
+        MainDevice.Watch away = srcWatch(day, 10, 20);
+        MainDevice.Day ra = MainDevice.of(MainDevice.RING, day, from, to, z, ring, away, phone);
+        check("#329b ring and watch both off: the phone fills that time", Math.round(ra.phoneSteps()) == want && ra.fillSteps == 0
+                && bits(ra.steps, 6543 + (double) want), ra.phoneSteps());
+        // the watch off for a part of the ring's gap only: the phone takes the rest (the watch's own 30 minute reach counts as worn)
+        MainDevice.Watch part = srcWatch(day, 14, 15.5);
+        MainDevice.Day rp = MainDevice.of(MainDevice.RING, day, from, to, z, ring, part, phone);
+        boolean[] ww = MainDevice.watch(part, from, to).worn;
+        double share = 0;
+        for (int k = 56; k < 64; k++) if (!ww[k]) share += phoneShare(phone, from, k, k + 1);
+        check("#329b ring and watch: the phone only where neither was worn", Math.round(rp.phoneSteps()) == Math.round(share) && share > 0 && rp.fillSteps > 0
+                && rp.fills.size() == 2 && rp.fills.get(0).kind == MainDevice.WATCH && rp.fills.get(1).kind == MainDevice.PHONE, rp.phoneSteps() + " " + share);
+        check("#329b ring and watch: one sentence per device, the phone's last", MainDevice.stepsLine(rp, z, Locale.US).contains("from your watch")
+                && MainDevice.stepsLine(rp, z, Locale.US).indexOf("from your phone") > MainDevice.stepsLine(rp, z, Locale.US).indexOf("from your watch")
+                && "Estimated from your movement, some counted by your watch and phone".equals(MainDevice.stepsNote(rp)), MainDevice.stepsLine(rp, z, Locale.US));
+        // the list in any order gives the same numbers
+        MainDevice.Day y = new MainDevice.Day();
+        y.main = MainDevice.RING;
+        y.watchRows = rp.watchRows;
+        MainDevice.numbers(y, Arrays.asList(MainDevice.phone(phone, from, to), MainDevice.watch(part, from, to), MainDevice.ring(ring, from, to, z)), from, to);
+        check("#329b sources: three in any order give the same numbers", bits(y.steps, rp.steps) && bits(y.metres, rp.metres) && bits(y.phoneSteps(), rp.phoneSteps())
+                && srcRanges(y.stepFill).equals(srcRanges(rp.stepFill)) && sameTs(y.hr, rp.hr));
+
+        // watch main, off 12:00 to 17:00: the ring fills first (its noon walk), the phone where the ring was not worn either
+        MainDevice.Watch wOff = srcWatch(day, 12, 17);
+        MainDevice.Ring rOff = srcRing(day, 14, 16, 6543);
+        MainDevice.Day w = MainDevice.of(MainDevice.WATCH, day, from, to, z, rOff, wOff, phone);
+        check("#329b watch main: ring fills, then the phone, and the tile says both", w.fillSteps > 0 && w.phoneSteps() > 0
+                && "Counted by your watch, some estimated by your ring and some counted by your phone".equals(MainDevice.stepsNote(w)), MainDevice.stepsNote(w));
+
+        // the phone as main device: its own day; the ring fills where the phone counted nothing, the heart rate is the ring's
+        MainDevice.Phone daylong = new MainDevice.Phone();
+        daylong.intervals.add(ph(day, 9, 12, 4000));
+        daylong.intervals.add(ph(day, 13, 22, 5000));
+        MainDevice.Day p = MainDevice.of(MainDevice.PHONE, day, from, to, z, ring, null, daylong);
+        double ringLent = 0;
+        boolean[] pw = MainDevice.phone(daylong, from, to).worn;
+        for (double[] q : MainDevice.ring(ring, from, to, z).parts) if (!pw[(int) q[0]]) ringLent += q[1];
+        check("#329b phone main: its own total, the ring's estimate only outside the phone's intervals", p.main == MainDevice.PHONE && p.base == MainDevice.PHONE
+                && bits(p.steps, 9000 + Math.round(ringLent / 10.0) * 10.0) && p.otherKind == MainDevice.RING, p.steps + " " + ringLent);
+        check("#329b phone main: the tile and the heart rate line", "Counted by your phone, some estimated by your ring".equals(MainDevice.stepsNote(p))
+                && p.hr.size() == ring.hr.size() && "From your ring, your phone measures no heart rate.".equals(MainDevice.heartLine(p, z)), MainDevice.stepsNote(p) + " / " + MainDevice.heartLine(p, z));
+        // the phone main with nothing on this day: the ring's own day as stored, named
+        MainDevice.Day pe = MainDevice.of(MainDevice.PHONE, day, from, to, z, ring, null, new MainDevice.Phone());
+        check("#329b phone main without steps today: the ring's day as stored, said so", pe.whole && pe.wholeFrom == MainDevice.RING && pe.base == MainDevice.RING
+                && bits(pe.steps, 6543) && "From your ring: your phone has no data for this day.".equals(MainDevice.stepsLine(pe, z, Locale.US)) && MainDevice.stepsNote(pe) == null,
+                MainDevice.stepsLine(pe, z, Locale.US));
+        // a phone only person: steps from the phone, nothing named
+        MainDevice.Day only = MainDevice.of(MainDevice.PHONE, day, from, to, z, new MainDevice.Ring(), null, daylong);
+        check("#329b phone only: the phone's steps, no line, its tile", bits(only.steps, 9000) && MainDevice.stepsLine(only, z, Locale.US) == null
+                && "Counted by your phone".equals(MainDevice.stepsNote(only)) && !only.whole && only.hr.size() == 0 && only.any(), only.steps);
+        check("#329b phone only: the distance follows from the steps", bits(only.metres, app.openring.core.analysis.Wellness.stepsToMeters(9000)), only.metres);
+        // a ring only day: the ring's whole day when the ring has nothing and the phone has steps
+        MainDevice.Day off = MainDevice.of(MainDevice.RING, day, from, to, z, new MainDevice.Ring(), null, daylong);
+        check("#329b ring main, ring not worn all day: the phone's day, named", off.whole && off.wholeFrom == MainDevice.PHONE && bits(off.steps, 9000)
+                && "From your phone: your ring has no data for this day.".equals(MainDevice.stepsLine(off, z, Locale.US))
+                && "Counted by your phone".equals(MainDevice.stepsNote(off)), MainDevice.stepsLine(off, z, Locale.US));
+
+        // which device is main: the stored choice, else the default ring, watch, phone; a stored 2 without phone steps is the ring
+        check("#329b main shown: nothing stored, the default by what is there", MainDevice.shown(-1, true, true, true) == MainDevice.RING
+                && MainDevice.shown(-1, false, true, true) == MainDevice.WATCH && MainDevice.shown(-1, false, false, true) == MainDevice.PHONE
+                && MainDevice.shown(-1, false, false, false) == MainDevice.RING);
+        check("#329b main shown: a stored 2 is the phone while it counts steps, otherwise the ring", MainDevice.shown(2, true, true, true) == MainDevice.PHONE
+                && MainDevice.shown(2, true, true, false) == MainDevice.RING && MainDevice.shown(2, false, false, false) == MainDevice.RING);
+        check("#329b main shown: ring and watch stay as stored", MainDevice.shown(1, true, false, true) == MainDevice.WATCH && MainDevice.shown(0, false, true, true) == MainDevice.RING
+                && MainDevice.shown(7, true, true, true) == MainDevice.RING);
+        check("#329b chips: only the devices present, in order", Arrays.equals(MainDevice.present(true, false, true), new int[] {MainDevice.RING, MainDevice.PHONE})
+                && Arrays.equals(MainDevice.present(false, false, true), new int[] {MainDevice.PHONE}) && MainDevice.present(false, false, false).length == 0
+                && Arrays.equals(MainDevice.present(true, true, true), MainDevice.choices()));
+        check("#329b main line: Phone (steps only)", "Phone (steps only)".equals(MainDevice.mainLine(MainDevice.PHONE)) && "Ring".equals(MainDevice.mainLine(MainDevice.RING))
+                && "your phone".equals(MainDevice.name(MainDevice.PHONE)));
+        boolean plainAll = true;
+        for (String t : new String[] {MainDevice.stepsLine(r, z, Locale.US), MainDevice.stepsLine(rp, z, Locale.US), MainDevice.stepsNote(w), MainDevice.heartLine(p, z),
+            MainDevice.stepsLine(pe, z, Locale.US), MainDevice.nightLine(p)}) plainAll &= plain(t);
+        check("#329b texts: plain, no dashes", plainAll);
+        // a 23 hour day: 92 quarter hours, the phone's interval over the clock change spread by real time
+        LocalDate dst = LocalDate.of(2026, 3, 29);
+        double f23 = dst.atStartOfDay(z).toEpochSecond(), t23 = dst.plusDays(1).atStartOfDay(z).toEpochSecond();
+        MainDevice.Phone night = new MainDevice.Phone();
+        night.intervals.add(new double[] {f23 - 3600, f23 + 3 * 3600, 400});
+        MainDevice.Day d23 = MainDevice.of(MainDevice.PHONE, dst, f23, t23, z, new MainDevice.Ring(), null, night);
+        check("#329b 23 hour day: three of the four hours fall into it", MainDevice.slots(f23, t23) == 92 && Math.abs(d23.steps - 300) < 1e-9, d23.steps);
+    }
+
+    // ------------------------------------------------------------- first real watch data (owner's report of 11 November)
+
+    /**
+     * Issue #251, the owner's first real data: the sleep codes (0 awake, 1 light, 2 deep, 3 REM), the night's minutes adding
+     * up to the chart, the night's heart rate, steps per hour adding up to the day, distance in centimetres, and where the
+     * next request starts. Made up records only.
+     */
+    static void sleep251() {
+        ZoneId zurich = ZoneId.of("Europe/Zurich");
+        WatchDays.Zones z = new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return zurich;
+            }
+        };
+        LocalDate d = LocalDate.of(2026, 11, 10);
+        long midnight = d.atStartOfDay(zurich).toEpochSecond(), bed = midnight - 2 * 3600;
+        check("251 sleep codes: 0 awake, 1 light, 2 deep, 3 REM, as the app's digits", WatchDays.stage(0) == 4 && WatchDays.stage(1) == 2 && WatchDays.stage(2) == 1
+                && WatchDays.stage(3) == 3 && WatchDays.stage(5) == 0 && Records.AWAKE == 0 && Records.LIGHT == 1);
+        // a night mostly light (code 1), with deep, REM, a wake up and a gap without a record
+        List<Records.Sleep> sl = Arrays.asList(new Records.Sleep(bed, 600, 0), new Records.Sleep(bed + 600, 3000, 1), new Records.Sleep(bed + 3600, 1800, 2),
+                new Records.Sleep(bed + 5400, 1200, 1), new Records.Sleep(bed + 6600, 300, 0), new Records.Sleep(bed + 6900, 1500, 3),
+                new Records.Sleep(bed + 9000, 3600, 1));
+        WatchDays.Night n = WatchDays.nightFor(sl, d, z);
+        check("251 night: light is code 1 and no longer shown as no data", n != null && n.lightMin == 50 + 20 + 60 && n.deepMin == 30 && n.remMin == 25
+                && n.awakeMin == 15 && n.otherMin == 10 && n.asleepMin() == 185, n == null ? null : n.lightMin + " " + n.otherMin);
+        check("251 night: the rows add up to the whole night as the chart shows it", n.inBedMin() == n.stages.length && n.stages.length == 210, n.stages.length);
+        check("251 night: awake minutes in the chart as awake, the gap as no data", n.stages[0] == 4 && n.stages[112] == 4 && n.stages[145] == 0 && n.stages[10] == 2,
+                n.stages[145]);
+        // overlapping pieces: each minute counts once (it counted twice before)
+        WatchDays.Night o = WatchDays.nightFor(Arrays.asList(new Records.Sleep(midnight, 3600, 2), new Records.Sleep(midnight + 1800, 3600, 1)), d, z);
+        check("251 night: overlapping pieces count each minute once", o.inBedMin() == 90 && o.deepMin == 30 && o.lightMin == 60, o.deepMin + " " + o.lightMin);
+
+        // the night's heart rate: only readings from its start to its end, oldest first, lowest and average
+        List<Records.Heart> hr = Arrays.asList(new Records.Heart(n.end, 60), new Records.Heart(bed + 3600, 48), new Records.Heart(bed - 1, 70),
+                new Records.Heart(bed, 54), new Records.Heart(n.end + 1, 90), new Records.Heart(bed + 7200, 51));
+        WatchDays.NightHeart h = WatchDays.heartIn(hr, n.start, n.end);
+        check("251 night heart: the readings inside the night, both ends included, oldest first", h.points.size() == 4 && h.points.get(0)[0] == bed
+                && h.points.get(3)[0] == n.end && h.points.get(1)[1] == 48, h.points.size());
+        check("251 night heart: lowest with its time, average of the readings", h.lowest == 48 && h.lowestAt == bed + 3600 && Math.abs(h.average - 53.25) < 1e-9, h.average);
+        WatchDays.NightHeart none = WatchDays.heartIn(hr, midnight + 12 * 3600, midnight + 13 * 3600);
+        check("251 night heart: no reading, nothing made up", none.points.isEmpty() && none.lowest < 0 && Double.isNaN(none.average));
+        // on the Sleep page through the main device: the watch's night comes with its heart rate
+        MainDevice.Watch w = new MainDevice.Watch();
+        w.sleep.addAll(sl);
+        w.heart.addAll(hr);
+        MainDevice.Day day = MainDevice.of(MainDevice.WATCH, d, midnight, d.plusDays(1).atStartOfDay(zurich).toEpochSecond(), zurich, new MainDevice.Ring(), w);
+        check("251 night heart: the watch's night on Sleep carries its heart rate", day.watchNight != null && day.watchNightHeart != null
+                && day.watchNightHeart.points.size() == 4 && day.watchNightHeart.lowest == 48, day.watchNightHeart == null ? null : day.watchNightHeart.points.size());
+
+        // steps per hour: each record in the hour it starts in, adding up to exactly the day total
+        long dayEnd = d.plusDays(1).atStartOfDay(zurich).toEpochSecond();
+        List<Records.Steps> st = Arrays.asList(new Records.Steps(midnight + 8 * 3600, 900, 400, 300, 10), new Records.Steps(midnight + 8 * 3600 + 3599, 900, 7, 5, 0),
+                new Records.Steps(midnight + 9 * 3600, 900, 123, 90, 3), new Records.Steps(midnight - 1, 900, 999, 700, 9), new Records.Steps(dayEnd, 900, 55, 40, 1),
+                new Records.Steps(dayEnd - 1, 60, 3, 2, 0));
+        double[] per = WatchDays.stepsPerHour(st, midnight, dayEnd);
+        double sum = 0;
+        for (double v : per) sum += v;
+        check("251 steps per hour: 24 hours, each record in its starting hour", per.length == 24 && per[8] == 407 && per[9] == 123 && per[23] == 3 && per[0] == 0, per[8]);
+        check("251 steps per hour: the hours add up to the day's total", sum == WatchDays.stepsPerDay(st, z).get(d), sum);
+        WatchDays.Index ix = new WatchDays.Index(st, new ArrayList<Records.Moves>(), hr, new ArrayList<Records.Workout>(), sl, new ArrayList<Records.Battery>(), z);
+        check("251 the Watch page's index gives the same hours and night heart rate", Arrays.equals(ix.stepsPerHour(d), per)
+                && ix.heartIn(n).points.size() == 4 && ix.heartIn(n).lowest == 48);
+        LocalDate back = LocalDate.of(2026, 10, 25), forward = LocalDate.of(2026, 3, 29);
+        check("251 steps per hour: 25 hours when the clocks go back, 23 when they go forward",
+                WatchDays.stepsPerHour(st, WatchDays.dayStart(back, z), WatchDays.dayStart(back.plusDays(1), z)).length == 25
+                        && WatchDays.stepsPerHour(st, WatchDays.dayStart(forward, z), WatchDays.dayStart(forward.plusDays(1), z)).length == 23);
+
+        // distance: the watch sends centimetres
+        Records.Decoded dec = new Records.Decoded();
+        Records.decode(Frame.message(Proto.ACTIVITY, WatchDemo.time(1000), WatchDemo.duration(900), WatchDemo.steps(3900, 315500), WatchDemo.end()), 2000, dec);
+        check("251 distance: centimetres become metres (about 0.8 m a step)", dec.steps.get(0).metres == 3155, dec.steps.get(0).metres);
+        check("251 distance: half a metre rounds up, nothing below 0", Records.metres(149) == 1 && Records.metres(150) == 2 && Records.metres(0) == 0
+                && Records.metres(-5) == 0 && Records.metres(Long.MAX_VALUE / 2) == Integer.MAX_VALUE);
+
+        // where the next request starts: only a whole answer counts
+        List<byte[]> whole = WatchDemo.answer(Proto.HEART_RATE, Arrays.asList(new byte[][] {WatchDemo.time(500), WatchDemo.heart(60)},
+                new byte[][] {WatchDemo.time(900), WatchDemo.heart(61)}), 1);
+        check("251 cursor: a whole answer gives its newest record", Records.newestComplete(whole) == 900, Records.newestComplete(whole));
+        check("251 cursor: an answer cut off before its end part gives nothing", Records.newestComplete(whole.subList(0, 1)) == -1);
+        check("251 cursor: a whole answer without records gives 0", Records.newestComplete(Collections.singletonList(Frame.message(Proto.HEART_RATE, WatchDemo.end()))) == 0);
+
+        // the demo's watch night: light, deep, REM and awake, with heart rate readings through it
+        LocalDate today = LocalDate.of(2026, 11, 3);
+        List<WatchDemo.Msg> msgs = WatchDemo.history(today, 10, at(today, 10, 0, zurich), zurich, new Random(251));
+        List<byte[]> bodies = new ArrayList<byte[]>();
+        List<Long> caps = new ArrayList<Long>();
+        for (WatchDemo.Msg m : msgs) {
+            bodies.add(m.body);
+            caps.add(m.captured);
+        }
+        Records.Decoded demo = Records.decode(bodies, caps);
+        WatchDays.Night dn = WatchDays.nightFor(demo.sleep, today, z);
+        WatchDays.NightHeart dh = WatchDays.heartIn(demo.heart, dn.start, dn.end);
+        check("251 demo night: light, deep, REM and awake, no gap", dn.lightMin > dn.deepMin && dn.deepMin > 30 && dn.remMin > 30 && dn.awakeMin > 0 && dn.awakeMin < 20
+                && dn.otherMin == 0, dn.lightMin + " " + dn.deepMin + " " + dn.remMin + " " + dn.awakeMin + " " + dn.otherMin);
+        check("251 demo night: a heart rate reading about every 10 minutes, lowest under the evening's", dh.points.size() > 40 && dh.lowest >= 45 && dh.lowest < 56
+                && dh.average > dh.lowest, dh.points.size() + " " + dh.lowest);
+        double km = WatchDays.metresPerDay(demo.steps, z).get(today.minusDays(1)) / (double) WatchDays.stepsPerDay(demo.steps, z).get(today.minusDays(1));
+        check("251 demo: about 0.7 m a step", km > 0.65 && km < 0.8, km);
+    }
+
+    // ------------------------------------------------------------------------------------ scores without a ring (#379)
+
+    static final ZoneId DS_ZONE = ZoneId.of("Europe/Zurich");
+    static final LocalDate DS_DAY = LocalDate.of(2026, 11, 3);
+
+    /** A made up watch: {@code days} days up to {@link #DS_DAY}, each with a night, steps every quarter hour by day and heart rate. */
+    static MainDevice.Watch dsWatch(int days, int stepsPerQuarter, boolean nights, boolean heart) {
+        MainDevice.Watch w = new MainDevice.Watch();
+        for (int d = days - 1; d >= 0; d--) {
+            LocalDate day = DS_DAY.minusDays(d);
+            if (nights) dsNight(w, day, new int[][] {{Records.LIGHT, 60}, {Records.DEEP, 60}, {Records.LIGHT, 60}, {Records.REM, 30},
+                {Records.AWAKE, 5}, {Records.LIGHT, 90}, {Records.DEEP, 30}, {Records.REM, 60}, {Records.LIGHT, 40}}, 23, 0, heart);
+            for (int q = 7 * 4; q < 22 * 4; q++) {
+                long t = at(day, q / 4, (q % 4) * 15, DS_ZONE);
+                w.steps.add(new Records.Steps(t, 900, stepsPerQuarter, stepsPerQuarter * 7 / 10, stepsPerQuarter / 25));
+                if (heart && q % 2 == 0) w.heart.add(new Records.Heart(t, 70));
+            }
+        }
+        return w;
+    }
+
+    /** A night ending on {@code day}: pieces {stage, minutes} from {@code h}:{@code m} (the evening before from 12:00), heart rate every 10 minutes. */
+    static void dsNight(MainDevice.Watch w, LocalDate day, int[][] pieces, int h, int m, boolean heart) {
+        // a start in the evening is the evening before, one after midnight is on the day itself
+        long t = at(h >= 12 ? day.minusDays(1) : day, h, m, DS_ZONE);
+        long start = t;
+        for (int[] p : pieces) {
+            w.sleep.add(new Records.Sleep(t, p[1] * 60, p[0]));
+            t += p[1] * 60L;
+        }
+        if (heart) for (long u = start; u < t; u += 600) w.heart.add(new Records.Heart(u, 52 + (int) ((u - start) / 600 % 7)));
+    }
+
+    static String keys(app.openring.core.analysis.Night.Score s) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.analysis.Night.Contributor c : s.contributors) b.append(b.length() == 0 ? "" : ",").append(c.key);
+        return b.toString();
+    }
+
+    static String leftKeys(List<app.openring.core.DeviceScores.Left> l) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.DeviceScores.Left x : l) b.append(b.length() == 0 ? "" : ",").append(x.key);
+        return b.toString();
+    }
+
+    /** The weighted mean of the contributors, as Scores.finish works it out (the left out weight shared out). */
+    static int weighted(app.openring.core.analysis.Night.Score s) {
+        double w = 0, v = 0;
+        for (app.openring.core.analysis.Night.Contributor c : s.contributors) {
+            w += c.weight;
+            v += c.weight * c.score;
+        }
+        return (int) Math.round(v / w);
+    }
+
+    static void deviceScores379() throws Exception {
+        // ---- the ring's scores byte for byte as before: 9,000 scores from seeded inputs, fingerprint taken on dev before #379
+        check("#379 ring unchanged: sleep, readiness and activity scores of 9,000 seeded inputs as before the change",
+                ringFingerprint().equals("c637f65e2f4c7b3d94253c54f8610d1199a7c1dada3dfd04e51251776bd6795e"), ringFingerprint());
+
+        // ---- which device
+        check("#379 ring only: no scores from another device", app.openring.core.DeviceScores.device(true, false, true) == -1
+                && app.openring.core.DeviceScores.device(true, false, false) == -1);
+        check("#379 ring and watch: the watch's version next to the ring's", app.openring.core.DeviceScores.device(true, true, true) == MainDevice.WATCH);
+        check("#379 watch only: the watch, also with phone steps", app.openring.core.DeviceScores.device(false, true, true) == MainDevice.WATCH
+                && app.openring.core.DeviceScores.device(false, true, false) == MainDevice.WATCH);
+        check("#379 phone only: the phone; nothing at all: none", app.openring.core.DeviceScores.device(false, false, true) == MainDevice.PHONE
+                && app.openring.core.DeviceScores.device(false, false, false) == -1);
+
+        // ---- watch only, the demo watch
+        long now = at(DS_DAY, 10, 0, DS_ZONE);
+        List<WatchDemo.Msg> msgs = WatchDemo.history(DS_DAY, 35, now, DS_ZONE, new Random(251));
+        List<byte[]> bodies = new ArrayList<byte[]>();
+        List<Long> caps = new ArrayList<Long>();
+        for (WatchDemo.Msg m : msgs) {
+            bodies.add(m.body);
+            caps.add(m.captured);
+        }
+        Records.Decoded dec = Records.decode(bodies, caps);
+        MainDevice.Watch demo = new MainDevice.Watch();
+        demo.steps.addAll(dec.steps);
+        demo.heart.addAll(dec.heart);
+        demo.sleep.addAll(dec.sleep);
+        demo.workouts.addAll(dec.workouts);
+        LocalDate y = DS_DAY.minusDays(1);
+        app.openring.core.DeviceScores.Result r = app.openring.core.DeviceScores.of(MainDevice.WATCH, y, DS_ZONE, demo, null, 10000, 40);
+        check("#379 watch only: all three scores", r.activity != null && r.sleep != null && r.readiness != null
+                && r.activityNone == null && r.sleepNone == null && r.readinessNone == null, r.activityNone + " " + r.sleepNone + " " + r.readinessNone);
+        check("#379 watch only: activity has every part of the ring's", keys(r.activity).equals("stay_active,move_hourly,targets,frequency,volume")
+                && r.activityLeft.isEmpty(), keys(r.activity));
+        check("#379 watch only: the demo night starts asleep, so latency is left out and said why", keys(r.sleep).equals("total,efficiency,restfulness,rem,deep,timing")
+                && leftKeys(r.sleepLeft).equals("restless,latency"), keys(r.sleep) + " / " + leftKeys(r.sleepLeft));
+        check("#379 watch only: readiness without HRV, temperature and recovery, each named", keys(r.readiness).equals("rhr,sleep,sleep_balance,prev_activity,activity_balance")
+                && leftKeys(r.readinessLeft).equals("hrv,temperature,recovery"), keys(r.readiness) + " / " + leftKeys(r.readinessLeft));
+        check("#379 the left out weight is shared out (the ring's rule)", r.readiness.value == weighted(r.readiness) && r.sleep.value == weighted(r.sleep)
+                && r.activity.value == weighted(r.activity), r.readiness.value);
+        check("#379 readiness takes the watch's sleep score", r.readiness.get("sleep").score == r.sleep.value);
+        WatchDays.Night wn = WatchDays.nightFor(demo.sleep, y, new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return DS_ZONE;
+            }
+        });
+        WatchDays.NightHeart nh = WatchDays.heartIn(demo.heart, wn.start, wn.end);
+        check("#379 resting heart rate is the watch's lowest reading of the night", r.readiness.get("rhr").detail.startsWith(nh.lowest + " bpm (usual "),
+                r.readiness.get("rhr").detail);
+        check("#379 total sleep is the watch night's time asleep", r.sleep.get("total").detail.equals(app.openring.core.analysis.Scores.hm(wn.asleepMin())),
+                r.sleep.get("total").detail);
+        check("#379 the step goal stands in for the calorie goal, said in the detail", r.activity.get("targets").detail.endsWith(" at 10,000 steps")
+                && r.readiness.get("prev_activity").detail.endsWith(" steps of 10,000"), r.activity.get("targets").detail);
+        check("#379 the day's steps and goal for the Activity line", r.steps == WatchDays.stepsPerDay(demo.steps, new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return DS_ZONE;
+            }
+        }).get(y) && r.goal == 10000 && r.days7 == 7, r.steps);
+        check("#379 demo watch: plausible scores", r.activity.value >= 60 && r.sleep.value >= 70 && r.readiness.value >= 60,
+                r.activity.value + " " + r.sleep.value + " " + r.readiness.value);
+        check("#379 the same rows give the same scores", app.openring.core.DeviceScores.of(MainDevice.WATCH, y, DS_ZONE, demo, null, 10000, 40).readiness.value == r.readiness.value);
+        check("#379 a goal of 0 is the default 10,000", app.openring.core.DeviceScores.of(MainDevice.WATCH, y, DS_ZONE, demo, null, 0, 40).goal == 10000);
+
+        // ---- phone only
+        MainDevice.Phone ph = new MainDevice.Phone();
+        for (PhoneSteps.Interval i : PhoneSteps.intervals(PhoneSteps.demo(DS_DAY, 35, now, DS_ZONE, new Random(329)))) ph.intervals.add(new double[] {i.start, i.stop, i.steps});
+        app.openring.core.DeviceScores.Result p = app.openring.core.DeviceScores.of(MainDevice.PHONE, y, DS_ZONE, null, ph, 10000, 40);
+        check("#379 phone only: activity without training volume, which is named", p.activity != null && keys(p.activity).equals("stay_active,move_hourly,targets,frequency")
+                && leftKeys(p.activityLeft).equals("volume") && p.activityLeft.get(0).why.contains("no calories"), p.activity == null ? p.activityNone : keys(p.activity));
+        check("#379 phone only: no sleep, no readiness, said plainly", p.sleep == null && p.readiness == null
+                && app.openring.core.DeviceScores.PHONE_NO_NIGHT.equals(p.sleepNone) && app.openring.core.DeviceScores.PHONE_NO_NIGHT.equals(p.readinessNone));
+        check("#379 phone only: the line under the dial", app.openring.core.DeviceScores.from(MainDevice.PHONE, "activity_score").equals("From this phone's steps")
+                && app.openring.core.DeviceScores.from(MainDevice.WATCH, "readiness").contains("fewer signals"));
+        // a phone that counted all day, every quarter hour 0 steps: only 07:00 to 23:00 is awake, 16 hours inactive
+        MainDevice.Phone still = new MainDevice.Phone();
+        for (int d = 6; d >= 0; d--) still.intervals.add(new double[] {at(DS_DAY.minusDays(d), 0, 0, DS_ZONE), at(DS_DAY.minusDays(d).plusDays(1), 0, 0, DS_ZONE), 0});
+        app.openring.core.DeviceScores.Result ps = app.openring.core.DeviceScores.of(MainDevice.PHONE, y, DS_ZONE, null, still, 10000, 40);
+        check("#379 phone: no night known, so only 07:00 to 23:00 counts as awake", ps.activity.get("stay_active").detail.equals("16h 0m inactive"),
+                ps.activity.get("stay_active").detail);
+        check("#379 phone: a still day is one long sitting period from 08:00 to 22:00", ps.activity.get("move_hourly").detail.equals("1 long sitting period"),
+                ps.activity.get("move_hourly").detail);
+
+        // ---- a day with no steps, the watch worn (heart rate all day)
+        MainDevice.Watch zero = dsWatch(7, 0, true, true);
+        app.openring.core.DeviceScores.Result z = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY.minusDays(1), DS_ZONE, zero, null, 10000, 40);
+        // the ring's rule gives a whole day of sitting one long sitting period, so the score stays near 45, not near 0
+        check("#379 a day with no steps still has a score, a low one", z.activity != null && z.activity.value < 50 && z.steps == 0
+                && z.activity.get("stay_active").score <= 25, z.activity == null ? z.activityNone : z.activity.value);
+        check("#379 a day with no steps: no target met, no training", z.activity.get("targets").detail.startsWith("0 of 7 days")
+                && z.activity.get("frequency").detail.startsWith("0 training days"), z.activity.get("targets").detail);
+        // ---- a day not worn: nothing from the watch on it
+        MainDevice.Watch gap = dsWatch(7, 200, true, true);
+        LocalDate later = DS_DAY.plusDays(2);
+        app.openring.core.DeviceScores.Result g = app.openring.core.DeviceScores.of(MainDevice.WATCH, later, DS_ZONE, gap, null, 10000, 40);
+        check("#379 a day without the watch: no scores, each says why", g.activity == null && g.sleep == null && g.readiness == null
+                && app.openring.core.DeviceScores.WATCH_NO_ACTIVITY.equals(g.activityNone) && app.openring.core.DeviceScores.WATCH_NO_NIGHT.equals(g.sleepNone)
+                && app.openring.core.DeviceScores.WATCH_NO_READINESS.equals(g.readinessNone) && Double.isNaN(g.steps), g.activityNone);
+        check("#379 the result reads NaN for a score it has not", Double.isNaN(g.value("sleep")) && Double.isNaN(g.value("readiness")) && Double.isNaN(g.value("activity_score")));
+        check("#379 nothing at all: no rows, no scores, no crash", app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, null, null, 10000, 40).activity == null
+                && app.openring.core.DeviceScores.of(MainDevice.PHONE, DS_DAY, DS_ZONE, null, null, 10000, 40).activity == null);
+
+        // ---- a short night and a night with only light sleep
+        app.openring.core.DeviceScores.Result full = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY.minusDays(1), DS_ZONE, dsWatch(10, 200, true, true), null, 10000, 40);
+        check("#379 a long night scores well", full.sleep != null && full.sleep.value >= 80, full.sleep == null ? full.sleepNone : full.sleep.value);
+        MainDevice.Watch three = dsWatch(10, 200, true, true);
+        three.sleep.clear();
+        dsNight(three, DS_DAY, new int[][] {{Records.LIGHT, 60}, {Records.DEEP, 40}, {Records.LIGHT, 50}, {Records.REM, 30}}, 3, 0, false);
+        app.openring.core.DeviceScores.Result s3 = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, three, null, 10000, 40);
+        check("#379 a short night (3 hours): a low score, total sleep counts most", s3.sleep != null && s3.sleep.value < 60 && s3.sleep.get("total").score < 30,
+                s3.sleep == null ? s3.sleepNone : s3.sleep.value + " " + s3.sleep.get("total").score);
+        check("#379 a single night: no sleep balance, no usual heart rate, readiness provisional", s3.readiness != null && s3.readiness.provisional
+                && s3.readiness.get("sleep_balance") == null && leftKeys(s3.readinessLeft).contains("sleep_balance")
+                && s3.readiness.get("rhr") != null && !s3.readiness.get("rhr").detail.contains("usual"), s3.readiness == null ? null : keys(s3.readiness));
+        MainDevice.Watch light = dsWatch(3, 200, false, true);
+        dsNight(light, DS_DAY, new int[][] {{Records.LIGHT, 450}}, 23, 0, true);
+        app.openring.core.DeviceScores.Result li = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, light, null, 10000, 40);
+        check("#379 only light sleep: deep and REM count as none (0), not as left out", li.sleep.get("deep").score == 0 && li.sleep.get("rem").score == 0
+                && li.sleep.get("total").score >= 90, keys(li.sleep));
+        check("#379 only light sleep: a lower score than the same length with stages", li.sleep.value < full.sleep.value, li.sleep.value + " vs " + full.sleep.value);
+        check("#379 the watch's heart rate of the night gives the resting heart rate", li.readiness.get("rhr") != null && li.readiness.get("rhr").detail.startsWith("52 bpm"),
+                li.readiness.get("rhr") == null ? null : li.readiness.get("rhr").detail);
+
+        // ---- latency, wake ups and an all awake night
+        MainDevice.Watch lat = dsWatch(2, 200, false, false);
+        dsNight(lat, DS_DAY, new int[][] {{Records.AWAKE, 12}, {Records.LIGHT, 200}, {Records.AWAKE, 3}, {Records.DEEP, 100}, {Records.AWAKE, 1}, {Records.REM, 120}}, 23, 0, false);
+        app.openring.core.DeviceScores.Result la = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, lat, null, 10000, 40);
+        check("#379 a night that starts awake has a latency", la.sleep.get("latency") != null && la.sleep.get("latency").detail.equals("12 min")
+                && !leftKeys(la.sleepLeft).contains("latency"), keys(la.sleep));
+        check("#379 wake ups and time awake between first and last sleep (the ring's rule)", la.sleep.get("restfulness").detail.equals("2 wake ups, 0h 4m awake"),
+                la.sleep.get("restfulness").detail);
+        check("#379 efficiency: asleep over the whole night", la.sleep.get("efficiency").detail.equals(Math.round(100.0 * 420 / 436) + "%"), la.sleep.get("efficiency").detail);
+        check("#379 a night without heart rate: resting heart rate left out, said why", la.readiness.get("rhr") == null
+                && leftKeys(la.readinessLeft).startsWith("hrv,temperature,recovery,rhr"), leftKeys(la.readinessLeft));
+        MainDevice.Watch awake = dsWatch(2, 200, false, false);
+        dsNight(awake, DS_DAY, new int[][] {{Records.AWAKE, 300}}, 23, 0, false);
+        app.openring.core.DeviceScores.Result aw = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, awake, null, 10000, 40);
+        check("#379 a night with no sleep at all: only total sleep scores, the rest left out", aw.sleep != null && keys(aw.sleep).equals("total,rem,deep")
+                && aw.sleep.value < 20, aw.sleep == null ? aw.sleepNone : keys(aw.sleep));
+
+        // ---- the activity parts on quarter hours
+        MainDevice.Watch brisk = dsWatch(7, 200, true, true);
+        // yesterday 12:00 to 12:30: two quarter hours of 1,200 steps (12 brisk minutes each), and a 40 minute workout at 18:00
+        LocalDate b = DS_DAY.minusDays(1);
+        for (Records.Steps st : new ArrayList<Records.Steps>(brisk.steps)) {
+            if (st.start == at(b, 12, 0, DS_ZONE) || st.start == at(b, 12, 15, DS_ZONE)) {
+                brisk.steps.remove(st);
+                brisk.steps.add(new Records.Steps(st.start, 900, 1200, 900, 60));
+            }
+        }
+        app.openring.core.DeviceScores.Day bd = app.openring.core.DeviceScores.day(MainDevice.WATCH, at(b, 0, 0, DS_ZONE), at(b.plusDays(1), 0, 0, DS_ZONE), DS_ZONE, brisk, null);
+        check("#379 brisk quarter hours: steps / 100 minutes", Math.abs(bd.trainingMin - 24) < 1e-9 && bd.trainingKcal == 120, bd.trainingMin + " " + bd.trainingKcal);
+        brisk.workouts.add(new Records.Workout(at(b, 18, 0, DS_ZONE), 40 * 60, 2, 4000, 5000, 300));
+        bd = app.openring.core.DeviceScores.day(MainDevice.WATCH, at(b, 0, 0, DS_ZONE), at(b.plusDays(1), 0, 0, DS_ZONE), DS_ZONE, brisk, null);
+        check("#379 a workout counts its minutes and calories", Math.abs(bd.trainingMin - 64) < 1e-9 && bd.trainingKcal == 420, bd.trainingMin + " " + bd.trainingKcal);
+        app.openring.core.DeviceScores.Result br = app.openring.core.DeviceScores.of(MainDevice.WATCH, b, DS_ZONE, brisk, null, 10000, 40);
+        check("#379 a day with 30 brisk minutes is a training day", br.activity.get("frequency").detail.startsWith("1 training day"), br.activity.get("frequency").detail);
+        check("#379 no workout: training frequency still from steps", app.openring.core.DeviceScores.of(MainDevice.WATCH, b, DS_ZONE, dsWatch(7, 200, true, true), null, 10000, 40)
+                .activity.get("frequency").detail.startsWith("0 training days"));
+        // sitting from 21:00 to 23:00 (worn, heart rate): only 21:00 to 22:00 is daytime, so one long sitting period; 07:00 to 08:45 gives 45 daytime minutes, none
+        MainDevice.Watch sit = new MainDevice.Watch();
+        LocalDate sd = DS_DAY;
+        for (int q = 7 * 4; q < 23 * 4; q++) {
+            long t = at(sd, q / 4, (q % 4) * 15, DS_ZONE);
+            boolean idle = q < 8 * 4 + 3 || q >= 21 * 4;
+            sit.steps.add(new Records.Steps(t, 900, idle ? 10 : 300, 0, 0));
+            sit.heart.add(new Records.Heart(t, 70));
+        }
+        app.openring.core.DeviceScores.Day sday = app.openring.core.DeviceScores.day(MainDevice.WATCH, at(sd, 0, 0, DS_ZONE), at(sd.plusDays(1), 0, 0, DS_ZONE), DS_ZONE, sit, null);
+        check("#379 a sitting stretch over 22:00 counts its daytime hour, 45 minutes after 07:00 do not", sday.longSits == 1, sday.longSits);
+        // 07:00 to 08:45 and 21:00 to 23:00, and the 30 minutes the watch counts as worn around its records (06:30 to 07:00, 23:00 to 23:45)
+        check("#379 inactive: every worn awake quarter hour under 60 steps", sday.inactiveMin == (7 + 8 + 2 + 3) * 15, sday.inactiveMin);
+        check("#379 an hour of the watch makes a worn day", sday.worn() && sday.wornQ >= app.openring.core.DeviceScores.WORN_QUARTERS);
+        // asleep quarter hours are rest, not sitting
+        MainDevice.Watch inBed = new MainDevice.Watch();
+        for (int q = 7 * 4; q < 12 * 4; q++) inBed.heart.add(new Records.Heart(at(sd, q / 4, (q % 4) * 15, DS_ZONE), 60));
+        inBed.sleep.add(new Records.Sleep(at(sd, 7, 0, DS_ZONE), 5 * 3600, Records.LIGHT));
+        app.openring.core.DeviceScores.Day bed = app.openring.core.DeviceScores.day(MainDevice.WATCH, at(sd, 0, 0, DS_ZONE), at(sd.plusDays(1), 0, 0, DS_ZONE), DS_ZONE, inBed, null);
+        // 07:00 to 12:00 asleep; only the worn quarter hours around it (06:30 to 07:00, 12:00 to 12:45) are inactive
+        check("#379 time asleep is not inactive", bed.inactiveMin == 5 * 15 && bed.longSits == 0, bed.inactiveMin);
+        // fewer than 3 worn days in the week: the weekly parts are left out, each said why
+        app.openring.core.DeviceScores.Result two = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, DS_ZONE, dsWatch(2, 200, false, true), null, 10000, 40);
+        check("#379 two days of the watch: only the daily parts, the weekly ones named", keys(two.activity).equals("stay_active,move_hourly")
+                && leftKeys(two.activityLeft).equals("targets,frequency,volume") && two.days7 == 2, keys(two.activity));
+
+        // ---- the ring's sleep function: "watch" counts as staged, other sources as before
+        app.openring.core.analysis.Night n = new app.openring.core.analysis.Night();
+        n.asleepMin = 420;
+        n.remMin = 90;
+        n.deepMin = 60;
+        n.stageSource = "none";
+        check("#379 a night without stages scores no REM or deep, as before", app.openring.core.analysis.Scores.sleep(n, 0, 40).get("rem") == null);
+        n.stageSource = "watch";
+        check("#379 the watch's stages count as stages", app.openring.core.analysis.Scores.sleep(n, 0, 40).get("rem") != null);
+
+        // ---- texts
+        boolean ok = true;
+        for (String t : app.openring.core.DeviceScores.texts()) ok &= plain(t) && !t.isEmpty();
+        for (String k : new String[] {"stay_active", "move_hourly", "targets", "frequency", "volume", "efficiency", "restfulness", "rem", "deep", "latency", "rhr",
+            "sleep", "sleep_balance", "prev_activity", "activity_balance"}) {
+            ok &= plain(app.openring.ui.Explain.ofDevice(k, true)) && plain(app.openring.ui.Explain.ofDevice(k, false)) && app.openring.ui.Explain.ofDevice(k, true) != null;
+        }
+        for (String t : new String[] {app.openring.ui.Explain.WATCH_NIGHT_SCORE, app.openring.ui.Explain.SLEEP_DEVICE, app.openring.ui.Explain.READINESS_DEVICE,
+            app.openring.ui.Explain.ACTIVITY_DEVICE, app.openring.ui.Explain.activityDaysDevice(2, true), app.openring.ui.Explain.activityDaysDevice(5, false),
+            app.openring.ui.Explain.SLEEP_WATCH_ONLY}) ok &= plain(t);
+        check("#379 texts plain, no dashes as punctuation", ok);
+        check("#379 texts: the comparison line and the goal line", app.openring.core.DeviceScores.version(77.6).equals("Watch version: 78")
+                && app.openring.core.DeviceScores.goalLine(8412, 10000, java.util.Locale.US).equals("8,412 of 10,000 steps goal")
+                && app.openring.core.DeviceScores.goalLine(Double.NaN, 10000, java.util.Locale.US).startsWith("0 of"));
+        check("#379 unknown keys have no device text", app.openring.ui.Explain.ofDevice("hrv", true) == null && app.openring.ui.Explain.ofDevice(null, true) == null);
+    }
+
+    static String ringFingerprint() throws Exception {
+        Random r = new Random(379);
+        StringBuilder all = new StringBuilder();
+        String[] sources = {"ring", "signals", "none"};
+        for (int i = 0; i < 3000; i++) {
+            app.openring.core.analysis.Night n = new app.openring.core.analysis.Night();
+            n.stageSource = sources[i % 3];
+            n.asleepMin = r.nextInt(700);
+            n.efficiency = fpMaybe(r, 50 + r.nextDouble() * 50);
+            n.wasoMin = fpMaybe(r, r.nextDouble() * 200);
+            n.awakenings = r.nextInt(20);
+            n.restlessPct = fpMaybe(r, r.nextDouble() * 70);
+            n.remMin = r.nextDouble() * 130;
+            n.deepMin = r.nextDouble() * 100;
+            n.latencyMin = fpMaybe(r, r.nextDouble() * 100);
+            n.midpoint = fpMaybe(r, 1.7e9 + r.nextInt(86400 * 30));
+            all.append(fpText(app.openring.core.analysis.Scores.sleep(n, (r.nextInt(27) - 12) * 3600, 10 + r.nextInt(80)))).append('\n');
+            app.openring.core.analysis.Scores.ReadinessInput ri = new app.openring.core.analysis.Scores.ReadinessInput();
+            ri.sleepScore = fpMaybe(r, r.nextInt(101));
+            ri.rhr = fpMaybe(r, 38 + r.nextDouble() * 60);
+            ri.rhrBaseline = fpMaybe(r, 40 + r.nextDouble() * 40);
+            ri.rhrSd = fpMaybe(r, r.nextDouble() * 5);
+            ri.hrvRecent = fpMaybe(r, 10 + r.nextDouble() * 100);
+            ri.hrvBaseline = fpMaybe(r, 10 + r.nextDouble() * 100);
+            ri.tempDev = fpMaybe(r, r.nextDouble() * 3 - 1.5);
+            ri.recoveryFraction = fpMaybe(r, r.nextDouble());
+            ri.sleepBalance = fpMaybe(r, 0.5 + r.nextDouble() * 0.7);
+            ri.prevDayActivity = fpMaybe(r, r.nextDouble() * 3.5);
+            ri.activityBalance = fpMaybe(r, r.nextDouble() * 2.5);
+            ri.historyNights = r.nextInt(30);
+            all.append(fpText(app.openring.core.analysis.Scores.readiness(ri))).append('\n');
+            app.openring.core.analysis.Scores.ActivityInput ai = new app.openring.core.analysis.Scores.ActivityInput();
+            ai.inactiveMin = fpMaybe(r, r.nextDouble() * 900);
+            ai.longInactiveStreaks = r.nextInt(8) - 1;
+            ai.targetsMetFraction = fpMaybe(r, r.nextInt(8) / 7.0);
+            ai.trainingDays7 = r.nextInt(9) - 1;
+            ai.trainingKcal7 = fpMaybe(r, r.nextDouble() * 2500);
+            ai.days7 = 1 + r.nextInt(7);
+            all.append(fpText(app.openring.core.analysis.Scores.activity(ai))).append('\n');
+        }
+        byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(all.toString().getBytes("UTF-8"));
+        StringBuilder x = new StringBuilder();
+        for (byte v : h) x.append(String.format("%02x", v));
+        return x.toString();
+    }
+
+    static double fpMaybe(Random r, double v) {
+        return r.nextInt(8) == 0 ? Double.NaN : v;
+    }
+
+    /** Every bit of a score: value, provisional, each contributor's key, label, exact score and weight, detail. */
+    static String fpText(app.openring.core.analysis.Night.Score s) {
+        StringBuilder b = new StringBuilder();
+        b.append(s.value).append(s.provisional ? "p" : "").append('[');
+        for (app.openring.core.analysis.Night.Contributor c : s.contributors) b.append(c.key).append('|').append(c.label).append('|')
+                .append(Double.doubleToLongBits(c.score)).append('|').append(Double.doubleToLongBits(c.weight)).append('|').append(c.detail).append(';');
+        return b.append(']').toString();
+    }
+
+    // ------------------------------------------------------------------------------------ the statistics without a ring
+
+    /** DeviceScores.of over 40 days of the demo watch and phone, taken on dev before the statistics without a ring (owner's report of 13 November). */
+    static final String DS_FINGERPRINT = "337513e11329e3640555e4b61989cc0a4dedb32ccb830b8502588c2fe092b92c";
+
+    static Records.Decoded dhDemo(int days) {
+        long now = at(DS_DAY, 10, 0, DS_ZONE);
+        List<WatchDemo.Msg> msgs = WatchDemo.history(DS_DAY, days, now, DS_ZONE, new Random(251));
+        List<byte[]> bodies = new ArrayList<byte[]>();
+        List<Long> caps = new ArrayList<Long>();
+        for (WatchDemo.Msg m : msgs) {
+            bodies.add(m.body);
+            caps.add(m.captured);
+        }
+        return Records.decode(bodies, caps);
+    }
+
+    static List<double[]> dhPhone(int days) {
+        List<double[]> ph = new ArrayList<double[]>();
+        for (PhoneSteps.Interval i : PhoneSteps.intervals(PhoneSteps.demo(DS_DAY, days, at(DS_DAY, 10, 0, DS_ZONE), DS_ZONE, new Random(329)))) {
+            ph.add(new double[] {i.start, i.stop, i.steps});
+        }
+        return ph;
+    }
+
+    /** The watch rows the day load reads for a day's dials ({@code DayData.merge}): from 35 days, an hour and a day before, to its end. */
+    static MainDevice.Watch dhWindow(Records.Decoded dec, LocalDate d) {
+        double ds = d.atStartOfDay(DS_ZONE).toEpochSecond(), de = d.plusDays(1).atStartOfDay(DS_ZONE).toEpochSecond();
+        double wf = ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600 - 86400;
+        MainDevice.Watch w = new MainDevice.Watch();
+        for (Records.Steps s : dec.steps) if (s.start >= Math.floor(wf) && s.start < Math.ceil(de)) w.steps.add(s);
+        for (Records.Heart h : dec.heart) if (h.t >= Math.floor(wf) && h.t < Math.ceil(de)) w.heart.add(h);
+        for (Records.Sleep s : dec.sleep) if (s.start + s.dur > Math.floor(wf) && s.start < Math.ceil(de)) w.sleep.add(s);
+        for (Records.Workout x : dec.workouts) if (x.start >= Math.floor(wf) && x.start < Math.ceil(de)) w.workouts.add(x);
+        return w;
+    }
+
+    static MainDevice.Phone dhPhoneWindow(List<double[]> ph, LocalDate d) {
+        double ds = d.atStartOfDay(DS_ZONE).toEpochSecond(), de = d.plusDays(1).atStartOfDay(DS_ZONE).toEpochSecond();
+        double from = ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600;
+        MainDevice.Phone p = new MainDevice.Phone();
+        for (double[] i : ph) if (i[1] > from && i[0] < de) p.intervals.add(i);
+        return p;
+    }
+
+    static MainDevice.Watch dhAll(Records.Decoded dec) {
+        MainDevice.Watch w = new MainDevice.Watch();
+        w.steps.addAll(dec.steps);
+        w.heart.addAll(dec.heart);
+        w.sleep.addAll(dec.sleep);
+        w.workouts.addAll(dec.workouts);
+        return w;
+    }
+
+    /** Every bit of a device result: steps, goal, days, why none, each score in full ({@link #fpText}) and each left out part. */
+    static String dsText(app.openring.core.DeviceScores.Result r) {
+        if (r == null) return "null";
+        StringBuilder b = new StringBuilder();
+        b.append(r.device).append('|').append(Double.doubleToLongBits(r.steps)).append('|').append(r.goal).append('|').append(r.days7).append('|')
+                .append(r.activityNone).append('|').append(r.sleepNone).append('|').append(r.readinessNone).append('|');
+        for (app.openring.core.analysis.Night.Score s : new app.openring.core.analysis.Night.Score[] {r.activity, r.sleep, r.readiness}) b.append(s == null ? "null" : fpText(s)).append('/');
+        for (String k : new String[] {"activity_score", "sleep", "readiness"}) for (app.openring.core.DeviceScores.Left l : r.left(k)) b.append(l.key).append(l.label).append(l.why).append(';');
+        return b.toString();
+    }
+
+    static String sha(String s) throws Exception {
+        byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes("UTF-8"));
+        StringBuilder x = new StringBuilder();
+        for (byte v : h) x.append(String.format("%02x", v));
+        return x.toString();
+    }
+
+    static boolean sameNight(WatchDays.Night a, WatchDays.Night b) {
+        if (a == null || b == null) return a == b;
+        return a.start == b.start && a.end == b.end && Arrays.equals(a.stages, b.stages) && a.deepMin == b.deepMin && a.lightMin == b.lightMin
+                && a.remMin == b.remMin && a.awakeMin == b.awakeMin && a.otherMin == b.otherMin;
+    }
+
+    static boolean same(double a, double b) {
+        return Double.isNaN(a) ? Double.isNaN(b) : Math.abs(a - b) < 1e-9;
+    }
+
+    /**
+     * The sleep pieces a day of {@code DeviceHistory.of} looks at come from an index by start (code health): the same pieces in the
+     * same list order as going through every piece, as the code did before, on a long made up history with odd pieces (overlapping,
+     * days long, no or a negative length, the same start, not in order); and the whole history of 400 days is as on dev.
+     */
+    static void sleepNear() throws Exception {
+        java.util.Random rnd = new java.util.Random(4711);
+        ZoneId z = DS_ZONE;
+        MainDevice.Watch w = new MainDevice.Watch();
+        for (int d = 730; d >= 0; d--) {
+            long t = at(DS_DAY.minusDays(d + 1), 22, rnd.nextInt(60), z) + 60L * rnd.nextInt(60);
+            int pieces = 5 + rnd.nextInt(30);
+            for (int i = 0; i < pieces; i++) {
+                int dur = 60 * (1 + rnd.nextInt(40));
+                w.sleep.add(new Records.Sleep(t, dur, rnd.nextInt(4)));
+                if (rnd.nextInt(20) == 0) w.sleep.add(new Records.Sleep(t, dur / 2, Records.AWAKE)); // the same start
+                if (rnd.nextInt(25) == 0) w.sleep.add(new Records.Sleep(t + 30, 0, Records.LIGHT)); // no length
+                if (rnd.nextInt(25) == 0) w.sleep.add(new Records.Sleep(t + 60, -600, Records.LIGHT)); // a negative length
+                if (rnd.nextInt(30) == 0) w.sleep.add(new Records.Sleep(t - 1800, 3 * 3600, Records.LIGHT)); // overlapping
+                t += dur;
+            }
+        }
+        w.sleep.add(new Records.Sleep(at(DS_DAY.minusDays(300), 12, 0, z), 3 * 86400, Records.AWAKE)); // three days long
+        java.util.Collections.shuffle(w.sleep, rnd); // not in order
+        // every look a day of the history takes (for the day, and up to its end), and looks that end or start right at a piece's edge
+        List<double[]> looks = new ArrayList<double[]>();
+        for (LocalDate d = DS_DAY.minusDays(735); !d.isAfter(DS_DAY.plusDays(2)); d = d.plusDays(1)) {
+            double from = d.atStartOfDay(z).toEpochSecond(), to = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            looks.add(new double[] {from, to, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {from, to, to});
+        }
+        for (int i = 0; i < 2000; i++) {
+            Records.Sleep s = w.sleep.get(rnd.nextInt(w.sleep.size()));
+            double end = s.start + Math.max(0, s.dur);
+            // a = end exactly (the piece is out), b = start exactly (out), and half a second either side
+            looks.add(new double[] {end + 86400, end + 86400 + 3600, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {end + 86400 - 0.5, end + 90000, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {s.start - 90000, s.start - 86400, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {s.start - 90000, s.start - 86400 + 0.5, Double.POSITIVE_INFINITY});
+            looks.add(new double[] {s.start - 200000, s.start + 100000, s.start + rnd.nextInt(3) - 1});
+        }
+        List<List<Records.Sleep>> got = app.openring.core.DeviceHistory.sleepNear(w, looks.toArray(new double[0][]));
+        int diff = 0, pieces = 0;
+        String firstDiff = null;
+        for (int i = 0; i < looks.size(); i++) {
+            double[] l = looks.get(i);
+            // the code before: every piece for each look (DeviceHistory.Sorted.near on dev)
+            double a = l[0] - 86400, b = Math.min(l[1] + 86400, l[2]);
+            List<Records.Sleep> old = new ArrayList<Records.Sleep>();
+            for (Records.Sleep s : w.sleep) if (s.start < b && s.start + Math.max(0, s.dur) > a) old.add(s);
+            pieces += old.size();
+            boolean same = old.size() == got.get(i).size();
+            for (int j = 0; same && j < old.size(); j++) same = old.get(j) == got.get(i).get(j);
+            if (!same) {
+                diff++;
+                if (firstDiff == null) firstDiff = java.util.Arrays.toString(l) + ": " + old.size() + " / " + got.get(i).size();
+            }
+        }
+        check("sleep near: every look takes the same pieces in the same order as going through every piece (" + looks.size() + " looks)", diff == 0, firstDiff);
+        check("sleep near: the looks found pieces (the test is not empty)", pieces > looks.size() * 10, pieces);
+        List<List<Records.Sleep>> none = app.openring.core.DeviceHistory.sleepNear(new MainDevice.Watch(), new double[][] {{0, 86400, Double.POSITIVE_INFINITY}});
+        check("sleep near: no pieces, no pieces", none.get(0).isEmpty());
+
+        // the whole history over 400 days as on dev (before the index): every day's scores, nights and sums
+        MainDevice.Watch hw = dsWatch(400 + app.openring.core.DeviceHistory.DEBT_BACK + 40, 150, true, true);
+        hw.sleep.addAll(w.sleep);
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(MainDevice.WATCH, DS_DAY.minusDays(399), DS_DAY, z, hw, null, 9000, 41);
+        StringBuilder all = new StringBuilder();
+        for (LocalDate d = DS_DAY.minusDays(399); !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            int k = h.index(d);
+            all.append(d).append(dsText(h.result(d))).append('|').append(h.steps[k]).append('|').append(h.kcal[k]).append('|').append(h.workouts[k])
+                    .append('|').append(h.workoutMin[k]).append('|').append(h.wornMin[k]).append('|').append(h.dayHr[k]).append('|').append(h.asleepMin[k])
+                    .append('|').append(h.rhr[k]).append('\n');
+        }
+        int k0 = h.index(DS_DAY);
+        check("sleep near: the 400 days have scores and nights (the fingerprint is not of empty days)", !Double.isNaN(h.sleep[k0]) && !Double.isNaN(h.readiness[k0])
+                && !Double.isNaN(h.asleepMin[k0]) && !Double.isNaN(h.activity[0]), h.sleep[k0] + " " + h.readiness[k0] + " " + h.asleepMin[k0]);
+        check("sleep near: 400 days of watch history are as on dev (fingerprint)", sha(all.toString()).equals(NEAR_FINGERPRINT), sha(all.toString()));
+    }
+
+    /** {@link #sleepNear}'s 400 days, worked out on dev before the index (7eb2352). */
+    static final String NEAR_FINGERPRINT = "add8032caabdd638835a606bfc421f0fbc5cfaa568740d62e2dbd29319204644";
+
+    static void deviceHistory() throws Exception {
+        final ZoneId z = DS_ZONE;
+        WatchDays.Zones zones = new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return z;
+            }
+        };
+        Records.Decoded dec = dhDemo(70);
+        List<double[]> ph = dhPhone(70);
+
+        // ---- the scores of each day as before: DeviceScores.of byte for byte as on dev, and the history gives the same per day
+        StringBuilder all = new StringBuilder();
+        for (int k = 0; k < 40; k++) {
+            LocalDate d = DS_DAY.minusDays(k);
+            for (int dev : new int[] {MainDevice.WATCH, MainDevice.PHONE}) {
+                app.openring.core.DeviceScores.Result r = app.openring.core.DeviceScores.of(dev, d, z, dev == MainDevice.WATCH ? dhWindow(dec, d) : null,
+                        dev == MainDevice.PHONE ? dhPhoneWindow(ph, d) : null, 9000, 41);
+                all.append(d).append(dev).append(':').append(dsText(r)).append('\n');
+            }
+        }
+        check("history: the dials' scores without a ring are as before, 40 days of watch and phone (fingerprint from dev)", sha(all.toString()).equals(DS_FINGERPRINT), sha(all.toString()));
+        check("history: the ring's own scores are as before (9,000 seeded inputs)", ringFingerprint().equals("c637f65e2f4c7b3d94253c54f8610d1199a7c1dada3dfd04e51251776bd6795e"));
+
+        LocalDate first = DS_DAY.minusDays(29);
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, z, dhAll(dec), null, 9000, 41);
+        int diff = 0;
+        String firstDiff = null;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            String a = dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, z, dhWindow(dec, d), null, 9000, 41)), b = dsText(h.result(d));
+            if (!a.equals(b)) {
+                diff++;
+                if (firstDiff == null) firstDiff = d + ": " + a + " / " + b;
+            }
+        }
+        check("history: each of 30 days has exactly the dial's scores (all parts, left out parts, steps), a clock change day included", diff == 0, firstDiff);
+        // the phone's rows from 35 days before the first day, as the day load reads them
+        MainDevice.Phone all30 = new MainDevice.Phone();
+        double pFrom = app.openring.core.DeviceHistory.rowsFrom(first, z) + 86400;
+        for (double[] i : ph) if (i[1] > pFrom && i[0] < DS_DAY.plusDays(1).atStartOfDay(z).toEpochSecond()) all30.intervals.add(i);
+        app.openring.core.DeviceHistory hp = app.openring.core.DeviceHistory.of(MainDevice.PHONE, first, DS_DAY, z, null, all30, 9000, 41);
+        diff = 0;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            if (!dsText(app.openring.core.DeviceScores.of(MainDevice.PHONE, d, z, null, dhPhoneWindow(ph, d), 9000, 41)).equals(dsText(hp.result(d)))) diff++;
+        }
+        check("history: the phone's 30 days have exactly the dial's activity score and steps", diff == 0, diff);
+        check("history: the phone has no nights, calories or workouts", hp.night(DS_DAY) == null && Double.isNaN(hp.kcal[29]) && hp.workouts[29] == 0
+                && Double.isNaN(hp.workoutMin[29]) && Double.isNaN(hp.sleep[29]) && !Double.isNaN(hp.steps[29]) && !Double.isNaN(hp.activity[28]), hp.steps[29]);
+
+        // ---- Today's Your day line from the watch's and the phone's days (owner's wish of 16 November)
+        app.openring.core.DayLine.Facts wf = app.openring.core.DayLine.fromDevice(h, DS_DAY, false);
+        int wi = h.index(DS_DAY);
+        check("day line: the watch's facts are its own numbers of the day", wf.device == MainDevice.WATCH && same(wf.readiness, h.readiness[wi])
+                && same(wf.sleepScore, h.sleep[wi]) && same(wf.asleepMin, h.asleepMin[wi]) && same(wf.rhr, h.rhr[wi]) && same(wf.steps, h.steps[wi])
+                && same(wf.hardYesterdayMin, h.workoutMin[wi - 1]) && "Step goal".equals(wf.goalName) && Double.isNaN(wf.tempDev) && Double.isNaN(wf.hrv),
+                wf.readiness + " " + wf.sleepScore + " " + wf.steps);
+        check("day line: the watch's days before (up to 29) and its goal", wf.readinessBefore.length == Math.min(wi, 29) && same(wf.readinessBefore[wf.readinessBefore.length - 1], h.readiness[wi - 1])
+                && same(wf.sleepBefore[0], h.sleep[wi - wf.sleepBefore.length]) && wf.goalBefore[wf.goalBefore.length - 1] == (h.steps[wi - 1] >= 9000)
+                && Boolean.valueOf(h.steps[wi] >= 9000).equals(wf.goalToday), java.util.Arrays.toString(wf.goalBefore));
+        check("day line: the watch's step goal and the steps of the days before (not worn: none)", wf.stepGoal == 9000
+                && wf.stepsBefore.length == wf.readinessBefore.length && (h.wornMin[wi - 1] > 0 ? same(wf.stepsBefore[wf.stepsBefore.length - 1], h.steps[wi - 1])
+                : Double.isNaN(wf.stepsBefore[wf.stepsBefore.length - 1])), wf.stepGoal + " " + java.util.Arrays.toString(wf.stepsBefore));
+        double[] wd = h.debt(DS_DAY);
+        check("day line: the watch's sleep debt and need, as its Sleep tab", wd[1] > 0 ? same(wf.debtMin, wd[0]) && same(wf.needMin, wd[2] * 60)
+                : Double.isNaN(wf.debtMin), wf.debtMin + " " + wd[0]);
+        check("day line: the watch's usual resting heart rate from its nights", !Double.isNaN(wf.rhrUsual), wf.rhrUsual);
+        check("day line: the watch's day gets a sentence and a line", app.openring.core.DayLine.of(wf, new app.openring.core.DayLine.Memory(), false,
+                java.util.Locale.UK).line != null);
+        app.openring.core.DayLine.Facts pf = app.openring.core.DayLine.fromDevice(hp, DS_DAY, true);
+        check("day line: the phone's facts are its steps, no sleep, no debt", pf.device == MainDevice.PHONE && same(pf.steps, hp.steps[29])
+                && Double.isNaN(pf.sleepScore) && Double.isNaN(pf.debtMin) && Double.isNaN(pf.asleepMin), pf.steps);
+        pf.sinceSyncH = 500;
+        check("day line: the phone's day is never out of date and says its steps", app.openring.core.DayLine.decide(pf, java.util.Locale.UK).branch
+                != app.openring.core.DayLine.STALE && app.openring.core.DayLine.decide(pf, java.util.Locale.UK).evidence.contains("steps"),
+                app.openring.core.DayLine.decide(pf, java.util.Locale.UK).evidence);
+        app.openring.core.DayLine.Facts outside = app.openring.core.DayLine.fromDevice(h, DS_DAY.plusDays(3), false);
+        check("day line: a day outside the watch's days has no numbers", Double.isNaN(outside.readiness) && Double.isNaN(outside.steps));
+        app.openring.core.DayLine.Facts firstDay = app.openring.core.DayLine.fromDevice(h, first, false);
+        check("day line: the first day has no days before", firstDay.readinessBefore.length == 0 && Double.isNaN(firstDay.hardYesterdayMin));
+
+        // ---- each series is the watch's own number of the day
+        Map<LocalDate, Integer> steps = WatchDays.stepsPerDay(dec.steps, zones), kcal = WatchDays.kcalPerDay(dec.steps, zones);
+        boolean ok = true;
+        String bad = null;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            int i = h.index(d);
+            WatchDays.Night n = WatchDays.nightFor(dec.sleep, d, zones);
+            WatchDays.NightHeart nh = n == null ? null : WatchDays.heartIn(dec.heart, n.start, n.end);
+            double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            double avg = app.openring.core.analysis.DayHeart.of(MainDevice.watch(dhAll(dec), ds, de).line(), ds, de).avg;
+            int count = WatchDays.workoutsOn(dec.workouts, d, zones).size();
+            boolean dayOk = same(h.steps[i], steps.containsKey(d) ? steps.get(d) : Double.NaN) && same(h.kcal[i], kcal.containsKey(d) ? kcal.get(d) : Double.NaN)
+                    && same(h.asleepMin[i], n == null ? Double.NaN : n.asleepMin()) && same(h.rhr[i], nh == null || nh.lowest <= 0 ? Double.NaN : nh.lowest)
+                    && same(h.dayHr[i], avg) && h.workouts[i] == count && sameNight(h.night(d).night, n)
+                    && same(h.sleep[i], h.result(d).value("sleep")) && same(h.readiness[i], h.result(d).value("readiness"))
+                    && same(h.activity[i], h.result(d).value("activity_score")) && same(h.night(d).score, h.sleep[i]);
+            if (!dayOk && bad == null) bad = d + " steps " + h.steps[i] + " kcal " + h.kcal[i] + " asleep " + h.asleepMin[i] + " rhr " + h.rhr[i] + " hr " + h.dayHr[i];
+            ok &= dayOk;
+        }
+        check("history: steps, calories, time asleep, resting and day heart rate, workouts and the night of each day are the watch's own", ok, bad);
+        check("history: the demo has 30 nights, 30 days of steps and some workouts", app.openring.core.analysis.Stats.countFinite(h.asleepMin) == 30
+                && app.openring.core.analysis.Stats.countFinite(h.steps) == 30 && app.openring.core.analysis.Stats.countFinite(h.workoutMin) == 30
+                && h.workouts[1] + h.workouts[4] + h.workouts[7] > 0, app.openring.core.analysis.Stats.countFinite(h.asleepMin));
+        double wm = 0;
+        for (Records.Workout x : WatchDays.workoutsOn(dec.workouts, first.plusDays(1), zones)) wm += x.dur / 60.0;
+        check("history: workout minutes are the day's workouts", same(h.workoutMin[1], wm), h.workoutMin[1]);
+
+        // ---- slices, indices and the strip
+        double[] w7 = h.last(h.steps, DS_DAY, 7);
+        check("history: the last 7 days end at the day, oldest first", w7.length == 7 && w7[6] == h.steps[29] && w7[0] == h.steps[23]);
+        double[] edge = h.last(h.steps, first.plusDays(2), 7);
+        check("history: days before the first are NaN", Double.isNaN(edge[0]) && Double.isNaN(edge[3]) && edge[4] == h.steps[0] && edge[6] == h.steps[2]);
+        check("history: index and result outside are -1 and null", h.index(first.minusDays(1)) == -1 && h.index(DS_DAY.plusDays(1)) == -1
+                && h.result(DS_DAY.plusDays(1)) == null && h.index(DS_DAY) == 29 && h.size() == 30);
+        check("history: nights of the weeks before the first day are there for debt and the usual", h.night(first.minusDays(20)) != null
+                && h.night(first.minusDays(38)) != null && h.night(first.minusDays(app.openring.core.DeviceHistory.DEBT_BACK + 1)) == null
+                && h.night(DS_DAY.plusDays(1)) == null);
+        List<app.openring.core.DeviceHistory.NightRow> strip = h.nights(DS_DAY.minusDays(30), DS_DAY);
+        check("history: the strip's nights, oldest first", strip.size() == 31 && strip.get(0).day.equals(DS_DAY.minusDays(30)) && strip.get(30).day.equals(DS_DAY), strip.size());
+
+        // ---- the usual resting heart rate, sleep debt and cardio capacity
+        double[] prior = new double[14];
+        for (int k = 0; k < 14; k++) {
+            WatchDays.Night n = WatchDays.nightFor(dec.sleep, DS_DAY.minusDays(14 - k), zones);
+            prior[k] = n == null ? Double.NaN : WatchDays.heartIn(dec.heart, n.start, n.end).lowest;
+        }
+        check("history: the usual is the average lowest of the 14 nights before", same(h.usualRhr(DS_DAY), app.openring.core.analysis.Stats.mean(prior)), h.usualRhr(DS_DAY));
+        app.openring.core.DeviceHistory few = app.openring.core.DeviceHistory.of(MainDevice.WATCH, DS_DAY.minusDays(2), DS_DAY, z, dsWatch(3, 200, true, true), null, 10000, 40);
+        check("history: no usual with fewer than 3 nights before", Double.isNaN(few.usualRhr(DS_DAY)) && !Double.isNaN(few.rhr[2]), few.usualRhr(DS_DAY));
+        double[] debt = h.debt(DS_DAY);
+        int[] act = new int[14], need = new int[14];
+        for (int i = 0; i < 14; i++) {
+            WatchDays.Night n = WatchDays.nightFor(dec.sleep, DS_DAY.minusDays(i), zones);
+            act[i] = n == null ? 0 : n.asleepMin() * 60;
+            double[] pr = new double[90];
+            Arrays.fill(pr, Double.NaN);
+            // the ring's rule (Analyzer): the 90 nights before each of the 14 days, whatever the history's first day
+            for (int k = 0; k < 90; k++) {
+                LocalDate pd = DS_DAY.minusDays(i + k + 1);
+                WatchDays.Night p = WatchDays.nightFor(dec.sleep, pd, zones);
+                pr[k] = p == null ? Double.NaN : p.asleepMin() * 60.0;
+            }
+            need[i] = app.openring.core.analysis.Wellness.sleepNeedS(pr);
+        }
+        double[] want = app.openring.core.analysis.Wellness.sleepDebt(act, need);
+        check("history: sleep debt is the ring's rule on the watch's nights", debt[0] == want[0] / 60 && debt[1] == want[1] && debt[2] == need[0] / 3600.0,
+                debt[0] + " " + debt[1] + " " + debt[2]);
+        check("history: five weeks of 7 to 8 hour nights, a valid and small debt", debt[1] == 1 && debt[0] < 180, debt[0]);
+        double[] fewDebt = few.debt(DS_DAY);
+        check("history: debt needs five nights", fewDebt[1] == 0 && fewDebt[2] == 8, fewDebt[1]);
+        // a short week: 14 nights of 5 hours, the need 8 hours: a high debt
+        MainDevice.Watch shortW = new MainDevice.Watch();
+        for (int k = 0; k < 14; k++) dsNight(shortW, DS_DAY.minusDays(k), new int[][] {{Records.LIGHT, 180}, {Records.DEEP, 60}, {Records.REM, 60}}, 1, 0, true);
+        double[] sd = app.openring.core.DeviceHistory.of(MainDevice.WATCH, DS_DAY.minusDays(29), DS_DAY, z, shortW, null, 10000, 40).debt(DS_DAY);
+        check("history: two weeks of 5 hours against 8: a high debt", sd[1] == 1 && sd[0] >= 540, sd[0]);
+        check("history: cardio capacity from the age and the night's lowest reading (the ring's Uth method)",
+                same(h.vo2max(DS_DAY, 41), app.openring.core.analysis.Wellness.vo2maxUth(41, h.rhr[29])) && Double.isNaN(few.vo2max(DS_DAY.plusDays(1), 41))
+                && Double.isNaN(h.vo2max(DS_DAY.minusDays(200), 41)), h.vo2max(DS_DAY, 41));
+
+        // ---- the nights of a day computed once equal nightFor, also with overlapping pieces, a gap, a day sleep and an evening
+        MainDevice.Watch odd = new MainDevice.Watch();
+        odd.sleep.addAll(dec.sleep);
+        long t = at(DS_DAY, 13, 0, z);
+        odd.sleep.add(new Records.Sleep(t, 3600, Records.LIGHT)); // a nap ending before 18:00: longer than none, but not the night
+        odd.sleep.add(new Records.Sleep(at(DS_DAY, 19, 0, z), 1800, Records.LIGHT)); // ends after 18:00: not a night of this day
+        odd.sleep.add(new Records.Sleep(at(DS_DAY.minusDays(3), 2, 0, z), 7200, Records.DEEP)); // overlaps the night
+        odd.sleep.add(new Records.Sleep(at(DS_DAY.minusDays(5), 9, 0, z), 900, Records.REM)); // after a gap of more than 2 hours
+        TreeMap<LocalDate, WatchDays.Night> map = WatchDays.nights(odd.sleep, DS_DAY.minusDays(69), DS_DAY.plusDays(1), zones);
+        ok = true;
+        for (LocalDate d = DS_DAY.minusDays(69); !d.isAfter(DS_DAY.plusDays(1)); d = d.plusDays(1)) ok &= sameNight(map.get(d), WatchDays.nightFor(odd.sleep, d, zones));
+        check("history: nights worked out once are each day's nightFor (70 days, odd pieces)", ok);
+        check("history: no sleep rows, no nights", WatchDays.nights(new ArrayList<Records.Sleep>(), DS_DAY, DS_DAY, zones).isEmpty());
+
+        // ---- Further analysis: every night of a period with its score and heart rate
+        List<app.openring.core.DeviceHistory.NightRow> rows = app.openring.core.DeviceHistory.nightRows(dec.sleep, dec.heart, first, DS_DAY, z, 41, true);
+        ok = rows.size() == 30;
+        for (app.openring.core.DeviceHistory.NightRow r : rows) ok &= same(r.score, h.night(r.day).score) && r.lowest == h.night(r.day).lowest
+                && r.lowestAt == h.night(r.day).lowestAt && same(r.average, h.night(r.day).average);
+        check("history: Further analysis has the same nights, scores and heart rates as the charts", ok, rows.size());
+        check("history: Further analysis without nights is empty", app.openring.core.DeviceHistory.nightRows(new ArrayList<Records.Sleep>(), dec.heart, first, DS_DAY, z, 41, true).isEmpty());
+        // two years of nights in one go: worked out quickly
+        MainDevice.Watch two = new MainDevice.Watch();
+        for (int k = 0; k < 730; k++) dsNight(two, DS_DAY.minusDays(k), new int[][] {{Records.LIGHT, 60}, {Records.DEEP, 60}, {Records.LIGHT, 90}, {Records.REM, 40},
+            {Records.AWAKE, 3}, {Records.LIGHT, 120}, {Records.REM, 60}}, 23, 15, true);
+        long t0 = System.nanoTime();
+        List<app.openring.core.DeviceHistory.NightRow> years = app.openring.core.DeviceHistory.nightRows(two.sleep, two.heart, DS_DAY.minusDays(729), DS_DAY, z, 41, true);
+        double sec = (System.nanoTime() - t0) / 1e9;
+        System.out.println("    history: two years of watch nights (" + two.sleep.size() + " pieces, " + two.heart.size() + " heart rates) in " + String.format("%.2f", sec) + " s");
+        check("history: two years of nights for All time, each with a score", years.size() == 730 && !Double.isNaN(years.get(0).score) && sec < 20, years.size());
+
+        // ---- nothing at all, and the gate
+        app.openring.core.DeviceHistory none = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, z, null, null, 0, 40);
+        check("history: no rows, no values and no crash", app.openring.core.analysis.Stats.countFinite(none.steps) == 0 && none.night(DS_DAY) == null
+                && Double.isNaN(none.usualRhr(DS_DAY)) && none.debt(DS_DAY)[1] == 0 && none.goal == 10000 && none.result(DS_DAY).activity == null);
+        check("history: with a ring never (its own charts stay), else the watch, else the phone", app.openring.core.DeviceHistory.device(true, true, true) == -1
+                && app.openring.core.DeviceHistory.device(true, false, true) == -1 && app.openring.core.DeviceHistory.device(true, true, false) == -1
+                && app.openring.core.DeviceHistory.device(false, true, true) == MainDevice.WATCH && app.openring.core.DeviceHistory.device(false, false, true) == MainDevice.PHONE
+                && app.openring.core.DeviceHistory.device(false, false, false) == -1);
+
+        // ---- texts
+        java.util.Locale us = java.util.Locale.US;
+        check("history: the readout of a day", app.openring.core.DeviceHistory.tip(LocalDate.of(2026, 11, 3), app.openring.core.DeviceHistory.stepsText(8412, us), us)
+                .equals("Tue 3.11.  8,412 steps"), app.openring.core.DeviceHistory.tip(LocalDate.of(2026, 11, 3), "x", us));
+        app.openring.core.DeviceHistory.NightRow nr = h.night(DS_DAY);
+        String times = app.openring.core.DeviceHistory.timesText(nr, z);
+        check("history: a night's sleep times", times.matches("\\d\\d:\\d\\d to \\d\\d:\\d\\d, \\d+h \\d+m asleep") && plain(times), times);
+        check("history: no night", app.openring.core.DeviceHistory.timesText(null, z).equals("No night from the watch"));
+        ok = plain(app.openring.core.DeviceHistory.FROM_WATCH) && plain(app.openring.core.DeviceHistory.FROM_PHONE) && plain(times);
+        for (String s : app.openring.ui.Explain.historyTexts()) ok &= plain(s) && !s.isEmpty();
+        check("history: texts plain, no dashes as punctuation", ok);
+        check("history: clock minutes of a moment", app.openring.core.DeviceHistory.clockMin(at(DS_DAY, 23, 12, z), z) == 23 * 60 + 12
+                && Double.isNaN(app.openring.core.DeviceHistory.clockMin(Double.NaN, z)));
+        // ---- a watch that does not tell REM from light sleep (owner's report of 13 November)
+        Records.Decoded noRem = Records.decode(dhBodies(WatchDemo.history(DS_DAY, 70, at(DS_DAY, 10, 0, z), z, new Random(251), false)), dhCaps(
+                WatchDemo.history(DS_DAY, 70, at(DS_DAY, 10, 0, z), z, new Random(251), false)));
+        check("REM: a watch with REM records tells REM apart, the Steel HR's kind does not", WatchDays.tellsRem(dec.sleep) && !WatchDays.tellsRem(noRem.sleep)
+                && !WatchDays.tellsRem(new ArrayList<Records.Sleep>()));
+        WatchDays.Night with = WatchDays.nightFor(dec.sleep, DS_DAY, zones), without = WatchDays.nightFor(noRem.sleep, DS_DAY, zones);
+        check("REM: the demo without REM is the same night, its REM as light", without.remMin == 0 && without.lightMin == with.lightMin + with.remMin
+                && without.deepMin == with.deepMin && without.awakeMin == with.awakeMin && without.asleepMin() == with.asleepMin()
+                && noRem.steps.size() == dec.steps.size() && noRem.heart.size() == dec.heart.size(), without.lightMin);
+        app.openring.core.DeviceScores.Result nrs = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, z, dhWindow(noRem, DS_DAY), null, 9000, 41, false);
+        check("REM: without REM the sleep score has no REM part", nrs.sleep != null && nrs.sleep.get("rem") == null && nrs.sleep.get("deep") != null
+                && keys(nrs.sleep).equals("total,efficiency,restfulness,deep,timing"), keys(nrs.sleep));
+        check("REM: its weight is shared out like any left out part", nrs.sleep.value == weighted(nrs.sleep), nrs.sleep.value);
+        check("REM: the Left out card says why, once", leftKeys(nrs.sleepLeft).equals("restless,rem,latency")
+                && nrs.sleepLeft.get(1).why.equals(app.openring.core.DeviceScores.REM_LEFT) && plain(app.openring.core.DeviceScores.REM_LEFT), leftKeys(nrs.sleepLeft));
+        app.openring.core.DeviceScores.Result asIf = app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, z, dhWindow(noRem, DS_DAY), null, 9000, 41, true);
+        check("REM: the same night scored as if it had REM gets a REM part of 0 (the warning the owner saw)", asIf.sleep.get("rem") != null
+                && asIf.sleep.get("rem").score == 0 && asIf.sleep.value < nrs.sleep.value, asIf.sleep.value + " " + nrs.sleep.value);
+        check("REM: readiness takes the score without REM", nrs.readiness.get("sleep").score == nrs.sleep.value);
+        check("REM: a watch with REM keeps its REM part", app.openring.core.DeviceScores.of(MainDevice.WATCH, DS_DAY, z, dhWindow(dec, DS_DAY), null, 9000, 41, true)
+                .sleep.get("rem") != null);
+        app.openring.core.DeviceHistory hn = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, z, dhAll(noRem), null, 9000, 41, false);
+        diff = 0;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            if (!dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, z, dhWindow(noRem, d), null, 9000, 41, false)).equals(dsText(hn.result(d)))) diff++;
+        }
+        check("REM: the history without REM has each day's dial", diff == 0 && !hn.rem.any() && h.rem.any(), diff);
+        check("REM: its nights are marked as without REM", app.openring.core.analysis.Scores.NO_REM.equals(hn.night(DS_DAY).fields.stageSource)
+                && "watch".equals(h.night(DS_DAY).fields.stageSource), hn.night(DS_DAY).fields.stageSource);
+        List<app.openring.core.DeviceHistory.NightRow> nrRows = app.openring.core.DeviceHistory.nightRows(noRem.sleep, noRem.heart, first, DS_DAY, z, 41, false);
+        check("REM: Further analysis without REM has the charts' scores", same(nrRows.get(29).score, hn.sleep[29]) && same(hn.sleep[29], nrs.sleep.value), nrRows.get(29).score);
+        app.openring.core.analysis.Night ringNight = new app.openring.core.analysis.Night();
+        ringNight.asleepMin = 420;
+        ringNight.remMin = 0;
+        ringNight.deepMin = 60;
+        ringNight.stageSource = "ring";
+        check("REM: a ring night with no REM still scores its REM part (ring nights unchanged)", app.openring.core.analysis.Scores.sleep(ringNight, 0, 40).get("rem") != null);
+        check("history: the mean of a series skips days without a value", app.openring.core.DeviceHistory.mean(new double[] {Double.NaN, 4, 6}) == 5
+                && Double.isNaN(app.openring.core.DeviceHistory.mean(new double[] {Double.NaN})));
+    }
+
+    // ------------------------------------------------------------------------------------ code review of #389
+
+    /** The rows of {@code all} as the day load reads them for the dial of {@code d} in {@code z} (35 days, an hour and a day before, to its end). */
+    static MainDevice.Watch wWindow(MainDevice.Watch all, LocalDate d, ZoneId z) {
+        double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+        double wf = ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600 - 86400;
+        MainDevice.Watch w = new MainDevice.Watch();
+        for (Records.Steps s : all.steps) if (s.start >= Math.floor(wf) && s.start < Math.ceil(de)) w.steps.add(s);
+        for (Records.Heart h : all.heart) if (h.t >= Math.floor(wf) && h.t < Math.ceil(de)) w.heart.add(h);
+        for (Records.Sleep s : all.sleep) if (s.start + s.dur > Math.floor(wf) && s.start < Math.ceil(de)) w.sleep.add(s);
+        for (Records.Workout x : all.workouts) if (x.start >= Math.floor(wf) && x.start < Math.ceil(de)) w.workouts.add(x);
+        return w;
+    }
+
+    /** A night of {@code hours} ending on {@code day} at 07:00, with REM pieces or (the Steel HR's kind) light in their place. */
+    static void rvNight(MainDevice.Watch w, LocalDate day, double hours, boolean rem) {
+        int mins = (int) Math.round(hours * 60);
+        int[][] p = rem ? new int[][] {{Records.LIGHT, mins / 2}, {Records.DEEP, mins / 4}, {Records.REM, mins - mins / 2 - mins / 4}}
+                : new int[][] {{Records.LIGHT, mins / 2}, {Records.DEEP, mins / 4}, {Records.LIGHT, mins - mins / 2 - mins / 4}};
+        long end = at(day, 7, 0, DS_ZONE), t = end - mins * 60L;
+        for (int[] x : p) {
+            w.sleep.add(new Records.Sleep(t, x[1] * 60, x[0]));
+            t += x[1] * 60L;
+        }
+        for (long u = end - mins * 60L; u < end; u += 600) w.heart.add(new Records.Heart(u, 55));
+    }
+
+    static void review389() throws Exception {
+        final ZoneId z = DS_ZONE;
+        // ---- 1. the recent nights strip: every night in it has the score its dial shows (80 identical nights)
+        MainDevice.Watch same = dsWatch(80, 200, true, true);
+        LocalDate[] range = app.openring.core.DeviceHistory.range(DS_DAY, DS_DAY);
+        LocalDate first = range[0];
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(MainDevice.WATCH, range[0], range[1], z, same, null, 10000, 40);
+        List<app.openring.core.DeviceHistory.NightRow> strip = h.strip(DS_DAY);
+        boolean ok = strip.size() == 31 && strip.get(0).day.equals(DS_DAY.minusDays(30)) && range[1].equals(DS_DAY);
+        String bad = null;
+        for (app.openring.core.DeviceHistory.NightRow r : strip) {
+            double dial = app.openring.core.DeviceScores.of(MainDevice.WATCH, r.day, z, wWindow(same, r.day, z), null, 10000, 40).value("sleep");
+            if (!same(r.score, dial) || Double.isNaN(r.score)) {
+                ok = false;
+                if (bad == null) bad = r.day + " strip " + r.score + " dial " + dial;
+            }
+        }
+        check("review #389: every night of the recent nights strip has its dial's score, the oldest too", ok, bad);
+        LocalDate[] old = app.openring.core.DeviceHistory.range(DS_DAY.minusDays(60), DS_DAY);
+        LocalDate[] future = app.openring.core.DeviceHistory.range(DS_DAY.plusDays(2), DS_DAY);
+        check("review #389: the range reaches 30 nights back and 30 ahead, at most today, never before the shown day", old[0].equals(DS_DAY.minusDays(90))
+                && old[1].equals(DS_DAY.minusDays(30)) && future[1].equals(DS_DAY.plusDays(2)) && h.size() == 31 && h.last(h.sleep, DS_DAY, 30)[0] == h.sleep[1]);
+
+        // ---- 2. REM decided per night: a Steel HR before a watch with REM, and the other way round
+        MainDevice.Watch steelFirst = new MainDevice.Watch(), remFirst = new MainDevice.Watch();
+        for (int k = 60; k >= 0; k--) {
+            rvNight(steelFirst, DS_DAY.minusDays(k), 7.5, k <= 30);
+            rvNight(remFirst, DS_DAY.minusDays(k), 7.5, k > 30);
+        }
+        // each watch's own rows: the rule is per watch (WatchStore.rem reads them per device)
+        List<Records.Sleep> steelRows = new ArrayList<Records.Sleep>(), scanRows = new ArrayList<Records.Sleep>();
+        long cut = at(DS_DAY.minusDays(31), 12, 0, z);
+        for (Records.Sleep x : steelFirst.sleep) (x.start < cut ? steelRows : scanRows).add(x);
+        WatchDays.Rem steelThenScan = WatchDays.Rem.of(steelRows, scanRows);
+        List<Records.Sleep> scanRows2 = new ArrayList<Records.Sleep>(), steelRows2 = new ArrayList<Records.Sleep>();
+        for (Records.Sleep x : remFirst.sleep) (x.start < cut ? scanRows2 : steelRows2).add(x);
+        WatchDays.Rem scanThenSteel = WatchDays.Rem.of(scanRows2, steelRows2);
+        LocalDate from = DS_DAY.minusDays(45);
+        app.openring.core.DeviceHistory.DayZones fz = app.openring.core.DeviceHistory.fixed(z);
+        app.openring.core.DeviceHistory hs = app.openring.core.DeviceHistory.of(MainDevice.WATCH, from, DS_DAY, fz, steelFirst, null, 10000, 40, steelThenScan);
+        check("review #389: Steel HR nights before a watch with REM keep Light and REM, no REM part of 0", hs.result(DS_DAY.minusDays(40)).sleep.get("rem") == null
+                && app.openring.core.analysis.Scores.NO_REM.equals(hs.night(DS_DAY.minusDays(40)).fields.stageSource), keys(hs.result(DS_DAY.minusDays(40)).sleep));
+        check("review #389: the watch with REM keeps its REM part from its first REM night on", hs.result(DS_DAY.minusDays(30)).sleep.get("rem") != null
+                && hs.result(DS_DAY).sleep.get("rem") != null && "watch".equals(hs.night(DS_DAY).fields.stageSource), keys(hs.result(DS_DAY).sleep));
+        app.openring.core.DeviceHistory hr = app.openring.core.DeviceHistory.of(MainDevice.WATCH, from, DS_DAY, fz, remFirst, null, 10000, 40, scanThenSteel);
+        check("review #389: the other order, a Steel HR after a watch with REM: its nights have no REM part", hr.result(DS_DAY.minusDays(10)).sleep.get("rem") == null
+                && hr.result(DS_DAY.minusDays(40)).sleep.get("rem") != null, keys(hr.result(DS_DAY.minusDays(10)).sleep));
+        // each day still is its dial with the same rule, and Further analysis and the night objects follow it per night
+        int remDiff = 0;
+        for (LocalDate d = from; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            if (!dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, z, wWindow(steelFirst, d, z), null, 10000, 40, steelThenScan)).equals(dsText(hs.result(d)))) remDiff++;
+            if (!dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, z, wWindow(remFirst, d, z), null, 10000, 40, scanThenSteel)).equals(dsText(hr.result(d)))) remDiff++;
+        }
+        check("review #389: with REM decided per night each day is still its dial, both orders", remDiff == 0, remDiff);
+        List<app.openring.core.DeviceHistory.NightRow> mixed = app.openring.core.DeviceHistory.nightRows(steelFirst.sleep, steelFirst.heart, from, DS_DAY, fz, 40, steelThenScan);
+        boolean perNight = mixed.size() == 46;
+        for (app.openring.core.DeviceHistory.NightRow r : mixed) perNight &= same(r.score, hs.night(r.day).score)
+                && r.fields.stageSource.equals(r.day.isBefore(DS_DAY.minusDays(30)) ? app.openring.core.analysis.Scores.NO_REM : "watch");
+        check("review #389: Further analysis decides REM per night too, with the charts' scores", perNight, mixed.size());
+        check("review #389: the rule: no REM watch, one answer, a watch's span from its first REM record", !WatchDays.Rem.of(steelRows).any()
+                && WatchDays.Rem.of(true) == WatchDays.Rem.ALWAYS && WatchDays.Rem.of(false) == WatchDays.Rem.NEVER && WatchDays.Rem.ALWAYS.tells(0, 1)
+                && !WatchDays.Rem.NEVER.tells(0, Long.MAX_VALUE) && !WatchDays.Rem.ALWAYS.tells(null) && steelThenScan.any()
+                && !steelThenScan.tells(WatchDays.nightFor(steelFirst.sleep, DS_DAY.minusDays(31), zones(z)))
+                && steelThenScan.tells(WatchDays.nightFor(steelFirst.sleep, DS_DAY.minusDays(30), zones(z))));
+
+        // ---- 3. sleep debt by the ring's rule: 90 nights before each of the 14 days (Analyzer reads 104 days back)
+        MainDevice.Watch debtW = new MainDevice.Watch();
+        for (int k = 120; k >= 0; k--) rvNight(debtW, DS_DAY.minusDays(k), k >= 40 ? 9 : 6.5, true);
+        app.openring.core.DeviceHistory hd = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, z, debtW, null, 10000, 40);
+        WatchDays.Zones zz = zones(z);
+        int[] act = new int[14], need = new int[14];
+        for (int i = 0; i < 14; i++) {
+            WatchDays.Night n = WatchDays.nightFor(debtW.sleep, DS_DAY.minusDays(i), zz);
+            act[i] = n == null ? 0 : n.asleepMin() * 60;
+            double[] pr = new double[90];
+            for (int k = 0; k < 90; k++) {
+                WatchDays.Night p = WatchDays.nightFor(debtW.sleep, DS_DAY.minusDays(i + k + 1), zz);
+                pr[k] = p == null ? Double.NaN : p.asleepMin() * 60.0;
+            }
+            need[i] = app.openring.core.analysis.Wellness.sleepNeedS(pr);
+        }
+        double[] want = app.openring.core.analysis.Wellness.sleepDebt(act, need), got = hd.debt(DS_DAY);
+        check("review #389: sleep debt follows the ring's rule, 90 nights before each of the 14 days", got[0] == want[0] / 60 && got[1] == want[1]
+                && got[2] == need[0] / 3600.0 && need[0] == 8 * 3600, got[0] + " " + got[2] + " want " + want[0] / 60 + " " + need[0] / 3600.0);
+
+        // ---- 4. a week in another zone: each day's point is that day's dial in the day's own zone
+        Records.Decoded dec = dhDemo(70);
+        final ZoneId ny = ZoneId.of("America/New_York");
+        final LocalDate tripFrom = DS_DAY.minusDays(12), tripTo = DS_DAY.minusDays(6);
+        MainDevice.Watch all = dhAll(dec);
+        app.openring.core.DeviceHistory.DayZones trip = new app.openring.core.DeviceHistory.DayZones() {
+            @Override
+            public ZoneId of(LocalDate day) {
+                return !day.isBefore(tripFrom) && !day.isAfter(tripTo) ? ny : DS_ZONE;
+            }
+        };
+        app.openring.core.DeviceHistory ht = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, trip, all, null, 9000, 41, WatchDays.Rem.ALWAYS);
+        int diff = 0;
+        String firstDiff = null;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            ZoneId dz = !d.isBefore(tripFrom) && !d.isAfter(tripTo) ? ny : z;
+            String a = dsText(app.openring.core.DeviceScores.of(MainDevice.WATCH, d, dz, wWindow(all, d, dz), null, 9000, 41)), b = dsText(ht.result(d));
+            if (!a.equals(b)) {
+                diff++;
+                if (firstDiff == null) firstDiff = d.toString();
+            }
+        }
+        check("review #389: after a week in another zone each day's point is its dial (the day's own zone)", diff == 0, diff + " days, first " + firstDiff);
+        Map<LocalDate, Integer> nySteps = WatchDays.stepsPerDay(dec.steps, zones(ny));
+        boolean tripOk = true;
+        for (LocalDate d = tripFrom; !d.isAfter(tripTo); d = d.plusDays(1)) {
+            tripOk &= same(ht.steps[ht.index(d)], nySteps.get(d)) && sameNight(ht.night(d).night, WatchDays.nightFor(dec.sleep, d, zones(ny)))
+                    && ht.night(d).zone.equals(ny) && ht.zone(d).equals(ny);
+        }
+        check("review #389: the trip's days count steps and nights by their own midnights", tripOk && ht.night(DS_DAY).zone.equals(DS_ZONE) && ht.zone.equals(DS_ZONE));
+        List<app.openring.core.DeviceHistory.NightRow> tripRows = app.openring.core.DeviceHistory.nightRows(dec.sleep, dec.heart, first, DS_DAY, trip, 41, WatchDays.Rem.ALWAYS);
+        boolean fa = tripRows.size() == 31;
+        for (app.openring.core.DeviceHistory.NightRow r : tripRows) fa &= same(r.score, ht.night(r.day).score) && r.lowest == ht.night(r.day).lowest && r.zone.equals(ht.zone(r.day));
+        check("review #389: Further analysis has each night in its day's zone, with the charts' scores", fa, tripRows.size());
+        double rf = app.openring.core.DeviceHistory.rowsFrom(first, DS_DAY, trip);
+        check("review #389: the rows are read from the earliest day any zone reads", rf == Math.min(app.openring.core.DeviceHistory.rowsFrom(first, DS_ZONE),
+                app.openring.core.DeviceHistory.rowsFrom(tripFrom, ny)) && app.openring.core.DeviceHistory.sleepFrom(first, trip)
+                <= first.minusDays(103).atStartOfDay(DS_ZONE).toEpochSecond() - 86400, rf);
+
+        // ---- 5. the heart rates of each night by a binary search give what going through every row gave
+        Random rnd = new Random(389);
+        List<Records.Heart> hrRows = new ArrayList<Records.Heart>();
+        long base = at(DS_DAY, 0, 0, z);
+        for (int i = 0; i < 3000; i++) hrRows.add(new Records.Heart(base + rnd.nextInt(5 * 86400) / 60 * 60, 40 + rnd.nextInt(60)));
+        WatchDays.HeartIndex hix = new WatchDays.HeartIndex(hrRows);
+        boolean hsame = true;
+        for (int i = 0; i < 300; i++) {
+            long a = base + rnd.nextInt(5 * 86400) - 3600, b = a + rnd.nextInt(12 * 3600);
+            WatchDays.NightHeart x = WatchDays.heartIn(hrRows, a, b), y = hix.in(a, b);
+            boolean pts = x.points.size() == y.points.size();
+            for (int j = 0; pts && j < x.points.size(); j++) pts = Arrays.equals(x.points.get(j), y.points.get(j));
+            hsame &= pts && x.lowest == y.lowest && x.lowestAt == y.lowestAt && same(x.average, y.average);
+        }
+        check("review #389: the sorted heart rates give each night's readings, lowest and average as before (300 windows)", hsame
+                && new WatchDays.HeartIndex(new ArrayList<Records.Heart>()).in(0, Long.MAX_VALUE).lowest == -1);
+        // two years with a heart rate every 10 minutes, day and night
+        MainDevice.Watch two = new MainDevice.Watch();
+        for (int k = 0; k < 730; k++) rvNight(two, DS_DAY.minusDays(k), 7.5, true);
+        two.heart.clear();
+        for (long u = at(DS_DAY.minusDays(731), 0, 0, z); u < at(DS_DAY, 12, 0, z); u += 600) two.heart.add(new Records.Heart(u, 60 + (int) (u / 600 % 9)));
+        long t0 = System.nanoTime();
+        List<app.openring.core.DeviceHistory.NightRow> years = app.openring.core.DeviceHistory.nightRows(two.sleep, two.heart, LocalDate.of(2000, 1, 1), DS_DAY, fz, 41, WatchDays.Rem.ALWAYS);
+        double sec = (System.nanoTime() - t0) / 1e9;
+        System.out.println("    review #389: All time, two years of nights with " + two.heart.size() + " heart rates in " + String.format("%.2f", sec) + " s");
+        WatchDays.Night n0 = WatchDays.nightFor(two.sleep, DS_DAY, zones(z));
+        check("review #389: All time over two years of heart rates, each night's lowest as before", years.size() == 730 && sec < 10
+                && years.get(729).lowest == WatchDays.heartIn(two.heart, n0.start, n0.end).lowest, years.size());
+    }
+
+    /** One zone for every time. */
+    static WatchDays.Zones zones(final ZoneId z) {
+        return new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return z;
+            }
+        };
+    }
+
+    static List<byte[]> dhBodies(List<WatchDemo.Msg> msgs) {
+        List<byte[]> out = new ArrayList<byte[]>();
+        for (WatchDemo.Msg m : msgs) out.add(m.body);
+        return out;
+    }
+
+    static List<Long> dhCaps(List<WatchDemo.Msg> msgs) {
+        List<Long> out = new ArrayList<Long>();
+        for (WatchDemo.Msg m : msgs) out.add(m.captured);
+        return out;
+    }
+
+    // ------------------------------------------------------------- every route that read only the ring (14 November)
+
+    /**
+     * The owner's report of 14 November (the Screen tab showed no sleep with only the watch): one rule for which device's night a
+     * day shows, the one the Sleep tab uses, and the minutes worn of the device's days that the badges count.
+     */
+    static void routes251() {
+        int[] mains = {MainDevice.RING, MainDevice.WATCH, MainDevice.PHONE, 7};
+        boolean table = true;
+        StringBuilder bad = new StringBuilder();
+        for (int main : mains) {
+            for (int r = 0; r < 2; r++) {
+                for (int w = 0; w < 2; w++) {
+                    boolean ring = r == 1, watch = w == 1;
+                    // the rule as #319 wrote it in MainDevice.of: the watch's night when the watch is main or the ring has none
+                    int want = watch && (main == MainDevice.WATCH || !ring) ? MainDevice.WATCH : ring ? MainDevice.RING : -1;
+                    int got = MainDevice.nightFrom(main, ring, watch);
+                    if (got != want) {
+                        table = false;
+                        bad.append(main).append(ring).append(watch).append("->").append(got).append(' ');
+                    }
+                }
+            }
+        }
+        check("routes: the night shown is the main device's, else the other's (every main device, with and without each night)", table, bad);
+        check("routes: with only the ring its night, always", MainDevice.nightFrom(MainDevice.RING, true, false) == MainDevice.RING
+                && MainDevice.nightFrom(MainDevice.WATCH, true, false) == MainDevice.RING && MainDevice.nightFrom(MainDevice.PHONE, true, false) == MainDevice.RING);
+        check("routes: with only the watch its night, whatever the main device", MainDevice.nightFrom(MainDevice.RING, false, true) == MainDevice.WATCH
+                && MainDevice.nightFrom(MainDevice.PHONE, false, true) == MainDevice.WATCH && MainDevice.nightFrom(MainDevice.WATCH, false, true) == MainDevice.WATCH);
+        check("routes: no night from either, none", MainDevice.nightFrom(MainDevice.WATCH, false, false) == -1);
+
+        // the Sleep tab's day (MainDevice.of) shows the watch's night exactly when the rule says so
+        final ZoneId z = DS_ZONE;
+        Records.Decoded dec = dhDemo(10);
+        boolean same = true;
+        int watchShown = 0;
+        for (int main : mains) {
+            for (int r = 0; r < 2; r++) {
+                for (int k = 0; k < 5; k++) {
+                    LocalDate d = DS_DAY.minusDays(k);
+                    double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+                    MainDevice.Ring ring = new MainDevice.Ring();
+                    ring.night = r == 1;
+                    MainDevice.Watch w = dhWindow(dec, d);
+                    MainDevice.Day day = MainDevice.of(main, d, ds, de, z, ring, w, new MainDevice.Phone());
+                    WatchDays.Night wn = WatchDays.nightFor(w.sleep, d, DeviceScoresZones.of(z));
+                    int rule = MainDevice.nightFrom(day.main, ring.night, wn != null);
+                    same &= (day.watchNight != null) == (rule == MainDevice.WATCH);
+                    if (day.watchNight != null) watchShown++;
+                }
+            }
+        }
+        check("routes: the Sleep tab's night follows the same rule (each main device, ring night or not, 5 days)", same && watchShown > 0, watchShown);
+
+        // minutes worn per day: the worn quarter hours of the day the dial reads, times 15 (watch and phone)
+        LocalDate first = DS_DAY.minusDays(9);
+        app.openring.core.DeviceHistory h = app.openring.core.DeviceHistory.of(MainDevice.WATCH, first, DS_DAY, z, dhAll(dec), null, 9000, 41);
+        boolean worn = true;
+        int wornDays = 0;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            double want = app.openring.core.DeviceScores.day(MainDevice.WATCH, ds, de, z, dhWindow(dec, d), null).wornQ * 15.0;
+            worn &= h.wornMin[h.index(d)] == want;
+            if (want >= 720) wornDays++;
+        }
+        check("routes: the watch's minutes worn are its worn quarter hours of each day, as the dial counts them", worn && wornDays >= 5, wornDays);
+        List<double[]> ph = dhPhone(20);
+        MainDevice.Phone all = new MainDevice.Phone();
+        all.intervals.addAll(ph);
+        app.openring.core.DeviceHistory hp = app.openring.core.DeviceHistory.of(MainDevice.PHONE, first, DS_DAY, z, null, all, 9000, 41);
+        boolean pw = true;
+        for (LocalDate d = first; !d.isAfter(DS_DAY); d = d.plusDays(1)) {
+            double ds = d.atStartOfDay(z).toEpochSecond(), de = d.plusDays(1).atStartOfDay(z).toEpochSecond();
+            pw &= hp.wornMin[hp.index(d)] == app.openring.core.DeviceScores.day(MainDevice.PHONE, ds, de, z, null, dhPhoneWindow(ph, d)).wornQ * 15.0;
+        }
+        check("routes: the phone's minutes counting likewise", pw && hp.wornMin[hp.index(DS_DAY)] > 0, hp.wornMin[hp.index(DS_DAY)]);
+    }
+
+    /** One zone for every moment, as the day load gives MainDevice.of. */
+    static final class DeviceScoresZones {
+        static WatchDays.Zones of(final ZoneId z) {
+            return new WatchDays.Zones() {
+                @Override
+                public ZoneId at(double unix) {
+                    return z;
+                }
+            };
+        }
     }
 }

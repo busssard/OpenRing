@@ -31,6 +31,12 @@ public final class WatchStore {
     static final String[] DECODED = {"watch_steps", "watch_hr", "watch_sleep", "watch_workouts", "watch_battery", "watch_moves"};
     /** kv: the decoder version the stored rows come from. */
     static final String DECODER = "watch_decoder";
+    /**
+     * kv: the newest session whose messages are decoded, with every session before it (review of dadbb71). A session
+     * whose decoding failed stays behind it and is decoded by the next sync ({@link #decodePending}). Missing (an older
+     * version, pairing another ring empties kv): every message is decoded again once ({@link #ensureDecoded}).
+     */
+    static final String DECODED_UPTO = "watch_decoded_session";
     /** Tests only: decoding throws after this many messages, as a stop half way would. */
     static volatile int failDecodeAfter = -1;
 
@@ -63,8 +69,21 @@ public final class WatchStore {
 
     /** Stores one message as it came (its own small transaction, so a stop keeps everything before it). */
     public static void addRaw(Db db, long session, int seq, String device, byte[] body, double captured) {
+        addRaw(db, session, seq, device, body, Frame.type(body), captured);
+    }
+
+    /**
+     * Stores bytes that are no whole message (a Bluetooth piece lost on the way) as they came, under {@code type}: the
+     * request whose answer they came in (-1 for none). That answer then counts as cut off, also when every row is worked
+     * out again ({@link #fromRaw}) or after a restore, and they give no rows ({@code Records.decode}). Review of dadbb71.
+     */
+    public static void addDamaged(Db db, long session, int seq, String device, byte[] bytes, int type, double captured) {
+        addRaw(db, session, seq, device, bytes, type, captured);
+    }
+
+    private static void addRaw(Db db, long session, int seq, String device, byte[] body, int type, double captured) {
         db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO watch_raw(session, seq, device, type, body, captured) VALUES (?, ?, ?, ?, ?, ?)",
-                new Object[] {session, seq, device, Frame.type(body), body, captured});
+                new Object[] {session, seq, device, type, body, captured});
     }
 
     /** Notes the watch (first time: when it was added), with the name and firmware its hello named when known. */
@@ -81,23 +100,51 @@ public final class WatchStore {
         db.getWritableDatabase().execSQL("UPDATE watch_devices SET removed = ? WHERE address = ?", new Object[] {now, address});
     }
 
-    /** Works out the rows of one session's messages, in one transaction. */
+    /**
+     * Works out the rows of one session's messages, then moves where the next request of each kind starts
+     * ({@link #since(Db, String, int, long)}) for the answers of this session that reached their end, all in one
+     * transaction: a start only moves once the rows up to it are stored, and an answer cut off moves nothing (also one that
+     * lost a piece on the way: its stored type is the request's, see {@link #addDamaged}). Notes the session as decoded
+     * ({@link #DECODED_UPTO}) in the same transaction.
+     */
     public static Records.Decoded decodeSession(Db db, final long session) {
         final SQLiteDatabase d = db.getWritableDatabase();
         final Records.Decoded[] all = {new Records.Decoded()};
+        // the session's data answers per device and request (a session has one of each)
+        java.util.Map<String, List<byte[]>> answers = new java.util.TreeMap<String, List<byte[]>>();
         d.beginTransaction();
         try {
-            Cursor c = d.rawQuery("SELECT device, body, captured FROM watch_raw WHERE session = ? ORDER BY seq", new String[] {String.valueOf(session)});
+            Cursor c = d.rawQuery("SELECT device, body, captured, type FROM watch_raw WHERE session = ? ORDER BY seq", new String[] {String.valueOf(session)});
             try {
                 while (c.moveToNext()) {
+                    byte[] body = c.getBlob(1);
                     Records.Decoded one = new Records.Decoded();
-                    Records.decode(c.getBlob(1), (long) c.getDouble(2), one);
+                    Records.decode(body, (long) c.getDouble(2), one);
                     write(d, c.getString(0), one);
                     collect(all[0], one);
+                    // the stored type: the message's own, or for damaged bytes the request they came in
+                    int type = c.getInt(3);
+                    if (isRequest(type)) {
+                        String k = cursorKey(c.getString(0), type);
+                        List<byte[]> l = answers.get(k);
+                        if (l == null) answers.put(k, l = new ArrayList<byte[]>());
+                        l.add(body);
+                    }
                 }
             } finally {
                 c.close();
             }
+            for (java.util.Map.Entry<String, List<byte[]>> e : answers.entrySet()) {
+                long got = Records.newestComplete(e.getValue());
+                if (got <= 0) continue;
+                String k = e.getKey();
+                String have = kv(d, k);
+                // no start noted yet (an older version, a restore): worked out from every raw message, this session's too
+                long next = have == null ? fromRaw(d, deviceOf(k), typeOf(k)) : Math.max(parse(have), got);
+                d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {k, String.valueOf(next)});
+            }
+            String upto = kv(d, DECODED_UPTO);
+            if (upto == null || parse(upto) < session) d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {DECODED_UPTO, String.valueOf(session)});
             d.setTransactionSuccessful();
         } finally {
             d.endTransaction();
@@ -211,6 +258,8 @@ public final class WatchStore {
      */
     static void decodeAll(SQLiteDatabase d) {
         for (String t : DECODED) d.execSQL("DELETE FROM " + t);
+        // where the next requests start is worked out again from the raw messages when next asked (a restore brings others)
+        d.execSQL("DELETE FROM kv WHERE k LIKE '" + CURSOR + "%'");
         int n = 0;
         long last = Long.MIN_VALUE;
         int lastSeq = -1;
@@ -236,6 +285,14 @@ public final class WatchStore {
             if (got == 0) break;
         }
         d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {DECODER, String.valueOf(Records.VERSION)});
+        // every session is decoded now
+        Cursor m = d.rawQuery("SELECT MAX(session) FROM watch_raw", null);
+        try {
+            if (m.moveToFirst() && !m.isNull(0)) d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {DECODED_UPTO, String.valueOf(m.getLong(0))});
+            else d.execSQL("DELETE FROM kv WHERE k = ?", new Object[] {DECODED_UPTO});
+        } finally {
+            m.close();
+        }
     }
 
     /** True when the stored rows come from this decoder (or nothing is stored yet). */
@@ -243,11 +300,38 @@ public final class WatchStore {
         return String.valueOf(Records.VERSION).equals(db.kv(DECODER, null)) || db.count("SELECT COUNT(*) FROM watch_raw") == 0;
     }
 
-    /** Works every row out again when the decoder changed since they were stored; one transaction. Returns whether it did. */
+    /**
+     * Works every row out again when the decoder changed since they were stored, or when it is not known which sessions
+     * are decoded ({@link #DECODED_UPTO} missing: an older version, pairing another ring); one transaction. Returns whether it did.
+     */
     public static boolean ensureDecoded(Db db) {
-        if (decoderCurrent(db)) return false;
+        if (decoderCurrent(db) && (db.kv(DECODED_UPTO, null) != null || !any(db))) return false;
         decodeAgain(db);
         return true;
+    }
+
+    /**
+     * Decodes every session after the newest one decoded ({@link #DECODED_UPTO}), and {@code session} too when it is not
+     * -1, oldest first, each in its own transaction ({@link #decodeSession}): a session whose decoding failed before (a
+     * full disk) is decoded by the next sync instead of waiting for the next decoder (review of dadbb71). Stops at the
+     * first that fails (it throws), so none is skipped: the note only moves past a session once it is decoded. Returns
+     * what was decoded, for the log's counts and the hello's name and firmware.
+     */
+    public static Records.Decoded decodePending(Db db, long session) {
+        String upto = db.kv(DECODED_UPTO, null);
+        long after = upto == null ? Long.MIN_VALUE : parse(upto);
+        java.util.TreeSet<Long> todo = new java.util.TreeSet<Long>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT DISTINCT session FROM watch_raw WHERE session > ?", new String[] {String.valueOf(after)});
+        try {
+            while (c.moveToNext()) todo.add(c.getLong(0));
+        } finally {
+            c.close();
+        }
+        // this session's messages always, also when a re decode during it noted it as decoded half way
+        if (session != -1) todo.add(session);
+        Records.Decoded all = new Records.Decoded();
+        for (long s : todo) collect(all, decodeSession(db, s));
+        return all;
     }
 
     /** Works every row out again, in one transaction. */
@@ -261,28 +345,109 @@ public final class WatchStore {
         });
     }
 
-    /**
-     * Where the next request starts (unix seconds): the newest stored record of that kind of this watch minus 2 hours,
-     * so a record still running at the last sync comes again whole (its key replaces it); 0 for none (the sync then asks
-     * {@code WatchSetup.FIRST_SINCE_S} back, see {@link #since(Db, String, boolean, long)}).
-     */
-    public static long since(Db db, String device, boolean heart) {
-        String q = heart ? "SELECT MAX(t) FROM watch_hr WHERE device = ?"
-                : "SELECT MAX(m) FROM (SELECT MAX(start) AS m FROM watch_steps WHERE device = ?1 UNION ALL SELECT MAX(start) FROM watch_sleep WHERE device = ?1"
-                        + " UNION ALL SELECT MAX(start) FROM watch_workouts WHERE device = ?1)";
-        Cursor c = db.getReadableDatabase().rawQuery(q, new String[] {device});
+    /** kv: per watch and request, the newest record time of its whole answers ({@code watch_cursor_<type>_<address>}). */
+    static final String CURSOR = "watch_cursor_";
+    /** The data requests, each with its own start (owner's report of 11 November). */
+    public static final int[] REQUESTS = {app.openring.core.withings.Proto.ACTIVITY, app.openring.core.withings.Proto.MOVEMENT,
+        app.openring.core.withings.Proto.HEART_RATE};
+    public static final long OVERLAP_S = 2 * 3600;
+
+    static boolean isRequest(int type) {
+        for (int r : REQUESTS) if (r == type) return true;
+        return false;
+    }
+
+    static String cursorKey(String device, int type) {
+        return CURSOR + Frame.hexType(type) + "_" + device;
+    }
+
+    private static String deviceOf(String key) {
+        return key.substring(key.indexOf('_', CURSOR.length()) + 1);
+    }
+
+    private static int typeOf(String key) {
+        String hex = key.substring(CURSOR.length(), key.indexOf('_', CURSOR.length()));
+        return Integer.parseInt(hex.startsWith("0x") ? hex.substring(2) : hex, 16);
+    }
+
+    private static long parse(String v) {
         try {
-            return c.moveToFirst() && !c.isNull(0) ? Math.max(0, c.getLong(0) - OVERLAP_S) : 0;
+            return Long.parseLong(v);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static String kv(SQLiteDatabase d, String k) {
+        Cursor c = d.rawQuery("SELECT v FROM kv WHERE k = ?", new String[] {k});
+        try {
+            return c.moveToFirst() && !c.isNull(0) ? c.getString(0) : null;
         } finally {
             c.close();
         }
     }
 
-    public static final long OVERLAP_S = 2 * 3600;
+    /**
+     * The newest record time of every whole answer to request {@code type} from {@code device} in the raw messages, 0 for
+     * none: each session's answer counts only when it reached its end part. Reads session by session, so memory stays flat.
+     */
+    static long fromRaw(SQLiteDatabase d, String device, int type) {
+        long newest = 0, last = Long.MIN_VALUE;
+        while (true) {
+            Cursor c = d.rawQuery("SELECT DISTINCT session FROM watch_raw WHERE device = ? AND type = ? AND session > ? ORDER BY session LIMIT 500",
+                    new String[] {device, String.valueOf(type), String.valueOf(last)});
+            List<Long> sessions = new ArrayList<Long>();
+            try {
+                while (c.moveToNext()) sessions.add(c.getLong(0));
+            } finally {
+                c.close();
+            }
+            if (sessions.isEmpty()) return newest;
+            for (long s : sessions) {
+                List<byte[]> answer = new ArrayList<byte[]>();
+                Cursor m = d.rawQuery("SELECT body FROM watch_raw WHERE session = ? AND device = ? AND type = ? ORDER BY seq",
+                        new String[] {String.valueOf(s), device, String.valueOf(type)});
+                try {
+                    while (m.moveToNext()) answer.add(m.getBlob(0));
+                } finally {
+                    m.close();
+                }
+                newest = Math.max(newest, Records.newestComplete(answer));
+                last = s;
+            }
+        }
+    }
 
-    /** {@link #since(Db, String, boolean)}, or {@code now} minus a month when nothing of that kind is stored yet. */
-    public static long since(Db db, String device, boolean heart, long now) {
-        long s = since(db, device, heart);
+    /**
+     * The newest record time of the whole answers to request {@code type} of this watch (unix seconds, 0 for none). Noted
+     * per request when a session is decoded; when nothing is noted (an older version, after a restore or a new decoder) it
+     * is worked out from the raw messages once and noted.
+     */
+    public static long newest(Db db, String device, int type) {
+        String k = cursorKey(device, type);
+        SQLiteDatabase d = db.getWritableDatabase();
+        String have = kv(d, k);
+        if (have != null) return parse(have);
+        long v = fromRaw(d, device, type);
+        d.execSQL("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", new Object[] {k, String.valueOf(v)});
+        return v;
+    }
+
+    /**
+     * Where the next request {@code type} starts (unix seconds): 2 hours before the newest record of its last whole answers,
+     * so a record still running then comes again whole (its key replaces it); 0 when it never had a whole answer (the sync
+     * then asks {@code WatchSetup.FIRST_SINCE_S} back, see {@link #since(Db, String, int, long)}). Each request has its own
+     * start: the heart rates inside an activity answer, or an activity answer next to a movement answer that was cut off,
+     * never move another request's start (owner's report of 11 November).
+     */
+    public static long since(Db db, String device, int type) {
+        long n = newest(db, device, type);
+        return n > 0 ? Math.max(0, n - OVERLAP_S) : 0;
+    }
+
+    /** {@link #since(Db, String, int)}, or {@code now} minus a month when that request never had a whole answer. */
+    public static long since(Db db, String device, int type, long now) {
+        long s = since(db, device, type);
         return s > 0 ? s : Math.max(0, now - app.openring.core.withings.WatchSetup.FIRST_SINCE_S);
     }
 
@@ -390,6 +555,29 @@ public final class WatchStore {
     }
 
     /**
+     * Only the watch's sleep pieces and heart rates from {@code from} to {@code to} (the same rule as {@link #window}), for Further
+     * analysis of the watch's nights over a year or all time, where the steps are not needed.
+     */
+    public static app.openring.core.MainDevice.Watch nightRows(Db db, double from, double to) {
+        app.openring.core.MainDevice.Watch w = new app.openring.core.MainDevice.Watch();
+        SQLiteDatabase d = db.getReadableDatabase();
+        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+        Cursor c = d.rawQuery("SELECT t, bpm FROM watch_hr WHERE t >= ? AND t < ? ORDER BY t", a);
+        try {
+            while (c.moveToNext()) w.heart.add(new Records.Heart(c.getLong(0), c.getInt(1)));
+        } finally {
+            c.close();
+        }
+        c = d.rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) w.sleep.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
+        } finally {
+            c.close();
+        }
+        return w;
+    }
+
+    /**
      * What the ring's stored results give for the main device rule: the day summary's steps, distance, movement per
      * quarter hour and heart rate line, and every night or nap in {@code nights} that reaches the day ({@code from} to
      * {@code to}). Reads only; a missing summary gives NaN and empty values.
@@ -411,6 +599,23 @@ public final class WatchStore {
         return r;
     }
 
+    /**
+     * The battery readings of the watch that sent the newest one, from {@code span} seconds before it, oldest first (Today's
+     * battery row, {@code core/DeviceBattery}); a reading with state 0 is the watch charging. Empty without any. Reads only.
+     */
+    public static List<app.openring.core.DeviceBattery.Reading> batteryRows(Db db, long span) {
+        List<app.openring.core.DeviceBattery.Reading> out = new ArrayList<app.openring.core.DeviceBattery.Reading>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT b.t, b.pct, b.state FROM watch_battery b,"
+                + " (SELECT device, t FROM watch_battery ORDER BY t DESC LIMIT 1) n WHERE b.device = n.device AND b.t >= n.t - ? ORDER BY b.t",
+                new String[] {String.valueOf(span)});
+        try {
+            while (c.moveToNext()) out.add(new app.openring.core.DeviceBattery.Reading(c.getLong(0), c.getInt(1), c.getInt(2) == 0 ? 1 : 0));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     /** The newest battery reading as {percent, unix seconds}, null for none (Settings, Watch). */
     public static long[] newestBattery(Db db) {
         Cursor c = db.getReadableDatabase().rawQuery("SELECT pct, t FROM watch_battery ORDER BY t DESC LIMIT 1", null);
@@ -419,6 +624,42 @@ public final class WatchStore {
         } finally {
             c.close();
         }
+    }
+
+    /**
+     * Which nights tell REM from light sleep ({@code WatchDays.Rem}, code review of #389): each watch that ever sent a REM record,
+     * from its first REM record to the end of its last sleep piece; the nights of a watch that never did (the Steel HR) show
+     * "Light and REM", whether it was worn before or after one with REM. Every night without any watch sleep row, so nothing
+     * changes for a person without a watch.
+     */
+    public static app.openring.core.withings.WatchDays.Rem rem(Db db) {
+        if (db.count("SELECT COUNT(*) FROM (SELECT 1 FROM watch_sleep LIMIT 1)") == 0) return app.openring.core.withings.WatchDays.Rem.ALWAYS;
+        List<long[]> spans = new ArrayList<long[]>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT MIN(CASE WHEN stage = " + Records.REM + " THEN start END), MAX(start + dur) FROM watch_sleep"
+                + " GROUP BY device", null);
+        try {
+            while (c.moveToNext()) {
+                if (c.isNull(0)) continue;
+                long first = c.getLong(0);
+                spans.add(new long[] {first, Math.max(first + 1, c.getLong(1))});
+            }
+        } finally {
+            c.close();
+        }
+        return new app.openring.core.withings.WatchDays.Rem(spans.toArray(new long[0][]));
+    }
+
+    /** Only the watch's sleep pieces that reach into {@code from} to {@code to} (sleep debt reads 104 days of nights, not their steps). */
+    public static List<Records.Sleep> sleepRows(Db db, double from, double to) {
+        List<Records.Sleep> out = new ArrayList<Records.Sleep>();
+        String[] a = {String.valueOf((long) Math.floor(from)), String.valueOf((long) Math.ceil(to))};
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT start, dur, stage FROM watch_sleep WHERE start + dur > CAST(? AS INTEGER) AND start < ? ORDER BY start", a);
+        try {
+            while (c.moveToNext()) out.add(new Records.Sleep(c.getLong(0), c.getInt(1), c.getInt(2)));
+        } finally {
+            c.close();
+        }
+        return out;
     }
 
     /** True when any watch message is stored. */

@@ -156,11 +156,27 @@ public final class Json {
     /**
      * A day's zone, the one rule the analysis, the screens, the badges and the export share (review of #263): its main
      * night's ({@code main}, null when none), else the zone noted at the day's {@link #noon} ({@code notedId}, null when
-     * none), else {@code phone}.
+     * none), else {@code phone}. Calls {@link #dayZone(JSONObject, java.util.function.Supplier, java.time.ZoneId)}.
      */
-    public static java.time.ZoneId dayZone(JSONObject main, String notedId, java.time.ZoneId phone) {
-        java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(notedId);
-        return zone(main, noted == null ? phone : noted);
+    public static java.time.ZoneId dayZone(JSONObject main, final String notedId, java.time.ZoneId phone) {
+        return dayZone(main, new java.util.function.Supplier<String>() {
+            @Override
+            public String get() {
+                return notedId;
+            }
+        }, phone);
+    }
+
+    /**
+     * The one rule for a day's zone, with no exception (the stored analysis uses it too, issue #352): its main night's
+     * ({@code main}, null when none), else the zone noted at the day's {@link #noon} ({@code noted} gives its id or null;
+     * asked only when the night has no zone this phone knows, so the zone history is read only then), else {@code phone}.
+     */
+    public static java.time.ZoneId dayZone(JSONObject main, java.util.function.Supplier<String> noted, java.time.ZoneId phone) {
+        java.time.ZoneId night = zone(main, null);
+        if (night != null) return night;
+        java.time.ZoneId z = noted == null ? null : app.openring.core.analysis.ClockChange.zone(noted.get());
+        return z == null ? phone : z;
     }
 
     public static int[] stages(JSONObject night) {

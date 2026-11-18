@@ -80,20 +80,29 @@ public final class GamesActivity extends Activity implements RingManager.MotionL
 
     /**
      * The Ring games card in Settings (issue #15): a test of the ring's motion, always there, and
-     * a switch that shows the games and their controls. Back from a game returns to Settings.
+     * a switch that shows the games and their controls. Back from a game returns to Settings. Builds the section again (after
+     * the switch, or back from a game with a new best score); {@code card} is the body of the section, whose header says Ring
+     * games (owner's wish of 17 November).
      */
-    public static LinearLayout settingsCard(final Activity a) {
-        final LinearLayout card = Ui.card(a);
-        fill(a, card);
-        return card;
-    }
-
-    /** Builds the card again (after the switch, or back from a game with a new best score). */
     public static void fill(final Activity a, final LinearLayout card) {
         card.removeAllViews();
         final SharedPreferences sp = a.getSharedPreferences("games", Context.MODE_PRIVATE);
         final app.openring.data.Prefs p = app.openring.data.Prefs.of(a);
-        card.addView(Ui.caption(a, "Ring games"));
+        if (app.openring.core.KeyState.addRingInstead(p.demo(), p.ringState())) {
+            // without a ring by choice (issue #329): the way to add one instead of games that cannot connect
+            card.addView(Ui.body(a, app.openring.core.KeyState.NO_RING_GAMES));
+            TextView add = Ui.smallButton(a, app.openring.core.KeyState.ADD_RING, Ui.OXY);
+            add.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    a.startActivity(new android.content.Intent(a, app.openring.ui.SetupActivity.class).putExtra("add_ring", true));
+                }
+            });
+            LinearLayout.LayoutParams al = Ui.matchWrap();
+            al.setMargins(0, Ui.dp(a, 10), 0, 0);
+            card.addView(add, al);
+            return;
+        }
         card.addView(Ui.body(a, "Your ring as a game controller: tilt your hand to steer. Not every ring firmware sends its "
                 + "movement live, so test it first."));
         TextView test = Ui.smallButton(a, "Test the ring's motion", Ui.OXY);

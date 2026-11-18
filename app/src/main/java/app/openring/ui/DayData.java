@@ -49,9 +49,11 @@ public final class DayData {
     public LocalDate badgesSeen;
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
+    /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
+    public LocalDate periodFrom, periodTo;
     /**
-     * The nights' skin temperature compared with the usual ({@code temp_dev} of each day summary) from
-     * {@code Cycles.tempFrom()} to today, for the line next to the cycles (phase 1a2). Left out nights have no summary value.
+     * The nights' skin temperature compared with the usual ({@code temp_dev} of each day summary) from {@link #periodFrom} to
+     * today, for Body's temperature chart with the cycle on it. Left out nights have no summary value.
      */
     public final java.util.TreeMap<LocalDate, Double> periodTemps = new java.util.TreeMap<LocalDate, Double>();
     /** The morning temperatures by mouth imported from drip (phase 1b) over the same days, read only while the tracker shows. */
@@ -64,6 +66,50 @@ public final class DayData {
     public app.openring.core.MainDevice.Day merged;
     /** False when a part above could not be read and kept its fallback (issue #235); {@link #failed} noted why. */
     public boolean ok = true;
+    /**
+     * Steps from this phone (issue #329, phase 1b): the phone has a step counter, Physical activity is allowed, and any
+     * reading is stored in the file shown (the demo has its own). Read in the load's background task.
+     */
+    public boolean phoneSensor, phoneAllowed, phoneAny;
+    /**
+     * The scores from the watch, or from the phone without a ring (issue #379, {@code core/DeviceScores}): worked out on each
+     * load from the stored rows, nothing stored. Null with only a ring, or when the rows could not be read. Without a ring
+     * {@link #score} and {@link #scoreObj} show them; with a ring they are only the "Watch version" line.
+     */
+    public app.openring.core.DeviceScores.Result devices;
+    /**
+     * Without a ring, the watch's or the phone's days over time for the 7 and 30 day charts, sleep debt and the recent nights
+     * (owner's report of 13 November, {@code core/DeviceHistory}): from 30 days before the date to 30 days after it (at most
+     * today). Null with a ring (its own charts show), without a device, or when the rows could not be read.
+     */
+    public app.openring.core.DeviceHistory deviceHistory;
+    /**
+     * Which watch nights tell REM from light sleep (owner's report of 13 November; per night since the code review of #389,
+     * {@code WatchStore.rem}): the others show "Light and REM" as one stage and their score leaves REM out. Ring nights never change.
+     */
+    public app.openring.core.withings.WatchDays.Rem watchRem = app.openring.core.withings.WatchDays.Rem.ALWAYS;
+    /** The watch's nights of {@link #deviceHistory} around the date as the ring's night objects, for the recent nights strip. */
+    public final List<JSONObject> watchRecent = new ArrayList<JSONObject>();
+    /** The devices the tabs are built for (issue #373, {@code core/Start}); never null after {@link #load}. */
+    public app.openring.core.Start.Has has = new app.openring.core.Start.Has(true, false, false);
+    /**
+     * The battery of each added device, ring first (Today, right under the scores; owner's wish of 15 November). Empty with only
+     * the phone or when the readings cannot be read.
+     */
+    public final List<app.openring.core.DeviceBattery.Status> batteries = new ArrayList<app.openring.core.DeviceBattery.Status>();
+    /**
+     * The main device and the devices whose results show (owner's report of 14 November): the one source of the nights of the
+     * Screen tab and the badges ({@code data/ShownNights}), the main device of {@link #merged}. Never null after {@link #load}.
+     */
+    public app.openring.data.ShownNights.Devices shown = app.openring.data.ShownNights.Devices.RING;
+    /** The phone is a source of steps (it counts or has any stored); worked out with {@link #shown}. */
+    boolean phoneThere;
+    /**
+     * Screen test, demo mode only (extra {@code devices}, issue #373): show the demo as for a person with only the watch
+     * ({@code Start.PREVIEW_WATCH}) or only the phone. Nothing stored changes; the ring's (and the watch's) results of the
+     * demo file are left out of what is shown.
+     */
+    static volatile int preview = app.openring.core.Start.PREVIEW_NONE;
 
     /**
      * Notes a part of loading {@code date} that failed and kept its fallback (issue #235): a warning in Android's log
@@ -113,9 +159,21 @@ public final class DayData {
         d.date = date;
         String key = date.toString();
         d.day = Json.parse(db.dayJson(key));
+        try {
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            d.has = app.openring.core.Start.of(p.demo(), app.openring.core.KeyState.hasRing(p.ringState()), p.watchAddress() != null,
+                    p.startChoice(), p.demo() ? preview : app.openring.core.Start.PREVIEW_NONE);
+        } catch (RuntimeException e) {
+            d.ok = failed(c, date, "devices", e);
+        }
+        // the demo shown as without a ring (screen test, issue #373): its ring results are not shown
+        boolean hideRing = !d.has.ring && app.openring.data.Prefs.of(c).demo();
+        d.devices(c, db, hideRing);
+        if (hideRing) d.day = null;
         for (String s : db.nightsJson(key, key, false)) {
             JSONObject o = Json.parse(s);
             if (o == null) continue;
+            if (hideRing) continue;
             if (o.optBoolean("main")) d.night = o;
             else d.naps.add(o);
         }
@@ -131,19 +189,20 @@ public final class DayData {
         // a window around the date, so an old date loads as fast as a recent one (issue #98)
         for (String s : db.recentNights(date, LocalDate.now())) {
             JSONObject o = Json.parse(s);
-            if (o != null) d.recent.add(o);
+            if (o != null && !hideRing) d.recent.add(o);
         }
-        d.anyNight = !d.recent.isEmpty() || db.anyMainNight();
+        d.anyNight = !hideRing && (!d.recent.isEmpty() || db.anyMainNight());
         try {
-            d.now = app.openring.data.RightNow.load(c);
+            if (!hideRing) d.now = app.openring.data.RightNow.load(c);
         } catch (RuntimeException e) {
             // the Body card shows only its caption and the Today ring no verdict, as before (issue #235)
             d.ok = failed(c, date, "latest readings", e);
         }
         try {
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            // the nights of the main device, filled by the other (owner's report of 14 November): the watch's without a ring
             d.screen = app.openring.data.ScreenDays.info(db, date, d.zone, p.screenGoalMin(), p.screenExcluded(),
-                    p.screenMinShowMin() * 60.0);
+                    p.screenMinShowMin() * 60.0, d.shown);
         } catch (RuntimeException e) {
             // the Screen tab says it could not be read (issue #235)
             d.ok = failed(c, date, "screen time", e);
@@ -153,7 +212,8 @@ public final class DayData {
             d.periodShown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
             if (d.periodShown) {
                 LocalDate today = LocalDate.now();
-                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped()));
+                // the prediction method of Settings (issue #383); measured below keeps it
+                d.periods = app.openring.data.Periods.cycles(db, today, app.openring.core.analysis.Cycles.day(p.periodStopped())).withMethod(p.periodMethod());
                 d.periodAsk = d.periods.askStopped(p.age(), app.openring.core.analysis.Cycles.day(p.periodAskLater()));
                 try {
                     // phase 2: the temperature rise of each cycle, from the ring's nights and the mouth temperatures
@@ -162,9 +222,18 @@ public final class DayData {
                     // the calendar estimate stays; the error's kind only, never a date or a value
                     app.openring.ble.RingManager.get(c).log("day load: the temperature rise for the period tracker: " + e.getClass().getSimpleName());
                 }
-                // the day summaries hold no period data; read here so the line can sit next to the cycles
+                // "How close the estimates were" (issue #383): both backtests worked out here in the background, not while the
+                // card is drawn (each is kept in the estimate once done)
+                d.periods.backtest();
+                d.periods.riseBacktest();
+                // the day summaries hold no period data; read here for Body's temperature chart with the cycle on it, over
+                // its whole time span up to today (owner's feedback of 11 November)
+                LocalDate[] span = d.periods.tempWindow(date);
+                d.periodFrom = span[0];
+                d.periodTo = span[1];
+                String last = (span[1].isAfter(today) ? today : span[1]).toString();
                 try {
-                    for (String[] r : db.daysJson(d.periods.tempFrom().toString(), today.toString())) {
+                    for (String[] r : db.daysJson(span[0].toString(), last)) {
                         double v = Json.d(Json.parse(r[1]), "temp_dev");
                         if (!Double.isNaN(v)) d.periodTemps.put(LocalDate.parse(r[0]), v);
                     }
@@ -174,7 +243,7 @@ public final class DayData {
                     app.openring.ble.RingManager.get(c).log("day load: night temperatures for the period tracker: " + e.getClass().getSimpleName());
                 }
                 try {
-                    d.periodMouth.putAll(app.openring.data.Periods.temps(db, d.periods.tempFrom().toString(), today.toString()));
+                    d.periodMouth.putAll(app.openring.data.Periods.temps(db, span[0].toString(), last));
                 } catch (RuntimeException e) {
                     // the line shows the ring's nights only; the error's kind only, never a date or a value
                     d.periodMouth.clear();
@@ -191,7 +260,7 @@ public final class DayData {
             app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
             if (p.badgesOn()) {
                 d.badges.addAll(app.openring.data.BadgeDays.badges(db, date.minusDays(app.openring.core.analysis.Badges.WEEK - 1), date,
-                        p.targetKcal(), p.screenExcluded(), LocalDate.now(), System.currentTimeMillis() / 1000.0));
+                        p.targetKcal(), p.screenExcluded(), LocalDate.now(), System.currentTimeMillis() / 1000.0, d.shown));
                 d.badgesSeen = BadgeViews.seen(db);
             }
         } catch (RuntimeException e) {
@@ -201,10 +270,37 @@ public final class DayData {
         }
         for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
             JSONObject o = Json.parse(r[1]);
-            if (o != null) d.history.put(r[0], o);
+            if (o != null && !hideRing) d.history.put(r[0], o);
         }
         d.merge(c, db);
+        try {
+            d.batteries(c, db, System.currentTimeMillis() / 1000);
+        } catch (RuntimeException e) {
+            // Today shows no battery rows; the readings stay where they are (Settings, the Watch page)
+            d.batteries.clear();
+            d.ok = failed(c, date, "battery", e);
+        }
         return d;
+    }
+
+    /**
+     * Works out {@link #batteries} from the stored readings (nothing is written): the ring's {@code battery} table with Settings'
+     * newer read of the ring when there is one (not in demo mode, whose ring is made up), and the watch's {@code watch_battery}.
+     * A ring only when one is paired (or the demo's), a watch only when one is added (or the demo's).
+     */
+    void batteries(Context c, Db db, long now) {
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        long span = app.openring.core.DeviceBattery.WINDOW_S + app.openring.core.DeviceBattery.OLD_S;
+        if (has.ring && !app.openring.core.KeyState.addRingInstead(p.demo(), p.ringState())) {
+            List<app.openring.core.DeviceBattery.Reading> rows = db.batteryRows(span);
+            long newest = rows.isEmpty() ? 0 : rows.get(rows.size() - 1).t;
+            // Settings reads the ring's battery without storing it: that read when it is newer
+            if (!p.demo() && p.battery() >= 0 && p.batteryAt() > newest) rows.add(new app.openring.core.DeviceBattery.Reading(p.batteryAt(), p.battery(), -1));
+            batteries.add(app.openring.core.DeviceBattery.of(app.openring.core.DeviceBattery.RING, rows, now));
+        }
+        if (has.watch) {
+            batteries.add(app.openring.core.DeviceBattery.of(app.openring.core.DeviceBattery.WATCH, app.openring.data.WatchStore.batteryRows(db, span), now));
+        }
     }
 
     /**
@@ -217,17 +313,151 @@ public final class DayData {
         nights.addAll(naps);
         if (night != null) nights.add(night);
         app.openring.core.MainDevice.Ring ring = app.openring.data.WatchStore.ringDay(day, night, nights, ds, de);
-        int main = app.openring.core.MainDevice.RING;
+        int main = shown.main;
         app.openring.core.MainDevice.Watch watch = null;
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         try {
-            main = app.openring.data.Prefs.of(c).mainDevice();
             // a day earlier for the night that ends this morning
-            if (app.openring.data.WatchStore.any(db)) watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
+            // the demo shown as for only the phone (screen test, issue #373) leaves the watch's rows out too
+            if (shown.watch) {
+                watch = app.openring.data.WatchStore.window(db, ds - 86400, de);
+                watchRem = app.openring.data.WatchStore.rem(db);
+            }
         } catch (RuntimeException e) {
             watch = null;
             ok = failed(c, date, "watch data", e);
         }
-        merged = app.openring.core.MainDevice.of(main, date, ds, de, zone, ring, watch);
+        // the phone (issue #329, phase 1b): a source while it counts steps or has any stored; null leaves only ring and watch
+        app.openring.core.MainDevice.Phone phone = null;
+        try {
+            if (phoneAny) phone = app.openring.data.PhoneStore.forDay(db, ds, de);
+            else if (phoneThere) phone = new app.openring.core.MainDevice.Phone();
+        } catch (RuntimeException e) {
+            phone = null;
+            ok = failed(c, date, "phone steps", e);
+            // as before #251's routes: without the phone's rows the main device is worked out without the phone
+            if (phoneThere) main = mainDevice(c, false);
+        }
+        merged = app.openring.core.MainDevice.of(main, date, ds, de, zone, ring, watch, phone);
+        try {
+            // the scores without a ring (issue #379): the watch's or the phone's rows of the last five weeks
+            int dev = app.openring.core.DeviceScores.device(has.ring, has.watch, phone != null);
+            if (dev >= 0) {
+                double from = ds - (app.openring.core.DeviceScores.DAYS - 1) * 86400.0 - 3600;
+                app.openring.core.MainDevice.Watch w = dev == app.openring.core.MainDevice.WATCH && app.openring.data.WatchStore.any(db)
+                        ? app.openring.data.WatchStore.window(db, from - 86400, de) : null;
+                app.openring.core.MainDevice.Phone ph = dev == app.openring.core.MainDevice.PHONE && phoneAny
+                        ? app.openring.data.PhoneStore.window(db, from, de) : null;
+                devices = app.openring.core.DeviceScores.of(dev, date, zone, w, ph, p.watchGoal(), p.age(), watchRem);
+            }
+        } catch (RuntimeException e) {
+            // the tabs show the scores as without data; the ring's own are not touched
+            devices = null;
+            ok = failed(c, date, "scores without a ring", e);
+        }
+        try {
+            // the statistics without a ring (owner's report of 13 November); with a ring its own charts show
+            int dev = app.openring.core.DeviceHistory.device(has.ring, has.watch, phone != null);
+            if (dev >= 0) {
+                // from the strip's oldest night (30 before) to 30 after, at most today; each day in its own zone as its dial,
+                // the shown day in the zone its dial has (code review of #389)
+                LocalDate[] range = app.openring.core.DeviceHistory.range(date, LocalDate.now());
+                LocalDate first = range[0], last = range[1];
+                final app.openring.core.DeviceHistory.DayZones noted = app.openring.data.WatchHistory.dayZones(db, java.time.ZoneId.systemDefault());
+                app.openring.core.DeviceHistory.DayZones zones = app.openring.data.ShownNights.with(noted, date, zone);
+                double from = app.openring.core.DeviceHistory.rowsFrom(first, last, zones);
+                double to = last.plusDays(1).atStartOfDay(zones.of(last)).toEpochSecond();
+                app.openring.core.MainDevice.Watch w = null;
+                if (dev == app.openring.core.MainDevice.WATCH && app.openring.data.WatchStore.any(db)) {
+                    w = app.openring.data.WatchStore.window(db, from, to);
+                    // sleep debt reads 90 nights before each of its 14 days (the ring's rule): only the sleep pieces reach that far
+                    w.sleep.clear();
+                    w.sleep.addAll(app.openring.data.WatchStore.sleepRows(db, app.openring.core.DeviceHistory.sleepFrom(first, zones), to));
+                }
+                // the phone's window as the scores read it: from 35 days before the first day (a day less than the watch's)
+                app.openring.core.MainDevice.Phone ph = dev == app.openring.core.MainDevice.PHONE && phoneAny
+                        ? app.openring.data.PhoneStore.window(db, from + 86400, to) : null;
+                deviceHistory = app.openring.core.DeviceHistory.of(dev, first, last, zones, w, ph, p.watchGoal(), p.age(), watchRem);
+                if (dev == app.openring.core.MainDevice.WATCH) watchRecent.addAll(app.openring.data.WatchHistory.json(deviceHistory.strip(date)));
+            }
+        } catch (RuntimeException e) {
+            // the tabs show today's numbers without the charts below them
+            deviceHistory = null;
+            watchRecent.clear();
+            ok = failed(c, date, "history without a ring", e);
+        }
+    }
+
+    /**
+     * Works out {@link #shown} (and the phone's flags): the main device as Settings picks it among the devices there, whether the
+     * ring's results and the watch's rows show, and the device whose days stand in without a ring. Reads only; a part that cannot
+     * be read keeps its fallback (the ring, no phone) and is noted ({@link #failed}).
+     */
+    void devices(Context c, Db db, boolean hideRing) {
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        try {
+            phoneSensor = app.openring.sync.PhoneReader.hasSensor(c);
+            phoneAllowed = app.openring.sync.PhoneReader.allowed(c);
+            phoneAny = app.openring.data.PhoneStore.any(db);
+            phoneThere = phoneAny || p.demo() || phoneSensor && phoneAllowed;
+        } catch (RuntimeException e) {
+            phoneThere = false;
+            ok = failed(c, date, "phone steps", e);
+        }
+        int main = mainDevice(c, phoneThere);
+        boolean watchRows = false;
+        try {
+            // the demo shown as for only the phone (screen test, issue #373) leaves the watch's rows out
+            watchRows = app.openring.data.WatchStore.any(db) && (has.watch || !p.demo());
+        } catch (RuntimeException e) {
+            ok = failed(c, date, "watch data", e);
+        }
+        shown = new app.openring.data.ShownNights.Devices(main, !hideRing, watchRows,
+                app.openring.core.DeviceHistory.device(has.ring, has.watch, phoneThere), p.watchGoal(), p.age());
+    }
+
+    /**
+     * {@link #shown} as {@link #load} works it out, without loading a day (the Badges page, owner's report of 14 November); only the
+     * ring's results when the devices cannot be read.
+     */
+    static app.openring.data.ShownNights.Devices shownNow(Context c) {
+        try {
+            DayData d = new DayData();
+            d.date = LocalDate.now();
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            d.has = app.openring.core.Start.of(p.demo(), app.openring.core.KeyState.hasRing(p.ringState()), p.watchAddress() != null,
+                    p.startChoice(), p.demo() ? preview : app.openring.core.Start.PREVIEW_NONE);
+            d.devices(c, Db.get(c), !d.has.ring && p.demo());
+            return d.shown;
+        } catch (RuntimeException e) {
+            return app.openring.data.ShownNights.Devices.RING;
+        }
+    }
+
+    /** The main device shown among the devices there ({@code phone}: the phone is a source of steps). */
+    int mainDevice(Context c, boolean phone) {
+        try {
+            app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+            // without a ring (issue #373) a stored ring choice falls back to the device that is there
+            int stored = p.mainDeviceStored();
+            if (!has.ring && stored == app.openring.core.MainDevice.RING) stored = -1;
+            return app.openring.core.MainDevice.shown(stored, has.ring, has.watch, phone);
+        } catch (RuntimeException e) {
+            ok = failed(c, date, "main device", e);
+            return app.openring.core.MainDevice.RING;
+        }
+    }
+
+    /** The score {@code key} comes from the watch or the phone: no ring, and the device has one (issue #379). */
+    public boolean fromDevice(String key) {
+        return !has.ring && devices != null && !Double.isNaN(devices.value(key));
+    }
+
+    /** With a ring, the line "Watch version: 78" under the ring's score {@code key} when the watch has one too; else null. */
+    public String watchVersion(String key) {
+        if (!has.ring || devices == null || devices.device != app.openring.core.MainDevice.WATCH) return null;
+        double v = devices.value(key);
+        return Double.isNaN(v) ? null : app.openring.core.DeviceScores.version(v);
     }
 
     /** Values of a day field for the {@code n} days ending at the selected date (NaN if missing). */
@@ -262,6 +492,8 @@ public final class DayData {
 
     public double score(String key) {
         if ("screen".equals(key)) return screen == null || screen.score == null ? Double.NaN : screen.score.value;
+        // without a ring the watch's or the phone's (issue #379); a ring's stored score is never replaced
+        if (fromDevice(key)) return devices.value(key);
         if ("sleep".equals(key)) {
             JSONObject s = night == null ? null : night.optJSONObject("score");
             return s == null || !s.has("value") ? Double.NaN : s.optDouble("value");
@@ -271,6 +503,11 @@ public final class DayData {
     }
 
     public JSONObject scoreObj(String key) {
+        if (fromDevice(key)) {
+            JSONObject o = Json.score("sleep".equals(key) ? devices.sleep : "readiness".equals(key) ? devices.readiness : devices.activity);
+            Json.put(o, "device", devices.device);
+            return o;
+        }
         if ("sleep".equals(key)) return night == null ? null : night.optJSONObject("score");
         return day == null ? null : day.optJSONObject(key);
     }

@@ -316,14 +316,14 @@ public final class DripCsv {
 
     /**
      * A made up drip export for demo mode and the screen test (never a real one): six cycles before the demo's own made up
-     * log ({@code Cycles.demo}, whose first period starts 250 days before today), one of its periods with 2 days and a
+     * log ({@code Cycles.demoHistory}, whose first period starts about 3 years before today, issue #383), one of its periods with 2 days and a
      * single bleeding day between two periods (both flagged in the preview), the first period of the demo log (5 days) with
      * one day that differs, a bleeding day drip did not count, a temperature every morning (one in °F, one left out), mood
      * and note columns, a quoted note with a comma; newest row first, Windows line ends and a byte order mark.
      */
     public static String demo(LocalDate today) {
-        // the first period of the demo's own log (Cycles.demo), so the file overlaps it there
-        LocalDate demoStart = app.openring.core.analysis.Cycles.demo(today).firstKey();
+        // the first period of the demo's own log (Cycles.demoHistory, issue #383), so the file overlaps it there
+        LocalDate demoStart = app.openring.core.analysis.Cycles.demoHistory(today).firstKey();
         int[] cycle = {28, 30, 27, 29, 31, 26};
         int[] days = {5, 2, 5, 4, 6, 5};
         TreeMap<LocalDate, String[]> rows = new TreeMap<LocalDate, String[]>();

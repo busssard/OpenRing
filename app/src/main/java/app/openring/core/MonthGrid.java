@@ -28,11 +28,11 @@ public final class MonthGrid {
      * high, or null outside this month's days. A point left or right of the grid counts in the first or last column.
      */
     public static LocalDate dayAt(YearMonth month, DayOfWeek firstDay, float width, float head, float cellH, float x, float y) {
-        float cw = width / 7f;
-        int col = (int) Math.max(0, Math.min(6, Math.floor(x / cw)));
+        float cw = width / COLS;
+        int col = (int) Math.max(0, Math.min(COLS - 1, Math.floor(x / cw)));
         int row = (int) Math.floor((y - head) / cellH);
         if (row < 0 || row >= ROWS) return null;
-        int dom = row * 7 + col - offset(month, firstDay) + 1;
+        int dom = row * COLS + col - offset(month, firstDay) + 1;
         return dom >= 1 && dom <= month.lengthOfMonth() ? month.atDay(dom) : null;
     }
 

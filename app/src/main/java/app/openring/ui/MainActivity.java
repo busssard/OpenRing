@@ -198,6 +198,25 @@ public final class MainActivity extends Activity implements RingManager.Listener
     private boolean preparingDemo;
     /** Scroll position to return to while stepping through days, -1 when none is pending. */
     private int wantedY = -1;
+    /**
+     * Screen test, demo mode only (extra {@code card}, underscores for spaces): the page opens scrolled to the first text that
+     * starts with it, so a shot of a card near the end of a long page needs no swipes (the watch statistics). Null for none.
+     */
+    private String cardPending;
+
+    /** The top of the first text inside {@code v} that starts with {@code start}, relative to {@code v}; -1 when none. */
+    static int textTop(View v, String start) {
+        if (v instanceof TextView && ((TextView) v).getText().toString().startsWith(start)) return 0;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View ch = g.getChildAt(i);
+                int t = textTop(ch, start);
+                if (t >= 0) return ch.getTop() + t;
+            }
+        }
+        return -1;
+    }
 
     void stepDay(LocalDate d) {
         if (wantedY < 0) wantedY = scroll.getScrollY();
@@ -223,16 +242,22 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
      * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
      * rise it marks (phase 2),
-     * period_how (boolean, demo mode only) opens How it works on the Period card and in Your cycles,
+     * period_how (boolean, demo mode only) opens How it works on the Period card, in Your cycles and on the night
+     * temperature card (issue #363),
      * drip (boolean, demo mode only) opens Import from drip with a made up drip file (the preview only, nothing is imported in
      * demo mode) and drip_correct (boolean) with it opens Correct on its first short period,
-     * main_device (int, demo mode only: 0 ring, 1 watch) picks the main device as Settings, Watch does (issue #251).
+     * main_device (int, demo mode only: 0 ring, 1 watch, 2 phone) picks the main device as Settings does (issue #251),
+     * devices (int, demo mode only: 1 only the watch, 2 only the phone) shows the tabs as for a person with only that (issue #373),
+     * phone_ask (boolean, demo mode only) shows Activity's card that asks for Physical activity instead of the demo's phone steps
+     * (issue #329; nothing is asked without a tap, and demo mode never asks).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
         if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
         if (i.getBooleanExtra("analysis", false)) Pages.analysisOpen = true;
         if (i.hasExtra("period")) Pages.analysisPeriod = i.getIntExtra("period", 1);
+        String card = i.getStringExtra("card");
+        cardPending = card != null && Prefs.of(this).demo() ? card.replace('_', ' ') : null;
         String day = i.getStringExtra("day");
         if (day != null) {
             try {
@@ -258,12 +283,21 @@ public final class MainActivity extends Activity implements RingManager.Listener
         previewUnreadable = i.getBooleanExtra("key_unreadable", false) && Prefs.of(this).demo();
         // screen test: the period tracker's day editor on Body (issue #252), demo mode only; nothing is saved without a tap
         if (i.getBooleanExtra("period_edit", false) && Prefs.of(this).demo()) PeriodCard.editPending = true;
+        // screen test: the period calendar some months ahead (owner's feedback of 11 November), demo mode only
+        PeriodCard.monthsPending = Prefs.of(this).demo() ? Math.max(0, i.getIntExtra("period_month", 0)) : 0;
         // screen test: the gentle question of phase 1a2 on the period cards, demo mode only; nothing is saved without a tap
         PeriodCard.askPending = i.getBooleanExtra("period_ask", false) && Prefs.of(this).demo();
         // screen test: the marked temperature rise of phase 2, read by touch on its first high night, demo mode only
         PeriodAnalysis.risePending = i.getBooleanExtra("period_rise", false) && Prefs.of(this).demo();
-        // screen test: How it works opened on the Period card and in Your cycles (owner's feedback of 3 November), demo mode only
-        if (i.getBooleanExtra("period_how", false) && Prefs.of(this).demo()) PeriodCard.howOpen[0] = PeriodAnalysis.howOpen[0] = true;
+        // screen test: How it works opened on the Period card, in Your cycles and on the night temperature card (owner's feedback
+        // of 3 November, issue #363), demo mode only
+        if (i.getBooleanExtra("period_how", false) && Prefs.of(this).demo()) {
+            PeriodCard.howOpen[0] = PeriodAnalysis.howOpen[0] = PeriodAnalysis.tempHowOpen[0] = true;
+        }
+        // screen test: "Why this line" opened on Today's Your day card (owner's wish of 16 November), demo mode only
+        if (i.getBooleanExtra("day_line_why", false) && Prefs.of(this).demo()) Pages.dayWhyOpen[0] = true;
+        // the battery lines on Today folded open (owner's wish of 17 November), for the screen test
+        if (i.getBooleanExtra("battery_open", false) && Prefs.of(this).demo()) BatteryViews.open[0] = true;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)
@@ -272,8 +306,12 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
         // demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch_data", false) && Prefs.of(this).demo()) startActivity(new Intent(this, WatchPageActivity.class));
-        // screen test: the main device (issue #251), demo mode only; the same choice as the chips in Settings, Watch
+        // screen test: the main device (issue #251), demo mode only; the same choice as the chips in Settings
         if (i.hasExtra("main_device") && Prefs.of(this).demo()) Prefs.of(this).setMainDevice(i.getIntExtra("main_device", 0));
+        // screen test: the demo shown as with only the watch (1) or only the phone (2), issue #373; demo mode only, nothing stored
+        DayData.preview = Prefs.of(this).demo() ? i.getIntExtra("devices", app.openring.core.Start.PREVIEW_NONE) : app.openring.core.Start.PREVIEW_NONE;
+        // screen test: Activity's card that asks for Physical activity (issue #329), demo mode only; demo mode never asks
+        PhoneViews.previewAsk = i.getBooleanExtra("phone_ask", false) && Prefs.of(this).demo();
         // screen test: the watch setup (issue #251), demo mode only: watch_setup_part 1 scrolls to the alarm, watch_setup_hands
         // shows the hand calibration's controls
         if (i.getBooleanExtra("watch_setup", false) && Prefs.of(this).demo()) {
@@ -487,7 +525,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (preparingDemo) return;
         // a pairing whose key page the person has not left yet opens there (issue #218); a saved key this phone cannot
         // read keeps this screen, the status line says so (issue #199)
-        if (app.openring.core.KeyState.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null)) {
+        // nothing set up yet: Getting started (issue #373); never with a watch added, so a watch only phone stays here
+        if (app.openring.core.Start.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null, prefs.watchAddress() != null)) {
             startActivity(new Intent(this, SetupActivity.class));
             return;
         }
@@ -496,11 +535,28 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // allowed in the app's settings after Sync found it blocked: that sync starts now, also right after a recent one (#186)
         boolean allowedNow = !prefs.demo() && permissionBlocked && Permissions.granted(this);
         if (!prefs.demo() && Permissions.granted(this)) permissionBlocked = quietDenial = false;
-        if (!prefs.demo() && !Permissions.granted(this) && !askedPermissions) {
+        // just this phone (issue #329) needs no Bluetooth: it is asked for when a ring is added; a watch needs it, also
+        // without a ring (code review of the device choice)
+        if (app.openring.core.SyncPlan.asksBluetooth(prefs.demo(), keyState, prefs.watchAddress() != null) && !Permissions.granted(this) && !askedPermissions) {
             askedPermissions = true;
             Permissions.request(this);
         }
         SyncJob.schedule(this, keyState);
+        // steps from this phone (issue #329): its own hourly job, and a reading now (into the real history, also in demo mode);
+        // a new reading loads the day again
+        app.openring.sync.PhoneJob.schedule(this);
+        app.openring.sync.PhoneReader.readLater(this, "app opened", app.openring.core.PhoneSteps.OPEN_SKIP_S, new app.openring.sync.PhoneReader.Done() {
+            @Override
+            public void done(final int result) {
+                if (result != app.openring.data.PhoneStore.STORED) return;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!isFinishing() && !isDestroyed() && !Prefs.of(MainActivity.this).demo()) load();
+                    }
+                });
+            }
+        });
         // the automatic backups' daily job, and the check of a copy made before an update (issue #242)
         app.openring.sync.BackupJob.schedule(this);
         // the reminder before the expected period (issue #252): planned again from the person's own log, in the background
@@ -510,8 +566,12 @@ public final class MainActivity extends Activity implements RingManager.Listener
         updateStatus();
         load();
         boolean recent = app.openring.core.BackgroundJob.recent(System.currentTimeMillis() / 1000, prefs.lastSync(), prefs.lastAttempt());
-        if (!prefs.demo() && app.openring.core.KeyState.syncs(keyState) && (!recent || allowedNow) && !RingManager.get(this).busy() && Permissions.granted(this))
+        if (allowedNow && prefs.watchAddress() != null) {
+            // allowed in the app's settings after Sync with a watch found it blocked: that Sync goes on (watch, then the ring)
+            sync();
+        } else if (!prefs.demo() && app.openring.core.KeyState.syncs(keyState) && (!recent || allowedNow) && !RingManager.get(this).busy() && Permissions.granted(this)) {
             SyncService.start(this);
+        }
     }
 
     @Override
@@ -556,7 +616,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     ok = DayData.failed(MainActivity.this, d, "screen log read or its analysis", e);
                 }
                 try {
-                    latest = app.openring.data.Db.get(MainActivity.this).latestDay();
+                    // the ring's newest day, or the phone's newest steps (issue #329): a phone reading after midnight moves here
+                    latest = app.openring.data.Db.get(MainActivity.this).latestDayWithPhone();
                     DayData r = DayData.load(MainActivity.this, d);
                     if (ok && r.ok) DayData.allRead(MainActivity.this, d);
                     return r;
@@ -660,7 +721,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
             LinearLayout banner = Ui.card(this);
             banner.setBackground(Ui.rounded(Ui.alpha(Ui.OXY, 0.14f), Ui.dp(this, 14)));
             banner.addView(Ui.text(this, "Demo: a made up person's data", 14, Ui.TEXT, Ui.MEDIUM));
-            banner.addView(Ui.text(this, "Everything works like with a real ring. Leave the demo in Settings.", 12, Ui.TEXT_2, Ui.REGULAR));
+            String how = DayData.preview == app.openring.core.Start.PREVIEW_WATCH ? "Shown as with only a watch. Leave the demo in Settings."
+                    : DayData.preview == app.openring.core.Start.PREVIEW_PHONE ? "Shown as with only this phone. Leave the demo in Settings."
+                    : "Everything works like with a real ring. Leave the demo in Settings.";
+            banner.addView(Ui.text(this, how, 12, Ui.TEXT_2, Ui.REGULAR));
             ((LinearLayout) content).addView(banner, 0);
         }
         int p = Ui.dp(this, 16);
@@ -670,11 +734,19 @@ public final class MainActivity extends Activity implements RingManager.Listener
         final int y = wantedY >= 0 ? wantedY : scroll.getScrollY();
         scroll.removeAllViews();
         scroll.addView(content);
+        final View shown = content;
         scroll.post(new Runnable() {
             @Override
             public void run() {
                 scroll.scrollTo(0, y);
                 if (scroll.getScrollY() >= y) wantedY = -1;
+                // the screen test's card (demo mode only): once it is on the page, scroll to it a little below the top
+                int top = cardPending == null ? -1 : textTop(shown, cardPending);
+                if (top >= 0) {
+                    scroll.scrollTo(0, Math.max(0, top - Ui.dp(MainActivity.this, 12)));
+                    cardPending = null;
+                }
+                if (tab == Pages.TODAY && np.demo()) firstScreen(shown);
             }
         });
         for (int i = 0; i < nav.getChildCount(); i++) {
@@ -685,9 +757,31 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
     }
 
+    /**
+     * For the screen test (demo mode only, owner's wish of 17 November): logs where Today's day line ends on the page and how
+     * much of the page the first screen shows, so screens.sh can check the sentence and the line need no scrolling.
+     */
+    void firstScreen(View content) {
+        View line = content.findViewWithTag(Pages.DAY_LINE_TAG);
+        if (line == null || line.getHeight() == 0 || scroll.getHeight() == 0) return;
+        int bottom = line.getHeight();
+        for (View v = line; v != null && v != content; v = v.getParent() instanceof View ? (View) v.getParent() : null) bottom += v.getTop();
+        String preview = DayData.preview == app.openring.core.Start.PREVIEW_WATCH ? "watch" : DayData.preview == app.openring.core.Start.PREVIEW_PHONE ? "phone" : "ring";
+        android.util.Log.i("OpenRing", "today first screen (" + preview + "): the line ends at " + bottom + " of " + scroll.getHeight() + " px, "
+                + (bottom <= scroll.getHeight() ? "fits" : "cut"));
+    }
+
     String syncLine() {
         Prefs p = Prefs.of(this);
         StringBuilder sb = new StringBuilder();
+        // without a ring (issue #329) there is no sync to name
+        if (keyState == app.openring.core.KeyState.NO_RING && !p.demo() && p.watchAddress() != null) {
+            // only a watch (issue #373): its own last sync
+            long ok = p.watchLastOk();
+            return (ok > 0 ? "Watch synced " + DateUtils.getRelativeTimeSpanString(ok * 1000, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS)
+                    : "Watch not synced yet") + "\nAll analysis runs on this phone";
+        }
+        if (keyState == app.openring.core.KeyState.NO_RING && !p.demo() && p.lastSync() == 0) return "All analysis runs on this phone";
         if (p.lastSync() > 0) {
             sb.append("Synced ").append(DateUtils.getRelativeTimeSpanString(p.lastSync() * 1000, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS));
         } else {
@@ -795,17 +889,50 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
-        if (Permissions.granted(this) && app.openring.core.KeyState.syncs(keyState) && !RingManager.get(this).busy() && Prefs.of(this).lastSync() == 0)
+        // Physical activity, asked on Activity (issue #329): the job follows the answer, and a first reading comes at once
+        if (code == PhoneViews.REQUEST) {
+            app.openring.sync.PhoneJob.schedule(this);
+            if (app.openring.sync.PhoneReader.counting(this)) {
+                app.openring.sync.PhoneReader.readLater(this, "allowed", 0, new app.openring.sync.PhoneReader.Done() {
+                    @Override
+                    public void done(int result) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (!isFinishing() && !isDestroyed()) load();
+                            }
+                        });
+                    }
+                });
+            }
+            load();
+            return;
+        }
+        boolean fromSync = syncAsked;
+        syncAsked = false;
+        // asked by Sync (ring or watch) and allowed: that Sync goes on (code review of the device choice), else the first
+        // ring sync after pairing starts as before
+        boolean granted = Permissions.granted(this);
+        if (!(fromSync && granted) && granted && app.openring.core.KeyState.syncs(keyState) && !RingManager.get(this).busy() && Prefs.of(this).lastSync() == 0)
             SyncService.start(this);
         if (Prefs.of(this).demo()) return;
         // the same rule as Find my ring: a refusal after an earlier one, without explanation, means Android no longer asks (#140, #186)
         app.openring.core.PermissionAsk.Answer a = Permissions.answer(this, perms, results, quietDenial);
-        boolean fromSync = syncAsked;
-        syncAsked = false;
-        if (!fromSync) return;
-        quietDenial = a.quiet;
-        permissionBlocked = a.blocked;
-        if (a.blocked) askSettings();
+        if (fromSync) {
+            quietDenial = a.quiet;
+            permissionBlocked = a.blocked;
+        }
+        switch (app.openring.core.SyncPlan.afterAnswer(fromSync, granted, a.blocked)) {
+            case app.openring.core.SyncPlan.GO_ON:
+                permissionBlocked = quietDenial = false;
+                sync();
+                break;
+            case app.openring.core.SyncPlan.TO_SETTINGS:
+                askSettings();
+                break;
+            default:
+                break;
+        }
     }
 
     /** Setup at "Connect your ring", for a saved key this phone cannot read (issue #199); the saved key stays until a new one works. */
@@ -817,7 +944,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     void askSettings() {
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Bluetooth access")
-                .setMessage("Sync needs Bluetooth access to reach your ring. " + app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
+                .setMessage(app.openring.core.SyncPlan.accessText(app.openring.core.SyncPlan.of(false, keyState, Prefs.of(this).watchAddress() != null)) + " "
+                        + app.openring.core.PermissionAsk.settingsText(android.os.Build.VERSION.SDK_INT))
                 .setPositiveButton(app.openring.core.PermissionAsk.SETTINGS_BUTTON, new android.content.DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(android.content.DialogInterface d, int w) {
@@ -855,6 +983,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
     @Override
     public void live(boolean spo2) {
+        // without a ring by choice (issue #329): the way to add one instead
+        if (PhoneViews.noRing(this)) {
+            PhoneViews.addRingDialog(this);
+            return;
+        }
         // in demo mode Live shows made up readings and never uses the ring (issue #185)
         startActivity(new Intent(this, LiveActivity.class).putExtra("spo2", spo2));
     }
@@ -865,7 +998,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
             android.widget.Toast.makeText(this, "This is demo data. Leave the demo in Settings to sync.", android.widget.Toast.LENGTH_LONG).show();
             return;
         }
-        if (keyState == app.openring.core.KeyState.UNREADABLE) {
+        // with a watch added, Sync always syncs it, whatever the ring key's state; a usable ring syncs right after it
+        // (owner's report of 11 November, core/SyncPlan)
+        app.openring.core.SyncPlan plan = app.openring.core.SyncPlan.of(false, keyState, Prefs.of(this).watchAddress() != null);
+        if (plan.watch) {
+            syncWatch(plan.ring, plan.note);
+            return;
+        }
+        if (plan.addRing) {
+            PhoneViews.addRingDialog(this);
+            return;
+        }
+        if (plan.keyDialog) {
             new android.app.AlertDialog.Builder(this)
                     .setTitle(app.openring.core.KeyState.SYNC_TITLE)
                     .setMessage(app.openring.core.KeyState.SYNC_TEXT)
@@ -879,6 +1023,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     .show();
             return;
         }
+        syncRing();
+    }
+
+    /** The ring part of Sync: Bluetooth access first, then the ring sync as before. */
+    void syncRing() {
         if (!Permissions.granted(this)) {
             if (permissionBlocked) {
                 askSettings();
@@ -889,5 +1038,56 @@ public final class MainActivity extends Activity implements RingManager.Listener
             return;
         }
         if (!RingManager.get(this).busy()) SyncService.start(this);
+    }
+
+    /** True while the top bar's Sync runs a watch sync (issue #373). */
+    private static volatile boolean watchSyncing;
+
+    /** Sync with only a watch (issue #373): the same as Settings, Watch, Sync the watch now; the day loads again after it. */
+    void syncWatch() {
+        syncWatch(false, null);
+    }
+
+    /**
+     * The watch part of Sync: as Settings, Watch, Sync the watch now; the day loads again after it. {@code thenRing}: the
+     * ring syncs right after (core/SyncPlan); {@code note}: shown after a good watch sync instead of "Watch synced".
+     */
+    void syncWatch(final boolean thenRing, final String note) {
+        // Bluetooth access as for the ring (code review of the device choice): refused for good, the way to the app
+        // settings; else Android's dialog, and once allowed this Sync goes on (onRequestPermissionsResult)
+        if (!Permissions.granted(this)) {
+            if (permissionBlocked) {
+                askSettings();
+                return;
+            }
+            syncAsked = true;
+            Permissions.request(this);
+            return;
+        }
+        if (watchSyncing || app.openring.ble.WatchSync.running()) {
+            android.widget.Toast.makeText(this, app.openring.ble.WatchSync.ALREADY, android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        watchSyncing = true;
+        android.widget.Toast.makeText(this, "Syncing the watch, this takes up to two minutes.", android.widget.Toast.LENGTH_LONG).show();
+        final android.content.Context appCtx = getApplicationContext();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String r = app.openring.ble.WatchSync.run(appCtx);
+                watchSyncing = false;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        android.widget.Toast.makeText(appCtx, r == null ? (note != null ? note : "Watch synced") : r, android.widget.Toast.LENGTH_LONG).show();
+                        if (!isFinishing() && !isDestroyed()) {
+                            updateStatus();
+                            load();
+                            if (thenRing) syncRing();
+                        }
+                    }
+                });
+            }
+        }, "watch sync").start();
     }
 }

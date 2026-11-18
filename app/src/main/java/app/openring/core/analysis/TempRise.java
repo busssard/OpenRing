@@ -125,7 +125,7 @@ public final class TempRise {
      * (for random noise of spread s the steps' middle size is 0.954 s; the one step of a rise barely moves it). Without
      * {@link #NOISE_STEPS} steps, {@code fallback}.
      */
-    public static double noise(TreeMap<LocalDate, Double> v, double fallback) {
+    public static double noise(java.util.NavigableMap<LocalDate, Double> v, double fallback) {
         List<Double> steps = new ArrayList<Double>();
         LocalDate prev = null;
         double pv = 0;
@@ -183,7 +183,7 @@ public final class TempRise {
      * before {@code next} when the cycle is over ({@code next} not null), else up to {@code today}. {@code noise} is the
      * signal's own ({@link #noise}). Takes the first night where the rule holds and the rise lasts.
      */
-    public static Rise find(TreeMap<LocalDate, Double> v, LocalDate start, LocalDate next, LocalDate today, double noise) {
+    public static Rise find(java.util.NavigableMap<LocalDate, Double> v, LocalDate start, LocalDate next, LocalDate today, double noise) {
         LocalDate end = next != null ? next.minusDays(1) : today;
         TreeMap<LocalDate, Double> in = new TreeMap<LocalDate, Double>();
         if (v != null && !end.isBefore(start)) {
@@ -409,12 +409,25 @@ public final class TempRise {
      * by mouth ({@code mouth}, those drip left out already removed), each with its own noise. Either may be empty or null.
      */
     public static Analysis analyse(Cycles cy, TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth) {
+        return analyse(cy, ring, mouth, false);
+    }
+
+    /**
+     * As above; with {@code newest} only the cycles the estimate needs (issue #383, the backtest's replay): from the newest
+     * back until {@link #LUTEAL_WINDOW} of them give a luteal length. {@link Analysis#current}, the luteal length and its
+     * spread are the same as with every cycle; {@link Analysis#cycles} holds fewer.
+     */
+    static Analysis analyse(Cycles cy, TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, boolean newest) {
         TreeMap<LocalDate, Double> r = ring == null ? new TreeMap<LocalDate, Double>() : ring, m = mouth == null ? new TreeMap<LocalDate, Double>() : mouth;
         double rn = noise(r, NOISE_RING), mn = noise(m, NOISE_MOUTH);
         List<Result> out = new ArrayList<Result>();
-        for (Cycles.Cycle c : cy.cycles) {
+        int withLuteal = 0;
+        for (int i = cy.cycles.size() - 1; i >= 0 && !(newest && withLuteal >= LUTEAL_WINDOW); i--) {
+            Cycles.Cycle c = cy.cycles.get(i);
             if (c.leftOut) continue; // maybe a period was not logged: two cycles in one, no luteal length from it
-            out.add(new Result(c.start, c.next, find(r, c.start, c.next, cy.today, rn), find(m, c.start, c.next, cy.today, mn)));
+            Result res = new Result(c.start, c.next, find(r, c.start, c.next, cy.today, rn), find(m, c.start, c.next, cy.today, mn));
+            out.add(0, res);
+            if (res.luteal() != null && !res.disagree) withLuteal++;
         }
         Result current = null;
         if (!cy.periods.isEmpty()) {

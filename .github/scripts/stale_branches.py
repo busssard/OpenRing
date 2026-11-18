@@ -9,6 +9,7 @@ after it, on every closed pull request and once a day:
   commit of such a pull request (so nothing pushed after the merge is lost);
 * deleted: a branch whose pull requests were all closed without merging more than 14 days ago, again only at
   that pull request's commit;
+* deleted: a merged branch with later commits that are all in dev as well (ahead of dev by 0);
 * kept: main, dev, the screenshot and badge branches, every branch an open pull request comes from or goes
   into, and every branch without any pull request (work in progress of a person or a scheduled run).
 
@@ -28,9 +29,9 @@ def when(s):
     return datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
 
 
-def plan(now, branches, prs):
-    """branches: {name: sha}; prs: [{head, head_sha, base, state, merged_at, closed_at, same_repo}].
-    Returns (delete, kept) with a reason for each branch."""
+def plan(now, branches, prs, in_dev=()):
+    """branches: {name: sha}; prs: [{head, head_sha, base, state, merged_at, closed_at, same_repo}]; in_dev: branches
+    whose every commit is already in dev (GitHub's compare: ahead by 0). Returns (delete, kept) with a reason each."""
     now = when(now)
     open_refs = set()
     by_head = {}
@@ -55,7 +56,10 @@ def plan(now, branches, prs):
             if any(p["merged_at"] and p["head_sha"] == sha for p in mine):
                 delete.append((name, "merged"))
             else:
-                kept.append((name, "commits after the merge"))
+                if name in in_dev:
+                    delete.append((name, "merged, and the later commits are in dev too"))
+                else:
+                    kept.append((name, "commits after the merge"))
         else:
             last = max(when(p["closed_at"]) for p in mine)
             if (now - last).days < CLOSED_DAYS:
@@ -81,6 +85,23 @@ def pages(path):
         page += 1
 
 
+def in_dev(repo, kept):
+    """Of the branches kept for commits after their merge, those whose commits are all in dev anyway (for example a
+    branch someone merged dev into after its pull request was merged). Branches without a common history with dev
+    (from before the history was rewritten) are not compared and stay for the owner."""
+    out = set()
+    for n, why in kept:
+        if why != "commits after the merge":
+            continue
+        try:
+            c = json.loads(gh("repos/%s/compare/dev...%s" % (repo, n)))
+            if c.get("ahead_by") == 0:
+                out.add(n)
+        except subprocess.CalledProcessError:
+            pass
+    return out
+
+
 def read(repo):
     branches = {b["name"]: b["commit"]["sha"] for b in pages("repos/%s/branches" % repo)}
     prs = [{"head": p["head"]["ref"], "head_sha": p["head"]["sha"], "base": p["base"]["ref"], "state": p["state"],
@@ -93,7 +114,7 @@ def read(repo):
 def main(argv):
     if len(argv) == 3 and argv[1] == "--plan":
         data = json.load(open(argv[2]))
-        delete, kept = plan(data["now"], data["branches"], data["prs"])
+        delete, kept = plan(data["now"], data["branches"], data["prs"], set(data.get("in_dev", [])))
         for n, why in delete:
             print("delete %s (%s)" % (n, why))
         for n, why in kept:
@@ -104,7 +125,7 @@ def main(argv):
     dry = "--dry-run" in argv
     branches, prs = read(repo)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    delete, kept = plan(now, branches, prs)
+    delete, kept = plan(now, branches, prs, in_dev(repo, plan(now, branches, prs)[1]))
     failed = 0
     for n, why in delete:
         if dry:

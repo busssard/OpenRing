@@ -11,10 +11,16 @@ name: Build APK
 # A tag vX.Y made by hand (or by "Draft a new release" on GitHub) gets the signed APK attached.
 on:
   push:
-    branches: ['**']
+    # only dev (nightly) and main (stable): a pull request's branch is built once, by its pull_request run, not twice
+    # (owner, 17 November: the checks ran out of GitHub's minutes)
+    branches: [dev, main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+concurrency:
+  # a new push to a pull request stops its older run; pushes to dev and main always finish (they publish)
+  group: build-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: write
   id-token: write
@@ -125,9 +131,11 @@ jobs:
           if [ ! -s notes.md ]; then
             git fetch -q --tags origin || true
             prev=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA^" 2>/dev/null || true)
-            for f in $(git diff --name-only --diff-filter=A ${prev:-$GITHUB_SHA^} "$GITHUB_SHA" -- 'changes/[0-9]*.md' | sort); do
-              cat "$f" >> notes.md; echo >> notes.md
-            done
+            # one short line per change (owner, 17 November), the full notes linked
+            python3 .github/scripts/release_notes.py $(git diff --name-only --diff-filter=A ${prev:-$GITHUB_SHA^} "$GITHUB_SHA" -- 'changes/[0-9]*.md' | sort) > notes.md
+            if [ -s notes.md ] && [ -n "$prev" ]; then
+              printf '\nEvery change in full: [%s to %s](https://github.com/%s/compare/%s...%s), the files in `changes/`.\n' "$prev" "$tag" "$GITHUB_REPOSITORY" "$prev" "$GITHUB_SHA" >> notes.md
+            fi
           fi
           [ -s notes.md ] || echo "Open Ring $v" > notes.md
           sha=$(sha256sum "$APK" | cut -d' ' -f1)
@@ -165,11 +173,8 @@ jobs:
             echo "Nightly build of \`dev\` at commit [\`${GITHUB_SHA::7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}), version $v nightly. Not a stable release: it has every merged pull request, tested only by CI so far."
             echo
             echo "### On dev, not yet in a stable release"
-            n=0
-            for f in $(git diff --name-only --diff-filter=A origin/main "$GITHUB_SHA" -- 'changes/[0-9]*.md' 2>/dev/null | sort); do
-              cat "$f"; echo; n=$((n + 1))
-            done
-            [ "$n" = 0 ] && echo "Nothing users notice since the last stable release."
+            files=$(git diff --name-only --diff-filter=A origin/main "$GITHUB_SHA" -- 'changes/[0-9]*.md' 2>/dev/null | sort)
+            if [ -n "$files" ]; then python3 .github/scripts/release_notes.py $files; else echo "Nothing users notice since the last stable release."; fi
             echo
             echo "SHA-256 of the APK: \`$(sha256sum "$APK" | cut -d' ' -f1)\`"
           } > nightly.md

@@ -32,6 +32,11 @@ public final class SleepHistory {
      * rules differ (Calm and another level; Detailed and Balanced count the same wake ups).
      */
     public int stageDetail = StageFilter.DETAILED;
+    /**
+     * Some night of the period comes from a watch that does not tell REM from light sleep, so the screen shows "Light and
+     * REM" as one stage ({@link WatchHistory#load}); false for the ring's nights.
+     */
+    public boolean lightRem;
 
     /**
      * The orange line after a trip (issue #22): {@code night}'s zone differs from the zone of the night

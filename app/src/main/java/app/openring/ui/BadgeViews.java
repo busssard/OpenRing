@@ -39,6 +39,88 @@ final class BadgeViews {
         }
     }
 
+    /**
+     * The colour of a badge's group (owner's wish of 12 November), the colour of its tab: Sleep, Readiness, Activity, Body
+     * (heart), Screen and Period as on their screens, a neutral grey for anything else.
+     */
+    static int color(int kind) {
+        switch (Badges.group(kind)) {
+            case Badges.SLEEP:
+                return Ui.SLEEP;
+            case Badges.READINESS:
+                return Ui.READY;
+            case Badges.ACTIVITY:
+                return Ui.ACTIVE;
+            case Badges.BODY:
+                return Ui.HEART;
+            case Badges.SCREEN:
+                return Ui.OXY;
+            case Badges.PERIOD:
+                return Ui.PERIOD;
+            default:
+                return Ui.TEXT_2;
+        }
+    }
+
+    /** How strongly a badge shows its colour: earned in the last 7 days, earlier, or not yet (the Badges page's list). */
+    static final int RECENT = 2, EARLIER = 1, NOT_YET = 0;
+
+    /**
+     * A badge's surface, the same on Today and the Badges page: the raised card colour with a thin frame in the badge's
+     * colour, full for a badge of the last 7 days and paler for older ones. {@code touched}: the one whose numbers are
+     * read out under the chips, with a faint wash of its colour and a slightly thicker frame.
+     */
+    static android.graphics.drawable.GradientDrawable frame(Context c, int kind, int level, boolean touched) {
+        int col = color(kind);
+        android.graphics.drawable.GradientDrawable bg = Ui.rounded(touched ? Ui.blend(Ui.CARD_HI, col, 0.16f) : Ui.CARD_HI, Ui.dp(c, 12));
+        float a = level == RECENT ? 0.9f : level == EARLIER ? 0.45f : 0.2f;
+        bg.setStroke(Ui.dp(c, touched ? 2f : 1.5f), touched ? col : Ui.alpha(col, a));
+        return bg;
+    }
+
+    /** A badge's title line: a small disc and the name in the badge's colour (paler when not earned yet). */
+    static LinearLayout title(Context c, int kind, float sp, int level) {
+        int col = color(kind);
+        LinearLayout line = Ui.hbox(c);
+        View disc = new View(c);
+        disc.setBackground(Ui.rounded(level == NOT_YET ? Ui.alpha(col, 0.4f) : col, Ui.dp(c, 4)));
+        LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(Ui.dp(c, 8), Ui.dp(c, 8));
+        dl.setMargins(0, 0, Ui.dp(c, 7), 0);
+        line.addView(disc, dl);
+        TextView name = Ui.text(c, Badges.NAMES[kind], sp, level == NOT_YET ? Ui.blend(col, Ui.TEXT_2, 0.5f) : col, Ui.MEDIUM);
+        // two lines at most, so a long name never makes one badge bigger than the rest (owner's wish of 17 November)
+        name.setMaxLines(2);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        line.addView(name, Ui.weight(1));
+        return line;
+    }
+
+    /**
+     * One badge chip, the same on Today and the Badges page (owner's wish of 17 November): the title line, then {@code when}
+     * (the date, or how often) with New after it. Its frame is set by the caller; an {@link EqualGrid} gives all chips one size.
+     */
+    static LinearLayout chip(Context c, int kind, int level, String when, boolean fresh) {
+        LinearLayout chip = Ui.vbox(c);
+        int p = Ui.dp(c, 8);
+        chip.setPadding(Ui.dp(c, 10), p, Ui.dp(c, 10), p);
+        chip.addView(title(c, kind, 14, level), Ui.matchWrap());
+        LinearLayout line = Ui.hbox(c);
+        TextView w = Ui.text(c, when, 12, level == NOT_YET ? Ui.TEXT_3 : Ui.TEXT_2, Ui.REGULAR);
+        w.setMaxLines(2);
+        w.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        line.addView(w, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        if (fresh) {
+            TextView n = Ui.text(c, Explain.BADGES_NEW, 12, Ui.GOOD, Ui.MEDIUM);
+            n.setPadding(Ui.dp(c, 8), 0, 0, 0);
+            line.addView(n);
+        }
+        chip.addView(line, Ui.matchWrap());
+        chip.setBackground(frame(c, kind, level, false));
+        chip.setClickable(true);
+        chip.setFocusable(true);
+        return chip;
+    }
+
     /** Reads kv {@link #SEEN}; null when never set or unreadable. Call off the main thread. */
     static LocalDate seen(app.openring.data.Db db) {
         try {
@@ -94,45 +176,28 @@ final class BadgeViews {
         readout.setMinLines(2);
         final LinearLayout[] chips = new LinearLayout[list.size()];
         final int[] selected = {0};
-        LinearLayout line = null;
+        // two columns of chips of one size (owner's wish of 17 November): a long name takes two lines at most and makes every
+        // chip that tall, never one chip bigger than the others
+        EqualGrid grid = new EqualGrid(c, 2, 8);
         for (int i = 0; i < list.size(); i++) {
             final Badges.Badge b = list.get(i);
-            if (i % 2 == 0) {
-                line = Ui.hbox(c);
-                LinearLayout.LayoutParams ll = Ui.matchWrap();
-                ll.setMargins(0, Ui.dp(c, 8), 0, 0);
-                card.addView(line, ll);
-            }
-            LinearLayout chip = Ui.vbox(c);
-            int p = Ui.dp(c, 8);
-            chip.setPadding(Ui.dp(c, 10), p, Ui.dp(c, 10), p);
-            chip.addView(Ui.text(c, Badges.NAMES[b.kind], 14, Ui.TEXT, Ui.MEDIUM));
-            LinearLayout when = Ui.hbox(c);
-            when.addView(Ui.text(c, Explain.badgeWhen(b.date, today), 12, Ui.TEXT_2, Ui.REGULAR));
-            if (Badges.isNew(b, d.badgesSeen)) {
-                TextView fresh = Ui.text(c, Explain.BADGES_NEW, 12, Ui.GOOD, Ui.MEDIUM);
-                fresh.setPadding(Ui.dp(c, 8), 0, 0, 0);
-                when.addView(fresh);
-            }
-            chip.addView(when);
-            chip.setClickable(true);
-            chip.setFocusable(true);
+            LinearLayout chip = chip(c, b.kind, Badges.thisWeek(b.date, today) ? RECENT : EARLIER, Explain.badgeWhen(b.date, today),
+                    Badges.isNew(b, d.badgesSeen));
             chip.setContentDescription(Badges.NAMES[b.kind] + ", " + Explain.badgeWhen(b.date, today) + ". Shows its numbers below.");
             final int idx = i;
             chip.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     selected[0] = idx;
-                    select(c, chips, idx, readout, list.get(idx));
+                    select(c, chips, idx, readout, list, today);
                 }
             });
             chips[i] = chip;
-            LinearLayout.LayoutParams cl = Ui.weight(1);
-            cl.setMargins(i % 2 == 0 ? 0 : Ui.dp(c, 4), 0, i % 2 == 0 ? Ui.dp(c, 4) : 0, 0);
-            line.addView(chip, cl);
+            grid.addView(chip);
         }
-        // an odd count keeps the last chip half wide
-        if (list.size() % 2 == 1 && line != null) line.addView(new View(c), Ui.weight(1));
+        LinearLayout.LayoutParams gl = Ui.matchWrap();
+        gl.setMargins(0, Ui.dp(c, 8), 0, 0);
+        card.addView(grid, gl);
         LinearLayout.LayoutParams rl = Ui.matchWrap();
         rl.setMargins(0, Ui.dp(c, 10), 0, 0);
         card.addView(readout, rl);
@@ -167,17 +232,17 @@ final class BadgeViews {
         LinearLayout.LayoutParams acl = Ui.matchWrap();
         acl.setMargins(0, Ui.dp(c, 8), 0, 0);
         card.addView(actions, acl);
-        select(c, chips, 0, readout, list.get(0));
+        select(c, chips, 0, readout, list, today);
         return card;
     }
 
     /** Marks chip {@code idx} as touched and shows its badge's full text with the numbers under the chips. */
-    static void select(Context c, LinearLayout[] chips, int idx, TextView readout, Badges.Badge b) {
+    static void select(Context c, LinearLayout[] chips, int idx, TextView readout, List<Badges.Badge> list, LocalDate today) {
         for (int i = 0; i < chips.length; i++) {
-            android.graphics.drawable.GradientDrawable bg = Ui.rounded(Ui.CARD_HI, Ui.dp(c, 12));
-            if (i == idx) bg.setStroke(Ui.dp(c, 1.5f), Ui.GOOD);
-            chips[i].setBackground(bg);
+            Badges.Badge b = list.get(i);
+            chips[i].setBackground(frame(c, b.kind, Badges.thisWeek(b.date, today) ? RECENT : EARLIER, i == idx));
         }
+        Badges.Badge b = list.get(idx);
         readout.setText(Badges.NAMES[b.kind] + ": " + b.text);
     }
 }

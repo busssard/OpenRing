@@ -1,0 +1,3 @@
+* Period calendar: page forward month by month as far as you like. Every expected period, ovulation and fertile window is shown, with ranges that honestly grow wider the further ahead they are.
+* The Period card names the most likely day: "Next period expected on Thu 3 Dec, give or take 3 days", and the same for ovulation. In the calendar that day has a dashed ring and the range is darkest there.
+* One temperature chart on Body: with the period tracker on, the night temperature chart shows your period days, the measured ovulation and the expected windows. Touch it to read the day, temperature, cycle day and phase. The second chart at the end of Body is gone.

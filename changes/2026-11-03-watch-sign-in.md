@@ -1,2 +1,2 @@
 * The Withings Steel HR asks for a sign in at the start of every sync. Open Ring now answers it, so the sync goes on to the battery, the clock and your data.
-* If the watch does not accept the sign in, the sync stops with a plain message and nothing is changed on the watch. Settings, Help, Data check and log then says which step stopped.
+* If the watch does not accept the sign in, the sync stops with a plain message (when it refuses right at the start, nothing is changed on the watch; when it refuses later in the sync, what arrived until then is stored). Settings, Help, Data check and log then says which step stopped.

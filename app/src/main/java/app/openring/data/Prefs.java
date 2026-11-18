@@ -104,6 +104,25 @@ public final class Prefs {
     public void setPeriodRemindDays(int d) { sp.edit().putInt("period_remind_days", app.openring.core.PeriodRemind.validDays(d) ? d : 0).apply(); }
     public int periodRemindMinute() { return app.openring.core.PeriodRemind.minute(sp.getInt("period_remind_min", app.openring.core.PeriodRemind.DEFAULT_MINUTE)); }
     public void setPeriodRemindMinute(int m) { sp.edit().putInt("period_remind_min", app.openring.core.PeriodRemind.minute(m)).apply(); }
+    /**
+     * Settings, Period tracker, Prediction (issue #383): {@code cycleforecast.Methods.BEST} (0, the default: the method the
+     * backtest on the person's own cycles found closest) or a method's id. Display only, the log never changes; in a backup.
+     * Demo and real share it (it is how the estimate is shown, not data).
+     */
+    public int periodMethod() {
+        int m = sp.getInt("period_method", app.openring.core.analysis.cycleforecast.Methods.BEST);
+        return app.openring.core.analysis.cycleforecast.Methods.valid(m) ? m : app.openring.core.analysis.cycleforecast.Methods.BEST;
+    }
+    public void setPeriodMethod(int m) {
+        sp.edit().putInt("period_method", app.openring.core.analysis.cycleforecast.Methods.valid(m) ? m : app.openring.core.analysis.cycleforecast.Methods.BEST).apply();
+    }
+    /**
+     * The "Your day" lines shown lately ({@code core/DayLine.Memory}): display memory only, so a line is not shown again within
+     * 30 days. Demo mode keeps its own; not in backups.
+     */
+    public String dayLineSeen() { return sp.getString(demo() ? "day_line_seen_demo" : "day_line_seen", null); }
+    public void setDayLineSeen(String s) { sp.edit().putString(demo() ? "day_line_seen_demo" : "day_line_seen", s).apply(); }
+
     /** The cycle already reminded of (the start of its period), so one cycle never gets two; not in a backup. */
     public String periodRemindSent() { return sp.getString("period_remind_sent", null); }
     /** Written to disk before it returns, before the notification is posted, so a stop in between never sends twice. */
@@ -231,6 +250,85 @@ public final class Prefs {
      */
     public int mainDevice() { return app.openring.core.MainDevice.valid(sp.getInt("main_device", app.openring.core.MainDevice.RING)); }
     public void setMainDevice(int d) { sp.edit().putInt("main_device", app.openring.core.MainDevice.valid(d)).apply(); }
+    /**
+     * The main device as stored, -1 when the person never picked one (issue #329: then {@code MainDevice.defaultMain} picks
+     * the ring, the watch or the phone by what is there). A stored phone (2) comes back as 2; {@code MainDevice.shown} reads it
+     * as the ring while the phone counts no steps.
+     */
+    public int mainDeviceStored() { return sp.contains("main_device") ? app.openring.core.MainDevice.valid(sp.getInt("main_device", 0)) : -1; }
+
+    // ---- the phone's own steps (issue #329, phase 1b); not in the backup: they belong to this phone ----
+    /** The person chose "Use without a ring" in Setup ({@code core/KeyState.NO_RING} while no key is stored). */
+    public boolean noRing() { return sp.getBoolean("no_ring", false); }
+    public void setNoRing(boolean b) { sp.edit().putBoolean("no_ring", b).commit(); }
+    /**
+     * Used without a ring key on purpose: the choice without a ring, or a watch added ({@code core/Start.noRing}, the rule
+     * {@link #keyState} counts with since #373). The one rule wherever a missing key is fine: backups, automatic backups,
+     * going back to a copy and their texts in Settings (code review of the device choice).
+     */
+    public boolean withoutRing() { return app.openring.core.Start.noRing(noRing(), watchAddress() != null); }
+    /**
+     * The path picked on Getting started (issue #373, {@code core/Start}): none yet, a ring, a watch or just this phone. The
+     * tap stores only this choice; {@link #setNoRing} comes when the watch or the phone path is done (after About you,
+     * {@code SetupActivity.finishWithout}). A setup left before that (during Bluetooth access or About you) shows Getting
+     * started again, where the person picks once more. In the backup; an older backup without it keeps the phone's.
+     */
+    public int startChoice() { return app.openring.core.Start.valid(sp.getInt("start_choice", app.openring.core.Start.NONE)); }
+    public void setStartChoice(int c) { sp.edit().putInt("start_choice", app.openring.core.Start.valid(c)).commit(); }
+    /**
+     * This phone's own id for its step readings (issue #329): random, made once and written to disk before it is used, never
+     * in a backup and never set by a restore (no restore step names this key), so another phone's readings brought by a
+     * restore keep their own id and are never mixed with this phone's. Not ANDROID_ID.
+     */
+    public String phoneDevice() {
+        synchronized (NO_READING_LOCK) {
+            String id = sp.getString("phone_device", null);
+            if (id != null) return id;
+            id = newPhoneDevice();
+            sp.edit().putString("phone_device", id).commit();
+            return id;
+        }
+    }
+
+    /**
+     * This phone's id for a reading now ({@code boot} the boot key, {@code elapsedMs} the time since the start, {@code wall}
+     * unix seconds), with the phone's state noted as the mark (code review of the device choice). Android's phone to phone
+     * transfer copies these settings to a new phone, also with {@code allowBackup} off; the mark then does not fit
+     * ({@code core/PhoneSteps.samePhone}) and the new phone gets its own id, so its readings are never differenced against the
+     * old phone's (which stay as they are, under the old id). Written to disk before it is returned.
+     */
+    public String phoneDevice(long boot, long elapsedMs, double wall) {
+        synchronized (NO_READING_LOCK) {
+            String id = sp.getString("phone_device", null);
+            boolean marked = sp.contains("phone_device_wall");
+            if (id == null || !app.openring.core.PhoneSteps.samePhone(sp.getLong("phone_device_boot", 0), sp.getLong("phone_device_elapsed", 0),
+                    marked ? sp.getLong("phone_device_wall", 0) / 1000.0 : 0, boot, elapsedMs, wall)) id = newPhoneDevice();
+            sp.edit().putString("phone_device", id).putLong("phone_device_boot", boot).putLong("phone_device_elapsed", elapsedMs)
+                    .putLong("phone_device_wall", Math.round(wall * 1000)).commit();
+            return id;
+        }
+    }
+
+    /** The stored id as it is, null before the first reading (for the log line when it changes). */
+    public String phoneDeviceStored() { return sp.getString("phone_device", null); }
+
+    private static String newPhoneDevice() {
+        byte[] b = new byte[8];
+        new java.security.SecureRandom().nextBytes(b);
+        return app.openring.core.Hex.encode(b);
+    }
+    /** Physical activity was asked for once (a later "not allowed" is then a refusal, not "not asked yet"). */
+    public boolean phoneAsked() { return sp.getBoolean("phone_asked", false); }
+    public void setPhoneAsked() { sp.edit().putBoolean("phone_asked", true).apply(); }
+    /** How often the step sensor sent no value in time, and the last time (unix seconds): for the Data check only. */
+    public int phoneNoReading() { return sp.getInt("phone_no_reading", 0); }
+    public long phoneNoReadingAt() { return sp.getLong("phone_no_reading_at", 0); }
+    public void notePhoneNoReading(long now) {
+        synchronized (NO_READING_LOCK) {
+            sp.edit().putInt("phone_no_reading", phoneNoReading() + 1).putLong("phone_no_reading_at", now).apply();
+        }
+    }
+    private static final Object NO_READING_LOCK = new Object();
     // ---- the watch's setup (issue #251, watch setup): what the watch is told, in the backup ----
     /** When the first setup was sent completely (unix seconds), 0 never. */
     public long watchSetupAt() { return sp.getLong("watch_setup_at", 0); }
@@ -386,7 +484,8 @@ public final class Prefs {
      * transfer the Keystore lock stays behind, issue #199). Reads the key once; never changes what is stored.
      */
     public int keyState() {
-        return app.openring.core.KeyState.of(hasKey(), loadKey() != null);
+        // an added watch counts as no ring while no key is stored (issue #373): a watch only phone never opens the ring setup
+        return app.openring.core.KeyState.of(hasKey(), loadKey() != null, withoutRing());
     }
 
     /**
@@ -396,7 +495,7 @@ public final class Prefs {
      * {@code KeyState.opensSetup} or {@code KeyState.syncs}, which need {@link #keyState}.
      */
     public int ringState() {
-        return app.openring.core.KeyState.ofStored(hasKey());
+        return app.openring.core.KeyState.ofStored(hasKey(), withoutRing());
     }
 
     /** Why the last stored key could not be read (exception and message, for the Bluetooth log), null when none failed. */
@@ -450,7 +549,8 @@ public final class Prefs {
     public boolean pairDone(byte[] key16, String address, String serial, String message, boolean dropPending) {
         SharedPreferences.Editor e = put(sp.edit(), "key_enc", "key_iv", encrypt(key16));
         if (address != null) e.putString("address", address);
-        e.putString("serial", serial).putBoolean("setup_done", true).putString("pair_unseen", message);
+        // a ring paired after "Use without a ring" (issue #329): the key wins anyway, the choice is no longer needed
+        e.putString("serial", serial).putBoolean("setup_done", true).putString("pair_unseen", message).remove("no_ring");
         if (dropPending) e.remove("pending_key_enc").remove("pending_key_iv").remove("pending_key_serial");
         return e.commit();
     }

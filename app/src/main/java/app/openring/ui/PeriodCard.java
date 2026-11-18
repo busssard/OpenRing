@@ -41,6 +41,8 @@ final class PeriodCard {
     static boolean editPending;
     /** Screen test (extra {@code period_ask}, demo mode only): show "Have your periods stopped?" until it is answered. */
     static boolean askPending;
+    /** Screen test (extra {@code period_month}, demo mode only): the calendar opens this many months after the shown day's month. */
+    static int monthsPending;
     /** The card's How it works is open, kept while the page is rebuilt (extra {@code period_how} opens it for the screen test). */
     static final boolean[] howOpen = {false};
     /** The last change, until Undo, the next change or 10 minutes. */
@@ -88,7 +90,8 @@ final class PeriodCard {
         status(c, card, cy, loc);
         ask(c, card, d, nav);
         buttons(c, card, cy, d, nav);
-        String next = cy.nextLine();
+        // the most likely day itself, then the range around it (owner's feedback of 11 November)
+        String next = cy.dayLine(loc);
         if (next != null) {
             card.addView(Ui.gap(c, 14));
             card.addView(Ui.text(c, next, 16, Ui.TEXT, Ui.MEDIUM));
@@ -283,7 +286,7 @@ final class PeriodCard {
         status(c, card, cy, loc);
         ask(c, card, d, nav);
         buttons(c, card, cy, d, nav);
-        String next = cy.nextLine();
+        String next = cy.dayLine(loc);
         if (next != null) {
             card.addView(Ui.gap(c, 12));
             card.addView(Ui.text(c, next, 15, Ui.TEXT, Ui.MEDIUM));
@@ -306,6 +309,10 @@ final class PeriodCard {
             month = YearMonth.from(d.date);
             monthFor = d.date;
         }
+        if (monthsPending > 0) {
+            month = YearMonth.from(d.date).plusMonths(monthsPending);
+            monthsPending = 0;
+        }
         final TextView title = Ui.text(c, "", 15, Ui.TEXT, Ui.MEDIUM);
         title.setGravity(Gravity.CENTER);
         final TextView readout = Ui.text(c, "", 12, Ui.TEXT_2, Ui.REGULAR);
@@ -321,7 +328,7 @@ final class PeriodCard {
                 edit(c, cy, day, nav);
             }
         });
-        final String hint = "Touch and slide across the days to read them. Tap a day to change it.";
+        final String hint = "Touch and slide across the days to read them. Tap a day to change it. The arrows page through your history and the months ahead.";
         readout.setText(hint);
         LinearLayout head = Ui.hbox(c);
         TextView prev = Ui.smallButton(c, "‹", Ui.TEXT_2), next = Ui.smallButton(c, "›", Ui.TEXT_2);

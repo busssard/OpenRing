@@ -11,6 +11,15 @@ public final class Explain {
             + "and adds your recent sleep and activity. 85 or more: ready for a demanding day. 70 to 84: good, keep a normal pace. "
             + "Below 70: your body is asking for rest.";
 
+    /** Under "Why this line" on Today's Your day card (owner's wish of 16 November, {@code core/DayLine}). */
+    public static final String DAY_LINE = "The sentence above the line gives the facts of the day it is based on. The line itself "
+            + "is one of more than 150 short thoughts written for Open Ring, one list for each case. It is picked by the date, so it stays "
+            + "the same all day and changes tomorrow, and none comes back within 30 days. Signs of strain means your night temperature "
+            + "is at least 0.5 °C above your usual, with your resting heart rate 3 bpm above it or your HRV 15 % under it. That is a "
+            + "reason to take it easy, not a diagnosis. Time to move means yesterday under 60 % of your step goal, the last 3 days "
+            + "under 70 % on average, or today after 15:00 under half of it; never after hard training, with readiness under 50 or "
+            + "on a period day. These lines are encouragement, not medical advice.";
+
     public static final String SLEEP = "The sleep score sums up how long and how well you slept: total sleep, how much of the "
             + "time in bed you were asleep, how calm the night was, your deep and REM sleep, how fast you fell asleep and whether "
             + "your sleep fits your body clock.";
@@ -155,10 +164,29 @@ public final class Explain {
                 + "(about 2.4 days in a large study), times 1.28 for about 4 in 5. At least 3 days.";
     }
 
+    /** How it works on the Period card: why one day is the most likely and the days around it less so. */
+    public static final String PERIOD_LIKELY = "Most likely day: the expected day itself. The days around it are less likely the further "
+            + "they lie from it, as in a normal spread, so the calendar shades the range darkest on that day and marks it with a "
+            + "dashed ring. The same for the ovulation day.";
+
+    /**
+     * How it works on the Period card: the months ahead, with the ranges of the next cycle, six and twelve cycles ahead
+     * ({@code Cycles.ahead}), worked out from the person's own numbers.
+     */
+    public static String periodAhead(app.openring.core.analysis.Cycles cy) {
+        java.util.List<app.openring.core.analysis.Cycles.Ahead> a = cy.ahead(cy.today.plusDays(13L * Math.max(1, cy.step)));
+        String r1 = a.get(0).range + (a.get(0).range == 1 ? " day" : " days");
+        String more = a.size() >= 12 ? ", " + a.get(5).range + " six cycles ahead and " + a.get(11).range + " twelve cycles ahead" : "";
+        return "Months ahead: each later period is one expected cycle (" + cy.step + " days) after the one before, counted from today "
+                + "while the next one is due. Its range grows with the square root of how many cycles ahead it is, from the same "
+                + "spread, because the variation of each cycle adds up: give or take " + r1 + " for the next" + more
+                + ". Page with the arrows above the calendar.";
+    }
+
     /** Under "Your cycles vary by about N days". */
     public static String periodVary(int cycles) {
         return "Vary by: the standard deviation of " + yourCycles(cycles) + ", how far a cycle usually lies from their average. "
-                + "Cycles far from the rest (more than 10 days from the middle value) are left out, maybe a period was not logged.";
+                + "Cycles far from the rest (more than 10 days from the middle value) are left out, maybe a period was not logged, unless half of them or more are.";
     }
 
     // ------------------------------------------------- period tracker, "Your cycles" (issue #252, phase 1a2)
@@ -202,14 +230,17 @@ public final class Explain {
     }
 
     /** Under the night temperature line, in view; the rest is in its How it works ({@link #periodTempHow}). */
-    public static final String PERIOD_TEMP_LINE = "Your ring's skin temperature each night, compared with your usual. Touch the line to read a night.";
+    public static final String PERIOD_TEMP_LINE = "Each night's skin temperature compared with your usual, your cycle behind it. "
+            + "Touch to read a day and its phase.";
 
     /** Under the night temperature line (the plan's text, with the marked rise of phase 2). */
     public static final String PERIOD_TEMP = "Your ring's nightly skin temperature compared with your usual. In many people it rises a little "
             + "after ovulation and stays higher until the next period. Where the app found that rise, the dashed line is the baseline "
             + "(the highest of the 6 nights before), the ringed dots are the high nights and the thin line the likely ovulation, the day "
-            + "before the first high night. Red bands are period days, green the ovulation range of the estimate. Nights you left out are "
-            + "not shown, and illness, alcohol, travel or a warm room move it too. Touch the line to read a night.";
+            + "before the first high night. Red bands are period days, green the ovulation range of the estimate and light red the "
+            + "expected period, both darkest on their most likely day; the dashed red line is the expected first day and the green "
+            + "bar at the bottom the likely fertile days. The chart goes on to the end of the expected period, a thin line marks "
+            + "today. Nights you left out are not shown, and illness, alcohol, travel or a warm room move it too.";
 
     // ------------------------------------------ period tracker, ovulation from the temperature (issue #252, phase 2)
 
@@ -261,16 +292,114 @@ public final class Explain {
             return "Ovulation day: give or take " + cy.ovulationRange + " days, from how much " + yourCycles(cy.used.size()) + " vary, together with how much your own "
                     + "time from ovulation to the period varies, times 1.28 for about 4 in 5. At least 3 days.";
         }
+        if (cy.methodId == app.openring.core.analysis.cycleforecast.Methods.DRIP && !cy.forecast.fallback) {
+            return "Ovulation day: give or take " + cy.ovulationRange + " days, from drip style's range for the period (" + cy.range + (cy.range == 1 ? " day" : " days")
+                    + " each side) together with how much the time from ovulation to the next period varies (about 2.4 days in a large study). At least 3 days.";
+        }
         return periodOvulation(cy.used.size(), cy.ovulationRange);
     }
 
     /** Under "Expected ...", for whichever way the estimate was made. */
     public static String periodRange(app.openring.core.analysis.Cycles cy) {
+        if (cy.method != app.openring.core.analysis.Cycles.MEASURED && cy.methodId != app.openring.core.analysis.cycleforecast.Methods.OPEN_RING) return periodMethodRange(cy);
         if (cy.method != app.openring.core.analysis.Cycles.MEASURED) return periodRange(cy.used.size(), cy.length, cy.range, cy.sd);
         boolean own = cy.rise.ownLuteal();
         return "Next period: measured, the ovulation day plus " + cy.luteal + " days, " + (own ? "your own time from ovulation to the period" : "the usual time from ovulation to the period")
                 + ". Give or take " + cy.range + (cy.range == 1 ? " day" : " days") + ": how much " + (own ? "your own time varies" : "that time varies (about 2.4 days in a large study)")
                 + " together with the error of the measured day, times 1.28 for about 4 in 5. The calendar estimate from your typical cycle is shown for comparison.";
+    }
+
+    // ------------------------------------------------------------- period prediction methods (issue #383)
+
+    /** Settings, under Prediction. */
+    public static final String PERIOD_METHOD_SETTINGS = "How the next period and the months ahead are worked out. Only how it is shown: "
+            + "your log stays as it is. How close each method was on your own cycles is on Body, card How close the estimates were.";
+
+    /**
+     * Under "Expected ..." for a method other than Open Ring: the last start plus its expected length, its range, and how
+     * it did on the person's own cycles.
+     */
+    public static String periodMethodRange(app.openring.core.analysis.Cycles cy) {
+        StringBuilder sb = new StringBuilder("Next period: your last start plus ").append(cy.step).append(" days from ")
+                .append(app.openring.core.analysis.cycleforecast.Methods.name(cy.methodId)).append(cy.choice == app.openring.core.analysis.cycleforecast.Methods.BEST ? " (picked for you)" : "").append(". ");
+        if (cy.forecast.fallback) sb.append("With few cycles of your own it uses Open Ring's rule for now. ");
+        else sb.append("Give or take ").append(cy.range).append(cy.range == 1 ? " day: " : " days: ").append(app.openring.core.analysis.cycleforecast.Methods.rangeWords(cy.methodId)).append(". ");
+        app.openring.core.analysis.cycleforecast.Backtest.Score sc = cy.backtest().of(cy.methodId);
+        if (sc != null && sc.n > 0) sb.append(backtestWords(sc));
+        return sb.toString().trim();
+    }
+
+    /** "On 33 of your past periods it was 1.3 days off on average, and the start fell in its range 31 times." */
+    static String backtestWords(app.openring.core.analysis.cycleforecast.Backtest.Score sc) {
+        return "On " + yourPeriods(sc.n) + " it was " + fmt1(sc.mae) + " days off on average, and the start fell in its range " + times(sc.hits) + ".";
+    }
+
+    static String yourPeriods(int n) {
+        return n == 1 ? "1 of your past periods" : n + " of your past periods";
+    }
+
+    static String times(int n) {
+        return n == 1 ? "once" : n + " times";
+    }
+
+    static String fmt1(double v) {
+        return String.format(java.util.Locale.getDefault(), "%.1f", v);
+    }
+
+    /** Settings, under the choices: which method Best for you uses now and why (from the backtest of the open log). */
+    public static String periodBestNow(app.openring.core.analysis.Cycles cy) {
+        app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
+        int best = bt.best();
+        String s;
+        if (bt.scored() < app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED) {
+            s = "Best for you uses Open Ring until " + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED
+                    + " of your periods can be checked (from the 5th period on; now " + bt.scored() + ").";
+        } else {
+            app.openring.core.analysis.cycleforecast.Backtest.Score b = bt.of(best), o = bt.of(app.openring.core.analysis.cycleforecast.Methods.OPEN_RING);
+            s = "Best for you uses " + app.openring.core.analysis.cycleforecast.Methods.name(best) + " now: " + fmt1(b.mae) + " days off on average over " + yourPeriods(b.n)
+                    + (best == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING ? "." : ", Open Ring " + fmt1(o.mae) + ".");
+        }
+        if (cy.rise != null && !cy.riseUsed && app.openring.core.analysis.cycleforecast.Methods.usesTemperature(cy.methodId)) s += " " + cy.riseOff();
+        return s;
+    }
+
+    /** Under the rows of "How close the estimates were". */
+    public static final String PERIOD_ACC_ROWS = "Days off: how far each method's expected day was from the day you logged, on average. "
+            + "In range: how often the start fell inside the range it showed. A wider range is hit more often, so read both.";
+
+    /** Under the chart of each period's error. */
+    public static final String PERIOD_ACC_DOTS = "Each dot is one period: above the line it came later than this method expected, below earlier. "
+            + "The band is its average range. Touch a dot to read it.";
+
+    /** Under the temperature numbers. */
+    public static String periodAccTemp(app.openring.core.analysis.RiseBacktest rb) {
+        return "From the first day the rise showed in each of " + (rb.n() == 1 ? "1 past cycle" : rb.n() + " past cycles")
+                + ", compared with the calendar on that same day. In range: temperature " + rb.hits + ", calendar " + rb.calendarHits + " of " + rb.n() + ".";
+    }
+
+    /** How it works of "How close the estimates were": the test, the pick, each method, the temperature, the research. */
+    public static java.util.List<String> periodAccuracyHow() {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        out.add("How it is tested: for each of your periods from the 5th on, every method gets only the cycles before it, as if it were "
+                + "that day, and says when the period will start. The difference to the day you logged is its error. Nothing after that "
+                + "day is used. A cycle more than 10 days from the middle value of the ones before it (probably a period that was not "
+                + "logged) is not counted, every method misses those.");
+        out.add("Best for you: the method with the smallest average error, on a tie Open Ring. Until " + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED
+                + " periods can be checked it stays with Open Ring. A method ahead by a fraction of a day may just have been lucky, so look at "
+                + "the numbers too. You can pick another in Settings, Period tracker, Prediction.");
+        for (int id : app.openring.core.analysis.cycleforecast.Methods.CHOICES) if (id != app.openring.core.analysis.cycleforecast.Methods.BEST) out.add(app.openring.core.analysis.cycleforecast.Methods.how(id));
+        out.add("With your temperature: each past cycle with a rise is replayed with only the log and the temperatures up to the first day the "
+                + "app would have shown the estimate from it (the ovulation day plus your own days to the period), and compared with the "
+                + "calendar on that same day. It is used with every method but drip style. Best for you leaves it out only when at least "
+                + app.openring.core.analysis.RiseBacktest.MIN + " cycles say it was further off.");
+        out.add("From research: one person's cycles vary by about 2.6 days on average (Bull and others, 2019, 612,613 cycles), so even a perfect "
+                + "method misses by about 2 days for most people. In large app data, neural networks were no better than the average of the "
+                + "person's own cycles (Li, Urteaga and others, Clue data), and a temperature rise found ovulation within about 1.3 days, the "
+                + "calendar 3.4 (an Oura study, 2025). With about 12 cycles a year, machine learning on one person mostly learns noise: a small "
+                + "learned model (ridge regression on the last 3 cycles) was tried on made up histories and was never more than 0.03 days better "
+                + "than Follows your last cycle, so it is not offered.");
+        out.add(app.openring.core.analysis.Cycles.NOT_ADVICE);
+        return out;
     }
 
     /** Settings, under "Remind me before my period". */
@@ -335,8 +464,8 @@ public final class Explain {
     // ------------------------------------- period tracker, "How it works" (issue #252, owner's feedback of 3 November)
 
     /** How it works, Your cycles: the dot charts' lines and bands. */
-    public static final String PERIOD_DOTS_CYCLES = "Cycle length chart: each dot sits at the day its cycle started. The dashed line is your "
-            + "typical length, the band the range the estimate gives. A faded dot is left out of the estimate.";
+    public static final String PERIOD_DOTS_CYCLES = "Cycle length chart: each dot sits at the day its cycle started. The dashed line is the "
+            + "length the estimate expects, the band the range it gives. A faded dot lies more than 10 days from the middle value.";
     /** How it works, Your cycles: the period length and amount charts. */
     public static final String PERIOD_DOTS_PERIODS = "Period length and amount charts: each dot sits at the day its period started, the dashed line is the average.";
     /** How it works, Your cycles: which cycles the estimate uses. */
@@ -357,6 +486,11 @@ public final class Explain {
             out.add(periodOvulation(cy));
         }
         if (cy.regularityLine() != null) out.add(periodVary(cy.used.size()));
+        if (cy.nextLine() != null) {
+            // the most likely day and the months ahead (owner's feedback of 11 November)
+            out.add(PERIOD_LIKELY);
+            out.add(periodAhead(cy));
+        }
         return out;
     }
 
@@ -413,7 +547,7 @@ public final class Explain {
     public static final String BADGES_OPEN = "Open that day";
     public static final String BADGES_NEW = "New";
     public static final String BADGES_ALL = "All badges";
-    public static final String BADGES_CALENDAR = "A dot marks a day with at least one badge, a bigger dot two or more. "
+    public static final String BADGES_CALENDAR = "Each badge of a day is a dot in its colour, the colour of its tab. "
             + "Touch and slide across the days to read them, tap a day to open it.";
     public static final String BADGES_COUNT_NOTE = "The number counts the days with this badge in all your history. It is not a score to beat: "
             + "a day without a badge says nothing.";
@@ -475,7 +609,8 @@ public final class Explain {
             case Badges.RECOVERED:
                 return "Recovered: readiness back to your usual (its average over the " + weeks + " before the low days) after at least "
                         + Badges.LOW_DAYS + " days in a row clearly below it (lower than the average minus its usual day to day spread, "
-                        + "one standard deviation). Needs readiness on each of these days and on " + Badges.MIN_DAYS + " days of the " + weeks + ".";
+                        + "one standard deviation), on the first day back, at most " + Badges.BACK_WITHIN + " days after the low days. Needs readiness on each "
+                        + "of these days and on " + Badges.MIN_DAYS + " days of the " + weeks + ".";
             case Badges.PHONE_FREE:
                 return "Phone free evening: at most " + Badges.PHONE_FREE_MAX + " min on the phone in the hour before your night started "
                         + "(a look at the clock is fine). Comes for " + Badges.PHONE_FREE_OF + " such evenings in " + week + ", at most once in "
@@ -572,7 +707,36 @@ public final class Explain {
             + "in a workout more often. Touch the chart to read a time and its value.";
 
     public static final String WATCH_SLEEP = "Withings' own sleep stages for the night that ended on this day, as the watch worked them out. "
-            + "Time asleep adds light, deep and REM. Parts with a code we do not know yet show as no data.";
+            + "Time asleep adds light, deep and REM. Awake is time the watch marked as awake inside the night. "
+            + "Time without a record from the watch, or with a code we do not know yet, shows as no data.";
+
+    /** The watch night's No data row (owner's report of 11 November). */
+    public static final String WATCH_NO_RECORD = "No data is time inside the night the watch sent no sleep record for. It is not counted as asleep or awake.";
+
+    /** The watch night's heart rate under its stages (owner's wish of 11 November). */
+    public static final String WATCH_NIGHT_HEART = "Heart rate: the watch's own readings between falling asleep and waking up. "
+            + "The watch measures only every few minutes, so each dot is one reading; dots further apart than an hour are not joined. "
+            + "Lowest is the lowest reading, average the average of the readings.";
+
+    /** Activity's steps through the day from the watch when another device filled its gaps (issue #251). */
+    public static final String WATCH_DAY_FILLED = "The steps another device added where the watch was not worn are in the day's total above, not in these bars.";
+
+    /** The Watch page's steps per hour (issue #251). */
+    public static final String WATCH_HOURS = "Steps per hour as the watch counted them; each record counts in the hour it started. Touch to see the hour and its steps.";
+
+    /** The watch's distance (owner's report of 11 November: the watch sends centimetres). */
+    public static final String WATCH_DISTANCE = "Distance is the watch's own estimate from your steps. It sends it in centimetres; shown here in km.";
+
+    /** Sleep with only the watch and no night from it (issues #373, #379). */
+    public static final String SLEEP_WATCH_ONLY = "With only the watch, Sleep shows Withings' own night: when you fell asleep and woke up, light, deep and REM "
+            + "sleep, the heart rate through the night and a sleep score worked out from them. Wear the watch in bed and sync it in the "
+            + "morning (Settings, Watch). HRV, blood oxygen and breathing need a ring.";
+
+    /** Under the battery rows on Today (owner's wish of 15 November). */
+    public static final String BATTERY_TODAY = "The last level each device sent, read at its syncs. "
+            + "Days left come from how fast it fell since the last charge, only when it fell steadily.";
+    /** The way to a device's battery history under the battery lines on Today ("Ring battery history"). */
+    public static final String BATTERY_HISTORY = "battery history";
 
     public static final String WATCH_BATTERY = "The watch's battery at the last sync of each day. A jump up is a charge.";
 
@@ -589,4 +753,131 @@ public final class Explain {
 
     public static final String MAIN_WATCH_NIGHT = "Stages from Withings' own analysis on the watch, not from this app. "
             + "The sleep score needs the ring's night, so there is none here.";
+
+    // ---- scores without a ring (issue #379, core/DeviceScores) ----
+
+    /** Under the watch's night when it has a score. */
+    public static final String WATCH_NIGHT_SCORE = "Stages from Withings' own analysis on the watch. The sleep score is worked out from them on this phone "
+            + "with the same formula as for the ring, see Contributors.";
+
+    public static final String SLEEP_DEVICE = "The sleep score from your watch uses the ring's formula on the watch's night: total sleep, how much of "
+            + "the night you were asleep, wake ups and time awake, deep and REM sleep, and timing. Parts the watch cannot give are left out "
+            + "and the others count for more.";
+
+    public static final String READINESS_DEVICE = "Readiness from your watch uses the ring's formula with the signals the watch has: your lowest "
+            + "heart rate last night against your usual, last night's sleep score, your sleep over two weeks, and your steps yesterday and over "
+            + "the last weeks. HRV and body temperature, the strongest signs of recovery, need a ring, so this readiness rests on fewer signals. "
+            + "85 or more: ready for a demanding day. 70 to 84: good. Below 70: your body is asking for rest.";
+
+    public static final String ACTIVITY_DEVICE = "The activity score from steps uses the ring's formula: how long you sat still, whether you moved "
+            + "every hour, how often you reached your step goal and your training over the last week. Steps stand in for the ring's movement, "
+            + "so standing or cycling without a workout counts as sitting. Days with less than an hour of data are left out.";
+
+    /** The note above the device's activity contributors while fewer than 7 days of the last week have data. */
+    public static String activityDaysDevice(int n, boolean watch) {
+        String days = n == 1 ? "1 day" : n + " days";
+        String rule = " with " + (watch ? "the watch" : "steps from this phone") + " in the last 7 days (a day counts with at least an hour of data). ";
+        if (n >= app.openring.core.analysis.Scores.MIN_WEEK_DAYS) return "Based on " + days + rule + "Daily targets and training are steadier after a full week.";
+        return "Only " + days + rule + "Daily targets and training count from " + app.openring.core.analysis.Scores.MIN_WEEK_DAYS + " days on.";
+    }
+
+    /**
+     * A contributor's text for a score from the watch or the phone (issue #379), null where the ring's text ({@link #of}) fits
+     * as it is.
+     */
+    public static String ofDevice(String key, boolean watch) {
+        if (key == null) return null;
+        String dev = watch ? "the watch was on" : "the phone counted";
+        switch (key) {
+            case "stay_active": return "Time awake while " + dev + ", in quarter hours with fewer than 60 steps. Each counts as 15 minutes sitting.";
+            case "move_hourly": return "Times you took fewer than 60 steps per quarter hour for an hour or more between 08:00 and 22:00.";
+            case "targets": return "How often you reached your step goal in the last 7 days. Days with less than an hour of data are left out.";
+            case "frequency": return "Days in the last 7 with at least 30 brisk minutes: a quarter hour with 1,000 steps or more (100 steps a minute "
+                + "is a brisk walk), or a workout the watch recorded.";
+            case "volume": return "Calories the watch counted in brisk quarter hours and in its workouts over the last 7 days.";
+            case "efficiency": return "Share of the watch's night spent asleep. Time without a record from the watch counts as in bed, not as sleep.";
+            case "restfulness": return "Wake ups and time awake between falling asleep and waking up, from the watch's stages. Restless movement "
+                + "is left out, the watch sends none.";
+            case "rem": return "Dreaming sleep, from Withings' own stages. Usually about a fifth of sleep.";
+            case "deep": return "The most restorative stage, from Withings' own stages. Usually 13 to 23% of sleep.";
+            case "latency": return "Time awake at the start of the watch's night before the first sleep.";
+            case "rhr": return "The lowest of the watch's heart rate readings last night against your usual over the last 14 watch nights. "
+                + "The watch reads every 10 to 30 minutes, so the true lowest can be a little lower.";
+            case "sleep": return "Last night's sleep score from the watch's night.";
+            case "sleep_balance": return "Your sleep from the watch over the last two weeks compared with your sleep need.";
+            case "prev_activity": return "Yesterday's steps compared with your step goal. Both very little and a lot lower readiness. "
+                + "A day with less than an hour of data is left out.";
+            case "activity_balance": return "Your steps over the last week compared with the last four weeks, so sudden jumps show up. "
+                + "Days with less than an hour of data are left out.";
+            default: return null;
+        }
+    }
+
+    // ---- steps from this phone (issue #329, phase 1b) ----
+
+    public static final String PHONE_STEPS = "Your phone counts steps in its own sensor. Open Ring reads the count about once an hour and stores the difference. "
+            + "Nothing leaves the phone. On some phones the sensor only counts while an app such as the phone's own health app keeps it on. "
+            + "If the phone restarts because the battery ran out, the steps since the last reading are lost.";
+
+    // ---- the statistics without a ring (owner's report of 13 November, core/DeviceHistory) ----
+
+    /** A day without a value in a chart's readout. */
+    public static final String NO_VALUE = "no data";
+    public static final String NEEDS_RING_TITLE = "Needs a ring";
+    public static final String WATCH_IN_BED = "From the watch's first piece of sleep to its last";
+    public static final String WATCH_LATENCY = "Only when the watch marked you awake before sleep";
+    public static final String WATCH_WAKE_UPS = "Awake a minute or more between falling asleep and waking up";
+    public static final String WATCH_DEBT_BUILDING = "Needs five nights from the watch.";
+    public static final String WATCH_DEBT = "The ring's rule on the watch's nights: the last two weeks against your sleep need, recent nights counting more. "
+            + "Your need comes from your usual sleep once the watch has two weeks of nights, until then it is 8 hours.";
+    public static final String WATCH_SLEEP_TIMES = "Each bar is one night from your watch, from falling asleep (top) to waking up (bottom). "
+            + "Touch a bar to read the times.";
+    public static final String WATCH_NO_NIGHTS = "No nights from the watch yet";
+    public static final String WATCH_NO_HEART = "No heart rate from the watch yet";
+    public static final String NO_STEPS_YET = "No steps yet";
+    public static final String WATCH_SCORE_MONTH = "The sleep score of each night from your watch, the same as on that night's dial. Touch a dot to read it.";
+    public static final String WATCH_READY_WEEK = "Readiness from your watch on each day, the same as on that day's dial.";
+    public static final String ACTIVITY_WEEK_DEVICE = "The activity score of each day, the same as on that day's dial. Days with less than an hour of data have none.";
+    public static final String WATCH_KCAL = "Calories your watch counted for your movement each day, workouts not included.";
+    public static final String WATCH_WORKOUTS_MONTH = "Minutes of the workouts your watch recorded each day. Touch a bar to read the day.";
+    public static final String WATCH_RHR = "The watch's lowest heart rate reading of each night. It reads every 10 to 30 minutes, so it can be a few beats above the true lowest.";
+    public static final String WATCH_DAY_HR = "The average of each day's heart rate through the day, as on Heart rate today.";
+    public static final String SLEEP_NEEDS_RING = "HRV, breathing, blood oxygen and skin temperature through the night, and their charts, come from the ring's sensors. "
+            + "The watch measures heart rate only.";
+    public static final String ACTIVITY_NEEDS_RING = "Active and total burn against a calorie goal, Daily movement and Intensity through the day come from "
+            + "the ring's movement analysis. Steps stand in for them here.";
+    public static final String BODY_NEEDS_RING = "Heart rate variability (HRV), breathing, blood oxygen, skin temperature and the symptom radar come from the "
+            + "ring's sensors at night. The watch measures heart rate only.";
+    /** A watch that does not tell REM from light sleep (owner's report of 13 November): its two stages as one. */
+    public static final String LIGHT_REM = "Your watch cannot tell REM sleep from light sleep, so they are shown together as Light and REM.";
+    /** Further analysis with only the watch. */
+    public static final String WATCH_ANALYSIS = "From your watch's nights, Withings' own stages. HRV needs a ring.";
+
+    /** The line under Cardio capacity with only the watch: where it comes from, or why there is none. */
+    public static String vo2maxWatch(double v, boolean hadNight) {
+        if (Double.isNaN(v)) {
+            if (hadNight) return "No heart rate from the watch in that night, so no estimate. It needs the lowest heart rate of the night (Uth method).";
+            return "Needs a night with the watch. It comes from your age and the lowest heart rate in that night (Uth method).";
+        }
+        if (Double.isNaN(app.openring.core.analysis.Wellness.vo2maxShown(v))) {
+            return "Not shown for this day: that night's lowest reading gave a value outside what a person can have, so that reading was probably off.";
+        }
+        return "From your age and the watch's lowest heart rate reading that night (Uth method). The watch reads every 10 to 30 minutes, "
+                + "so its lowest is a little higher than the true one and the estimate a little lower. A rough guide, not a lab test.";
+    }
+
+    // ---- every route that read only the ring's nights (owner's report of 14 November, data/ShownNights) ----
+
+    /** Under the Screen tab's 14 days when the sleep in them is the watch's. */
+    public static final String SCREEN_WATCH_NIGHTS = "Sleep: the nights your watch recorded, the same as on the Sleep tab.";
+    /** As above when some nights are the ring's and some the watch's. */
+    public static final String SCREEN_WATCH_SOME = "Some nights come from your watch, as on the Sleep tab: where it is the main device, or your ring has no night.";
+
+    /** Every text of the statistics without a ring, for the tests. */
+    public static String[] historyTexts() {
+        return new String[] {NO_VALUE, NEEDS_RING_TITLE, WATCH_IN_BED, WATCH_LATENCY, WATCH_WAKE_UPS, WATCH_DEBT_BUILDING, WATCH_DEBT, WATCH_SLEEP_TIMES,
+            WATCH_NO_NIGHTS, WATCH_NO_HEART, NO_STEPS_YET, WATCH_SCORE_MONTH, WATCH_READY_WEEK, ACTIVITY_WEEK_DEVICE, WATCH_KCAL, WATCH_WORKOUTS_MONTH,
+            WATCH_RHR, WATCH_DAY_HR, LIGHT_REM, SLEEP_NEEDS_RING, ACTIVITY_NEEDS_RING, BODY_NEEDS_RING, WATCH_ANALYSIS, vo2maxWatch(Double.NaN, true),
+            vo2maxWatch(Double.NaN, false), vo2maxWatch(5, true), vo2maxWatch(45, true), SCREEN_WATCH_NIGHTS, SCREEN_WATCH_SOME};
+    }
 }

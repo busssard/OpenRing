@@ -47,6 +47,12 @@ public final class SyncError {
         return raw == null || raw.trim().isEmpty() ? NO_REASON : raw;
     }
 
+    /**
+     * Start of the raw text of a sync stopped by an unexpected error: then its class and place ({@link LoadNote#error}).
+     * Older versions put the error's full text after it, which the data check leaves out (issue #362).
+     */
+    public static final String UNEXPECTED = "Unexpected error: ";
+
     /** Start of the raw text of a sync whose start failed with an error (issue #334). */
     public static final String START_FAILED = "Sync could not start: ";
 

@@ -151,7 +151,8 @@ public final class Demo {
         Db db = Db.get(c);
         // built completely today: nothing to do. Not "the newest day is today", which is still
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
-        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db)) return false;
+        if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db) && PhoneStore.any(db)
+                && db.count("SELECT COUNT(*) FROM battery") > 0) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll(Db.DEMO_BUILD);
         ZoneId zone = ZoneId.systemDefault();
@@ -171,10 +172,27 @@ public final class Demo {
         db.putApps(apps);
         periods(db, today, now);
         watch(db, today, now, zone);
+        phone(db, today, now, zone);
+        ringBattery(db, today, now, zone);
         if (p != null) p.step("Analysing the demo nights on this phone");
         Analyzer.runAll(c, null);
         db.put(BUILT, today.toString());
         return true;
+    }
+
+    /**
+     * The demo ring's battery readings (Today's battery row, owner's wish of 15 November): one every 3 hours, charged yesterday
+     * in its charger time ({@code core/DeviceBattery.demoRing}). Only into the demo file, as every demo row.
+     */
+    static void ringBattery(final Db db, LocalDate today, long now, ZoneId zone) {
+        final List<app.openring.core.DeviceBattery.Reading> rows = app.openring.core.DeviceBattery.demoRing(now, 35,
+                (long) at(today.minusDays(1), CHARGE_FROM_H, zone), (long) at(today.minusDays(1), CHARGE_TO_H, zone));
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                for (app.openring.core.DeviceBattery.Reading r : rows) db.addBattery(r.t, r.pct);
+            }
+        });
     }
 
     /** The demo ring's charging time yesterday, clock hours (issue #251): no movement, no heart rate, no temperature. */
@@ -198,11 +216,11 @@ public final class Demo {
     }
 
     /**
-     * The demo's made up period log (issue #252): 8 cycles before the newest period, today on cycle day 20
-     * ({@code Cycles.demo}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
+     * The demo's made up period log (issue #252): 37 cycles over about 3 years before the newest period, so the prediction
+     * methods can be compared (issue #383), today on cycle day 20 ({@code Cycles.demoHistory}). Written into {@code db}, the demo file (resetAll above emptied it), never into the real one.
      */
     static void periods(final Db db, LocalDate today, final long now) {
-        final java.util.Map<LocalDate, Integer> log = app.openring.core.analysis.Cycles.demo(today);
+        final java.util.Map<LocalDate, Integer> log = app.openring.core.analysis.Cycles.demoHistory(today);
         db.inTransaction(new Runnable() {
             @Override
             public void run() {
@@ -246,7 +264,7 @@ public final class Demo {
      * messages and decoded by the same code as a real watch's. Written into {@code db}, the demo file, never the real one.
      */
     static void watch(final Db db, LocalDate today, final long now, ZoneId zone) {
-        final List<app.openring.core.withings.WatchDemo.Msg> msgs = app.openring.core.withings.WatchDemo.history(today, 35, now, zone, new Random(251));
+        final List<app.openring.core.withings.WatchDemo.Msg> msgs = app.openring.core.withings.WatchDemo.history(today, 35, now, zone, new Random(251), false);
         db.inTransaction(new Runnable() {
             @Override
             public void run() {
@@ -257,6 +275,14 @@ public final class Demo {
                 WatchStore.decodeAll(db.getWritableDatabase());
             }
         });
+    }
+
+    /**
+     * The demo's made up phone steps (issue #329, phase 1b): hourly readings of a phone carried by day, one restart
+     * ({@code core/PhoneSteps.demo}), stored like real readings, in {@code db}, the demo file, never the real one.
+     */
+    static void phone(Db db, LocalDate today, long now, ZoneId zone) {
+        PhoneStore.addAll(db, app.openring.core.PhoneSteps.demo(today, 35, now, zone, new Random(329)));
     }
 
     /**

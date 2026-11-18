@@ -26,7 +26,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 10;
+    static final int VERSION = 11;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -35,8 +35,17 @@ public final class Db extends SQLiteOpenHelper {
     public static synchronized Db get(Context c) {
         String name = Prefs.of(c).demo() ? DEMO : REAL;
         if (instance != null && !instance.fileName.equals(name)) {
-            instance.close();
+            // into demo mode while a phone reading is written through the real file's helper (PhoneStore.record writes
+            // without this lock, code review of the device choice): it is kept aside for the readings, never closed under it
+            if (writers > 0 && REAL.equals(instance.fileName) && realAside == null) realAside = instance;
+            else instance.close();
             instance = null;
+        }
+        // back from demo mode: the real file's helper the phone's readings used meanwhile (issue #329) is taken over, so
+        // there is never a second one on the same file
+        if (instance == null && REAL.equals(name) && realAside != null) {
+            instance = realAside;
+            realAside = null;
         }
         if (instance == null) {
             if (REAL.equals(name)) recoverSwap(c);
@@ -45,6 +54,61 @@ public final class Db extends SQLiteOpenHelper {
             instance = new Db(c.getApplicationContext(), name);
         }
         return instance;
+    }
+
+    /** The real history's helper while demo mode shows the demo file, for the phone's step readings only (issue #329). */
+    private static Db realAside;
+
+    /**
+     * The real history, also while demo mode is shown (issue #329, phase 1b): the phone's step readings are the person's,
+     * never the demo's. Outside demo mode it is {@link #get}'s own helper; in demo mode a second helper on the real file
+     * (the demo has its own file, so the two never meet), taken over by {@link #get} when demo mode ends and closed before a
+     * restore swaps the file. Writers take it through {@link #beginWrite} ({@code PhoneStore.record}), which
+     * {@link #replaceWith} waits for, so a reading never lands in a file half swapped.
+     */
+    static synchronized Db real(Context c) {
+        if (instance != null && REAL.equals(instance.fileName)) return instance;
+        if (!Prefs.of(c).demo()) return get(c);
+        if (realAside == null) {
+            recoverSwap(c);
+            // the first open after an update copies the history first, as get() does (issue #242)
+            BeforeUpdate.ensure(c);
+            realAside = new Db(c.getApplicationContext(), REAL);
+        }
+        return realAside;
+    }
+
+    /** Writes under way through {@link #beginWrite}; swaps under way or waiting ({@link #replaceWith}). Guarded by Db.class. */
+    private static int writers, swapping;
+
+    /**
+     * The real history for a short write from a background thread (the phone's step readings), or null while a restore swaps
+     * the file or waits to. Code review of the device choice: the write itself runs without Db's class lock, since waiting
+     * for SQLite's write (an automatic backup's copy of the whole history, a sync) while holding it would stop every
+     * {@link #get} on the main thread. {@link #replaceWith} waits until each write ended with {@link #endWrite}.
+     */
+    static synchronized Db beginWrite(Context c) {
+        if (swapping > 0) return null;
+        Db d = real(c);
+        writers++;
+        return d;
+    }
+
+    /** The end of a write begun with {@link #beginWrite} (always, in a finally). */
+    static synchronized void endWrite() {
+        writers--;
+        Db.class.notifyAll();
+    }
+
+    /** Closes the real file's second helper of demo mode, if any (a restore swaps the file next). */
+    private static void closeAside() {
+        if (realAside == null) return;
+        try {
+            realAside.close();
+        } catch (RuntimeException ignored) {
+            // it is not used any more either way
+        }
+        realAside = null;
     }
 
     /**
@@ -98,6 +162,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo8(db);
         upgradeTo9(db);
         upgradeTo10(db);
+        upgradeTo11(db);
     }
 
     @Override
@@ -111,6 +176,20 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 8) upgradeTo8(db);
         if (oldV < 9) upgradeTo9(db);
         if (oldV < 10) upgradeTo10(db);
+        if (oldV < 11) upgradeTo11(db);
+    }
+
+    /**
+     * v11: the phone's own steps (issue #329, phase 1b), see {@link PhoneStore}: {@code phone_readings}, every reading of the
+     * phone's step counter as it came (only ever added to), and {@code phone_steps}, the intervals worked out from them.
+     * Only adds tables and an index ({@code IF NOT EXISTS}): safe to run twice and to resume. No existing table or row
+     * changes; older files (and restored older backups) get them empty.
+     */
+    private static void upgradeTo11(SQLiteDatabase db) {
+        PhoneStore.create11(db);
+        // an upgrade stopped half way may have left readings without their intervals: the next day load works them out again
+        // from the readings (PhoneStore.forDay); with no reading stored there is nothing to do
+        PhoneStore.ruleUnknown(db);
     }
 
     /**
@@ -1055,6 +1134,7 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /** The newest day with a day summary (the ring's analysis), or null: the Settings preview's night and the Data check. */
     public String latestDay() {
         Cursor c = getReadableDatabase().rawQuery("SELECT MAX(day) FROM days", null);
         try {
@@ -1062,6 +1142,24 @@ public final class Db extends SQLiteOpenHelper {
         } finally {
             c.close();
         }
+    }
+
+    /**
+     * The newest day the main screen follows (issue #329): {@link #latestDay}, or the day of the phone's newest step interval
+     * when that is later, so a person without a ring follows today too. The phone's day is the phone's zone now. Only for the
+     * main screen; whatever needs the ring's newest day reads {@link #latestDay}.
+     */
+    public String latestDayWithPhone() {
+        String ring = latestDay();
+        double stop = PhoneStore.newestStop(getReadableDatabase());
+        // the watch's newest step, sleep or heart rate record too (owner's report of 14 November), so a person with only the
+        // watch follows the day its sync brought; without any watch row nothing changes
+        stop = Math.max(Double.isNaN(stop) ? -1 : stop, count("SELECT COALESCE(MAX(m), -1) FROM (SELECT MAX(start + dur) AS m FROM watch_steps"
+                + " UNION ALL SELECT MAX(start + dur) FROM watch_sleep UNION ALL SELECT MAX(t) + 1 FROM watch_hr)"));
+        if (!(stop > 0)) return ring;
+        // an interval ends at its reading; one that ends exactly at midnight belongs to the day before
+        String phone = java.time.Instant.ofEpochSecond((long) Math.ceil(stop) - 1).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString();
+        return ring == null || phone.compareTo(ring) > 0 ? phone : ring;
     }
 
     // --------------------------------------------------------------------------- screen
@@ -1476,6 +1574,22 @@ public final class Db extends SQLiteOpenHelper {
         getWritableDatabase().insertWithOnConflict("battery", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
+    /**
+     * The ring's battery readings of the last {@code span} seconds before its newest one, oldest first (Today's battery row,
+     * {@code core/DeviceBattery}); empty without any. Reads only.
+     */
+    public List<app.openring.core.DeviceBattery.Reading> batteryRows(long span) {
+        List<app.openring.core.DeviceBattery.Reading> out = new ArrayList<app.openring.core.DeviceBattery.Reading>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT unix, pct FROM battery WHERE unix >= (SELECT MAX(unix) FROM battery) - ? ORDER BY unix",
+                new String[] {String.valueOf(span)});
+        try {
+            while (c.moveToNext()) out.add(new app.openring.core.DeviceBattery.Reading(c.getLong(0), c.getInt(1), -1));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
     /** What a database file holds, read without the app's helper (no upgrade, nothing written). */
     public static final class Info {
         /** The file exists and could be read. */
@@ -1523,6 +1637,8 @@ public final class Db extends SQLiteOpenHelper {
         {"watch_workouts", 9, new String[] {"device", "start", "dur", "kind", "steps", "metres", "kcal"}},
         {"watch_battery", 9, new String[] {"device", "t", "pct", "state", "mv"}},
         {"watch_moves", 10, new String[] {"device", "start", "met", "up", "down"}},
+        {"phone_readings", 11, new String[] {"device", "boot", "elapsed", "counter", "wall"}},
+        {"phone_steps", 11, new String[] {"device", "boot", "elapsed", "start", "stop", "steps"}},
     };
 
     /**
@@ -1679,9 +1795,30 @@ public final class Db extends SQLiteOpenHelper {
      * says so. Any other error on the way to the phone's log refuses the restore before anything moves
      * ({@link PeriodLogUnreadable}); any failure later puts the old file back with its log, like every other failure here.
      *
+     * A phone reading written meanwhile ({@link #beginWrite}, without the class lock) is waited for first, before anything
+     * is read or moved, and no new one starts until the swap is over; the reading is then in the phone's file and carried
+     * into the restored one like every other reading.
+     *
      * @return true when the phone's file was damaged, so its period log was left behind (review of #275)
      */
     public static synchronized boolean replaceWith(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
+        swapping++;
+        try {
+            while (writers > 0) {
+                try {
+                    Db.class.wait();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new java.io.InterruptedIOException("stopped while waiting for a phone reading to be written, nothing changed");
+                }
+            }
+            return replaceLocked(c, src, expectedEvents);
+        } finally {
+            swapping--;
+        }
+    }
+
+    private static boolean replaceLocked(Context c, java.io.File src, long expectedEvents) throws java.io.IOException {
         java.io.File dst = c.getDatabasePath(REAL);
         dst.getParentFile().mkdirs();
         String old = dst.getPath() + ".old";
@@ -1690,6 +1827,8 @@ public final class Db extends SQLiteOpenHelper {
         // a restore as the first thing after an update: the history from before it is copied first (issue #242)
         BeforeUpdate.ensure(c);
         if (new java.io.File(old).exists()) throw new java.io.IOException("an earlier restore could not be undone");
+        // demo mode's second helper on the real file (the phone's readings, issue #329) must not hold it during the swap
+        closeAside();
         // side files of a .old that is gone (a cleanup cut off half way) belong to nothing
         for (int i = 1; i < SIDE.length; i++) new java.io.File(old + SIDE[i]).delete();
         if (instance != null && !REAL.equals(instance.fileName)) {
@@ -1700,6 +1839,7 @@ public final class Db extends SQLiteOpenHelper {
         // the period log typed on this phone (issue #252), read before anything moves; it goes into the restored file
         Periods.Rows phoneLog = null;
         WatchStore.Rows phoneWatch = null;
+        List<Object[]> phoneSteps = null;
         boolean logDamaged = false;
         if (instance != null) {
             try {
@@ -1712,6 +1852,8 @@ public final class Db extends SQLiteOpenHelper {
                 phoneLog = Periods.read(instance.getReadableDatabase());
                 // the watch's messages (issue #251): the watch may have dropped them after the sync, so they are kept too
                 phoneWatch = WatchStore.read(instance.getReadableDatabase());
+                // the phone's step readings (issue #329): no ring or backup can bring them back
+                phoneSteps = PhoneStore.read(instance.getReadableDatabase());
                 mergeStep(MERGE_READ);
             } catch (RuntimeException e) {
                 // a damaged file (at the open or in a period table) has no log that can be read: it is replaced without it,
@@ -1719,6 +1861,7 @@ public final class Db extends SQLiteOpenHelper {
                 if (!damaged(e)) throw closed(new PeriodLogUnreadable(e));
                 phoneLog = null;
                 phoneWatch = null;
+                phoneSteps = null;
                 logDamaged = true;
             } catch (java.io.IOException e) {
                 // nothing moved yet: the phone keeps everything as it is; the person is told it was the phone's log, not the backup
@@ -1744,6 +1887,9 @@ public final class Db extends SQLiteOpenHelper {
             if (phoneLog != null) Periods.merge(instance.getWritableDatabase(), phoneLog);
             // the phone's watch messages and devices too, then every watch row worked out again from all of them (issue #251)
             if (phoneWatch != null) WatchStore.merge(instance.getWritableDatabase(), phoneWatch);
+            // the phone's step readings the backup lacks (insert, never replace), then its intervals worked out again (issue #329)
+            if (phoneSteps != null) PhoneStore.merge(instance.getWritableDatabase(), phoneSteps);
+            mergeStep(MERGE_PHONE);
             // a failed shrink noted in the backup's file (issue #299) is not true here: the restored file is compact
             instance.getWritableDatabase().delete("kv", "k = ?", new String[] {DataCheck.SHRINK_ERROR});
             mergeStep(MERGE_DONE);
@@ -1799,7 +1945,7 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     /** The steps of the period merge in {@link #replaceWith} (issue #252), where a test can stop it. */
-    static final String MERGE_READ = "read", MERGE_WRITE = "write", MERGE_DONE = "done";
+    static final String MERGE_READ = "read", MERGE_WRITE = "write", MERGE_PHONE = "phone", MERGE_DONE = "done";
     /** Tests only: the merge throws at this step, as a failure there would. */
     static volatile String failMergeAt;
 
@@ -1834,9 +1980,10 @@ public final class Db extends SQLiteOpenHelper {
 
     /**
      * The tables that do not belong to one ring and stay when a different ring is paired: the period log
-     * ({@link Periods#TABLES}, issue #252) and the watch's data ({@link WatchStore#TABLES}, issue #251).
+     * ({@link Periods#TABLES}, issue #252), the watch's data ({@link WatchStore#TABLES}, issue #251) and the phone's own
+     * steps ({@link PhoneStore#TABLES}, issue #329).
      */
-    static final String[] KEPT_TABLES = join(Periods.TABLES, WatchStore.TABLES);
+    static final String[] KEPT_TABLES = join(join(Periods.TABLES, WatchStore.TABLES), PhoneStore.TABLES);
 
     /**
      * The tables of one ring's history and what was worked out from it, emptied when a different ring is paired

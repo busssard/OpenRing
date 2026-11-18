@@ -84,6 +84,17 @@ launch() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
 log "first start: setup"
 launch
 shot setup 5
+# Getting started (issue #373): Get started leads to the device choice, a ring, a watch or just this phone
+tap_text() {  # $1 the exact text of a view: taps its middle; fails when not on screen
+  local b
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  b=$(adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o "text=\"$1\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  adb shell input tap $(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))
+}
+if tap_text "Get started"; then shot setup-choice 2
+else echo "::warning::issue #373 step: Get started was not on the first screen"; fi
 
 log "demo data, turning the phone twice while it is prepared (issue #29)"
 adb shell settings put system accelerometer_rotation 0
@@ -116,7 +127,9 @@ log "ending the app while the demo is prepared, opening it again from the launch
 adb shell pm clear $PKG >/dev/null
 for perm in BLUETOOTH_SCAN BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant $PKG android.permission.$perm 2>/dev/null; done
 launch --ez demo true
-sleep 1
+# ended half a second after the screen shows (launch waits for it): with a whole second the slow runner of PR #400 let
+# the preparation finish first, and the step found nothing cut off to finish
+sleep 0.5
 adb shell am force-stop $PKG
 sleep 1
 adb shell am start -W -n $MAIN -a android.intent.action.MAIN -c android.intent.category.LAUNCHER >/dev/null
@@ -131,7 +144,32 @@ else
   echo "::warning::issue #69 step: no cut off demo was finished after opening again (the preparation may have ended before the app was)"
 fi
 shot today 2
-# the compact Recent badges row under the score rings (issue #265) is in the today shot above
+# Today's first screen (owner's wish of 17 November): the day's sentence and line must be on it without scrolling, with a
+# ring, only a watch and only the phone, with the demo's badges. The app logs in demo mode where the line ends on the page
+# and how much the first screen shows (MainActivity.firstScreen); a line that does not fit fails the run at the end
+FIRST_CUT=0
+first_screen() {  # $1 ring, watch or phone: the newest measurement of that Today
+  local l
+  l=$(adb logcat -d -s OpenRing:I 2>/dev/null | grep "today first screen ($1)" | tail -1)
+  if [ -z "$l" ]; then echo "::warning::Today ($1): no first screen measurement in the log"; return 0; fi
+  log "${l#*: }"
+  case "$l" in
+    *", fits"*) ;;
+    *) echo "::error::Today ($1): the day's sentence and line are not on the first screen: ${l#*: }"; FIRST_CUT=1 ;;
+  esac
+}
+first_screen ring
+# the battery of the demo's ring and watch right under the score rings, one folded line each (owner's wishes of 15 and 17
+# November), is in the today shot above (today-battery-open below opens it), the watch's alone in today-watch-only, none in
+# today-phone-only. Recent badges come after Your day, each badge chip the same size in two columns (owner's wish of 17
+# November), framed in the colour of its tab (12 November); today-period below shows them
+# Today's Your day card (owner's wish of 16 November): the sentence with the day's facts, the line of the day, and Why this
+# line opened (extra day_line_why, demo mode only: each check of the tree, top to bottom); then the same card with only the
+# watch and only the phone (extra devices, nothing stored)
+launch --ei tab 0 --es card YOUR_DAY;                         shot today-line 2
+launch --ei tab 0 --es card YOUR_DAY --ez day_line_why true;  shot today-line-why 1
+launch --ei tab 0 --ei devices 1 --es card YOUR_DAY;          shot today-line-watch 2
+launch --ei tab 0 --ei devices 2 --es card YOUR_DAY;          shot today-line-phone 2
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
@@ -185,7 +223,14 @@ shot activity-first-days 1
 # its month calendar with the expected period, ovulation range and fertile days, then the day editor (extra period_edit,
 # demo mode only, a day of the newest period picked; nothing is saved without a tap)
 launch --ei tab 4;                          shot body
+# the card names the most likely day of the next period (owner's feedback of 11 November)
+ui_dump | grep -q "Next period expected on" || echo "::warning::period step: the line with the expected day was not on the Period card"
 adb shell input swipe 30 1700 30 700 1500; shot body-period-calendar 1
+# the same calendar six months ahead (extra period_month, demo mode only): each expected period and ovulation shaded darkest
+# on its most likely day (dashed ring), the ranges wider than next month's
+launch --ei tab 4 --ei period_month 6; sleep 3
+adb shell input swipe 30 1700 30 700 1500
+shot body-period-ahead 1
 launch --ei tab 4 --ez period_edit true;    shot period-edit 3
 # the trend charts below the period card (README picture): slow swipes until the Resting heart rate caption is in the
 # upper third of the screen
@@ -198,6 +243,8 @@ for i in $(seq 1 14); do
 done
 [ -n "$y" ] || echo "::warning::issue #252 step: the Resting heart rate chart was not found on Body, body-trends shows where the swipes ended"
 shot body-trends 1
+# the battery lines on Today folded open (owner's wish of 17 November): what the numbers mean and the way to each history
+launch --ei tab 0 --ez battery_open true;   shot today-battery-open 2
 # Today's compact period card near the bottom (issue #252)
 launch --ei tab 0; sleep 3
 swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
@@ -206,50 +253,104 @@ swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
 # cycles (the demo's nights are warmer after ovulation), touched on its newest night. Slow swipes until the caption is in
 # the upper third; a chart is found by its content description and touched 10 px inside its right end, where the newest is
 caption_top() { ui_dump | grep -o "text=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p; }  # $1 the text or its start
-scroll_to() {  # $1 caption text, $2 the most swipes
-  local y
+scroll_to() {  # $1 caption text, $2 the most swipes. Done once the caption is in the upper third, or on screen when the
+  # page cannot move further (a card near the end of a page never reaches the upper third)
+  local y prev="" now
   for i in $(seq 1 "$2"); do
     y=$(caption_top "$1")
     if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 3 )) ]; then return 0; fi
+    now=$(ui_dump | grep -o 'bounds="[^"]*"' | head -40 | tr -d '\n')
+    if [ -n "$prev" ] && [ "$now" = "$prev" ]; then
+      [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} - 300 )) ] && return 0
+      return 1
+    fi
+    prev=$now
     adb shell input swipe 30 1500 30 900 1500; sleep 1
   done
   return 1
 }
-touch_desc() {  # $1 the start of a content description: taps 10 px inside the right end, in the middle; fails when not on screen
-  local b
+touch_desc() {  # $1 the start of a content description, $2 where to tap in percent of its width from the left (default:
+  # 10 px inside the right end), in the middle; fails when not on screen
+  local b at=${2:-}
   b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b
   [ $# -eq 4 ] || return 1
-  local y=$(( ($2 + $4) / 2 ))
+  local y=$(( ($2 + $4) / 2 )) x=$(( $3 - 10 ))
+  [ -n "$at" ] && x=$(( $1 + ($3 - $1) * at / 100 ))
   [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} - 450 )) ] || return 1
-  adb shell input tap $(( $3 - 10 )) $y
+  adb shell input tap $x $y
 }
-launch --ei tab 4; sleep 3
-scroll_to "YOUR CYCLES" 40 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
+# Body's one temperature chart carries the cycle (owner's feedback of 11 November): period days, the measured rise, the
+# expected period and ovulation range ahead, touched at 60 % of its width (a night after the demo's measured ovulation:
+# date, temperature, cycle day and phase). It sits above Your cycles, so it comes first.
+launch --ei tab 4 --es card TEMPERATURE_DEVIATION_AND_YOUR_CYCLE; sleep 3
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 3 || echo "::warning::period step: the temperature chart with the cycle was not found on Body"
+if touch_desc "Night temperature since" 60; then shot body-period-temp 1
+else echo "::warning::period step: the temperature chart with the cycle was not on screen to touch it"; shot body-period-temp 1; fi
+launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
+scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1
 if touch_desc "Cycle lengths"; then shot body-cycles-touch 1
 else echo "::warning::issue #252 step skipped: the cycle length chart was not on screen to touch it"; fi
-scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 20 || echo "::warning::issue #252 step: the night temperature card was not found on Body"
-if touch_desc "Night temperature since"; then shot body-period-temp 1
-else echo "::warning::issue #252 step: the night temperature line was not on screen to touch it"; shot body-period-temp 1; fi
+# issue #383: "How close the estimates were" after Your cycles: each prediction method's error and range hits on the demo's
+# 3 made up years (the one in use marked), then the chart of each period's error with the method in use, touched at 70 %
+# of its width (a period: expected day, how many days later or earlier, inside or outside the range)
+launch --ei tab 4 --es card HOW_CLOSE_THE_ESTIMATES_WERE; sleep 3
+scroll_to "HOW CLOSE THE ESTIMATES WERE" 3 || echo "::warning::issue #383 step: the card How close the estimates were was not found on Body"
+shot body-period-accuracy 1
+scroll_to "Each period, " 12 || echo "::warning::issue #383 step: the chart of each period's error was not found"
+if touch_desc "Days each period came" 70; then shot body-period-accuracy-touch 1
+else echo "::warning::issue #383 step skipped: the chart of each period's error was not on screen to touch it"; fi
 # Phase 2 of #252: "Ovulation from your temperature" in Your cycles (this cycle's measured day, in how many cycles a rise
 # was found, the own time from ovulation to the period, a line under each cycle), the Period card's measured lines, and the
 # rise marked on the night temperature line (baseline, ringed high nights, the ovulation line), opened touched on its first
 # high night (extra period_rise, demo mode only)
-launch --ei tab 4; sleep 3
-scroll_to "Ovulation from your temperature" 40 || echo "::warning::issue #252 phase 2 step: Ovulation from your temperature was not found on Body"
+launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
+scroll_to "Ovulation from your temperature" 8 || echo "::warning::issue #252 phase 2 step: Ovulation from your temperature was not found on Body"
 shot body-cycles-ovulation 1
-launch --ei tab 4; sleep 3
+launch --ei tab 4 --es card PERIOD; sleep 3
 scroll_to "Likely fertile days were" 6 || echo "::warning::issue #252 phase 2 step: the measured lines were not found on the Period card"
 shot body-period-measured 1
-launch --ei tab 4 --ez period_rise true; sleep 3
-scroll_to "NIGHT TEMPERATURE AND YOUR CYCLE" 40 || echo "::warning::issue #252 phase 2 step: the night temperature card was not found on Body"
+launch --ei tab 4 --ez period_rise true --es card TEMPERATURE_DEVIATION_AND_YOUR_CYCLE; sleep 3
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 3 || echo "::warning::issue #252 phase 2 step: the temperature chart with the cycle was not found on Body"
 shot body-period-rise 1
 # How it works at the bottom of the Period card, opened (extra period_how, demo mode only): the shots above show it
 # closed, as everyone sees it first (owner's feedback of 3 November, issue #252)
-launch --ei tab 4 --ez period_how true; sleep 3
-scroll_to "How it works" 12 || echo "::warning::issue #252 step: How it works was not found on the Period card"
+launch --ei tab 4 --ez period_how true --es card PERIOD; sleep 3
+scroll_to "How it works" 8 || echo "::warning::issue #252 step: How it works was not found on the Period card"
 shot body-period-how 1
+# the same launch opens How it works in Your cycles and on the night temperature card too (issue #363). Every card on
+# Body ends with a "How it works" row, so the one of Your cycles is the last such row above its list's "Cycle length
+# chart" text; slow swipes from the Your cycles caption until that row is in the upper third
+how_above() {  # $1 the start of a text in an opened list: the top of the last "How it works" row above it, when both are shown
+  local d t
+  d=$(ui_dump)
+  t=$(echo "$d" | grep -o "text=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p)
+  [ -n "$t" ] || return 0
+  echo "$d" | grep -o 'text="How it works"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' \
+    | sed 's/bounds="\[[0-9]*,\([0-9]*\)\].*/\1/' | awk -v t="$t" '$1 < t' | tail -1
+}
+cycles_how=0
+launch --ei tab 4 --ez period_how true --es card YOUR_CYCLES; sleep 3
+scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #363 step: the Your cycles card was not found on Body"
+for i in $(seq 1 12); do
+  y=$(how_above "Cycle length chart")
+  if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 3 )) ]; then cycles_how=1; break; fi
+  adb shell input swipe 30 1500 30 900 1500; sleep 1
+done
+[ $cycles_how = 1 ] || echo "::warning::issue #363 step: How it works of Your cycles was not found, body-cycles-how shows where the swipes ended"
+shot body-cycles-how 1
+# the temperature chart with the cycle sits above Your cycles: a fresh launch, then slow swipes until its How it works
+# text (opened) is in the upper half
+launch --ei tab 4 --ez period_how true --es card TEMPERATURE_DEVIATION_AND_YOUR_CYCLE; sleep 3
+scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 3 || echo "::warning::issue #363 step: the temperature chart with the cycle was not found on Body"
+for i in $(seq 1 6); do
+  y=$(ui_dump | grep -o 'text="[^"]*In many people it rises[^"]*"[^>]*bounds="[^"]*"' | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | sed -n 2p)
+  if [ -n "$y" ] && [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} / 2 )) ]; then break; fi
+  adb shell input swipe 30 1500 30 1000 1500; sleep 1
+done
+ui_dump | grep -q "In many people it rises" || echo "::warning::issue #363 step: How it works of the temperature chart is not open on screen"
+shot body-temp-how 1
 # the gentle question "Have your periods stopped?" (extra period_ask, demo mode only; nothing is saved without a tap)
 launch --ei tab 4 --ez period_ask true;    shot period-ask 3
 # Import from drip (phase 1b of #252): in demo mode the preview of a made up drip file against the demo's log (extra drip;
@@ -280,23 +381,28 @@ log "clock touch at ${xy:-$DIAL_FALLBACK}"
 adb shell input tap ${xy:-$DIAL_FALLBACK}; shot screen-touch 1
 swipe_up; swipe_up;                       shot screen-days 1
 swipe_up; swipe_up; swipe_up;             shot screen-apps 1
-# the Badges page (issue #265): calendar with a dot on each day with a badge, then each kind with how often and its rule
+# the Badges page (issue #265): calendar with a dot in its colour for each badge of a day and the colours' names under it,
+# then each kind in its colour (frame, disc and name) with how often and its rule
 launch --ez badges true;                    shot badges 4
 swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
 launch --es settings top;                   shot settings
-# the Ring and Watch blocks closed, as every time Settings opens (owner's wish of 3 November); stages and watch below open
-# their own block first
+# every section folded, as every time Settings opens (owner's wishes of 3 and 17 November: a title, one status line and a
+# chevron each); stages, watch, period and the others below open their own section first
 launch --es settings blocks;                shot settings-blocks
 launch --es settings stages;                shot settings-stage-detail
+launch --es settings ring;                  shot settings-ring   # where a tap on Today's ring battery row leads
 # Count phone use as awake switched off and on (issue #204): when the nights are analysed again the
 # preview above redraws, its phone line goes away and comes back without leaving the page. The card
 # opens at the top with the switch below the screen: one slow swipe (no fling) brings both into view,
-# and short ones after it while the switch is still below (the closed Watch block sits in between).
+# and short ones after it while the switch is still below (the closed Watch and Phone blocks and the Period tracker sit in
+# between). The Screen time section is closed like every section (owner's wish of 17 November): its header is tapped open
+# once it is on screen.
 adb shell input swipe 30 1700 30 900 1500; sleep 1
 phone_line() { ui_dump | grep -q "on the phone, shown as awake"; }
 switch_shown() { ui_dump | grep -o 'text="Count phone use as awake"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tail -1 | { read b; [ -n "$b" ] && [ "$b" -lt "${SCREEN_H:-2400}" ]; }; }
-for i in 1 2 3; do
+for i in 1 2 3 4 5 6; do
   switch_shown && break
+  if ui_dump | grep -q 'content-desc="Screen time, [^"]*closed, tap to open"' && touch_desc "Screen time, " 50; then sleep 1; continue; fi
   adb shell input swipe 30 1500 30 1250 1000; sleep 1
 done
 tap_phone_switch() {  # fails when the switch is not listed or its middle is off the screen
@@ -329,6 +435,10 @@ fi
 launch --es settings screen;                shot settings-screen-time
 # the period tracker's reminder and "My periods have stopped" (issue #252, phase 1a2); the reminder follows the real log only
 launch --es settings period;                shot settings-period
+# the card starts with Prediction (issue #383): Best for you and each method, and which one Best for you uses now; the
+# reminder below it gets its own shot
+scroll_to "Remind me before my period" 8 || echo "::warning::issue #383 step: the reminder was not found below Prediction"
+shot settings-period-remind 1
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
 # The Watch check (issue #251, phase 1a): the Settings card, then in demo mode the made up scan (never Bluetooth) and
@@ -380,6 +490,87 @@ launch --es settings watch --ei main_device 1; shot settings-main-watch
 launch --ei tab 1 --ei main_device 1;       shot sleep-watch-main
 swipe_up;                                   shot sleep-watch-main-stages 1
 launch --ei tab 0 --ei main_device 0;       sleep 3
+# Only a watch (issue #373, extra devices 1, demo mode only, nothing stored): Today with the dials of the scores from the
+# watch (issue #379) and the watch's day; Ready, Sleep and Activity with the watch's score, then each one's Contributors
+# and Left out (what the score could not use and why)
+launch --ei tab 0 --ei devices 1;           shot today-watch-only
+first_screen watch
+launch --ei tab 2 --ei devices 1;           shot ready-watch-only
+scroll_to "CONTRIBUTORS" 6 || echo "::warning::issue #379 step: Contributors was not found on Ready with only the watch"
+shot ready-watch-only-parts 1
+launch --ei tab 1 --ei devices 1;           shot sleep-watch-only
+scroll_to "CONTRIBUTORS" 10 || echo "::warning::issue #379 step: Contributors was not found on Sleep with only the watch"
+shot sleep-watch-only-parts 1
+launch --ei tab 3 --ei devices 1;           shot activity-watch-only
+scroll_to "CONTRIBUTORS" 14 || echo "::warning::issue #379 step: Contributors was not found on Activity with only the watch"
+shot activity-watch-only-parts 1
+# Only the phone (extra devices 2): Today with the Activity and Screen dials, Activity with the score from the phone's steps
+launch --ei tab 0 --ei devices 2;           shot today-phone-only
+first_screen phone
+launch --ei tab 3 --ei devices 2;           shot activity-phone-only
+# Steps from this phone (issue #329, phase 1b): the demo's made up phone readings (in the demo file only) as light bars under
+# the ring's steps per hour on Activity, then touched in the afternoon (the readout names the ring's hour and the phone's
+# interval there); Activity's card that asks for Physical activity (extra phone_ask, demo mode only, nothing is asked); the
+# Phone block in Settings with the Main device chips (Ring, Watch, Phone); the phone as main device (extra main_device 2):
+# Activity with the phone's own steps. Back to Ring after, so the shots below stay as they were
+tap_desc_at() {  # $1 the start of a content description, $2 percent of its width from the left: taps there, in the middle
+  local b
+  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b $2
+  [ $# -eq 5 ] || return 1
+  local y=$(( ($2 + $4) / 2 ))
+  [ "$y" -gt 0 ] && [ "$y" -lt $(( ${SCREEN_H:-2400} - 450 )) ] || return 1
+  adb shell input tap $(( $1 + ($3 - $1) * $5 / 100 )) $y
+}
+launch --ei tab 3 --es day "$FILL_DAY"; sleep 3
+scroll_to "STEPS FROM THIS PHONE" 10 || echo "::warning::issue #329 step: the phone's card was not found on Activity"
+shot activity-phone 1
+if tap_desc_at "Steps through the day" 62; then shot activity-phone-touch 1
+else echo "::warning::issue #329 step skipped: the phone's day line was not on screen to touch it"; fi
+launch --ei tab 3 --ez phone_ask true; sleep 3
+scroll_to "STEPS FROM THIS PHONE" 10 || echo "::warning::issue #329 step: the card that asks for Physical activity was not found on Activity"
+shot activity-phone-ask 1
+launch --es settings phone;                 shot settings-phone
+launch --ei tab 3 --ei main_device 2 --es day "$FILL_DAY"; shot activity-phone-main
+launch --ei tab 0 --ei main_device 0;       sleep 3
+# The owner's first real watch data (issue #251, 11 November): with only the watch (extra devices 1, demo mode only),
+# Activity's Steps through the day from the watch's records, then touched (the hour and its steps); Sleep with the watch's
+# night (awake, REM, light, deep) and its heart rate under the stages, touched (time, stage and the nearest reading)
+launch --ei tab 3 --ei devices 1; sleep 3
+scroll_to "STEPS THROUGH THE DAY" 8 || echo "::warning::issue #251 step: Steps through the day was not found on Activity"
+shot activity-watch-steps 1
+if tap_desc_at "Watch steps through the day" 40; then shot activity-watch-steps-touch 1
+else echo "::warning::issue #251 step skipped: the watch's steps chart was not on screen to touch it"; fi
+launch --ei tab 1 --ei devices 1; sleep 3
+scroll_to "SLEEP DEPTH THROUGH THE NIGHT" 4 || echo "::warning::issue #251 step: the watch's night was not found on Sleep"
+shot sleep-watch-heart 1
+if tap_desc_at "Sleep stages and heart rate" 30; then shot sleep-watch-heart-touch 1
+else echo "::warning::issue #251 step skipped: the watch's night chart was not on screen to touch it"; fi
+# The statistics without a ring (owner's report of 13 November): with only the watch (extra devices 1, demo mode only,
+# nothing stored) each tab shows its 7 and 30 day charts from the watch. The extra card (demo mode only, underscores for
+# spaces) opens the page scrolled to a text, so these shots need no swipes. The demo's watch is like the owner's Steel HR
+# and sends no REM, so its nights show Light and REM as one stage (one row, no REM part in the score). Sleep: the stage
+# list with Light and REM, sleep debt and the 7 day chart, the sleep times touched on a night, Further analysis of the
+# watch's nights; Ready, Activity (steps touched, workouts) and Body their charts; Activity with only the phone its steps
+launch --ei tab 1 --ei devices 1 --es card "Light_and_REM,_and_deep"; shot sleep-watch-light-rem
+launch --ei tab 1 --ei devices 1 --es card SLEEP_DEBT;             shot sleep-watch-only-stats
+launch --ei tab 1 --ei devices 1 --es card SLEEP_TIMES; sleep 3
+if tap_desc_at "Sleep times, last 30 days" 75; then shot sleep-watch-only-times 1
+else echo "::warning::watch statistics step skipped: the sleep times chart was not on screen to touch it"; fi
+launch --ei tab 1 --ei devices 1 --ez analysis true --ei period 1 --es card Further_analysis; sleep 5
+scroll_to "AVERAGE NIGHT" 4 || echo "::warning::watch statistics step: Further analysis of the watch's nights was not found"
+shot sleep-watch-only-analysis 1
+launch --ei tab 2 --ei devices 1 --es card LAST_NIGHT;             shot ready-watch-only-stats
+launch --ei tab 3 --ei devices 1 --es card "STEPS,_LAST_7"; sleep 3
+if tap_desc_at "Steps, last 7 days" 50; then shot activity-watch-only-stats 1
+else echo "::warning::watch statistics step: Steps, last 7 days was not on screen to touch it"; shot activity-watch-only-stats 1; fi
+launch --ei tab 3 --ei devices 1 --es card "WORKOUTS,_LAST_30";    shot activity-watch-only-workouts
+launch --ei tab 4 --ei devices 1 --es card "RESTING_HEART_RATE,_30"; shot body-watch-only-stats
+launch --ei tab 3 --ei devices 2 --es card "STEPS,_LAST_7";        shot activity-phone-only-stats
+# The Screen tab with only the watch (owner's report of 14 November, extra devices 1, demo mode only): the 14 days with the
+# watch's nights in purple and the green first look, and the day's numbers (first look, before bed, in the night) from them
+launch --ei tab 5 --ei devices 1 --es card LAST_14_DAYS;            shot screen-watch-only-days
+launch --ei tab 5 --ei devices 1 --es card THIS_DAY;                shot screen-watch-only-numbers
 # A time left out because someone else wore the ring (issue #254), last: the example changes the demo's results for
 # every shot after it. left_out leaves out the day before yesterday 13:00 to 17:00, only in demo mode (the demo file),
 # then the analysis runs again: the Body tab shows the grey band on Heart rate today, Today the Left out card, and
@@ -414,6 +605,10 @@ fi
 log "no leaked dialogs"
 # two named shots that are the same picture: one of them did not get to its card or state (issue #160)
 ./.github/scripts/same_shots.sh "$OUT" || exit 1
+if [ "$FIRST_CUT" = 1 ]; then
+  echo "::error::Today's sentence and line need scrolling on the first screen (see the lines above)"
+  exit 1
+fi
 if [ "$DIRTY" = 1 ]; then
   echo "::error::some screenshots show a system dialog; not publishing them as README pictures"
   exit 1

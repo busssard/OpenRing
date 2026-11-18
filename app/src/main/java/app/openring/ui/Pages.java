@@ -48,8 +48,54 @@ public final class Pages {
 
     // ======================================================================== TODAY
 
+    /**
+     * Today (owner's wish of 17 November: "The sentence is the main input for the human"): the scores with the battery in one
+     * folded line per device, then Your day with its sentence and line, so both are on the first screen with a ring, a watch
+     * or only the phone; the rest below, in the order {@code core/TodayCards} gives.
+     */
     public static View today(final Context c, DayData d, final Nav nav, String syncLine) {
         LinearLayout root = Ui.vbox(c);
+        // without a ring by choice (issue #329) the ring's buttons add one instead
+        final boolean noRing = PhoneViews.noRing(c);
+        View left = d.has.ring ? leftOutCard(c, d) : null;
+        for (String k : app.openring.core.TodayCards.of(d.has, !d.badges.isEmpty(), left != null, d.periodShown)) {
+            if (app.openring.core.TodayCards.SCORES.equals(k)) {
+                root.addView(d.has.ring ? ringScores(c, d, nav, noRing) : DeviceViews.scoresWithout(c, d, nav));
+            } else if (app.openring.core.TodayCards.DAY.equals(k)) {
+                View day = d.has.ring ? ringDay(c, d, nav, noRing) : dayCard(c, d, d.has.watch && !Double.isNaN(d.score("readiness")), null);
+                if (day != null) root.addView(day);
+            } else if (app.openring.core.TodayCards.DEVICE_NOTE.equals(k)) {
+                root.addView(DeviceViews.deviceNote(c, d));
+            } else if (app.openring.core.TodayCards.LEFT_OUT.equals(k)) {
+                // a time left out because someone else wore the ring (issue #254); a day left out as a whole shows only this
+                root.addView(left);
+            } else if (app.openring.core.TodayCards.FINISH_WATCH.equals(k)) {
+                root.addView(DeviceViews.finishWatch(c));
+            } else if (app.openring.core.TodayCards.BADGES.equals(k)) {
+                // the badges of the last 7 days (issue #265), only when there is one (no empty card)
+                root.addView(BadgeViews.row(c, d, nav));
+            } else if (app.openring.core.TodayCards.RING_METRICS.equals(k)) {
+                if (!d.emptyAll()) ringMetrics(c, d, root);
+            } else if (app.openring.core.TodayCards.LIVE.equals(k)) {
+                root.addView(liveCard(c, nav, noRing));
+            } else if (app.openring.core.TodayCards.WATCH_DAY.equals(k)) {
+                root.addView(DeviceViews.watchDay(c, d));
+            } else if (app.openring.core.TodayCards.PHONE_DAY.equals(k)) {
+                root.addView(DeviceViews.phoneDay(c, d));
+            } else if (app.openring.core.TodayCards.PERIOD.equals(k)) {
+                // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
+                root.addView(PeriodCard.today(c, d, nav));
+            }
+        }
+        TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
+        foot.setGravity(Gravity.CENTER);
+        foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
+        root.addView(foot);
+        return root;
+    }
+
+    /** The ring's four score dials, the battery in one folded line per device under them, and Find my ring as a small button. */
+    static View ringScores(final Context c, DayData d, Nav nav, final boolean noRing) {
         LinearLayout rings = Ui.card(c);
         LinearLayout row = Ui.hbox(c);
         row.setGravity(Gravity.CENTER);
@@ -59,26 +105,41 @@ public final class Pages {
         double sc = d.score("screen");
         row.addView(ringButton(c, sc, "Screen", Ui.OXY, nav, SCREEN, Double.isNaN(sc) && !screenReady(c) ? "Tap to set up" : null), Ui.weight(1));
         rings.addView(row);
-        TextView find = Ui.smallButton(c, "Find my ring", Ui.OXY); // issue #74
+        // the battery of each device right under the scores (owner's wish of 15 November), one line each (17 November)
+        View bat = BatteryViews.rows(c, d);
+        if (bat != null) rings.addView(bat);
+        // issue #74; a small text button, so the day's line stays on the first screen (owner's wish of 17 November)
+        TextView find = Ui.textButton(c, noRing ? app.openring.core.KeyState.ADD_RING : "Find my ring", Ui.OXY);
         find.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                c.startActivity(new android.content.Intent(c, FinderActivity.class));
+                if (noRing) PhoneViews.addRing(c);
+                else c.startActivity(new android.content.Intent(c, FinderActivity.class));
             }
         });
-        LinearLayout.LayoutParams fl = Ui.matchWrap();
-        fl.setMargins(0, Ui.dp(c, 12), 0, 0);
-        rings.addView(find, fl);
-        root.addView(rings);
-        // a time left out because someone else wore the ring (issue #254); a day left out as a whole shows only this
-        View left = leftOutCard(c, d);
-        if (left != null) root.addView(left);
-        // the badges of the last 7 days (issue #265), only when there is one (no empty card), after a left out notice
-        if (!d.badges.isEmpty()) root.addView(BadgeViews.row(c, d, nav));
+        if (bat == null) rings.addView(Ui.gap(c, 6));
+        rings.addView(find, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return rings;
+    }
 
-        if (d.emptyAll() && d.allLeftOut()) {
-            // nothing to show: the Left out card above says why
-        } else if (d.emptyAll()) {
+    /**
+     * Your day with a ring: the day card; a card that says what to do when the day has no data yet; nothing when the whole day is
+     * left out (the Left out card says why).
+     */
+    static View ringDay(final Context c, DayData d, final Nav nav, boolean noRing) {
+        if (d.emptyAll() && d.allLeftOut()) return null;
+        if (d.emptyAll() && noRing) {
+            // without a ring (issue #329): the phone's steps come with its readings, about every hour
+            LinearLayout e = Ui.card(c);
+            e.addView(Ui.h2(c, "No data for this day yet"));
+            e.addView(Ui.gap(c, 6));
+            e.addView(Ui.body(c, "Steps from this phone show on Activity after its first reading, screen time on Screen. "
+                    + "Sleep and readiness need a ring or a watch."));
+            e.addView(Ui.gap(c, 12));
+            e.addView(PhoneViews.addRingButton(c, true), Ui.matchWrap());
+            return e;
+        }
+        if (d.emptyAll()) {
             LinearLayout e = Ui.card(c);
             e.addView(Ui.h2(c, "No data for this day yet"));
             e.addView(Ui.gap(c, 6));
@@ -103,74 +164,69 @@ public final class Pages {
                 }
             });
             e.addView(b, Ui.matchWrap());
-            root.addView(e);
-        } else {
-            LinearLayout digest = Ui.card(c);
-            digest.addView(Ui.caption(c, "Your day"));
-            digest.addView(Ui.gap(c, 6));
-            digest.addView(Ui.text(c, headline(d), 20, Ui.TEXT, Ui.LIGHT));
-            digest.addView(Ui.gap(c, 6));
-            digest.addView(Ui.body(c, digest(d)));
-            root.addView(digest);
-
-            LinearLayout stats = Ui.card(c);
-            stats.addView(Ui.caption(c, "Key metrics"));
-            JSONObject n = d.night;
-            // the main device's night, else the other one's (issue #251); a watch night is Withings' own
-            app.openring.core.withings.WatchDays.Night wn = d.merged == null ? null : d.merged.watchNight;
-            stats.addView(Ui.statRow(c,
-                    wn != null ? Ui.stat(c, "Total sleep", Ui.hm(wn.asleepMin()), "", Ui.SLEEP, d.merged.main == app.openring.core.MainDevice.WATCH
-                            ? "Time asleep last night, as your watch counted it" : "Last night from your watch, your ring has none")
-                    : Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, "Time asleep last night, naps not counted"),
-                    Ui.stat(c, "Resting HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", Ui.HEART, "Lowest heart rate while asleep")));
-            stats.addView(Ui.statRow(c,
-                    Ui.stat(c, "HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", Ui.READY, "Average while asleep, higher is calmer"),
-                    // temp_dev is a difference from the usual skin temperature, not a body temperature (issue #32)
-                    Ui.stat(c, "Temp vs usual", signed(Json.d(d.day, "temp_dev")), "°C", Ui.TEMP, "Skin temperature compared with your usual")));
-            stats.addView(Ui.statRow(c,
-                    stepsStat(c, d, Ui.ACTIVE, "Estimated from your movement"),
-                    Ui.stat(c, "Active burn", Ui.fmt(Json.d(d.day, "active_kcal"), 0), "kcal", Ui.ACTIVE, "Calories burned by moving")));
-            String fill = stepsLine(d);
-            if (fill != null) stats.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
-            root.addView(stats);
-
-            JSONObject radar = d.day == null ? null : d.day.optJSONObject("radar");
-            if (radar != null && radar.optBoolean("available")) {
-                LinearLayout r = Ui.card(c);
-                r.addView(Ui.caption(c, "Symptom radar"));
-                r.addView(Ui.gap(c, 4));
-                int dec = radar.optInt("decision");
-                r.addView(Ui.text(c, radar.optString("status"), 18, dec == 0 ? Ui.GOOD : Ui.WARN, Ui.REGULAR));
-                r.addView(Ui.body(c, dec == 0 ? "Your temperature, heart rate, HRV and breathing look like your normal."
-                        : "Some of your body signals moved away from your normal. Take it easy and see Body for details."));
-                root.addView(r);
-            }
+            return e;
         }
+        // the day's facts and a line that changes every day (owner's wish of 16 November); without a ring (issue #329) the
+        // phone's steps, with the note that sleep and readiness need a ring or a watch
+        return dayCard(c, d, !noRing, noRing ? "Sleep and readiness need a ring or a watch. Everything is worked out on this phone, nothing left the device."
+                : null);
+    }
 
+    /** The ring's Key metrics and, when there is one, the symptom radar. */
+    static void ringMetrics(Context c, DayData d, LinearLayout root) {
+        LinearLayout stats = Ui.card(c);
+        stats.addView(Ui.caption(c, "Key metrics"));
+        JSONObject n = d.night;
+        // the main device's night, else the other one's (issue #251); a watch night is Withings' own
+        app.openring.core.withings.WatchDays.Night wn = d.merged == null ? null : d.merged.watchNight;
+        stats.addView(Ui.statRow(c,
+                wn != null ? Ui.stat(c, "Total sleep", Ui.hm(wn.asleepMin()), "", Ui.SLEEP, d.merged.main == app.openring.core.MainDevice.WATCH
+                        ? "Time asleep last night, as your watch counted it" : "Last night from your watch, your ring has none")
+                : Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, "Time asleep last night, naps not counted"),
+                Ui.stat(c, "Resting HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", Ui.HEART, "Lowest heart rate while asleep")));
+        stats.addView(Ui.statRow(c,
+                Ui.stat(c, "HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", Ui.READY, "Average while asleep, higher is calmer"),
+                // temp_dev is a difference from the usual skin temperature, not a body temperature (issue #32)
+                Ui.stat(c, "Temp vs usual", signed(Json.d(d.day, "temp_dev")), "°C", Ui.TEMP, "Skin temperature compared with your usual")));
+        stats.addView(Ui.statRow(c,
+                stepsStat(c, d, Ui.ACTIVE, "Estimated from your movement"),
+                Ui.stat(c, "Active burn", Ui.fmt(Json.d(d.day, "active_kcal"), 0), "kcal", Ui.ACTIVE, "Calories burned by moving")));
+        String fill = stepsLine(d);
+        if (fill != null) stats.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
+        root.addView(stats);
+
+        JSONObject radar = d.day == null ? null : d.day.optJSONObject("radar");
+        if (radar != null && radar.optBoolean("available")) {
+            LinearLayout r = Ui.card(c);
+            r.addView(Ui.caption(c, "Symptom radar"));
+            r.addView(Ui.gap(c, 4));
+            int dec = radar.optInt("decision");
+            r.addView(Ui.text(c, radar.optString("status"), 18, dec == 0 ? Ui.GOOD : Ui.WARN, Ui.REGULAR));
+            r.addView(Ui.body(c, dec == 0 ? "Your temperature, heart rate, HRV and breathing look like your normal."
+                    : "Some of your body signals moved away from your normal. Take it easy and see Body for details."));
+            root.addView(r);
+        }
+    }
+
+    /** Live heart rate: Start, or Add a ring without one. */
+    static View liveCard(final Context c, final Nav nav, final boolean noRing) {
         LinearLayout live = Ui.card(c);
         LinearLayout lr = Ui.hbox(c);
         LinearLayout lt = Ui.vbox(c);
         lt.addView(Ui.h2(c, "Live heart rate"));
-        lt.addView(Ui.body(c, "Measure right now with your ring"));
+        lt.addView(Ui.body(c, noRing ? "Needs a ring" : "Measure right now with your ring"));
         lr.addView(lt, Ui.weight(1));
-        TextView lb = Ui.button(c, "Start", Ui.HEART, false);
+        TextView lb = Ui.button(c, noRing ? app.openring.core.KeyState.ADD_RING : "Start", Ui.HEART, false);
         lb.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                nav.live(false);
+                if (noRing) PhoneViews.addRing(c);
+                else nav.live(false);
             }
         });
         lr.addView(lb);
         live.addView(lr);
-        root.addView(live);
-        // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
-        if (d.periodShown) root.addView(PeriodCard.today(c, d, nav));
-
-        TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
-        foot.setGravity(Gravity.CENTER);
-        foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
-        root.addView(foot);
-        return root;
+        return live;
     }
 
     /**
@@ -223,7 +279,107 @@ public final class Pages {
         return "Keep wearing your ring to build your picture.";
     }
 
-    static String digest(DayData d) {
+    /** The tag of the day's line on Today, for the first screen check of the screen test. */
+    static final String DAY_LINE_TAG = "day_line";
+
+    /** Whether "Why this line" is open on Today's Your day card; kept while the screen is rebuilt (extra {@code day_line_why}). */
+    static final boolean[] dayWhyOpen = {false};
+
+    /**
+     * Today's "Your day" card (owner's wish of 16 November, {@code core/DayLine}): the sentence with the day's facts, the line
+     * of the day, the readiness sentence ({@code withDigest}) or {@code note}, and "Why this line" with each check of the tree.
+     * A tap on the card opens or closes it.
+     */
+    static View dayCard(Context c, DayData d, boolean withDigest, String note) {
+        app.openring.core.DayLine.Result r = dayLine(c, d);
+        // out of date: nothing below pretends to know the day
+        String more = r.decision.branch == app.openring.core.DayLine.STALE ? null
+                : withDigest ? digest(d, true, r.decision.branch == app.openring.core.DayLine.DEBT) : note;
+        final LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, "Your day"));
+        card.addView(Ui.gap(c, 6));
+        card.addView(Ui.body(c, r.decision.evidence));
+        card.addView(Ui.gap(c, 8));
+        TextView line = Ui.text(c, r.line, 20, Ui.TEXT, Ui.LIGHT);
+        // the screen test measures where the line ends on the first screen (MainActivity.firstScreen, demo mode only)
+        line.setTag(DAY_LINE_TAG);
+        card.addView(line);
+        if (more != null && !more.isEmpty()) {
+            card.addView(Ui.gap(c, 8));
+            card.addView(Ui.text(c, more, 13, Ui.TEXT_2, Ui.REGULAR));
+        }
+        card.addView(Ui.gap(c, 6));
+        List<String> why = new java.util.ArrayList<String>();
+        why.add("Checked from the top, the first that fits picks the line:");
+        why.addAll(r.why());
+        why.add(Explain.DAY_LINE);
+        final Fold how = Ui.howFold(c, dayWhyOpen, why, "Why this line");
+        card.addView(how.view, Ui.matchWrap());
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                how.toggle();
+            }
+        });
+        return card;
+    }
+
+    /**
+     * The facts of the day for {@link #dayCard}: the ring's stored day, else the watch's or the phone's days, with the sync age,
+     * the screen, a badge of the day and the period phase. The line is noted in the display memory only for today.
+     */
+    static app.openring.core.DayLine.Result dayLine(Context c, DayData d) {
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        java.time.LocalDate today = java.time.LocalDate.now();
+        boolean isToday = d.date.equals(today);
+        app.openring.core.DayLine.Facts f;
+        if (d.has.ring && (d.day != null || d.night != null)) {
+            f = app.openring.data.DayLines.ring(d.date, isToday, d.day, d.night, d.history);
+        } else if (d.deviceHistory != null) {
+            f = app.openring.core.DayLine.fromDevice(d.deviceHistory, d.date, isToday);
+        } else {
+            f = new app.openring.core.DayLine.Facts();
+            f.date = d.date;
+            f.isToday = isToday;
+            f.device = d.has.ring ? app.openring.core.DayLine.RING : d.has.watch ? app.openring.core.DayLine.WATCH : app.openring.core.DayLine.PHONE;
+            if (d.merged != null) f.steps = d.merged.steps;
+        }
+        // the app's step goal (the watch's setting, 10,000 unless changed) and the clock for "today after 15:00"
+        if (f.device == app.openring.core.DayLine.RING) f.stepGoal = p.watchGoal();
+        if (isToday) {
+            java.time.LocalTime now = java.time.ZonedDateTime.now(d.zone).toLocalTime();
+            f.hourNow = now.getHour() + now.getMinute() / 60.0;
+        }
+        // the demo never counts as out of date; a ring or a watch without a sync yet says so
+        if (!p.demo() && f.device != app.openring.core.DayLine.PHONE) {
+            long t = f.device == app.openring.core.DayLine.WATCH ? p.watchLastOk() : p.lastSync();
+            f.neverSynced = t == 0;
+            f.sinceSyncH = t == 0 ? Double.NaN : Math.max(0, System.currentTimeMillis() / 1000.0 - t) / 3600.0;
+        }
+        if (d.screen != null) {
+            f.bedScreenMin = d.screen.bedMin;
+            f.nightScreenMin = d.screen.nightMin;
+            if (d.screen.day != null) f.screenMin = d.screen.day.totalMin;
+        }
+        for (app.openring.core.analysis.Badges.Badge b : d.badges) {
+            if (b.date.equals(d.date)) {
+                f.badge = app.openring.core.analysis.Badges.NAMES[b.kind];
+                break;
+            }
+        }
+        if (d.periodShown && d.periods != null) f.periodPhase = d.periods.phase(d.date);
+        String stored = p.dayLineSeen();
+        app.openring.core.DayLine.Memory m = app.openring.core.DayLine.Memory.parse(stored);
+        app.openring.core.DayLine.Result r = app.openring.core.DayLine.of(f, m, isToday, Locale.getDefault());
+        if (isToday && !m.toString().equals(stored)) p.setDayLineSeen(m.toString());
+        return r;
+    }
+
+    /**
+     * The readiness sentence and the sleep debt under the day's line (no filler when {@code forLine}), without the sleep debt
+     * when the line said it ({@code noDebt}).
+     */
+    static String digest(DayData d, boolean forLine, boolean noDebt) {
         StringBuilder sb = new StringBuilder();
         JSONObject rd = d.scoreObj("readiness");
         if (rd != null) {
@@ -241,18 +397,24 @@ public final class Pages {
             if (rd.optBoolean("provisional")) sb.append("Your baselines are still forming, so scores will become more personal over the next two weeks. ");
         }
         JSONObject debt = d.day == null ? null : d.day.optJSONObject("sleep_debt");
-        if (debt != null && debt.optBoolean("valid")) {
+        if (noDebt) {
+            // the day's sentence above already gives the sleep debt
+        } else if (debt != null && debt.optBoolean("valid")) {
             double m = debt.optDouble("debt_min", 0);
             if (m >= 180) sb.append("You carry about ").append(Ui.hm(m)).append(" of sleep debt. ");
+        } else if (debt == null && HistoryViews.watch(d)) {
+            // only the watch: its sleep debt by the ring's rule, the number of the Sleep tab (owner's report of 14 November)
+            double[] w = d.deviceHistory.debt(d.date);
+            if (w[1] > 0 && w[0] >= 180) sb.append("You carry about ").append(Ui.hm(w[0])).append(" of sleep debt. ");
         }
-        if (sb.length() == 0) sb.append("Synced and analysed on this phone. Nothing left the device.");
+        // under the day's line the card has its own sentence, so no filler
+        if (sb.length() == 0 && !forLine) sb.append("Synced and analysed on this phone. Nothing left the device.");
         return sb.toString().trim();
     }
 
     /**
      * The night as a list of moments: bedtime, falling asleep, every wake up of a minute or more (the
-     * ones Wake ups counts, issue #70), lowest HR, waking. Times are rounded to whole minutes so the
-     * clock times and the minutes between them agree.
+     * ones Wake ups counts, issue #70), lowest HR, waking. The rows come from {@link WakeUps#timeline}.
      */
     static View timeline(Context c, JSONObject n, java.time.ZoneId z, List<double[]> leftOut) {
         LinearLayout card = Ui.card(c);
@@ -264,41 +426,9 @@ public final class Pages {
         int[] st = Json.stages(n);
         double s = Json.d(n, "start"), e = Json.d(n, "end");
         double ep = st.length == 0 ? 30 : (e - s) / st.length;
-        List<String[]> rows = new ArrayList<String[]>();
-        // a time left out because someone else wore the ring next to this night (issue #254): before or after it
-        List<String[]> leftBefore = new ArrayList<String[]>(), leftAfter = new ArrayList<String[]>();
-        for (double[] r : leftOut) {
-            if (r[1] < s - 3600 || r[0] > e + 3600) continue;
-            String[] row = {minute(r[0], z), app.openring.core.analysis.LeftOut.timelineRow(r[0], r[1], z)};
-            if (r[1] <= s + 60) leftBefore.add(row);
-            else leftAfter.add(row);
-        }
-        rows.addAll(leftBefore);
-        rows.add(new String[] {minute(s, z), "Start of the sleep window"});
-        int first = -1, last = -1;
-        for (int i = 0; i < st.length; i++) if (st[i] >= 1 && st[i] <= 3) {
-            if (first < 0) first = i;
-            last = i;
-        }
-        double low = Json.d(n, "lowest_hr_time");
-        boolean lowDone = Double.isNaN(low);
-        if (first >= 0) {
-            double asleep = s + first * ep;
-            rows.add(new String[] {minute(asleep, z), "Fell asleep" + (first > 0 ? " after " + WakeUps.shownMinutes(s, asleep) + " min" : "")});
-            // every wake up the Wake ups number counts, none left out (issue #70)
-            for (int[] w : WakeUps.list(st, ep)) {
-                double a = s + w[0] * ep, b = s + w[1] * ep;
-                if (!lowDone && low < a) {
-                    rows.add(new String[] {minute(low, z), "Lowest heart rate, " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm"});
-                    lowDone = true;
-                }
-                rows.add(new String[] {minute(a, z), "Awake for " + WakeUps.shownMinutes(a, b) + " min, back asleep " + minute(b, z)});
-            }
-            if (!lowDone) rows.add(new String[] {minute(low, z), "Lowest heart rate, " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm"});
-            rows.add(new String[] {minute(s + (last + 1) * ep, z), "Woke up"});
-        }
-        rows.add(new String[] {minute(e, z), "End of the sleep window"});
-        rows.addAll(leftAfter);
+        // the rows, with left out times next to the night (issue #254), in core so they are tested
+        List<String[]> rows = WakeUps.timeline(st, s, e, Json.d(n, "lowest_hr_time"), Json.d(n, "lowest_hr"), leftOut, z,
+                Locale.getDefault());
         for (String[] r : rows) {
             LinearLayout row = Ui.hbox(c);
             row.setPadding(0, Ui.dp(c, 3), 0, Ui.dp(c, 3));
@@ -364,15 +494,28 @@ public final class Pages {
     // ======================================================================== SLEEP
 
     public static View sleep(Context c, DayData d, Nav nav) {
+        // no ring and no watch (issue #329): one card instead of empty charts
+        if (PhoneViews.needsDevice(c, d)) return DeviceViews.needDevice(c);
         // the watch's night: the main device's, or the ring has none for this day (issue #251)
         if (d.merged != null && d.merged.watchNight != null) return watchSleep(c, d, nav, d.merged.watchNight);
+        if (!d.has.ring && d.night == null) {
+            // only a watch, no night from it (issue #373): what to do, no ring instructions
+            LinearLayout root = Ui.vbox(c);
+            root.addView(hero(c, Double.NaN, "Sleep", Ui.SLEEP, app.openring.core.Start.NO_WATCH_NIGHT));
+            // the watch's nights around this day and its statistics still show (owner's report of 13 November)
+            if (!d.watchRecent.isEmpty()) root.addView(recentNights(c, d, d.watchRecent, nav));
+            root.addView(infoCard(c, "About sleep", Explain.SLEEP_WATCH_ONLY));
+            HistoryViews.sleep(c, root, d);
+            if (HistoryViews.watch(d)) root.addView(furtherAnalysis(c, d));
+            return root;
+        }
         LinearLayout root = Ui.vbox(c);
         JSONObject n = d.night;
         // each night in the zone it was slept in (issue #22)
         java.time.ZoneId nz = d.zoneOf(n);
         root.addView(hero(c, d.score("sleep"), "Sleep", Ui.SLEEP,
                 n == null ? "No main sleep recorded for this day" : "Total sleep " + Ui.hm(Json.d(n, "asleep_min"))
-                        + "  ·  " + minute(Json.d(n, "start"), nz) + " to " + minute(Json.d(n, "end"), nz)));
+                        + "  ·  " + minute(Json.d(n, "start"), nz) + " to " + minute(Json.d(n, "end"), nz), d.watchVersion("sleep")));
         if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
@@ -520,53 +663,100 @@ public final class Pages {
     static View watchSleep(Context c, DayData d, Nav nav, app.openring.core.withings.WatchDays.Night wn) {
         LinearLayout root = Ui.vbox(c);
         java.time.ZoneId nz = d.zone;
-        root.addView(hero(c, Double.NaN, "Sleep", Ui.SLEEP, "Total sleep " + Ui.hm(wn.asleepMin()) + "  \u00b7  " + minute(wn.start, nz) + " to " + minute(wn.end, nz)));
-        if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
+        // without a ring the score from the watch's night (issue #379); with a ring its version as a line
+        boolean scored = d.fromDevice("sleep");
+        root.addView(hero(c, scored ? d.score("sleep") : Double.NaN, "Sleep", Ui.SLEEP, "Total sleep " + Ui.hm(wn.asleepMin()) + "  \u00b7  "
+                + minute(wn.start, nz) + " to " + minute(wn.end, nz), scored ? app.openring.core.DeviceScores.FROM_WATCH : d.watchVersion("sleep")));
+        // without a ring the watch's own nights (owner's report of 13 November); with a ring the ring's, as before
+        boolean watchOnly = HistoryViews.watch(d);
+        if (watchOnly) {
+            if (!d.watchRecent.isEmpty()) root.addView(recentNights(c, d, d.watchRecent, nav));
+        } else if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
         LinearLayout hyp = Ui.card(c);
         hyp.addView(Ui.caption(c, "Sleep depth through the night"));
         hyp.addView(Ui.gap(c, 10));
-        hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz), Ui.sized(c, -1, 170));
+        // the watch's heart rate of the night under the stages, on the same time axis (the owner's wish of 11 November)
+        app.openring.core.withings.WatchDays.NightHeart hr = d.merged.watchNightHeart;
+        boolean withHr = hr != null && !hr.points.isEmpty();
+        // a watch that does not tell REM from light sleep shows them as one stage (owner's report of 13 November)
+        boolean lightRem = !d.watchRem.tells(wn);
+        hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem),
+                Ui.sized(c, -1, withHr ? 250 : 170));
         hyp.addView(Ui.gap(c, 4));
-        hyp.addView(Ui.text(c, "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        hyp.addView(Ui.text(c, withHr ? "Touch or slide along the chart to see the time, the stage and the nearest heart rate."
+                : "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        if (withHr) {
+            hyp.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", String.valueOf(hr.lowest), "bpm", Ui.HEART, "At " + minute(hr.lowestAt, nz) + ", the watch's lowest reading"),
+                    Ui.stat(c, "Average HR", Ui.fmt(hr.average, 0), "bpm", Ui.HEART, "Of its " + hr.points.size() + " readings this night")));
+            hyp.addView(Ui.text(c, Explain.WATCH_NIGHT_HEART, 11, Ui.TEXT_3, Ui.REGULAR));
+        }
         hyp.addView(Ui.gap(c, 8));
-        double asleep = wn.asleepMin();
-        hyp.addView(stageRow(c, "REM", wn.remMin, asleep, Ui.STAGE_REM));
-        hyp.addView(stageRow(c, "Light", wn.lightMin, asleep, Ui.STAGE_LIGHT));
-        hyp.addView(stageRow(c, "Deep", wn.deepMin, asleep, Ui.STAGE_DEEP));
-        if (wn.otherMin > 0) hyp.addView(stageRow(c, "No data", wn.otherMin, asleep + wn.otherMin, Ui.TEXT_3));
+        // awake and no record are shares of the whole night, the stages of the time asleep, as on the ring's night
+        double inBed = wn.inBedMin();
+        int[] share = StageShare.sleepShares(wn.deepMin, wn.lightMin, wn.remMin);
+        hyp.addView(stageRowPct(c, "Awake", wn.awakeMin, StageShare.share(wn.awakeMin, inBed), Ui.STAGE_AWAKE));
+        if (lightRem) {
+            // one row: light and REM together, its share the two shares added (so the rows still add up to 100%)
+            hyp.addView(stageRowPct(c, "Light and REM", wn.lightMin + wn.remMin, share == null ? Double.NaN : share[1] + share[2], Ui.STAGE_LIGHT));
+        } else {
+            hyp.addView(stageRowPct(c, "REM", wn.remMin, share == null ? Double.NaN : share[2], Ui.STAGE_REM));
+            hyp.addView(stageRowPct(c, "Light", wn.lightMin, share == null ? Double.NaN : share[1], Ui.STAGE_LIGHT));
+        }
+        hyp.addView(stageRowPct(c, "Deep", wn.deepMin, share == null ? Double.NaN : share[0], Ui.STAGE_DEEP));
+        if (wn.otherMin > 0) hyp.addView(stageRowPct(c, "No data", wn.otherMin, StageShare.share(wn.otherMin, inBed), Ui.TEXT_3));
+        hyp.addView(Ui.gap(c, 2));
+        hyp.addView(Ui.text(c, (lightRem ? "Light and REM, and deep are shares of your time asleep, so they add up to 100%. "
+                : "REM, light and deep are shares of your time asleep, so they add up to 100%. ")
+                + (wn.otherMin > 0 ? "Awake and No data are shares of the whole night. " + Explain.WATCH_NO_RECORD : "Awake is a share of the whole night."),
+                11, Ui.TEXT_3, Ui.REGULAR));
+        if (lightRem) hyp.addView(Ui.text(c, Explain.LIGHT_REM, 11, Ui.TEXT_3, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 6));
         String from = app.openring.core.MainDevice.nightLine(d.merged);
         if (from != null) hyp.addView(Ui.text(c, from, 12, Ui.OXY, Ui.REGULAR));
-        hyp.addView(Ui.text(c, Explain.MAIN_WATCH_NIGHT, 11, Ui.TEXT_3, Ui.REGULAR));
+        hyp.addView(Ui.text(c, scored ? Explain.WATCH_NIGHT_SCORE : Explain.MAIN_WATCH_NIGHT, 11, Ui.TEXT_3, Ui.REGULAR));
         String too = app.openring.core.MainDevice.ringTooLine(d.merged, d.score("sleep"));
         if (too != null) {
             hyp.addView(Ui.gap(c, 4));
             hyp.addView(Ui.text(c, too, 12, Ui.TEXT_2, Ui.REGULAR));
         }
         root.addView(hyp);
+        // the night's timeline from the watch's stages, as the ring's (each wake up of a minute or more)
+        app.openring.core.DeviceHistory.NightRow row = watchOnly ? d.deviceHistory.night(d.date) : null;
+        if (row != null) root.addView(timeline(c, app.openring.data.WatchHistory.nightJson(row), nz, new ArrayList<double[]>()));
+        if (scored) {
+            DeviceViews.deviceParts(c, root, d, "sleep", Ui.SLEEP);
+            root.addView(infoCard(c, "About the sleep score", Explain.SLEEP_DEVICE));
+        }
+        // details, sleep debt, the 7 and 30 day charts and what needs a ring, without a ring only
+        HistoryViews.sleep(c, root, d);
         addNaps(c, root, d);
-        if (d.anyNight) root.addView(furtherAnalysis(c, d));
+        if (d.anyNight || watchOnly) root.addView(furtherAnalysis(c, d));
         return root;
     }
 
     // ---- recent nights: tap one to open it ----
     static View recentNights(Context c, DayData d, final Nav nav) {
+        return recentNights(c, d, d.recent, nav);
+    }
+
+    /** The strip of {@code nights} (the ring's, or the watch's without a ring), the shown day's night selected. */
+    static View recentNights(Context c, DayData d, List<JSONObject> nights, final Nav nav) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Recent nights"));
         card.addView(Ui.gap(c, 2));
         card.addView(Ui.text(c, "Tap a night to open it. Height is time asleep.", 11, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(c, 8));
         double max = 8 * 60;
-        for (JSONObject o : d.recent) max = Math.max(max, Json.d(o, "asleep_min") + Math.max(0, Json.d(o, "awake_min")));
+        for (JSONObject o : nights) max = Math.max(max, Json.d(o, "asleep_min") + Math.max(0, Json.d(o, "awake_min")));
         final android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(c);
         hs.setHorizontalScrollBarEnabled(false);
         LinearLayout row = Ui.hbox(c);
         int selIndex = -1, upTo = 0;
         String sel = d.date.toString();
-        for (int i = 0; i < d.recent.size(); i++) {
-            JSONObject o = d.recent.get(i);
+        for (int i = 0; i < nights.size(); i++) {
+            JSONObject o = nights.get(i);
             final String day = o.optString("day");
             boolean selected = day.equals(sel);
             if (selected) selIndex = i;
@@ -735,11 +925,29 @@ public final class Pages {
                 : analysisPeriod == 2 ? to.minusDays(364) : java.time.LocalDate.of(2000, 1, 1);
         final int period = analysisPeriod;
         final int load = analysisLoad.incrementAndGet();
+        // without a ring the watch's nights (owner's report of 13 November), worked out from its rows
+        final boolean watch = HistoryViews.watch(d);
+        final app.openring.core.withings.WatchDays.Rem rem = d.watchRem;
+        final java.time.LocalDate shown = d.date;
+        final java.time.ZoneId shownZone = d.zone;
+        final int age = Prefs.of(c).age();
         new android.os.AsyncTask<Void, Void, app.openring.data.SleepHistory>() {
             @Override
             protected app.openring.data.SleepHistory doInBackground(Void... v) {
                 // a newer load was asked for while this one waited (another day, tab or period): its card is gone
                 if (load != analysisLoad.get()) return null;
+                if (watch) {
+                    // each night in its day's zone, as its dial and the charts (code review of #389), the shown day in the dial's
+                    app.openring.data.Db db = app.openring.data.Db.get(c);
+                    final app.openring.core.DeviceHistory.DayZones noted = app.openring.data.WatchHistory.dayZones(db, java.time.ZoneId.systemDefault());
+                    app.openring.core.DeviceHistory.DayZones zones = new app.openring.core.DeviceHistory.DayZones() {
+                        @Override
+                        public java.time.ZoneId of(java.time.LocalDate day) {
+                            return day.equals(shown) ? shownZone : noted.of(day);
+                        }
+                    };
+                    return app.openring.data.WatchHistory.load(db, from.toString(), to.toString(), zones, java.time.ZoneId.systemDefault(), age, rem);
+                }
                 return app.openring.data.SleepHistory.load(app.openring.data.Db.get(c), from.toString(), to.toString(),
                         java.time.ZoneId.systemDefault());
             }
@@ -751,7 +959,7 @@ public final class Pages {
                 // a screen gone with a turn of the phone shows nothing; the new one loads its own
                 if (c instanceof android.app.Activity && ((android.app.Activity) c).isDestroyed()) return;
                 // the old views go and the new ones come in the same step, before the next layout
-                showAnalysis(c, h, result, period);
+                showAnalysis(c, h, result, period, watch, watch && h.lightRem);
                 result.setAlpha(1f);
                 setTouchable(result, true);
                 result.setMinimumHeight(0);
@@ -767,6 +975,14 @@ public final class Pages {
     }
 
     static void showAnalysis(Context c, app.openring.data.SleepHistory h, LinearLayout out, int period) {
+        showAnalysis(c, h, out, period, false, false);
+    }
+
+    /**
+     * As above; {@code watch}: the watch's nights without a ring, so no HRV row and a line that says where they come from;
+     * {@code lightRem}: a watch that does not tell REM from light sleep, so "Light and REM" is one stage (only watch nights here).
+     */
+    static void showAnalysis(Context c, app.openring.data.SleepHistory h, LinearLayout out, int period, boolean watch, boolean lightRem) {
         out.removeAllViews();
         out.addView(Ui.gap(c, 10));
         if (h.nights == 0) {
@@ -778,7 +994,7 @@ public final class Pages {
         out.addView(Ui.caption(c, "Average night"));
         out.addView(Ui.text(c, span, 12, Ui.TEXT_3, Ui.REGULAR));
         out.addView(Ui.gap(c, 6));
-        out.addView(new Charts.Pattern(c, h.pattern), Ui.sized(c, -1, 210));
+        out.addView(new Charts.Pattern(c, h.pattern).lightRem(lightRem), Ui.sized(c, -1, 210));
         out.addView(Ui.gap(c, 6));
         out.addView(Ui.text(c, "For each time of night, the share of nights spent in each stage. The outline shows how often you "
                 + "are in bed at that time, so its rise and fall show your usual bedtime and wake time. Touch the chart to read a time.",
@@ -795,15 +1011,29 @@ public final class Pages {
                 Ui.stat(c, "Sleep score", Ui.fmt(h.score, 0), "", Ui.SLEEP, "Average per night")));
         out.addView(Ui.statRow(c, Ui.stat(c, "Falls asleep", clockOf(h.bedtimeMin), "", 0, "Usual time you fall asleep"),
                 Ui.stat(c, "Wakes up", clockOf(h.wakeMin), "", 0, "Usual time you wake up")));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(shown[0]), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
-                Ui.stat(c, "REM", Ui.hm(shown[2]), "", Ui.STAGE_REM, StageShare.note(remPct, "sleep", StageShare.USUAL_REM))));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(shown[1]), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
-                Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", Ui.STAGE_AWAKE, StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
+        if (lightRem) {
+            // no REM row and no REM note: the watch cannot tell it from light sleep (owner's report of 13 November)
+            double lr = (Double.isNaN(shown[1]) ? 0 : shown[1]) + (Double.isNaN(shown[2]) ? 0 : shown[2]);
+            double lrPct = Double.isNaN(lightPct) ? Double.NaN : lightPct + (Double.isNaN(remPct) ? 0 : remPct);
+            out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(shown[0]), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
+                    Ui.stat(c, "Light and REM", Ui.hm(lr), "", Ui.STAGE_LIGHT, StageShare.note(lrPct, "sleep", null))));
+            out.addView(Ui.statRow(c, Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", Ui.STAGE_AWAKE,
+                    StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
+        } else {
+            out.addView(Ui.statRow(c, Ui.stat(c, "Deep", Ui.hm(shown[0]), "", Ui.STAGE_DEEP, StageShare.note(deepPct, "sleep", StageShare.USUAL_DEEP)),
+                    Ui.stat(c, "REM", Ui.hm(shown[2]), "", Ui.STAGE_REM, StageShare.note(remPct, "sleep", StageShare.USUAL_REM))));
+            out.addView(Ui.statRow(c, Ui.stat(c, "Light", Ui.hm(shown[1]), "", Ui.STAGE_LIGHT, StageShare.note(lightPct, "sleep", null)),
+                    Ui.stat(c, "Awake in bed", Ui.hm(h.awakeMin), "", Ui.STAGE_AWAKE, StageShare.note(StageShare.share(h.awakeMin, h.inBedMin), "time in bed", null))));
+        }
         out.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(h.efficiency, 0), "%", 0, "Share of time in bed asleep"),
                 Ui.stat(c, "Wake ups", Ui.fmt(h.wakeUps, 1), "per night", 0,
                         WakeUps.averageLine(h.stageDetail))));
-        out.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(h.lowestHr, 0), "bpm", Ui.HEART, "Average lowest heart rate"),
-                Ui.stat(c, "Average HRV", Ui.fmt(h.hrv, 0), "ms", Ui.READY, "Average while asleep")));
+        if (watch) {
+            out.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(h.lowestHr, 0), "bpm", Ui.HEART, "Average of the watch's lowest reading each night")));
+        } else {
+            out.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(h.lowestHr, 0), "bpm", Ui.HEART, "Average lowest heart rate"),
+                    Ui.stat(c, "Average HRV", Ui.fmt(h.hrv, 0), "ms", Ui.READY, "Average while asleep")));
+        }
         if (!Double.isNaN(h.bedtimeSdMin)) {
             out.addView(Ui.gap(c, 6));
             String reg = h.bedtimeSdMin < 30 ? "very regular" : h.bedtimeSdMin < 60 ? "fairly regular" : "irregular";
@@ -813,6 +1043,11 @@ public final class Pages {
         if (h.nights < 7) {
             out.addView(Ui.gap(c, 6));
             out.addView(Ui.text(c, "Averages settle after about a week of nights.", 11, Ui.TEXT_3, Ui.REGULAR));
+        }
+        if (watch) {
+            out.addView(Ui.gap(c, 6));
+            out.addView(Ui.text(c, Explain.WATCH_ANALYSIS, 11, Ui.TEXT_3, Ui.REGULAR));
+            if (lightRem) out.addView(Ui.text(c, Explain.LIGHT_REM, 11, Ui.TEXT_3, Ui.REGULAR));
         }
     }
 
@@ -849,10 +1084,32 @@ public final class Pages {
     // ===================================================================== READINESS
 
     public static View readiness(Context c, DayData d) {
+        // no ring and no watch (issue #329): one card instead of empty charts
+        if (PhoneViews.needsDevice(c, d)) return DeviceViews.needDevice(c);
         LinearLayout root = Ui.vbox(c);
         JSONObject sc = d.scoreObj("readiness");
+        if (app.openring.core.Start.shows(app.openring.core.Start.READY, app.openring.core.Start.READY_WATCH, d.has)) {
+            // only a watch (issue #379): readiness from the watch's signals, what it used and what it left out
+            boolean scored = d.fromDevice("readiness");
+            String none = d.devices == null || d.devices.readinessNone == null ? app.openring.core.DeviceScores.WATCH_NO_READINESS : d.devices.readinessNone;
+            root.addView(hero(c, d.score("readiness"), "Readiness", Ui.READY, scored ? headline(d) : none,
+                    scored ? app.openring.core.DeviceScores.FEWER : null));
+            if (scored) {
+                if (sc.optBoolean("provisional")) {
+                    LinearLayout note = Ui.card(c);
+                    note.addView(Ui.body(c, app.openring.core.DeviceScores.PROVISIONAL));
+                    root.addView(note);
+                }
+                DeviceViews.deviceParts(c, root, d, "readiness", Ui.READY);
+            }
+            // last night's heart rate and the 30 and 7 day charts (owner's report of 13 November)
+            HistoryViews.ready(c, root, d);
+            root.addView(infoCard(c, "What is readiness?", Explain.READINESS_DEVICE));
+            root.addView(DeviceViews.needCard(c, null, app.openring.core.DeviceScores.RING_ADDS, false));
+            return root;
+        }
         root.addView(hero(c, d.score("readiness"), "Readiness", Ui.READY,
-                sc == null ? "Readiness appears the morning after a night with the ring on" : headline(d)));
+                sc == null ? "Readiness appears the morning after a night with the ring on" : headline(d), d.watchVersion("readiness")));
         root.addView(infoCard(c, "What is readiness?", Explain.READINESS));
         if (sc == null) {
             LinearLayout how = Ui.card(c);
@@ -961,11 +1218,18 @@ public final class Pages {
         LinearLayout root = Ui.vbox(c);
         JSONObject day = d.day;
         double active = Json.d(day, "active_kcal"), target = Json.d(day, "target_kcal");
-        root.addView(hero(c, d.score("activity_score"), "Activity", Ui.ACTIVE,
-                day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal"));
+        // without a ring (issue #379): the score from the watch's or the phone's steps, the steps as evidence, then its parts
+        boolean noRing = !d.has.ring;
+        boolean scored = d.fromDevice("activity_score");
+        app.openring.core.DeviceScores.Result dv = d.devices;
+        String sub = !noRing ? (day == null ? "No activity data for this day" : Ui.fmt(active, 0) + " of " + Ui.fmt(target, 0) + " kcal goal")
+                : scored ? app.openring.core.DeviceScores.goalLine(dv.steps, dv.goal, Locale.getDefault())
+                : dv != null && dv.activityNone != null ? dv.activityNone : app.openring.core.DeviceScores.PHONE_NO_ACTIVITY;
+        root.addView(hero(c, d.score("activity_score"), "Activity", Ui.ACTIVE, sub,
+                scored ? app.openring.core.DeviceScores.from(dv.device, "activity_score") : d.watchVersion("activity_score")));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
-        if (day == null) {
+        if (day == null || noRing) {
             // no ring summary: the watch's steps and workouts, when it has any (issue #251)
             app.openring.core.MainDevice.Day m = d.merged;
             if (m != null && !Double.isNaN(m.steps)) {
@@ -974,10 +1238,29 @@ public final class Pages {
                 sc.addView(Ui.statRow(c, stepsStat(c, d, 0, "Estimated from how much you moved, so \"est.\""), distanceStat(c, d)));
                 String fill = stepsLine(d);
                 if (fill != null) sc.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
+                if (phoneCounted(d)) sc.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
                 root.addView(sc);
             }
+            // the watch's steps per hour, touch readable (owner's report of 11 November)
+            View hours = PhoneViews.watchDayCard(c, d);
+            if (hours != null) root.addView(hours);
+            // steps from this phone (issue #329): the evidence, or the card that asks for Physical activity
+            View phone = PhoneViews.activityCard(c, d);
+            if (phone != null) root.addView(phone);
             View w = workoutsCard(c, d);
             if (w != null) root.addView(w);
+            if (scored) {
+                boolean watch = dv.device == app.openring.core.MainDevice.WATCH;
+                if (dv.days7 < 7) {
+                    LinearLayout note = Ui.card(c);
+                    note.addView(Ui.body(c, Explain.activityDaysDevice(dv.days7, watch)));
+                    root.addView(note);
+                }
+                DeviceViews.deviceParts(c, root, d, "activity_score", Ui.ACTIVE);
+                root.addView(infoCard(c, "About the activity score", Explain.ACTIVITY_DEVICE));
+            }
+            // steps, the activity score, calories and workouts over 7 and 30 days (owner's report of 13 November)
+            HistoryViews.activity(c, root, d);
             return root;
         }
 
@@ -993,7 +1276,15 @@ public final class Pages {
             goal.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
             goal.addView(Ui.text(c, Explain.MAIN_FILLED, 12, Ui.TEXT_3, Ui.REGULAR));
         }
+        // phone steps in the total are spread evenly over each interval between two readings (issue #329)
+        if (phoneCounted(d)) goal.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(goal);
+        // the watch's steps per hour when its steps are the day's (owner's report of 11 November)
+        View hours = PhoneViews.watchDayCard(c, d);
+        if (hours != null) root.addView(hours);
+        // steps from this phone (issue #329): the evidence under the main device's steps, or the card that asks
+        View phone = PhoneViews.activityCard(c, d);
+        if (phone != null) root.addView(phone);
         // the watch's workouts of the day: only the watch records them (issue #251)
         View workouts = workoutsCard(c, d);
         if (workouts != null) root.addView(workouts);
@@ -1091,8 +1382,17 @@ public final class Pages {
         app.openring.core.MainDevice.Day m = d.merged;
         String note = m == null ? null : app.openring.core.MainDevice.stepsNote(m);
         double metres = m == null ? Json.d(d.day, "distance_m") : m.metres;
-        return Ui.stat(c, "Distance", Ui.fmt(metres / 1000.0, 1), "km", 0, note == null ? "Estimated from the steps"
-                : note.startsWith("Counted") ? "The watch's own estimate from your steps" : "Estimated from the steps of both");
+        // the phone counts no distance: it is worked out from its steps (issue #329)
+        boolean phone = m != null && (m.main == app.openring.core.MainDevice.PHONE || m.whole && m.wholeFrom == app.openring.core.MainDevice.PHONE);
+        return Ui.stat(c, "Distance", Ui.fmt(metres / 1000.0, 1), "km", 0, note == null || phone ? "Estimated from the steps"
+                : note.startsWith("Counted") && !note.contains("phone") ? "The watch's own estimate from your steps" : "Estimated from the steps of both");
+    }
+
+    /** Phone steps are part of the day's total: the phone is the main device with steps, or it filled a gap (issue #329). */
+    static boolean phoneCounted(DayData d) {
+        app.openring.core.MainDevice.Day m = d.merged;
+        if (m == null || Double.isNaN(m.steps)) return false;
+        return m.phoneSteps() > 0 || (m.base == app.openring.core.MainDevice.PHONE && m.steps > 0);
     }
 
     /** The watch's workouts of the day as one card, null without any (issue #251). */
@@ -1296,6 +1596,8 @@ public final class Pages {
         card.addView(Ui.text(c, "One row per day, midnight to midnight, newest on top. Blue: phone in use. Purple: sleep. "
                 + "Green dot: first look after waking up. Right: the day's screen time, or -- when it is not known "
                 + "(the day itself says why). Tap a day to open it.", 12, Ui.TEXT_2, Ui.REGULAR));
+        // where the sleep came from when the watch gave a night (owner's report of 14 November); nothing new with only the ring
+        if (in.watchNights) card.addView(Ui.text(c, in.ringNights ? Explain.SCREEN_WATCH_SOME : Explain.SCREEN_WATCH_NIGHTS, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
     }
 
@@ -1427,7 +1729,19 @@ public final class Pages {
         JSONObject day = d.day;
         // the period tracker first (issue #252), when the profile says female, the Settings switch says so, or in demo mode
         if (d.periodShown) root.addView(PeriodCard.body(c, d, nav));
-        root.addView(rightNow(c, d.now));
+        // without a ring (issue #373): no ring readings, live buttons or night charts, one card instead; with neither a ring
+        // nor a watch no heart rate either
+        boolean ring = d.has.ring;
+        if (app.openring.core.Start.shows(BODY, app.openring.core.Start.HEART_NEEDS_DEVICE, d.has)) {
+            root.addView(DeviceViews.needCard(c, null, app.openring.core.Start.HEART_NEEDS, true));
+            root.addView(DeviceViews.needCard(c, app.openring.core.Start.NIGHT_TITLE, app.openring.core.Start.NIGHT_TEXT, false));
+            if (d.periodShown && d.periods != null) {
+                root.addView(PeriodAnalysis.cycles(c, d));
+                if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
+            }
+            return root;
+        }
+        if (ring) root.addView(rightNow(c, d.now));
         LinearLayout hr = Ui.card(c);
         hr.addView(Ui.caption(c, "Heart rate today"));
         // the day's own hours, midnight to midnight as the analysis counted them (23 or 25 on a clock change, issue #22)
@@ -1461,6 +1775,20 @@ public final class Pages {
             hr.addView(Ui.gap(c, 4));
             hr.addView(Ui.text(c, fromOther, 12, Ui.OXY, Ui.REGULAR));
             hr.addView(Ui.text(c, Explain.MAIN_FILLED, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
+        if (!ring) {
+            root.addView(hr);
+            // resting and day heart rate over 30 days and cardio capacity from the watch (owner's report of 13 November)
+            HistoryViews.body(c, root, d, Prefs.of(c).age());
+            root.addView(DeviceViews.needCard(c, app.openring.core.Start.NIGHT_TITLE,
+                    HistoryViews.watch(d) ? Explain.BODY_NEEDS_RING : app.openring.core.Start.NIGHT_TEXT, false));
+            if (d.periodShown && d.periods != null) {
+                // without a ring this is the only temperature chart (drip's mouth temperatures), so it stays next to the cycles
+                root.addView(PeriodAnalysis.cycles(c, d));
+                if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
+                if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
+            }
+            return root;
         }
         hr.addView(Ui.gap(c, 10));
         TextView live = Ui.button(c, "Measure live heart rate and HRV", Ui.HEART, false);
@@ -1526,11 +1854,15 @@ public final class Pages {
         root.addView(chartCard(c, "HRV, 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"), null));
         root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).unit("/min"), null));
         root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).range(88, 100).unit("%"), null));
-        root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
-        // the period tracker's analysis at the end (issue #252, phase 1a2): the cycles over time, then the night temperature next to them
+        // with the period tracker and a logged period, the one temperature chart carries the cycle (owner's feedback of
+        // 11 November: no second temperature chart at the end of Body); without it the chart stays as it was
+        if (d.periodShown && d.periods != null && !d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
+        else root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
+        // the period tracker's analysis at the end (issue #252, phase 1a2): the cycles over time
         if (d.periodShown && d.periods != null) {
             root.addView(PeriodAnalysis.cycles(c, d));
-            if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
+            // how close each prediction method was on these cycles (issue #383)
+            if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
         }
         return root;
     }
@@ -1579,6 +1911,14 @@ public final class Pages {
     }
 
     static View hero(Context c, double score, String label, int color, String sub) {
+        return hero(c, score, label, color, sub, null);
+    }
+
+    /**
+     * As above with a small line under it, null for none: where a score without a ring comes from, or the watch's version of a
+     * ring's score (issue #379).
+     */
+    static View hero(Context c, double score, String label, int color, String sub, String note) {
         LinearLayout card = Ui.card(c);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         Charts.ScoreRing ring = new Charts.ScoreRing(c, score, label, color, true);
@@ -1590,6 +1930,12 @@ public final class Pages {
         s.setGravity(Gravity.CENTER);
         s.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
         card.addView(s);
+        if (note != null) {
+            TextView n = Ui.text(c, note, 12, Ui.TEXT_3, Ui.REGULAR);
+            n.setGravity(Gravity.CENTER);
+            n.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
+            card.addView(n);
+        }
         return card;
     }
 
@@ -1620,12 +1966,15 @@ public final class Pages {
             return card;
         }
         double dev = Json.d(day, "temp_dev"), eff = nightEfficiency(night);
+        // a score from the watch or the phone (issue #379) has texts of its own where the ring's do not fit
+        boolean device = score.has("device"), watch = score.optInt("device", -1) == app.openring.core.MainDevice.WATCH;
         for (int i = 0; i < cs.length(); i++) {
             JSONObject o = cs.optJSONObject(i);
             String detail = o.optString("detail");
             if ("temperature".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(dev)) detail = signed(dev) + " \u00b0C";
             if ("efficiency".equals(o.optString("key")) && !detail.isEmpty() && !Double.isNaN(eff)) detail = Math.round(eff) + "%";
-            card.addView(Ui.contributor(c, o.optString("label"), detail, o.optDouble("score"), color, Explain.of(o.optString("key"))));
+            String key = o.optString("key"), why = device ? Explain.ofDevice(key, watch) : null;
+            card.addView(Ui.contributor(c, o.optString("label"), detail, o.optDouble("score"), color, why != null ? why : Explain.of(key)));
         }
         return card;
     }

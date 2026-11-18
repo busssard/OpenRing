@@ -396,14 +396,15 @@ public final class WatchSetupActivity extends Activity {
         // (review of #332), so a change here never leaves results of the old profile behind
         if (!demo && (!who.complete() || !p.profileSet())) {
             card.addView(Ui.gap(this, 8));
-            card.addView(Ui.text(this, !who.complete() ? "The watch needs to know male or female to count calories. Set it in Settings, Profile, then come back here."
-                    : "Your profile was never entered, so the app's defaults would be sent. Enter yours in Settings, Profile, then come back here.", 13, Ui.TEXT, Ui.REGULAR));
+            card.addView(Ui.text(this, !who.complete() ? "The watch needs to know male or female to count calories. Set it in Settings, Profile, save it, then tap Back to the watch setup."
+                    : "Your profile was never entered, so the app's defaults would be sent. Enter yours in Settings, Profile, save it, then tap Back to the watch setup.", 13, Ui.TEXT, Ui.REGULAR));
             addButton(card, "Open Settings, Profile", Ui.OXY, false, new Runnable() {
                 @Override
                 public void run() {
-                    // the Settings screen below is built anew at its Profile card, so it never shows the old numbers
+                    // the Settings screen below is built anew at its Profile card, so it never shows the old numbers; the flag
+                    // closes this screen, so Settings gets the extra and offers Back to the watch setup (issue #351)
                     startActivity(new Intent(WatchSetupActivity.this, SettingsActivity.class).putExtra("section", "profile")
-                            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+                            .putExtra(SettingsActivity.FROM_WATCH_SETUP, true).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
                 }
             });
         }
