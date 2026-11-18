@@ -107,15 +107,19 @@ public final class Methods {
     }
 
     // ------------------------------------------------------------------------- shared statistics
+    // The one copy of these for the period tracker (Cycles, TempRise and the methods). sd is the sample standard deviation
+    // (n minus 1), not core.Stats.sd (n): the period numbers have always used this one.
 
-    static double mean(int[] v) {
+    /** The mean, NaN without values. */
+    public static double mean(int[] v) {
         if (v.length == 0) return Double.NaN;
         double s = 0;
         for (int x : v) s += x;
         return s / v.length;
     }
 
-    static double median(int[] v) {
+    /** The middle value (the mean of the two middle ones for an even count), NaN without values. */
+    public static double median(int[] v) {
         if (v.length == 0) return Double.NaN;
         int[] s = v.clone();
         Arrays.sort(s);
@@ -124,7 +128,7 @@ public final class Methods {
     }
 
     /** The mean without one shortest and one longest value (at least 3 values). */
-    static double trimmedMean(int[] v) {
+    public static double trimmedMean(int[] v) {
         int[] s = v.clone();
         Arrays.sort(s);
         double sum = 0;
@@ -132,8 +136,8 @@ public final class Methods {
         return sum / (s.length - 2);
     }
 
-    /** The sample standard deviation, NaN with fewer than 2 values. */
-    static double sd(int[] v) {
+    /** The sample standard deviation (divided by n minus 1), NaN with fewer than 2 values. */
+    public static double sd(int[] v) {
         if (v.length < 2) return Double.NaN;
         double m = mean(v), q = 0;
         for (int x : v) q += (x - m) * (x - m);

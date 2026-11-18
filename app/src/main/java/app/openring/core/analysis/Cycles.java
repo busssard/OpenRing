@@ -4,7 +4,6 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -17,6 +16,7 @@ import app.openring.core.Texts;
 import app.openring.core.analysis.cycleforecast.Backtest;
 import app.openring.core.analysis.cycleforecast.Forecast;
 import app.openring.core.analysis.cycleforecast.Methods;
+import app.openring.core.analysis.cycleforecast.OpenRingMethod;
 
 /**
  * The period tracker's estimates from the logged days (issue #252, phase 1a1), the way "Design round: plan" and the
@@ -231,9 +231,9 @@ public final class Cycles {
         used = Collections.unmodifiableList(new ArrayList<Cycle>(kept.subList(Math.max(0, kept.size() - WINDOW), kept.size())));
         int[] u = new int[used.size()];
         for (int i = 0; i < u.length; i++) u[i] = used.get(i).length;
-        typical = u.length == 0 ? DEFAULT_LENGTH : u.length < TRIM_FROM ? median(u) : trimmedMean(u);
+        typical = OpenRingMethod.typical(u);
         length = (int) Math.round(typical);
-        sd = sd(u);
+        sd = OpenRingMethod.sd(u);
         // the prediction method (issue #383): Open Ring's own rule gives exactly the numbers above
         this.choice = Methods.valid(choice) ? choice : Methods.OPEN_RING;
         int[] lens = lengths();
@@ -381,34 +381,6 @@ public final class Cycles {
     static LocalDate markIn(TreeSet<LocalDate> ends, LocalDate from, LocalDate to) {
         LocalDate m = ends.ceiling(from);
         return m != null && m.isBefore(to) ? m : null;
-    }
-
-    static double median(int[] v) {
-        if (v.length == 0) return Double.NaN;
-        int[] s = v.clone();
-        Arrays.sort(s);
-        int n = s.length;
-        return n % 2 == 1 ? s[n / 2] : (s[n / 2 - 1] + s[n / 2]) / 2.0;
-    }
-
-    /** The mean without one shortest and one longest value (at least 3 values). */
-    static double trimmedMean(int[] v) {
-        int[] s = v.clone();
-        Arrays.sort(s);
-        double sum = 0;
-        for (int i = 1; i < s.length - 1; i++) sum += s[i];
-        return sum / (s.length - 2);
-    }
-
-    /** The sample standard deviation, NaN with fewer than 2 values. */
-    static double sd(int[] v) {
-        if (v.length < 2) return Double.NaN;
-        double m = 0;
-        for (int x : v) m += x;
-        m /= v.length;
-        double q = 0;
-        for (int x : v) q += (x - m) * (x - m);
-        return Math.sqrt(q / (v.length - 1));
     }
 
     // ------------------------------------------------------------------ questions the screens ask
@@ -897,7 +869,7 @@ public final class Cycles {
                 hi = Math.max(hi, x);
             }
             mean = n == 0 ? Double.NaN : s / n;
-            sd = Cycles.sd(v);
+            sd = Methods.sd(v);
             min = n == 0 ? 0 : lo;
             max = n == 0 ? 0 : hi;
         }
