@@ -111,6 +111,14 @@ public final class SettingsBlocks {
             HELP_STATUS = "Data check, log and Re analyse all", ADVANCED_STATUS = "Leave out a time someone else wore the ring",
             CAREFUL_STATUS = "Delete all local data";
 
+    /**
+     * Export (issue #292): {@link #EXPORT_STATUS}, or with the CSV choice ticked "Daily summaries with life factors, or the
+     * database"; Intimacy is never named in the status, it is a line anyone looking at the screen can read.
+     */
+    public static String exportStatus(boolean life) {
+        return life ? "Daily summaries with life factors, or the database" : EXPORT_STATUS;
+    }
+
     /** Updates: "Open Ring 2.0.19 installed"; "Open Ring" when the version is not known. */
     public static String updatesStatus(String version) {
         return version == null || version.isEmpty() ? "Open Ring" : "Open Ring " + version + " installed";
