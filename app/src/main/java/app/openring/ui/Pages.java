@@ -832,7 +832,7 @@ public final class Pages {
 
     // ---- further analysis: averages over a period, folded away by default ----
     static boolean analysisOpen;
-    static int analysisPeriod = 1; // 0 week, 1 month, 2 year, 3 all time
+    static int analysisPeriod = 1; // 0 week, 1 30 days, 2 year, 3 all time
 
     /** Further analysis' tile key on Sleep (its fold is the tile's, owner's wish of 18 November). */
     static final String ANALYSIS_KEY = "further analysis";
@@ -849,7 +849,7 @@ public final class Pages {
         Tiles.Spec s = Tiles.spec(card);
         s.key = ANALYSIS_KEY;
         s.title = "Further analysis";
-        s.summary = "Your average night and typical values over a week, month, year or all time";
+        s.summary = "Your average night and typical values over the last week, 30 days, year or all time";
         s.standardOpen = false;
         s.listener = new Tiles.Listener() {
             @Override
@@ -859,6 +859,8 @@ public final class Pages {
             }
         };
         fillAnalysis(c, d, body, true);
+        // calendar months over the whole history are Trends' (issue #374); the chips here stay rolling windows
+        card.addView(TrendsCard.link(c, d));
         return card;
     }
 
@@ -892,7 +894,8 @@ public final class Pages {
         if (!analysisOpen) return;
         body.addView(Ui.gap(c, 12));
         LinearLayout chips = Ui.hbox(c);
-        final String[] names = {"Week", "Month", "Year", "All time"};
+        // "30 days", not "Month": Trends' months are calendar months (issue #374), one word never means two things
+        final String[] names = {"Week", "30 days", "Year", "All time"};
         final TextView[] chip = new TextView[names.length];
         final LinearLayout result = Ui.vbox(c);
         for (int i = 0; i < names.length; i++) {
@@ -1950,14 +1953,7 @@ public final class Pages {
     }
 
     static TS daysSeries(DayData d, String field, int n) {
-        TS ts = new TS();
-        double[] v = d.series(field, n);
-        for (int i = 0; i < n; i++) {
-            if (Double.isNaN(v[i])) continue;
-            double t = d.date.minusDays(n - 1 - i).atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond() + 43200;
-            ts.add(t, v[i]);
-        }
-        return ts;
+        return app.openring.data.DaySeries.of(d.date, d.series(field, n));
     }
 
     static View hero(Context c, double score, String label, int color, String sub) {

@@ -463,6 +463,16 @@ swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 # then each kind in its colour (frame, disc and name) with how often and its rule
 launch --ez badges true;                    shot badges 4
 swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
+# Trends (issue #374) on the demo's made up year before its five weeks: the card at the bottom of Sleep ("Your months"), Sleep
+# by month (time asleep, about 25 minutes more from four months ago), one month touched (the chart found by its content
+# description, touched at 45 % of its width: the bubble and the full readout under the chart), steps by year (extra trends is
+# the group, trends_measure 10 steps, trends_period 2 years), and with only the watch the line for under two months
+launch --ei tab 1 --es card Your_months;    shot sleep-trends-card
+launch --ei trends 0;                       shot trends-sleep 4
+if touch_desc "Trends chart" 45; then shot trends-touch 1
+else echo "::warning::issue #374 step: the Trends chart was not on screen to touch it"; shot trends-touch 1; fi
+launch --ei trends 2 --ei trends_measure 10 --ei trends_period 2; shot trends-steps-year 4
+launch --ei trends 0 --ei devices 1;        shot trends-watch-only 4
 launch --es settings top;                   shot settings
 # every section folded, as every time Settings opens (owner's wishes of 3 and 17 November: a title, one status line and a
 # chevron each); stages, watch, period and the others below open their own section first
