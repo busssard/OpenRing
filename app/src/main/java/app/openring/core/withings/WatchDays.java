@@ -63,33 +63,28 @@ public final class WatchDays {
 
     /** Steps per day (only steps records; workouts are listed on their own, see {@link #workoutsOn}). */
     public static TreeMap<LocalDate, Integer> stepsPerDay(List<Records.Steps> rows, Zones z) {
-        TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
-        for (Records.Steps s : rows) {
-            LocalDate d = day(s.start, z);
-            Integer v = out.get(d);
-            out.put(d, (v == null ? 0 : v) + s.steps);
-        }
-        return out;
+        return perDay(rows, z, STEPS);
     }
 
     /** Distance per day in metres, from the same records as {@link #stepsPerDay}. */
     public static TreeMap<LocalDate, Integer> metresPerDay(List<Records.Steps> rows, Zones z) {
-        TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
-        for (Records.Steps s : rows) {
-            LocalDate d = day(s.start, z);
-            Integer v = out.get(d);
-            out.put(d, (v == null ? 0 : v) + s.metres);
-        }
-        return out;
+        return perDay(rows, z, METRES);
     }
 
     /** Calories of movement per day, from the same records as {@link #stepsPerDay} (workouts are listed on their own). */
     public static TreeMap<LocalDate, Integer> kcalPerDay(List<Records.Steps> rows, Zones z) {
+        return perDay(rows, z, KCAL);
+    }
+
+    private static final int STEPS = 0, METRES = 1, KCAL = 2;
+
+    /** One value of the steps records ({@link #STEPS}, {@link #METRES} or {@link #KCAL}) added up per day of their start. */
+    private static TreeMap<LocalDate, Integer> perDay(List<Records.Steps> rows, Zones z, int what) {
         TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
         for (Records.Steps s : rows) {
             LocalDate d = day(s.start, z);
             Integer v = out.get(d);
-            out.put(d, (v == null ? 0 : v) + s.kcal);
+            out.put(d, (v == null ? 0 : v) + (what == STEPS ? s.steps : what == METRES ? s.metres : s.kcal));
         }
         return out;
     }
@@ -236,36 +231,14 @@ public final class WatchDays {
      * end falls on that day (in its zone) between 00:00 and 18:00; of several, the longest. Null when there is none.
      */
     public static Night nightFor(List<Records.Sleep> rows, LocalDate day, Zones z) {
-        List<Records.Sleep> s = new ArrayList<Records.Sleep>(rows);
-        Collections.sort(s, new Comparator<Records.Sleep>() {
-            @Override
-            public int compare(Records.Sleep a, Records.Sleep b) {
-                return Long.compare(a.start, b.start);
-            }
-        });
-        Night best = null;
-        int i = 0;
-        while (i < s.size()) {
-            int j = i;
-            long end = s.get(i).start + Math.max(0, s.get(i).dur);
-            while (j + 1 < s.size() && s.get(j + 1).start - end <= JOIN_S) {
-                j++;
-                end = Math.max(end, s.get(j).start + Math.max(0, s.get(j).dur));
-            }
-            long start = s.get(i).start;
-            java.time.ZonedDateTime e = Instant.ofEpochSecond(end).atZone(z.at(end));
-            if (e.toLocalDate().equals(day) && e.getHour() < 18 && end > start && (best == null || end - start > best.end - best.start)) {
-                best = night(s.subList(i, j + 1), start, end);
-            }
-            i = j + 1;
-        }
-        return best;
+        return nights(rows, day, day, z).get(day);
     }
 
     /**
-     * The nights of every day from {@code first} to {@code last}, each exactly what {@link #nightFor} gives for that day, but with
-     * the rows sorted and joined once instead of once per day (a year of nights for Further analysis). Days without a night are
-     * missing.
+     * The nights of every day from {@code first} to {@code last}, each by the rule of {@link #nightFor}, with the rows sorted and
+     * joined once instead of once per day (a year of nights for Further analysis). Days without a night are missing. The one
+     * place of the rule: {@link #nightFor} is this for a single day, so a day's dial and its chart point always show the same
+     * night.
      */
     public static TreeMap<LocalDate, Night> nights(List<Records.Sleep> rows, LocalDate first, LocalDate last, Zones z) {
         List<Records.Sleep> s = new ArrayList<Records.Sleep>(rows);
@@ -289,7 +262,7 @@ public final class WatchDays {
             java.time.ZonedDateTime e = Instant.ofEpochSecond(end).atZone(z.at(end));
             LocalDate day = e.toLocalDate();
             long[] b = span.get(day);
-            // the rule of nightFor: before 18:00, longer than none, and only a longer stretch replaces the first one found
+            // ends before 18:00, longer than none, and only a longer stretch replaces the first one found on its day
             if (!day.isBefore(first) && !day.isAfter(last) && e.getHour() < 18 && end > start && (b == null || end - start > b[1] - b[0])) {
                 span.put(day, new long[] {start, end});
                 best.put(day, new int[] {i, j});
@@ -364,33 +337,20 @@ public final class WatchDays {
 
         /** As {@link WatchDays#heartIn}: the readings from {@code start} to {@code end}, both included. */
         public NightHeart in(long start, long end) {
-            NightHeart h = new NightHeart();
             int lo = 0, hi = t.length;
             while (lo < hi) {
                 int m = (lo + hi) >>> 1;
                 if (t[m] < start) lo = m + 1;
                 else hi = m;
             }
-            long sum = 0;
-            int n = 0;
-            for (int i = lo; i < t.length && t[i] <= end; i++) {
-                Records.Heart x = rows.get(i);
-                h.points.add(new long[] {x.t, x.bpm});
-                sum += x.bpm;
-                n++;
-                if (h.lowest < 0 || x.bpm < h.lowest) {
-                    h.lowest = x.bpm;
-                    h.lowestAt = x.t;
-                }
-            }
-            if (n > 0) h.average = sum / (double) n;
-            return h;
+            int to = lo;
+            while (to < t.length && t[to] <= end) to++;
+            return summary(rows.subList(lo, to));
         }
     }
 
     /** One night's readings by going through every row: fine for a few nights, {@link HeartIndex} for many. */
     private static NightHeart heartScan(List<Records.Heart> rows, long start, long end) {
-        NightHeart h = new NightHeart();
         List<Records.Heart> s = new ArrayList<Records.Heart>();
         for (Records.Heart x : rows) if (x.t >= start && x.t <= end) s.add(x);
         Collections.sort(s, new Comparator<Records.Heart>() {
@@ -399,8 +359,14 @@ public final class WatchDays {
                 return Long.compare(a.t, b.t);
             }
         });
+        return summary(s);
+    }
+
+    /** The readings of a night already in time order: each as {time, bpm}, the lowest (the first of equals) and the average. */
+    private static NightHeart summary(List<Records.Heart> sorted) {
+        NightHeart h = new NightHeart();
         long sum = 0;
-        for (Records.Heart x : s) {
+        for (Records.Heart x : sorted) {
             h.points.add(new long[] {x.t, x.bpm});
             sum += x.bpm;
             if (h.lowest < 0 || x.bpm < h.lowest) {
@@ -408,7 +374,7 @@ public final class WatchDays {
                 h.lowestAt = x.t;
             }
         }
-        if (!s.isEmpty()) h.average = sum / (double) s.size();
+        if (!sorted.isEmpty()) h.average = sum / (double) sorted.size();
         return h;
     }
 
