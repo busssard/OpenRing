@@ -171,36 +171,57 @@ public class TodayTest {
     /** The time asleep first on Sleep (issue #409): the hero's big line and the line under it, for the ring's and the watch's night. */
     static void sleepHero() throws Exception {
         java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        // a night's stages, one digit a minute (0 no record, 1 deep, 2 light, 3 REM, 4 awake)
+        int[] slept = {4, 2, 2, 1, 1, 3, 2, 4};
         // a ring night over midnight: 23:10 to 07:05 local (winter, UTC+1), 432 min asleep, 475 min in bed
         double start = java.time.ZonedDateTime.of(2026, 11, 16, 23, 10, 0, 0, z).toEpochSecond();
         double end = java.time.ZonedDateTime.of(2026, 11, 17, 7, 5, 0, 0, z).toEpochSecond();
-        eq("ring night: the time asleep as the big line", SleepHero.asleep(432), "7h 12m asleep");
+        eq("ring night: the time asleep as the big line", SleepHero.asleep(432, slept), "7h 12m asleep");
         eq("ring night over midnight: times and time in bed", SleepHero.window(start, end, 475, z), "23:10 to 07:05, 7h 55m in bed");
         // the stored asleep_min is fractional: the big line rounds it as Details does (Ui.hm is Texts.hm)
         for (double m : new double[] {0, 0.4, 29.5, 59.6, 60, 431.7, 432.2, 719.5, 1000}) {
-            eq("the minutes are Ui.hm of asleep_min, " + m, SleepHero.asleep(m), Texts.hm(m) + " asleep");
+            eq("the minutes are Ui.hm of asleep_min, " + m, SleepHero.asleep(m, slept), Texts.hm(m) + " asleep");
         }
-        eq("under an hour still in hours and minutes", SleepHero.asleep(45), "0h 45m asleep");
+        eq("under an hour still in hours and minutes", SleepHero.asleep(45, slept), "0h 45m asleep");
         // a watch night: whole minutes and unix seconds as longs, the same helper
         long ws = (long) start + 20 * 60, we = (long) end - 5 * 60;
-        eq("watch night: big line", SleepHero.asleep(401), "6h 41m asleep");
+        eq("watch night: big line", SleepHero.asleep(401, slept), "6h 41m asleep");
         eq("watch night: times and time in bed", SleepHero.window(ws, we, 450, z), "23:30 to 07:00, 7h 30m in bed");
         // no time in bed (Pages.shownInBed gives -1 for a night without an end): only the times
         eq("no time in bed: only the times", SleepHero.window(start, end, -1, z), "23:10 to 07:05");
         eq("time in bed unknown: only the times", SleepHero.window(start, end, Double.NaN, z), "23:10 to 07:05");
         eq("a night without an end: as the old line, no time in bed", SleepHero.window(start, Double.NaN, -1, z), "23:10 to --");
-        check("time asleep unknown: no big line", SleepHero.asleep(Double.NaN) == null && SleepHero.asleep(-1) == null);
+        check("time asleep unknown: no big line", SleepHero.asleep(Double.NaN, slept) == null && SleepHero.asleep(-1, slept) == null);
         eq("clock times rounded to the minute like the timeline", SleepHero.window(start + 40, end - 20, 475, z), "23:11 to 07:05, 7h 55m in bed");
-        for (String t : new String[] {SleepHero.asleep(432), SleepHero.window(start, end, 475, z), SleepHero.window(start, end, -1, z)}) {
+        for (String t : new String[] {SleepHero.asleep(432, slept), SleepHero.window(start, end, 475, z), SleepHero.window(start, end, -1, z)}) {
             check("no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
         }
         eq("Texts.hm unknown", Texts.hm(Double.NaN), "--");
 
+        // no time asleep (review of #411): without any stage data no big line, only the times; with stages (all awake) the
+        // honest "0h 0m asleep" stays
+        int[] none = {0, 0, 0, 0}, awake = {4, 4, 4, 0, 4};
+        check("no time asleep, no stages: no big line", SleepHero.asleep(0, none) == null && SleepHero.asleep(0, new int[0]) == null
+                && SleepHero.asleep(0, null) == null && SleepHero.asleep(0.4, none) == null);
+        eq("no time asleep, all awake stages: the big line stays", SleepHero.asleep(0, awake), "0h 0m asleep");
+        eq("no time asleep, any measured minute counts as stage data", SleepHero.asleep(0, new int[] {0, 0, 2, 0}), "0h 0m asleep");
+        eq("time asleep without stage data: the big line stays", SleepHero.asleep(30, none), "0h 30m asleep");
+        check("hasStages", SleepHero.hasStages(slept) && SleepHero.hasStages(awake) && !SleepHero.hasStages(none)
+                && !SleepHero.hasStages(null) && !SleepHero.hasStages(new int[0]));
+        eq("a night without stages still shows its times", SleepHero.window(start, end, 475, z), "23:10 to 07:05, 7h 55m in bed");
+
+        // the clock goes back an hour in the night (Zurich, 24 to 25 October 2026, 03:00 to 02:00): 23:00 to 07:00 on the clock
+        // are 8 hours apart, but the night lasts 9 hours, and the line says so
+        double ds = java.time.ZonedDateTime.of(2026, 10, 24, 23, 0, 0, 0, z).toEpochSecond();
+        double de = java.time.ZonedDateTime.of(2026, 10, 25, 7, 0, 0, 0, z).toEpochSecond();
+        check("daylight saving night lasts 9 hours", de - ds == 9 * 3600);
+        eq("daylight saving night: clock times and 9h 0m in bed", SleepHero.window(ds, de, (de - ds) / 60, z), "23:00 to 07:00, 9h 0m in bed");
+
         String ui = src("ui/Ui.java"), pages = src("ui/Pages.java"), history = src("ui/HistoryViews.java");
         check("Ui.hm is Texts.hm", ui.contains("return app.openring.core.Texts.hm(minutes);"));
-        check("the ring's and the watch's hero use the helper", pages.contains("app.openring.core.SleepHero.asleep(Json.d(n, \"asleep_min\"))")
+        check("the ring's and the watch's hero use the helper", pages.contains("app.openring.core.SleepHero.asleep(Json.d(n, \"asleep_min\"), Json.stages(n))")
                 && pages.contains("app.openring.core.SleepHero.window(Json.d(n, \"start\"), Json.d(n, \"end\"), shownInBed(n), nz)")
-                && pages.contains("app.openring.core.SleepHero.asleep(wn.asleepMin())")
+                && pages.contains("app.openring.core.SleepHero.asleep(wn.asleepMin(), wn.stages)")
                 && pages.contains("app.openring.core.SleepHero.window(wn.start, wn.end, wn.inBedMin(), nz)"));
         check("the ring's Details start with Total sleep, then Time in bed", pages.indexOf("Ui.stat(c, \"Total sleep\", Ui.hm(Json.d(n, \"asleep_min\"))")
                 < pages.indexOf("Ui.stat(c, \"Time in bed\", Ui.hm(shownInBed(n)") && pages.contains("Ui.stat(c, \"Total sleep\", Ui.hm(Json.d(n, \"asleep_min\"))"));

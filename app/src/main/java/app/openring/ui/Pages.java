@@ -518,7 +518,7 @@ public final class Pages {
         java.time.ZoneId nz = d.zoneOf(n);
         // the time asleep first and big, time in bed in the line under it (issue #409); the same values as Details
         root.addView(n == null ? hero(c, d.score("sleep"), "Sleep", Ui.SLEEP, "No main sleep recorded for this day", d.watchVersion("sleep"))
-                : hero(c, d.score("sleep"), "Sleep", Ui.SLEEP, app.openring.core.SleepHero.asleep(Json.d(n, "asleep_min")),
+                : hero(c, d.score("sleep"), "Sleep", Ui.SLEEP, app.openring.core.SleepHero.asleep(Json.d(n, "asleep_min"), Json.stages(n)),
                         app.openring.core.SleepHero.window(Json.d(n, "start"), Json.d(n, "end"), shownInBed(n), nz), d.watchVersion("sleep")));
         if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         View left = leftOutCard(c, d);
@@ -677,7 +677,7 @@ public final class Pages {
         // without a ring the score from the watch's night (issue #379); with a ring its version as a line
         boolean scored = d.fromDevice("sleep");
         // the time asleep first and big, time in bed in the line under it (issue #409); the same values as Details
-        root.addView(hero(c, scored ? d.score("sleep") : Double.NaN, "Sleep", Ui.SLEEP, app.openring.core.SleepHero.asleep(wn.asleepMin()),
+        root.addView(hero(c, scored ? d.score("sleep") : Double.NaN, "Sleep", Ui.SLEEP, app.openring.core.SleepHero.asleep(wn.asleepMin(), wn.stages),
                 app.openring.core.SleepHero.window(wn.start, wn.end, wn.inBedMin(), nz), scored ? app.openring.core.DeviceScores.FROM_WATCH : d.watchVersion("sleep")));
         // without a ring the watch's own nights (owner's report of 13 November); with a ring the ring's, as before
         boolean watchOnly = HistoryViews.watch(d);

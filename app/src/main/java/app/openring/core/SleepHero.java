@@ -14,10 +14,22 @@ import java.time.ZoneId;
 public final class SleepHero {
     private SleepHero() {}
 
-    /** "7h 12m asleep"; null when the time asleep is unknown, so the hero shows no big line. */
-    public static String asleep(double asleepMin) {
+    /**
+     * "7h 12m asleep"; null when the time asleep is unknown, so the hero shows no big line. Also null for a night with no time
+     * asleep and no stage data at all ({@code stages} has no minute from 1 deep to 4 awake), where a big "0h 0m asleep" would
+     * only say that nothing was measured (review of #411); a night with stages but no sleep (all awake) keeps "0h 0m asleep".
+     */
+    public static String asleep(double asleepMin, int[] stages) {
         if (Double.isNaN(asleepMin) || Double.isInfinite(asleepMin) || asleepMin < 0) return null;
+        if (Math.round(asleepMin) == 0 && !hasStages(stages)) return null;
         return Texts.hm(asleepMin) + " asleep";
+    }
+
+    /** Whether a night's stages (one digit a minute: 0 no record, 1 deep, 2 light, 3 REM, 4 awake) hold any measured minute. */
+    public static boolean hasStages(int[] stages) {
+        if (stages == null) return false;
+        for (int s : stages) if (s >= 1 && s <= 4) return true;
+        return false;
     }
 
     /**
