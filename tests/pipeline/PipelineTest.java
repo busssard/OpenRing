@@ -29,7 +29,7 @@ import app.openring.data.Json;
 public class PipelineTest {
     static int passed, failed;
     /** The schema version of this app (issue #251 made it 9). */
-    static final int CUR = 12;
+    static final int CUR = 13;
 
     static void check(String name, boolean ok, Object info) {
         if (ok) passed++;
@@ -944,6 +944,14 @@ public class PipelineTest {
         lifePrivacy292();
         lifeDemo292();
         lifeLarge292();
+        soundUpgrade380();
+        soundRestore380();
+        soundKeptTables380();
+        soundResets380();
+        soundSweep380();
+        soundRetain380();
+        soundDataCheck380();
+        soundLarge380();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -15172,6 +15180,548 @@ public class PipelineTest {
         System.out.printf("    #292 five years of tags (%d rows): all read in %.2f s, a restore of an older backup in %.2f s%n", n, read, s);
         check("#292 five years of six tags a day (" + n + " rows) go through a restore row for row, in seconds", r.ok && r.history && n == 6 * 5 * 365
                 && lifeRows292(Db.get(c)).equals(rows) && s < 60 && days == 5 * 365 && read < 5, s);
+        clean254();
+    }
+
+    // ---------------------------------------------------------------- issue #380, phase 1a: sleep sounds
+
+    static final String[] DROP13 = {"DROP TABLE sound_nights", "DROP TABLE sound_clips", "DROP TABLE sound_gaps"};
+    /** Made up times in 2019 (far from the ring history's dates). */
+    static final double N380 = 1551654000; // 2019-03-03 23:00 in Zurich
+
+    /** Every row of the three sleep sound tables, in key order: what upgrades, restores and pairing must keep exactly. */
+    static String soundRows380(Db db) {
+        StringBuilder b = new StringBuilder();
+        String[] qs = {"SELECT start, stop, floor, clips, ended FROM sound_nights ORDER BY start",
+            "SELECT start, stop, kind, peak, file, kept, gone FROM sound_clips ORDER BY start", "SELECT start, stop, why FROM sound_gaps ORDER BY start"};
+        int[] cols = {5, 7, 3};
+        for (int q = 0; q < qs.length; q++) {
+            android.database.Cursor c = db.getReadableDatabase().rawQuery(qs[q], null);
+            try {
+                while (c.moveToNext()) {
+                    for (int i = 0; i < cols[q]; i++) b.append(c.isNull(i) ? "null" : c.getString(i)).append(i < cols[q] - 1 ? " " : "\n");
+                }
+            } finally {
+                c.close();
+            }
+            b.append("--\n");
+        }
+        return b.toString();
+    }
+
+    static long soundCount380(Db db) {
+        return db.count("SELECT (SELECT COUNT(*) FROM sound_nights) + (SELECT COUNT(*) FROM sound_clips) + (SELECT COUNT(*) FROM sound_gaps)");
+    }
+
+    /** The clip files in {@code dir}, by name (none when it does not exist). */
+    static List<String> files380(File dir) {
+        String[] fs = dir.list();
+        List<String> out = fs == null ? new ArrayList<String>() : new ArrayList<String>(Arrays.asList(fs));
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    /** A made up clip file (not a sound: a few bytes) in {@code dir}. */
+    static void clipFile380(File dir, String name, int bytes) throws Exception {
+        dir.mkdirs();
+        java.nio.file.Files.write(new File(dir, name).toPath(), new byte[bytes]);
+    }
+
+    /** A clip row and its file in the folder of {@code db} (real or demo). */
+    static void clip380(Context c, Db db, double start, String kind, String file, boolean withFile) throws Exception {
+        app.openring.data.Sounds.addClip(db, start, start + 6, kind, -23.5, file);
+        if (withFile) clipFile380(app.openring.data.Sounds.folder(c, db), file, 1000);
+    }
+
+    /** One night listened with its gap and four clips (one kept), files in the folder of {@code db}. */
+    static void someSounds380(Context c, Db db) throws Exception {
+        app.openring.data.Sounds.addNight(db, N380, N380 + 8 * 3600, -61.25, 4, app.openring.data.Sounds.ENDED_TIME);
+        app.openring.data.Sounds.addGap(db, N380 + 3600, N380 + 3660, app.openring.data.Sounds.GAP_SILENCE);
+        clip380(c, db, N380 + 100, app.openring.core.analysis.SoundDetector.TALK, "a380.m4a", true);
+        clip380(c, db, N380 + 200, app.openring.core.analysis.SoundDetector.COUGH, "b380.m4a", true);
+        clip380(c, db, N380 + 300, app.openring.core.analysis.SoundDetector.SNORE, "c380.wav", true);
+        clip380(c, db, N380 + 400, app.openring.core.analysis.SoundDetector.TALK, "d380.m4a", true);
+        app.openring.data.Sounds.keep(db, N380 + 200, true);
+    }
+
+    /** The phone's other kept data: a period log, a watch session, phone steps and life factors. */
+    static void otherKept380(Db db) {
+        someLog252(db);
+        session251(db, 1000, made251(T251, 80), T251 + 86400);
+        app.openring.data.PhoneStore.addAll(db, readings329(5, LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond(), 30, 0, 380));
+        someLife292(db);
+    }
+
+    static void version380(Context c, int v, String... sql) throws Exception {
+        restart242();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + c.getDatabasePath(Db.REAL).getPath()); java.sql.Statement st = cn.createStatement()) {
+            for (String x : sql) st.execute(x);
+            st.execute("PRAGMA user_version = " + v);
+        }
+    }
+
+    /**
+     * Issue #380, data safety: a schema 12 history (ring, period log, watch, phone steps, life factors) upgrades to 13 with every
+     * row as before and three empty sound tables; run twice it keeps the sounds; one stopped after the first table goes on with
+     * the others and keeps the first one's rows; a schema 11 history upgrades the same way.
+     */
+    static void soundUpgrade380() throws Exception {
+        Context c = phone254("openring380-up");
+        Db db = Db.get(c);
+        otherKept380(db);
+        List<String> before = results139(db), ev = events58(db);
+        String periods = periodRows252(db), watch = watchRows251(db), phone = phoneRows329(db), life = lifeRows292(db), state = results252(db);
+        version380(c, 12, DROP13);
+        db = Db.get(c);
+        check("#380 upgrade from schema 12: version " + CUR + ", empty sound tables, every event, night, day, period, watch, phone and life row the same",
+                db.getReadableDatabase().getVersion() == CUR && soundCount380(db) == 0 && events58(db).equals(ev) && results139(db).equals(before)
+                        && periodRows252(db).equals(periods) && watchRows251(db).equals(watch) && phoneRows329(db).equals(phone) && lifeRows292(db).equals(life),
+                db.getReadableDatabase().getVersion());
+        check("#380 upgrade from schema 12: the schema check of this version passes, nothing to analyse again, the analysis state as before",
+                schemaProblem251(db) == null && Analyzer.upToDate(c) && results252(db).equals(state), schemaProblem251(db));
+        someSounds380(c, db);
+        String sounds = soundRows380(db);
+        check("#380 the made up sounds are stored (1 night, 4 clips, 1 gap)", db.count("SELECT COUNT(*) FROM sound_clips") == 4 && soundCount380(db) == 6, sounds);
+        version380(c, 12);
+        db = Db.get(c);
+        check("#380 the upgrade run twice keeps every sound row and the whole history", db.getReadableDatabase().getVersion() == CUR && soundRows380(db).equals(sounds)
+                && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods) && watchRows251(db).equals(watch)
+                && phoneRows329(db).equals(phone) && lifeRows292(db).equals(life), null);
+        version380(c, 12, "DROP TABLE sound_clips", "DROP TABLE sound_gaps");
+        db = Db.get(c);
+        check("#380 an upgrade stopped after the first table goes on: all three there, the night row kept", db.getReadableDatabase().getVersion() == CUR
+                && schemaProblem251(db) == null && db.count("SELECT COUNT(*) FROM sound_nights") == 1 && db.count("SELECT COUNT(*) FROM sound_clips") == 0
+                && events58(db).equals(ev) && results139(db).equals(before) && lifeRows292(db).equals(life), schemaProblem251(db));
+        List<String> sql = new ArrayList<String>(Arrays.asList(DROP13));
+        sql.addAll(Arrays.asList(DROP12));
+        version380(c, 11, sql.toArray(new String[0]));
+        db = Db.get(c);
+        check("#380 upgrade from schema 11 with history: version " + CUR + ", every event, night, day, period, watch and phone row the same, life and sound tables empty",
+                db.getReadableDatabase().getVersion() == CUR && schemaProblem251(db) == null && soundCount380(db) == 0 && lifeCount292(db) == 0
+                        && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods) && watchRows251(db).equals(watch)
+                        && phoneRows329(db).equals(phone) && Analyzer.upToDate(c), schemaProblem251(db));
+        check("#380 the clip files are never touched by an upgrade", files380(app.openring.data.Sounds.folder(c, false)).equals(Arrays.asList("a380.m4a", "b380.m4a", "c380.wav", "d380.m4a")), null);
+        clean254();
+    }
+
+    /**
+     * Issue #380, data safety: a restore keeps the phone's sounds. The phone's rows win on the same start (a clip kept after the
+     * backup stays kept); a row only the backup has comes back, with its sound when its file is on this phone and as a mark
+     * without sound ({@code gone} 1) when not; a file the phone gave another mark never plays for the backup's. Twice gives the
+     * same; a backup of schema 12 restores with the phone's rows; onto a phone without clips every mark comes without sound; a
+     * stop at any merge step restores nothing; a restore never deletes or makes a clip file.
+     */
+    static void soundRestore380() throws Exception {
+        Context c = phone254("openring380-restore");
+        Db db = Db.get(c);
+        File dir = app.openring.data.Sounds.folder(c, false);
+        someSounds380(c, db);
+        clip380(c, db, N380 + 500, app.openring.core.analysis.SoundDetector.TALK, "x1.m4a", true);  // the phone loses the row, keeps the file
+        clip380(c, db, N380 + 600, app.openring.core.analysis.SoundDetector.TALK, "x2.m4a", true);  // the phone loses row and file
+        clip380(c, db, N380 + 700, app.openring.core.analysis.SoundDetector.TALK, "same.m4a", false); // the phone gives the name to another mark
+        byte[] full = backup252(c);
+        // a backup whose mark names a file outside the folder (a tampered file): restored as a mark without sound
+        byte[] odd = withDb(full, alter(zipEntry(full, "openring.db"), CUR, "INSERT INTO sound_clips(start, stop, kind, file) VALUES (1, 2, 'talk', '../a380.m4a')"));
+        String backupRows = soundRows380(db);
+        // after the backup: a clip kept, a new night and clip, the three rows only the backup will have
+        app.openring.data.Sounds.keep(db, N380 + 100, true);
+        app.openring.data.Sounds.addNight(db, N380 + 86400, null, null, 0, null);
+        clip380(c, db, N380 + 86400 + 50, app.openring.core.analysis.SoundDetector.SNORE, "e380.m4a", true);
+        db.getWritableDatabase().execSQL("DELETE FROM sound_clips WHERE start >= ? AND start <= ?", new Object[] {N380 + 500, N380 + 700});
+        new File(dir, "x2.m4a").delete();
+        clip380(c, db, N380 + 800, app.openring.core.analysis.SoundDetector.COUGH, "same.m4a", true);
+        long events = db.eventCount();
+        List<String> results = results139(db);
+        String phone = soundRows380(db);
+        List<String> files = files380(dir);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        String merged = soundRows380(db);
+        check("#380 restore of this version: the history is the backup's", r.ok && r.history && db.eventCount() == events && results139(db).equals(results), r.message);
+        check("#380 restore: every row of the phone is there as it was (the clip kept after the backup stays kept)", containsRows252(merged, phone)
+                && db.count("SELECT kept FROM sound_clips WHERE start = " + (N380 + 100)) == 1, merged);
+        check("#380 restore: a row only the backup has, its file still here, comes back with its sound",
+                db.count("SELECT COUNT(*) FROM sound_clips WHERE file = 'x1.m4a' AND gone = 0") == 1, merged);
+        check("#380 restore: a row only the backup has, its file not on this phone, comes back as a mark without sound",
+                db.count("SELECT COUNT(*) FROM sound_clips WHERE file = 'x2.m4a' AND gone = 1") == 1, merged);
+        check("#380 restore: a file name the phone gave another mark never plays for the backup's mark", db.count("SELECT gone FROM sound_clips WHERE start = " + (N380 + 700)) == 1
+                && db.count("SELECT gone FROM sound_clips WHERE start = " + (N380 + 800)) == 0, merged);
+        check("#380 restore: no row is lost (the phone's 6 clips and the backup's 3 others)", db.count("SELECT COUNT(*) FROM sound_clips") == 9
+                && db.count("SELECT COUNT(*) FROM sound_nights") == 2 && db.count("SELECT COUNT(*) FROM sound_gaps") == 1, merged);
+        check("#380 restore: no clip file deleted or made", files380(dir).equals(files), files380(dir));
+        app.openring.data.Backup.Result again = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#380 the same restore twice gives the same sounds and history", again.ok && soundRows380(db).equals(merged) && db.eventCount() == events, null);
+        app.openring.data.Backup.Result oddR = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(odd));
+        db = Db.get(c);
+        check("#380 a backup's mark whose file name is not a plain clip name: restored without sound, the rest as before", oddR.ok
+                && db.count("SELECT gone FROM sound_clips WHERE start = 1") == 1 && containsRows252(soundRows380(db), merged), oddR.message);
+        db.getWritableDatabase().execSQL("DELETE FROM sound_clips WHERE start = 1");
+        // a backup of schema 12 and of schema 11 (no sound tables): the upgrade makes them, then the phone's rows go in
+        for (int v : new int[] {12, 11}) {
+            List<String> sql = new ArrayList<String>(Arrays.asList(DROP13));
+            if (v <= 11) sql.addAll(Arrays.asList(DROP12));
+            byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), v, sql.toArray(new String[0])));
+            r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
+            db = Db.get(c);
+            check("#380 a backup of schema " + v + " restores at version " + CUR + " with the phone's sound rows, row for row", r.ok && r.history
+                    && db.getReadableDatabase().getVersion() == CUR && soundRows380(db).equals(merged) && db.eventCount() == events, r.message);
+        }
+        // the backup onto a phone without clips: every mark comes back without sound, nothing is made in its folders
+        Context fresh = freshDb("openring380-fresh");
+        MADE_254.add(fresh);
+        r = app.openring.data.Backup.read(fresh, new java.io.ByteArrayInputStream(full));
+        Db fdb = Db.get(fresh);
+        check("#380 the backup restored onto a phone without clips: its nights, gaps and marks row for row, every mark without sound", r.ok && r.history
+                && soundRows380(fdb).equals(backupRows.replaceAll("(?m) 0$", " 1"))
+                && fdb.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 0 && files380(app.openring.data.Sounds.folder(fresh, false)).isEmpty(), soundRows380(fdb));
+        restart242();
+        db = Db.get(c);
+        // a stop at each step of the merge: nothing restored, the phone's sounds and history as they were
+        for (String step : new String[] {"read", "life", "sounds", "done"}) {
+            failMerge252(step);
+            try {
+                r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+            } finally {
+                failMerge252(null);
+            }
+            db = Db.get(c);
+            check("#380 a stop at the merge step " + step + ": nothing restored, the phone's sounds row for row", !r.ok && soundRows380(db).equals(merged)
+                    && db.eventCount() == events && results139(db).equals(results) && files380(dir).equals(files), r.message);
+        }
+        // the phone's sound table cannot be read: refused before anything moves
+        db.getWritableDatabase().execSQL("ALTER TABLE sound_gaps RENAME TO sound_gaps_x");
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        db.getWritableDatabase().execSQL("ALTER TABLE sound_gaps_x RENAME TO sound_gaps");
+        check("#380 sounds on the phone that cannot be read: refused, nothing changed", !r.ok && app.openring.data.Backup.PERIODS_UNREADABLE.equals(r.message)
+                && soundRows380(db).equals(merged) && db.eventCount() == events, r.message);
+        // the clip folder cannot be listed (a file in its place): refused, the old file back
+        File moved = new File(dir.getPath() + "-aside");
+        check("#380 (test setup) the folder moved aside", dir.renameTo(moved), null);
+        java.nio.file.Files.write(dir.toPath(), new byte[1]);
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        dir.delete();
+        moved.renameTo(dir);
+        check("#380 a clip folder that cannot be read: nothing restored, the phone's sounds and history as they were", !r.ok && soundRows380(db).equals(merged)
+                && db.eventCount() == events && files380(dir).equals(files), r.message);
+        noTemp(c, "after the #380 restores");
+        clean254();
+    }
+
+    /**
+     * Issue #380 (Experiment view, point 4): every table in {@code Db.KEPT_TABLES} keeps the phone's rows through a restore of a
+     * backup made before they were written. A kept table this test does not fill fails here, and so does one without its merge
+     * in {@code Db.replaceWith}: a new table that belongs to the phone needs both.
+     */
+    static void soundKeptTables380() throws Exception {
+        List<String> keep = Arrays.asList((String[]) field252(Db.class, "KEPT_TABLES"));
+        Context c = phone254("openring380-kept");
+        Db db = Db.get(c);
+        byte[] full = backup252(c);
+        otherKept380(db);
+        someSounds380(c, db);
+        java.util.Map<String, List<String>> phone = new java.util.LinkedHashMap<String, List<String>>();
+        List<String> empty = new ArrayList<String>();
+        for (String t : keep) {
+            phone.put(t, tableRows380(db, t));
+            if (phone.get(t).isEmpty()) empty.add(t);
+        }
+        check("#380 this test fills every kept table (a new one must be added here, with its restore merge)", empty.isEmpty(), empty);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        List<String> lost = new ArrayList<String>();
+        for (String t : keep) {
+            List<String> after = tableRows380(db, t);
+            for (String row : phone.get(t)) if (!after.contains(row)) lost.add(t + ": " + row);
+        }
+        check("#380 a restore of an older backup keeps every row of every kept table (" + keep.size() + " tables)", r.ok && r.history && lost.isEmpty(),
+                lost.size() > 5 ? lost.subList(0, 5) + " and " + (lost.size() - 5) + " more" : lost);
+        clean254();
+    }
+
+    /** Every row of {@code table}, each as one line of its columns as SQLite quotes them (blobs as hex). */
+    static List<String> tableRows380(Db db, String table) {
+        StringBuilder cols = new StringBuilder();
+        android.database.Cursor info = db.getReadableDatabase().rawQuery("PRAGMA table_info(" + table + ")", null);
+        try {
+            while (info.moveToNext()) cols.append(cols.length() == 0 ? "" : " || '|' || ").append("quote(").append(info.getString(1)).append(')');
+        } finally {
+            info.close();
+        }
+        List<String> out = new ArrayList<String>();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT " + cols + " FROM " + table, null);
+        try {
+            while (c.moveToNext()) out.add(c.getString(0));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /**
+     * Issue #380: the three tables are kept when another ring is paired (rows and files), emptied by Delete all with every clip
+     * file of both folders and the copies before updates (one method, {@code DeleteAll.run}); Delete all failing part way keeps
+     * rows and files; in demo mode it empties the demo file and the demo's folder and never touches the real ones.
+     */
+    static void soundResets380() throws Exception {
+        List<String> keep = Arrays.asList((String[]) field252(Db.class, "KEPT_TABLES"));
+        List<String> all = Arrays.asList((String[]) field252(Db.class, "ALL_TABLES"));
+        List<String> ring = Arrays.asList((String[]) field252(Db.class, "RING_TABLES"));
+        List<String> mine = Arrays.asList("sound_nights", "sound_clips", "sound_gaps");
+        check("#380 the sound tables are kept when another ring is paired, emptied by Delete all", keep.containsAll(mine) && all.containsAll(mine)
+                && java.util.Collections.disjoint(ring, mine), keep);
+        Context c = phone254("openring380-resets");
+        Db db = Db.get(c);
+        File real = app.openring.data.Sounds.folder(c, false), demo = app.openring.data.Sounds.folder(c, true);
+        check("#380 the clip folders: no_backup/sounds for the real history, no_backup/sounds-demo for the demo", real.equals(new File(c.getNoBackupFilesDir(), "sounds"))
+                && demo.equals(new File(c.getNoBackupFilesDir(), "sounds-demo")) && real.equals(app.openring.data.Sounds.folder(c, db)), real);
+        someSounds380(c, db);
+        clipFile380(demo, "tone.wav", 500);
+        String rows = soundRows380(db);
+        List<String> files = files380(real);
+        db.resetRingData();
+        check("#380 pairing another ring: every sound row and clip file stays, the ring's history is gone", soundRows380(db).equals(rows)
+                && files380(real).equals(files) && db.eventCount() == 0, null);
+        // Delete all failing part way: nothing deleted, no file either
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop_sound BEFORE DELETE ON sound_gaps BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        Throwable got = null;
+        try {
+            app.openring.data.DeleteAll.run(c);
+        } catch (RuntimeException e) {
+            got = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER stop_sound");
+        check("#380 Delete all failing part way: the sounds, their files and the demo's as they were", got != null && soundRows380(db).equals(rows)
+                && files380(real).equals(files) && files380(demo).equals(Arrays.asList("tone.wav")), got);
+        // Delete all: no row, no clip file in either folder, no copy before an update
+        File copies = new File(c.getFilesDir(), "before-update");
+        copies.mkdirs();
+        java.nio.file.Files.write(new File(copies, "openring-1.42.db").toPath(), new byte[10]);
+        app.openring.data.DeleteAll.run(c);
+        check("#380 Delete all: every table empty, no clip file in either folder, no copy before an update", notEmpty272(db).isEmpty() && !real.exists()
+                && !demo.exists() && files380(copies).isEmpty(), notEmpty272(db) + " " + files380(real) + " " + files380(demo));
+        // demo mode: Delete all empties the demo file and its folder; the real file and folder stay
+        someSounds380(c, db);
+        rows = soundRows380(db);
+        files = files380(real);
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            check("#380 (test setup) the demo file is open", Db.DEMO.equals(d.fileName) && app.openring.data.Sounds.folder(c, d).equals(demo), d.fileName);
+            app.openring.data.Sounds.addClip(d, N380, N380 + 5, app.openring.core.analysis.SoundDetector.SNORE, -30.0, "tone.wav");
+            clipFile380(demo, "tone.wav", 500);
+            app.openring.data.DeleteAll.run(c);
+            check("#380 Delete all in demo mode: the demo file and its folder empty", notEmpty272(d).isEmpty() && !demo.exists(), notEmpty272(d));
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        db = Db.get(c);
+        check("#380 Delete all in demo mode never touches the real sounds: rows and files as they were", Db.REAL.equals(db.fileName) && soundRows380(db).equals(rows)
+                && files380(real).equals(files), files380(real));
+        clean254();
+    }
+
+    /**
+     * Issue #380: the sweep both ways, each history on its own folder. A mark whose file is missing keeps its row with
+     * {@code gone} 1 (never deleted); a file no mark with sound names is deleted unless it is younger than 10 minutes (a clip
+     * being written); a mark's own file stays. The demo file's sweep works only on the demo folder and the real file's only on
+     * the real one. A folder that cannot be listed changes nothing.
+     */
+    static void soundSweep380() throws Exception {
+        Context c = phone254("openring380-sweep");
+        Db db = Db.get(c);
+        File real = app.openring.data.Sounds.folder(c, false), demo = app.openring.data.Sounds.folder(c, true);
+        clip380(c, db, N380 + 1, app.openring.core.analysis.SoundDetector.TALK, "has.m4a", true);
+        clip380(c, db, N380 + 2, app.openring.core.analysis.SoundDetector.TALK, "missing.m4a", false);
+        clip380(c, db, N380 + 3, app.openring.core.analysis.SoundDetector.TALK, "gone.m4a", true);
+        db.getWritableDatabase().execSQL("UPDATE sound_clips SET gone = 1 WHERE start = ?", new Object[] {N380 + 3});
+        clipFile380(real, "orphan.m4a", 100);
+        clipFile380(real, "orphan.part", 100);
+        clipFile380(real, "young.m4a", 100);
+        long old = System.currentTimeMillis() - 3600_000L;
+        for (String f : new String[] {"has.m4a", "gone.m4a", "orphan.m4a", "orphan.part"}) new File(real, f).setLastModified(old);
+        clipFile380(demo, "demo-orphan.wav", 100);
+        new File(demo, "demo-orphan.wav").setLastModified(old);
+        new File(real, "sub").mkdirs();
+        // a row only a damaged or tampered file could hold: a file name with a folder in it
+        db.getWritableDatabase().execSQL("INSERT INTO sound_clips(start, stop, kind, file) VALUES (?, ?, 'talk', '../has.m4a')", new Object[] {N380 + 4, N380 + 5});
+        app.openring.data.Sounds.Swept s = app.openring.data.Sounds.sweep(c, db);
+        check("#380 sweep: a mark whose file is missing (or whose name is not a clip's) keeps its row without sound", s.rows == 2
+                && db.count("SELECT gone FROM sound_clips WHERE file = 'missing.m4a'") == 1 && db.count("SELECT gone FROM sound_clips WHERE file = '../has.m4a'") == 1
+                && db.count("SELECT COUNT(*) FROM sound_clips") == 4, s.rows);
+        check("#380 sweep: files without a mark with sound are deleted (also a gone mark's), the mark's own file, a file being written and a folder stay",
+                s.files == 3 && files380(real).equals(Arrays.asList("has.m4a", "sub", "young.m4a")), files380(real));
+        check("#380 the real file's sweep never touches the demo's folder", files380(demo).equals(Arrays.asList("demo-orphan.wav")), files380(demo));
+        String rows = soundRows380(db);
+        s = app.openring.data.Sounds.sweep(c, db);
+        check("#380 a second sweep changes nothing", s.rows == 0 && s.files == 0 && soundRows380(db).equals(rows) && files380(real).equals(Arrays.asList("has.m4a", "sub", "young.m4a")), null);
+        // the demo file sweeps the demo folder only
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            app.openring.data.Sounds.addClip(d, N380, N380 + 5, app.openring.core.analysis.SoundDetector.SNORE, -30.0, "has.m4a");
+            s = app.openring.data.Sounds.sweep(c, d);
+            check("#380 the demo's sweep: its mark without a file in the demo folder loses its sound (a real file of that name does not count), its orphan goes",
+                    s.rows == 1 && s.files == 1 && files380(demo).isEmpty() && d.count("SELECT gone FROM sound_clips") == 1, s.rows + " " + s.files);
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        db = Db.get(c);
+        check("#380 the demo's sweep never touches the real folder or file", files380(real).equals(Arrays.asList("has.m4a", "sub", "young.m4a")) && soundRows380(db).equals(rows), null);
+        // a folder that cannot be listed: an error, nothing changed
+        File moved = new File(real.getPath() + "-aside");
+        real.renameTo(moved);
+        java.nio.file.Files.write(real.toPath(), new byte[1]);
+        boolean threw = false;
+        try {
+            app.openring.data.Sounds.sweep(c, db);
+        } catch (java.io.IOException e) {
+            threw = true;
+        }
+        real.delete();
+        moved.renameTo(real);
+        check("#380 a clip folder that cannot be listed: the sweep stops with an error, no mark changed", threw && soundRows380(db).equals(rows), null);
+        // no folder at all (nothing recorded yet, or a backup's marks): every mark loses its sound, nothing else
+        for (File f : real.listFiles()) f.delete();
+        real.delete();
+        s = app.openring.data.Sounds.sweep(c, db);
+        check("#380 no clip folder: every mark keeps its row without sound", s.rows == 1 && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 0
+                && db.count("SELECT COUNT(*) FROM sound_clips") == 4 && !real.exists(), s.rows);
+        clean254();
+    }
+
+    /**
+     * Issue #380: the retention deletes only the sound of clips older than the days chosen (7 or 30; never with "until
+     * deleted") that are not kept; every mark stays with {@code gone} 1. A kept clip keeps its sound however old.
+     */
+    static void soundRetain380() throws Exception {
+        Context c = phone254("openring380-retain");
+        Db db = Db.get(c);
+        File real = app.openring.data.Sounds.folder(c, false), demo = app.openring.data.Sounds.folder(c, true);
+        double now = System.currentTimeMillis() / 1000.0;
+        clip380(c, db, now - 40 * 86400, app.openring.core.analysis.SoundDetector.TALK, "d40.m4a", true);
+        clip380(c, db, now - 40 * 86400 + 1, app.openring.core.analysis.SoundDetector.SNORE, "d40kept.m4a", true);
+        app.openring.data.Sounds.keep(db, now - 40 * 86400 + 1, true);
+        clip380(c, db, now - 8 * 86400, app.openring.core.analysis.SoundDetector.COUGH, "d8.wav", true);
+        clip380(c, db, now - 8 * 86400 + 1, app.openring.core.analysis.SoundDetector.COUGH, "d8nofile.m4a", false);
+        clip380(c, db, now - 2 * 86400, app.openring.core.analysis.SoundDetector.TALK, "d2.m4a", true);
+        clipFile380(demo, "d40.m4a", 10);
+        db.getWritableDatabase().execSQL("INSERT INTO sound_clips(start, stop, kind, peak, file) VALUES (?, ?, 'talk', -23.5, '/d40.m4a')", new Object[] {now - 9 * 86400, now - 9 * 86400 + 6});
+        String rows = soundRows380(db);
+        check("#380 retention until deleted: nothing", app.openring.data.Sounds.retain(c, db, app.openring.data.Sounds.KEEP_ALWAYS) == 0 && soundRows380(db).equals(rows), null);
+        int n = app.openring.data.Sounds.retain(c, db, app.openring.data.Sounds.KEEP_MONTH);
+        check("#380 retention 30 days: the 40 day old clip loses its sound, the kept one keeps it", n == 1 && db.count("SELECT gone FROM sound_clips WHERE file = 'd40.m4a'") == 1
+                && db.count("SELECT gone FROM sound_clips WHERE file = 'd40kept.m4a'") == 0 && files380(real).equals(Arrays.asList("d2.m4a", "d40kept.m4a", "d8.wav")), files380(real));
+        n = app.openring.data.Sounds.retain(c, db, app.openring.data.Sounds.KEEP_WEEK);
+        check("#380 retention 7 days: the 8 and 9 day old clips lose their sound (one had no file, one a name that is not a clip's), the 2 day old and the kept one stay", n == 3
+                && files380(real).equals(Arrays.asList("d2.m4a", "d40kept.m4a")) && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 2, files380(real));
+        check("#380 retention never deletes a row: 6 marks, with time, kind, length and peak", db.count("SELECT COUNT(*) FROM sound_clips") == 6
+                && db.count("SELECT COUNT(*) FROM sound_clips WHERE stop - start = 6 AND peak = -23.5") == 6, null);
+        check("#380 the real file's retention never touches the demo's folder", files380(demo).equals(Arrays.asList("d40.m4a")), null);
+        n = app.openring.data.Sounds.retain(c, db, app.openring.data.Sounds.KEEP_WEEK);
+        check("#380 retention twice: nothing more", n == 0 && files380(real).size() == 2, n);
+        app.openring.data.Sounds.Space sp = app.openring.data.Sounds.space(real);
+        clipFile380(real, "note.txt", 5000);
+        app.openring.data.Sounds.Space sp2 = app.openring.data.Sounds.space(real);
+        check("#380 space used: the real sizes of the .m4a and .wav clips only", sp.files == 2 && sp.bytes == 2000 && sp2.files == 2 && sp2.bytes == 2000
+                && app.openring.data.Sounds.space(new File(real, "none")).bytes == 0, sp.bytes);
+        boolean refusedName = false;
+        try {
+            app.openring.data.Sounds.addClip(db, now, now + 1, app.openring.core.analysis.SoundDetector.TALK, -20.0, "../escape.m4a");
+        } catch (IllegalArgumentException e) {
+            refusedName = "not a clip file name".equals(e.getMessage());
+        }
+        boolean refusedKind = false;
+        try {
+            app.openring.data.Sounds.addClip(db, now, now + 1, "dog", -20.0, "ok.m4a");
+        } catch (IllegalArgumentException e) {
+            refusedKind = "not a kind".equals(e.getMessage());
+        }
+        int refused = 0;
+        for (String bad : new String[] {null, "", ".m4a", ".hidden.m4a", "a b.m4a", "a/b.m4a", "a\\b.wav", "x.mp3", "x.M4A", "\u00e9.m4a",
+            "x:y.m4a", "x~.wav", "x+.wav", "x{.wav", "x@.wav", "x[.wav", "x`.wav", repeat380('a', 77) + ".m4a"}) {
+            try {
+                app.openring.data.Sounds.addClip(db, now, now + 1, app.openring.core.analysis.SoundDetector.TALK, -20.0, bad);
+            } catch (IllegalArgumentException e) {
+                refused++;
+            }
+        }
+        app.openring.data.Sounds.addClip(db, now, now + 1, app.openring.core.analysis.SoundDetector.TALK, -20.0, "Az09-_." + repeat380('b', 68) + ".wav");
+        check("#380 a file name with a folder in it, and an unknown kind, are refused; only plain names of letters, digits, dot, dash and underscore, up to 80",
+                refusedName && refusedKind && refused == 18 && db.count("SELECT COUNT(*) FROM sound_clips") == 7, refused);
+        app.openring.data.Sounds.keep(db, now - 40 * 86400 + 1, false);
+        n = app.openring.data.Sounds.retain(c, db, app.openring.data.Sounds.KEEP_WEEK);
+        check("#380 a clip no longer kept loses its sound to the retention like the others", n == 1 && !new File(real, "d40kept.m4a").exists(), n);
+        clean254();
+    }
+
+    static String repeat380(char ch, int n) {
+        char[] a = new char[n];
+        Arrays.fill(a, ch);
+        return new String(a);
+    }
+
+    /** Issue #380: the Data check has one line with counts only, never a time, kind, file name or loudness. */
+    static void soundDataCheck380() throws Exception {
+        Context c = phone254("openring380-check");
+        Db db = Db.get(c);
+        String none = DataCheck.run(c).text;
+        check("#380 Data check without sounds: 0 nights, 0 clips", none.contains("\nSleep sounds: 0 nights, 0 clips (0 with sound)\n"), null);
+        someSounds380(c, db);
+        db.getWritableDatabase().execSQL("UPDATE sound_clips SET gone = 1 WHERE start = ?", new Object[] {N380 + 400});
+        String text = DataCheck.run(c).text;
+        check("#380 Data check: 1 night, 4 clips (3 with sound)", text.contains("\nSleep sounds: 1 night, 4 clips (3 with sound)\n"), null);
+        check("#380 Data check: nothing else changed (no time, kind, file name or loudness of a sound)", text.replaceAll("(?m)^Sleep sounds: .*$", "").equals(none.replaceAll("(?m)^Sleep sounds: .*$", ""))
+                && !text.contains("a380") && !text.contains("snore") && !text.contains("cough") && !text.contains("-23.5") && !text.contains("-61.25"), null);
+        clean254();
+    }
+
+    /**
+     * Issue #380: a year of 60 clips a night (21,900 marks with their files) goes through a restore of an older backup row for
+     * row in seconds, and that year's backup onto a phone without clips keeps every mark without sound.
+     */
+    static void soundLarge380() throws Exception {
+        Context c = phone254("openring380-large");
+        final Db db = Db.get(c);
+        byte[] older = backup252(c);
+        final File dir = app.openring.data.Sounds.folder(c, false);
+        dir.mkdirs();
+        final double t0 = 1_500_000_000;
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                for (int night = 0; night < 365; night++) {
+                    double s = t0 + night * 86400.0;
+                    app.openring.data.Sounds.addNight(db, s, s + 8 * 3600, -60.0, 60, app.openring.data.Sounds.ENDED_TIME);
+                    for (int k = 0; k < 60; k++) {
+                        String name = (long) (s + k * 400) + ".m4a";
+                        app.openring.data.Sounds.addClip(db, s + k * 400, s + k * 400 + 5, app.openring.core.analysis.SoundDetector.TALK, -30.0 + k % 7, name);
+                    }
+                }
+            }
+        });
+        for (int night = 0; night < 365; night++) {
+            for (int k = 0; k < 60; k++) java.nio.file.Files.write(new File(dir, (long) (t0 + night * 86400.0 + k * 400) + ".m4a").toPath(), new byte[1]);
+        }
+        String rows = soundRows380(db);
+        long n = db.count("SELECT COUNT(*) FROM sound_clips");
+        long t = System.nanoTime();
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(older));
+        double s = (System.nanoTime() - t) / 1e9;
+        System.out.printf("    #380 a year of clips (%d marks): a restore of an older backup in %.2f s%n", n, s);
+        check("#380 a year of 60 clips a night (" + n + " marks) goes through a restore row for row, with sound, in seconds", r.ok && r.history && n == 21_900
+                && soundRows380(Db.get(c)).equals(rows) && Db.get(c).count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 21_900 && s < 60, s);
+        byte[] year = backup252(c);
+        Context fresh = freshDb("openring380-large-fresh");
+        MADE_254.add(fresh);
+        t = System.nanoTime();
+        r = app.openring.data.Backup.read(fresh, new java.io.ByteArrayInputStream(year));
+        s = (System.nanoTime() - t) / 1e9;
+        Db f = Db.get(fresh);
+        check("#380 that year's backup onto a phone without clips: 21,900 marks, none with sound, in seconds", r.ok && f.count("SELECT COUNT(*) FROM sound_clips") == 21_900
+                && f.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 0 && s < 60, s);
         clean254();
     }
 }
