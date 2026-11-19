@@ -306,10 +306,12 @@ public final class SoundDetector {
         }
         if (!zero) addToFloor(db);
         // clip windows that have passed, then a row of possible snores that can take nobody more
-        for (Sound s : new ArrayList<Sound>(open)) {
-            double stop = s.clipStart + CLIP_MAX_S;
-            if (s.ended) stop = Math.min(stop, s.stop + AFTER_S);
-            if (end >= stop - 1e-9) closeClip(s, stop);
+        if (!open.isEmpty()) {
+            for (Sound s : new ArrayList<Sound>(open)) {
+                double stop = s.clipStart + CLIP_MAX_S;
+                if (s.ended) stop = Math.min(stop, s.stop + AFTER_S);
+                if (end >= stop - 1e-9) closeClip(s, stop);
+            }
         }
         if (run != null) {
             Sound last = run.members.get(run.members.size() - 1);

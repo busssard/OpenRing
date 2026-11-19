@@ -952,6 +952,7 @@ public class PipelineTest {
         soundRetain380();
         soundDataCheck380();
         soundLarge380();
+        soundReview420();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -15722,6 +15723,62 @@ public class PipelineTest {
         Db f = Db.get(fresh);
         check("#380 that year's backup onto a phone without clips: 21,900 marks, none with sound, in seconds", r.ok && f.count("SELECT COUNT(*) FROM sound_clips") == 21_900
                 && f.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 0 && s < 60, s);
+        clean254();
+    }
+
+    /**
+     * Review of #420: a phone mark without sound that names the same file as a live mark never takes that file from it in a
+     * restore (so the sweep keeps the file); storing a mark again keeps its Keep; marks without a clip (beyond the 60, a
+     * stretch whose clip was given up) are stored with gone 1 and no file, and the sweep, the retention and a restore leave
+     * them so; a clip stored later for the same start gives the mark its sound.
+     */
+    static void soundReview420() throws Exception {
+        Context c = phone254("openring380-review");
+        Db db = Db.get(c);
+        File dir = app.openring.data.Sounds.folder(c, false);
+        byte[] full = backup252(c);
+        clip380(c, db, N380 + 100, app.openring.core.analysis.SoundDetector.TALK, "f.m4a", true);
+        // a mark without sound naming the same file, written after the live one (read last by the merge)
+        db.getWritableDatabase().execSQL("INSERT INTO sound_clips(start, stop, kind, peak, file, kept, gone) VALUES (?, ?, 'talk', -30, 'f.m4a', 0, 1)", new Object[] {N380 + 200, N380 + 201});
+        new File(dir, "f.m4a").setLastModified(System.currentTimeMillis() - 3600_000L);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#420 restore: a phone mark without sound naming the same file leaves the live mark its sound", r.ok
+                && db.count("SELECT gone FROM sound_clips WHERE start = " + (N380 + 100)) == 0 && db.count("SELECT gone FROM sound_clips WHERE start = " + (N380 + 200)) == 1, r.message);
+        app.openring.data.Sounds.Swept sw = app.openring.data.Sounds.sweep(c, db);
+        check("#420 the sweep after that restore keeps the live mark's file", sw.files == 0 && sw.rows == 0 && new File(dir, "f.m4a").exists(), sw.files + " " + sw.rows);
+        // Keep survives storing the mark again
+        app.openring.data.Sounds.keep(db, N380 + 100, true);
+        app.openring.data.Sounds.addClip(db, N380 + 100, N380 + 109, app.openring.core.analysis.SoundDetector.COUGH, -12.0, "f.m4a");
+        check("#420 storing a mark again keeps its Keep, with the new stop, kind and peak", db.count("SELECT COUNT(*) FROM sound_clips WHERE start = " + (N380 + 100)
+                + " AND kept = 1 AND gone = 0 AND kind = 'cough' AND stop = " + (N380 + 109) + " AND peak = -12") == 1, soundRows380(db));
+        // marks without sound
+        app.openring.data.Sounds.addMark(db, N380 + 300, N380 + 340, app.openring.core.analysis.SoundDetector.SNORE, -40.0);
+        app.openring.data.Sounds.addMark(db, N380 + 400, N380 + 402, app.openring.core.analysis.SoundDetector.TALK, null);
+        app.openring.data.Sounds.keep(db, N380 + 400, true);
+        boolean refused = false;
+        try {
+            app.openring.data.Sounds.addMark(db, N380 + 500, N380 + 501, "dog", -1.0);
+        } catch (IllegalArgumentException e) {
+            refused = "not a kind".equals(e.getMessage());
+        }
+        check("#420 a mark without a clip is stored with gone 1 and no file; an unknown kind refused", refused
+                && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 1 AND file = '' AND start IN (" + (N380 + 300) + ", " + (N380 + 400) + ")") == 2, soundRows380(db));
+        String rows = soundRows380(db);
+        sw = app.openring.data.Sounds.sweep(c, db);
+        int ret = app.openring.data.Sounds.retain(c, db, app.openring.data.Sounds.KEEP_WEEK);
+        check("#420 the sweep and the retention leave marks without sound as they are, every file of a live mark too", sw.rows == 0 && sw.files == 0
+                && soundRows380(db).equals(rows) && new File(dir, "f.m4a").exists(), sw.rows + " " + sw.files + " " + ret);
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#420 a restore keeps the marks without sound row for row", r.ok && soundRows380(db).equals(rows), soundRows380(db));
+        app.openring.data.Sounds.addMark(db, N380 + 400, N380 + 403, app.openring.core.analysis.SoundDetector.TALK, -35.0);
+        clip380(c, db, N380 + 300, app.openring.core.analysis.SoundDetector.SNORE, "late.m4a", true);
+        check("#420 a mark stored again without sound keeps its Keep; a clip stored later gives a mark its sound", db.count("SELECT kept FROM sound_clips WHERE start = " + (N380 + 400)) == 1
+                && db.count("SELECT gone FROM sound_clips WHERE start = " + (N380 + 400)) == 1
+                && db.count("SELECT COUNT(*) FROM sound_clips WHERE start = " + (N380 + 300) + " AND gone = 0 AND file = 'late.m4a'") == 1, soundRows380(db));
+        String text = DataCheck.run(c).text;
+        check("#420 the Data check counts marks without sound as clips without sound", text.contains("\nSleep sounds: 0 nights, 4 clips (2 with sound)\n"), text);
         clean254();
     }
 }

@@ -153,12 +153,35 @@ public final class Sounds {
                 new Object[] {start, stop, floor, (long) clips, ended});
     }
 
-    /** Stores a mark with its clip file (a plain name in the history's folder), replacing a row with the same start. */
+    /**
+     * Stores a mark with its clip file (a plain name in the history's folder). A row with the same start gets the new stop,
+     * kind, peak and file and has its sound again; its Keep stays as the person set it (review of #420).
+     */
     public static void addClip(Db db, double start, double stop, String kind, Double peak, String file) {
-        if (!SoundDetector.SNORE.equals(kind) && !SoundDetector.COUGH.equals(kind) && !SoundDetector.TALK.equals(kind)) throw new IllegalArgumentException("not a kind");
         if (!clipName(file)) throw new IllegalArgumentException("not a clip file name");
-        db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO sound_clips(start, stop, kind, peak, file, kept, gone) VALUES (?, ?, ?, ?, ?, 0, 0)",
-                new Object[] {start, stop, kind, peak, file});
+        store(db, start, stop, kind, peak, file, 0);
+    }
+
+    /**
+     * Stores a mark without sound ({@code gone} 1, no file): a sound beyond the night's 60 clips, or a snoring stretch whose
+     * clip was given up for louder ones (review of #420). The sweep, the retention and a restore leave it as it is; a clip
+     * stored later for the same start ({@link #addClip}) gives it its sound. Keep stays as it was.
+     */
+    public static void addMark(Db db, double start, double stop, String kind, Double peak) {
+        store(db, start, stop, kind, peak, "", 1);
+    }
+
+    private static void store(final Db db, final double start, final double stop, final String kind, final Double peak, final String file, final long gone) {
+        if (!SoundDetector.SNORE.equals(kind) && !SoundDetector.COUGH.equals(kind) && !SoundDetector.TALK.equals(kind)) throw new IllegalArgumentException("not a kind");
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                SQLiteDatabase w = db.getWritableDatabase();
+                w.execSQL("INSERT OR IGNORE INTO sound_clips(start, stop, kind, peak, file, kept, gone) VALUES (?, ?, ?, ?, ?, 0, ?)",
+                        new Object[] {start, stop, kind, peak, file, gone});
+                w.execSQL("UPDATE sound_clips SET stop = ?, kind = ?, peak = ?, file = ?, gone = ? WHERE start = ?", new Object[] {stop, kind, peak, file, gone, start});
+            }
+        });
     }
 
     /** Stores a time the phone was not listening. */
@@ -310,7 +333,8 @@ public final class Sounds {
     static void merge(SQLiteDatabase d, Rows phone, File folder) throws java.io.IOException {
         Set<String> present = names(folder);
         Map<String, Double> phoneFiles = new HashMap<String, Double>();
-        if (phone != null) for (Object[] row : phone.tables.get(1)) phoneFiles.put((String) row[4], (Double) row[0]);
+        // only the phone's marks with sound own their file: a mark without sound that names it too owns nothing (review of #420)
+        if (phone != null) for (Object[] row : phone.tables.get(1)) if (row[6] != null && (Long) row[6] == 0) phoneFiles.put((String) row[4], (Double) row[0]);
         d.beginTransaction();
         try {
             for (int t = 0; t < TABLES.length; t++) {
