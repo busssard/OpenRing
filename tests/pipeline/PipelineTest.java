@@ -941,6 +941,7 @@ public class PipelineTest {
         lifeWrites292();
         lifeRestore292();
         lifeResets292();
+        baselines292();
         lifePrivacy292();
         lifeDemo292();
         lifeLarge292();
@@ -9986,6 +9987,72 @@ public class PipelineTest {
             rmTree(c.dir);
             rmTree(fdir);
         }
+    }
+
+    // ------------------------------------------------------------- issue #292, phase 1.5: baselines into core
+
+    /**
+     * Every stored night and day ({@link #results139}, its SHA-256 by {@link #digest254}) of the demo built on 2026-10-20
+     * at 14:00 and of a made up year (365 days from 2024-11-04, two clock changes), as {@code dev} 8791631 stored them
+     * before the readiness baselines moved to {@code core/analysis/Baselines} (run with TZ Europe/Zurich as this script
+     * runs). The move must keep them byte for byte. A later change of the analysis rules changes these on purpose; then
+     * the new values go here with that change. The demo's rows are those of its five weeks ({@link #fiveWeeks292}): results
+     * a demo copies in without analysing them (open PR #413 adds a made up year before the five weeks) are not the analysis's.
+     */
+    static final String DEMO_292 = "71 69bc46e948c18447044cfad32eaee1697b130eef4112607d8ce0ac5ed5eb500c",
+            YEAR_292 = "731 d65df3d8c4880931f8f5c831241bbcdf69a11c30c90a3c74f192e7e3b7069da4";
+
+    /** Issue #292 phase 1.5: the demo's and a made up year's nights and days are byte for byte as before the move. */
+    static void baselines292() throws Exception {
+        Context demo = freshDb("openring292-demo");
+        long demoNow = java.time.LocalDateTime.parse("2026-10-20T14:00:00").atZone(ZoneId.systemDefault()).toEpochSecond();
+        List<String> demoRows;
+        try {
+            setStatic("testNow", demoNow);
+            app.openring.data.Demo.enter(demo, null, LocalDate.parse("2026-10-20"), demoNow);
+            demoRows = fiveWeeks292(results139(Db.get(demo)), LocalDate.parse("2026-10-20"));
+        } finally {
+            setStatic("testNow", 0L);
+        }
+        app.openring.data.Demo.leave(demo);
+        check("#292 baselines: the demo's nights and days byte for byte as before the move", digest254(demoRows).equals(DEMO_292), digest254(demoRows));
+        check("#292 baselines: the demo has readiness and temperature deviation to compare", count292(demoRows, "\"readiness\"") >= 30
+                && count292(demoRows, "\"temp_dev\"") >= 25, count292(demoRows, "\"readiness\"") + " " + count292(demoRows, "\"temp_dev\""));
+
+        Context year = freshDb("openring292-year");
+        Db db = Db.get(year);
+        ZoneId z = ZoneId.systemDefault();
+        long t0 = LocalDate.parse("2024-11-04").atStartOfDay(z).toEpochSecond();
+        long end = t0 + 366 * 86400L + 12 * 3600;
+        putBoot(db, app.openring.data.Demo.history(t0, 365, end, z, new Random(292)), 1, t0, end);
+        long t = System.currentTimeMillis();
+        Analyzer.run(year, null);
+        System.out.println("  #292: a made up year analysed in " + (System.currentTimeMillis() - t) + " ms");
+        List<String> yearRows = results139(db);
+        check("#292 baselines: a made up year's nights and days byte for byte as before the move", digest254(yearRows).equals(YEAR_292), digest254(yearRows));
+        check("#292 baselines: the year has readiness and temperature deviation on most days", count292(yearRows, "\"readiness\"") >= 300
+                && count292(yearRows, "\"temp_dev\"") >= 300, count292(yearRows, "\"readiness\"") + " " + count292(yearRows, "\"temp_dev\""));
+        restart242();
+        rmTree(demo.dir);
+        rmTree(year.dir);
+    }
+
+    /** The night and day rows of the demo's five weeks (dated from 36 days before {@code today}), in their order. */
+    static List<String> fiveWeeks292(List<String> rows, LocalDate today) {
+        String from = today.minusDays(36).toString();
+        List<String> out = new ArrayList<String>();
+        for (String r : rows) {
+            String[] f = r.split(" ", 5);
+            String date = r.startsWith("night ") ? f[3] : f[1];
+            if (date.compareTo(from) >= 0) out.add(r);
+        }
+        return out;
+    }
+
+    static int count292(List<String> rows, String field) {
+        int n = 0;
+        for (String r : rows) if (r.startsWith("day ") && r.contains(field)) n++;
+        return n;
     }
 
     // ------------------------------------------------------------------------------------------- issue #254

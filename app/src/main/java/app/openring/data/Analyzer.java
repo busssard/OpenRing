@@ -1104,37 +1104,13 @@ public final class Analyzer {
             JSONObject sc = mainNight.optJSONObject("score");
             if (sc != null && sc.has("value") && sc.optInt("value", -1) >= 0) ri.sleepScore = sc.optInt("value");
             ri.rhr = Json.d(mainNight, "lowest_hr");
-            double[] rhrHist = lastValues(prevNights, "lowest_hr", 14);
-            if (Stats.countFinite(rhrHist) >= 3) {
-                ri.rhrBaseline = Stats.mean(rhrHist);
-                ri.rhrSd = Stats.sd(rhrHist);
-            }
-            double hrvTonight = Json.d(mainNight, "avg_hrv");
-            double[] hrv14 = lastValues(prevNights, "avg_hrv", 13);
-            double[] hrv90 = lastValues(prevNights, "avg_hrv", 90);
-            if (!Double.isNaN(hrvTonight) && Stats.countFinite(hrv90) >= 3) {
-                // two week weighted average (newest heaviest) vs the long term average
-                double ws = 0, w = 0;
-                double[] recent = new double[hrv14.length + 1];
-                System.arraycopy(hrv14, 0, recent, 0, hrv14.length);
-                recent[hrv14.length] = hrvTonight;
-                for (int i = 0; i < recent.length; i++) {
-                    if (Double.isNaN(recent[i])) continue;
-                    double wi = 1 + i;
-                    ws += wi * recent[i];
-                    w += wi;
-                }
-                ri.hrvRecent = ws / w;
-                ri.hrvBaseline = Stats.mean(hrv90);
-            }
-            double temp = Json.d(mainNight, "temp");
-            double[] tempHist = lastValues(prevNights, "temp", 30);
-            if (!Double.isNaN(temp) && Stats.countFinite(tempHist) >= 3) {
-                tempDev = temp - Stats.median(tempHist);
-                ri.tempDev = tempDev;
-            }
-            double low = Json.d(mainNight, "lowest_hr_time"), s0 = Json.d(mainNight, "sleep_start"), s1 = Json.d(mainNight, "sleep_end");
-            if (!Double.isNaN(low) && s1 > s0) ri.recoveryFraction = Stats.clamp((low - s0) / (s1 - s0), 0, 1);
+            // the baselines against the main nights before (core/analysis/Baselines, issue #292)
+            int n = app.openring.core.analysis.Baselines.HRV_LONG_NIGHTS;
+            app.openring.core.analysis.Baselines.Result b = app.openring.core.analysis.Baselines.readiness(lastValues(prevNights, "lowest_hr", n),
+                    lastValues(prevNights, "avg_hrv", n), lastValues(prevNights, "temp", n), Json.d(mainNight, "avg_hrv"), Json.d(mainNight, "temp"),
+                    Json.d(mainNight, "lowest_hr_time"), Json.d(mainNight, "sleep_start"), Json.d(mainNight, "sleep_end"));
+            b.into(ri);
+            tempDev = b.tempDev;
         }
         // sleep balance and debt from total sleep per day
         double[] asleep14 = new double[14];
