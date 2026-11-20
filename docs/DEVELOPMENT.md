@@ -10,7 +10,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `app/src/main/java/app/openring/` | The app (plain Java, no third party libraries). Packages explained in ARCHITECTURE.md |
 | `app/src/main/res/` | Icons (vector drawables), app name, theme. All screens are built in code, there are no layouts |
 | `app/src/main/AndroidManifest.xml` | Permissions, activities, services. Must never request `INTERNET` |
-| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383), `BatteryTest.java` (Today's battery rows, `core/DeviceBattery`), `DayLineTest.java` (Today's Your day line: its decision tree, the line bank's rules, no line again within 30 days) and `TodayTest.java` (the order of Today's cards, `core/TodayCards`; the equal badge grid, `core/Grid`; the status line of each Settings section) `LifeTest.java` (the life factors of `core/LifeTags`, issue #292: keys, chips, own tags, several days, texts, CSV columns, demo tags) and `LayoutTest.java` (the tiles of every tab, `core/Layout`: keys, the merge of a saved order with the standard one, folds, the drag's landing place) run after it |
+| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383), `BatteryTest.java` (Today's battery rows, `core/DeviceBattery`), `DayLineTest.java` (Today's Your day line: its decision tree, the line bank's rules, no line again within 30 days) and `TodayTest.java` (the order of Today's cards, `core/TodayCards`; the equal badge grid, `core/Grid`; the status line of each Settings section) `LifeTest.java` (the life factors of `core/LifeTags`, issue #292: keys, chips, own tags, several days, texts, CSV columns, demo tags) and `LayoutTest.java` (the tiles of every tab, `core/Layout`: keys, the merge of a saved order with the standard one, folds, the drag's landing place, the edit session's draft in `core/LayoutDraft`) run after it |
 | `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh` |
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
@@ -148,8 +148,10 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
   through a rebuild), `Fold.inline` for a row inside a card (How it works, Why this line, the battery lines on Today).
   Closed by default; the explanations of the numbers go inside.
 * **Tiles (owner's wish of 18 November):** every card a page puts on a tab becomes a tile after the page is built
-  (`ui/Tiles.arrange`, called by `MainActivity.render`): its caption becomes the header of a shared `Fold`, a tap folds it,
-  holding the header lifts it to move it (letting go without moving opens a menu, also for TalkBack). The order and folds are
+  (`ui/Tiles.arrange`, called by `MainActivity.render`): its caption becomes the header of a shared `Fold`, a tap folds it.
+  Moving is an edit session (owner's wish of 20 November, extra `edit_layout` from Settings' Rearrange tiles): every tile gets a
+  frame and a handle (drag to move, tap for a menu, also for TalkBack), Reset and Save replace Sync and Settings in the header,
+  and changes stay in a `core/LayoutDraft` until Save (Back with unsaved changes asks). The order and folds are
   saved per tab by a stable key (`core/Layout`: from the caption, or `Tiles.name` for a card without one or with a caption
   that changes), so give a new card a caption or a name; it then appears at its standard place for people who moved tiles.
   `Tiles.summary` sets the line a folded tile shows (its key number); without it the first big number of the card is used.

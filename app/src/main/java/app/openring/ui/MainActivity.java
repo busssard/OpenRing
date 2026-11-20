@@ -84,7 +84,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         root.setBackgroundColor(Ui.BG);
 
         // header: date navigation and settings
-        LinearLayout header = Ui.hbox(this);
+        header = Ui.hbox(this);
         int p = Ui.dp(this, 12);
         header.setPadding(p, Ui.dp(this, 10), p, Ui.dp(this, 4));
         header.addView(iconButton(R.drawable.ic_chevron_left, new View.OnClickListener() {
@@ -123,6 +123,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
             }
         }));
         root.addView(header);
+        // the edit session's header (owner's wish of 20 November): Reset and Save where Sync and Settings are
+        editBar = editBar();
+        root.addView(editBar);
 
         // status strip
         statusStrip = Ui.vbox(this);
@@ -149,6 +152,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         for (int i = 0; i < ICONS.length; i++) nav.addView(navItem(i), Ui.weight(1));
         root.addView(nav);
         setContentView(root);
+        showEditing();
         if (demoRun.running) {
             // a preparation started before the phone was turned: show its progress again
             preparingDemo = true;
@@ -196,6 +200,77 @@ public final class MainActivity extends Activity implements RingManager.Listener
     }
 
     private boolean preparingDemo;
+    private LinearLayout header, editBar;
+
+    /** The header of the edit session: its name, Reset and Save, and the hint under them. */
+    private LinearLayout editBar() {
+        LinearLayout bar = Ui.vbox(this);
+        bar.setPadding(Ui.dp(this, 16), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 6));
+        LinearLayout row = Ui.hbox(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(Ui.text(this, "Rearrange tiles", 18, Ui.TEXT, Ui.MEDIUM), Ui.weight(1));
+        TextView reset = Ui.textButton(this, "Reset", Ui.TEXT_2);
+        reset.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Tiles.resetDraft();
+                render();
+            }
+        });
+        row.addView(reset);
+        TextView save = Ui.button(this, "Save", Ui.SLEEP, true);
+        save.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Tiles.save(MainActivity.this);
+                showEditing();
+                render();
+                android.widget.Toast.makeText(MainActivity.this, "Layout saved", android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sl.setMargins(Ui.dp(this, 8), 0, 0, 0);
+        row.addView(save, sl);
+        bar.addView(row);
+        TextView hint = Ui.text(this, Explain.EDIT_HINT, 12, Ui.TEXT_2, Ui.REGULAR);
+        hint.setPadding(0, Ui.dp(this, 6), 0, 0);
+        bar.addView(hint);
+        return bar;
+    }
+
+    /** Shows the edit session's header in place of the normal one, or the other way round. */
+    void showEditing() {
+        if (header == null || editBar == null) return;
+        boolean e = Tiles.editing();
+        header.setVisibility(e ? View.GONE : View.VISIBLE);
+        editBar.setVisibility(e ? View.VISIBLE : View.GONE);
+    }
+
+    /** Back in the edit session leaves it; with changes not saved it asks first. */
+    @Override
+    public void onBackPressed() {
+        if (!Tiles.editing()) {
+            super.onBackPressed();
+            return;
+        }
+        if (!Tiles.draftChanged()) {
+            leaveEditing();
+            return;
+        }
+        new android.app.AlertDialog.Builder(this).setTitle("Rearrange tiles").setMessage(Explain.EDIT_LEAVE)
+                .setPositiveButton("Leave", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        leaveEditing();
+                    }
+                }).setNegativeButton("Keep editing", null).show();
+    }
+
+    private void leaveEditing() {
+        Tiles.stopEditing();
+        showEditing();
+        render();
+    }
     /** Scroll position to return to while stepping through days, -1 when none is pending. */
     private int wantedY = -1;
     /**
@@ -265,6 +340,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     void handleExtras(Intent i) {
         if (i == null) return;
         if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
+        // Settings, Rearrange tiles (owner's wish of 20 November): the tabs open in the edit session
+        if (i.getBooleanExtra("edit_layout", false) && !Tiles.editing()) Tiles.startEditing(this);
         // screen test, demo mode only: every tab in the standard layout (owner's wish of 18 November), before anything below
         if (i.getBooleanExtra("layout_reset", false) && Prefs.of(this).demo()) Prefs.of(this).resetTiles(null);
         // Further analysis shown open once (its tile is folded in the standard layout); nothing is saved
@@ -380,6 +457,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         super.onNewIntent(i);
         setIntent(i);
         handleExtras(i);
+        showEditing();
         // while the demo is prepared the database is half written; the task loads when it is done
         if (scroll != null && !preparingDemo) {
             scroll.scrollTo(0, 0);

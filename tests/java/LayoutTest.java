@@ -42,6 +42,7 @@ public class LayoutTest {
         target();
         randomized();
         texts();
+        draft();
         sources();
         System.out.println("layout: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -195,11 +196,36 @@ public class LayoutTest {
             check("no dash as punctuation: " + s, !s.contains(" - ") && !s.contains("–") && !s.contains("—"));
             check("not empty", s.length() > 10);
         }
-        eq("the hint says what to do", app.openring.ui.Explain.TILES_HINT, "Hold a tile's title to move it.");
+        check("the edit hint names Save", app.openring.ui.Explain.EDIT_HINT.contains("Save"));
         eq("the owner's question before Reset layout", app.openring.ui.Explain.LAYOUT_RESET_ALL, "Put every tab's tiles back in their standard order and open state?");
         eq("status: standard", SettingsBlocks.layoutStatus(0), "Standard on every tab");
         eq("status: one tab", SettingsBlocks.layoutStatus(1), "Changed on 1 tab");
         eq("status: tabs", SettingsBlocks.layoutStatus(3), "Changed on 3 tabs");
+    }
+
+    /** The edit session (owner's wish of 20 November): changes stay in the draft until Save, Reset is standard, Leave keeps all. */
+    static void draft() {
+        app.openring.core.LayoutDraft d = new app.openring.core.LayoutDraft();
+        for (String t : Layout.TABS) d.load(t, null, null);
+        d.load("today", "day|scores", "-scores");
+        d.load("sleep", "", null);
+        check("draft: starts as saved, nothing changed", !d.changed());
+        eq("draft: the saved order", d.order("today"), "day|scores");
+        eq("draft: an empty saved value is the standard", d.order("sleep"), null);
+        check("draft: not standard with a saved order", !d.standard());
+        d.setOrder("sleep", "score|day");
+        check("draft: a move is a change", d.changed());
+        d.setOrder("sleep", "");
+        check("draft: moved back, no change", !d.changed());
+        d.setFolds("today", Layout.fold(d.folds("today"), "scores", true));
+        check("draft: a fold is a change", d.changed());
+        d.reset();
+        check("draft: reset is the standard everywhere", d.standard() && d.order("today") == null && d.folds("today") == null);
+        check("draft: reset of a changed layout is a change to save", d.changed());
+        app.openring.core.LayoutDraft e = new app.openring.core.LayoutDraft();
+        for (String t : Layout.TABS) e.load(t, null, null);
+        e.reset();
+        check("draft: reset of a standard layout changes nothing", !e.changed() && e.standard());
     }
 
     static String src(String f) throws Exception {
@@ -212,14 +238,18 @@ public class LayoutTest {
         String settings = src("ui/SettingsActivity.java"), pages = src("ui/Pages.java");
         check("every tab is arranged after it is built", main.contains("Tiles.arrange(this, scroll, tab, (LinearLayout) content"));
         check("a page is not replaced under a held tile", main.contains("Tiles.waitForDrop("));
-        check("the tile header is the shared fold", tiles.contains("Fold.inline(c, words,"));
-        check("drags start only from the header", tiles.contains("head.setOnLongClickListener") && !tiles.contains("card.setOnLongClickListener"));
-        check("a held tile without a finger opens the menu (TalkBack)", tiles.contains("if (!touching || dragged != null)"));
+        check("the tile header is the shared fold", tiles.contains("Fold.inline(c, headContent,"));
+        check("drags start only from the handle in the edit session", tiles.contains("handle.setOnTouchListener") && !tiles.contains("setOnLongClickListener"));
+        check("the handle opens the menu for TalkBack", tiles.contains("menu(t); // TalkBack"));
+        check("moves and folds go to the draft while editing", tiles.contains("if (draft != null) draft.setOrder(tab, order);") && tiles.contains("setOrderOf(c, tabName,"));
+        check("Settings opens the edit session", settings.contains("\"Rearrange tiles\"") && settings.contains("putExtra(\"edit_layout\", true)"));
+        check("the edit header has Save and Reset", main.contains("\"Save\"") && main.contains("Tiles.resetDraft()") && main.contains("Tiles.save(MainActivity.this)"));
+        check("Back with unsaved changes asks first", main.contains("Tiles.draftChanged()") && main.contains("Explain.EDIT_LEAVE"));
         check("the menu moves up and down", tiles.contains("\"Move up\"") && tiles.contains("\"Move down\""));
         check("demo mode keeps its own layout", prefs.contains("(demo ? \"_demo\" : \"\")") && prefs.contains("tileKey(\"order\", tab, demo())"));
         check("the backup holds the person's layout, never the demo's", backup.contains("p.tileOrderReal(tab)") && backup.contains("p.setTilesReal(tab, order, folds)"));
         check("an older backup without a layout keeps the phone's", backup.contains("if (layout != null)"));
-        check("Settings has Reset layout with a question", settings.contains("\"Reset layout\"") && settings.contains("Tiles.confirmReset(SettingsActivity.this, null,"));
+        check("Settings has Reset layout with a question", settings.contains("\"Reset layout\"") && settings.contains("Tiles.confirmReset(SettingsActivity.this, new Runnable()"));
         check("Settings' Layout section is a fold", settings.contains("fold(app.openring.core.SettingsBlocks.LAYOUT,"));
         check("the screen test can start from the standard layout", main.contains("\"layout_reset\"") && main.contains("resetTiles(null)"));
         check("Further analysis folds as a tile", pages.contains("s.standardOpen = false;") && pages.contains("Tiles.open(c, SLEEP, ANALYSIS_KEY, false)"));

@@ -1646,7 +1646,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     }
 
     /**
-     * Layout of the tabs (owner's wish of 18 November, "Have a reset layout button in the settings"): how tiles move and fold,
+     * Layout of the tabs (owner's wishes of 18 and 20 November): how tiles fold, Rearrange tiles (the edit session on the tabs),
      * and Reset layout, which asks first and then puts every tab's tiles back in their standard order and open state. Demo mode
      * resets only the demo's layout.
      */
@@ -1654,10 +1654,19 @@ public final class SettingsActivity extends Activity implements RingManager.List
         final Fold f = fold(app.openring.core.SettingsBlocks.LAYOUT, app.openring.core.SettingsBlocks.layoutStatus(Tiles.changedTabs(this)));
         layoutCard = f.body;
         layoutCard.addView(Ui.body(this, Explain.LAYOUT_ABOUT));
+        // the edit session (owner's wish of 20 November): the tabs open with frames and handles, Save and Reset in the header
+        small(layoutCard, "Rearrange tiles", Ui.SLEEP, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, MainActivity.class).putExtra("edit_layout", true)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                finish();
+            }
+        });
         small(layoutCard, "Reset layout", Ui.TEXT_2, new Runnable() {
             @Override
             public void run() {
-                Tiles.confirmReset(SettingsActivity.this, null, new Runnable() {
+                Tiles.confirmReset(SettingsActivity.this, new Runnable() {
                     @Override
                     public void run() {
                         f.setStatus(app.openring.core.SettingsBlocks.layoutStatus(Tiles.changedTabs(SettingsActivity.this)));

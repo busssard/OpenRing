@@ -11,7 +11,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
@@ -26,25 +25,27 @@ import java.util.Set;
 import java.util.WeakHashMap;
 
 import app.openring.core.Layout;
+import app.openring.core.LayoutDraft;
 import app.openring.data.Prefs;
 
 /**
- * The tiles of a tab (owner's wish of 18 November): every card on Today, Sleep, Ready, Activity, Body and Screen gets the shared
- * {@link Fold} header (its title, a one line summary while folded, the chevron), can be folded with a tap on that header and
- * moved by holding it: it lifts, follows the finger, the others make room, and letting go keeps the new place. Holding and
- * letting go without moving opens a small menu (Move up, Move down, to the top, to the bottom, Fold or Open), which is also
- * how TalkBack moves a tile. The order and the folds stay per tab ({@code core/Layout}, saved in {@link Prefs}, demo mode has
- * its own), until changed or put back with "Back to the standard layout" at the end of the tab or in Settings.
+ * The tiles of a tab (owner's wishes of 18 and 20 November): every card on Today, Sleep, Ready, Activity, Body and Screen gets
+ * the shared {@link Fold} header (its title, a one line summary while folded, the chevron) and folds with a tap on that header;
+ * each tile stays as the person left it. Moving happens in an edit session (Settings, Layout of the tabs, Rearrange tiles):
+ * every tile gets a frame and a handle, a drag on the handle lifts it, it follows the finger, the others make room, and letting
+ * go keeps the new place; a tap on the handle opens a small menu (Move up, Move down, to the top, to the bottom, Fold or Open),
+ * which is also how TalkBack moves a tile. A fold in the session sets how the tile starts. The session's changes stay in a
+ * {@link LayoutDraft} until Save; Reset puts the draft to the standard layout; leaving without Save changes nothing. The order
+ * and the folds stay per tab ({@code core/Layout}, saved in {@link Prefs}, demo mode has its own).
  * <p>
  * Display only: the pages build their cards exactly as before, in the standard order; {@link #arrange} only wraps and orders
- * them after the page is built. Drags start only from a header, so charts keep their touch readout and the page its scrolling.
+ * them after the page is built. Drags start only from a handle, so charts keep their touch readout and the page its scrolling.
  */
 final class Tiles {
     private Tiles() {}
 
-    /** The one line at the end of each tab. */
-    static final String HINT = Explain.TILES_HINT;
-    static final String RESET = "Back to the standard layout";
+    /** The edit session's draft, null outside it (owner's wish of 20 November). */
+    private static LayoutDraft draft;
 
     /** What a page says about one of its cards; a card without it gets key and title from its caption. */
     static final class Spec {
@@ -92,7 +93,67 @@ final class Tiles {
         String t = Layout.tab(tab);
         if (t == null) return standardOpen;
         if (openOnce.contains(t + ":" + key)) return true;
-        return Layout.open(Layout.folds(Prefs.of(c).tileFolds(t)), key, standardOpen);
+        return Layout.open(Layout.folds(foldsOf(c, t)), key, standardOpen);
+    }
+
+    // ------------------------------------------------------------------------------------------- the edit session
+
+    /** Whether the tabs are in the edit session (frames, handles, Save and Reset in the header). */
+    static boolean editing() {
+        return draft != null;
+    }
+
+    /** Starts the edit session from the saved layout of every tab (of the current mode, demo or the person's). */
+    static void startEditing(Context c) {
+        Prefs p = Prefs.of(c);
+        LayoutDraft d = new LayoutDraft();
+        for (String t : Layout.TABS) d.load(t, p.tileOrder(t), p.tileFolds(t));
+        draft = d;
+    }
+
+    /** Save: the session's layout of every tab becomes the saved one, and the session ends. */
+    static void save(Context c) {
+        if (draft == null) return;
+        Prefs p = Prefs.of(c);
+        for (String t : Layout.TABS) {
+            p.setTileOrder(t, draft.order(t));
+            p.setTileFolds(t, draft.folds(t));
+        }
+        draft = null;
+    }
+
+    /** Leaves the session without saving: the saved layout stays as it was. */
+    static void stopEditing() {
+        draft = null;
+    }
+
+    /** Reset in the session: every tab of the draft in the standard layout, saved only with Save. */
+    static void resetDraft() {
+        if (draft != null) draft.reset();
+    }
+
+    /** Whether Save would change anything (the question before leaving without saving). */
+    static boolean draftChanged() {
+        return draft != null && draft.changed();
+    }
+
+    /** The order and folds of {@code tab}: the session's while editing, else the saved ones. */
+    static String orderOf(Context c, String tab) {
+        return draft != null ? draft.order(tab) : Prefs.of(c).tileOrder(tab);
+    }
+
+    static String foldsOf(Context c, String tab) {
+        return draft != null ? draft.folds(tab) : Prefs.of(c).tileFolds(tab);
+    }
+
+    static void setOrderOf(Context c, String tab, String order) {
+        if (draft != null) draft.setOrder(tab, order);
+        else Prefs.of(c).setTileOrder(tab, order);
+    }
+
+    static void setFoldsOf(Context c, String tab, String folds) {
+        if (draft != null) draft.setFolds(tab, folds);
+        else Prefs.of(c).setTileFolds(tab, folds);
     }
 
     /** A load asked for while a tile is dragged: runs after the drop. Returns false when nothing is dragged (load now). */
@@ -110,14 +171,13 @@ final class Tiles {
         return n;
     }
 
-    /** Asks, then puts every tab (null) or one tab back to the standard layout and runs {@code done}. */
-    static void confirmReset(final Context c, final String tab, final Runnable done) {
-        new AlertDialog.Builder(c).setTitle(tab == null ? "Reset layout?" : RESET + "?")
-                .setMessage(tab == null ? Explain.LAYOUT_RESET_ALL : Explain.LAYOUT_RESET_TAB)
-                .setPositiveButton(tab == null ? "Reset" : "Put back", new DialogInterface.OnClickListener() {
+    /** Settings' Reset layout: asks, then puts every tab back to the standard layout and runs {@code done}. */
+    static void confirmReset(final Context c, final Runnable done) {
+        new AlertDialog.Builder(c).setTitle("Reset layout?").setMessage(Explain.LAYOUT_RESET_ALL)
+                .setPositiveButton("Reset", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface d, int w) {
-                        Prefs.of(c).resetTiles(tab);
+                        Prefs.of(c).resetTiles(null);
                         if (done != null) done.run();
                     }
                 }).setNegativeButton("Cancel", null).show();
@@ -139,8 +199,8 @@ final class Tiles {
 
     /**
      * Wraps the cards of {@code root} (a page as Pages built it) into tiles and puts them in the saved order, with their saved
-     * folds, then adds the hint and "Back to the standard layout" at the end. Children that are not cards (the sync line on
-     * Today, the note at the end of Screen) keep their places. {@code reload} builds the page again (after a reset).
+     * folds (the session's while editing). Children that are not cards (the sync line on Today, the note at the end of Screen)
+     * keep their places. {@code reload} builds the page again.
      */
     static void arrange(Context c, ScrollView scroll, int tab, LinearLayout root, Runnable reload) {
         String tabName = Layout.tab(tab);
@@ -168,16 +228,15 @@ final class Tiles {
         List<String> keys = Layout.unique(raw);
         for (int i = 0; i < made.size(); i++) made.get(i).key = keys.get(i);
         page.standard = keys;
-        Prefs p = Prefs.of(c);
-        List<String> order = Layout.order(Layout.parse(p.tileOrder(tabName)), keys);
-        Map<String, Boolean> folds = Layout.folds(p.tileFolds(tabName));
+        List<String> order = Layout.order(Layout.parse(orderOf(c, tabName)), keys);
+        Map<String, Boolean> folds = Layout.folds(foldsOf(c, tabName));
         for (String k : order) page.tiles.add(made.get(keys.indexOf(k)));
         for (int i = 0; i < slots.size(); i++) root.addView(page.tiles.get(i).view, slots.get(i));
         for (Tile t : page.tiles) {
             boolean once = openOnce.remove(tabName + ":" + t.key);
             page.show(t, once || Layout.open(folds, t.key, t.standardOpen));
         }
-        page.footer();
+        page.loading = false;
     }
 
     /** One arranged page and its drag. */
@@ -190,7 +249,6 @@ final class Tiles {
         final Runnable reload;
         final List<Tile> tiles = new ArrayList<Tile>();
         List<String> standard;
-        TextView resetButton;
         // the drag
         Tile dragged;
         boolean touching, moved, scrolling;
@@ -238,10 +296,41 @@ final class Tiles {
             t.summary = Fold.oneLine(Ui.text(c, sum == null ? "" : sum, 13, Ui.TEXT_2, Ui.REGULAR));
             t.summary.setPadding(0, Ui.dp(c, 2), 0, 0);
             words.addView(t.summary);
+            final boolean edit = editing();
+            View headContent = words;
+            if (edit) {
+                // the handle in the edit session: a drag on it moves the tile, a tap opens the menu
+                LinearLayout row = Ui.hbox(c);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                TextView handle = Ui.text(c, HANDLE, 24, Ui.SLEEP, Ui.REGULAR);
+                handle.setGravity(Gravity.CENTER);
+                handle.setContentDescription("Move " + t.title);
+                handle.setMinimumWidth(Ui.dp(c, 48));
+                handle.setMinimumHeight(Ui.dp(c, 48));
+                handle.setPadding(0, 0, Ui.dp(c, 6), 0);
+                handle.setClickable(true);
+                handle.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        menu(t); // TalkBack's double tap; a finger's tap is handled in onTouch below
+                    }
+                });
+                handle.setOnTouchListener(new View.OnTouchListener() {
+                    @Override
+                    public boolean onTouch(View v, MotionEvent e) {
+                        handleTouch(t, e);
+                        return true;
+                    }
+                });
+                row.addView(handle);
+                row.addView(words, Ui.weight(1));
+                headContent = row;
+            }
 
             // the surface: the card's own background and padding, so an open tile looks as the card did
             LinearLayout outer = Ui.vbox(c);
-            outer.setBackground(card.getBackground());
+            // in the edit session a frame shows each tile as one piece to move
+            outer.setBackground(edit ? frame(c) : card.getBackground());
             card.setBackground(null);
             int top = Math.min(card.getPaddingTop(), Ui.dp(c, 4));
             outer.setPadding(card.getPaddingLeft(), top, card.getPaddingRight(), card.getPaddingBottom());
@@ -252,7 +341,7 @@ final class Tiles {
             card.setLayoutParams(Ui.matchWrap());
 
             final boolean[] open = {true};
-            t.fold = Fold.inline(c, words, t.title + (sum == null ? "" : ", " + sum), open, false);
+            t.fold = Fold.inline(c, headContent, t.title + (sum == null ? "" : ", " + sum), open, false);
             t.fold.head.setMinimumHeight(Ui.dp(c, 40));
             t.fold.body.addView(card, Ui.matchWrap());
             outer.addView(t.fold.view, Ui.matchWrap());
@@ -263,27 +352,14 @@ final class Tiles {
                     folded(t);
                 }
             });
-            final View head = t.fold.head;
-            head.setOnLongClickListener(new View.OnLongClickListener() {
-                @Override
-                public boolean onLongClick(View v) {
-                    return lift(t);
+            if (edit) {
+                // a little more room around each framed tile
+                ViewGroup.LayoutParams olp = outer.getLayoutParams();
+                if (olp instanceof ViewGroup.MarginLayoutParams) {
+                    ViewGroup.MarginLayoutParams m = (ViewGroup.MarginLayoutParams) olp;
+                    m.bottomMargin = Math.max(m.bottomMargin, Ui.dp(c, 14));
                 }
-            });
-            head.setOnTouchListener(new View.OnTouchListener() {
-                @Override
-                public boolean onTouch(View v, MotionEvent e) {
-                    touch(t, e);
-                    return false; // the header still gets every event: its tap folds, its hold lifts, its ripple ends
-                }
-            });
-            head.setAccessibilityDelegate(new View.AccessibilityDelegate() {
-                @Override
-                public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
-                    super.onInitializeAccessibilityNodeInfo(host, info);
-                    info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK, "Move or fold"));
-                }
-            });
+            }
             return t;
         }
 
@@ -302,60 +378,28 @@ final class Tiles {
             if (v.getPaddingBottom() != b) v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), b);
         }
 
-        /** After a tap on the header: the summary, the saved state, the reset button, the page's own listener. */
+        /** After a tap on the header: the summary, the state kept (in the session's draft while editing), the page's listener. */
         void folded(Tile t) {
             boolean open = t.fold.isOpen();
             look(t);
             if (!loading) {
-                Prefs p = Prefs.of(c);
-                p.setTileFolds(tabName, Layout.fold(p.tileFolds(tabName), t.key, open));
+                setFoldsOf(c, tabName, Layout.fold(foldsOf(c, tabName), t.key, open));
                 if (t.spec != null && t.spec.listener != null) t.spec.listener.folded(open);
-                updateReset();
             }
         }
 
         /** True while {@link #arrange} sets the saved states (nothing to save then). */
         boolean loading = true;
 
-        /** The hint and Back to the standard layout, at the end of the page. */
-        void footer() {
-            loading = false;
-            LinearLayout f = Ui.vbox(c);
-            f.setGravity(Gravity.CENTER_HORIZONTAL);
-            f.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 8));
-            TextView hint = Ui.text(c, HINT, 12, Ui.TEXT_3, Ui.REGULAR);
-            hint.setGravity(Gravity.CENTER);
-            f.addView(hint);
-            resetButton = Ui.textButton(c, RESET, Ui.TEXT_2);
-            resetButton.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    confirmReset(c, tabName, reload);
-                }
-            });
-            f.addView(resetButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            root.addView(f, Ui.matchWrap());
-            updateReset();
-        }
-
-        /** The reset button shows only when the page is not in the standard layout. */
-        void updateReset() {
-            if (resetButton == null) return;
-            boolean same = true;
-            for (int i = 0; i < tiles.size() && same; i++) {
-                Tile t = tiles.get(i);
-                if (!t.key.equals(standard.get(i)) || t.fold.isOpen() != t.standardOpen) same = false;
-            }
-            resetButton.setVisibility(same ? View.GONE : View.VISIBLE);
-        }
-
         // --------------------------------------------------------------------------------------- moving
 
-        void touch(Tile t, MotionEvent e) {
+        /** A finger on a tile's handle: down lifts the tile at once, moving drags it, up drops it (a tap opens the menu). */
+        void handleTouch(Tile t, MotionEvent e) {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     touching = true;
                     lastRaw = e.getRawY();
+                    lift(t);
                     break;
                 case MotionEvent.ACTION_MOVE:
                     lastRaw = e.getRawY();
@@ -376,12 +420,9 @@ final class Tiles {
             }
         }
 
-        /** The header was held: lift the tile under the finger, or open the menu when held without a finger (TalkBack). */
+        /** The handle was touched: the tile under the finger lifts. */
         boolean lift(Tile t) {
-            if (!touching || dragged != null) {
-                if (dragged == null) menu(t);
-                return true;
-            }
+            if (!touching || dragged != null) return true;
             int i = tiles.indexOf(t);
             if (i < 0) return false;
             dragged = t;
@@ -399,7 +440,7 @@ final class Tiles {
                 heights[k] = tiles.get(k).view.getHeight();
             }
             t.fold.head.getParent().requestDisallowInterceptTouchEvent(true);
-            t.fold.head.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            t.fold.head.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
             View v = t.view;
             v.animate().cancel();
             v.setTranslationZ(Ui.dp(c, 12));
@@ -495,9 +536,7 @@ final class Tiles {
             tiles.add(Math.max(0, Math.min(tiles.size() - 1, b)), tiles.remove(a));
             for (Tile x : tiles) root.removeView(x.view);
             for (int i = 0; i < at.size(); i++) root.addView(tiles.get(i).view, at.get(i));
-            Prefs p = Prefs.of(c);
-            p.setTileOrder(tabName, Layout.join(Layout.remember(Layout.parse(p.tileOrder(tabName)), keys)));
-            updateReset();
+            setOrderOf(c, tabName, Layout.join(Layout.remember(Layout.parse(orderOf(c, tabName)), keys)));
         }
 
         /** The menu of a held tile: move it without dragging (also with TalkBack), or fold or open it. */
@@ -541,6 +580,16 @@ final class Tiles {
                 }
             });
         }
+    }
+
+    /** The handle's sign: three lines, the usual sign for something that can be dragged. */
+    static final String HANDLE = "\u2261";
+
+    /** The frame of a tile in the edit session: the card's colour with an outline in the accent colour. */
+    static android.graphics.drawable.GradientDrawable frame(Context c) {
+        android.graphics.drawable.GradientDrawable g = Ui.rounded(Ui.CARD_HI, Ui.dp(c, 18));
+        g.setStroke(Ui.dp(c, 2), Ui.alpha(Ui.SLEEP, 0.7f));
+        return g;
     }
 
     // ------------------------------------------------------------------------------------------- reading the cards
