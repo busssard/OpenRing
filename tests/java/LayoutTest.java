@@ -132,17 +132,45 @@ public class LayoutTest {
     static void folds() {
         Map<String, Boolean> none = Layout.folds(null);
         check("nothing saved: the standard state", Layout.open(none, "a", true) && !Layout.open(none, "further analysis", false));
-        String s = Layout.fold(null, "key metrics", false);
+        String s = Layout.fold(null, "key metrics", false, true);
         eq("folded is saved", s, "-key metrics");
         check("and stays folded", !Layout.open(Layout.folds(s), "key metrics", true));
-        s = Layout.fold(s, "further analysis", true);
+        s = Layout.fold(s, "further analysis", true, false);
         check("a tile folded by default stays open once opened", Layout.open(Layout.folds(s), "further analysis", false));
-        s = Layout.fold(s, "key metrics", true);
+        eq("opened: saved, as it is not its standard", s, "-key metrics|+further analysis");
+        s = Layout.fold(s, "key metrics", true, true);
         check("opened again", Layout.open(Layout.folds(s), "key metrics", true));
-        eq("the newest change last, each key once", s, "+further analysis|+key metrics");
-        check("open again is kept as open, also if the standard changes later", Layout.open(Layout.folds(s), "key metrics", false));
+        // review of #415: one rule for "standard", a tile in its standard state saves nothing, so Settings agrees with the tab
+        eq("opened again is its standard: nothing saved for it", s, "+further analysis");
         eq("a broken value keeps the good entries", Layout.folds("+a|-b|xc|-|+|-B|+c d").toString(), "{a=true, b=false, c d=true}");
-        eq("a key that is not a key is not saved", Layout.fold("-a", "Bad Key", false), "-a");
+        eq("a key that is not a key is not saved", Layout.fold("-a", "Bad Key", false, true), "-a");
+        // fold then open is standard
+        String f = Layout.fold(Layout.fold(null, "scores", false, true), "scores", true, true);
+        check("fold then open is standard (" + f + ")", Layout.standard(null, f));
+        String g = Layout.fold(Layout.fold(null, "further analysis", true, false), "further analysis", false, false);
+        check("a tile folded by default: open then fold is standard (" + g + ")", Layout.standard(null, g));
+        // an order moved back to the standard saves nothing; one with a tile from another day keeps that tile's place
+        List<String> page = l("a", "b", "c");
+        eq("moved down and back up: no order saved", Layout.orderToSave(null, l("a", "b", "c"), page), null);
+        eq("back to the standard after an earlier move: no order saved", Layout.orderToSave(l("c", "a", "b"), l("a", "b", "c"), page), null);
+        eq("a moved order is saved", Layout.orderToSave(null, l("b", "a", "c"), page), "b|a|c");
+        eq("a tile not on the page keeps its saved place", Layout.orderToSave(l("workouts", "a", "b", "c"), l("a", "b", "c"), page), "workouts|a|b|c");
+        check("fold then open, move and move back: Settings counts no tab", Layout.standard(Layout.orderToSave(null, page, page), f));
+        // the folded line of a score dial (review of #415, with #411's big line)
+        eq("dial: score, word and the big line", Layout.dialSummary(96, "7h 28m asleep", "23:10 to 07:05, 7h 55m in bed"), "96, Optimal, 7h 28m asleep");
+        eq("dial without a big line", Layout.dialSummary(72, null, "Lowest heart rate 52"), "72, Good");
+        eq("a watch night without a score: the big line first", Layout.dialSummary(Double.NaN, "6h 2m asleep", "23:40 to 06:30, 6h 50m in bed"), "6h 2m asleep");
+        eq("no score, no big line: the line under it", Layout.dialSummary(Double.NaN, null, "No main sleep recorded for this day"), "No main sleep recorded for this day");
+        // a folded line leaves out values that are missing (review of #415: no "Steps --")
+        eq("summary parts: both", Layout.parts("Steps 7432", "active burn 412 kcal"), "Steps 7432, active burn 412 kcal");
+        eq("summary parts: the first missing", Layout.parts(null, "active burn 412 kcal"), "Active burn 412 kcal");
+        eq("summary parts: none, no line", Layout.parts(null, null), "");
+        // a note without a caption: its first words up to the first number, so a count or date in it does not move its place
+        eq("note key without numbers", Layout.noteKey("Your baselines are still forming."), "note your baselines are still forming");
+        eq("note key stops at a number", Layout.noteKey("Only 3 days with the ring in the last 7 days."), "note only");
+        eq("note key: the same on another day", Layout.noteKey("Only 5 days with the ring in the last 7 days."), Layout.noteKey("Only 3 days with the ring"));
+        eq("note key: a number first", Layout.noteKey("12 November: synced"), "note");
+        eq("note key: no text", Layout.noteKey(null), "note");
         eq("written back the same", Layout.joinFolds(Layout.folds("+a|-b")), "+a|-b");
         eq("nothing saved writes nothing", Layout.joinFolds(Layout.folds(null)), "");
     }
@@ -217,8 +245,20 @@ public class LayoutTest {
         check("draft: a move is a change", d.changed());
         d.setOrder("sleep", "");
         check("draft: moved back, no change", !d.changed());
-        d.setFolds("today", Layout.fold(d.folds("today"), "scores", true));
+        d.setFolds("today", Layout.fold(d.folds("today"), "scores", true, true));
         check("draft: a fold is a change", d.changed());
+        d.setFolds("today", Layout.fold(d.folds("today"), "scores", false, true));
+        check("draft: folded back as saved, no change", !d.changed());
+        app.openring.core.LayoutDraft two = new app.openring.core.LayoutDraft();
+        for (String t : Layout.TABS) two.load(t, null, null);
+        two.load("today", null, "-scores|-day");
+        two.setFolds("today", Layout.fold(Layout.fold(two.folds("today"), "scores", true, true), "scores", false, true));
+        check("draft: open and fold again, no change (the order of the entries does not count): " + two.folds("today"), !two.changed());
+        app.openring.core.LayoutDraft s = new app.openring.core.LayoutDraft();
+        for (String t : Layout.TABS) s.load(t, null, null);
+        s.setFolds("sleep", Layout.fold(Layout.fold(s.folds("sleep"), "score", false, true), "score", true, true));
+        s.setOrder("sleep", Layout.orderToSave(Layout.parse(s.order("sleep")), l("score", "contributors"), l("score", "contributors")));
+        check("draft: fold then open, move and move back is standard and no change", s.standard() && !s.changed());
         d.reset();
         check("draft: reset is the standard everywhere", d.standard() && d.order("today") == null && d.folds("today") == null);
         check("draft: reset of a changed layout is a change to save", d.changed());
@@ -254,6 +294,12 @@ public class LayoutTest {
         check("the screen test can start from the standard layout", main.contains("\"layout_reset\"") && main.contains("resetTiles(null)"));
         check("Further analysis folds as a tile", pages.contains("s.standardOpen = false;") && pages.contains("Tiles.open(c, SLEEP, ANALYSIS_KEY, false)"));
         check("a score dial is a tile", pages.contains("Tiles.name(card, \"score\", label + \" score\""));
+        check("a folded dial says its big line (#411's time asleep)", pages.contains("Layout.dialSummary(score, big, sub)"));
+        check("a folded Goal progress leaves out missing values", pages.contains("Tiles.summary(goal, app.openring.core.Layout.parts("));
+        check("Activity's note with a count of days has its own name", pages.contains("Tiles.name(note, ACTIVITY_DAYS_KEY, null, null)"));
+        check("a tile in its standard state saves nothing", tiles.contains("Layout.fold(foldsOf(c, tabName), t.key, open, t.standardOpen)")
+                && tiles.contains("Layout.orderToSave(Layout.parse(orderOf(c, tabName)), keys, standard)"));
+        check("a note's key leaves out numbers", tiles.contains("k = Layout.noteKey(firstText)"));
         String screens = new String(Files.readAllBytes(Paths.get(".github/scripts/screens.sh")), "UTF-8");
         check("screens.sh starts its steps in the standard layout", screens.contains("--ez layout_reset true"));
     }

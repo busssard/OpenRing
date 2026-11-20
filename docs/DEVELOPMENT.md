@@ -158,7 +158,11 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
   and changes stay in a `core/LayoutDraft` until Save (Back with unsaved changes asks). The order and folds are
   saved per tab by a stable key (`core/Layout`: from the caption, or `Tiles.name` for a card without one or with a caption
   that changes), so give a new card a caption or a name; it then appears at its standard place for people who moved tiles.
-  `Tiles.summary` sets the line a folded tile shows (its key number); without it the first big number of the card is used.
+  A card without a caption gets "note" and its first words up to the first number (`Layout.noteKey`); when those words can
+  change (a date, a name, a count in words), give it a `Tiles.name`, as Activity's note on the days that count has.
+  A tile in its standard state saves nothing (`Layout.fold`, `Layout.orderToSave`), so Settings' count agrees with the tabs.
+  `Tiles.summary` sets the line a folded tile shows (its key number, `Layout.parts` leaves out missing values, empty for no
+  line); without it the first big number of the card is used.
 * **Today's order:** `core/TodayCards` (the scores, then Your day, so its sentence and line are on the first screen; the
   screen test fails when they are not, from the line `today first screen` that demo mode logs).
 * **New game:** subclass `ui/games/Game.java`, add it to `GamesActivity.create` before the motion check (which stays last) and raise `COUNT`. Games live in Settings, card *Ring games* (issue #15).

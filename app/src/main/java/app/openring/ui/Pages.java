@@ -1305,7 +1305,8 @@ public final class Pages {
                 if (dv.days7 < 7) {
                     LinearLayout note = Ui.card(c);
                     note.addView(Ui.body(c, Explain.activityDaysDevice(dv.days7, watch)));
-                    root.addView(note);
+                    // its text holds the count of days: a name of its own keeps its place and fold from day to day
+                    root.addView(Tiles.name(note, ACTIVITY_DAYS_KEY, null, null));
                 }
                 DeviceViews.deviceParts(c, root, d, "activity_score", Ui.ACTIVE);
                 root.addView(infoCard(c, "About the activity score", Explain.ACTIVITY_DEVICE));
@@ -1331,7 +1332,9 @@ public final class Pages {
         if (phoneCounted(d)) goal.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
         // folded (owner's wish of 18 November): the day's steps and active burn, as the tiles above show them
         double steps = d.merged == null ? Json.d(day, "steps") : d.merged.steps;
-        Tiles.summary(goal, "Steps " + Ui.fmt(steps, 0) + ", active burn " + Ui.fmt(active, 0) + " kcal");
+        // a missing value is left out, none at all gives no line (review of #415: never "Steps --")
+        Tiles.summary(goal, app.openring.core.Layout.parts(Double.isNaN(steps) ? null : "Steps " + Ui.fmt(steps, 0),
+                Double.isNaN(active) ? null : "active burn " + Ui.fmt(active, 0) + " kcal"));
         root.addView(goal);
         // the watch's steps per hour when its steps are the day's (owner's report of 11 November)
         View hours = PhoneViews.watchDayCard(c, d);
@@ -1412,7 +1415,8 @@ public final class Pages {
             if (worn < 7) {
                 LinearLayout note = Ui.card(c);
                 note.addView(Ui.body(c, Explain.activityDays(worn)));
-                root.addView(note);
+                // its text holds the count of days: a name of its own keeps its place and fold from day to day
+                root.addView(Tiles.name(note, ACTIVITY_DAYS_KEY, null, null));
             }
             root.addView(contributors(c, as, Ui.ACTIVE, "Contributors"));
             root.addView(infoCard(c, "About the activity score", Explain.ACTIVITY));
@@ -1974,6 +1978,9 @@ public final class Pages {
         return hero(c, score, label, color, null, sub, note);
     }
 
+    /** The key of Activity's note on how many days count (its text changes with the count, so it needs a name). */
+    static final String ACTIVITY_DAYS_KEY = "activity days";
+
     /** Under the time asleep (issue #409): what Details says about Total sleep. */
     static final String TOTAL_SLEEP_NOTE = "Time asleep, without the time awake in bed";
 
@@ -2005,8 +2012,9 @@ public final class Pages {
             n.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
             card.addView(n);
         }
-        // a tile like every other (owner's wish of 18 November): folded it says the score and its word, else the line under it
-        return Tiles.name(card, "score", label + " score", Double.isNaN(score) ? sub : Math.round(score) + ", " + Scores.verdict((int) score));
+        // a tile like every other (owner's wish of 18 November): folded it says the score, its word and the big line ("96,
+        // Optimal, 7h 28m asleep", review of #415 with #411); without a score the big line, else the line under it
+        return Tiles.name(card, "score", label + " score", app.openring.core.Layout.dialSummary(score, big, sub));
     }
 
     static View contributors(Context c, JSONObject score, int color, String title) {

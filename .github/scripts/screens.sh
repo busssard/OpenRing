@@ -330,6 +330,15 @@ if tap_text "Rearrange tiles"; then
 else
   echo "::warning::tiles step: Rearrange tiles was not found in Settings, Layout of the tabs"
 fi
+# the Sleep dial folded with a tap on its title (review of #415 with #411): its line keeps the time asleep, "96, Optimal,
+# 7h 28m asleep"; the next launch puts the standard layout back
+launch --ei tab 1; sleep 3
+if xy=$(text_mid "SLEEP SCORE"); then
+  adb shell input tap 540 ${xy#* }; sleep 1
+  shot sleep-dial-folded 1
+  if ui_dump | grep -q 'text="[0-9]*, [A-Za-z ]*, [0-9]*h [0-9]*m asleep"'; then log "the folded Sleep dial says the time asleep"
+  else echo "::warning::tiles step: the folded Sleep dial has no line with the time asleep"; fi
+else echo "::warning::tiles step: the Sleep score title was not on screen to fold it"; fi
 # Phase 1a2 of #252 at the end of Body: "Your cycles" (cycle day, next period, the cycle length dots next to the typical
 # length, then period length and amount), touched on the newest cycle dot, and the night temperature line next to the
 # cycles (the demo's nights are warmer after ovulation), touched on its newest night. Slow swipes until the caption is in

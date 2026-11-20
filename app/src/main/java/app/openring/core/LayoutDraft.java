@@ -34,10 +34,11 @@ public final class LayoutDraft {
         }
     }
 
-    /** Whether Save would change anything (asked before leaving without saving). */
+    /** Whether Save would change anything (asked before leaving without saving); the order of the fold entries does not count. */
     public boolean changed() {
         for (String t : Layout.TABS) {
-            if (!same(order.get(t), savedOrder.get(t)) || !same(folds.get(t), savedFolds.get(t))) return true;
+            if (!Layout.parse(order.get(t)).equals(Layout.parse(savedOrder.get(t)))) return true;
+            if (!Layout.folds(folds.get(t)).equals(Layout.folds(savedFolds.get(t)))) return true;
         }
         return false;
     }
@@ -50,9 +51,5 @@ public final class LayoutDraft {
 
     private static String empty(String s) {
         return s == null || s.isEmpty() ? null : s;
-    }
-
-    private static boolean same(String a, String b) {
-        return a == null ? b == null : a.equals(b);
     }
 }

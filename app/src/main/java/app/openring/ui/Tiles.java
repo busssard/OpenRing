@@ -285,11 +285,14 @@ final class Tiles {
             t.title = s != null && s.title != null ? s.title : sentence(title.getText().toString());
             String k = s != null && s.key != null ? s.key : Layout.key(title.getText().toString());
             if (s == null || s.key == null) {
-                // a card without its own title (a note): its first words, so two notes on one page keep their own places
-                if ("note".equals(k) && firstText != null) k = Layout.key("note " + firstText);
+                // a card without its own title (a note): its first words up to a number, so two notes on one page keep their
+                // own places and a count or date in the text does not move it from day to day
+                if ("note".equals(k) && firstText != null) k = Layout.noteKey(firstText);
             }
             t.key = k;
             String sum = s != null && s.summary != null ? s.summary : autoSummary(card);
+            // an empty summary from the page: no line while folded (its values are missing)
+            if (sum != null && sum.isEmpty()) sum = null;
 
             LinearLayout words = Ui.vbox(c);
             words.addView(title);
@@ -383,7 +386,8 @@ final class Tiles {
             boolean open = t.fold.isOpen();
             look(t);
             if (!loading) {
-                setFoldsOf(c, tabName, Layout.fold(foldsOf(c, tabName), t.key, open));
+                // a tile back in its standard state saves nothing (one rule with Settings' count, review of #415)
+                setFoldsOf(c, tabName, Layout.fold(foldsOf(c, tabName), t.key, open, t.standardOpen));
                 if (t.spec != null && t.spec.listener != null) t.spec.listener.folded(open);
             }
         }
@@ -536,7 +540,8 @@ final class Tiles {
             tiles.add(Math.max(0, Math.min(tiles.size() - 1, b)), tiles.remove(a));
             for (Tile x : tiles) root.removeView(x.view);
             for (int i = 0; i < at.size(); i++) root.addView(tiles.get(i).view, at.get(i));
-            setOrderOf(c, tabName, Layout.join(Layout.remember(Layout.parse(orderOf(c, tabName)), keys)));
+            // moved back to the standard order: nothing saved (one rule with Settings' count, review of #415)
+            setOrderOf(c, tabName, Layout.orderToSave(Layout.parse(orderOf(c, tabName)), keys, standard));
         }
 
         /** The menu of a held tile: move it without dragging (also with TalkBack), or fold or open it. */

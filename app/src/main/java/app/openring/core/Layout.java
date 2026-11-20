@@ -208,19 +208,78 @@ public final class Layout {
         return b == null ? standardOpen : b;
     }
 
-    /** {@code saved} fold states with the tile {@code key} left open or folded by the person; it stays so until changed. */
-    public static String fold(String saved, String key, boolean open) {
+    /**
+     * {@code saved} fold states with the tile {@code key} left open or folded by the person; it stays so until changed. A tile
+     * left in its standard state ({@code standardOpen}) saves nothing, so a tab that looks standard is standard for
+     * {@link #standard} too (Settings' "Changed on N tabs", review of #415).
+     */
+    public static String fold(String saved, String key, boolean open, boolean standardOpen) {
         Map<String, Boolean> m = folds(saved);
         if (valid(key)) {
             m.remove(key); // the newest change last, so the saved value reads in the order things happened
-            m.put(key, open);
+            if (open != standardOpen) m.put(key, open);
         }
         return joinFolds(m);
+    }
+
+    /**
+     * The order to save after a move: {@link #remember}'s, or null (nothing saved) when the page shows its {@code standard}
+     * order and no saved tile of another day needs its place kept, so a tile moved down and back up leaves the tab standard.
+     */
+    public static String orderToSave(List<String> saved, List<String> shown, List<String> standard) {
+        List<String> next = remember(saved, shown);
+        if (shown.equals(standard) && standard.containsAll(next)) return null;
+        return join(next);
     }
 
     /** Whether a tab with this saved order and these fold states looks as in the standard layout (nothing to reset). */
     public static boolean standard(String order, String folds) {
         return parse(order).isEmpty() && folds(folds).isEmpty();
+    }
+
+    // ------------------------------------------------------------------------------------------------ folded lines
+
+    /**
+     * The line of a folded score dial: "96, Optimal, 7h 28m asleep" (the score, its word and the dial's big line, #411's time
+     * asleep on Sleep); without a score the big line, else {@code sub}, the line under the dial (a watch night without a score).
+     */
+    public static String dialSummary(double score, String big, String sub) {
+        if (Double.isNaN(score)) return big != null ? big : sub;
+        String s = Math.round(score) + ", " + app.openring.core.analysis.Scores.verdict((int) score);
+        return big != null ? s + ", " + big : s;
+    }
+
+    /**
+     * A folded line from its parts, each null when its value is missing: "Steps 7432, active burn 412 kcal", "Active burn 412
+     * kcal" without steps. Empty when every part is missing: the tile then shows no line (never "Steps --").
+     */
+    public static String parts(String... parts) {
+        StringBuilder b = new StringBuilder();
+        for (String p : parts) {
+            if (p == null || p.isEmpty()) continue;
+            if (b.length() > 0) b.append(", ");
+            b.append(p);
+        }
+        if (b.length() == 0) return "";
+        return Character.toUpperCase(b.charAt(0)) + b.substring(1);
+    }
+
+    /**
+     * The key of a card without a caption: "note" and its first words up to the first word with a digit, so a count or a date
+     * in the text ("Only 3 days with the ring") does not change the key from day to day. Cards whose first words change in
+     * other ways get an explicit name ({@code Tiles.name}).
+     */
+    public static String noteKey(String firstText) {
+        StringBuilder b = new StringBuilder("note");
+        if (firstText != null) {
+            for (String w : firstText.trim().split("\\s+")) {
+                boolean digit = false;
+                for (int i = 0; i < w.length(); i++) if (Character.isDigit(w.charAt(i))) digit = true;
+                if (digit) break;
+                b.append(' ').append(w);
+            }
+        }
+        return key(b.toString());
     }
 
     private static List<String> split(String s) {
