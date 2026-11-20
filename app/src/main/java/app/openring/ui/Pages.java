@@ -794,8 +794,14 @@ public final class Pages {
             col.addView(Ui.text(c, score, 12, selected ? Ui.TEXT : Ui.TEXT_2, Ui.MEDIUM));
             // a night by hand has no stages: its time asleep as one block (issue #427)
             boolean hand = app.openring.data.HandNights.isHand(o);
-            col.addView(new Charts.NightBar(c, hand ? 0 : Json.d(o, "deep_min"), hand ? Json.d(o, "asleep_min") : Json.d(o, "light_min"),
-                    hand ? 0 : Json.d(o, "rem_min"), Json.d(o, "awake_min"), max, selected),
+            Charts.NightBar bar = new Charts.NightBar(c, hand ? 0 : Json.d(o, "deep_min"), hand ? Json.d(o, "asleep_min") : Json.d(o, "light_min"),
+                    hand ? 0 : Json.d(o, "rem_min"), Json.d(o, "awake_min"), max, selected);
+            if (hand) {
+                // one neutral block, never a stage colour, and said as by hand
+                bar.byHand();
+                col.setContentDescription(app.openring.core.HandNight.STRIP + ", " + Ui.hm(Json.d(o, "asleep_min")) + " asleep");
+            }
+            col.addView(bar,
                     new LinearLayout.LayoutParams(Ui.dp(c, 40), Ui.dp(c, 84)));
             java.time.LocalDate ld = java.time.LocalDate.parse(day);
             col.addView(Ui.text(c, ld.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault()), 11,

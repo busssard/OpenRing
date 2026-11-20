@@ -15943,6 +15943,19 @@ public class PipelineTest {
         app.openring.data.SleepHistory hr = app.openring.data.SleepHistory.of(ringOnlyParsed(db), Z58);
         check("#427 Further analysis counts the night by hand of a day without a ring night, not the one under a ring night", h.nights == hr.nights + 1, h.nights + " vs " + hr.nights);
         check("#427 Further analysis: the efficiency stays the ring's (a night by hand has none)", Math.abs(h.efficiency - hr.efficiency) < 1e-9, h.efficiency + " vs " + hr.efficiency);
+        // review of #429: a night by hand a WATCH night replaced is not counted either (its Sleep tab says it was replaced)
+        LocalDate wday = d1.plusDays(5);
+        app.openring.data.HandNights.save(db, at427(wday.minusDays(1).toString(), 23, 30), at427(wday.toString(), 6, 30), new ArrayList<double[]>(), 3002);
+        int withHand = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", Z58).nights;
+        sleep389(db, "w427", wday, true, Z58);
+        int withWatch = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", Z58).nights;
+        boolean listed = false;
+        for (JSONObject o : app.openring.data.HandNights.withoutRingNight(db, "2000-01-01", "2100-01-01", Z58)) listed |= wday.toString().equals(o.optString("day"));
+        check("#427 Further analysis: a night by hand is counted until a watch night replaces it, then left out (stored still)", withHand == hr.nights + 2
+                && withWatch == hr.nights + 1 && !listed && app.openring.data.HandNights.row(db, 3002) != null && !app.openring.data.HandNights.row(db, 3002).gone,
+                withHand + " " + withWatch);
+        db.getWritableDatabase().execSQL("DELETE FROM watch_sleep");
+        db.getWritableDatabase().execSQL("DELETE FROM sleep_manual WHERE made = 3002");
         // a device night that arrives later for the same night wins; the one by hand stays stored
         JSONObject later = Json.parse(ringJs.get(0));
         later.put("day", free.toString());
@@ -16117,10 +16130,10 @@ public class PipelineTest {
         Context c = phone254("openring427-resets");
         Db db = Db.get(c);
         String none = DataCheck.run(c).text;
-        check("#427 Data check without nights by hand: 0 in force, 0 deleted or changed", none.contains("\nNights by hand: 0 nights in force, 0 deleted or changed\n"), null);
+        check("#427 Data check without nights by hand: 0 kept, 0 deleted or changed", none.contains("\nNights by hand: 0 nights kept, 0 deleted or changed\n"), null);
         someHand427(db);
         String text = DataCheck.run(c).text;
-        check("#427 Data check: 2 nights in force, 1 deleted or changed", text.contains("\nNights by hand: 2 nights in force, 1 deleted or changed\n"), null);
+        check("#427 Data check: 2 nights kept, 1 deleted or changed", text.contains("\nNights by hand: 2 nights kept, 1 deleted or changed\n"), null);
         check("#427 Data check: nothing else changed (no time or day of a night by hand)", text.replaceAll("(?m)^Nights by hand: .*$", "")
                 .equals(none.replaceAll("(?m)^Nights by hand: .*$", "")) && !text.contains("2019-03"), null);
         String rows = handRows427(db);

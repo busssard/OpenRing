@@ -45,6 +45,7 @@ public class HandTest {
         times();
         defaults();
         marks();
+        markEdits();
         stored();
         night();
         choice();
@@ -166,6 +167,56 @@ public class HandTest {
         double as = at(autumn.minusDays(1), 23, 0), ae = at(autumn, 7, 0);
         List<double[]> am = HandNight.addMark(as, ae, none);
         eq("autumn night: the mark in the middle of the 9 hours", am.size() == 1 ? (am.get(0)[0] - as) / 60 : -1, 265.0);
+    }
+
+    /** Review of #429: marks near the handles, stretching short marks, handles over marks, dragging over a neighbour, the buttons. */
+    static void markEdits() {
+        double s = at(DAY.minusDays(1), 23, 0), e = at(DAY, 7, 0);
+        List<double[]> m = new ArrayList<double[]>();
+        m.add(new double[] {at(DAY.minusDays(1), 23, 10), at(DAY.minusDays(1), 23, 25)});
+        m.add(new double[] {at(DAY, 3, 0), at(DAY, 3, 15)});
+        m.add(new double[] {at(DAY, 6, 40), at(DAY, 6, 55)});
+        m = HandNight.marks(s, e, m);
+        // a touch takes a mark before the handles: one right after In bed and one right before Up
+        eq("a touch on the mark 10 minutes after In bed takes that mark", HandNight.markAt(m, at(DAY.minusDays(1), 23, 15), 120), 0);
+        eq("a touch on the mark just before Up takes that mark", HandNight.markAt(m, at(DAY, 6, 50), 120), 2);
+        eq("a touch just beside a mark (within reach) takes it", HandNight.markAt(m, at(DAY, 3, 16), 120), 1);
+        eq("a touch away from every mark takes none (the handles may)", HandNight.markAt(m, at(DAY.minusDays(1), 23, 0), 120), -1);
+        eq("in the middle of two reachable marks, the nearer", HandNight.markAt(Arrays.asList(new double[] {0, 600}, new double[] {700, 1300}), 640, 120), 0);
+        // a 15 minute mark is stretched at its ends: thirds of 5 minutes
+        double[] k = m.get(1);
+        check("by thirds: the first third its start, the last its end, the middle the whole mark", HandNight.markPart(k, at(DAY, 3, 2)) == -1
+                && HandNight.markPart(k, at(DAY, 3, 13)) == 1 && HandNight.markPart(k, at(DAY, 3, 7)) == 0);
+        eq("its end stretched to 03:30", texts(HandNight.resizeMark(s, e, m, 1, true, at(DAY, 3, 31))).contains("03:00-03:30"), true);
+        eq("its start stretched to 02:40", texts(HandNight.resizeMark(s, e, m, 1, false, at(DAY, 2, 41))).contains("02:40-03:15"), true);
+        eq("never shorter than 5 minutes", texts(HandNight.resizeMark(s, e, m, 1, true, at(DAY, 2, 0))).contains("03:00-03:05"), true);
+        eq("stretched up to its neighbour, never over it", texts(HandNight.resizeMark(s, e, m, 1, true, at(DAY, 6, 50))).contains("03:00-06:40"), true);
+        eq("its start stops at the night's start plus 5 minutes", texts(HandNight.resizeMark(s, e, m, 0, false, at(DAY.minusDays(1), 22, 0))), "[23:05-23:25, 03:00-03:15, 06:40-06:55]");
+        // dragged over a neighbour: it stops there, the marks are not merged while dragging
+        List<double[]> moved = HandNight.moveMark(s, e, m, 1, at(DAY, 6, 45));
+        eq("dragged onto the next mark: stops touching it, same length, three marks still", texts(moved), "[23:10-23:25, 06:25-06:40, 06:40-06:55]");
+        eq("merged once the finger is lifted (they touch)", texts(HandNight.marks(s, e, moved)), "[23:10-23:25, 06:25-06:55]");
+        eq("dragged before the night: stops 5 minutes after In bed's neighbour", texts(HandNight.moveMark(s, e, m, 1, at(DAY.minusDays(1), 20, 0))),
+                "[23:10-23:25, 23:25-23:40, 06:40-06:55]");
+        eq("moved 5 minutes later by its button", texts(HandNight.moveMark(s, e, m, 1, m.get(1)[0] + HandNight.SNAP_S)), "[23:10-23:25, 03:05-03:20, 06:40-06:55]");
+        eq("no mark: the list as it was", texts(HandNight.moveMark(s, e, m, 5, 0)), texts(m));
+        eq("no mark: the list as it was (resize)", texts(HandNight.resizeMark(s, e, m, -1, true, 0)), texts(m));
+        List<double[]> tight = Arrays.asList(new double[] {at(DAY, 1, 0), at(DAY, 1, 15)}, new double[] {at(DAY, 1, 15), at(DAY, 1, 30)});
+        eq("no room between neighbours: the mark stays", texts(HandNight.moveMark(at(DAY, 0, 50), at(DAY, 1, 40), tight, 0, at(DAY, 1, 20))), texts(tight));
+        // a handle moved over a mark stops before it: no wake up is dropped
+        double[] t = HandNight.times(DAY, Z, at(DAY, 1, 0), e, false, m);
+        eq("In bed dragged past the first mark stops 5 minutes before it", HandNight.clock(t[0], Z) + " " + HandNight.marks(t[0], t[1], m).size(), "23:05 3");
+        t = HandNight.times(DAY, Z, s, at(DAY, 5, 0), true, m);
+        eq("Up dragged before the last mark stops 5 minutes after it", HandNight.clock(t[1], Z) + " " + HandNight.marks(t[0], t[1], m).size(), "07:00 3");
+        t = HandNight.times(DAY, Z, at(DAY.minusDays(1), 22, 0), at(DAY, 8, 0), false, m);
+        eq("away from the marks the handles move freely", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "22:00 08:00");
+        List<double[]> one = Arrays.asList(new double[] {at(DAY, 2, 0), at(DAY, 2, 5)});
+        t = HandNight.times(DAY, Z, at(DAY, 1, 55), at(DAY, 2, 10), false, one);
+        eq("around a 5 minute mark the night keeps 30 minutes", (t[1] - t[0]) / 60 + " " + HandNight.marks(t[0], t[1], one).size(), "30.0 1");
+        t = HandNight.times(DAY, Z, at(DAY, 1, 55), at(DAY, 2, 10), true, one);
+        eq("the same with Up moved last: In bed gives way", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "01:40 02:10");
+        check("without marks as before", Arrays.equals(HandNight.times(DAY, Z, s, e, false, new ArrayList<double[]>()), HandNight.times(DAY, Z, s, e, false))
+                && Arrays.equals(HandNight.times(DAY, Z, s, e, false, null), HandNight.times(DAY, Z, s, e, false)));
     }
 
     static String texts(List<double[]> m) {
@@ -298,7 +349,8 @@ public class HandTest {
         List<String> all = new ArrayList<String>(Arrays.asList(HandNight.ENTER, HandNight.IN_BED, HandNight.UP, HandNight.WOKE, HandNight.ASLEEP,
                 HandNight.ENTERED, HandNight.SCORE_LINE, HandNight.ASK, HandNight.ASK_ENTER, HandNight.NOT_NOW, HandNight.SAVE, HandNight.CHANGE,
                 HandNight.DELETE, HandNight.NOT_MEASURED, HandNight.MARK_HINT, HandNight.BAR_HINT, HandNight.NO_ROOM, HandNight.DELETED,
-                HandNight.SAVED, HandNight.CHANGED, HandNight.UNREADABLE, HandNight.replaced(MainDevice.RING), HandNight.replacedNote(MainDevice.WATCH),
+                HandNight.SAVED, HandNight.CHANGED, HandNight.UNREADABLE, HandNight.EARLIER, HandNight.LATER, HandNight.LONGER,
+                HandNight.SHORTER, HandNight.REMOVE, HandNight.STRIP, HandNight.replaced(MainDevice.RING), HandNight.replacedNote(MainDevice.WATCH),
                 HandNight.title(DAY, Locale.UK), HandNight.markText(new double[] {at(DAY, 2, 0), at(DAY, 2, 15)}, Z)));
         all.addAll(Arrays.asList(app.openring.ui.Explain.handTexts()));
         for (String t : all) {

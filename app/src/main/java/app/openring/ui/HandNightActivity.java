@@ -232,13 +232,14 @@ public final class HandNightActivity extends Activity {
         row.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 4));
         row.addView(label, Ui.weight(1));
         for (final int sign : new int[] {-1, 1}) {
-            TextView b = Ui.smallButton(this, sign < 0 ? "5 min earlier" : "5 min later", Ui.TEXT_2);
+            TextView b = Ui.smallButton(this, sign < 0 ? HandNight.EARLIER : HandNight.LATER, Ui.TEXT_2);
             b.setContentDescription((bed ? HandNight.IN_BED : HandNight.UP) + (sign < 0 ? ", 5 minutes earlier" : ", 5 minutes later"));
             b.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     double s = bar.start + (bed ? sign * HandNight.SNAP_S : 0), e = bar.stop + (bed ? 0 : sign * HandNight.SNAP_S);
-                    double[] t = HandNight.times(day, zone, s, e, !bed);
+                    // stops at the first or last wake mark, never drops one
+                    double[] t = HandNight.times(day, zone, s, e, !bed, bar.marks);
                     bar.set(t[0], t[1], bar.marks);
                     update();
                 }
@@ -263,11 +264,12 @@ public final class HandNightActivity extends Activity {
         }
         for (int i = 0; i < bar.marks.size(); i++) {
             final int at = i;
-            LinearLayout row = Ui.hbox(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 4));
-            row.addView(Ui.text(this, HandNight.markText(bar.marks.get(i), zone), 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
-            TextView rm = Ui.smallButton(this, "Remove", Ui.TEXT_2);
+            markList.addView(Ui.gap(this, 6));
+            LinearLayout head = Ui.hbox(this);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+            head.addView(Ui.text(this, HandNight.markText(bar.marks.get(i), zone), 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
+            TextView rm = Ui.smallButton(this, HandNight.REMOVE, Ui.TEXT_2);
+            rm.setContentDescription("Remove wake up " + (at + 1));
             rm.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -277,9 +279,45 @@ public final class HandNightActivity extends Activity {
                     update();
                 }
             });
-            row.addView(rm);
-            markList.addView(row);
+            head.addView(rm);
+            markList.addView(head, Ui.matchWrap());
+            // the way without dragging: move the mark or change its length by 5 minutes
+            LinearLayout row = Ui.hbox(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(0, Ui.dp(this, 4), 0, 0);
+            row.addView(markButton(at, HandNight.EARLIER, ", 5 minutes earlier", 0, -1), markWeight());
+            row.addView(markButton(at, HandNight.LATER, ", 5 minutes later", 0, 1), markWeight());
+            row.addView(markButton(at, HandNight.SHORTER, ", 5 minutes shorter", 1, -1), markWeight());
+            row.addView(markButton(at, HandNight.LONGER, ", 5 minutes longer", 1, 1), markWeight());
+            markList.addView(row, Ui.matchWrap());
         }
+    }
+
+    private LinearLayout.LayoutParams markWeight() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+        lp.setMargins(Ui.dp(this, 2), 0, Ui.dp(this, 2), 0);
+        return lp;
+    }
+
+    /**
+     * A button of wake mark {@code at}: {@code kind} 0 moves it 5 minutes ({@code sign}), 1 makes it 5 minutes longer or shorter
+     * (its end); stopped at the night's ends and its neighbours ({@code HandNight.moveMark}, {@code resizeMark}).
+     */
+    private TextView markButton(final int at, String label, String spoken, final int kind, final int sign) {
+        TextView b = Ui.smallButton(this, label, Ui.TEXT_2);
+        b.setContentDescription("Wake up " + (at + 1) + spoken);
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (at >= bar.marks.size()) return;
+                double[] m = bar.marks.get(at);
+                List<double[]> l = kind == 0 ? HandNight.moveMark(bar.start, bar.stop, bar.marks, at, m[0] + sign * HandNight.SNAP_S)
+                        : HandNight.resizeMark(bar.start, bar.stop, bar.marks, at, true, m[1] + sign * HandNight.SNAP_S);
+                bar.set(bar.start, bar.stop, l);
+                update();
+            }
+        });
+        return b;
     }
 
     /** Saves in the background (one transaction), notes Undo for the Sleep tab, then goes back to it. */

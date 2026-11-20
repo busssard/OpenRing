@@ -911,8 +911,8 @@ public final class Explain {
             + "heart rate, HRV or temperature for it, so nothing of that is made up. If your ring or watch later brings a night for the same "
             + "time, theirs is shown and this one stays stored until you delete it.";
     /** Under the sleep score of a night by hand. */
-    public static final String HAND_SCORE = "The score uses only what needs no device: total sleep, the timing of your sleep and your wake ups. "
-            + "The other parts are left out, so the score is not lowered for them.";
+    public static final String HAND_SCORE = "The score uses only what needs no device: total sleep, the timing of your sleep and the wake ups "
+            + "you entered (none entered counts as a night without wake ups). The other parts are left out, so the score is not lowered for them.";
     /** Readiness of a day whose night is by hand. */
     public static final String HAND_READINESS = "Last night was entered by hand, so readiness uses its sleep and your activity, and leaves out "
             + "resting heart rate, HRV, temperature and recovery, as for a day without the ring.";

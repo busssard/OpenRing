@@ -395,7 +395,7 @@ with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav 
 from 18:00 the evening before to 14:00 on the day, in the day's zone (19 or 21 hours on a clock change night), with In bed and Up
 handles, every time snapped to 5 minutes, the night at least 30 minutes; the default times are the median clock times of the last
 14 shown nights (23:00 to 07:00 without). Wake marks are 15 minutes, added in the middle of the longest sleep stretch, kept inside
-the night with sleep on both sides, merged when they touch (`core/HandNight`, pure Java, `tests/java/HandTest`). A night belongs to
+the night with sleep on both sides, stopped at their neighbours while dragged and merged when they touch once the finger is lifted; a touch on a mark takes it before the handles (its outer thirds stretch it), In bed and Up stop at the first and last mark, and each mark has 5 minute buttons (`core/HandNight`, pure Java, `tests/java/HandTest`). A night belongs to
 the day whose bar holds its start. `data/HandNights` holds `sleep_manual` (version 14, `CREATE TABLE IF NOT EXISTS`, safe twice):
 Save writes one transaction that adds the new row and marks gone the night it changes and any night in force it overlaps; Delete
 only marks gone; Undo clears or sets those marks. No row is overwritten. The night as shown is `Json.night` of `HandNight.night`:
@@ -405,13 +405,13 @@ ups) and timing. Which night a day shows: `MainDevice.nightFrom(main, ring, watc
 only when neither device has a night for the day and none overlaps it (`data/ShownNights.withHand`, `DayData.hands`); a device night
 that arrives later is shown and the one by hand stays stored, its Sleep tab says "Replaced by your ring's night" with Delete.
 Readiness of a day with a ring and a night by hand (no stored readiness) is worked out on the load from its sleep score, sleep
-balance and the activity parts, without resting heart rate, HRV, temperature or recovery, and never stored. The Screen tab and the
-badges get it through `ShownNights.main`, Further analysis through `SleepHistory.load` (`HandNights.withoutRingNight`, its
+balance and the activity parts, without resting heart rate, HRV, temperature or recovery; shown only, never stored. Its sleep balance reads only the nights of the ±30 day strip, so it can differ slightly from a readiness the analysis would store. The Screen tab and the
+badges get it through `ShownNights.main`, Further analysis through `SleepHistory.load` (`HandNights.withoutRingNight`, leaving out days with a ring or a watch night, its
 efficiency left out) and the watch's `WatchHistory.load`. Today asks "No night for last night ..." when today has no night, a device
 synced today from 04:00 on (within 2 days), and Not now was not tapped for today (`HandNight.ask`, Prefs `hand_not_now`). Restore:
 `Db.replaceWith` reads the table before the swap and `HandNights.merge` writes it into the restored file (`INSERT OR REPLACE` by
 `made`, the phone wins, removal marks included); an older backup without the table gets it empty from the upgrade, so it keeps the
-phone's. The Data check has one line of counts only ("Nights by hand: N nights in force, M deleted or changed"); nothing of it
+phone's. The Data check has one line of counts only ("Nights by hand: N nights kept, M deleted or changed"); nothing of it
 reaches the log or a notification. The demo file has one made up night (the day before yesterday, under the demo ring's night).
 
 ## Automatic backups (issue #242)

@@ -227,7 +227,9 @@ public final class DayData {
     /**
      * Readiness of a day whose night is by hand (issue #427), with a ring and no stored readiness: its sleep score and sleep
      * balance and the activity parts from the stored days before; heart rate, HRV and temperature left out, as for a day without
-     * the ring (#341). Shown only, never stored: {@link #day} becomes a copy with it.
+     * the ring (#341). Shown only, never stored: {@link #day} becomes a copy with it. Sleep balance and the sleep need read only the
+     * nights of the recent strip (30 days around the date, not the 104 the analysis reads), so this readiness can differ slightly
+     * from one the analysis would store.
      */
     void handReadiness() {
         JSONObject sc = night.optJSONObject("score");

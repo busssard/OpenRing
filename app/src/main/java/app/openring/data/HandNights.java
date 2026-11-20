@@ -258,8 +258,8 @@ public final class HandNights {
     }
 
     /**
-     * The nights by hand whose day lies from {@code fromDay} to {@code toDay} (ISO dates) that the ring has no main night for
-     * (by day, and overlapping none of its main nights), as night JSON ordered by start: what Further analysis adds to the
+     * The nights by hand whose day lies from {@code fromDay} to {@code toDay} (ISO dates) that neither the ring (a main night) nor the watch has a night for
+     * (by day, and overlapping none of their nights, the rule of the replaced card), as night JSON ordered by start: what Further analysis adds to the
      * ring's nights (issue #427). Each day in the zone noted then ({@code WatchHistory.dayZones}). Empty without any row.
      */
     public static List<JSONObject> withoutRingNight(Db db, String fromDay, String toDay, ZoneId phone) {
@@ -293,6 +293,13 @@ public final class HandNights {
         } finally {
             c.close();
         }
+        // the watch's nights too: a night by hand a watch night replaced is not counted (the Sleep tab says it was replaced)
+        if (db.count("SELECT EXISTS (SELECT 1 FROM watch_sleep)") != 0) {
+            for (JSONObject w : ShownNights.watch(db, first.minusDays(1), last.plusDays(1), zones, Double.NaN).values()) {
+                ringDays.add(w.optString("day"));
+                spans.add(new double[] {Json.d(w, "start"), Json.d(w, "end")});
+            }
+        }
         for (java.util.Map.Entry<LocalDate, JSONObject> e : hand.entrySet()) {
             JSONObject o = e.getValue();
             if (ringDays.contains(e.getKey().toString()) || HandNight.overlaps(Json.d(o, "start"), Json.d(o, "end"), spans)) continue;
@@ -307,7 +314,7 @@ public final class HandNights {
     static String checkLine(Db db) {
         long all = db.count("SELECT COUNT(*) FROM sleep_manual");
         long gone = db.count("SELECT COUNT(*) FROM sleep_manual WHERE COALESCE(gone, 0) <> 0");
-        return "Nights by hand: " + Texts.count(all - gone, "night", "nights") + " in force, " + gone + " deleted or changed\n";
+        return "Nights by hand: " + Texts.count(all - gone, "night", "nights") + " kept, " + gone + " deleted or changed\n";
     }
 
     // ------------------------------------------------------------------------------------- demo

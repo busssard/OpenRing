@@ -63,6 +63,11 @@ public final class HandNight {
     public static final String ASK = "No night for last night. Did you sleep without your ring and watch?";
     public static final String ASK_ENTER = "Enter by hand", NOT_NOW = "Not now";
     public static final String SAVE = "Save", CHANGE = "Change", DELETE = "Delete";
+    /** The buttons of In bed, Up and each wake mark on the entry screen (the way without dragging). */
+    public static final String EARLIER = "5 min earlier", LATER = "5 min later", LONGER = "5 min longer", SHORTER = "5 min shorter",
+            REMOVE = "Remove";
+    /** The recent nights strip: what a night by hand's column says to touch and screen readers. */
+    public static final String STRIP = "Night by hand";
     public static final String NOT_MEASURED = "Not measured this night: efficiency, time to fall asleep, REM and deep sleep. A night by hand has no heart rate or stages.";
     public static final String MARK_HINT = "Drag a wake mark along the bar, or drag its ends to make it longer or shorter. Tap a mark to remove it.";
     public static final String BAR_HINT = "Drag In bed and Up, or use the buttons below. Touch the bar to read the time.";
@@ -138,6 +143,97 @@ public final class HandNight {
             else e = s + MIN_NIGHT_S;
         }
         return new double[] {s, e};
+    }
+
+    /**
+     * As {@link #times}, with the night's wake marks ({@code marks}, kept inside as {@link #marks} keeps them): In bed stops 5
+     * minutes before the first mark and Up 5 minutes after the last, so moving a handle never drops a wake up.
+     */
+    public static double[] times(LocalDate day, ZoneId zone, double inBed, double up, boolean movedUp, List<double[]> marks) {
+        double[] t = times(day, zone, inBed, up, movedUp);
+        if (marks == null || marks.isEmpty()) return t;
+        double first = Double.POSITIVE_INFINITY, last = Double.NEGATIVE_INFINITY;
+        for (double[] m : marks) {
+            first = Math.min(first, Math.min(m[0], m[1]));
+            last = Math.max(last, Math.max(m[0], m[1]));
+        }
+        double s = Math.min(t[0], snap(first) - SNAP_S), e = Math.max(t[1], snap(last) + SNAP_S);
+        if (e - s < MIN_NIGHT_S) {
+            if (movedUp) s = e - MIN_NIGHT_S;
+            else e = s + MIN_NIGHT_S;
+        }
+        return new double[] {s, e};
+    }
+
+    /**
+     * The mark of {@code marks} (as {@link #marks} keeps them, in order) a touch at {@code t} takes: one that holds {@code t}
+     * within {@code reachS} seconds on each side, the nearest when there are more; -1 for none. A mark is taken before the
+     * handles, so a wake up near In bed or Up can still be moved.
+     */
+    public static int markAt(List<double[]> marks, double t, double reachS) {
+        int best = -1;
+        double bestD = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < marks.size(); i++) {
+            double[] m = marks.get(i);
+            if (t < m[0] - reachS || t > m[1] + reachS) continue;
+            double d = t >= m[0] && t <= m[1] ? 0 : Math.min(Math.abs(t - m[0]), Math.abs(t - m[1]));
+            if (d < bestD) {
+                bestD = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /** Which part of mark {@code m} a touch at {@code t} holds, by thirds: -1 its start, 1 its end, 0 the whole mark. */
+    public static int markPart(double[] m, double t) {
+        double third = (m[1] - m[0]) / 3;
+        if (t < m[0] + third) return -1;
+        if (t > m[1] - third) return 1;
+        return 0;
+    }
+
+    /**
+     * {@code marks} (as {@link #marks} keeps them) with mark {@code i} moved to start at {@code newStart}, snapped, the same
+     * length, inside the night and stopped at its neighbours (touching them at most, never over them). Not merged: a merge of
+     * touching marks waits for {@link #marks} (the finger lifted). The list is unchanged when {@code i} is no mark.
+     */
+    public static List<double[]> moveMark(double start, double stop, List<double[]> marks, int i, double newStart) {
+        List<double[]> l = copy(marks);
+        if (i < 0 || i >= l.size()) return l;
+        double[] m = l.get(i);
+        double len = m[1] - m[0];
+        double lo = Math.max(start + SNAP_S, i > 0 ? l.get(i - 1)[1] : Double.NEGATIVE_INFINITY);
+        double hi = Math.min(stop - SNAP_S, i + 1 < l.size() ? l.get(i + 1)[0] : Double.POSITIVE_INFINITY) - len;
+        if (hi < lo) return l;
+        double a = Math.max(lo, Math.min(hi, snap(newStart)));
+        m[0] = a;
+        m[1] = a + len;
+        return l;
+    }
+
+    /**
+     * {@code marks} with the start ({@code end} false) or the end of mark {@code i} moved to {@code t}, snapped, at least 5
+     * minutes long, inside the night and stopped at its neighbours. Not merged (see {@link #moveMark}).
+     */
+    public static List<double[]> resizeMark(double start, double stop, List<double[]> marks, int i, boolean end, double t) {
+        List<double[]> l = copy(marks);
+        if (i < 0 || i >= l.size()) return l;
+        double[] m = l.get(i);
+        if (end) {
+            double hi = Math.min(stop - SNAP_S, i + 1 < l.size() ? l.get(i + 1)[0] : Double.POSITIVE_INFINITY);
+            m[1] = Math.max(m[0] + SNAP_S, Math.min(hi, snap(t)));
+        } else {
+            double lo = Math.max(start + SNAP_S, i > 0 ? l.get(i - 1)[1] : Double.NEGATIVE_INFINITY);
+            m[0] = Math.min(m[1] - SNAP_S, Math.max(lo, snap(t)));
+        }
+        return l;
+    }
+
+    private static List<double[]> copy(List<double[]> marks) {
+        List<double[]> l = new ArrayList<double[]>();
+        for (double[] m : marks) l.add(new double[] {m[0], m[1]});
+        return l;
     }
 
     /**

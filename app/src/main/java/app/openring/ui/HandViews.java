@@ -40,7 +40,7 @@ final class HandViews {
     private HandViews() {}
 
     /** The last change, until Undo, the next change or 10 minutes. */
-    static Undo undo;
+    static volatile Undo undo;
 
     /**
      * What one change wrote, so Undo can put it back in the same file: a save ({@code saved}) or a delete ({@code removed}, the
@@ -500,6 +500,11 @@ final class HandViews {
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
+                    if (editable && moved && target >= 3) {
+                        // marks that touch merge once the finger is lifted, never while one is dragged over another
+                        set(start, stop, marks);
+                        tell();
+                    }
                     if (editable && !moved && target >= 3 && markAt >= 0 && markAt < marks.size()) {
                         // a tap on a mark removes it
                         List<double[]> l = new ArrayList<double[]>(marks);
@@ -516,6 +521,7 @@ final class HandViews {
                     invalidate();
                     return true;
                 case MotionEvent.ACTION_CANCEL:
+                    if (editable && target >= 3) set(start, stop, marks);
                     target = 0;
                     markAt = -1;
                     readX = Float.NaN;
@@ -531,23 +537,27 @@ final class HandViews {
             return super.performClick();
         }
 
-        /** What a touch at {@code x} grabs: the nearer handle within reach, else a mark (its ends stretch it), else nothing. */
+        /**
+         * What a touch at {@code x} grabs: a mark it touches (with the touch slop on each side) before the handles, so a wake up near
+         * In bed or Up can still be moved; its outer thirds stretch it, its middle moves it ({@code HandNight.markAt}, {@code
+         * markPart}). Else the nearer handle within reach, else nothing (the touch only reads the time).
+         */
         private void pick(float x) {
-            float reach = Ui.dp(getContext(), 26), end = Ui.dp(getContext(), 10);
+            double t = t(x), perPx = (barTo - barFrom) / Math.max(1, getWidth() - 2 * pad());
+            int i = HandNight.markAt(marks, t, slop * perPx);
+            if (i >= 0) {
+                double[] m = marks.get(i);
+                markAt = i;
+                int part = HandNight.markPart(m, t);
+                target = part < 0 ? 4 : part > 0 ? 5 : 3;
+                grabOffset = t - m[0];
+                return;
+            }
+            float reach = Ui.dp(getContext(), 26);
             float ds = Math.abs(x - x(start)), de = Math.abs(x - x(stop));
             if (Math.min(ds, de) <= reach) {
                 target = ds <= de ? 1 : 2;
                 if (ds == de && x > x(start)) target = 2;
-                return;
-            }
-            for (int i = 0; i < marks.size(); i++) {
-                double[] m = marks.get(i);
-                float a = x(m[0]), b = x(m[1]);
-                if (x < a - end || x > b + end) continue;
-                markAt = i;
-                target = Math.abs(x - a) <= end && b - a > 2 * end ? 4 : Math.abs(x - b) <= end && b - a > 2 * end ? 5 : 3;
-                grabOffset = t(x) - m[0];
-                return;
             }
         }
 
@@ -555,28 +565,16 @@ final class HandViews {
             if (target == 0) return;
             double t = t(x);
             if (target == 1 || target == 2) {
-                double[] st = HandNight.times(day, zone, target == 1 ? t : start, target == 2 ? t : stop, target == 2);
+                // a handle stops at the first or last wake mark, never drops one
+                double[] st = HandNight.times(day, zone, target == 1 ? t : start, target == 2 ? t : stop, target == 2, marks);
                 set(st[0], st[1], marks);
             } else if (markAt >= 0 && markAt < marks.size()) {
-                List<double[]> l = new ArrayList<double[]>();
-                for (double[] m : marks) l.add(new double[] {m[0], m[1]});
-                double[] m = l.get(markAt);
-                double len = m[1] - m[0];
-                if (target == 3) {
-                    double a = HandNight.snap(t - grabOffset);
-                    a = Math.max(start + HandNight.SNAP_S, Math.min(stop - HandNight.SNAP_S - len, a));
-                    m[0] = a;
-                    m[1] = a + len;
-                } else if (target == 4) {
-                    m[0] = Math.min(m[1] - HandNight.SNAP_S, HandNight.snap(t));
-                } else {
-                    m[1] = Math.max(m[0] + HandNight.SNAP_S, HandNight.snap(t));
-                }
-                // the moved mark stays the one held, also when the order changes
-                double keep = m[0];
-                set(start, stop, l);
-                markAt = -1;
-                for (int i = 0; i < marks.size(); i++) if (marks.get(i)[0] <= keep + 1 && marks.get(i)[1] >= keep) markAt = i;
+                // stopped at its neighbours, kept in order, not merged until the finger is lifted
+                List<double[]> l = target == 3 ? HandNight.moveMark(start, stop, marks, markAt, t - grabOffset)
+                        : HandNight.resizeMark(start, stop, marks, markAt, target == 5, t);
+                marks = l;
+                setContentDescription(describe());
+                invalidate();
             }
             tell();
         }
