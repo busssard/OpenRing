@@ -99,7 +99,9 @@ public final class WatchHistory {
         // a day more on each side for a day in another zone
         double from = first.atStartOfDay(zones.of(first)).toEpochSecond() - 2 * 86400, to = last.plusDays(1).atStartOfDay(zones.of(last)).toEpochSecond() + 86400;
         app.openring.core.MainDevice.Watch w = WatchStore.nightRows(db, from, to);
-        List<JSONObject> nights = json(DeviceHistory.nightRows(w.sleep, w.heart, first, last, zones, age, rem));
+        // the nights entered by hand of days without a watch night (issue #427)
+        List<JSONObject> nights = ShownNights.withHand(db, json(DeviceHistory.nightRows(w.sleep, w.heart, first, last, zones, age, rem)), first, last,
+                zones, age);
         SleepHistory h = SleepHistory.of(nights, phone);
         for (JSONObject o : nights) h.lightRem |= o.optBoolean("light_rem");
         return h;
