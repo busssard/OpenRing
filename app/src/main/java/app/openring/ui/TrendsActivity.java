@@ -32,7 +32,7 @@ public final class TrendsActivity extends Activity {
     static final String GROUP = "group", DAY = "day", MEASURE = "measure", PERIOD = "period", TOUCHED = "touched";
 
     private LinearLayout body;
-    private int group, measure = -1, period = Trends.MONTHS, loads;
+    private int group, measure = -1, period = Trends.MONTHS, loads, fills;
     private LocalDate shownDay, today;
     /** A day of the period touched on the chart (kept through a chip change, a reload and a turn of the phone), null for none. */
     private LocalDate touched;
@@ -231,18 +231,20 @@ public final class TrendsActivity extends Activity {
         void picked(int i);
     }
 
-    /** Builds the page from the days read; a chip calls it again, without reading anything. */
+    /**
+     * Builds the page from the days read; a chip calls it again, without reading anything. The grouping and the comparison
+     * (its 2000 draws) are worked out on the background executor; the page keeps its views until they are ready and is then
+     * rebuilt at once, as before, so nothing jumps. A newer chip or reload wins over an older result.
+     */
     void fill() {
-        body.removeAllViews();
-        if (demo) {
-            LinearLayout banner = Ui.card(this);
-            banner.setBackground(Ui.rounded(Ui.alpha(Ui.OXY, 0.14f), Ui.dp(this, 14)));
-            banner.addView(Ui.text(this, Explain.TRENDS_DEMO, 12, Ui.TEXT_2, Ui.REGULAR));
-            body.addView(banner);
-        }
-        if (!Trends.enough(days, today)) {
+        final int mine = ++fills;
+        final List<Trends.Day> ds = days;
+        final LocalDate t = today;
+        if (!Trends.enough(ds, t)) {
+            // no demo note here: the made up year is not in what is shown ("Trends need at least two months")
+            body.removeAllViews();
             LinearLayout card = Ui.card(this);
-            card.addView(Ui.body(this, Trends.tooShort(Trends.daysSoFar(days, today))));
+            card.addView(Ui.body(this, Trends.tooShort(Trends.daysSoFar(ds, t))));
             card.addView(Ui.gap(this, 8));
             card.addView(Ui.text(this, Explain.TRENDS, 12, Ui.TEXT_3, Ui.REGULAR));
             body.addView(card);
@@ -250,6 +252,50 @@ public final class TrendsActivity extends Activity {
         }
         final int[] measures = Trends.GROUPS[group];
         if (measure < 0 || !contains(measures, measure)) measure = measures[0];
+        final int m = measure, p = period;
+        final Locale l = Locale.getDefault();
+        final android.content.Context ctx = getApplicationContext();
+        new AsyncTask<Void, Void, Object[]>() {
+            @Override
+            protected Object[] doInBackground(Void... v) {
+                try {
+                    return new Object[] {Trends.of(ds, m, p, t), Trends.compare(ds, m, t, l)};
+                } catch (Throwable e) {
+                    try {
+                        // the error's kind only, never a value
+                        app.openring.ble.RingManager.get(ctx).log("trends: could not be worked out: " + e.getClass().getSimpleName());
+                    } catch (Throwable ignored) {
+                        // the page says it failed
+                    }
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Object[] r) {
+                if (mine != fills || isFinishing() || isDestroyed()) return;
+                if (r == null) {
+                    body.removeAllViews();
+                    LinearLayout card = Ui.card(TrendsActivity.this);
+                    card.addView(Ui.body(TrendsActivity.this, Explain.TRENDS_FAILED));
+                    body.addView(card);
+                    return;
+                }
+                show((Trends.View) r[0], (Trends.Compare) r[1]);
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /** The page with enough history: the demo note, the chips, the chart of {@code view} and the comparison {@code compared}. */
+    void show(final Trends.View view, Trends.Compare compared) {
+        body.removeAllViews();
+        if (demo) {
+            LinearLayout banner = Ui.card(this);
+            banner.setBackground(Ui.rounded(Ui.alpha(Ui.OXY, 0.14f), Ui.dp(this, 14)));
+            banner.addView(Ui.text(this, Explain.TRENDS_DEMO, 12, Ui.TEXT_2, Ui.REGULAR));
+            body.addView(banner);
+        }
+        final int[] measures = Trends.GROUPS[group];
         int c = color(group);
         body.addView(chipRow(Trends.GROUP_NAMES, group, c, new Pick() {
             @Override
@@ -286,7 +332,6 @@ public final class TrendsActivity extends Activity {
         }));
         body.addView(Ui.gap(this, 10));
 
-        final Trends.View view = Trends.of(days, measure, period, today);
         LinearLayout card = Ui.card(this);
         String each = period == Trends.WEEKS ? "by week" : period == Trends.MONTHS ? "by month" : "by year";
         card.addView(Ui.caption(this, Trends.NAMES[measure] + ", " + each));
@@ -317,7 +362,7 @@ public final class TrendsActivity extends Activity {
         LinearLayout cmp = Ui.card(this);
         cmp.addView(Ui.caption(this, Explain.TRENDS_COMPARE_CAPTION));
         cmp.addView(Ui.gap(this, 6));
-        cmp.addView(Ui.body(this, Trends.compare(days, measure, today, l).text));
+        cmp.addView(Ui.body(this, compared.text));
         cmp.addView(Ui.gap(this, 6));
         cmp.addView(Ui.text(this, Explain.TRENDS_COMPARE, 12, Ui.TEXT_3, Ui.REGULAR));
         body.addView(cmp);

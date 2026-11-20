@@ -478,19 +478,28 @@ public final class Trends {
     /** Draws of the resampling, and whole weeks each month needs at least. */
     public static final int DRAWS = 2000, MIN_WEEKS = 3, MIN_DAYS = 7;
     public static final String TOO_FEW_NOW = "Too few days this month to compare yet.";
+    /** Wake ups counted at stage detail levels that keep different wake ups: a changed setting is no change in sleep. */
+    public static final String MIXED_DETAIL = "Wake ups were counted at different stage detail levels in these two months, so they are not compared.";
 
     /** The comparison: the difference of this month so far to the last month, its 90 % range, and the sentence. */
     public static final class Compare {
         public final boolean enough;
         public final double diff, lo, hi;
+        /** Whole weeks with a value on the side with fewer of them; Student's t for the range uses one less (0 when not compared). */
+        public final int weeks;
         public final String text;
 
-        Compare(boolean enough, double diff, double lo, double hi, String text) {
+        Compare(boolean enough, double diff, double lo, double hi, int weeks, String text) {
             this.enough = enough;
             this.diff = diff;
             this.lo = lo;
             this.hi = hi;
+            this.weeks = weeks;
             this.text = text;
+        }
+
+        static Compare not(String text) {
+            return new Compare(false, Double.NaN, Double.NaN, Double.NaN, 0, text);
         }
     }
 
@@ -556,12 +565,15 @@ public final class Trends {
         LocalDate thisFrom = today.withDayOfMonth(1), thisTo = today.minusDays(1);
         LocalDate lastFrom = thisFrom.minusMonths(1), lastTo = thisFrom.minusDays(1);
         String lastName = monthName(lastFrom);
-        if (thisTo.isBefore(thisFrom)) return new Compare(false, Double.NaN, Double.NaN, Double.NaN, TOO_FEW_NOW);
+        if (thisTo.isBefore(thisFrom)) return Compare.not(TOO_FEW_NOW);
         List<double[]> now = blocks(days, measure, thisFrom, thisTo), before = blocks(days, measure, lastFrom, lastTo);
-        if (wholeWeeks(now, thisFrom, thisTo) < MIN_WEEKS || values(now) < MIN_DAYS) return new Compare(false, Double.NaN, Double.NaN, Double.NaN, TOO_FEW_NOW);
-        if (wholeWeeks(before, lastFrom, lastTo) < MIN_WEEKS || values(before) < MIN_DAYS) {
-            return new Compare(false, Double.NaN, Double.NaN, Double.NaN, "Too few days in " + lastName + " to compare.");
-        }
+        int wn = wholeWeeks(now, thisFrom, thisTo), wb = wholeWeeks(before, lastFrom, lastTo);
+        if (wn < MIN_WEEKS || values(now) < MIN_DAYS) return Compare.not(TOO_FEW_NOW);
+        if (wb < MIN_WEEKS || values(before) < MIN_DAYS) return Compare.not("Too few days in " + lastName + " to compare.");
+        if (measure == WAKE_UPS && !oneRule(days, lastFrom, thisTo)) return Compare.not(MIXED_DETAIL);
+        // only blocks with a value are drawn (an empty week drawn only makes a draw smaller)
+        now = withValues(now);
+        before = withValues(before);
         int kind = KIND[measure];
         double centre = Double.NaN;
         if (kind == CLOCK || kind == SPREAD) {
@@ -590,9 +602,30 @@ public final class Trends {
         // change that is not there), so each side's variance gets the small sample correction k / (k - 1) and the range
         // Student's t for the fewer weeks of the two, as a 90 % range should
         double vn = sq(Stats.sd(dn)) * kn / (kn - 1.0), vb = sq(Stats.sd(db)) * kb / (kb - 1.0);
-        double half = T90[Math.min(Math.min(kn, kb) - 1, T90.length - 1)] * Math.sqrt(vn + vb);
+        // the degrees of freedom: whole weeks with a value on the side with fewer, less one (an empty week or the last few
+        // days of a month are no week of their own)
+        int weeks = Math.min(wn, wb);
+        double half = T90[Math.min(weeks - 1, T90.length - 1)] * Math.sqrt(vn + vb);
         double lo = diff - half, hi = diff + half;
-        return new Compare(true, diff, lo, hi, sentence(measure, diff, lo, hi, lastName, l));
+        return new Compare(true, diff, lo, hi, weeks, sentence(measure, diff, lo, hi, lastName, l));
+    }
+
+    static List<double[]> withValues(List<double[]> blocks) {
+        List<double[]> out = new ArrayList<double[]>();
+        for (double[] b : blocks) if (b.length > 0) out.add(b);
+        return out;
+    }
+
+    /** Wake ups of every night in [{@code from}, {@code to}] counted by one rule ({@link #of}'s: a night without a level as Detailed). */
+    static boolean oneRule(List<Day> days, LocalDate from, LocalDate to) {
+        int col = column(WAKE_UPS), shortest = -1;
+        for (Day d : days) {
+            if (d.date.isBefore(from) || d.date.isAfter(to) || Double.isNaN(d.v[col])) continue;
+            int k = WakeUps.shortestKeptMin(d.detail < 0 ? StageFilter.DETAILED : StageFilter.clampLevel(d.detail));
+            if (shortest < 0) shortest = k;
+            else if (k != shortest) return false;
+        }
+        return true;
     }
 
     /** Student's t for a two sided 90 % range by degrees of freedom (index 0 unused, 30 and more about the normal 1.645). */

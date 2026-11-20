@@ -56,6 +56,8 @@ public class TrendsTest {
         wakeUps();
         compare();
         compareKinds();
+        compareMore();
+        demoNote();
         enough();
         speed();
         plain();
@@ -385,6 +387,62 @@ public class TrendsTest {
         eq("range from the same", t(Trends.sentence(Trends.STEPS, 500, 0.2, 900, "October", L)),
                 "This month you walk 500 steps a day more on average than in October (could be the same to 900 steps a day more), so about the same.");
     }
+
+    /**
+     * Review of #413: one full sentence pinned as the person reads it (with its range), the degrees of freedom from whole
+     * weeks with a value only, and wake ups not compared across two stage detail levels.
+     */
+    static void compareMore() {
+        LocalDate today = LocalDate.parse("2026-11-29");
+        Random r = new Random(1);
+        List<Trends.Day> d = new ArrayList<Trends.Day>();
+        month(d, LocalDate.parse("2026-10-01"), LocalDate.parse("2026-10-31"), Trends.ASLEEP, 420, 20, r);
+        month(d, LocalDate.parse("2026-11-01"), today, Trends.ASLEEP, 445, 20, r);
+        eq("the sentence as the card shows it", t(Trends.compare(d, Trends.ASLEEP, today, L).text), PINNED);
+        // October with an empty second week and nothing from the 29th: three whole weeks with values, not five blocks
+        List<Trends.Day> gap = new ArrayList<Trends.Day>();
+        for (Trends.Day x : d) {
+            int dom = x.date.getDayOfMonth();
+            if (x.date.getMonthValue() == 10 && (dom >= 8 && dom <= 14 || dom >= 29)) continue;
+            gap.add(x);
+        }
+        Trends.Compare g = Trends.compare(gap, Trends.ASLEEP, today, L);
+        eq("an empty week and a month's last days are no week of their own", g.weeks, 3);
+        eq("a full month: four whole weeks", Trends.compare(d, Trends.ASLEEP, today, L).weeks, 4);
+        eq("not compared: no weeks", Trends.compare(d, Trends.ASLEEP, LocalDate.parse("2026-11-01"), L).weeks, 0);
+        // wake ups: last month Detailed, this month Calm (keeps fewer short wake ups): a setting, not sleep, changed
+        List<Trends.Day> w = new ArrayList<Trends.Day>();
+        for (LocalDate x = LocalDate.parse("2026-10-01"); x.isBefore(today); x = x.plusDays(1)) {
+            Trends.Day y = new Trends.Day(x).set(Trends.WAKE_UPS, x.getMonthValue() == 11 ? 1 : 3, Trends.RING);
+            y.detail = x.getMonthValue() == 11 ? StageFilter.CALM : StageFilter.DETAILED;
+            w.add(y);
+        }
+        Trends.Compare mixed = Trends.compare(w, Trends.WAKE_UPS, today, L);
+        eq("wake ups at two detail levels: not compared", t(mixed.text), Trends.MIXED_DETAIL);
+        check("wake ups at two detail levels: no numbers", !mixed.enough && Double.isNaN(mixed.diff));
+        for (Trends.Day y : w) y.detail = StageFilter.CALM;
+        check("wake ups at one level: compared", Trends.compare(w, Trends.WAKE_UPS, today, L).enough);
+        for (Trends.Day y : w) y.detail = -1;
+        check("wake ups without a level (as Detailed): compared", Trends.compare(w, Trends.WAKE_UPS, today, L).enough);
+    }
+
+    /** Review of #413: the demo's made up year note shows only with enough history, never above "Trends need at least two months". */
+    static void demoNote() {
+        String src;
+        try {
+            src = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("app/src/main/java/app/openring/ui/TrendsActivity.java")), "UTF-8");
+        } catch (java.io.IOException e) {
+            check("TrendsActivity.java readable: " + e, false);
+            return;
+        }
+        int tooShort = src.indexOf("Trends.tooShort("), note = src.indexOf("Explain.TRENDS_DEMO");
+        int show = src.indexOf("void show(");
+        check("the demo note is built only in show(), after the too short page", tooShort > 0 && show > tooShort && note > show
+                && src.indexOf("Explain.TRENDS_DEMO", note + 1) < 0);
+    }
+
+    /** The comparison sentence of {@link #compareMore}'s history, word for word. */
+    static final String PINNED = "This month you sleep 23 min longer on average than in October (16 min to 30 min longer).";
 
     static void enough() {
         LocalDate today = LocalDate.parse("2026-11-18");
