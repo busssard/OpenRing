@@ -614,8 +614,12 @@ public class PipelineTest {
         app.openring.core.analysis.LastWorn.Result demoLast = app.openring.data.RightNow.lastWorn(demo, demoNow);
         check("ring finder: the demo ring reads as worn, confirmed by heart rate (#94)", demoLast.state == app.openring.core.analysis.LastWorn.WORN
                 && !Double.isNaN(demoLast.skinC) && !demoLast.justOn && !Double.isNaN(demoLast.lastHr), demoLast.state + " " + demoLast.skinC + " " + demoLast.lastHr);
-        long demoNights = demo.count("SELECT COUNT(*) FROM nights WHERE main = 1");
-        check("demo has about five weeks of nights", demoNights >= 28 && demoNights <= 36, demoNights + " nights in " + (System.currentTimeMillis() - t) + " ms");
+        // issue #374: the made up year before the five weeks is results only; the five weeks are analysed from raw events
+        String yearUntil = demo.kv(app.openring.data.Demo.YEAR_UNTIL, null);
+        check("#374 demo: its made up year is noted", yearUntil != null, null);
+        if (yearUntil == null) yearUntil = "0000-01-01";
+        long demoNights = demo.count("SELECT COUNT(*) FROM nights WHERE main = 1 AND day > '" + yearUntil + "'");
+        check("demo has about five weeks of nights after its made up year", demoNights >= 28 && demoNights <= 36, demoNights + " nights in " + (System.currentTimeMillis() - t) + " ms");
         app.openring.data.SleepHistory dh = app.openring.data.SleepHistory.load(demo, "2000-01-01", "2100-01-01", java.time.ZoneId.systemDefault());
         check("demo nights look like real nights", dh.asleepMin > 330 && dh.asleepMin < 560 && dh.awakeMin > 10 && dh.deepMin > 20 && dh.remMin > 20,
                 String.format(java.util.Locale.US, "asleep %.0f, awake %.0f, deep %.0f, rem %.0f, score %.0f", dh.asleepMin, dh.awakeMin, dh.deepMin, dh.remMin, dh.score));
@@ -628,7 +632,7 @@ public class PipelineTest {
         // issue #44: the first demo days count the worn days so far, later ones a full week as before
         int firstWorn = -1, fullWeek = 0, weekDays = 0;
         boolean weekTexts = true;
-        for (String[] r : demo.daysJson("2000-01-01", "2100-01-01")) {
+        for (String[] r : demo.daysJson(LocalDate.parse(yearUntil).plusDays(1).toString(), "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
             if (o == null || o.optJSONObject("activity_score") == null) continue;
             if (firstWorn < 0) firstWorn = o.optInt("activity_days", -1);

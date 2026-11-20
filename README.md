@@ -29,6 +29,8 @@ Not affiliated with Oura, not a medical device.
   You choose how detailed the sleep chart is; the numbers stay the same.
 * Sleep, readiness and activity scores, each with the parts it is made of
 * Heart rate through the day, HRV, skin temperature, blood oxygen and their trends
+* Trends: your sleep, readiness, steps, heart rate and screen time by week, month and year over all
+  your history, and this month against the last
 * Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be
   left out. Phone use at night counts as awake (can be switched off).
 * Live heart rate, HRV and blood oxygen on demand
