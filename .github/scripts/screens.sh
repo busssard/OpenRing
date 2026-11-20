@@ -186,6 +186,8 @@ launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
 launch --ei tab 1; sleep 3
 swipe_up; swipe_up;                       shot sleep-details 1
+# the Details card with Total sleep first, next to Time in bed (issue #409); sleep-details above scrolls past it
+launch --ei tab 1 --es card DETAILS;        shot sleep-details-card 2
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 launch --ei tab 1 --ez analysis true --ei period 1
@@ -602,6 +604,7 @@ launch --ei tab 1 --ei devices 1;           shot sleep-watch-only
 launch --ei tab 1 --ei devices 1 --es card CONTRIBUTORS; sleep 3
 scroll_to "CONTRIBUTORS" 10 || echo "::warning::issue #379 step: Contributors was not found on Sleep with only the watch"
 shot sleep-watch-only-parts 1
+launch --ei tab 1 --ei devices 1 --es card DETAILS; shot sleep-watch-only-details 2   # Total sleep first (issue #409)
 launch --ei tab 3 --ei devices 1;           shot activity-watch-only
 launch --ei tab 3 --ei devices 1 --es card CONTRIBUTORS; sleep 3
 scroll_to "CONTRIBUTORS" 14 || echo "::warning::issue #379 step: Contributors was not found on Activity with only the watch"

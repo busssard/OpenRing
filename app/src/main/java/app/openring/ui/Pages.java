@@ -542,9 +542,10 @@ public final class Pages {
         JSONObject n = d.night;
         // each night in the zone it was slept in (issue #22)
         java.time.ZoneId nz = d.zoneOf(n);
-        root.addView(hero(c, d.score("sleep"), "Sleep", Ui.SLEEP,
-                n == null ? "No main sleep recorded for this day" : "Total sleep " + Ui.hm(Json.d(n, "asleep_min"))
-                        + "  ·  " + minute(Json.d(n, "start"), nz) + " to " + minute(Json.d(n, "end"), nz), d.watchVersion("sleep")));
+        // the time asleep first and big, time in bed in the line under it (issue #409); the same values as Details
+        root.addView(n == null ? hero(c, d.score("sleep"), "Sleep", Ui.SLEEP, "No main sleep recorded for this day", d.watchVersion("sleep"))
+                : hero(c, d.score("sleep"), "Sleep", Ui.SLEEP, app.openring.core.SleepHero.asleep(Json.d(n, "asleep_min"), Json.stages(n)),
+                        app.openring.core.SleepHero.window(Json.d(n, "start"), Json.d(n, "end"), shownInBed(n), nz), d.watchVersion("sleep")));
         if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
@@ -639,16 +640,20 @@ public final class Pages {
         LinearLayout stats = Ui.card(c);
         stats.addView(Ui.caption(c, "Details"));
         // a short line under every number (issue #47); ranges as in Explain
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(shownInBed(n) < 0 ? Double.NaN : shownInBed(n)), "", 0, "From start to end of the sleep window"),
-                Ui.stat(c, "Efficiency", Ui.fmt(nightEfficiency(n), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal"),
-                Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, wakeUpsLine(n))));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0, "Lowest heart rate while asleep"),
-                Ui.stat(c, "Average HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", 0, "Average while asleep, higher is calmer")));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0, "Breaths per minute while asleep"),
-                Ui.stat(c, "Blood oxygen", Ui.fmt(Json.d(n, "spo2"), 0), "%", 0, "Average while asleep")));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Cycles", String.valueOf(n.optInt("cycles")), "", 0, "Rounds of light, deep and REM, about 90 min each"),
-                Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0, "Steady level at night, lower than body temperature")));
+        // Total sleep first, next to Time in bed (issue #409); the other tiles keep their order, two per row
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Total sleep", Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, TOTAL_SLEEP_NOTE),
+                Ui.stat(c, "Time in bed", Ui.hm(shownInBed(n) < 0 ? Double.NaN : shownInBed(n)), "", 0, "From start to end of the sleep window")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(nightEfficiency(n), 0), "%", 0, "Share of time in bed asleep, 85% or more is good"),
+                Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, wakeUpsLine(n)),
+                Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0, "Lowest heart rate while asleep")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Average HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", 0, "Average while asleep, higher is calmer"),
+                Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0, "Breaths per minute while asleep")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Blood oxygen", Ui.fmt(Json.d(n, "spo2"), 0), "%", 0, "Average while asleep"),
+                Ui.stat(c, "Cycles", String.valueOf(n.optInt("cycles")), "", 0, "Rounds of light, deep and REM, about 90 min each")));
+        // the last tile keeps half the width, as every other tile
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0, "Steady level at night, lower than body temperature"),
+                new View(c)));
         root.addView(stats);
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
@@ -697,8 +702,9 @@ public final class Pages {
         java.time.ZoneId nz = d.zone;
         // without a ring the score from the watch's night (issue #379); with a ring its version as a line
         boolean scored = d.fromDevice("sleep");
-        root.addView(hero(c, scored ? d.score("sleep") : Double.NaN, "Sleep", Ui.SLEEP, "Total sleep " + Ui.hm(wn.asleepMin()) + "  \u00b7  "
-                + minute(wn.start, nz) + " to " + minute(wn.end, nz), scored ? app.openring.core.DeviceScores.FROM_WATCH : d.watchVersion("sleep")));
+        // the time asleep first and big, time in bed in the line under it (issue #409); the same values as Details
+        root.addView(hero(c, scored ? d.score("sleep") : Double.NaN, "Sleep", Ui.SLEEP, app.openring.core.SleepHero.asleep(wn.asleepMin(), wn.stages),
+                app.openring.core.SleepHero.window(wn.start, wn.end, wn.inBedMin(), nz), scored ? app.openring.core.DeviceScores.FROM_WATCH : d.watchVersion("sleep")));
         // without a ring the watch's own nights (owner's report of 13 November); with a ring the ring's, as before
         boolean watchOnly = HistoryViews.watch(d);
         if (watchOnly) {
@@ -1965,6 +1971,17 @@ public final class Pages {
      * ring's score (issue #379).
      */
     static View hero(Context c, double score, String label, int color, String sub, String note) {
+        return hero(c, score, label, color, null, sub, note);
+    }
+
+    /** Under the time asleep (issue #409): what Details says about Total sleep. */
+    static final String TOTAL_SLEEP_NOTE = "Time asleep, without the time awake in bed";
+
+    /**
+     * As above with a big line under the verdict, null for none: the Sleep page's time asleep, "7h 12m asleep" (issue #409),
+     * as big as the tiles on Today and in the score's colour.
+     */
+    static View hero(Context c, double score, String label, int color, String big, String sub, String note) {
         LinearLayout card = Ui.card(c);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         Charts.ScoreRing ring = new Charts.ScoreRing(c, score, label, color, true);
@@ -1972,6 +1989,12 @@ public final class Pages {
         TextView v = Ui.text(c, Double.isNaN(score) ? "" : Scores.verdict((int) score), 18, Ui.scoreColor(score, color), Ui.MEDIUM);
         v.setGravity(Gravity.CENTER);
         card.addView(v);
+        if (big != null) {
+            TextView b = Ui.text(c, big, 24, color, Ui.MEDIUM);
+            b.setGravity(Gravity.CENTER);
+            b.setPadding(Ui.dp(c, 8), Ui.dp(c, 6), Ui.dp(c, 8), 0);
+            card.addView(b);
+        }
         TextView s = Ui.body(c, sub);
         s.setGravity(Gravity.CENTER);
         s.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
