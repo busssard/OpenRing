@@ -178,6 +178,13 @@ launch --ei tab 0 --es card WHAT_WAS;                                 shot today
 launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
 launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
 launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
+# A night by hand (issue #427), before the left out examples below change the demo file: hand_night (demo mode only, nothing
+# stored) shows today and the day before yesterday as without a device night, so Today asks for last night and the demo's
+# made up night by hand shows on its day; hand_entry opens the entry for last night with two wake marks (nothing is saved)
+launch --ei tab 0 --ez hand_night true --es card No_night_for_last;  shot today-hand-ask 2
+launch --ez hand_entry true;                                         shot hand-entry 3
+launch --ei tab 1 --ez hand_night true --es day "$(date -d '2 days ago' +%F)"; shot sleep-hand 3
+launch --ei tab 1 --ez hand_night true --es day "$(date -d '2 days ago' +%F)" --es card YOUR_NIGHT; shot sleep-hand-night 2
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1

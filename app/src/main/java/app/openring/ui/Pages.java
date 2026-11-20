@@ -58,12 +58,15 @@ public final class Pages {
         // without a ring by choice (issue #329) the ring's buttons add one instead
         final boolean noRing = PhoneViews.noRing(c);
         View left = d.has.ring ? leftOutCard(c, d) : null;
-        for (String k : app.openring.core.TodayCards.of(d.has, !d.badges.isEmpty(), left != null, d.periodShown)) {
+        for (String k : app.openring.core.TodayCards.of(d.has, !d.badges.isEmpty(), left != null, d.periodShown, d.handAsk)) {
             if (app.openring.core.TodayCards.SCORES.equals(k)) {
                 root.addView(d.has.ring ? ringScores(c, d, nav, noRing) : DeviceViews.scoresWithout(c, d, nav));
             } else if (app.openring.core.TodayCards.DAY.equals(k)) {
                 View day = d.has.ring ? ringDay(c, d, nav, noRing) : dayCard(c, d, d.has.watch && !Double.isNaN(d.score("readiness")), null);
                 if (day != null) root.addView(day);
+            } else if (app.openring.core.TodayCards.HAND_ASK.equals(k)) {
+                // no night for last night after a sync (issue #427): enter it by hand, or Not now for this night
+                root.addView(HandViews.askCard(c, d, nav));
             } else if (app.openring.core.TodayCards.LIFE.equals(k)) {
                 // life factors (issue #292): one tap chips for the day shown, right after Your day
                 root.addView(LifeCard.today(c, d, nav));
@@ -185,7 +188,8 @@ public final class Pages {
         stats.addView(Ui.statRow(c,
                 wn != null ? Ui.stat(c, "Total sleep", Ui.hm(wn.asleepMin()), "", Ui.SLEEP, d.merged.main == app.openring.core.MainDevice.WATCH
                         ? "Time asleep last night, as your watch counted it" : "Last night from your watch, your ring has none")
-                : Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, "Time asleep last night, naps not counted"),
+                : Ui.stat(c, "Total sleep", n == null ? "--" : Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP,
+                        d.handShown ? "Last night, entered by hand" : "Time asleep last night, naps not counted"),
                 Ui.stat(c, "Resting HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", Ui.HEART, "Lowest heart rate while asleep")));
         stats.addView(Ui.statRow(c,
                 Ui.stat(c, "HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", Ui.READY, "Average while asleep, higher is calmer"),
@@ -499,12 +503,17 @@ public final class Pages {
     public static View sleep(Context c, DayData d, Nav nav) {
         // no ring and no watch (issue #329): one card instead of empty charts
         if (PhoneViews.needsDevice(c, d)) return DeviceViews.needDevice(c);
+        // a night entered by hand: neither device has a night for this day (issue #427)
+        if (d.handShown) return HandViews.sleep(c, d, nav);
         // the watch's night: the main device's, or the ring has none for this day (issue #251)
         if (d.merged != null && d.merged.watchNight != null) return watchSleep(c, d, nav, d.merged.watchNight);
         if (!d.has.ring && d.night == null) {
             // only a watch, no night from it (issue #373): what to do, no ring instructions
             LinearLayout root = Ui.vbox(c);
             root.addView(hero(c, Double.NaN, "Sleep", Ui.SLEEP, app.openring.core.Start.NO_WATCH_NIGHT));
+            // slept without the watch: enter the night by hand (issue #427)
+            View offer = HandViews.offerCard(c, d, nav);
+            if (offer != null) root.addView(offer);
             // the watch's nights around this day and its statistics still show (owner's report of 13 November)
             if (!d.watchRecent.isEmpty()) root.addView(recentNights(c, d, d.watchRecent, nav));
             root.addView(infoCard(c, "About sleep", Explain.SLEEP_WATCH_ONLY));
@@ -523,6 +532,9 @@ public final class Pages {
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
         if (n == null) {
+            // slept without the ring and the watch: enter the night by hand (issue #427)
+            View offer = HandViews.offerCard(c, d, nav);
+            if (offer != null) root.addView(offer);
             root.addView(infoCard(c, "About sleep", Explain.SLEEP));
             LinearLayout how = Ui.card(c);
             how.addView(Ui.caption(c, "How to see your sleep"));
@@ -534,6 +546,9 @@ public final class Pages {
             if (d.anyNight) root.addView(furtherAnalysis(c, d));
             return root;
         }
+        // a night entered by hand for this day stays stored, the ring's is shown (issue #427)
+        View replaced = HandViews.replacedCard(c, d, nav);
+        if (replaced != null) root.addView(replaced);
         // what was logged for the day before this night (issue #292): "Before this night: Alcohol, Meditation."
         View life = LifeCard.night(c, d, nav);
         if (life != null) root.addView(life);
@@ -680,6 +695,9 @@ public final class Pages {
         } else if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
+        // a night entered by hand for this day stays stored, the watch's is shown (issue #427)
+        View replaced = HandViews.replacedCard(c, d, nav);
+        if (replaced != null) root.addView(replaced);
         View life = LifeCard.night(c, d, nav);
         if (life != null) root.addView(life);
         LinearLayout hyp = Ui.card(c);
@@ -774,7 +792,16 @@ public final class Pages {
             JSONObject sc = o.optJSONObject("score");
             String score = sc != null && sc.has("value") ? String.valueOf(sc.optInt("value")) : "--";
             col.addView(Ui.text(c, score, 12, selected ? Ui.TEXT : Ui.TEXT_2, Ui.MEDIUM));
-            col.addView(new Charts.NightBar(c, Json.d(o, "deep_min"), Json.d(o, "light_min"), Json.d(o, "rem_min"), Json.d(o, "awake_min"), max, selected),
+            // a night by hand has no stages: its time asleep as one block (issue #427)
+            boolean hand = app.openring.data.HandNights.isHand(o);
+            Charts.NightBar bar = new Charts.NightBar(c, hand ? 0 : Json.d(o, "deep_min"), hand ? Json.d(o, "asleep_min") : Json.d(o, "light_min"),
+                    hand ? 0 : Json.d(o, "rem_min"), Json.d(o, "awake_min"), max, selected);
+            if (hand) {
+                // one neutral block, never a stage colour, and said as by hand
+                bar.byHand();
+                col.setContentDescription(app.openring.core.HandNight.STRIP + ", " + Ui.hm(Json.d(o, "asleep_min")) + " asleep");
+            }
+            col.addView(bar,
                     new LinearLayout.LayoutParams(Ui.dp(c, 40), Ui.dp(c, 84)));
             java.time.LocalDate ld = java.time.LocalDate.parse(day);
             col.addView(Ui.text(c, ld.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault()), 11,
@@ -1138,6 +1165,12 @@ public final class Pages {
         if (sc.optBoolean("provisional")) {
             LinearLayout note = Ui.card(c);
             note.addView(Ui.body(c, "Your baselines are still forming. Readiness compares each night with your personal normal, which takes about two weeks of nights to settle, so early scores move more."));
+            root.addView(note);
+        }
+        if (sc.optBoolean("hand")) {
+            // last night was entered by hand (issue #427): its sleep and the activity, no heart rate, HRV or temperature
+            LinearLayout note = Ui.card(c);
+            note.addView(Ui.body(c, Explain.HAND_READINESS));
             root.addView(note);
         }
         root.addView(signals(c, d));

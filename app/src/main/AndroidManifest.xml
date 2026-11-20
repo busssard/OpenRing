@@ -69,6 +69,9 @@
         <!-- Import from drip (issue #252): a turn keeps the preview and its corrections, so the screen is not rebuilt -->
         <activity android:name="app.openring.ui.DripImportActivity" android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+        <!-- a night by hand (issue #427): a turn keeps the times being entered, so the screen is not rebuilt -->
+        <activity android:name="app.openring.ui.HandNightActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name="app.openring.ui.games.GamesActivity" android:exported="false" android:screenOrientation="portrait" />
 
         <service

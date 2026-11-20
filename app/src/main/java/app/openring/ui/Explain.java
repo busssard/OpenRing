@@ -903,4 +903,28 @@ public final class Explain {
             WATCH_RHR, WATCH_DAY_HR, LIGHT_REM, SLEEP_NEEDS_RING, ACTIVITY_NEEDS_RING, BODY_NEEDS_RING, WATCH_ANALYSIS, vo2maxWatch(Double.NaN, true),
             vo2maxWatch(Double.NaN, false), vo2maxWatch(5, true), vo2maxWatch(45, true), SCREEN_WATCH_NIGHTS, SCREEN_WATCH_SOME};
     }
+
+    // ---- a night entered by hand (issue #427)
+
+    /** The Sleep tab's card about a night by hand. */
+    public static final String HAND_ABOUT = "You entered this night yourself. The times are only as good as your memory. There are no stages, "
+            + "heart rate, HRV or temperature for it, so nothing of that is made up. If your ring or watch later brings a night for the same "
+            + "time, theirs is shown and this one stays stored until you delete it.";
+    /** Under the sleep score of a night by hand. */
+    public static final String HAND_SCORE = "The score uses only what needs no device: total sleep, the timing of your sleep and the wake ups "
+            + "you entered (none entered counts as a night without wake ups). The other parts are left out, so the score is not lowered for them.";
+    /** Readiness of a day whose night is by hand. */
+    public static final String HAND_READINESS = "Last night was entered by hand, so readiness uses its sleep and your activity, and leaves out "
+            + "resting heart rate, HRV, temperature and recovery, as for a day without the ring.";
+    /** The entry screen: what the big number is. */
+    public static final String HAND_LENGTH = "Time asleep: from In bed to Up, without the times you were awake.";
+    /** The entry screen: what happens on Save. */
+    public static final String HAND_SAVE = "Saved on this phone only. A night from your ring or watch for the same time always wins.";
+    /** The Sleep tab of a day without a night, above Enter the night by hand. */
+    public static final String HAND_OFFER = "Slept without your ring and watch? Enter when you went to bed and got up, and when you woke up if you remember.";
+
+    /** Every text of the nights by hand, for the tests. */
+    public static String[] handTexts() {
+        return new String[] {HAND_ABOUT, HAND_SCORE, HAND_READINESS, HAND_LENGTH, HAND_SAVE, HAND_OFFER};
+    }
 }

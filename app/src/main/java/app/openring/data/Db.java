@@ -26,7 +26,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 12;
+    static final int VERSION = 14;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -164,6 +164,8 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo10(db);
         upgradeTo11(db);
         upgradeTo12(db);
+        upgradeTo13(db);
+        upgradeTo14(db);
     }
 
     @Override
@@ -179,6 +181,28 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 10) upgradeTo10(db);
         if (oldV < 11) upgradeTo11(db);
         if (oldV < 12) upgradeTo12(db);
+        if (oldV < 13) upgradeTo13(db);
+        if (oldV < 14) upgradeTo14(db);
+    }
+
+    /**
+     * v14: nights entered by hand (issue #427), see {@link HandNights}: {@code sleep_manual}, one row per night (removal marks
+     * kept, never deleted). Only adds the table ({@code IF NOT EXISTS}): safe to run twice. No existing table or row changes;
+     * older files (and restored older backups) get it empty.
+     */
+    private static void upgradeTo14(SQLiteDatabase db) {
+        HandNights.create14(db);
+    }
+
+    /**
+     * v13: sleep sounds (issue #380, phase 1a), see {@link Sounds}: {@code sound_nights}, {@code sound_clips} (the marks, each
+     * with its clip file's name; the sound itself is a file in {@code no_backup}, never in the database) and
+     * {@code sound_gaps}. Only adds tables, each on its own ({@code IF NOT EXISTS}): safe to run twice, and an upgrade stopped
+     * after the first goes on with the others. No existing table or row changes; older files (and restored older backups)
+     * get them empty.
+     */
+    private static void upgradeTo13(SQLiteDatabase db) {
+        Sounds.create13(db);
     }
 
     /**
@@ -1653,6 +1677,10 @@ public final class Db extends SQLiteOpenHelper {
         {"phone_steps", 11, new String[] {"device", "boot", "elapsed", "start", "stop", "steps"}},
         {"life_days", 12, new String[] {"day", "tag", "time", "span", "made", "gone"}},
         {"life_tags", 12, new String[] {"key", "name", "shown", "ord", "made", "gone"}},
+        {"sound_nights", 13, new String[] {"start", "stop", "floor", "clips", "ended"}},
+        {"sound_clips", 13, new String[] {"start", "stop", "kind", "peak", "file", "kept", "gone"}},
+        {"sound_gaps", 13, new String[] {"start", "stop", "why"}},
+        {"sleep_manual", 14, new String[] {"made", "start", "stop", "wakes", "gone"}},
     };
 
     /**
@@ -1805,6 +1833,9 @@ public final class Db extends SQLiteOpenHelper {
      * (days with their removal marks, ends, imported temperatures and imports) are read before the swap and written into
      * the restored file, the phone's row winning on the same day, before {@code .old} goes. The life factors (issue #292,
      * {@link LifeLog}) go the same way: every day and tag row of the phone, removal marks included, wins over the backup's.
+     * So do the sleep sound marks (issue #380, {@link Sounds#merge}); a mark whose clip file is not on this phone keeps its mark
+     * without sound ({@code gone} 1), since backups never hold the clips. And the nights entered by hand (issue #427,
+     * {@link HandNights#merge}): the phone's row wins on the same key, removal marks included.
      * Ring data is never merged. A
      * damaged phone file (Android's {@code SQLiteDatabaseCorruptException}, at the open or in a period table) is what a
      * restore is for (#255, #266): it is replaced without its period log, which cannot be read reliably, and the result
@@ -1857,6 +1888,8 @@ public final class Db extends SQLiteOpenHelper {
         WatchStore.Rows phoneWatch = null;
         List<Object[]> phoneSteps = null;
         LifeLog.Rows phoneLife = null;
+        Sounds.Rows phoneSounds = null;
+        List<Object[]> phoneHand = null;
         boolean logDamaged = false;
         if (instance != null) {
             try {
@@ -1873,6 +1906,10 @@ public final class Db extends SQLiteOpenHelper {
                 phoneSteps = PhoneStore.read(instance.getReadableDatabase());
                 // the life factors typed on this phone (issue #292): like the period log, nothing can bring them back
                 phoneLife = LifeLog.read(instance.getReadableDatabase());
+                // the sleep sound marks of this phone (issue #380): their clips are only on this phone
+                phoneSounds = Sounds.read(instance.getReadableDatabase());
+                // the nights entered by hand on this phone (issue #427): nothing else can bring them back
+                phoneHand = HandNights.read(instance.getReadableDatabase());
                 mergeStep(MERGE_READ);
             } catch (RuntimeException e) {
                 // a damaged file (at the open or in a period table) has no log that can be read: it is replaced without it,
@@ -1882,6 +1919,8 @@ public final class Db extends SQLiteOpenHelper {
                 phoneWatch = null;
                 phoneSteps = null;
                 phoneLife = null;
+                phoneSounds = null;
+                phoneHand = null;
                 logDamaged = true;
             } catch (java.io.IOException e) {
                 // nothing moved yet: the phone keeps everything as it is; the person is told it was the phone's log, not the backup
@@ -1911,6 +1950,12 @@ public final class Db extends SQLiteOpenHelper {
             if (phoneSteps != null) PhoneStore.merge(instance.getWritableDatabase(), phoneSteps);
             // the phone's life factors win over the backup's on the same day and tag, removal marks included (issue #292)
             if (phoneLife != null) LifeLog.merge(instance.getWritableDatabase(), phoneLife);
+            // the phone's sleep sound marks win; a mark whose clip is not on this phone keeps its mark without sound (issue #380).
+            // Also without phone rows: the backup's marks never point at a sound this phone does not have
+            Sounds.merge(instance.getWritableDatabase(), phoneSounds, Sounds.folder(c, false));
+            // the phone's nights by hand win over the backup's on the same key, removal marks included; an older backup without
+            // the table got it empty from the upgrade, so it keeps the phone's (issue #427)
+            if (phoneHand != null) HandNights.merge(instance.getWritableDatabase(), phoneHand);
             mergeStep(MERGE_PHONE);
             // a failed shrink noted in the backup's file (issue #299) is not true here: the restored file is compact
             instance.getWritableDatabase().delete("kv", "k = ?", new String[] {DataCheck.SHRINK_ERROR});
@@ -1967,7 +2012,7 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     /** The steps of the period merge in {@link #replaceWith} (issue #252), where a test can stop it. */
-    static final String MERGE_READ = "read", MERGE_WRITE = "write", MERGE_LIFE = "life", MERGE_PHONE = "phone", MERGE_DONE = "done";
+    static final String MERGE_READ = "read", MERGE_WRITE = "write", MERGE_LIFE = "life", MERGE_SOUNDS = "sounds", MERGE_HAND = "hand", MERGE_PHONE = "phone", MERGE_DONE = "done";
     /** Tests only: the merge throws at this step, as a failure there would. */
     static volatile String failMergeAt;
 
@@ -2003,9 +2048,11 @@ public final class Db extends SQLiteOpenHelper {
     /**
      * The tables that do not belong to one ring and stay when a different ring is paired: the period log
      * ({@link Periods#TABLES}, issue #252), the watch's data ({@link WatchStore#TABLES}, issue #251) and the phone's own
-     * steps ({@link PhoneStore#TABLES}, issue #329) and the life factors ({@link LifeLog#TABLES}, issue #292).
+     * steps ({@link PhoneStore#TABLES}, issue #329), the life factors ({@link LifeLog#TABLES}, issue #292) and the sleep sounds
+     * ({@link Sounds#TABLES}, issue #380) and the nights entered by hand ({@link HandNights#TABLES}, issue #427). Each needs its merge in {@link #replaceWith} too (a pipeline test restores a backup
+     * and checks every table here keeps the phone's rows).
      */
-    static final String[] KEPT_TABLES = join(join(join(Periods.TABLES, WatchStore.TABLES), PhoneStore.TABLES), LifeLog.TABLES);
+    static final String[] KEPT_TABLES = join(join(join(join(join(Periods.TABLES, WatchStore.TABLES), PhoneStore.TABLES), LifeLog.TABLES), Sounds.TABLES), HandNights.TABLES);
 
     /**
      * The tables of one ring's history and what was worked out from it, emptied when a different ring is paired

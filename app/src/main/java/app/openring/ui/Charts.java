@@ -1023,8 +1023,16 @@ public final class Charts {
     public static final class NightBar extends View {
         private final double deep, light, rem, awake, maxMin;
         private final boolean selected;
+        /** A night entered by hand (issue #427): no stages, its time asleep as one block in the muted colour. */
+        private boolean hand;
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF r = new RectF();
+
+        /** Draws a night by hand: {@code light} is its time asleep, shown as one block in no stage's colour. */
+        public NightBar byHand() {
+            hand = true;
+            return this;
+        }
 
         public NightBar(Context c, double deep, double light, double rem, double awake, double maxMin, boolean selected) {
             super(c);
@@ -1052,6 +1060,7 @@ public final class Charts {
             }
             double[] parts = {deep, light, rem, awake};
             int[] colors = {Ui.STAGE_DEEP, Ui.STAGE_LIGHT, Ui.STAGE_REM, Ui.STAGE_AWAKE};
+            if (hand) colors = new int[] {Ui.TEXT_3, Ui.TEXT_3, Ui.TEXT_3, Ui.STAGE_AWAKE};
             float y = h - Ui.dp(getContext(), 4);
             float scale = (float) ((h - Ui.dp(getContext(), 8)) / maxMin);
             for (int i = 0; i < 4; i++) {
