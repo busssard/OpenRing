@@ -368,9 +368,11 @@ public final class Explain {
             + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED + " periods. Smaller differences are luck.";
 
     /**
-     * When Best for you stays with Open Ring although another method was a little closer: "drip style was 0.2 days closer, too
-     * little to switch."; under 0.1 days "only a few hundredths of a day closer (the days off above are rounded)", since the card's
-     * rounded numbers may read 1.4 and 1.3 for a lead of 0.03; else null.
+     * When Best for you stays with Open Ring although another method was a little closer: "drip style was 0.22 days closer (the
+     * days off above are rounded), less than the quarter of a day needed to switch."; under 0.1 days "was only a few hundredths of
+     * a day closer (the days off above are rounded), too little to switch."; else null. The rows above show one decimal, so they
+     * may read 1.4 and 1.3 for a lead of 0.03, or 2.7 and 2.4 (0.3 apart) for a lead of 0.22: the line gives the lead in
+     * hundredths, at most 0.24 (a lead that rounds to 0.25 is still below the margin), and says the rows are rounded.
      */
     public static String periodStay(app.openring.core.analysis.Cycles cy) {
         app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
@@ -378,8 +380,11 @@ public final class Explain {
         int c = bt.closest();
         if (c == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING || bt.best() != app.openring.core.analysis.cycleforecast.Methods.OPEN_RING) return null;
         double lead = bt.lead(c);
-        return app.openring.core.analysis.cycleforecast.Methods.name(c) + " was " + (lead < 0.1 ? "only a few hundredths of a day closer (the days off above are rounded)"
-                : fmt1(lead) + " days closer") + ", too little to switch.";
+        String name = app.openring.core.analysis.cycleforecast.Methods.name(c);
+        if (lead < 0.1) return name + " was only a few hundredths of a day closer (the days off above are rounded), too little to switch.";
+        double shown = Math.min(Math.round(lead * 100), 24) / 100.0;
+        return name + " was " + String.format(java.util.Locale.getDefault(), "%.2f", shown)
+                + " days closer (the days off above are rounded), less than the quarter of a day needed to switch.";
     }
 
     /** On the card How close the estimates were, under the methods: the margin, and why Best for you stayed with Open Ring. */
@@ -406,9 +411,30 @@ public final class Explain {
      * {@code RiseBacktest.MIN} cycles "until 3 past cycles can show whether it is closer (now 1)".
      */
     public static String periodTempWords(boolean drip, int n, double mae, double calendarMae) {
+        return periodTempWords(drip, n, mae, calendarMae, true);
+    }
+
+    /**
+     * On the card With your temperature, under the two tiles that already show both numbers: the short form of {@link #periodTempUse},
+     * "Your night temperature is used on top of the method picked, because it was closer on average over 7 past cycles."; when the
+     * tiles read the same "because over 7 past cycles it was as close as the calendar on average."; else null.
+     */
+    public static String periodTempUseShort(app.openring.core.analysis.Cycles cy) {
+        if (cy.choice != app.openring.core.analysis.cycleforecast.Methods.BEST || !cy.riseUsed) return null;
+        app.openring.core.analysis.RiseBacktest rb = cy.riseBacktest();
+        if (rb == null) return null;
+        return periodTempWords(cy.methodId == app.openring.core.analysis.cycleforecast.Methods.DRIP, rb.n(), rb.mae, rb.calendarMae, false);
+    }
+
+    /** {@link #periodTempWords}, with both numbers ({@code full}, Settings) or without them (the card, where the tiles show them). */
+    public static String periodTempWords(boolean drip, int n, double mae, double calendarMae, boolean full) {
         String s = drip ? "Best for you picked drip style and adds your night temperature on top" : "Your night temperature is used on top of the method picked";
         if (n < app.openring.core.analysis.RiseBacktest.MIN) {
             return s + " until " + app.openring.core.analysis.RiseBacktest.MIN + " past cycles can show whether it is closer (now " + n + ").";
+        }
+        if (!full) {
+            return s + (fmt1(mae).equals(fmt1(calendarMae)) ? ", because over " + n + " past cycles it was as close as the calendar on average."
+                    : ", because it was closer on average over " + n + " past cycles.");
         }
         if (fmt1(mae).equals(fmt1(calendarMae))) {
             return s + ", because on " + n + " past cycles it was as close as the calendar (" + fmt1(mae) + " days off on average).";

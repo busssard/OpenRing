@@ -65,6 +65,11 @@ public class ForecastTest {
     }
 
     /** {@code n} cycles around {@code mean} with spread {@code sd}, from a fixed seed. */
+    /** One decimal, as the card's rows show the days off. */
+    static String fmt1(double v) {
+        return String.format(Locale.getDefault(), "%.1f", v);
+    }
+
     static int[] random(int n, double mean, double sd, long seed) {
         Random r = new Random(seed);
         int[] a = new int[n];
@@ -264,10 +269,12 @@ public class ForecastTest {
     static final String[][] BEFORE = {
         // changed on purpose by the margin and the temperature rule (design round of #383, phase 1); before: d7a57493e6e9913b, 8f397f5e86e9fa7d
         // and the stay line under 0.1 days ("only a few hundredths of a day closer", emulator shots of #412); before: f5bd6bb4e3c11948
-        {"Best for you, calendar", "26175e035f3230d3"},
+        // and the stay line from 0.1 days on in hundredths ("0.22 days closer", review of ce5f994); before: 26175e035f3230d3
+        {"Best for you, calendar", "24a8d85074003869"},
         // and once more by the review of #412 (the temperature line in one sentence, "as close as the calendar"); before: 4fff7f0461946475
         // and the stay line under 0.1 days; before: dc377626c5c56b08
-        {"Best for you, temperature", "ed6948149ea3290c"},
+        // and the stay line from 0.1 days on in hundredths; before: ed6948149ea3290c
+        {"Best for you, temperature", "c5c6c4d3b5fde693"},
         {"Follows your last cycle, calendar", "e90423cb13d5775d"},
         {"Follows your last cycle, temperature", "a973dced7a5d960a"},
         {"Learns from every cycle, calendar", "831eff51a8271cea"},
@@ -845,7 +852,20 @@ public class ForecastTest {
                 + "past cycles it was as close as the calendar (" + f + " days off on average).")
                 && app.openring.ui.Explain.periodTempWords(true, 1, 0, 3).equals("Best for you picked drip style and adds your night temperature on top until 3 past cycles "
                 + "can show whether it is closer (now 1)."), app.openring.ui.Explain.periodTempWords(false, 7, 1.2, 1.2));
+        String useShort = app.openring.ui.Explain.periodTempUseShort(picked);
+        String closer = prb.mae < prb.calendarMae && !String.format(Locale.getDefault(), "%.1f", prb.mae).equals(String.format(Locale.getDefault(), "%.1f", prb.calendarMae))
+                ? ", because it was closer on average over " + prb.n() + " past cycles." : ", because over " + prb.n() + " past cycles it was as close as the calendar on average.";
+        check("#383 review of ce5f994: the card's short form without the numbers the tiles show, Settings keeps them", useShort.equals("Best for you picked drip style and "
+                + "adds your night temperature on top" + closer) && !useShort.contains(String.format(Locale.getDefault(), "%.1f", prb.mae))
+                && app.openring.ui.Explain.periodBestNow(picked).contains(use), useShort);
+        check("#383 the short form: closer, a tie, too few cycles", app.openring.ui.Explain.periodTempWords(false, 7, 1.2, 2.4, false)
+                .equals("Your night temperature is used on top of the method picked, because it was closer on average over 7 past cycles.")
+                && app.openring.ui.Explain.periodTempWords(false, 7, 1.24, 1.21, false).equals("Your night temperature is used on top of the method picked, because over 7 "
+                + "past cycles it was as close as the calendar on average.")
+                && app.openring.ui.Explain.periodTempWords(true, 1, 0, 3, false).equals(app.openring.ui.Explain.periodTempWords(true, 1, 0, 3)),
+                app.openring.ui.Explain.periodTempWords(false, 7, 1.24, 1.21, false));
         check("#383 no such line for a method chosen by hand or without the temperature", app.openring.ui.Explain.periodTempUse(hand) == null
+                && app.openring.ui.Explain.periodTempUseShort(hand) == null
                 && app.openring.ui.Explain.periodTempUse(Cycles.of(log(dh), null, today).withMethod(Methods.BEST)) == null);
 
         // the texts: the stay line, under 0.1 days "only a few hundredths", the period Best for you can start from
@@ -857,8 +877,36 @@ public class ForecastTest {
         Cycles alt = Cycles.of(log(small), null, lastStart(small).plusDays(3)).withMethod(Methods.BEST);
         String stay = app.openring.ui.Explain.periodStay(alt);
         double lead = alt.backtest().lead(Methods.TREND);
-        check("#383 the stay line with one decimal from 0.1 days on", alt.methodId == Methods.OPEN_RING && alt.backtest().closest() == Methods.TREND && lead >= 0.1
-                && lead < Backtest.MARGIN && ("Follows your last cycle was " + String.format(Locale.getDefault(), "%.1f", lead) + " days closer, too little to switch.").equals(stay), lead + " " + stay);
+        check("#383 the stay line with two decimals from 0.1 days on", alt.methodId == Methods.OPEN_RING && alt.backtest().closest() == Methods.TREND && lead >= 0.1
+                && lead < Backtest.MARGIN && ("Follows your last cycle was " + String.format(Locale.getDefault(), "%.2f", 0.12) + " days closer (the days off above are rounded), "
+                + "less than the quarter of a day needed to switch.").equals(stay), lead + " " + stay);
+        // review of ce5f994: rows 2.7 and 2.4 (0.3 apart, more than a quarter) for a lead of 0.22, which one decimal showed as "0.2 days closer"
+        int[] apart = random(12, 29, 2.6, 58);
+        Cycles ap = Cycles.of(log(apart), null, lastStart(apart).plusDays(3)).withMethod(Methods.BEST);
+        Backtest abt = ap.backtest();
+        String apStay = app.openring.ui.Explain.periodStay(ap);
+        check("#383 rows 0.3 apart for a lead of 0.22: the stay line says 0.22 and that the rows are rounded", ap.methodId == Methods.OPEN_RING
+                && abt.closest() == Methods.DRIP && fmt1(abt.of(Methods.OPEN_RING).mae).equals(fmt1(2.7)) && fmt1(abt.of(Methods.DRIP).mae).equals(fmt1(2.4))
+                && ("drip style was " + String.format(Locale.getDefault(), "%.2f", 0.22) + " days closer (the days off above are rounded), less than the quarter of a day "
+                + "needed to switch.").equals(apStay), abt.lead(Methods.DRIP) + " " + apStay);
+        // on many histories: whenever it stays, the number in the line is the lead in hundredths, never rounded up to a quarter
+        boolean cut = true;
+        int stays = 0;
+        for (double spread : new double[] {1.5, 2.6, 4}) for (long seed = 1; seed <= 60; seed++) {
+            int[] l = random(12 + (int) (seed % 20), 29, spread, seed);
+            Cycles cy = Cycles.of(log(l), null, lastStart(l).plusDays(3)).withMethod(Methods.BEST);
+            String st = app.openring.ui.Explain.periodStay(cy);
+            if (st == null) continue;
+            stays++;
+            double ld = cy.backtest().lead(cy.backtest().closest());
+            String want = ld < 0.1 ? "only a few hundredths of a day closer (the days off above are rounded), too little to switch."
+                    : String.format(Locale.getDefault(), "%.2f", Math.min(Math.round(ld * 100), 24) / 100.0) + " days closer (the days off above are rounded), less than the quarter";
+            if (ld >= Backtest.MARGIN || !st.contains(want) || st.contains(String.format(Locale.getDefault(), "%.2f", 0.25))) {
+                cut = false;
+                System.out.println("  " + ld + ": " + st);
+            }
+        }
+        check("#383 every stay line on 180 histories: the lead in hundredths, never a quarter, rows marked as rounded", cut && stays > 10, stays);
         check("#383 no stay line when Best for you switched or is not chosen", app.openring.ui.Explain.periodStay(picked) == null
                 && app.openring.ui.Explain.periodStay(demo.withMethod(Methods.OPEN_RING)) == null);
         check("#383 ordinals", app.openring.ui.Explain.ordinal(1).equals("1st") && app.openring.ui.Explain.ordinal(2).equals("2nd") && app.openring.ui.Explain.ordinal(3).equals("3rd")
@@ -868,7 +916,7 @@ public class ForecastTest {
                 && app.openring.ui.Explain.periodAccuracyHow().get(1).startsWith("Best for you: the method that was closest on average, if it was at least a quarter of a day "
                 + "closer than Open Ring over at least 6 periods, else Open Ring. Smaller differences are luck. So it can leave Open Ring from your 10th period on at the earliest."),
                 app.openring.ui.Explain.periodAccuracyHow().get(1));
-        List<String> texts = new ArrayList<String>(Arrays.asList(use, Methods.line(Methods.DRIP), Methods.how(Methods.DRIP), hand.riseOff(), app.openring.ui.Explain.periodPick(demo),
+        List<String> texts = new ArrayList<String>(Arrays.asList(use, useShort, apStay, stay, Methods.line(Methods.DRIP), Methods.how(Methods.DRIP), hand.riseOff(), app.openring.ui.Explain.periodPick(demo),
                 app.openring.ui.Explain.periodBestNow(picked), app.openring.ui.Explain.periodRange(picked), app.openring.ui.Explain.periodBestNow(demo)));
         texts.addAll(app.openring.ui.Explain.periodAccuracyHow());
         boolean dashes = false;

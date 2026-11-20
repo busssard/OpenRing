@@ -198,8 +198,9 @@ final class PeriodAnalysis {
                     Ui.stat(c, "Temperature", Ui.fmt(rb.mae, 1), "days off", Ui.PERIOD),
                     Ui.stat(c, "Calendar", Ui.fmt(rb.calendarMae, 1), "days off", 0)));
             card.addView(PeriodCard.note(c, Explain.periodAccTemp(rb)));
-            // why the temperature is used or not (with drip style picked by Best for you, the mix named)
-            String why = cy.riseUsed ? Explain.periodTempUse(cy) : cy.riseOff();
+            // why the temperature is used or not (with drip style picked by Best for you, the mix named); the tiles above show
+            // both numbers, so the short form (Settings keeps the full sentence)
+            String why = cy.riseUsed ? Explain.periodTempUseShort(cy) : cy.riseOff();
             if (why != null) card.addView(PeriodCard.note(c, why));
         }
         card.addView(Ui.gap(c, 6));
