@@ -457,11 +457,14 @@ scroll_to "Remind me before my period" 8 || echo "::warning::issue #383 step: th
 shot settings-period-remind 1
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
-# The Watch check (issue #251, phase 1a): the Settings card, then in demo mode the made up scan (never Bluetooth) and
-# the made up report, built by the same code as a real one (the screen scrolls to it, copy buttons included)
+# The Device check (issue #251, phase 1a, once the Watch check; issue #418): the Settings card with its row Check a ring or
+# watch, then in demo mode the made up scan (never Bluetooth, a watch and a QRing ring among it) and the made up report,
+# built by the same code as a real one (the screen scrolls to it, copy buttons included)
 launch --es settings watch;                 shot settings-watch
 launch --ez watch true;                     shot watch 3
 launch --ez watch true --ez watch_report true; shot watch-report 3   # scrolls to the report itself: copy buttons, Use this watch for syncing (phase 1b)
+# the made up QRing ring checked (issue #418, phase 1): its report without messages and the line of its family
+launch --ez watch true --ez device_ring true; shot device-ring 3
 # The Watch page (issue #251, phase 1b): the demo's made up watch, decoded by the same code as a real one: steps per
 # day, workouts, heart rate, Withings' own sleep and the battery
 # The watch setup (issue #251): every step with its state, what is sent from the profile, then the alarm, then the hand

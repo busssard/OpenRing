@@ -3347,17 +3347,19 @@ public class CoreTest {
         check("watch: the Withings service makes it likely a watch", WatchCheck.likelyWatch(w));
         check("watch: a Steel HR name makes it likely a watch", WatchCheck.likelyWatch(new WatchCheck.Found("y", "Steel HR", -60)));
         check("watch: headphones are not", !WatchCheck.likelyWatch(new WatchCheck.Found("z", "Headphones", -60)));
-        // Watch setup's own name rule, moved to core as it was (a prefix, any case); it differs from likelyWatch on purpose
+        // Watch setup's name rule is the Withings family of RingFamily since issue #418 (one rule for Setup and the check:
+        // the words anywhere in the name). Before, Setup took only a prefix and no "hwa0": "My Steel HR" and "HWA09" were 0.
         String[][] setupNames = {
             {"Steel HR", "1"}, {"steel hr sport", "1"}, {"Withings Move", "1"}, {"WITHINGS", "1"}, {"Activite Pop", "1"},
-            {"ScanWatch 2", "1"}, {"scanwatch", "1"}, {"My Steel HR", "0"}, {"HWA09", "0"}, {"Headphones", "0"}, {"", "0"}, {null, "0"},
+            {"ScanWatch 2", "1"}, {"scanwatch", "1"}, {"My Steel HR", "1"}, {"HWA09", "1"}, {"Headphones", "0"}, {"", "0"}, {null, "0"},
         };
         for (String[] t : setupNames) {
             check("watch setup: name rule for " + t[0], WatchCheck.setupName(t[0]) == "1".equals(t[1]));
+            check("watch setup and check: one rule for " + t[0], WatchCheck.setupName(t[0]) == WatchCheck.likelyWatch(new WatchCheck.Found("a", t[0], -60)));
         }
-        check("watch setup: its scan runs 10 s, the Watch check's SCAN_MS", WatchCheck.SCAN_MS == 10000);
-        check("watch setup: the two rules stay as they were (ScanWatch only in setup, HWA0 and a name anywhere only in the check)",
-                !WatchCheck.likelyWatch(new WatchCheck.Found("a", "ScanWatch 2", -60))
+        check("watch setup: its scan runs 10 s, the Device check's SCAN_MS", WatchCheck.SCAN_MS == 10000);
+        check("#418 one rule: a ScanWatch 2 without services now counts in the check as in Setup",
+                WatchCheck.likelyWatch(new WatchCheck.Found("a", "ScanWatch 2", -60))
                         && WatchCheck.likelyWatch(new WatchCheck.Found("b", "HWA09", -60))
                         && WatchCheck.likelyWatch(new WatchCheck.Found("c", "My Steel HR", -60)));
         eq("watch: scan row detail", WatchCheck.detail(new WatchCheck.Found("z", "Headphones", -61)), "Signal -61 dBm, no services advertised");

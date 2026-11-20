@@ -191,7 +191,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (gamesCard != null) app.openring.ui.games.GamesActivity.fill(this, gamesCard); // new best scores
         if (backupsCard != null) fillBackupsCard(p); // a copy made or checked meanwhile
         showJobState(); // a backup, export or re analysis that ended while this screen was covered (issue #222)
-        if (watchCard != null) fillWatchCard(); // a watch added on the Watch check, or a sync that ended meanwhile (issue #251)
+        if (watchCard != null) fillWatchCard(); // a watch added on the Device check, or a sync that ended meanwhile (issue #251)
         // back from the app's settings with Physical activity allowed or taken back (issue #329)
         if (phoneCard != null) {
             app.openring.sync.PhoneJob.schedule(this);
@@ -1054,7 +1054,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         }
     }
 
-    /** The Watch card (issue #251): the watch this app syncs, its state, Sync the watch now, how often, the Watch check. */
+    /** The Watch card (issue #251): the watch this app syncs, its state, Sync the watch now, how often, the Device check (issue #418). */
     LinearLayout watchCard() {
         LinearLayout card = Ui.vbox(this); // a section of the Watch block, whose header says Watch
         watchCard = card;
@@ -1090,7 +1090,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         if (p.demo()) {
             card.addView(Ui.body(this, "Demo mode: a made up Withings Steel HR. Turn demo mode off to sync a real watch."));
             watchPageButton(card);
-            small(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+            small(card, app.openring.core.WatchCheck.ROW, Ui.OXY, new Runnable() {
                 @Override
                 public void run() {
                     startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
@@ -1101,7 +1101,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         final String address = p.watchAddress();
         if (address == null) {
             card.addView(Ui.body(this, Explain.WATCH_ADD));
-            action(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+            action(card, app.openring.core.WatchCheck.ROW, Ui.OXY, new Runnable() {
                 @Override
                 public void run() {
                     startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
@@ -1198,7 +1198,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.addView(Ui.gap(this, 6));
         card.addView(Ui.text(this, Explain.WATCH_WITHINGS_APP, 12, Ui.TEXT_3, Ui.REGULAR));
         watchPageButton(card);
-        small(card, "Check a Withings watch", Ui.OXY, new Runnable() {
+        small(card, app.openring.core.WatchCheck.ROW, Ui.OXY, new Runnable() {
             @Override
             public void run() {
                 startActivity(new Intent(SettingsActivity.this, WatchActivity.class));
