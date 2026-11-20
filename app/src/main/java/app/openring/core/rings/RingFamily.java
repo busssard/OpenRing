@@ -14,11 +14,14 @@ import java.util.regex.Pattern;
  * <p>The facts come from the Driver hunt on issue #418 and are written down in docs/ARCHITECTURE.md ("Other rings"), with
  * their sources. Only names and UUIDs are used here, in our own words; no code or table was copied.
  *
- * <p>Withings is checked first and is the one rule for "is this a Withings watch", used by the check's list
- * ({@code WatchCheck.likelyWatch}) and by Watch setup ({@code WatchCheck.setupName}).
+ * <p>Its Withings words are the one name rule for "is this a Withings watch", used by the check's list
+ * ({@code WatchCheck.likelyWatch}) and by Watch setup ({@code WatchCheck.setupName}); another family's service wins over
+ * those words (review of #430). The Oura ring is a family too, so the check names the person's own ring and leaves it alone.
  */
 public enum RingFamily {
     WITHINGS("Withings", "a Withings watch"),
+    /** The ring Open Ring already reads (review of #430): the check names it and leaves it alone. */
+    OURA("Oura", "an Oura ring"),
     QRING("QRing family (Colmi, Yawell, KSIX)", "a ring of the QRing family (Colmi, Yawell, KSIX)"),
     RINGCONN("RingConn", "a RingConn ring"),
     ULTRAHUMAN("Ultrahuman", "an Ultrahuman ring"),
@@ -74,30 +77,43 @@ public enum RingFamily {
         return uuid != null && uuid.toLowerCase(Locale.ROOT).contains("-5749-5448-");
     }
 
-    /** True when the name or one of the services means a Withings watch. */
-    public static boolean withings(String name, List<String> services) {
-        if (withingsName(name)) return true;
-        for (String s : nz(services)) if (withingsService(s)) return true;
-        return false;
+    /** The Oura ring's service, {@code core/Protocol.SERVICE}. */
+    public static final String OURA_SERVICE = app.openring.core.Protocol.SERVICE.toString().toLowerCase(Locale.ROOT);
+
+    /** True when the name means an Oura ring: "oura" anywhere, in any case (the name rule of {@code ble/RingScanner.isOura}). */
+    public static boolean ouraName(String name) {
+        return name != null && name.toLowerCase(Locale.ROOT).contains("oura");
+    }
+
+    /** The family a service UUID belongs to, or null for a service no family claims. */
+    public static RingFamily byService(String uuid) {
+        if (uuid == null) return null;
+        String s = uuid.toLowerCase(Locale.ROOT);
+        if (withingsService(s)) return WITHINGS;
+        if (s.equals(OURA_SERVICE)) return OURA;
+        if (s.equals(QRING_SERVICE) || s.equals(QRING_BIG)) return QRING;
+        if (s.equals(RINGCONN_SERVICE)) return RINGCONN;
+        for (String p : ULTRAHUMAN_PREFIX) if (s.startsWith(p)) return ULTRAHUMAN;
+        if (s.equals(SAMSUNG_SERVICE)) return SAMSUNG;
+        if (s.equals(LEFUN_SERVICE)) return LEFUN;
+        if (s.equals(VIATOM_SERVICE)) return VIATOM;
+        return null;
     }
 
     /**
-     * The family of a device: Withings first (so a watch is found as before), then the services, then the maker name,
-     * then the name. {@code services} and {@code maker} may be null.
+     * The family of a device. A service is the strongest sign, so the services come first (the Withings service before
+     * the others), then the maker name, then the names: Withings' words, Oura, then the other families (review of #430:
+     * a "Steel R02" with the QRing service is a QRing ring, not a watch). {@code services} and {@code maker} may be null.
      */
     public static RingFamily of(String name, List<String> services, String maker) {
-        if (withings(name, services)) return WITHINGS;
-        for (String raw : nz(services)) {
-            if (raw == null) continue;
-            String s = raw.toLowerCase(Locale.ROOT);
-            if (s.equals(QRING_SERVICE) || s.equals(QRING_BIG)) return QRING;
-            if (s.equals(RINGCONN_SERVICE)) return RINGCONN;
-            for (String p : ULTRAHUMAN_PREFIX) if (s.startsWith(p)) return ULTRAHUMAN;
-            if (s.equals(SAMSUNG_SERVICE)) return SAMSUNG;
-            if (s.equals(LEFUN_SERVICE)) return LEFUN;
-            if (s.equals(VIATOM_SERVICE)) return VIATOM;
+        for (String s : nz(services)) if (withingsService(s)) return WITHINGS;
+        for (String s : nz(services)) {
+            RingFamily f = byService(s);
+            if (f != null) return f;
         }
         if (maker != null && maker.toLowerCase(Locale.ROOT).contains(RINGCONN_MAKER)) return RINGCONN;
+        if (withingsName(name)) return WITHINGS;
+        if (ouraName(name)) return OURA;
         String n = name == null ? "" : name.trim();
         String low = n.toLowerCase(Locale.ROOT);
         if (QRING_NAME.matcher(n).matches()) return QRING;
@@ -109,10 +125,13 @@ public enum RingFamily {
         return UNKNOWN;
     }
 
-    /** True for every family except Withings and unknown: the rings Open Ring cannot read yet. */
+    /** True for every family except Withings, Oura and unknown: the rings Open Ring cannot read yet. */
     public boolean otherRing() {
-        return this != WITHINGS && this != UNKNOWN;
+        return this != WITHINGS && this != OURA && this != UNKNOWN;
     }
+
+    /** The Oura ring's line: Open Ring reads it already. */
+    public static final String OURA_LINE = "This is an Oura ring. Open Ring already reads it, there is nothing to send.";
 
     /**
      * The one line the Device check shows for a device of this family once it was checked: what it looks like and what
@@ -122,6 +141,8 @@ public enum RingFamily {
         switch (this) {
             case WITHINGS:
                 return null;
+            case OURA:
+                return OURA_LINE;
             case UNKNOWN:
                 return "Open Ring does not know this device. If it is a ring or watch, copy the report and add it to issue " + ISSUE
                         + " on GitHub, so we can learn how it talks.";

@@ -1135,14 +1135,21 @@ nothing is stored, no permission is added, and no ring is written to.
   `WatchCheck.listens`) is listened to exactly as before. Any other device is only looked at: its layout, Device
   Information and battery level are read, no notification is switched on, and its report holds names, services and
   characteristics only, so it can never hold a health value. The report names the family ("Looks like: ...") and the
-  screen shows one line per family (`RingFamily.line`), asking to add the report to issue #418.
+  screen shows one line per family (`RingFamily.line`), asking to add the report to issue #418. A layout with a known
+  ring family's service is never listened to, even when the name has a Withings word (review of #430).
+* **The person's own Oura ring** (review of #430) is a family too (its service `Protocol.SERVICE`, Oura's company id in the
+  maker data, or "oura" in the name: the rule `RingScanner.isOura` uses, `RingFamily.ouraName`). The check never connects
+  to it: tapping it shows a report from the scan alone and "This is an Oura ring. Open Ring already reads it, there is
+  nothing to send." So the ring lock is not taken and a sync is never kept waiting. (For any other device the session takes
+  the ring lock only when it is free, `RingGate.takeIfFree`; during a sync the check says the ring is busy.)
 * **Families** (`core/rings/RingFamily`; it only names a device, it never picks or pairs one, since a QRing ring has no
-  lock and a neighbour's ring looks the same). Checked in this order: Withings first (the words withings, steel, activit,
-  scanwatch or hwa0 anywhere in the name, or a service with `5749-5448`, "WITH" in ASCII; one rule for the check and
-  Watch setup since #418), then the services, then the maker name, then the name:
+  lock and a neighbour's ring looks the same). Checked in this order: the Withings service (`5749-5448`, "WITH" in
+  ASCII), the other families' services, the maker name, then the names: Withings' words (withings, steel, activit,
+  scanwatch or hwa0 anywhere; one rule for the check and Watch setup since #418), Oura, then the others below:
 
   | Family | Services | Maker or name |
   | --- | --- | --- |
+  | Oura (read already, never connected by the check) | `98ed0001-a541-11e4-b6a0-0002a5d5c51b` | company id `0x02b2`, or "oura" in the name |
   | QRing (Colmi, Yawell, KSIX and rebrands) | `6e40fff0-b5a3-f393-e0a9-e50e24dcca9e`, `de5bf728-d711-4e47-af26-65e3012a5dc7` | name `R`, two digits, `_` (Colmi: `R02_341C`) |
   | RingConn | `8327ad99-2d87-4a22-a8ce-6dd7971c0437` | maker `JZ_Tech`, or "ringconn" in the name |
   | Ultrahuman | starts with `86f65000-` or `86f61000-` (only these digits are published) | name starts with `UH_`, or "ultrahuman" |

@@ -336,6 +336,8 @@ public final class WatchActivity extends Activity {
             if (name != null) f.name = name;
             List<ParcelUuid> uuids = rec == null ? null : rec.getServiceUuids();
             if (uuids != null) for (ParcelUuid u : uuids) f.service(u.getUuid().toString());
+            // Oura's maker data, as RingScanner.isOura reads it: the person's own ring is named, never connected to
+            if (rec != null && rec.getManufacturerSpecificData(app.openring.core.Protocol.COMPANY_ID) != null) f.ouraMaker = true;
         }
     }
 
@@ -395,6 +397,7 @@ public final class WatchActivity extends Activity {
             for (WatchCheck.Found f : found.values()) {
                 WatchCheck.Found c = new WatchCheck.Found(f.address, f.name, f.rssi);
                 for (String s : f.services) c.service(s);
+                c.ouraMaker = f.ouraMaker;
                 all.add(c);
             }
         }
@@ -466,6 +469,12 @@ public final class WatchActivity extends Activity {
         if (session != null) return;
         checkedAddress = f.address;
         checkedName = WatchCheck.title(f);
+        if (WatchCheck.family(f) == RingFamily.OURA) {
+            // the person's own Oura ring (review of #430): named from the scan alone, never connected to, so the ring
+            // lock is not taken and a sync is never kept waiting or disturbed
+            showReport(report = WatchCheck.ouraReport(f));
+            return;
+        }
         if (demo) {
             showReport(report = WatchCheck.demoReport(f));
             return;
@@ -547,7 +556,7 @@ public final class WatchActivity extends Activity {
         reportCard.setVisibility(View.VISIBLE);
         showReportCard();
         reportStatus.setText(WatchCheck.outcome(r));
-        if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.PAIRED_NOW);
+        if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.pairedNow(r));
         reportText.setText(WatchCheck.text(r, false));
         reportNote.setText(WatchCheck.reportNote(r));
         sendBack.setText(WatchCheck.sendBack(r));

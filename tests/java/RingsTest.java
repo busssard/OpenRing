@@ -91,7 +91,43 @@ public class RingsTest {
             List<String> services = (List<String>) r[1];
             eq("family of " + r[0] + " " + services + " " + r[2], RingFamily.of((String) r[0], services, (String) r[2]), r[3]);
         }
-        eq("Withings first: a Steel name with a QRing service stays a watch", RingFamily.of("Steel HR", s(RingFamily.QRING_SERVICE), null), RingFamily.WITHINGS);
+        // review of #430: another family's service beats a Withings word in the name
+        eq("a Steel R02 with the QRing service is a QRing ring", RingFamily.of("Steel R02", s(RingFamily.QRING_SERVICE), null), RingFamily.QRING);
+        WatchCheck.Found steelRing = new WatchCheck.Found("s", "Steel R02", -60).service(RingFamily.QRING_SERVICE);
+        check("a Steel R02 with the QRing service is not a watch in the check", !WatchCheck.likelyWatch(steelRing) && WatchCheck.family(steelRing) == RingFamily.QRING);
+        WatchCheck.Report steelLayout = new WatchCheck.Report();
+        steelLayout.add(RingFamily.QRING_SERVICE);
+        check("a Steel R02 is never listened to, whatever the scan said", !WatchCheck.listens(WatchCheck.family(steelRing), steelLayout)
+                && !WatchCheck.listens(RingFamily.WITHINGS, steelLayout));
+        steelLayout.add(WatchCheck.WITHINGS_SERVICE);
+        check("a layout with the Withings service and a ring's service is not listened to", !WatchCheck.listens(RingFamily.WITHINGS, steelLayout));
+        eq("the Withings service still beats the other services", RingFamily.of("R02_0000", s(RingFamily.QRING_SERVICE, WatchCheck.WITHINGS_SERVICE), null), RingFamily.WITHINGS);
+        eq("the maker beats a Withings word", RingFamily.of("Steel", null, "JZ_Tech"), RingFamily.RINGCONN);
+        eq("a Withings word without other signs is still a watch", RingFamily.of("Steel HR", s("0000180a" + BASE), null), RingFamily.WITHINGS);
+        // the person's own Oura ring (review of #430)
+        String oura = app.openring.core.Protocol.SERVICE.toString();
+        eq("Oura: its service", RingFamily.of(null, s(oura.toUpperCase(Locale.ROOT)), null), RingFamily.OURA);
+        eq("Oura: its name, any case", RingFamily.of("Oura Ring 4", null, null), RingFamily.OURA);
+        eq("Oura: the name rule", RingFamily.ouraName("my OURA") + " " + RingFamily.ouraName(null) + " " + RingFamily.ouraName("Ring"), "true false false");
+        eq("Oura: a QRing name with the Oura service is Oura", RingFamily.of("R02_0000", s(oura), null), RingFamily.OURA);
+        WatchCheck.Found own = new WatchCheck.Found("o", null, -50);
+        own.ouraMaker = true;
+        eq("Oura: its maker data alone (company id, as RingScanner.isOura)", WatchCheck.family(own), RingFamily.OURA);
+        check("Oura: the maker data does not change the scan's services", own.services.isEmpty());
+        check("Oura: listed, a known family, read already", WatchCheck.shown(Arrays.asList(own)).size() == 1 && !RingFamily.OURA.otherRing()
+                && !WatchCheck.likelyWatch(own));
+        eq("Oura: its own line", RingFamily.OURA.line(), "This is an Oura ring. Open Ring already reads it, there is nothing to send.");
+        WatchCheck.Report or = WatchCheck.ouraReport(new WatchCheck.Found("o", "Oura Ring 4", -50));
+        check("Oura: its report comes from the scan, never connected, never listened", !or.connected && !or.listen && or.family == RingFamily.OURA
+                && or.services.isEmpty() && or.connectMs < 0);
+        eq("Oura: the screen says it was left alone", WatchCheck.outcome(or), WatchCheck.OURA_LEFT);
+        eq("Oura: the line under the report", WatchCheck.sendBack(or), RingFamily.OURA_LINE);
+        check("Oura: the report text names it", WatchCheck.text(or, false).startsWith("Open Ring device check\nName: Oura Ring 4\nLooks like: Oura\n")
+                && WatchCheck.text(or, false).contains("Connected: no"));
+        WatchCheck.Report ol = new WatchCheck.Report();
+        ol.add(oura);
+        check("Oura: never listened to, even if the scan said Withings", !WatchCheck.listens(RingFamily.WITHINGS, ol) && !WatchCheck.listens(RingFamily.OURA, ol));
+        check("Oura: no driver writes to it through Forbidden", !Forbidden.allowed(RingFamily.OURA, new byte[] {0x01}));
         eq("services before the name: a QRing name with the RingConn service is RingConn",
                 RingFamily.of("R02_0000", s(RingFamily.RINGCONN_SERVICE), null), RingFamily.RINGCONN);
         check("other rings are every family but Withings and unknown", RingFamily.QRING.otherRing() && RingFamily.VIATOM.otherRing()
@@ -154,13 +190,13 @@ public class RingsTest {
             if (f == RingFamily.WITHINGS) continue;
             String l = f.line();
             check("one line for " + f, l != null && seen.add(l));
-            check("the line names the issue: " + f, l.contains("issue 418 on GitHub"));
+            if (f != RingFamily.OURA) check("the line names the issue: " + f, l.contains("issue 418 on GitHub"));
             check("no dash in the line of " + f, noDash(l) && noDash(f.title));
             if (f.otherRing()) check("the line says what it looks like and that it is not read: " + f, l.startsWith("This looks like " + f.what + ". Open Ring cannot read it"));
         }
         check("Zepp: says why (the key from Zepp's servers, no internet)", RingFamily.ZEPP.line().contains("Zepp's servers") && RingFamily.ZEPP.line().contains("never goes online"));
         for (String x : new String[] {WatchCheck.TITLE, WatchCheck.ROW, WatchCheck.INTRO, WatchCheck.SIGNAL, WatchCheck.DEVICE_NOTE, WatchCheck.NO_ANSWER_DEVICE,
-            WatchCheck.NOTHING_FOUND, WatchCheck.RUNNING, WatchCheck.DEMO}) {
+            WatchCheck.NOTHING_FOUND, WatchCheck.RUNNING, WatchCheck.DEMO, WatchCheck.OURA_LEFT, WatchCheck.PAIRED_NOW_DEVICE, RingFamily.OURA_LINE}) {
             check("no dash: " + x.substring(0, Math.min(30, x.length())), noDash(x));
         }
         eq("the screen's title", WatchCheck.TITLE, "Device check");
@@ -171,11 +207,14 @@ public class RingsTest {
 
     static void checkScreen() {
         // only a Withings watch is listened to
+        WatchCheck.Report ringLayout = new WatchCheck.Report();
+        ringLayout.add(RingFamily.QRING_SERVICE);
+        check("listen: a ring is never listened to", !WatchCheck.listens(RingFamily.QRING, ringLayout) && !WatchCheck.listens(RingFamily.UNKNOWN, ringLayout));
         WatchCheck.Report bare = new WatchCheck.Report();
-        bare.add(RingFamily.QRING_SERVICE);
-        check("listen: a ring is never listened to", !WatchCheck.listens(RingFamily.QRING, bare));
+        bare.add("0000180a" + BASE);
+        bare.add("12345678-1234-1234-1234-123456789abc");
         check("listen: an unknown device is not listened to", !WatchCheck.listens(RingFamily.UNKNOWN, bare) && !WatchCheck.listens(null, bare));
-        check("listen: a Withings watch from the scan is", WatchCheck.listens(RingFamily.WITHINGS, bare));
+        check("listen: a Withings watch from the scan is", WatchCheck.listens(RingFamily.WITHINGS, bare) && WatchCheck.listens(RingFamily.WITHINGS, new WatchCheck.Report()));
         bare.add(WatchCheck.WITHINGS_SERVICE);
         check("listen: the Withings service in the layout is enough", WatchCheck.listens(RingFamily.UNKNOWN, bare));
 
@@ -202,6 +241,8 @@ public class RingsTest {
         eq("report: the note says no health values", WatchCheck.reportNote(r), WatchCheck.DEVICE_NOTE);
         eq("report: the family's line under it", WatchCheck.sendBack(r), RingFamily.QRING.line());
         eq("report: the outcome names the device", WatchCheck.outcome(r), "Done. The device was let go again.");
+        eq("report: a bond left on a device is named as a device", WatchCheck.pairedNow(r), WatchCheck.PAIRED_NOW_DEVICE);
+        check("report: the device's bond sentence says how to undo it", WatchCheck.PAIRED_NOW_DEVICE.contains("tap the device and choose Forget"));
         r.connected = false;
         eq("report: no answer from a device", WatchCheck.outcome(r), WatchCheck.NO_ANSWER_DEVICE);
         // the maker read from Device Information names RingConn
@@ -217,7 +258,7 @@ public class RingsTest {
         check("watch report: as before", WatchCheck.text(w, false).startsWith("Open Ring watch check\nName: Steel HR (example)\n")
                 && !WatchCheck.text(w, false).contains("Looks like:") && WatchCheck.text(w, true).startsWith("Open Ring watch check (with message bytes, private)"));
         check("watch report: its notes as before", WatchCheck.reportNote(w).equals(WatchCheck.REPORT_NOTE) && WatchCheck.sendBack(w).equals(WatchCheck.SEND_BACK)
-                && WatchCheck.outcome(w).equals("Done. The watch was let go again."));
+                && WatchCheck.outcome(w).equals("Done. The watch was let go again.") && WatchCheck.pairedNow(w).equals(WatchCheck.PAIRED_NOW));
     }
 
     static void demo() {

@@ -61,6 +61,14 @@ public final class WatchCheck {
     /** Said under the report when the phone was not paired with the watch before the check and is now (review of #270). */
     public static final String PAIRED_NOW = "The phone is now paired with this watch. To undo it, open Android's Bluetooth settings, tap the watch and choose Forget.";
 
+    /** {@link #PAIRED_NOW} for a device that is not a Withings watch (review of #430). */
+    public static final String PAIRED_NOW_DEVICE = "The phone is now paired with this device. To undo it, open Android's Bluetooth settings, tap the device and choose Forget.";
+
+    /** The sentence for a bond the check left: the watch's or the device's. */
+    public static String pairedNow(Report r) {
+        return other(r) ? PAIRED_NOW_DEVICE : PAIRED_NOW;
+    }
+
     /** True when the check left a bond that was not there before, so the screen tells how to remove it. */
     public static boolean pairedDuring(Report r) {
         return r != null && r.bondedAfter && !r.bondedBefore;
@@ -91,6 +99,7 @@ public final class WatchCheck {
     /** The line above the report on the screen: plain words only, the details stay in the report. */
     public static String outcome(Report r) {
         boolean watch = !other(r);
+        if (r.family == RingFamily.OURA && !r.connected && r.problem == null) return OURA_LEFT;
         if (!r.connected) return r.problem != null ? r.problem : watch ? NO_ANSWER : NO_ANSWER_DEVICE;
         if (r.problem != null) return "The check ended early. " + r.problem + " What it found so far is below.";
         return watch ? "Done. The watch was let go again." : "Done. The device was let go again.";
@@ -124,14 +133,40 @@ public final class WatchCheck {
      * report can never hold a health value and nothing is written to it.
      */
     public static boolean listens(RingFamily scanFamily, Report r) {
-        if (scanFamily == RingFamily.WITHINGS) return true;
-        for (Service s : r.services) if (withings(s.uuid)) return true;
-        return false;
+        boolean withings = scanFamily == RingFamily.WITHINGS;
+        for (Service s : r.services) {
+            RingFamily f = RingFamily.byService(s.uuid);
+            // a service of another family (a ring with a Withings word in its name, review of #430): never listened to
+            if (f != null && f != RingFamily.WITHINGS) return false;
+            if (f == RingFamily.WITHINGS) withings = true;
+        }
+        return withings;
     }
 
-    /** The family of a scanned device, from its name and advertised services. */
+    /**
+     * The family of a scanned device, from its name, advertised services and maker data: Oura's company id
+     * ({@link Protocol#COMPANY_ID}) counts as the Oura service, as {@code ble/RingScanner.isOura} counts it.
+     */
     public static RingFamily family(Found f) {
-        return RingFamily.of(f.name, f.services, null);
+        List<String> s = f.services;
+        if (f.ouraMaker) {
+            s = new ArrayList<String>(s);
+            s.add(RingFamily.OURA_SERVICE);
+        }
+        return RingFamily.of(f.name, s, null);
+    }
+
+    /** Said instead of an outcome for the Oura ring: the check does not connect to it (review of #430). */
+    public static final String OURA_LEFT = "Not connected: Open Ring already reads this ring, so the check leaves it alone and a sync is never disturbed.";
+
+    /** The report of the Oura ring, from the scan alone: the check never connects to it, so a sync is never disturbed. */
+    public static Report ouraReport(Found f) {
+        Report r = new Report();
+        r.name = title(f);
+        r.rssi = f.rssi;
+        r.listen = false;
+        r.family = RingFamily.OURA;
+        return r;
     }
 
     /**
@@ -224,6 +259,8 @@ public final class WatchCheck {
         public String name;
         public int rssi;
         public final List<String> services = new ArrayList<String>();
+        /** True when the advertisement carries maker data under Oura's company id ({@link Protocol#COMPANY_ID}). */
+        public boolean ouraMaker;
 
         public Found(String address, String name, int rssi) {
             this.address = address;
@@ -297,7 +334,7 @@ public final class WatchCheck {
 
     /** True when the name or the advertised services suggest a Withings watch: the Withings family of {@link RingFamily}. */
     public static boolean likelyWatch(Found f) {
-        return RingFamily.withings(f.name, f.services);
+        return family(f) == RingFamily.WITHINGS;
     }
 
     /** "Signal -58 dBm" and the advertised services, the second line of a row in the scan list. */
