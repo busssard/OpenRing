@@ -1004,4 +1004,30 @@ public final class Explain {
             WATCH_RHR, WATCH_DAY_HR, LIGHT_REM, SLEEP_NEEDS_RING, ACTIVITY_NEEDS_RING, BODY_NEEDS_RING, WATCH_ANALYSIS, vo2maxWatch(Double.NaN, true),
             vo2maxWatch(Double.NaN, false), vo2maxWatch(5, true), vo2maxWatch(45, true), SCREEN_WATCH_NIGHTS, SCREEN_WATCH_SOME};
     }
+
+    // ---- Trends (issue #374)
+
+    /** The card at the bottom of every tab but Today, and the line inside Sleep's Further analysis. */
+    public static final String TRENDS_CARD_TITLE = "Your months";
+    public static final String TRENDS_CARD = "Sleep, readiness and more month by month, over all your history.";
+    public static final String TRENDS_LINK = "Month by month in Trends";
+
+    /** How it works on the Trends page. */
+    public static final String TRENDS = "Weeks run Monday to Sunday, months and years are calendar ones. A night counts in the period "
+            + "of the morning it ends, as on Sleep. The middle half leaves out the quarter of days with the lowest and the quarter with "
+            + "the highest values, so one odd night does not move the band. Steps and active calories count only days the device was "
+            + "worn for an hour or more, screen time only days the phone recorded completely; days without are left out, not zero. "
+            + "Today's steps, calories and screen time count once the day is over. Nothing here changes your stored numbers.";
+
+    public static final String TRENDS_COMPARE_CAPTION = "This month against the last";
+    /** Under the comparison: what the range in brackets means. */
+    public static final String TRENDS_COMPARE = "This month so far (without today) against the whole last month. The range in brackets "
+            + "is where the real difference most likely lies (9 times in 10), worked out by drawing your weeks again many times at random. "
+            + "When it holds no change, the months are about the same. Each month needs three whole weeks.";
+
+    /** Demo mode only: the made up year. */
+    public static final String TRENDS_DEMO = "Demo mode: the year before the demo's five weeks is made up from the demo's own nights and "
+            + "days, with a change in it: about 25 minutes more sleep from four months ago, more steps in summer and one week of illness.";
+
+    public static final String TRENDS_FAILED = "Your history could not be read this time. Your data is as before. Diagnostics, Log tab, shows why.";
 }

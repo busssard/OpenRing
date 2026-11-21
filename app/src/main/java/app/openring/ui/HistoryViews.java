@@ -52,12 +52,7 @@ final class HistoryViews {
 
     /** One value per day at noon, for the 30 day line charts ({@code LineChart.daily}), as the ring's {@code Pages.daysSeries}. */
     static TS series(DayData d, double[] v) {
-        TS ts = new TS();
-        for (int i = 0; i < v.length; i++) {
-            if (Double.isNaN(v[i])) continue;
-            ts.add(d.date.minusDays(v.length - 1 - i).atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond() + 43200, v[i]);
-        }
-        return ts;
+        return app.openring.data.DaySeries.of(d.date, v);
     }
 
     /** A 7 day bar chart card as the ring's ("Total sleep, last 7 days"), readable by touch, with a line under it. */

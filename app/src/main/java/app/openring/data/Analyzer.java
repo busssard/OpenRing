@@ -480,13 +480,16 @@ public final class Analyzer {
             int waited = db.beginLongRun();
             if (waited > 0) log.log("a long analysis: waited for a ring task to store its data");
         }
+        // the demo file keeps its made up year before the five weeks (issue #374): it has no raw events to analyse. Only the demo
+        // file, whatever a setting or a stray kv row says (code review of #413): the person's own history is always rebuilt whole
+        final String keepUntil = all && Db.DEMO.equals(db.fileName) ? db.kv(Demo.YEAR_UNTIL, null) : null;
         try {
             // one transaction for all results (issue #230): the old nights and days stay, also for the screens reading
             // meanwhile, until the new ones are all stored; any stop or failure rolls back to them
             db.inTransaction(new Runnable() {
                 @Override
                 public void run() {
-                    if (all) db.clearResults();
+                    if (all) db.clearResults(keepUntil);
                     // the dating these results are worked out from: stored with them, so a run that did not finish
                     // still sees the change next time
                     db.put("dated_count", t.datedAfter);

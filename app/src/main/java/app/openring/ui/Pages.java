@@ -820,7 +820,7 @@ public final class Pages {
         head.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout ht = Ui.vbox(c);
         ht.addView(Ui.h2(c, "Further analysis"));
-        ht.addView(Ui.text(c, "Your average night and typical values over a week, month, year or all time", 12, Ui.TEXT_3, Ui.REGULAR));
+        ht.addView(Ui.text(c, "Your average night and typical values over the last week, 30 days, year or all time", 12, Ui.TEXT_3, Ui.REGULAR));
         head.addView(ht, Ui.weight(1));
         final TextView arrow = Ui.text(c, analysisOpen ? "\u25B4" : "\u25BE", 20, Ui.TEXT_2, Ui.REGULAR);
         head.addView(arrow);
@@ -837,6 +837,8 @@ public final class Pages {
             }
         });
         fillAnalysis(c, d, body, true);
+        // calendar months over the whole history are Trends' (issue #374); the chips here stay rolling windows
+        card.addView(TrendsCard.link(c, d));
         return card;
     }
 
@@ -870,7 +872,8 @@ public final class Pages {
         if (!analysisOpen) return;
         body.addView(Ui.gap(c, 12));
         LinearLayout chips = Ui.hbox(c);
-        final String[] names = {"Week", "Month", "Year", "All time"};
+        // "30 days", not "Month": Trends' months are calendar months (issue #374), one word never means two things
+        final String[] names = {"Week", "30 days", "Year", "All time"};
         final TextView[] chip = new TextView[names.length];
         final LinearLayout result = Ui.vbox(c);
         for (int i = 0; i < names.length; i++) {
@@ -1922,14 +1925,7 @@ public final class Pages {
     }
 
     static TS daysSeries(DayData d, String field, int n) {
-        TS ts = new TS();
-        double[] v = d.series(field, n);
-        for (int i = 0; i < n; i++) {
-            if (Double.isNaN(v[i])) continue;
-            double t = d.date.minusDays(n - 1 - i).atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond() + 43200;
-            ts.add(t, v[i]);
-        }
-        return ts;
+        return app.openring.data.DaySeries.of(d.date, d.series(field, n));
     }
 
     static View hero(Context c, double score, String label, int color, String sub) {
