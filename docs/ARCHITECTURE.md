@@ -388,8 +388,8 @@ The retention (`Sounds.retain`: 7 days by default, 30, or until deleted) deletes
 Restore: `Db.replaceWith` reads the three tables before the swap and `Sounds.merge` writes them into the restored file after the life
 factors (the phone wins on the same start), then gives `gone` 1 to every mark whose file is not in the real folder or belongs to
 another of the phone's marks, all in one transaction; any failure puts the old file back. Delete all is one method,
-`data/DeleteAll.run` (the history in use, the copies before updates, the demo's clip folder, and the real one unless demo mode is
-on, since its history is not the one deleted). The Data check has one line of counts only: "Sleep sounds: N nights, M clips (K
+`data/DeleteAll.run` (the history in use, the copies before updates, and the clip folder of the history deleted: the demo's in
+demo mode, the real one otherwise; the other history and its clips stay, so its marks never lose their files). The Data check has one line of counts only: "Sleep sounds: N nights, M clips (K
 with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav files. Nothing calls the sweep or the retention yet;
 1b runs them with the service.
 

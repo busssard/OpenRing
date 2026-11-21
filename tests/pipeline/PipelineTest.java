@@ -15613,8 +15613,10 @@ public class PipelineTest {
 
     /**
      * Issue #380: the three tables are kept when another ring is paired (rows and files), emptied by Delete all with every clip
-     * file of both folders and the copies before updates (one method, {@code DeleteAll.run}); Delete all failing part way keeps
-     * rows and files; in demo mode it empties the demo file and the demo's folder and never touches the real ones.
+     * file of the history's own folder and the copies before updates (one method, {@code DeleteAll.run}); Delete all failing
+     * part way keeps rows and files; on the real history it leaves the demo file's marks and the demo's folder alone (code
+     * review of ee03389 on #420: before, it emptied the demo folder and left demo marks without their files); in demo mode it
+     * empties the demo file and the demo's folder and never touches the real ones.
      */
     static void soundResets380() throws Exception {
         List<String> keep = Arrays.asList((String[]) field252(Db.class, "KEPT_TABLES"));
@@ -15646,13 +15648,34 @@ public class PipelineTest {
         db.getWritableDatabase().execSQL("DROP TRIGGER stop_sound");
         check("#380 Delete all failing part way: the sounds, their files and the demo's as they were", got != null && soundRows380(db).equals(rows)
                 && files380(real).equals(files) && files380(demo).equals(Arrays.asList("tone.wav")), got);
-        // Delete all: no row, no clip file in either folder, no copy before an update
+        // a demo mark with its file, to show Delete all on the real history leaves them alone
+        app.openring.data.Prefs.of(c).setDemo(true);
+        String demoRows;
+        try {
+            Db d = Db.get(c);
+            app.openring.data.Sounds.addClip(d, N380, N380 + 5, app.openring.core.analysis.SoundDetector.SNORE, -30.0, "tone.wav");
+            demoRows = soundRows380(d);
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        db = Db.get(c);
+        // Delete all: no row, no clip file of the real history, no copy before an update
         File copies = new File(c.getFilesDir(), "before-update");
         copies.mkdirs();
         java.nio.file.Files.write(new File(copies, "openring-1.42.db").toPath(), new byte[10]);
         app.openring.data.DeleteAll.run(c);
-        check("#380 Delete all: every table empty, no clip file in either folder, no copy before an update", notEmpty272(db).isEmpty() && !real.exists()
-                && !demo.exists() && files380(copies).isEmpty(), notEmpty272(db) + " " + files380(real) + " " + files380(demo));
+        check("#380 Delete all: every table empty, no clip file in the real folder, no copy before an update", Db.REAL.equals(db.fileName) && notEmpty272(db).isEmpty()
+                && !real.exists() && files380(copies).isEmpty(), notEmpty272(db) + " " + files380(real));
+        check("#380 Delete all on the real history: the demo's folder keeps its file", files380(demo).equals(Arrays.asList("tone.wav")), files380(demo));
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            check("#380 Delete all on the real history: the demo file's mark is as it was and still names a file that is there", demoRows.contains("tone.wav")
+                    && soundRows380(d).equals(demoRows) && new File(app.openring.data.Sounds.folder(c, d), "tone.wav").isFile(), soundRows380(d));
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        db = Db.get(c);
         // demo mode: Delete all empties the demo file and its folder; the real file and folder stay
         someSounds380(c, db);
         rows = soundRows380(db);
