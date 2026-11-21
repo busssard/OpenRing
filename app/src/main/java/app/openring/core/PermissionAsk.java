@@ -18,6 +18,15 @@ public final class PermissionAsk {
     public static final String SETTINGS_BUTTON = "Open app settings";
 
     /**
+     * The permission a Bluetooth scan needs, as Find my ring and the Watch check name it ("To hear the ring, this
+     * app needs ..."): Android 12 and newer ask for Nearby devices, older ones for Location.
+     */
+    public static String neededText(int sdk) {
+        return sdk >= 31 ? "the Nearby devices permission"
+                : "the Location permission (Android 11 and older ask for it to find Bluetooth devices; Open Ring has no internet and keeps no place)";
+    }
+
+    /**
      * What Setup and Sync say once Android no longer asks (issue #186). Android 12 and newer call the Bluetooth
      * permission Nearby devices, older ones ask for Location to find Bluetooth devices.
      */
