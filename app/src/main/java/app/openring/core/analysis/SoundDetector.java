@@ -18,8 +18,9 @@ import java.util.List;
  * <li>Loudness per frame in dB of full scale (the frame's RMS against 32768; digital silence counts as {@link #MIN_DB}).</li>
  * <li>The noise floor is the 20th percentile of the frames of the last 60 s (0.5 dB steps); frames of digital silence are
  * left out of it, so a microphone taken by another app cannot pull it down.</li>
- * <li>A sound starts when {@link #START_FRAMES} frames in a row lie more than {@link #ABOVE_DB} above the floor (at its first
- * frame), and ends after {@link #END_S} below it (at the end of its last loud frame).</li>
+ * <li>A sound starts when {@link #START_FRAMES} frames in a row lie more than the start threshold above the floor (at its
+ * first frame), and ends after {@link #END_S} below it (at the end of its last loud frame). The threshold is {@link #ABOVE_DB}
+ * unless the caller gives another (phase 1b sets it from the microphone test).</li>
  * <li>Cough like ({@link #COUGH}): shorter than {@link #COUGH_MAX_S}, its loudest frame among the first {@link #SHARP_FRAMES},
  * and more than {@link #COUGH_ZC} zero crossings per frame on average (noise like; speech and snoring have 10 to 40).</li>
  * <li>Snoring ({@link #SNORE}): {@link #SNORE_MIN} or more sounds, each starting {@link #SNORE_GAP_MIN} to
@@ -39,7 +40,15 @@ import java.util.List;
  * {@link #CLIP_MAX_S} (from its start; never before the night's start). A clip is ready once its window has passed
  * ({@link #takeReady}), so the caller needs to keep only the last {@link #CLIP_MAX_S} s of audio (plus one piece) to save it.
  * At most {@link #MAX_CLIPS} clips are kept: when full, a louder one replaces the quietest. A stretch keeps only the clip of
- * its loudest snore. A clip given up after it was ready comes back from {@link #takeDropped}, so its audio can be deleted.</li>
+ * its loudest snore. The clips of the first two sounds of a row of possible snores push out nobody until the row is decided
+ * (so for that short time there can be up to 2 more). A clip given up after it was ready comes back from
+ * {@link #takeDropped}, so its audio can be deleted.</li>
+ * <li>Which mark a clip belongs to: the mark whose {@link Mark#clip} it is. {@link Clip#sound} is the start of the clip's own
+ * sound: for a single sound that is its mark's start, for a stretch the start of its loudest snore, somewhere inside the
+ * stretch's start and stop. Time alone does not find the mark: a cough between two snores is its own mark inside a
+ * stretch's start and stop. A clip can be ready before its mark is decided (a snore's, before the third snore): save its
+ * audio under {@link Clip#sound}, and store the mark's row when {@link #takeMarks} hands out the mark, with
+ * {@link Mark#clip}.</li>
  * </ul>
  */
 public final class SoundDetector {
@@ -52,7 +61,7 @@ public final class SoundDetector {
     public static final double FLOOR_PERCENTILE = 0.2, FLOOR_S = 60;
     /** Frames of history the floor needs before anything counts as a sound (0.5 s). */
     public static final int FLOOR_MIN_FRAMES = 16;
-    /** A frame is loud this many dB above the floor; a sound starts after this many loud frames in a row. */
+    /** A frame is loud this many dB above the floor (the default start threshold); a sound starts after this many loud frames in a row. */
     public static final double ABOVE_DB = 10;
     public static final int START_FRAMES = 3;
     /** A sound ends after this long below the threshold. */
@@ -82,7 +91,10 @@ public final class SoundDetector {
     public static final class Clip {
         /** The window (unix seconds) and the loudest frame of its sound inside it (dB of full scale). */
         public final double start, stop, peak;
-        /** The start of the sound it was made for. */
+        /**
+         * The start of the sound it was made for: its mark's start for a single sound, the start of the loudest snore for a
+         * stretch (between the stretch's start and stop, not always its start). Find the mark through {@link Mark#clip}.
+         */
         public final double sound;
 
         Clip(double start, double stop, double peak, double sound) {
@@ -134,7 +146,10 @@ public final class SoundDetector {
             return (stop - start) / 60.0;
         }
 
-        /** The clip kept for this mark now, or null (given up for louder ones, or not ready yet). */
+        /**
+         * The clip kept for this mark now, or null (given up for louder ones, or not ready yet). This is the link from a mark
+         * to its clip; {@link Clip#sound} lies between this mark's start and stop.
+         */
         public Clip clip() {
             Sound s = single != null ? single : run.best;
             return s == null || s.clip == null || !s.kept ? null : s.clip;
@@ -182,6 +197,8 @@ public final class SoundDetector {
     }
 
     private final double origin;
+    /** The start threshold: dB above the floor. */
+    private final double above;
     private final short[] frame = new short[FRAME];
     private int filled;
     private long frames;
@@ -209,7 +226,22 @@ public final class SoundDetector {
 
     /** A detector for a night that starts at {@code start} (unix seconds), the time of the first sample. */
     public SoundDetector(double start) {
+        this(start, ABOVE_DB);
+    }
+
+    /**
+     * The same with another start threshold: a sound starts {@code aboveDb} above the floor ({@link #ABOVE_DB} by default;
+     * phase 1b sets it from the microphone test). It must be a number above 0.
+     */
+    public SoundDetector(double start, double aboveDb) {
+        if (!(aboveDb > 0) || Double.isInfinite(aboveDb)) throw new IllegalArgumentException("threshold " + aboveDb);
         origin = start;
+        above = aboveDb;
+    }
+
+    /** The start threshold in dB above the floor. */
+    public double threshold() {
+        return above;
     }
 
     /** Feeds {@code s} (all of it). */
@@ -274,7 +306,7 @@ public final class SoundDetector {
         long index = frames;
         double start = time(index * FRAME), end = time((index + 1) * FRAME);
         frames++;
-        boolean loud = !zero && windowCount >= FLOOR_MIN_FRAMES && db > floor + ABOVE_DB;
+        boolean loud = !zero && windowCount >= FLOOR_MIN_FRAMES && db > floor + above;
         if (current == null) {
             if (loud) {
                 if (loudRow == 0) {
@@ -358,8 +390,9 @@ public final class SoundDetector {
         run.members.add(s);
         s.run = run;
         if (run.members.size() == SNORE_MIN) {
-            // a stretch now: only the clip of its loudest snore stays
+            // a stretch now: only the clip of its loudest snore stays, and it counts against the limit from now on
             for (Sound m : run.members) if (m.clip != null && m.kept) stretchClip(run, m);
+            trim();
         }
     }
 
@@ -383,6 +416,8 @@ public final class SoundDetector {
                 s.run = null;
                 addMark(new Mark(s));
             }
+            // their clips (kept while the row was undecided) count against the limit now
+            trim();
         }
     }
 
@@ -409,10 +444,11 @@ public final class SoundDetector {
             return;
         }
         if (louder(s, r.best)) {
+            // the old clip goes first, so at the limit the new one takes its place and no other clip is given up
             Sound old = r.best;
             r.best = s;
-            if (!s.kept) keep(s);
             drop(old);
+            if (!s.kept) keep(s);
         } else {
             drop(s);
         }
@@ -422,16 +458,38 @@ public final class SoundDetector {
         return a.clip.peak > b.clip.peak + 1e-9;
     }
 
-    /** Keeps the clip of {@code s}; past {@link #MAX_CLIPS}, the quietest (the newest of equal ones) is given up. */
+    /** Keeps the clip of {@code s} (ready now, its audio saved), then holds the limit ({@link #trim}). */
     private void keep(Sound s) {
         s.kept = true;
         keptClips.add(s);
         ready.add(s.clip);
-        if (keptClips.size() <= MAX_CLIPS) return;
-        Sound quiet = null;
-        for (Sound k : keptClips) if (quiet == null || k.clip.peak < quiet.clip.peak - 1e-9 || (Math.abs(k.clip.peak - quiet.clip.peak) <= 1e-9 && k.start > quiet.start)) quiet = k;
-        drop(quiet);
-        if (quiet.run != null && quiet.run.best == quiet) quiet.run.best = null;
+        trim();
+    }
+
+    /**
+     * The first two sounds of a row of possible snores (fewer than {@link #SNORE_MIN}) wait outside the limit: their clips are
+     * kept and handed out (the audio is only there now), but they push out nobody until the row is decided. Then the row is
+     * either a stretch, which keeps one clip, or single sounds, each with its own; only then they count. So a stretch never
+     * leaves an empty slot, and for at most two clips' time {@link #clips} can hold up to 62.
+     */
+    private static boolean waiting(Sound s) {
+        return s.run != null && s.run.members.size() < SNORE_MIN;
+    }
+
+    /** Past {@link #MAX_CLIPS} clips that count (not {@link #waiting}), the quietest (the newest of equal ones) is given up. */
+    private void trim() {
+        while (true) {
+            int count = 0;
+            Sound quiet = null;
+            for (Sound k : keptClips) {
+                if (waiting(k)) continue;
+                count++;
+                if (quiet == null || k.clip.peak < quiet.clip.peak - 1e-9 || (Math.abs(k.clip.peak - quiet.clip.peak) <= 1e-9 && k.start > quiet.start)) quiet = k;
+            }
+            if (count <= MAX_CLIPS) return;
+            drop(quiet);
+            if (quiet.run != null && quiet.run.best == quiet) quiet.run.best = null;
+        }
     }
 
     private void drop(Sound s) {
