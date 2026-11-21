@@ -131,6 +131,39 @@ public final class Prefs {
     public String dayLineSeen() { return sp.getString(demo() ? "day_line_seen_demo" : "day_line_seen", null); }
     public void setDayLineSeen(String s) { sp.edit().putString(demo() ? "day_line_seen_demo" : "day_line_seen", s).apply(); }
 
+    // ---- the tiles of each tab (owner's wish of 18 November, core/Layout): display only, demo mode keeps its own ----
+    private static String tileKey(String what, String tab, boolean demo) { return "tiles_" + what + "_" + tab + (demo ? "_demo" : ""); }
+    /** The saved order of the tab's tiles ({@code core/Layout.join}), null for the standard order; demo mode keeps its own. */
+    public String tileOrder(String tab) { return sp.getString(tileKey("order", tab, demo()), null); }
+    public void setTileOrder(String tab, String order) { SharedPreferences.Editor e = sp.edit(); putText(e, tileKey("order", tab, demo()), order); e.apply(); }
+    /** The saved fold states of the tab's tiles ({@code core/Layout.joinFolds}), null when none was changed; demo keeps its own. */
+    public String tileFolds(String tab) { return sp.getString(tileKey("folds", tab, demo()), null); }
+    public void setTileFolds(String tab, String folds) { SharedPreferences.Editor e = sp.edit(); putText(e, tileKey("folds", tab, demo()), folds); e.apply(); }
+    /** The person's own layout, also while demo mode is on (the backup holds it, never the demo's). */
+    public String tileOrderReal(String tab) { return sp.getString(tileKey("order", tab, false), null); }
+    public String tileFoldsReal(String tab) { return sp.getString(tileKey("folds", tab, false), null); }
+    /** Sets the person's own layout of one tab (a restore); null or empty for the standard. */
+    public void setTilesReal(String tab, String order, String folds) {
+        SharedPreferences.Editor e = sp.edit();
+        putText(e, tileKey("order", tab, false), order);
+        putText(e, tileKey("folds", tab, false), folds);
+        e.apply();
+    }
+    /** Back to the standard layout: one tab, or every tab for null (Settings). In demo mode only the demo's layout. */
+    public void resetTiles(String tab) {
+        SharedPreferences.Editor e = sp.edit();
+        boolean demo = demo();
+        for (String t : app.openring.core.Layout.TABS) {
+            if (tab != null && !tab.equals(t)) continue;
+            e.remove(tileKey("order", t, demo)).remove(tileKey("folds", t, demo));
+        }
+        e.apply();
+    }
+    private static void putText(SharedPreferences.Editor e, String k, String v) {
+        if (v == null || v.isEmpty()) e.remove(k);
+        else e.putString(k, v);
+    }
+
     /** The cycle already reminded of (the start of its period), so one cycle never gets two; not in a backup. */
     public String periodRemindSent() { return sp.getString("period_remind_sent", null); }
     /** Written to disk before it returns, before the notification is posted, so a stop in between never sends twice. */

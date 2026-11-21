@@ -997,6 +997,24 @@ public final class Explain {
     /** As above when some nights are the ring's and some the watch's. */
     public static final String SCREEN_WATCH_SOME = "Some nights come from your watch, as on the Sleep tab: where it is the main device, or your ring has no night.";
 
+    // ---- the tiles of each tab (owner's wish of 18 November, ui/Tiles and core/Layout) ----
+
+    /** Settings, Layout: what the section is about, under its title. */
+    public static final String LAYOUT_ABOUT = "Tap a tile's title on any tab to fold it or open it again; each tile stays as you leave it. "
+            + "To change the order, tap Rearrange tiles. Only the look changes, never a number.";
+    /** The line under the header in the edit session (owner's wish of 20 November). */
+    public static final String EDIT_HINT = "Drag a tile by its \u2261 to move it, or tap \u2261 for a menu. Tap a title to fold the tile, "
+            + "it then starts folded. Switch tabs to arrange them too, then Save.";
+    /** The question before leaving the edit session with changes that were not saved. */
+    public static final String EDIT_LEAVE = "Leave without saving? The tabs keep the layout they had before.";
+    /** The question before Reset layout in Settings (owner's words of 18 November). */
+    public static final String LAYOUT_RESET_ALL = "Put every tab's tiles back in their standard order and open state?";
+
+    /** Every text of the tiles, for the tests. */
+    public static String[] layoutTexts() {
+        return new String[] {LAYOUT_ABOUT, EDIT_HINT, EDIT_LEAVE, LAYOUT_RESET_ALL};
+    }
+
     /** Every text of the statistics without a ring, for the tests. */
     public static String[] historyTexts() {
         return new String[] {NO_VALUE, NEEDS_RING_TITLE, WATCH_IN_BED, WATCH_LATENCY, WATCH_WAKE_UPS, WATCH_DEBT_BUILDING, WATCH_DEBT, WATCH_SLEEP_TIMES,

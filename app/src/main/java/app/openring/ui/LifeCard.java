@@ -287,7 +287,7 @@ final class LifeCard {
         }
         final int n = LifeTags.span(from, to).size();
         new android.app.AlertDialog.Builder(c).setTitle(LifeTags.spanLine(t.name, from, to, year(), Locale.getDefault()))
-                .setMessage("One entry on each of the " + n + (n == 1 ? " day." : " days.") + " To take a day away, open that day and tap its chip.")
+                .setMessage(LifeTags.spanDone(n))
                 .setPositiveButton("Log", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dlg, int w) {
@@ -424,12 +424,11 @@ final class LifeCard {
             @Override
             public String run(Db db, boolean demo) {
                 String key = day.toString();
-                LifeLog.Row before = LifeLog.row(db, key, t.key);
+                // the rows the tap writes, as they are now: the tag's, and taking it off, those of its aliases (#422)
+                List<LifeLog.Row> rows = LifeLog.before(db, key, t.key, on);
                 LifeLog.set(db, key, t.key, on);
                 List<String> days = new ArrayList<String>();
-                days.add(key);
-                List<LifeLog.Row> rows = new ArrayList<LifeLog.Row>();
-                rows.add(before);
+                for (int i = 0; i < rows.size(); i++) days.add(key);
                 undo = new Undo(db, demo, t.key, days, rows, LifeTags.tapLine(t.name, on, day, year(), Locale.getDefault()));
                 return null;
             }

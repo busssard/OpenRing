@@ -84,7 +84,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         root.setBackgroundColor(Ui.BG);
 
         // header: date navigation and settings
-        LinearLayout header = Ui.hbox(this);
+        header = Ui.hbox(this);
         int p = Ui.dp(this, 12);
         header.setPadding(p, Ui.dp(this, 10), p, Ui.dp(this, 4));
         header.addView(iconButton(R.drawable.ic_chevron_left, new View.OnClickListener() {
@@ -123,6 +123,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
             }
         }));
         root.addView(header);
+        // the edit session's header (owner's wish of 20 November): Reset and Save where Sync and Settings are
+        editBar = editBar();
+        root.addView(editBar);
 
         // status strip
         statusStrip = Ui.vbox(this);
@@ -149,6 +152,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         for (int i = 0; i < ICONS.length; i++) nav.addView(navItem(i), Ui.weight(1));
         root.addView(nav);
         setContentView(root);
+        showEditing();
         if (demoRun.running) {
             // a preparation started before the phone was turned: show its progress again
             preparingDemo = true;
@@ -196,6 +200,77 @@ public final class MainActivity extends Activity implements RingManager.Listener
     }
 
     private boolean preparingDemo;
+    private LinearLayout header, editBar;
+
+    /** The header of the edit session: its name, Reset and Save, and the hint under them. */
+    private LinearLayout editBar() {
+        LinearLayout bar = Ui.vbox(this);
+        bar.setPadding(Ui.dp(this, 16), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 6));
+        LinearLayout row = Ui.hbox(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(Ui.text(this, "Rearrange tiles", 18, Ui.TEXT, Ui.MEDIUM), Ui.weight(1));
+        TextView reset = Ui.textButton(this, "Reset", Ui.TEXT_2);
+        reset.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Tiles.resetDraft();
+                render();
+            }
+        });
+        row.addView(reset);
+        TextView save = Ui.button(this, "Save", Ui.SLEEP, true);
+        save.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Tiles.save(MainActivity.this);
+                showEditing();
+                render();
+                android.widget.Toast.makeText(MainActivity.this, "Layout saved", android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sl.setMargins(Ui.dp(this, 8), 0, 0, 0);
+        row.addView(save, sl);
+        bar.addView(row);
+        TextView hint = Ui.text(this, Explain.EDIT_HINT, 12, Ui.TEXT_2, Ui.REGULAR);
+        hint.setPadding(0, Ui.dp(this, 6), 0, 0);
+        bar.addView(hint);
+        return bar;
+    }
+
+    /** Shows the edit session's header in place of the normal one, or the other way round. */
+    void showEditing() {
+        if (header == null || editBar == null) return;
+        boolean e = Tiles.editing();
+        header.setVisibility(e ? View.GONE : View.VISIBLE);
+        editBar.setVisibility(e ? View.VISIBLE : View.GONE);
+    }
+
+    /** Back in the edit session leaves it; with changes not saved it asks first. */
+    @Override
+    public void onBackPressed() {
+        if (!Tiles.editing()) {
+            super.onBackPressed();
+            return;
+        }
+        if (!Tiles.draftChanged()) {
+            leaveEditing();
+            return;
+        }
+        new android.app.AlertDialog.Builder(this).setTitle("Rearrange tiles").setMessage(Explain.EDIT_LEAVE)
+                .setPositiveButton("Leave", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        leaveEditing();
+                    }
+                }).setNegativeButton("Keep editing", null).show();
+    }
+
+    private void leaveEditing() {
+        Tiles.stopEditing();
+        showEditing();
+        render();
+    }
     /** Scroll position to return to while stepping through days, -1 when none is pending. */
     private int wantedY = -1;
     /**
@@ -204,14 +279,25 @@ public final class MainActivity extends Activity implements RingManager.Listener
      */
     private String cardPending;
 
-    /** The top of the first text inside {@code v} that starts with {@code start}, relative to {@code v}; -1 when none. */
+    /**
+     * The top of the first text inside {@code v} that starts with {@code start}, relative to {@code v}; -1 when none. Without
+     * an exact match the case is ignored (a tile's title is a caption in capitals, "Further analysis" since issue of 18 November).
+     */
     static int textTop(View v, String start) {
-        if (v instanceof TextView && ((TextView) v).getText().toString().startsWith(start)) return 0;
+        int t = textTop(v, start, false);
+        return t >= 0 ? t : textTop(v, start, true);
+    }
+
+    private static int textTop(View v, String start, boolean anyCase) {
+        if (v instanceof TextView) {
+            String s = ((TextView) v).getText().toString();
+            if (anyCase ? s.toLowerCase(java.util.Locale.ROOT).startsWith(start.toLowerCase(java.util.Locale.ROOT)) : s.startsWith(start)) return 0;
+        }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) {
                 View ch = g.getChildAt(i);
-                int t = textTop(ch, start);
+                int t = textTop(ch, start, anyCase);
                 if (t >= 0) return ch.getTop() + t;
             }
         }
@@ -258,7 +344,12 @@ public final class MainActivity extends Activity implements RingManager.Listener
     void handleExtras(Intent i) {
         if (i == null) return;
         if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
-        if (i.getBooleanExtra("analysis", false)) Pages.analysisOpen = true;
+        // Settings, Rearrange tiles (owner's wish of 20 November): the tabs open in the edit session
+        if (i.getBooleanExtra("edit_layout", false) && !Tiles.editing()) Tiles.startEditing(this);
+        // screen test, demo mode only: every tab in the standard layout (owner's wish of 18 November), before anything below
+        if (i.getBooleanExtra("layout_reset", false) && Prefs.of(this).demo()) Prefs.of(this).resetTiles(null);
+        // Further analysis shown open once (its tile is folded in the standard layout); nothing is saved
+        if (i.getBooleanExtra("analysis", false)) Tiles.openOnce.add(app.openring.core.Layout.tab(Pages.SLEEP) + ":" + Pages.ANALYSIS_KEY);
         if (i.hasExtra("period")) Pages.analysisPeriod = i.getIntExtra("period", 1);
         String card = i.getStringExtra("card");
         cardPending = card != null && Prefs.of(this).demo() ? card.replace('_', ' ') : null;
@@ -386,6 +477,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         super.onNewIntent(i);
         setIntent(i);
         handleExtras(i);
+        showEditing();
         // while the demo is prepared the database is half written; the task loads when it is done
         if (scroll != null && !preparingDemo) {
             scroll.scrollTo(0, 0);
@@ -701,6 +793,13 @@ public final class MainActivity extends Activity implements RingManager.Listener
 
     void render() {
         if (data == null) return;
+        // a tile held under the finger: the page is replaced once it is let go (owner's wish of 18 November)
+        if (Tiles.waitForDrop(new Runnable() {
+            @Override
+            public void run() {
+                if (!isFinishing() && !isDestroyed()) render();
+            }
+        })) return;
         View content;
         switch (tab) {
             case Pages.SLEEP:
@@ -721,8 +820,17 @@ public final class MainActivity extends Activity implements RingManager.Listener
             default:
                 content = Pages.today(this, data, this, syncLine());
         }
-        // Trends (issue #374): one card at the bottom of every tab but Today, so Today's first screen stays as it is
+        // Trends (issue #374): one card at the bottom of every tab but Today, so Today's first screen stays as it is;
+        // added before the tiles are arranged, so it is a tile like every other card (it folds and moves)
         if (content instanceof LinearLayout) TrendsCard.add(this, (LinearLayout) content, data, tab);
+        // every card a tile that folds and moves, in the order and with the folds the person left (owner's wish of 18 November);
+        // before the notices below, which are not tiles
+        if (content instanceof LinearLayout) Tiles.arrange(this, scroll, tab, (LinearLayout) content, new Runnable() {
+            @Override
+            public void run() {
+                render();
+            }
+        });
         // no copy could be made before this update (issue #242): said once on Today, until OK
         final Prefs np = Prefs.of(this);
         if (tab == Pages.TODAY && !np.demo() && np.beforeUpdateUnseen() && content instanceof LinearLayout) {

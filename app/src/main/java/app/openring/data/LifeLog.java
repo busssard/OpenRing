@@ -96,17 +96,61 @@ public final class LifeLog {
 
     /**
      * {@code tag} on {@code day} on ({@code on}) or taken off at {@code made} (unix seconds): one statement replacing the day's
-     * row of that tag. Taking it off keeps the row as a removal mark, never a delete.
+     * row of that tag. Taking it off keeps the row as a removal mark, never a delete; it also marks the day removed for every
+     * alias of {@code tag} that holds it (an own tag with the same name, {@code LifeTags.Known}, issue #422), so the day really
+     * goes, all in one transaction. Putting it on writes {@code tag} only.
      */
     public static void set(Db db, String day, String tag, boolean on, double made) {
-        db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, span, made, gone) VALUES (?, ?, NULL, NULL, ?, ?)",
-                new Object[] {date(day), tag(tag), made, on ? 0L : 1L});
+        String d = date(day);
+        tag(tag);
+        if (on) {
+            write(db.getWritableDatabase(), d, tag, made, false);
+            return;
+        }
+        List<String> also = holding(db, d, known(db).aliases(tag));
+        SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            write(w, d, tag, made, true);
+            for (String a : also) write(w, d, a, made, true);
+            w.setTransactionSuccessful();
+        } finally {
+            w.endTransaction();
+        }
     }
 
-    /** Puts {@code r} back as it was (Undo); {@code before} null (the day never had the tag) leaves a removal mark. */
+    /** One day's row of one tag, on or as a removal mark: one statement. */
+    private static void write(SQLiteDatabase w, String day, String tag, double made, boolean gone) {
+        w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, span, made, gone) VALUES (?, ?, NULL, NULL, ?, ?)",
+                new Object[] {day, tag, made, gone ? 1L : 0L});
+    }
+
+    /** The keys of {@code keys} that have {@code day} in force. */
+    private static List<String> holding(Db db, String day, List<String> keys) {
+        List<String> out = new ArrayList<String>();
+        for (String k : keys) {
+            Row r = row(db, day, k);
+            if (r != null && !r.gone) out.add(k);
+        }
+        return out;
+    }
+
+    /**
+     * The rows {@link #set} is about to write for {@code tag} on {@code day}, as they are now, for Undo: the tag's own (null when
+     * there is none), and taking it off, those of its aliases that hold the day.
+     */
+    public static List<Row> before(Db db, String day, String tag, boolean on) {
+        String d = date(day);
+        List<Row> out = new ArrayList<Row>();
+        out.add(row(db, d, tag));
+        if (!on) for (String a : holding(db, d, known(db).aliases(tag))) out.add(row(db, d, a));
+        return out;
+    }
+
+    /** Puts {@code r} back as it was (Undo); {@code before} null (the day never had the tag) leaves a removal mark of that tag only. */
     public static void restore(Db db, String day, String tag, Row before, double made) {
         if (before == null) {
-            set(db, day, tag, false, made);
+            write(db.getWritableDatabase(), date(day), tag(tag), made, true);
             return;
         }
         db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, span, made, gone) VALUES (?, ?, NULL, ?, ?, ?)",
@@ -152,14 +196,17 @@ public final class LifeLog {
         }
     }
 
-    /** The tags in force on each day from {@code from} to {@code to} (both included), by day, each day's tags in key order. */
+    /**
+     * The tags in force on each day from {@code from} to {@code to} (both included), by day, each day's tags in key order. An
+     * own tag with the same name as an older one is read as that one, a day once ({@code LifeTags.Known.fold}, issue #422).
+     */
     public static TreeMap<LocalDate, List<String>> days(Db db, String from, String to) {
-        return days(db.getReadableDatabase(), "WHERE gone = 0 AND day >= ? AND day <= ? ", new String[] {date(from), date(to)});
+        return known(db).fold(days(db.getReadableDatabase(), "WHERE gone = 0 AND day >= ? AND day <= ? ", new String[] {date(from), date(to)}));
     }
 
-    /** Every day with a tag in force, oldest first. */
+    /** Every day with a tag in force, oldest first, read as {@link #days} reads them. */
     public static TreeMap<LocalDate, List<String>> all(Db db) {
-        return days(db.getReadableDatabase(), "WHERE gone = 0 ", null);
+        return known(db).fold(days(db.getReadableDatabase(), "WHERE gone = 0 ", null));
     }
 
     /** The tags in force on {@code day}, in key order (empty when none). */
@@ -218,17 +265,31 @@ public final class LifeLog {
     /**
      * A new own tag named {@code typed} (cleaned by {@code LifeTags.cleanName}), on Today's row, made at {@code millis}. Returns
      * its key, or null when the name cannot be a tag or an own tag in force already has it (any case). The name of a removed
-     * own tag (any case) brings that one back with its days and its first spelling.
+     * own tag (any case) brings that one back with its days and its first spelling, together with the keys read as it (issue
+     * #422), in one transaction.
      */
     public static String addOwn(Db db, String typed, long millis) {
         String name = LifeTags.cleanName(typed);
         if (name == null) return null;
         LifeTags.Known k = known(db);
-        for (LifeTags.Tag t : k.own()) if (t.name.equalsIgnoreCase(name)) return null;
+        String same = LifeTags.sameName(name);
+        for (LifeTags.Tag t : k.own()) if (LifeTags.sameName(t.name).equals(same)) return null;
         // the name of a removed own tag brings that tag back (with its days), never a second key with the same name
         for (LifeTags.Tag t : k.all.values()) {
-            if (t.removed && t.name.equalsIgnoreCase(name)) {
-                db.getWritableDatabase().execSQL("UPDATE life_tags SET gone = 0, shown = 1, ord = NULL, made = ? WHERE key = ?", new Object[] {millis / 1000.0, t.key});
+            if (t.removed && LifeTags.sameName(t.name).equals(same)) {
+                List<String> keys = new ArrayList<String>();
+                keys.add(t.key);
+                keys.addAll(k.aliases(t.key));
+                SQLiteDatabase w = db.getWritableDatabase();
+                w.beginTransaction();
+                try {
+                    for (String key : keys) {
+                        w.execSQL("UPDATE life_tags SET gone = 0, shown = 1, ord = NULL, made = ? WHERE key = ?", new Object[] {millis / 1000.0, key});
+                    }
+                    w.setTransactionSuccessful();
+                } finally {
+                    w.endTransaction();
+                }
                 return t.key;
             }
         }
@@ -249,15 +310,29 @@ public final class LifeLog {
         }
     }
 
-    /** Removes the own tag {@code key}: a removal mark ({@code gone} 1), never a delete; its logged days stay. */
+    /**
+     * Removes the own tag {@code key} and the keys read as it (issue #422): a removal mark ({@code gone} 1) each, never a
+     * delete, in one transaction; their logged days stay.
+     */
     public static void removeOwn(Db db, String key, double made) {
         if (!LifeTags.isOwn(key)) throw new IllegalArgumentException("not an own tag");
-        db.getWritableDatabase().execSQL("UPDATE life_tags SET gone = 1, shown = 0, made = ? WHERE key = ?", new Object[] {made, key});
+        LifeTags.Known k = known(db);
+        List<String> keys = new ArrayList<String>();
+        keys.add(k.key(key));
+        keys.addAll(k.aliases(k.key(key)));
+        SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            for (String x : keys) w.execSQL("UPDATE life_tags SET gone = 1, shown = 0, made = ? WHERE key = ?", new Object[] {made, x});
+            w.setTransactionSuccessful();
+        } finally {
+            w.endTransaction();
+        }
     }
 
     /**
      * The chips on Today's row: exactly {@code keys}, in that order, every other known tag off. One transaction. A fixed tag
-     * keeps no name; an own tag keeps its name and removal mark.
+     * keeps no name; an own tag keeps its name and removal mark; the keys read as an own tag (issue #422) get its choice too.
      */
     public static void setChips(Db db, List<String> keys, double made) {
         LifeTags.Known k = known(db);
@@ -273,6 +348,9 @@ public final class LifeLog {
                             new Object[] {t.key, shown, ord, made});
                 } else {
                     w.execSQL("UPDATE life_tags SET shown = ?, ord = ?, made = ? WHERE key = ?", new Object[] {shown, ord, made, t.key});
+                    for (String a : k.aliases(t.key)) {
+                        w.execSQL("UPDATE life_tags SET shown = ?, ord = ?, made = ? WHERE key = ?", new Object[] {shown, ord, made, a});
+                    }
                 }
             }
             w.setTransactionSuccessful();

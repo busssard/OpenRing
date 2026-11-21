@@ -57,6 +57,7 @@ public class WatchTest {
         sleepNear();
         review389();
         routes251();
+        codeHealthWatchDays();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -3483,6 +3484,238 @@ public class WatchTest {
             pw &= hp.wornMin[hp.index(d)] == app.openring.core.DeviceScores.day(MainDevice.PHONE, ds, de, z, null, dhPhoneWindow(ph, d)).wornQ * 15.0;
         }
         check("routes: the phone's minutes counting likewise", pw && hp.wornMin[hp.index(DS_DAY)] > 0, hp.wornMin[hp.index(DS_DAY)]);
+    }
+
+    /**
+     * Code health: WatchDays finds a night with one rule, sums the per day steps, distance and calories with one loop and
+     * collects a night's heart rates with one loop. Each answer is compared with a copy of the code as it was before (class
+     * {@link OldWatchDays}) on made up histories with odd rows: overlapping pieces, no or a negative length, the same start,
+     * not in order, stretches of the same length on one day, evenings, day sleep, and a trip that changes the zone.
+     */
+    static void codeHealthWatchDays() {
+        final ZoneId home = ZoneId.of("Europe/Zurich"), away = ZoneId.of("America/New_York");
+        final LocalDate first = LocalDate.of(2026, 3, 1);
+        final long trip = first.plusDays(20).atStartOfDay(home).toEpochSecond();
+        WatchDays.Zones z = new WatchDays.Zones() {
+            @Override
+            public ZoneId at(double unix) {
+                return unix < trip ? home : away;
+            }
+        };
+        long base = first.atStartOfDay(home).toEpochSecond();
+        int nightsSame = 0, nightsFound = 0, heartSame = 0, daySame = 0, rounds = 0;
+        boolean ok = true;
+        for (int seed = 0; seed < 40; seed++) {
+            Random r = new Random(1119 + seed);
+            List<Records.Sleep> sleep = new ArrayList<Records.Sleep>();
+            for (int k = 0; k < 40; k++) {
+                long night = base + k * 86400L + 20 * 3600 + r.nextInt(6 * 3600);
+                int pieces = r.nextInt(8);
+                long t = night;
+                for (int p = 0; p < pieces; p++) {
+                    int dur = r.nextInt(10) == 0 ? -r.nextInt(600) : r.nextInt(10) == 0 ? 0 : 60 * (5 + r.nextInt(120));
+                    sleep.add(new Records.Sleep(t, dur, r.nextInt(6)));
+                    t += r.nextInt(5) == 0 ? 3 * 3600 + r.nextInt(3600) : r.nextInt(4) == 0 ? -r.nextInt(1800) : Math.max(0, dur) + r.nextInt(900);
+                }
+                if (r.nextInt(4) == 0) sleep.add(new Records.Sleep(base + k * 86400L + 13 * 3600, 60 * (20 + r.nextInt(60)), 2));
+                if (r.nextInt(5) == 0) {
+                    long s = base + k * 86400L + 3600 * (1 + r.nextInt(4));
+                    sleep.add(new Records.Sleep(s, 3600, 1));
+                    sleep.add(new Records.Sleep(s + 6 * 3600, 3600, 2));
+                }
+                if (r.nextInt(6) == 0 && !sleep.isEmpty()) {
+                    Records.Sleep c = sleep.get(r.nextInt(sleep.size()));
+                    sleep.add(new Records.Sleep(c.start, c.dur, r.nextInt(6)));
+                }
+            }
+            Collections.shuffle(sleep, r);
+            List<Records.Heart> heart = new ArrayList<Records.Heart>();
+            for (int i = 0; i < 2000; i++) heart.add(new Records.Heart(base + r.nextInt(40 * 86400) / 30 * 30, 35 + r.nextInt(80)));
+            List<Records.Steps> steps = new ArrayList<Records.Steps>();
+            for (int i = 0; i < 1500; i++) {
+                steps.add(new Records.Steps(base + r.nextInt(40 * 86400), 60 * r.nextInt(30), r.nextInt(20) == 0 ? -r.nextInt(50) : r.nextInt(3000),
+                        r.nextInt(2500), r.nextInt(200)));
+            }
+            LocalDate from = first.minusDays(2), to = first.plusDays(42);
+            TreeMap<LocalDate, WatchDays.Night> all = WatchDays.nights(sleep, from, to, z), oldAll = OldWatchDays.nights(sleep, from, to, z);
+            ok &= all.keySet().equals(oldAll.keySet());
+            for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
+                WatchDays.Night n = WatchDays.nightFor(sleep, d, z), o = OldWatchDays.nightFor(sleep, d, z);
+                boolean same = sameNight(n, o) && sameNight(all.get(d), oldAll.get(d)) && sameNight(n, all.get(d));
+                ok &= same;
+                if (same) nightsSame++;
+                if (o != null) {
+                    nightsFound++;
+                    WatchDays.NightHeart h = WatchDays.heartIn(heart, o.start, o.end), oh = OldWatchDays.heartIn(heart, o.start, o.end);
+                    boolean hs = sameHeart(h, oh);
+                    ok &= hs;
+                    if (hs) heartSame++;
+                }
+            }
+            for (int w = 0; w < 50; w++) {
+                long a = base + r.nextInt(41 * 86400) - 3600, b = a + r.nextInt(14 * 3600) - 600;
+                boolean hs = sameHeart(WatchDays.heartIn(heart, a, b), OldWatchDays.heartIn(heart, a, b));
+                ok &= hs;
+                if (hs) heartSame++;
+            }
+            boolean ds = WatchDays.stepsPerDay(steps, z).equals(OldWatchDays.stepsPerDay(steps, z))
+                    && WatchDays.metresPerDay(steps, z).equals(OldWatchDays.metresPerDay(steps, z))
+                    && WatchDays.kcalPerDay(steps, z).equals(OldWatchDays.kcalPerDay(steps, z));
+            ok &= ds;
+            if (ds) daySame++;
+            rounds++;
+        }
+        check("code health: nights, a night's heart rates and the day totals are as before (40 made up histories with odd rows)", ok
+                && nightsFound > 500, nightsSame + " days, " + nightsFound + " nights, " + heartSame + " heart windows, " + daySame + "/" + rounds);
+        List<Records.Sleep> none = new ArrayList<Records.Sleep>();
+        check("code health: no rows give no night, no heart rate and empty days", WatchDays.nightFor(none, first, z) == null
+                && WatchDays.nights(none, first, first, z).isEmpty() && WatchDays.heartIn(new ArrayList<Records.Heart>(), 0, Long.MAX_VALUE).lowest == -1
+                && Double.isNaN(WatchDays.heartIn(new ArrayList<Records.Heart>(), 0, Long.MAX_VALUE).average)
+                && WatchDays.stepsPerDay(new ArrayList<Records.Steps>(), z).isEmpty());
+    }
+
+    static boolean sameHeart(WatchDays.NightHeart x, WatchDays.NightHeart y) {
+        if (x.points.size() != y.points.size()) return false;
+        for (int j = 0; j < x.points.size(); j++) if (!Arrays.equals(x.points.get(j), y.points.get(j))) return false;
+        return x.lowest == y.lowest && x.lowestAt == y.lowestAt && Double.doubleToLongBits(x.average) == Double.doubleToLongBits(y.average);
+    }
+
+    /** WatchDays' night, heart rate and day total code as it was before the code health change, to compare with. */
+    static final class OldWatchDays {
+        static TreeMap<LocalDate, Integer> stepsPerDay(List<Records.Steps> rows, WatchDays.Zones z) {
+            TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
+            for (Records.Steps s : rows) {
+                LocalDate d = WatchDays.day(s.start, z);
+                Integer v = out.get(d);
+                out.put(d, (v == null ? 0 : v) + s.steps);
+            }
+            return out;
+        }
+
+        static TreeMap<LocalDate, Integer> metresPerDay(List<Records.Steps> rows, WatchDays.Zones z) {
+            TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
+            for (Records.Steps s : rows) {
+                LocalDate d = WatchDays.day(s.start, z);
+                Integer v = out.get(d);
+                out.put(d, (v == null ? 0 : v) + s.metres);
+            }
+            return out;
+        }
+
+        static TreeMap<LocalDate, Integer> kcalPerDay(List<Records.Steps> rows, WatchDays.Zones z) {
+            TreeMap<LocalDate, Integer> out = new TreeMap<LocalDate, Integer>();
+            for (Records.Steps s : rows) {
+                LocalDate d = WatchDays.day(s.start, z);
+                Integer v = out.get(d);
+                out.put(d, (v == null ? 0 : v) + s.kcal);
+            }
+            return out;
+        }
+
+        static List<Records.Sleep> sorted(List<Records.Sleep> rows) {
+            List<Records.Sleep> s = new ArrayList<Records.Sleep>(rows);
+            Collections.sort(s, new Comparator<Records.Sleep>() {
+                @Override
+                public int compare(Records.Sleep a, Records.Sleep b) {
+                    return Long.compare(a.start, b.start);
+                }
+            });
+            return s;
+        }
+
+        static WatchDays.Night nightFor(List<Records.Sleep> rows, LocalDate day, WatchDays.Zones z) {
+            List<Records.Sleep> s = sorted(rows);
+            WatchDays.Night best = null;
+            int i = 0;
+            while (i < s.size()) {
+                int j = i;
+                long end = s.get(i).start + Math.max(0, s.get(i).dur);
+                while (j + 1 < s.size() && s.get(j + 1).start - end <= WatchDays.JOIN_S) {
+                    j++;
+                    end = Math.max(end, s.get(j).start + Math.max(0, s.get(j).dur));
+                }
+                long start = s.get(i).start;
+                java.time.ZonedDateTime e = java.time.Instant.ofEpochSecond(end).atZone(z.at(end));
+                if (e.toLocalDate().equals(day) && e.getHour() < 18 && end > start && (best == null || end - start > best.end - best.start)) {
+                    best = night(s.subList(i, j + 1), start, end);
+                }
+                i = j + 1;
+            }
+            return best;
+        }
+
+        static TreeMap<LocalDate, WatchDays.Night> nights(List<Records.Sleep> rows, LocalDate first, LocalDate last, WatchDays.Zones z) {
+            List<Records.Sleep> s = sorted(rows);
+            TreeMap<LocalDate, int[]> best = new TreeMap<LocalDate, int[]>();
+            TreeMap<LocalDate, long[]> span = new TreeMap<LocalDate, long[]>();
+            int i = 0;
+            while (i < s.size()) {
+                int j = i;
+                long end = s.get(i).start + Math.max(0, s.get(i).dur);
+                while (j + 1 < s.size() && s.get(j + 1).start - end <= WatchDays.JOIN_S) {
+                    j++;
+                    end = Math.max(end, s.get(j).start + Math.max(0, s.get(j).dur));
+                }
+                long start = s.get(i).start;
+                java.time.ZonedDateTime e = java.time.Instant.ofEpochSecond(end).atZone(z.at(end));
+                LocalDate day = e.toLocalDate();
+                long[] b = span.get(day);
+                if (!day.isBefore(first) && !day.isAfter(last) && e.getHour() < 18 && end > start && (b == null || end - start > b[1] - b[0])) {
+                    span.put(day, new long[] {start, end});
+                    best.put(day, new int[] {i, j});
+                }
+                i = j + 1;
+            }
+            TreeMap<LocalDate, WatchDays.Night> out = new TreeMap<LocalDate, WatchDays.Night>();
+            for (Map.Entry<LocalDate, int[]> e : best.entrySet()) {
+                long[] b = span.get(e.getKey());
+                out.put(e.getKey(), night(s.subList(e.getValue()[0], e.getValue()[1] + 1), b[0], b[1]));
+            }
+            return out;
+        }
+
+        static WatchDays.Night night(List<Records.Sleep> pieces, long start, long end) {
+            WatchDays.Night n = new WatchDays.Night();
+            n.start = start;
+            n.end = end;
+            int mins = (int) Math.max(1, (end - start + 59) / 60);
+            n.stages = new int[mins];
+            for (Records.Sleep p : pieces) {
+                int a = (int) ((p.start - start) / 60), b = (int) Math.min(mins, (p.start + Math.max(0, p.dur) - start + 59) / 60);
+                for (int k = Math.max(0, a); k < b; k++) n.stages[k] = WatchDays.stage(p.stage);
+            }
+            for (int st : n.stages) {
+                if (st == 1) n.deepMin++;
+                else if (st == 2) n.lightMin++;
+                else if (st == 3) n.remMin++;
+                else if (st == 4) n.awakeMin++;
+                else n.otherMin++;
+            }
+            return n;
+        }
+
+        static WatchDays.NightHeart heartIn(List<Records.Heart> rows, long start, long end) {
+            WatchDays.NightHeart h = new WatchDays.NightHeart();
+            List<Records.Heart> s = new ArrayList<Records.Heart>();
+            for (Records.Heart x : rows) if (x.t >= start && x.t <= end) s.add(x);
+            Collections.sort(s, new Comparator<Records.Heart>() {
+                @Override
+                public int compare(Records.Heart a, Records.Heart b) {
+                    return Long.compare(a.t, b.t);
+                }
+            });
+            long sum = 0;
+            for (Records.Heart x : s) {
+                h.points.add(new long[] {x.t, x.bpm});
+                sum += x.bpm;
+                if (h.lowest < 0 || x.bpm < h.lowest) {
+                    h.lowest = x.bpm;
+                    h.lowestAt = x.t;
+                }
+            }
+            if (!s.isEmpty()) h.average = sum / (double) s.size();
+            return h;
+        }
     }
 
     /** One zone for every moment, as the day load gives MainDevice.of. */
