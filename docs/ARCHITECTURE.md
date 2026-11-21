@@ -136,7 +136,7 @@ Nothing leaves the phone: the app has no internet permission.
 | `period_temps`, `period_imports` | The drip import (phase 1b of #252, version 8): one imported basal temperature per day (`day`, `time` as HH:MM, `c` in °C, `excluded`, `src`, `gone`), and one row per import (`id` its time in milliseconds, `made`, `days`, `temps`, `gone`). Undoing an import writes `gone` 1 on the import and its temperatures (a removal mark like a day's -1, never a delete), so a restore of an older backup cannot bring them back |
 | `battery`, `kv` | Battery history (one row per read: each sync and Find my ring; Settings' read stays in `Prefs` only), shown on Today under the scores with the watch's `watch_battery` (`core/DeviceBattery`); small key value state (cursor, analysis progress, errors) |
 | `watch_raw`, `watch_devices`, `watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery` | The Withings watch (version 9, issue #251): every message as it came, the watch, and the rows worked out from the messages; see Withings watch below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
-| `life_days`, `life_tags` | Life factors (version 12, issue #292): one row per calendar day and tag (`day` yyyy-mm-dd, `tag` a fixed key such as `meditation` or `own:<id>`, `time` empty in phase 1, `span` the id shared by the days of one several day entry, `made`, `gone` 1 a removal mark, never a delete), and one row per tag the person changed (`key`, `name` of an own tag, `shown` on Today's row 1 or 0, `ord` its place, `made`, `gone` 1 an own tag removed, its days kept). Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Life factors below |
+| `life_days`, `life_tags` | Life factors (version 12, issue #292): one row per calendar day and tag (`day` yyyy-mm-dd, `tag` a fixed key such as `meditation` or `own:<id>`, `time` "HH:MM" the local clock time on that day or empty, `minutes` its length or empty (version 15, issue #435), `span` the id shared by the days of one several day entry, `made`, `gone` 1 a removal mark, never a delete), and one row per tag the person changed (`key`, `name` of an own tag, `shown` on Today's row 1 or 0, `ord` its place, `made`, `gone` 1 an own tag removed, its days kept). Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Life factors below |
 | `sound_nights`, `sound_clips`, `sound_gaps` | Sleep sounds (version 13, issue #380, phase 1a: the tables only, nothing records yet): the nights listened, one mark per sound with its clip file's name, and the times the phone was not listening; the sounds themselves are files in `no_backup`, never in the database. Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Sleep sounds below |
 | `sleep_manual` | Nights entered by hand (version 14, issue #427): one row per saved night (`made` key, unix seconds of the save; `start` In bed, `stop` Up, `wakes` the wake marks as a small JSON list of start and stop times, `gone` 1 when deleted or changed, never a delete). Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Nights by hand below |
 | `phone_readings`, `phone_steps` | Steps from this phone (version 11, issue #329): every reading of the phone's step counter as it came (`boot` count and `elapsed` ms as the key, `counter`, `wall`), only ever added to, and the intervals worked out from them (`boot`, `elapsed` of the end reading, `start`, `stop`, `steps`); see Steps from this phone below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
@@ -341,10 +341,10 @@ without it: it stays beside the kept copies until a copy with the key is written
 not know the `-nokey` name and leave those files alone.
 
 **Life factors (issue #292, phase 1).** What a day was like, logged by the person: `core/LifeTags` holds the keys (Meditation,
-Alcohol, Caffeine late, Stress, Hard workout on Today's row by default; Intimacy, Holiday, Illness and Travel also offered; own
-tags `own:<millis>` with a cleaned name of at most 30 characters), the texts, several days turned into dates and the CSV
+Sauna, Friends, Alcohol, Stress, Hard workout on Today's row by default since issue #435; Caffeine late, Intimacy, Holiday, Illness and
+Travel also offered; own tags `own:<millis>` with a cleaned name of at most 30 characters), the texts, several days turned into dates and the CSV
 columns; `data/LifeLog` the two tables of version 12 (`LifeLog.create12`, each `CREATE TABLE IF NOT EXISTS` on its own, so the
-upgrade is safe twice and resumes after a stop). A tag is a calendar day, never a moment, so travel and clock changes never
+upgrade is safe twice and resumes after a stop). A tag is a calendar day (a time on it is optional, see When and how long below), so travel and clock changes never
 move it; a tag of day D belongs to the night that starts on the evening of D: Sleep of D + 1 shows "Before this night: ...",
 Readiness of D + 1 "Logged yesterday: ...". A tap on a chip writes one statement in the background (`LifeLog.set`), taking a
 tag off keeps a removal mark; Several days writes one row per date with one span id in one transaction (`LifeLog.setSpan`);
@@ -363,6 +363,29 @@ and a row for a tagged day without a summary. Backups and the full database carr
 (`LifeLog.read`) and writes them into the restored file in one transaction after the period log, the watch and the phone's
 steps (`LifeLog.merge`, `INSERT OR REPLACE`: the phone wins on the same day and tag, removal marks included); any failure puts
 the old file back. Demo mode writes made up tags (`LifeTags.demo`, never Intimacy) into the demo file only.
+
+**When and how long (issue #435).** Sauna and Friends are fixed tags (`sauna`, `friends`, after Hard workout); the default chips for a
+person who never chose are Meditation, Sauna, Friends, Alcohol, Stress, Hard workout in that order (`LifeTags.DEFAULT_CHIPS`). A person
+who chose once has a `life_tags` row for every fixed tag of then (`setChips` writes them all), so `Known` keeps a fixed tag without a row
+off the card for them: a tag added later never joins a choice. An own tag named Sauna or Friends made before stays its own key next to the
+fixed one; a new one with that name is refused (`cleanName`). The tags of a moment (Sauna, Meditation, Hard workout, Intimacy, Friends,
+Alcohol, Caffeine late, own tags; `core/LifeTimes.timed`) can carry a start and a length: a long press on the chip, or the small clock in
+a logged chip's corner, opens "When and how long?" (`LifeCard.sheet`: From as an hour and a 5 minute wheel, How long as the tag's usual
+lengths, `LifeTimes.lengths`; Alcohol and Caffeine late a time only). Save writes `life_days.time` and `minutes` in one transaction
+(`LifeLog.setTime`: the day logged if it was not, a several day entry's span kept, a stop rolls back), Without a time clears both and
+keeps the day, Undo puts the row back (`LifeLog.Row` carries time and minutes). Version 15 only adds `life_days.minutes` when it is missing
+(`LifeLog.add15`, `PRAGMA table_info`), safe twice and resumable; `Db.schemaProblem` knows it from 15 (`LATER_COLUMNS`, like
+`events.seg`), so a backup of 14 passes its check and gets the column empty; the restore merge carries it (`LifeLog.COLUMNS`, the phone's
+rows win, time and minutes included). A version before 15 refuses a backup of 15 as newer, as for every schema step. The band
+(`LifeTimes.band`): the clock time on its day in the shown day's zone (`ZonedDateTime.of`: a time the clocks skip is read after the skip,
+one that happens twice as the first), for the length in real minutes, so 23:30 for 90 minutes ends at 01:00 the next day and is drawn on
+both days' charts. Drawn on Body's heart rate of the day, Sleep's depth chart and its heart rate and HRV charts when it reaches into the
+night (`Charts.LineChart.life`, `Hypnogram.life`), and over Activity's intensity bars by the hour (`BarChart.life`, which now reads each
+hour by touch too); a touch in it adds "Sauna 19:00 to 19:45" to the readout. Under Body's heart rate one line per band with a length:
+"Heart rate during: N on average (your day: M)." from the quarter hour points whose quarter hour reaches into it (`LifeTimes.during`), or
+"Not worn during"; measured values only, never a cause, nothing stored, no score changes. `DayData.lifeTimes` reads every row in force with
+a time (`LifeLog.times`). The demo has a few times (`LifeTimes.demo`: yesterday a sauna at 19:00 for 45 minutes, Alcohol at 20:30,
+Meditation at 21:00) and, in `Demo.enter` only, heart beats of about 110 bpm during its saunas (`Demo.sauna`; `Demo.history` unchanged).
 
 **Sleep sounds (issue #380), phase 1a.** Only the storage and the detector; there is no microphone permission, service or screen
 yet (1b brings the listening and the Sleep card, 1c the marks on the night's timeline). `core/analysis/SoundDetector` (pure Java,
