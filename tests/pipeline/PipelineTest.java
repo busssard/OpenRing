@@ -3481,7 +3481,6 @@ public class PipelineTest {
                 restDays + " of " + nights + ", " + cut + " night cut short left out");
     }
 
-    /** Start of the main night of {@code day} (unix seconds), NaN when there is none. */
     /**
      * The rule of the #72 check above (issue #406): the day's lowest {@code low} at {@code lowAt} must lie within 3 bpm of
      * the day's own night lowest {@code night}; it may go down to the next night's lowest {@code next} (NaN when there is
@@ -3505,8 +3504,15 @@ public class PipelineTest {
         // a line shifted by one night: its morning holds the next night's low (46) instead of its own (55)
         check("#72 rule: a line shifted by one night (the next night's low in this morning) fails",
                 !dayLowNearNight(46, day + 4 * 3600, 55, 46, nextStart), null);
+        // the quarter hour edge: a point stands for its quarter (time in the middle), so it is in the next night when its
+        // quarter reaches it (review of #445)
+        check("#72 rule: a point whose quarter hour reaches the next night counts as in it",
+                dayLowNearNight(46, nextStart - 400, 55, 46, nextStart), null);
+        check("#72 rule: a point whose quarter hour ends before the next night does not",
+                !dayLowNearNight(46, nextStart - 500, 55, 46, nextStart), null);
     }
 
+    /** Start of the main night of {@code day} (unix seconds), NaN when there is none. */
     static double nightStart(Db db, String day) {
         List<String> ns = db.nightsJson(day, day, true);
         return ns.isEmpty() ? Double.NaN : Json.d(Json.parse(ns.get(0)), "start");
