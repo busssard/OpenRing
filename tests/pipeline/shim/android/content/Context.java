@@ -17,6 +17,8 @@ public class Context {
     public java.io.File getCacheDir() { return dir; }
     /** The app's private files (issue #242: the copies before an update live in files/before-update). */
     public java.io.File getFilesDir() { java.io.File f = new java.io.File(dir, "files"); f.mkdirs(); return f; }
+    /** Files Android never puts into its cloud backup (issue #380: the sleep sound clips live in no_backup/sounds). */
+    public java.io.File getNoBackupFilesDir() { java.io.File f = new java.io.File(dir, "no_backup"); f.mkdirs(); return f; }
     /** The installed version the tests set; 0 means unknown, so the copy before an update is not looked at (issue #242). */
     public static int versionCode = 0;
     public static String versionName = "test";

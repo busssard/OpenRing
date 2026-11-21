@@ -38,6 +38,7 @@ import app.openring.data.AutoBackup;
 import app.openring.data.Backup;
 import app.openring.data.BeforeUpdate;
 import app.openring.data.Db;
+import app.openring.data.DeleteAll;
 import app.openring.data.Exporter;
 import app.openring.data.Json;
 import app.openring.data.Prefs;
@@ -2731,11 +2732,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     return RingManager.get(app).whileRingFree(new Runnable() {
                         @Override
                         public void run() {
-                            Analyzer.deleteAll(app);
+                            // the history, the copies before updates (the folder's copies stay, #242) and the sleep sound clips (#380)
+                            DeleteAll.run(app);
                             // the last life factor change belongs to the deleted file (issue #292)
                             LifeCard.forget();
-                            // the copies before updates hold the same history; the folder's copies stay (issue #242)
-                            BeforeUpdate.deleteAll(app);
                         }
                     });
                 } catch (RuntimeException e) {
