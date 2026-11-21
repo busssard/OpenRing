@@ -243,6 +243,12 @@ public final class Layout {
      * The line of a folded score dial: "96, Optimal, 7h 28m asleep" (the score, its word and the dial's big line, #411's time
      * asleep on Sleep); without a score the big line, else {@code sub}, the line under the dial (a watch night without a score).
      */
+    /** The folded line next to a score's small dial: its word and the big line ("Optimal, 7h 28m asleep"); the dial shows the number. */
+    public static String dialWords(double score, String big) {
+        String s = app.openring.core.analysis.Scores.verdict((int) score);
+        return big != null ? s + ", " + big : s;
+    }
+
     public static String dialSummary(double score, String big, String sub) {
         if (Double.isNaN(score)) return big != null ? big : sub;
         String s = Math.round(score) + ", " + app.openring.core.analysis.Scores.verdict((int) score);

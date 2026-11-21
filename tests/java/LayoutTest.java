@@ -160,6 +160,9 @@ public class LayoutTest {
         eq("dial: score, word and the big line", Layout.dialSummary(96, "7h 28m asleep", "23:10 to 07:05, 7h 55m in bed"), "96, Optimal, 7h 28m asleep");
         eq("dial without a big line", Layout.dialSummary(72, null, "Lowest heart rate 52"), "72, Good");
         eq("a watch night without a score: the big line first", Layout.dialSummary(Double.NaN, "6h 2m asleep", "23:40 to 06:30, 6h 50m in bed"), "6h 2m asleep");
+        // owner's wish of 21 November: the folded score card shows a small dial with the number, the line keeps the rest
+        eq("next to the dial: the word and the big line", Layout.dialWords(96, "7h 28m asleep"), "Optimal, 7h 28m asleep");
+        eq("next to the dial: the word alone", Layout.dialWords(89, null), "Optimal");
         eq("no score, no big line: the line under it", Layout.dialSummary(Double.NaN, null, "No main sleep recorded for this day"), "No main sleep recorded for this day");
         // a folded line leaves out values that are missing (review of #415: no "Steps --")
         eq("summary parts: both", Layout.parts("Steps 7432", "active burn 412 kcal"), "Steps 7432, active burn 412 kcal");
@@ -284,6 +287,8 @@ public class LayoutTest {
         check("moves and folds go to the draft while editing", tiles.contains("if (draft != null) draft.setOrder(tab, order);") && tiles.contains("setOrderOf(c, tabName,"));
         check("Settings opens the edit session", settings.contains("\"Rearrange tiles\"") && settings.contains("putExtra(\"edit_layout\", true)"));
         check("the edit header has Save and Reset", main.contains("\"Save\"") && main.contains("Tiles.resetDraft()") && main.contains("Tiles.save(MainActivity.this)"));
+        check("folded score cards get a small dial", pages.contains("return Tiles.dials(card, new double[] {score}") && tiles.contains("t.dials.setVisibility(open ? View.GONE : View.VISIBLE)"));
+        check("Today's folded scores are a row of dials", pages.contains("new String[] {\"Readiness\", \"Sleep\", \"Activity\", \"Screen\"}"));
         check("Back with unsaved changes asks first", main.contains("Tiles.draftChanged()") && main.contains("Explain.EDIT_LEAVE"));
         check("the menu moves up and down", tiles.contains("\"Move up\"") && tiles.contains("\"Move down\""));
         check("demo mode keeps its own layout", prefs.contains("(demo ? \"_demo\" : \"\")") && prefs.contains("tileKey(\"order\", tab, demo())"));

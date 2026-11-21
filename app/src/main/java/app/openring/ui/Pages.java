@@ -103,7 +103,13 @@ public final class Pages {
     /** Names a tile of Today by its {@code core/TodayCards} key, with a title where the card has no caption of its own. */
     static void todayTile(View card, String k, DayData d) {
         String key = app.openring.core.Layout.key(k);
-        if (app.openring.core.TodayCards.SCORES.equals(k)) Tiles.name(card, key, "Scores", scoresLine(d));
+        if (app.openring.core.TodayCards.SCORES.equals(k)) {
+            // folded: the four scores as small dials in a row (owner's wish of 21 November); the line when there is none
+            Tiles.name(card, key, "Scores", scoresLine(d));
+            if (Tiles.dials(card, new double[] {d.score("readiness"), d.score("sleep"), d.score("activity_score"), d.score("screen")},
+                    new int[] {Ui.READY, Ui.SLEEP, Ui.ACTIVE, Ui.OXY}, new String[] {"Readiness", "Sleep", "Activity", "Screen"}) != null
+                    && Tiles.spec(card).dials != null) Tiles.summary(card, "");
+        }
         else if (app.openring.core.TodayCards.DEVICE_NOTE.equals(k)) Tiles.name(card, key, "About these scores", null);
         else if (app.openring.core.TodayCards.FINISH_WATCH.equals(k)) Tiles.name(card, key, "Your watch", app.openring.core.Start.FINISH_TITLE);
         else if (app.openring.core.TodayCards.LIVE.equals(k)) Tiles.name(card, key, "Live heart rate", null);
@@ -2014,7 +2020,10 @@ public final class Pages {
         }
         // a tile like every other (owner's wish of 18 November): folded it says the score, its word and the big line ("96,
         // Optimal, 7h 28m asleep", review of #415 with #411); without a score the big line, else the line under it
-        return Tiles.name(card, "score", label + " score", app.openring.core.Layout.dialSummary(score, big, sub));
+        // folded: a small dial with the score, and the word and the big line next to it (owner's wish of 21 November)
+        Tiles.name(card, "score", label + " score", Double.isNaN(score) ? app.openring.core.Layout.dialSummary(score, big, sub)
+                : app.openring.core.Layout.dialWords(score, big));
+        return Tiles.dials(card, new double[] {score}, new int[] {color}, new String[] {label});
     }
 
     static View contributors(Context c, JSONObject score, int color, String title) {

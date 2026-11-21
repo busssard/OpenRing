@@ -157,7 +157,7 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
   (`ui/Tiles.arrange`, called by `MainActivity.render` after the page and the Trends card are built, so that card is a tile too): its caption becomes the header of a shared `Fold`, a tap folds it.
   Moving is an edit session (owner's wish of 20 November, extra `edit_layout` from Settings' Rearrange tiles): every tile gets a
   frame and a handle (drag to move, tap for a menu, also for TalkBack), Reset and Save replace Sync and Settings in the header,
-  and changes stay in a `core/LayoutDraft` until Save (Back with unsaved changes asks). The order and folds are
+  and changes stay in a `core/LayoutDraft` until Save (Back with unsaved changes asks). Folded score cards show a small dial (`Tiles.dials`, owner's wish of 21 November). The order and folds are
   saved per tab by a stable key (`core/Layout`: from the caption, or `Tiles.name` for a card without one or with a caption
   that changes), so give a new card a caption or a name; it then appears at its standard place for people who moved tiles.
   A card without a caption gets "note" and its first words up to the first number (`Layout.noteKey`); when those words can

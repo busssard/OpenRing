@@ -50,6 +50,10 @@ final class Tiles {
     /** What a page says about one of its cards; a card without it gets key and title from its caption. */
     static final class Spec {
         String key, title, summary;
+        /** Small score dials shown while folded (owner's wish of 21 November), null for none: values, colours, names. */
+        double[] dials;
+        int[] dialColors;
+        String[] dialNames;
         boolean standardOpen = true;
         Listener listener;
     }
@@ -81,6 +85,63 @@ final class Tiles {
         s.summary = summary;
         return card;
     }
+
+    /**
+     * Small score dials for the folded tile (owner's wish of 21 November): one dial goes left of the title (a score card), several
+     * go in a row under it in place of the line (Today's scores). Scores that are missing are left out; none left, no dials.
+     */
+    static <T extends View> T dials(T card, double[] values, int[] colors, String[] names) {
+        int n = 0;
+        for (double v : values) if (!Double.isNaN(v)) n++;
+        Spec s = spec(card);
+        if (n == 0) {
+            s.dials = null;
+            return card;
+        }
+        s.dials = new double[n];
+        s.dialColors = new int[n];
+        s.dialNames = new String[n];
+        for (int i = 0, j = 0; i < values.length; i++) {
+            if (Double.isNaN(values[i])) continue;
+            s.dials[j] = values[i];
+            s.dialColors[j] = colors[i];
+            s.dialNames[j++] = names[i];
+        }
+        return card;
+    }
+
+    /** The folded tile's dials: one small dial, or a row of them with their names under each. */
+    static View dialsView(Context c, Spec s) {
+        if (s.dials.length == 1) {
+            Charts.ScoreRing r = new Charts.ScoreRing(c, s.dials[0], null, s.dialColors[0], false);
+            r.setContentDescription(s.dialNames[0] + " " + Math.round(s.dials[0]));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(c, DIAL_DP), Ui.dp(c, DIAL_DP));
+            lp.setMargins(0, 0, Ui.dp(c, 12), 0);
+            r.setLayoutParams(lp);
+            return r;
+        }
+        LinearLayout row = Ui.hbox(c);
+        row.setPadding(0, Ui.dp(c, 8), 0, 0);
+        StringBuilder say = new StringBuilder();
+        for (int i = 0; i < s.dials.length; i++) {
+            LinearLayout one = Ui.vbox(c);
+            one.setGravity(Gravity.CENTER_HORIZONTAL);
+            one.addView(new Charts.ScoreRing(c, s.dials[i], null, s.dialColors[i], false),
+                    new LinearLayout.LayoutParams(Ui.dp(c, DIAL_DP), Ui.dp(c, DIAL_DP)));
+            TextView name = Ui.text(c, s.dialNames[i], 11, Ui.TEXT_2, Ui.REGULAR);
+            name.setGravity(Gravity.CENTER);
+            one.addView(name);
+            row.addView(one, Ui.weight(1));
+            if (say.length() > 0) say.append(", ");
+            say.append(s.dialNames[i]).append(' ').append(Math.round(s.dials[i]));
+        }
+        row.setContentDescription(say.toString());
+        row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        return row;
+    }
+
+    /** The size of a folded tile's dial: big enough for a two digit score, small enough to keep the tile one row. */
+    static final int DIAL_DP = 44;
 
     /** The summary shown while the card is folded (its key number), in place of the one read from the card. */
     static <T extends View> T summary(T card, String summary) {
@@ -193,6 +254,7 @@ final class Tiles {
         View view;
         Fold fold;
         TextView summary;
+        View dials;
         /** The space under the tile's content while open (the card's own); folded, the header needs less. */
         int bottom;
     }
@@ -299,8 +361,22 @@ final class Tiles {
             t.summary = Fold.oneLine(Ui.text(c, sum == null ? "" : sum, 13, Ui.TEXT_2, Ui.REGULAR));
             t.summary.setPadding(0, Ui.dp(c, 2), 0, 0);
             words.addView(t.summary);
+            View inner = words;
+            if (s != null && s.dials != null) {
+                // the small score dials while folded (owner's wish of 21 November)
+                t.dials = dialsView(c, s);
+                if (s.dials.length == 1) {
+                    LinearLayout withDial = Ui.hbox(c);
+                    withDial.setGravity(Gravity.CENTER_VERTICAL);
+                    withDial.addView(t.dials);
+                    withDial.addView(words, Ui.weight(1));
+                    inner = withDial;
+                } else {
+                    words.addView(t.dials);
+                }
+            }
             final boolean edit = editing();
-            View headContent = words;
+            View headContent = inner;
             if (edit) {
                 // the handle in the edit session: a drag on it moves the tile, a tap opens the menu
                 LinearLayout row = Ui.hbox(c);
@@ -326,7 +402,7 @@ final class Tiles {
                     }
                 });
                 row.addView(handle);
-                row.addView(words, Ui.weight(1));
+                row.addView(inner, Ui.weight(1));
                 headContent = row;
             }
 
@@ -376,6 +452,7 @@ final class Tiles {
         void look(Tile t) {
             boolean open = t.fold.isOpen();
             t.summary.setVisibility(!open && t.summary.getText().length() > 0 ? View.VISIBLE : View.GONE);
+            if (t.dials != null) t.dials.setVisibility(open ? View.GONE : View.VISIBLE);
             View v = t.view;
             int b = open ? t.bottom : Math.min(t.bottom, Ui.dp(c, 6));
             if (v.getPaddingBottom() != b) v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), b);
