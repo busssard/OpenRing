@@ -944,6 +944,7 @@ public class PipelineTest {
         syncStart334();
         batteryToday();
         lifeUpgrade292();
+        lifeNames422();
         lifeWrites292();
         lifeRestore292();
         lifeResets292();
@@ -15245,6 +15246,141 @@ public class PipelineTest {
                 && app.openring.data.Backup.PERIODS_UNREADABLE.equals(r.message) && r.message.contains("life factors") && lifeRows292(db).equals(merged)
                 && db.eventCount() == events, r.message);
         noTemp(c, "after the #292 restores");
+        clean254();
+    }
+
+    /** The life factor keys in force on {@code day} after a read, as the screens get them. */
+    static List<String> on422(Db db, String day) {
+        return app.openring.data.LifeLog.on(db, day);
+    }
+
+    /** The own tags not removed (Remove one of your own) and their names, as "key=name" each. */
+    static String own422(Db db) {
+        return app.openring.data.LifeLog.known(db).own().toString();
+    }
+
+    /**
+     * Issue #422: after Delete all, "Sauna" made again and an older backup with its own "Sauna" restored are one factor under
+     * the older key (the backup's): one chip, the days of both, a day held by both once; the restore twice gives the same; a tap
+     * off removes a day from both keys (removal marks only, Undo puts both rows back), a tap on writes the older key; the chips
+     * choice and removing the factor reach both keys, bringing it back brings both; "sauna" in other capitals joins too; a
+     * removed old "Sauna" never joins one in force. No stored row is ever deleted or rewritten by reading: the merge is as
+     * before and every row of the phone and of the backup is still there.
+     */
+    static void lifeNames422() throws Exception {
+        Context c = phone254("openring422-names");
+        Db db = Db.get(c);
+        String older = app.openring.data.LifeLog.addOwn(db, "Sauna", 1550000000000L);
+        app.openring.data.LifeLog.set(db, "2019-06-01", older, true, 1000);
+        app.openring.data.LifeLog.set(db, "2019-06-02", older, true, 1001);
+        app.openring.data.LifeLog.set(db, "2019-06-03", older, true, 1002);
+        app.openring.data.LifeLog.set(db, "2019-06-01", app.openring.core.LifeTags.ALCOHOL, true, 1003);
+        // the old Sauna was taken off the card before the backup
+        app.openring.data.LifeLog.setChips(db, Arrays.asList(app.openring.core.LifeTags.MEDITATION, app.openring.core.LifeTags.ALCOHOL), 1004);
+        byte[] full = backup252(c);
+        String backupRows = lifeRows292(db);
+        Analyzer.deleteAll(c);
+        db = Db.get(c);
+        String newer = app.openring.data.LifeLog.addOwn(db, "Sauna", 1560000000000L);
+        check("#422 after Delete all the same name gets a new key", newer != null && !newer.equals(older) && lifeCount292(db) == 1, newer);
+        app.openring.data.LifeLog.set(db, "2019-06-02", newer, true, 2000);
+        app.openring.data.LifeLog.set(db, "2019-06-10", newer, true, 2001);
+        String phoneRows = lifeRows292(db);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        String merged = lifeRows292(db);
+        check("#422 the restore: every row of the backup and of the phone is there as it was (nothing rewritten or deleted)", r.ok
+                && containsRows252(merged, phoneRows) && containsRows252(merged, backupRows), r.message);
+        app.openring.core.LifeTags.Known k = app.openring.data.LifeLog.known(db);
+        List<String> chips = new ArrayList<String>();
+        for (app.openring.core.LifeTags.Tag t : k.chips()) if (app.openring.core.LifeTags.isOwn(t.key)) chips.add(t.key + "=" + t.name);
+        check("#422 one Sauna chip under the older key (on the card, as the newer one is), one entry in Remove one of your own", chips.equals(Arrays.asList(older + "=Sauna"))
+                && own422(db).equals("[" + older + "=Sauna chip]") && k.aliases(older).equals(Arrays.asList(newer)), chips + " " + own422(db));
+        java.util.TreeMap<LocalDate, List<String>> all = app.openring.data.LifeLog.all(db);
+        check("#422 the days of both keys under the older one, the day both hold once", all.toString().equals("{2019-06-01=[alcohol, " + older + "], 2019-06-02=["
+                + older + "], 2019-06-03=[" + older + "], 2019-06-10=[" + older + "]}")
+                && app.openring.data.LifeLog.days(db, "2019-06-02", "2019-06-10").size() == 3 && on422(db, "2019-06-02").equals(Arrays.asList(older)), all);
+        check("#422 the names beside a night and the month's counts: Sauna once, on 4 days", k.names(on422(db, "2019-06-02")).equals(Arrays.asList("Sauna"))
+                && app.openring.core.LifeTags.monthLine(all, java.time.YearMonth.of(2019, 6), k).equals("This month: Sauna on 4 days, Alcohol on 1 day."),
+                app.openring.core.LifeTags.monthLine(all, java.time.YearMonth.of(2019, 6), k));
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setCsvLife(true);
+        java.io.ByteArrayOutputStream csv = new java.io.ByteArrayOutputStream();
+        app.openring.data.Exporter.dailyCsv(c, csv);
+        p.setCsvLife(false);
+        String[] lines = new String(csv.toByteArray(), "UTF-8").split("\n");
+        int col = Arrays.asList(lines[0].split(",")).indexOf("life_own_sauna"), ones = 0;
+        for (String l : lines) {
+            String[] f = l.split(",", -1);
+            if (l.startsWith("2019-06-") && col >= 0 && f.length > col && f[col].equals("1")) ones++;
+        }
+        check("#422 the CSV: one Sauna column with the 4 days", col > 0 && !lines[0].contains("life_own_sauna_2") && ones == 4, lines[0]);
+        app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#422 the same restore twice: the same rows, one Sauna", lifeRows292(db).equals(merged) && own422(db).equals("[" + older + "=Sauna chip]"), null);
+        // a tap off on a day both keys hold: a removal mark for each, the day gone; Undo puts both rows back as they were
+        List<app.openring.data.LifeLog.Row> before = app.openring.data.LifeLog.before(db, "2019-06-02", older, false);
+        long rows = db.count("SELECT COUNT(*) FROM life_days");
+        app.openring.data.LifeLog.set(db, "2019-06-02", older, false, 3000);
+        app.openring.data.LifeLog.Row a = app.openring.data.LifeLog.row(db, "2019-06-02", older), b = app.openring.data.LifeLog.row(db, "2019-06-02", newer);
+        check("#422 a tap off on a day both hold: removal marks for both keys, no row deleted, the day gone", before.size() == 2 && a.gone && b.gone
+                && a.made == 3000 && b.made == 3000 && db.count("SELECT COUNT(*) FROM life_days") == rows && on422(db, "2019-06-02").isEmpty(), before);
+        for (app.openring.data.LifeLog.Row x : before) app.openring.data.LifeLog.restore(db, "2019-06-02", older, x, 3001);
+        check("#422 Undo of that tap: both rows as they were", lifeRows292(db).equals(merged) && on422(db, "2019-06-02").equals(Arrays.asList(older)), null);
+        check("#422 a tap on writes only the older key's row (what Undo keeps)", app.openring.data.LifeLog.before(db, "2019-06-20", older, true).toString().equals("[null]"), null);
+        app.openring.data.LifeLog.set(db, "2019-06-20", older, true, 3002);
+        check("#422 a tap on writes the older key", on422(db, "2019-06-20").equals(Arrays.asList(older)) && app.openring.data.LifeLog.row(db, "2019-06-20", newer) == null
+                && !app.openring.data.LifeLog.row(db, "2019-06-20", older).gone, null);
+        app.openring.data.LifeLog.set(db, "2019-06-10", older, false, 3003);
+        check("#422 a tap off on a day only the newer key holds: the day gone, a mark for each", on422(db, "2019-06-10").isEmpty()
+                && app.openring.data.LifeLog.row(db, "2019-06-10", newer).gone && app.openring.data.LifeLog.row(db, "2019-06-10", older).gone, null);
+        app.openring.data.LifeLog.setSpan(db, LocalDate.parse("2019-07-01"), LocalDate.parse("2019-07-03"), older, 77L, 3004);
+        check("#422 several days write the older key", app.openring.data.LifeLog.days(db, "2019-07-01", "2019-07-03").size() == 3
+                && db.count("SELECT COUNT(*) FROM life_days WHERE tag = '" + newer + "' AND day >= '2019-07-01'") == 0, null);
+        // the chips choice reaches both keys
+        app.openring.data.LifeLog.setChips(db, Arrays.asList(app.openring.core.LifeTags.ALCOHOL), 3005);
+        check("#422 Sauna taken off the card: off for both keys", app.openring.data.LifeLog.known(db).chips().size() == 1
+                && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "') AND shown = 0") == 2, null);
+        app.openring.data.LifeLog.setChips(db, Arrays.asList(older, app.openring.core.LifeTags.ALCOHOL), 3006);
+        check("#422 Sauna put back on the card: on for both keys, first", app.openring.data.LifeLog.known(db).chips().get(0).key.equals(older)
+                && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "') AND shown = 1 AND ord = 0") == 2, null);
+        // a third Sauna in other capitals (as another backup could bring): it joins too
+        String third = "own:1570000000000";
+        db.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES (?, ' SAUNA', 1, NULL, 4000, 0)", new Object[] {third});
+        app.openring.data.LifeLog.set(db, "2019-06-15", third, true, 4001);
+        check("#422 \"sauna\" in other capitals joins: its day under the older key, still one Sauna", on422(db, "2019-06-15").equals(Arrays.asList(older))
+                && own422(db).equals("[" + older + "=Sauna chip]") && app.openring.data.LifeLog.known(db).aliases(older).equals(Arrays.asList(newer, third)), own422(db));
+        check("#422 a new own tag with the same name is still refused", app.openring.data.LifeLog.addOwn(db, "sauna", 1580000000000L) == null, null);
+        // removing the factor removes every key of it; its days stay; bringing it back brings them all
+        long days = db.count("SELECT COUNT(*) FROM life_days");
+        app.openring.data.LifeLog.removeOwn(db, older, 5000);
+        check("#422 removing Sauna removes all three keys (removal marks), the days stay", app.openring.data.LifeLog.known(db).own().isEmpty()
+                && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "', '" + third + "') AND gone = 1 AND shown = 0") == 3
+                && db.count("SELECT COUNT(*) FROM life_days") == days && on422(db, "2019-06-15").equals(Arrays.asList(older))
+                && app.openring.data.LifeLog.known(db).name(newer).equals("Sauna"), null);
+        String back = app.openring.data.LifeLog.addOwn(db, "SAUNA", 1590000000000L);
+        check("#422 the name again brings all three back as one, under the older key", older.equals(back) && own422(db).equals("[" + older + "=Sauna chip]")
+                && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "', '" + third + "') AND gone = 0 AND shown = 1") == 3, back);
+        int kept = 0;
+        for (String[] dt : new String[][] {{"2019-06-01", older}, {"2019-06-02", older}, {"2019-06-03", older}, {"2019-06-02", newer}, {"2019-06-10", newer}}) {
+            if (app.openring.data.LifeLog.row(db, dt[0], dt[1]) != null) kept++;
+        }
+        check("#422 nothing deleted: the row of each day of the phone and of the backup is still there (a tap off only marks it)",
+                kept == 5 && db.count("SELECT COUNT(*) FROM life_days WHERE day = '2019-06-01' AND tag = 'alcohol' AND gone = 0") == 1, kept);
+        // a removed old Sauna never joins one in force (as a restore of a newer phone's rows could bring)
+        Context c2 = phone254("openring422-removed");
+        Db d2 = Db.get(c2);
+        String old2 = app.openring.data.LifeLog.addOwn(d2, "Sauna", 1550000000000L);
+        app.openring.data.LifeLog.set(d2, "2019-06-01", old2, true, 1000);
+        app.openring.data.LifeLog.removeOwn(d2, old2, 1001);
+        String new2 = "own:1560000000000";
+        d2.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES (?, 'sauna', 1, NULL, 2000, 0)", new Object[] {new2});
+        app.openring.data.LifeLog.set(d2, "2019-06-02", new2, true, 2001);
+        app.openring.core.LifeTags.Known k2 = app.openring.data.LifeLog.known(d2);
+        app.openring.data.LifeLog.set(d2, "2019-06-02", new2, false, 2002);
+        check("#422 a removed old Sauna does not join the one in force: two keys, each its own days, a tap off reaches only its own key",
+                own422(d2).equals("[" + new2 + "=sauna chip]") && k2.all.get(old2).removed && k2.aliases(new2).isEmpty() && k2.aliases(old2).isEmpty()
+                && on422(d2, "2019-06-01").equals(Arrays.asList(old2)) && app.openring.data.LifeLog.row(d2, "2019-06-02", old2) == null, k2.all);
         clean254();
     }
 

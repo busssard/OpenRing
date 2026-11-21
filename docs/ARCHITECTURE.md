@@ -347,7 +347,7 @@ upgrade is safe twice and resumes after a stop). A tag is a calendar day, never 
 move it; a tag of day D belongs to the night that starts on the evening of D: Sleep of D + 1 shows "Before this night: ...",
 Readiness of D + 1 "Logged yesterday: ...". A tap on a chip writes one statement in the background (`LifeLog.set`), taking a
 tag off keeps a removal mark; Several days writes one row per date with one span id in one transaction (`LifeLog.setSpan`);
-Undo puts each row back as it was (a day that had none gets a removal mark). Logging starts no analysis and changes no score
+Undo puts each row back as it was (a day that had none gets a removal mark). **Same name, one factor (issue #422):** own tags whose cleaned names are equal in any case (two keys after Delete all and an older backup) are read as one factor under the older key (`LifeTags.Known`: `key`, `aliases`, `fold`); in force and removed tags are grouped apart. This is a reading rule only: no row is rewritten, a tap on writes the older key, a tap off marks the older key and every alias that has the day. Do not "simplify" `Known` back to one chip per key. Logging starts no analysis and changes no score
 (phase 1 does not touch `Analyzer` or readiness; the pipeline test analyses the demo with every tag on every day and gets the
 same nights and days). `DayData` reads every day in force (`LifeLog.all`, 11,000 rows of five years in about 0.04 s on the JVM)
 and the chips (`LifeLog.known`); an error there shows a sentence on the cards and logs the error's kind only. Today's row

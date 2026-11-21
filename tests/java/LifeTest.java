@@ -39,6 +39,8 @@ public class LifeTest {
         texts();
         csv();
         demo();
+        sameName();
+        restoreText();
         System.out.println("life: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -137,6 +139,8 @@ public class LifeTest {
                 "Holiday from 30 Dec 2025 to 2 Jan");
         eq("after a span", LifeTags.spanDone("Holiday", LocalDate.of(2026, 11, 3), LocalDate.of(2026, 11, 10), y, EN), "Holiday logged for 8 days, 3 Nov to 10 Nov.");
         eq("after a one day span", LifeTags.spanDone("Travel", TODAY, TODAY, y, EN), "Travel logged for 1 day, 17 Nov to 17 Nov.");
+        eq("before several days are logged (#421)", LifeTags.spanDone(5), "One entry on each of the 5 days. To take a day away, open that day and tap its chip.");
+        eq("before one day is logged as several (#421)", LifeTags.spanDone(1), "One entry on 1 day. To take a day away, open that day and tap its chip.");
         eq("after a tap on", LifeTags.tapLine("Meditation", true, LocalDate.of(2026, 11, 8), y, EN), "Meditation added to 8 Nov.");
         eq("after a tap off", LifeTags.tapLine("Meditation", false, LocalDate.of(2026, 11, 8), y, EN), "Meditation taken away from 8 Nov.");
         eq("a past day", LifeTags.logFor(LocalDate.of(2026, 10, 27), y, EN), "Log for 27 Oct");
@@ -163,7 +167,8 @@ public class LifeTest {
         List<String> all = new ArrayList<String>(Arrays.asList(LifeTags.TITLE, LifeTags.TITLE_PAST, LifeTags.NOTE, LifeTags.ALL, LifeTags.SEVERAL,
                 LifeTags.ADD_OWN, LifeTags.CHOOSE, LifeTags.REMOVE_OWN, LifeTags.OWN_HINT, LifeTags.BODY_TITLE, LifeTags.MONTH_HINT,
                 LifeTags.NONE_YET, LifeTags.NO_EFFECT_YET, LifeTags.NOT_SAVED, LifeTags.NOT_UNDONE, LifeTags.UNREADABLE, LifeTags.CSV_CHOICE,
-                LifeTags.CSV_INTIMACY, LifeTags.CSV_NOTE, LifeTags.SPAN_FUTURE, LifeTags.SPAN_BACKWARDS, LifeTags.OWN_REFUSED, LifeTags.monthLine(days, YearMonth.of(2026, 11), k)));
+                LifeTags.CSV_INTIMACY, LifeTags.CSV_NOTE, LifeTags.SPAN_FUTURE, LifeTags.SPAN_BACKWARDS, LifeTags.OWN_REFUSED, LifeTags.monthLine(days, YearMonth.of(2026, 11), k),
+                LifeTags.spanDone(1), LifeTags.spanDone(5), RESTORE_TEXT));
         all.addAll(Arrays.asList(app.openring.ui.Explain.lifeTexts()));
         for (String t : all) {
             check("plain, no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("–") && !t.contains("—") && !t.contains("--"));
@@ -226,5 +231,81 @@ public class LifeTest {
         for (LocalDate[] s : LifeTags.demoSpans(TODAY, cold)) spanDays += LifeTags.span(s[0], s[1]).size();
         eq("the demo's two spans cover the illness and holiday days", spanDays, illness + holiday);
         eq("the same day gives the same tags", LifeTags.demo(TODAY, days, cold), d);
+    }
+
+    /**
+     * Issue #422: own tags with the same name (cleaned, any case) and both in force, or both removed, are one factor under the
+     * older key; the newer key is an alias. A removed one never joins one in force; other spellings stay apart.
+     */
+    static void sameName() {
+        eq("the same name: cleaned, any case", LifeTags.sameName("  SAUNA ") + "|" + LifeTags.sameName("sauna") + "|" + LifeTags.sameName("Sauna\tvisit"),
+                "sauna|sauna|sauna visit");
+        check("no name, no same name", LifeTags.sameName(null) == null);
+        List<LifeTags.Choice> ch = new ArrayList<LifeTags.Choice>();
+        // the backup's Sauna (older, taken off the card long ago), the one made again after Delete all (on the card), a third
+        // spelled in capitals, a removed Sauna and another removed one, a different spelling, and a Sauna with no name
+        ch.add(new LifeTags.Choice("own:5000", "Sauna", 1, null, false));
+        ch.add(new LifeTags.Choice("own:1000", "Sauna", 0, 3, false));
+        ch.add(new LifeTags.Choice("own:7000", " SAUNA", 0, null, false));
+        ch.add(new LifeTags.Choice("own:500", "sauna", 1, null, true));
+        ch.add(new LifeTags.Choice("own:600", "Sauna ", 1, null, true));
+        ch.add(new LifeTags.Choice("own:2000", "Sauna visit", null, null, false));
+        ch.add(new LifeTags.Choice("own:8000", null, 1, null, false));
+        LifeTags.Known k = new LifeTags.Known(ch);
+        eq("one factor per name: the older key, the removed ones apart, another spelling apart", new ArrayList<String>(k.all.keySet()).subList(9, k.all.size()),
+                Arrays.asList("own:500", "own:1000", "own:2000"));
+        eq("the older key's name and its removal state", k.all.get("own:1000").toString() + " | " + k.all.get("own:500").toString(),
+                "own:1000=Sauna chip | own:500=sauna removed");
+        eq("an alias is read as the older key", k.key("own:5000") + " " + k.key("own:7000") + " " + k.key("own:600") + " " + k.key("own:2000") + " "
+                + k.key("alcohol") + " " + k.key("own:9"), "own:1000 own:1000 own:500 own:2000 alcohol own:9");
+        eq("the aliases, oldest first", k.aliases("own:1000"), Arrays.asList("own:5000", "own:7000"));
+        eq("a removed factor's aliases", k.aliases("own:500"), Arrays.asList("own:600"));
+        check("no aliases for a key alone with its name or a fixed tag", k.aliases("own:2000").isEmpty() && k.aliases("alcohol").isEmpty() && k.aliases("own:5000").isEmpty());
+        eq("the name of an alias is its factor's", k.name("own:7000") + "|" + k.name("own:600"), "Sauna|sauna");
+        eq("one chip, on the card when any key of it is, in the older key's place", keys(k.chips()),
+                Arrays.asList("own:1000", "meditation", "alcohol", "caffeine_late", "stress", "hard_workout", "own:2000"));
+        eq("one entry in All factors and in Remove one of your own", keys(k.own()), Arrays.asList("own:1000", "own:2000"));
+        eq("names: a day with both keys names it once", k.names(Arrays.asList("own:5000", "own:1000", "alcohol")), Arrays.asList("Alcohol", "Sauna"));
+        Map<LocalDate, List<String>> days = new TreeMap<LocalDate, List<String>>();
+        days.put(LocalDate.of(2026, 11, 1), Arrays.asList("own:1000"));
+        days.put(LocalDate.of(2026, 11, 2), Arrays.asList("alcohol", "own:5000"));
+        days.put(LocalDate.of(2026, 11, 3), Arrays.asList("own:1000", "own:5000", "own:7000", "stress"));
+        days.put(LocalDate.of(2026, 11, 4), Arrays.asList("own:600", "own:2000"));
+        TreeMap<LocalDate, List<String>> f = k.fold(days);
+        eq("fold: each day's factors once, in key order", f.toString(),
+                "{2026-11-01=[own:1000], 2026-11-02=[alcohol, own:1000], 2026-11-03=[own:1000, stress], 2026-11-04=[own:2000, own:500]}");
+        eq("fold leaves its input as it was", days.get(LocalDate.of(2026, 11, 3)), Arrays.asList("own:1000", "own:5000", "own:7000", "stress"));
+        check("fold of nothing", k.fold(null).isEmpty());
+        eq("the month's counts: the days of both keys, a day once", LifeTags.monthLine(f, YearMonth.of(2026, 11), k),
+                "This month: Sauna on 3 days, Alcohol on 1 day, Stress on 1 day, sauna on 1 day, Sauna visit on 1 day.");
+        eq("CSV: one column per factor", new ArrayList<String>(LifeTags.csvColumns(k, true, false).values()).subList(8, 11),
+                Arrays.asList("life_own_sauna", "life_own_sauna_2", "life_own_sauna_visit"));
+        // alone, each is its own factor as before
+        List<LifeTags.Choice> one = new ArrayList<LifeTags.Choice>();
+        one.add(new LifeTags.Choice("own:5000", "Sauna", 0, null, false));
+        LifeTags.Known k1 = new LifeTags.Known(one);
+        check("an own tag alone with its name: its own key, its own choice", k1.key("own:5000").equals("own:5000") && !k1.all.get("own:5000").chip
+                && k1.aliases("own:5000").isEmpty());
+    }
+
+    static final String RESTORE_TEXT = "Period days and life factors you logged or removed on this phone stay as they are.";
+
+    /** Issue #421: the restore card says that the life factors on this phone stay (ui/SetupActivity, Android, read as source). */
+    static void restoreText() {
+        String src;
+        try {
+            src = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("app/src/main/java/app/openring/ui/SetupActivity.java")), "UTF-8");
+        } catch (java.io.IOException e) {
+            src = "";
+        }
+        check("the restore card names the life factors that stay", src.contains("\"" + RESTORE_TEXT + "\""));
+        check("the restore card's old text is gone", !src.contains("\"Period days you logged or removed on this phone stay as they are.\""));
+        String card;
+        try {
+            card = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("app/src/main/java/app/openring/ui/LifeCard.java")), "UTF-8");
+        } catch (java.io.IOException e) {
+            card = "";
+        }
+        check("the several days question comes from LifeTags.spanDone (#421)", card.contains("LifeTags.spanDone(n)") && !card.contains("One entry on"));
     }
 }
