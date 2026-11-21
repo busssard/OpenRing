@@ -309,6 +309,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             addPeriodFold();
             addScreenFold(p);
             addGamesFold(p);
+            addLayoutFold();
             addBackupsFold(p);
             addAdvancedFold();
             Fold about = fold(app.openring.core.SettingsBlocks.ABOUT, app.openring.core.SettingsBlocks.aboutStatus(version()));
@@ -526,6 +527,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // ---- ring games (issue #15) ----
         addGamesFold(p);
 
+        // ---- the order and folds of the tiles on every tab (owner's wish of 18 November) ----
+        addLayoutFold();
+
         // ---- a backup file of the app (the key, settings, with history if wanted); its key half is in the Ring block ----
         Fold fileFold = fold(app.openring.core.SettingsBlocks.FILE, app.openring.core.SettingsBlocks.FILE_STATUS);
         LinearLayout file = fileFold.body;
@@ -635,9 +639,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 + "Not a medical device."));
         root.addView(aboutFold.view);
         // a chip to a part of the Ring or Watch block opens that block first
-        String[] sections = {"Updates", "Ring", "Sleep stages", "Measurements", "Ring key", "Watch", "Phone", "Profile", "Period", "Screen time", "Games", "Backup file", "Backups",
+        String[] sections = {"Updates", "Ring", "Sleep stages", "Measurements", "Ring key", "Watch", "Phone", "Profile", "Period", "Screen time", "Games", "Layout", "Backup file", "Backups",
             "Export", "Help", "Advanced", "Careful", "About"};
-        View[] targets = {updates, ringBlock.view, stagesCard, feat, key, watchBlock.view, phoneBlock.view, prof, periodCard, screenCard, gamesCard, file, backupsCard, data, help, advancedCard,
+        View[] targets = {updates, ringBlock.view, stagesCard, feat, key, watchBlock.view, phoneBlock.view, prof, periodCard, screenCard, gamesCard, layoutCard, file, backupsCard, data, help, advancedCard,
             danger, about};
         for (int i = 0; i < sections.length; i++) {
             final View t = targets[i];
@@ -761,7 +765,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return key;
     }
 
-    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard, periodCard;
+    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard, periodCard, layoutCard;
     /** The request code of the notification permission, asked when a reminder is first switched on. */
     static final int ASK_NOTIFY = 21;
     /** Whether Android lets the app notify, as the Period tracker card shows it (refilled when it changed). */
@@ -1641,6 +1645,39 @@ public final class SettingsActivity extends Activity implements RingManager.List
         root.addView(f.view);
     }
 
+    /**
+     * Layout of the tabs (owner's wishes of 18 and 20 November): how tiles fold, Rearrange tiles (the edit session on the tabs),
+     * and Reset layout, which asks first and then puts every tab's tiles back in their standard order and open state. Demo mode
+     * resets only the demo's layout.
+     */
+    void addLayoutFold() {
+        final Fold f = fold(app.openring.core.SettingsBlocks.LAYOUT, app.openring.core.SettingsBlocks.layoutStatus(Tiles.changedTabs(this)));
+        layoutCard = f.body;
+        layoutCard.addView(Ui.body(this, Explain.LAYOUT_ABOUT));
+        // the edit session (owner's wish of 20 November): the tabs open with frames and handles, Save and Reset in the header
+        small(layoutCard, "Rearrange tiles", Ui.SLEEP, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, MainActivity.class).putExtra("edit_layout", true)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                finish();
+            }
+        });
+        small(layoutCard, "Reset layout", Ui.TEXT_2, new Runnable() {
+            @Override
+            public void run() {
+                Tiles.confirmReset(SettingsActivity.this, new Runnable() {
+                    @Override
+                    public void run() {
+                        f.setStatus(app.openring.core.SettingsBlocks.layoutStatus(Tiles.changedTabs(SettingsActivity.this)));
+                        Toast.makeText(SettingsActivity.this, "Every tab is back in its standard layout", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
+        });
+        root.addView(f.view);
+    }
+
     /** The Automatic backups section (issue #242). */
     void addBackupsFold(Prefs p) {
         backupsFold = fold(app.openring.core.SettingsBlocks.BACKUPS, backupsStatus(p));
@@ -2179,7 +2216,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /**
      * Opens at a card when started with the extra {@code section} ("blocks", "ring" (the Ring block opened, from Today's battery row), "profile" (from the watch setup), "period", "stages", "watch", "screen", "games",
-     * "backups" or "advanced"), used by the screen test. A card inside the Ring or Watch block was opened with its block in
+     * "layout", "backups" or "advanced"), used by the screen test. A card inside the Ring or Watch block was opened with its block in
      * onCreate ({@link app.openring.core.SettingsBlocks#startsOpen}); "blocks" shows both blocks closed at the top.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
@@ -2187,7 +2224,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         String section = getIntent().getStringExtra("section");
         final View card = "blocks".equals(section) || "ring".equals(section) ? ringBlock.view : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
                 : "watch".equals(section) ? watchCard : "phone".equals(section) ? phoneCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
-                : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
+                : "layout".equals(section) ? layoutCard : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
         // the demo page is short: room below the last card, so every card can reach the top (issue #160); kept on every
         // build, so a restored scroll position finds the same page height

@@ -103,7 +103,7 @@ public final class SettingsBlocks {
      */
     public static final String UPDATES = "Updates", PROFILE = "Profile and goals", PERIOD = "Period tracker", SCREEN = "Screen time",
             GAMES = "Ring games", FILE = "Backup file", BACKUPS = Backups.TITLE, EXPORT = "Export", HELP = "Help and diagnostics",
-            ADVANCED = "Advanced", CAREFUL = "Careful", ABOUT = "About";
+            ADVANCED = "Advanced", CAREFUL = "Careful", ABOUT = "About", LAYOUT = "Layout of the tabs";
 
     /** The fixed status lines, for sections whose header says what is inside. */
     public static final String GAMES_STATUS = "Your ring as a game controller", GAMES_NO_RING = "Needs a ring",
@@ -117,6 +117,14 @@ public final class SettingsBlocks {
      */
     public static String exportStatus(boolean life) {
         return life ? "Daily summaries with life factors, or the database" : EXPORT_STATUS;
+    }
+
+    /**
+     * Layout of the tabs (owner's wish of 18 November): "Standard on every tab", or "Changed on 2 tabs" when the person moved or
+     * folded tiles there ({@code tabs} the number of such tabs).
+     */
+    public static String layoutStatus(int tabs) {
+        return tabs <= 0 ? "Standard on every tab" : "Changed on " + tabs + (tabs == 1 ? " tab" : " tabs");
     }
 
     /** Updates: "Open Ring 2.0.19 installed"; "Open Ring" when the version is not known. */
