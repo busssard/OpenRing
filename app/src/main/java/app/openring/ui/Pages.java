@@ -454,7 +454,7 @@ public final class Pages {
         card.addView(Ui.gap(c, 6));
         int[] st = Json.stages(n);
         double s = Json.d(n, "start"), e = Json.d(n, "end");
-        double ep = st.length == 0 ? 30 : (e - s) / st.length;
+        double ep = WakeUps.step(st, s, e);
         // the rows, with left out times next to the night (issue #254), in core so they are tested
         List<String[]> rows = WakeUps.timeline(st, s, e, Json.d(n, "lowest_hr_time"), Json.d(n, "lowest_hr"), leftOut, z,
                 Locale.getDefault());

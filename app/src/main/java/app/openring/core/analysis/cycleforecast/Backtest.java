@@ -15,8 +15,19 @@ import app.openring.core.analysis.Cycles;
 public final class Backtest {
     /** The first scored cycle has this many cycles before it (drip's minimum, Open Ring's narrow range). */
     public static final int FROM = Cycles.FEW;
-    /** "Best for you" needs this many scored cycles; with fewer it stays with Open Ring. */
-    public static final int MIN_SCORED = 3;
+    /**
+     * "Best for you" leaves Open Ring only with this many scored cycles (design round of issue #383: with fewer, a method can win
+     * by luck); with fewer it stays with Open Ring.
+     */
+    public static final int MIN_SCORED = 6;
+    /**
+     * And only for a method whose mean error is at least this many days below Open Ring's (exactly this counts). On regular cycles
+     * the methods differ by a few hundredths of a day, which is luck (Experiment view of issue #383: 54 of 400 made up regular
+     * histories left Open Ring for less than 0.05 days); clear wins, like Follows your last cycle on alternating cycles, are a day or more.
+     */
+    public static final double MARGIN = 0.25;
+    /** The card says how often the start fell in the range once this many cycles are scored (as before the margin). */
+    public static final int SHOWN_FROM = 3;
 
     /** One method's result. */
     public static final class Score {
@@ -125,13 +136,31 @@ public final class Backtest {
     }
 
     /**
-     * "Best for you": the method with the smallest mean error; a tie goes to the one listed first (Open Ring, so nothing
-     * moves without a reason). With fewer than {@link #MIN_SCORED} scored cycles Open Ring.
+     * The method with the smallest mean error, whatever the margin; a tie goes to the one listed first (Open Ring first, then
+     * {@link Methods#ALL}'s order). Open Ring without a scored cycle.
+     */
+    public int closest() {
+        if (scored() == 0) return Methods.OPEN_RING;
+        // scored cycles, so at least one score
+        Score b = null;
+        for (Score s : scores) if (b == null || s.mae < b.mae - 1e-9) b = s;
+        return b.method;
+    }
+
+    /** How many days the method {@code id} was closer than Open Ring on average (below 0: further off); NaN when not scored. */
+    public double lead(int id) {
+        Score o = of(Methods.OPEN_RING), s = of(id);
+        return o == null || s == null || scored() == 0 ? Double.NaN : o.mae - s.mae;
+    }
+
+    /**
+     * "Best for you": the {@link #closest} method, used only when it was at least {@link #MARGIN} days closer than Open Ring on
+     * average (exactly that counts) over at least {@link #MIN_SCORED} scored cycles; otherwise Open Ring, so nothing moves without
+     * a clear reason.
      */
     public int best() {
         if (scored() < MIN_SCORED) return Methods.OPEN_RING;
-        Score b = null;
-        for (Score s : scores) if (b == null || s.mae < b.mae - 1e-9) b = s;
-        return b == null ? Methods.OPEN_RING : b.method;
+        int c = closest();
+        return c != Methods.OPEN_RING && lead(c) >= MARGIN - 1e-9 ? c : Methods.OPEN_RING;
     }
 }
