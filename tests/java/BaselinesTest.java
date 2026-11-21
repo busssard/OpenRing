@@ -248,10 +248,17 @@ public class BaselinesTest {
         check("usual: none from 2 nights with a value", Double.isNaN(Baselines.usual(of(1, nan, 3, nan))), null);
         check("usual: the median of 3", Baselines.usual(of(5, 1, 3)) == 3, Baselines.usual(of(5, 1, 3)));
         check("usual: the median of 4 is the middle two's mean", Baselines.usual(of(4, 1, 3, 2)) == 2.5, null);
-        double[] v = filled(40, 10);
-        for (int i = 30; i < 40; i++) v[i] = nan;
-        check("usual: a night without the value still counts as one of the 30 (here 20 values in the window)", Baselines.usual(v) == 10, null);
-        check("usual: values more than 30 nights back do not count", Double.isNaN(Baselines.usual(filledTail(1000, 2, 30))), null);
+        // 15 nights of 0, then 15 of 10, then 15 without the value: the window of 30 holds the 10s and the empty nights,
+        // so the median is 10; skipping the empty nights would reach back to the 0s and give 5 (issue #442)
+        double[] v = filled(45, 10);
+        for (int i = 0; i < 15; i++) v[i] = 0;
+        for (int i = 30; i < 45; i++) v[i] = nan;
+        check("usual: a night without the value still counts as one of the 30 (here 15 values in the window, older ones 0)",
+                Baselines.usual(v) == 10, Baselines.usual(v));
+        // values 31, 30 and 29 nights back: only 2 of them lie in the window, too few; a window of 31 would count 3 (issue #442)
+        check("usual: values more than 30 nights back do not count", Double.isNaN(Baselines.usual(filledTail(1000, 3, 28))),
+                Baselines.usual(filledTail(1000, 3, 28)));
+        check("usual: values 30, 29 and 28 nights back all count", Baselines.usual(filledTail(1000, 3, 27)) == 1000, null);
         double[] t = new double[45];
         for (int i = 0; i < t.length; i++) t[i] = 36 + (i % 7) * 0.1;
         check("usual: is the temperature baseline of readiness, bit for bit", same(36.4 - Baselines.usual(t),
@@ -261,7 +268,7 @@ public class BaselinesTest {
         check("usual: leaves the array it reads as it was", input[0] == 3 && input[1] == 1 && input[2] == 2, null);
     }
 
-    /** {@code head} values, then {@code tail} missing nights: the values lie just outside a window of {@code tail}. */
+    /** {@code head} values, then {@code tail} missing nights (newest last): the newest value is {@code tail + 1} nights back. */
     static double[] filledTail(double value, int head, int tail) {
         double[] out = new double[head + tail];
         for (int i = 0; i < out.length; i++) out[i] = i < head ? value : Double.NaN;

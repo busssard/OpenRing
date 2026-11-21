@@ -626,6 +626,7 @@ public class PipelineTest {
         check("demo notes no time zones, so its nights look as before (#22)", demo.zones().isEmpty()
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
+        dayLowRule72();
         dayHeartChecks(demo, demoNow, "demo days", 0);
         dataCheckPrivate("demo", DataCheck.run(phone2).text, demo, LocalDate.now());
         exportChecks(phone2, demo, demoToday);
@@ -3449,10 +3450,7 @@ public class PipelineTest {
             double nextStart = nightStart(db, day.plusDays(1).toString());
             double lowAt = Double.NaN;
             for (int i = 0; i < line.size(); i++) if (line.v(i) <= line.min() + 1e-9) lowAt = line.t(i); // the latest lowest point
-            // a point stands for its quarter hour (time in the middle): it counts as in the next night when its quarter reaches it
-            boolean inNext = next != null && !Double.isNaN(next) && !Double.isNaN(nextStart) && lowAt + 450 > nextStart;
-            double floor = inNext ? Math.min(night, next) : night;
-            if (low >= floor - 3 && low <= night + 3) nearNight++;
+            if (dayLowNearNight(low, lowAt, night, next == null ? Double.NaN : next, nextStart)) nearNight++;
             else bad72 += key + " (lowest " + low + " at " + clockOf(lowAt) + ", night " + night + ", next "
                     + (next == null || Double.isNaN(next) ? "none" : next + " from " + clockOf(nextStart)) + ") ";
         }
@@ -3484,6 +3482,31 @@ public class PipelineTest {
     }
 
     /** Start of the main night of {@code day} (unix seconds), NaN when there is none. */
+    /**
+     * The rule of the #72 check above (issue #406): the day's lowest {@code low} at {@code lowAt} must lie within 3 bpm of
+     * the day's own night lowest {@code night}; it may go down to the next night's lowest {@code next} (NaN when there is
+     * none) only when it lies in that next night, which starts at {@code nextStart}. A point stands for its quarter hour
+     * (time in the middle): it counts as in the next night when its quarter reaches it.
+     */
+    static boolean dayLowNearNight(double low, double lowAt, double night, double next, double nextStart) {
+        boolean inNext = !Double.isNaN(next) && !Double.isNaN(nextStart) && lowAt + 450 > nextStart;
+        double floor = inNext ? Math.min(night, next) : night;
+        return low >= floor - 3 && low <= night + 3;
+    }
+
+    /** Issue #439: three pinned cases of the #72 rule, so loosening it turns a check red even when the demo days still pass. */
+    static void dayLowRule72() {
+        double day = 1_000_000, nextStart = day + 22.5 * 3600; // the next night starts at 22:30
+        // own night 55, the next night calmer at 46
+        check("#72 rule: the day's lowest in the next night may go down to that night's lowest",
+                dayLowNearNight(46, nextStart + 1800, 55, 46, nextStart), null);
+        check("#72 rule: a lowest point at 15:00 below the own night fails, even under a lower next night",
+                !dayLowNearNight(46, day + 15 * 3600, 55, 46, nextStart), null);
+        // a line shifted by one night: its morning holds the next night's low (46) instead of its own (55)
+        check("#72 rule: a line shifted by one night (the next night's low in this morning) fails",
+                !dayLowNearNight(46, day + 4 * 3600, 55, 46, nextStart), null);
+    }
+
     static double nightStart(Db db, String day) {
         List<String> ns = db.nightsJson(day, day, true);
         return ns.isEmpty() ? Double.NaN : Json.d(Json.parse(ns.get(0)), "start");
