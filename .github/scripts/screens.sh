@@ -330,6 +330,12 @@ if tap_text "Rearrange tiles"; then
 else
   echo "::warning::tiles step: Rearrange tiles was not found in Settings, Layout of the tabs"
 fi
+# A folded score card shows a small dial with its score (owner's wish of 21 November): Ready's score folded, then opened again
+launch_kept --ei tab 2; sleep 3
+if xy=$(text_mid "READINESS SCORE"); then
+  adb shell input tap 540 ${xy#* }; shot ready-score-folded 2
+  adb shell input tap 540 ${xy#* }; sleep 1
+else echo "::warning::score dial step: the title READINESS SCORE was not on screen"; fi
 # the Sleep dial folded with a tap on its title (review of #415 with #411): its line keeps the time asleep, "96, Optimal,
 # 7h 28m asleep"; the next launch puts the standard layout back
 launch --ei tab 1; sleep 3
