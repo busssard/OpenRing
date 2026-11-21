@@ -448,7 +448,7 @@ final class Tiles {
             View v = t.view;
             v.animate().cancel();
             v.setTranslationZ(Ui.dp(c, 12));
-            v.animate().scaleX(1.03f).scaleY(1.03f).alpha(0.94f).setDuration(120).start();
+            v.animate().scaleX(1.03f).scaleY(1.03f).setDuration(120).start(); // fully opaque: scale and shadow show the lift (issue #441)
             return true;
         }
 

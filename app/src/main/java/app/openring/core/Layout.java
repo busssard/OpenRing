@@ -9,8 +9,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The order of the tiles on each tab and which of them are folded (owner's wish of 18 November: hold a tile to move it, fold it
- * and it stays folded, everything can move and fold, and a way back to the standard layout). Display only: no number and no
+ * The order of the tiles on each tab and which of them are folded (owner's wishes of 18 and 20 November: move a tile by its
+ * handle in the edit session, Rearrange tiles, fold it and it stays folded, everything can move and fold, and a way back to
+ * the standard layout). Display only: no number and no
  * stored health data depends on it.
  * <p>
  * Every tile has a stable key (from its title or an explicit name, never its position). The saved order is a list of keys; the
