@@ -388,7 +388,8 @@ The retention (`Sounds.retain`: 7 days by default, 30, or until deleted) deletes
 Restore: `Db.replaceWith` reads the three tables before the swap and `Sounds.merge` writes them into the restored file after the life
 factors (the phone wins on the same start), then gives `gone` 1 to every mark whose file is not in the real folder or belongs to
 another of the phone's marks, all in one transaction; any failure puts the old file back. Delete all is one method,
-`data/DeleteAll.run` (the history in use, the copies before updates, and the clip folder of the history deleted: the demo's in
+`data/DeleteAll.run` (the history in use, the copies before updates only when that is the real file (they are copies of the
+real file, so the demo's Delete all keeps them, issue #425), and the clip folder of the history deleted: the demo's in
 demo mode, the real one otherwise; the other history and its clips stay, so its marks never lose their files). The Data check has one line of counts only: "Sleep sounds: N nights, M clips (K
 with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav files. Nothing calls the sweep or the retention yet;
 1b runs them with the service.
@@ -413,7 +414,10 @@ with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav 
   with "Go back to this copy": `AutoBackup.goBack` checks a temp copy, then inside the restore's swap
   (`Backup.finish` with a step before `Db.replaceWith`, so no sync, ring task or analysis runs) the current history is
   snapshotted into `back-<time>.db` ("Copy from before going back", the newest one stays) and the copy replaces the history;
-  key and settings stay. "Delete all local data" deletes the phone copies too.
+  key and settings stay. "Delete all local data" deletes the phone copies too, but only on the real history: in demo mode
+  the button reads "Delete the demo data", empties only the demo file and keeps every copy (`DeleteAll.run` follows the file
+  it deletes, not the demo switch; issue #425). After it the demo stays empty until the main screen is opened anew
+  (`Demo.complete`) or demo mode is entered again (`Demo.enter`): both see no events and no build day and make it again.
 * **Folder.** The person picks a folder (`ACTION_OPEN_DOCUMENT_TREE`, the permission kept; no storage permission, no
   network). `BackupJob` (periodic, id 4712, every 24 hours with 6 hours flex, charging, battery not low, persisted, kept
   when equal like the sync job, #193) runs daily; `Backups.due` decides whether a copy is due for the chosen interval

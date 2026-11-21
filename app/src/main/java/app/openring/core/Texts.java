@@ -35,6 +35,14 @@ public final class Texts {
     public static final String DELETE_BUSY_TOAST = "Nothing was deleted, the ring was busy. Try again later.";
     public static final String DELETE_FAILED_TOAST = "Nothing was deleted. Diagnostics, Log tab, shows why.";
 
+    /**
+     * Settings, Careful, in demo mode (issue #425): the same button empties only the demo file, so it says so. The copies
+     * from before updates are copies of the person's own history and stay (data/DeleteAll).
+     */
+    public static final String DELETE_DEMO = "Delete the demo data";
+    public static final String DELETE_DEMO_TITLE = "Delete the demo data?";
+    public static final String DELETE_DEMO_TEXT = "Only the made up demo history is erased. Your own history, its copies from before updates and your backup folder are not touched.";
+
     /** Settings, Re analyse all failed: it is one transaction, so the stored results are the old ones (issue #230). */
     public static final String ANALYSIS_FAILED = "The analysis failed, your nights and days are as before. " + SyncError.DETAILS;
 

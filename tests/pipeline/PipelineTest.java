@@ -961,6 +961,7 @@ public class PipelineTest {
         soundDataCheck380();
         soundLarge380();
         soundReview420();
+        demoDeleteAll425();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -16267,6 +16268,44 @@ public class PipelineTest {
                 && db.count("SELECT COUNT(*) FROM sound_clips WHERE start = " + (N380 + 300) + " AND gone = 0 AND file = 'late.m4a'") == 1, soundRows380(db));
         String text = DataCheck.run(c).text;
         check("#420 the Data check counts marks without sound as clips without sound", text.contains("\nSleep sounds: 0 nights, 4 clips (2 with sound)\n"), text);
+        clean254();
+    }
+
+    /**
+     * Issue #425: Delete all follows the file it deletes, never the mode switch. In demo mode it empties the demo file only: the
+     * real history (the same events and nights) and both copies made before updates stay, and the demo counts as not built, so
+     * the next start makes it again ({@code Demo.complete}). On the real history the copies go as before.
+     */
+    static void demoDeleteAll425() throws Exception {
+        Context c = phone254("openring425");
+        Db db = Db.get(c);
+        long events = db.eventCount(), nights = db.count("SELECT COUNT(*) FROM nights");
+        java.io.File copies = copies242(c);
+        copies.mkdirs();
+        java.nio.file.Files.write(new java.io.File(copies, "before-43-1.42.db").toPath(), new byte[10]);
+        java.nio.file.Files.write(new java.io.File(copies, "before-44-1.43.raw").toPath(), new byte[10]);
+        List<String> names = copyFiles242(c);
+        check("#425 (test setup) a real history with nights and two copies before updates", Db.REAL.equals(db.fileName) && events > 0 && nights > 0
+                && names.size() == 2, events + " " + nights + " " + names);
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            add58(d, 1, T58, 2, 0);
+            d.put("demo_day", "2026-11-21");
+            check("#425 (test setup) the demo file is open and has events", Db.DEMO.equals(d.fileName) && d.eventCount() > 0, d.fileName);
+            app.openring.data.DeleteAll.run(c);
+            check("#425 Delete all in demo mode: the demo file is empty and counts as not built (the next start makes the demo again)",
+                    notEmpty272(d).isEmpty() && d.eventCount() == 0 && d.kv("demo_day", null) == null, notEmpty272(d));
+            check("#425 Delete all in demo mode keeps both copies of the real history from before updates", copyFiles242(c).equals(names), copyFiles242(c));
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        db = Db.get(c);
+        check("#425 Delete all in demo mode keeps the real history: the same events and nights", Db.REAL.equals(db.fileName) && db.eventCount() == events
+                && db.count("SELECT COUNT(*) FROM nights") == nights, db.eventCount() + " " + db.count("SELECT COUNT(*) FROM nights"));
+        app.openring.data.DeleteAll.run(c);
+        check("#425 Delete all on the real history: every table empty and both copies before updates deleted", notEmpty272(db).isEmpty() && copyFiles242(c).isEmpty(),
+                notEmpty272(db) + " " + copyFiles242(c));
         clean254();
     }
 }

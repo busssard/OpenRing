@@ -551,6 +551,7 @@ scroll_to "Remind me before my period" 8 || echo "::warning::issue #383 step: th
 shot settings-period-remind 1
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
+launch --es settings careful;               shot settings-careful-demo   # Delete the demo data, never the real copies (issue #425)
 # The Watch check (issue #251, phase 1a): the Settings card, then in demo mode the made up scan (never Bluetooth) and
 # the made up report, built by the same code as a real one (the screen scrolls to it, copy buttons included)
 launch --es settings watch;                 shot settings-watch

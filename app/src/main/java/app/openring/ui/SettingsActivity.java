@@ -619,11 +619,15 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // ---- danger: what concerns this phone's data (the ring's own actions are in the Ring block) ----
         Fold dangerFold = fold(app.openring.core.SettingsBlocks.CAREFUL, app.openring.core.SettingsBlocks.CAREFUL_STATUS);
         LinearLayout danger = dangerFold.body;
+        carefulCard = danger;
         danger.addView(Ui.text(this, "This asks before it does anything.", 12, Ui.TEXT_3, Ui.REGULAR));
-        small(danger, "Delete all local data", Ui.WARN, new Runnable() {
+        // in demo mode only the demo file is emptied, the real history and its copies stay (issue #425)
+        final boolean demoDelete = p.demo();
+        small(danger, demoDelete ? Texts.DELETE_DEMO : "Delete all local data", Ui.WARN, new Runnable() {
             @Override
             public void run() {
-                confirm("Delete everything?", "All synced events and results on this phone are erased, including your period log and your life factors. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
+                confirm(demoDelete ? Texts.DELETE_DEMO_TITLE : "Delete everything?", demoDelete ? Texts.DELETE_DEMO_TEXT
+                        : "All synced events and results on this phone are erased, including your period log and your life factors. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
                     @Override
                     public void run() {
                         deleteAll();
@@ -766,7 +770,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return key;
     }
 
-    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, watchCard, periodCard, layoutCard;
+    private LinearLayout screenCard, gamesCard, backupsCard, advancedCard, carefulCard, watchCard, periodCard, layoutCard;
     /** The request code of the notification permission, asked when a reminder is first switched on. */
     static final int ASK_NOTIFY = 21;
     /** Whether Android lets the app notify, as the Period tracker card shows it (refilled when it changed). */
@@ -2217,7 +2221,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /**
      * Opens at a card when started with the extra {@code section} ("blocks", "ring" (the Ring block opened, from Today's battery row), "profile" (from the watch setup), "period", "stages", "watch", "screen", "games",
-     * "layout", "backups" or "advanced"), used by the screen test. A card inside the Ring or Watch block was opened with its block in
+     * "layout", "backups", "advanced" or "careful"), used by the screen test. A card inside the Ring or Watch block was opened with its block in
      * onCreate ({@link app.openring.core.SettingsBlocks#startsOpen}); "blocks" shows both blocks closed at the top.
      * Only then the page gets an empty space at its end, so a card near the end is not stopped by the scroll limit.
      */
@@ -2225,7 +2229,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         String section = getIntent().getStringExtra("section");
         final View card = "blocks".equals(section) || "ring".equals(section) ? ringBlock.view : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
                 : "watch".equals(section) ? watchCard : "phone".equals(section) ? phoneCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
-                : "layout".equals(section) ? layoutCard : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
+                : "layout".equals(section) ? layoutCard : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard
+                : "careful".equals(section) ? carefulCard : null;
         if (card == null) return;
         // the demo page is short: room below the last card, so every card can reach the top (issue #160); kept on every
         // build, so a restored scroll position finds the same page height
@@ -2732,7 +2737,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     return RingManager.get(app).whileRingFree(new Runnable() {
                         @Override
                         public void run() {
-                            // the history, the copies before updates (the folder's copies stay, #242) and the sleep sound clips (#380)
+                            // the history in use, the copies before updates only for the real history (the folder's copies stay, #242, #425)
+                            // and the sleep sound clips of the history deleted (#380)
                             DeleteAll.run(app);
                             // the last life factor change belongs to the deleted file (issue #292)
                             LifeCard.forget();
