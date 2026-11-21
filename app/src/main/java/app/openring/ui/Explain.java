@@ -673,9 +673,18 @@ public final class Explain {
     public static final String LIFE_NO_EFFECT = "Nothing here changes a score. Open Ring does not yet work out what a factor goes with: a "
             + "pattern needs many days with and without it, and would show what goes together, not what caused it.";
 
+    /** When and how long (issue #435), How it works on Today's row. */
+    public static final String LIFE_TIMES = "Hold a chip, or tap the small clock on a logged one, to say when it started and how long it "
+            + "took. It then shows as a band on that day's charts with time on them, and you can touch the band to read it. The ring "
+            + "does not know what you did: the band shows what was measured while you said it happened.";
+    /** Under the day's heart rate chart: what the numbers of each band are. */
+    public static final String LIFE_DURING = "Heart rate during is the average of the line's quarter hour points that reach into the time "
+            + "you logged; your day is the Average above. Not worn during: the ring had no reading then. Measured values only, they "
+            + "do not say what the factor did.";
+
     /** Every life factor text, for the tests (plain, no dashes). */
     public static String[] lifeTexts() {
-        return new String[] {LIFE_ROW, LIFE_MORE, LIFE_PRIVATE, LIFE_MONTH, LIFE_NO_EFFECT};
+        return new String[] {LIFE_ROW, LIFE_MORE, LIFE_PRIVATE, LIFE_MONTH, LIFE_NO_EFFECT, LIFE_TIMES, LIFE_DURING};
     }
 
     public static final String SHOW_BADGES = "Show badges";
