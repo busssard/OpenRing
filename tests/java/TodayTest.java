@@ -1,4 +1,6 @@
 import app.openring.core.Grid;
+import app.openring.core.SleepHero;
+import app.openring.core.Texts;
 import app.openring.core.SettingsBlocks;
 import app.openring.core.Start;
 import app.openring.core.TodayCards;
@@ -34,6 +36,7 @@ public class TodayTest {
         grid();
         statuses();
         sources();
+        sleepHero();
         System.out.println("today: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -43,14 +46,14 @@ public class TodayTest {
 
     static void order() {
         eq("ring, everything: Your day right after the scores, badges after it", TodayCards.of(RING, true, true, true).toString(),
-                "[scores, day, left_out, badges, ring_metrics, live, period]");
-        eq("ring, nothing extra", TodayCards.of(RING, false, false, false).toString(), "[scores, day, ring_metrics, live]");
+                "[scores, day, life, left_out, badges, ring_metrics, live, period]");
+        eq("ring, nothing extra", TodayCards.of(RING, false, false, false).toString(), "[scores, day, life, ring_metrics, live]");
         eq("ring and watch: as with the ring", TodayCards.of(BOTH, true, false, false), TodayCards.of(RING, true, false, false));
         eq("only a watch: the note on its scores under Your day, then badges and the watch's day",
-                TodayCards.of(WATCH, true, false, true).toString(), "[scores, day, device_note, badges, watch_day, period]");
-        eq("only the phone", TodayCards.of(PHONE, true, false, false).toString(), "[scores, day, device_note, badges, phone_day]");
+                TodayCards.of(WATCH, true, false, true).toString(), "[scores, day, life, device_note, badges, watch_day, period]");
+        eq("only the phone", TodayCards.of(PHONE, true, false, false).toString(), "[scores, day, life, device_note, badges, phone_day]");
         eq("watch chosen, not added: finish it after the note", TodayCards.of(HALF, false, false, false).toString(),
-                "[scores, day, device_note, finish_watch, phone_day]");
+                "[scores, day, life, device_note, finish_watch, phone_day]");
         // the owner's rule: the sentence is on the first screen whatever the devices and the badges
         for (Start.Has h : new Start.Has[] {RING, BOTH, WATCH, PHONE, HALF}) {
             for (int bits = 0; bits < 8; bits++) {
@@ -58,6 +61,8 @@ public class TodayTest {
                 check("Your day is second, " + l, TodayCards.dayIndex(l) == 1 && l.get(0).equals(TodayCards.SCORES));
                 check("badges never above Your day, " + l, !l.contains(TodayCards.BADGES) || l.indexOf(TodayCards.BADGES) > TodayCards.dayIndex(l));
                 check("each card once, " + l, new java.util.HashSet<String>(l).size() == l.size());
+                // issue #292: the life factors row right after Your day, below the measured first screen, for every device
+                check("life factors right after Your day, " + l, l.indexOf(TodayCards.LIFE) == TodayCards.dayIndex(l) + 1);
             }
         }
         // nothing that was on Today is gone: every device card of Start is still there (Find my ring sits in the scores card)
@@ -111,9 +116,13 @@ public class TodayTest {
         eq("backups weekly", SettingsBlocks.backupsStatus(false, true, 7, "Backups"), "Every week, to Backups");
         eq("backups daily, no folder name", SettingsBlocks.backupsStatus(false, true, 1, ""), "Every day");
         eq("backups demo", SettingsBlocks.backupsStatus(true, false, 7, null), "Demo, an example");
+        // issue #292: the export's status says when the CSV holds life factors, never which ones
+        eq("export, plain", SettingsBlocks.exportStatus(false), SettingsBlocks.EXPORT_STATUS);
+        eq("export with life factors", SettingsBlocks.exportStatus(true), "Daily summaries with life factors, or the database");
+        check("export status never names Intimacy", !SettingsBlocks.exportStatus(true).toLowerCase(java.util.Locale.ROOT).contains("intima"));
         // plain texts: no dash as punctuation, short enough for one line on a phone
         String[] all = {SettingsBlocks.GAMES_STATUS, SettingsBlocks.GAMES_NO_RING, SettingsBlocks.FILE_STATUS, SettingsBlocks.EXPORT_STATUS,
-            SettingsBlocks.HELP_STATUS, SettingsBlocks.ADVANCED_STATUS, SettingsBlocks.CAREFUL_STATUS, SettingsBlocks.profileStatus(34, 1, 62, 168),
+            SettingsBlocks.HELP_STATUS, SettingsBlocks.ADVANCED_STATUS, SettingsBlocks.exportStatus(true), SettingsBlocks.CAREFUL_STATUS, SettingsBlocks.profileStatus(34, 1, 62, 168),
             SettingsBlocks.screenStatus(false, true, true, 150), SettingsBlocks.backupsStatus(false, true, 30, "Backups"),
             app.openring.core.DeviceScores.TODAY_WATCH_SHORT, app.openring.core.DeviceScores.TODAY_PHONE_SHORT};
         for (String t : all) {
@@ -148,5 +157,75 @@ public class TodayTest {
         check("the badges on the Badges page sit in the equal grid, as the same chip", badgesPage.contains("EqualGrid grid = new EqualGrid(this, 2, 8);")
                 && badgesPage.contains("BadgeViews.chip(this, k, levels[k], counts[k], false)"));
         check("a badge name takes two lines at most", badges.contains("name.setMaxLines(2);"));
+        // issue #292: the life factors row is built where TodayCards puts it, its month view is the shared month calendar, its
+        // How it works the shared fold, and the export's status line follows the CSV choice
+        String life = src("ui/LifeCard.java");
+        check("Today builds the life factors row at its place", pages.contains("TodayCards.LIFE.equals(k)") && pages.contains("LifeCard.today(c, d, nav)"));
+        check("the life factors month view is the shared month calendar", src("ui/LifeCalendar.java").contains("extends MonthView"));
+        check("the life factors How it works is the shared fold", life.contains("Ui.howItWorks(c, howOpen, how)") && life.contains("Ui.howItWorks(c, bodyHowOpen, how)"));
+        check("the life factor chips sit in the equal grid", life.contains("new EqualGrid(c, 3, 6)"));
+        check("the export's status follows the CSV choice", settings.contains("fold(app.openring.core.SettingsBlocks.EXPORT, app.openring.core.SettingsBlocks.exportStatus(p.csvLife()))")
+                && settings.contains("fold.setStatus(app.openring.core.SettingsBlocks.exportStatus(on));"));
+    }
+
+    /** The time asleep first on Sleep (issue #409): the hero's big line and the line under it, for the ring's and the watch's night. */
+    static void sleepHero() throws Exception {
+        java.time.ZoneId z = java.time.ZoneId.of("Europe/Zurich");
+        // a night's stages, one digit a minute (0 no record, 1 deep, 2 light, 3 REM, 4 awake)
+        int[] slept = {4, 2, 2, 1, 1, 3, 2, 4};
+        // a ring night over midnight: 23:10 to 07:05 local (winter, UTC+1), 432 min asleep, 475 min in bed
+        double start = java.time.ZonedDateTime.of(2026, 11, 16, 23, 10, 0, 0, z).toEpochSecond();
+        double end = java.time.ZonedDateTime.of(2026, 11, 17, 7, 5, 0, 0, z).toEpochSecond();
+        eq("ring night: the time asleep as the big line", SleepHero.asleep(432, slept), "7h 12m asleep");
+        eq("ring night over midnight: times and time in bed", SleepHero.window(start, end, 475, z), "23:10 to 07:05, 7h 55m in bed");
+        // the stored asleep_min is fractional: the big line rounds it as Details does (Ui.hm is Texts.hm)
+        for (double m : new double[] {0, 0.4, 29.5, 59.6, 60, 431.7, 432.2, 719.5, 1000}) {
+            eq("the minutes are Ui.hm of asleep_min, " + m, SleepHero.asleep(m, slept), Texts.hm(m) + " asleep");
+        }
+        eq("under an hour still in hours and minutes", SleepHero.asleep(45, slept), "0h 45m asleep");
+        // a watch night: whole minutes and unix seconds as longs, the same helper
+        long ws = (long) start + 20 * 60, we = (long) end - 5 * 60;
+        eq("watch night: big line", SleepHero.asleep(401, slept), "6h 41m asleep");
+        eq("watch night: times and time in bed", SleepHero.window(ws, we, 450, z), "23:30 to 07:00, 7h 30m in bed");
+        // no time in bed (Pages.shownInBed gives -1 for a night without an end): only the times
+        eq("no time in bed: only the times", SleepHero.window(start, end, -1, z), "23:10 to 07:05");
+        eq("time in bed unknown: only the times", SleepHero.window(start, end, Double.NaN, z), "23:10 to 07:05");
+        eq("a night without an end: as the old line, no time in bed", SleepHero.window(start, Double.NaN, -1, z), "23:10 to --");
+        check("time asleep unknown: no big line", SleepHero.asleep(Double.NaN, slept) == null && SleepHero.asleep(-1, slept) == null);
+        eq("clock times rounded to the minute like the timeline", SleepHero.window(start + 40, end - 20, 475, z), "23:11 to 07:05, 7h 55m in bed");
+        for (String t : new String[] {SleepHero.asleep(432, slept), SleepHero.window(start, end, 475, z), SleepHero.window(start, end, -1, z)}) {
+            check("no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
+        }
+        eq("Texts.hm unknown", Texts.hm(Double.NaN), "--");
+
+        // no time asleep (review of #411): without any stage data no big line, only the times; with stages (all awake) the
+        // honest "0h 0m asleep" stays
+        int[] none = {0, 0, 0, 0}, awake = {4, 4, 4, 0, 4};
+        check("no time asleep, no stages: no big line", SleepHero.asleep(0, none) == null && SleepHero.asleep(0, new int[0]) == null
+                && SleepHero.asleep(0, null) == null && SleepHero.asleep(0.4, none) == null);
+        eq("no time asleep, all awake stages: the big line stays", SleepHero.asleep(0, awake), "0h 0m asleep");
+        eq("no time asleep, any measured minute counts as stage data", SleepHero.asleep(0, new int[] {0, 0, 2, 0}), "0h 0m asleep");
+        eq("time asleep without stage data: the big line stays", SleepHero.asleep(30, none), "0h 30m asleep");
+        check("hasStages", SleepHero.hasStages(slept) && SleepHero.hasStages(awake) && !SleepHero.hasStages(none)
+                && !SleepHero.hasStages(null) && !SleepHero.hasStages(new int[0]));
+        eq("a night without stages still shows its times", SleepHero.window(start, end, 475, z), "23:10 to 07:05, 7h 55m in bed");
+
+        // the clock goes back an hour in the night (Zurich, 24 to 25 October 2026, 03:00 to 02:00): 23:00 to 07:00 on the clock
+        // are 8 hours apart, but the night lasts 9 hours, and the line says so
+        double ds = java.time.ZonedDateTime.of(2026, 10, 24, 23, 0, 0, 0, z).toEpochSecond();
+        double de = java.time.ZonedDateTime.of(2026, 10, 25, 7, 0, 0, 0, z).toEpochSecond();
+        check("daylight saving night lasts 9 hours", de - ds == 9 * 3600);
+        eq("daylight saving night: clock times and 9h 0m in bed", SleepHero.window(ds, de, (de - ds) / 60, z), "23:00 to 07:00, 9h 0m in bed");
+
+        String ui = src("ui/Ui.java"), pages = src("ui/Pages.java"), history = src("ui/HistoryViews.java");
+        check("Ui.hm is Texts.hm", ui.contains("return app.openring.core.Texts.hm(minutes);"));
+        check("the ring's and the watch's hero use the helper", pages.contains("app.openring.core.SleepHero.asleep(Json.d(n, \"asleep_min\"), Json.stages(n))")
+                && pages.contains("app.openring.core.SleepHero.window(Json.d(n, \"start\"), Json.d(n, \"end\"), shownInBed(n), nz)")
+                && pages.contains("app.openring.core.SleepHero.asleep(wn.asleepMin(), wn.stages)")
+                && pages.contains("app.openring.core.SleepHero.window(wn.start, wn.end, wn.inBedMin(), nz)"));
+        check("the ring's Details start with Total sleep, then Time in bed", pages.indexOf("Ui.stat(c, \"Total sleep\", Ui.hm(Json.d(n, \"asleep_min\"))")
+                < pages.indexOf("Ui.stat(c, \"Time in bed\", Ui.hm(shownInBed(n)") && pages.contains("Ui.stat(c, \"Total sleep\", Ui.hm(Json.d(n, \"asleep_min\"))"));
+        check("the watch's Details start with Total sleep, then Time in bed", history.contains("Ui.stat(c, \"Total sleep\", Ui.hm(r.night.asleepMin())")
+                && history.indexOf("\"Total sleep\"") < history.indexOf("\"Time in bed\""));
     }
 }

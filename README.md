@@ -29,6 +29,8 @@ Not affiliated with Oura, not a medical device.
   You choose how detailed the sleep chart is; the numbers stay the same.
 * Sleep, readiness and activity scores, each with the parts it is made of
 * Heart rate through the day, HRV, skin temperature, blood oxygen and their trends
+* Trends: your sleep, readiness, steps, heart rate and screen time by week, month and year over all
+  your history, and this month against the last
 * Your phone's screen time with a score, shown as a clock next to your sleep; apps like maps can be
   left out. Phone use at night counts as awake (can be switched off).
 * Live heart rate, HRV and blood oxygen on demand
@@ -39,6 +41,8 @@ Not affiliated with Oura, not a medical device.
 * Steps counted by your phone itself (about once an hour, nothing leaves the phone). They fill the
   time the ring was not worn, and with steps, screen time and the period tracker the app is useful
   without a ring too ("Just this phone" when you start)
+* Life factors: tap what a day was like (meditation, alcohol, stress, a holiday, your own), and see it
+  next to the night after and as a month. Stored only on this phone
 * Find my ring, when the ring is lost at home (see below)
 * Nights keep the time zone you slept in, so a trip does not move your other nights
 * Touch the night timeline, the heart rate and trend lines or the screen time clock to see the exact

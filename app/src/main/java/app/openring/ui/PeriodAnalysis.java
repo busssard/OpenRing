@@ -156,14 +156,17 @@ final class PeriodAnalysis {
         card.addView(Ui.caption(c, ACC_CAPTION));
         app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
         if (bt.scored() == 0) {
-            card.addView(Ui.body(c, "Appears once you have logged " + (app.openring.core.analysis.cycleforecast.Backtest.FROM + 2)
-                    + " periods: each method then says when your 5th period would start from the 3 cycles before it, and so on, and you see which came closest."));
+            int from = app.openring.core.analysis.cycleforecast.Backtest.FROM;
+            card.addView(Ui.body(c, "Appears once you have logged " + (from + 2) + " periods: each method then says when your " + Explain.ordinal(from + 2)
+                    + " period would start from the " + from + " cycles before it, and so on, and you see which came closest."));
             return card;
         }
         card.addView(Ui.text(c, "Each method said when each of your last " + bt.scored() + " periods would start, from only the cycles before it.", 14, Ui.TEXT, Ui.REGULAR));
         double max = 0;
         for (app.openring.core.analysis.cycleforecast.Backtest.Score sc : bt.scores) max = Math.max(max, sc.mae);
         for (app.openring.core.analysis.cycleforecast.Backtest.Score sc : bt.scores) card.addView(methodRow(c, cy, sc, max), Ui.matchWrap());
+        // how Best for you picks, and why it stayed with Open Ring (design round of issue #383)
+        card.addView(PeriodCard.note(c, Explain.periodPick(cy)));
         card.addView(PeriodCard.note(c, Explain.PERIOD_ACC_ROWS));
         if (bt.farOut > 0) card.addView(PeriodCard.note(c, Texts.count(bt.farOut, "cycle", "cycles") + " far from the rest "
                 + (bt.farOut == 1 ? "is" : "are") + " not counted, probably a period that was not logged."));
@@ -195,7 +198,10 @@ final class PeriodAnalysis {
                     Ui.stat(c, "Temperature", Ui.fmt(rb.mae, 1), "days off", Ui.PERIOD),
                     Ui.stat(c, "Calendar", Ui.fmt(rb.calendarMae, 1), "days off", 0)));
             card.addView(PeriodCard.note(c, Explain.periodAccTemp(rb)));
-            if (!cy.riseUsed) card.addView(PeriodCard.note(c, cy.riseOff()));
+            // why the temperature is used or not (with drip style picked by Best for you, the mix named); the tiles above show
+            // both numbers, so the short form (Settings keeps the full sentence)
+            String why = cy.riseUsed ? Explain.periodTempUseShort(cy) : cy.riseOff();
+            if (why != null) card.addView(PeriodCard.note(c, why));
         }
         card.addView(Ui.gap(c, 6));
         card.addView(Ui.howItWorks(c, accHowOpen, Explain.periodAccuracyHow()), Ui.matchWrap());

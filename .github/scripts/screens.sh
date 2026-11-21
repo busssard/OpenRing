@@ -170,11 +170,21 @@ launch --ei tab 0 --es card YOUR_DAY;                         shot today-line 2
 launch --ei tab 0 --es card YOUR_DAY --ez day_line_why true;  shot today-line-why 1
 launch --ei tab 0 --ei devices 1 --es card YOUR_DAY;          shot today-line-watch 2
 launch --ei tab 0 --ei devices 2 --es card YOUR_DAY;          shot today-line-phone 2
+# Life factors (issue #292, phase 1): Today's row "What was today like?" right after Your day (the demo logged Meditation
+# today), its More opened (extra life_more, demo mode only: All factors, Several days, Add your own, Choose the chips), the
+# line beside last night on Sleep ("Before this night: ..."), the Readiness morning, and Body's month view touched in the
+# middle of its width (a tap reads the day). Made up tags of the demo file only, never Intimacy
+launch --ei tab 0 --es card WHAT_WAS;                                 shot today-life 2
+launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
+launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
+launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
 launch --ei tab 1; sleep 3
 swipe_up; swipe_up;                       shot sleep-details 1
+# the Details card with Total sleep first, next to Time in bed (issue #409); sleep-details above scrolls past it
+launch --ei tab 1 --es card DETAILS;        shot sleep-details-card 2
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 launch --ei tab 1 --ez analysis true --ei period 1
@@ -287,6 +297,14 @@ launch --ei tab 4 --es card TEMPERATURE_DEVIATION_AND_YOUR_CYCLE; sleep 3
 scroll_to "TEMPERATURE DEVIATION AND YOUR CYCLE" 3 || echo "::warning::period step: the temperature chart with the cycle was not found on Body"
 if touch_desc "Night temperature since" 60; then shot body-period-temp 1
 else echo "::warning::period step: the temperature chart with the cycle was not on screen to touch it"; shot body-period-temp 1; fi
+launch --ei tab 4 --es card LIFE_FACTORS; sleep 3
+scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body"
+shot body-life 1
+# a day read as a touch reads it: yesterday (extra life_read, days before today, demo mode only), which has the demo's Alcohol
+# and Meditation; computed in the app, so it is a past day with tags on any date CI runs (a fixed tap point is not)
+launch --ei tab 4 --es card LIFE_FACTORS --ei life_read 1; sleep 3
+scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body for the read day"
+shot body-life-touch 1
 launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
 scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1
@@ -385,6 +403,16 @@ swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 # then each kind in its colour (frame, disc and name) with how often and its rule
 launch --ez badges true;                    shot badges 4
 swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
+# Trends (issue #374) on the demo's made up year before its five weeks: the card at the bottom of Sleep ("Your months"), Sleep
+# by month (time asleep, about 25 minutes more from four months ago), one month touched (the chart found by its content
+# description, touched at 45 % of its width: the bubble and the full readout under the chart), steps by year (extra trends is
+# the group, trends_measure 10 steps, trends_period 2 years), and with only the watch the line for under two months
+launch --ei tab 1 --es card Your_months;    shot sleep-trends-card
+launch --ei trends 0;                       shot trends-sleep 4
+if touch_desc "Trends chart" 45; then shot trends-touch 1
+else echo "::warning::issue #374 step: the Trends chart was not on screen to touch it"; shot trends-touch 1; fi
+launch --ei trends 2 --ei trends_measure 10 --ei trends_period 2; shot trends-steps-year 4
+launch --ei trends 0 --ei devices 1;        shot trends-watch-only 4
 launch --es settings top;                   shot settings
 # every section folded, as every time Settings opens (owner's wishes of 3 and 17 November: a title, one status line and a
 # chevron each); stages, watch, period and the others below open their own section first
@@ -501,6 +529,7 @@ shot ready-watch-only-parts 1
 launch --ei tab 1 --ei devices 1;           shot sleep-watch-only
 scroll_to "CONTRIBUTORS" 10 || echo "::warning::issue #379 step: Contributors was not found on Sleep with only the watch"
 shot sleep-watch-only-parts 1
+launch --ei tab 1 --ei devices 1 --es card DETAILS; shot sleep-watch-only-details 2   # Total sleep first (issue #409)
 launch --ei tab 3 --ei devices 1;           shot activity-watch-only
 scroll_to "CONTRIBUTORS" 14 || echo "::warning::issue #379 step: Contributors was not found on Activity with only the watch"
 shot activity-watch-only-parts 1

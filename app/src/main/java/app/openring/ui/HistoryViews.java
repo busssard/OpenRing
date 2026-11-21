@@ -52,12 +52,7 @@ final class HistoryViews {
 
     /** One value per day at noon, for the 30 day line charts ({@code LineChart.daily}), as the ring's {@code Pages.daysSeries}. */
     static TS series(DayData d, double[] v) {
-        TS ts = new TS();
-        for (int i = 0; i < v.length; i++) {
-            if (Double.isNaN(v[i])) continue;
-            ts.add(d.date.minusDays(v.length - 1 - i).atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond() + 43200, v[i]);
-        }
-        return ts;
+        return app.openring.data.DaySeries.of(d.date, v);
     }
 
     /** A 7 day bar chart card as the ring's ("Total sleep, last 7 days"), readable by touch, with a line under it. */
@@ -108,10 +103,14 @@ final class HistoryViews {
         if (r != null) {
             LinearLayout stats = Ui.card(c);
             stats.addView(Ui.caption(c, "Details"));
-            stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(r.night.inBedMin()), "", 0, Explain.WATCH_IN_BED),
-                    Ui.stat(c, "Efficiency", Ui.fmt(r.fields.efficiency, 0), "%", 0, "Share of the night asleep, 85% or more is good")));
-            stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(r.fields.latencyMin, 0), "min", 0, Explain.WATCH_LATENCY),
-                    Ui.stat(c, "Wake ups", Double.isNaN(r.fields.sleepStart) ? Ui.fmt(Double.NaN, 0) : String.valueOf(r.fields.awakenings), "", 0, Explain.WATCH_WAKE_UPS)));
+            // Total sleep first, next to Time in bed (issue #409); the other tiles keep their order, two per row
+            stats.addView(Ui.statRow(c, Ui.stat(c, "Total sleep", Ui.hm(r.night.asleepMin()), "", Ui.SLEEP, Pages.TOTAL_SLEEP_NOTE),
+                    Ui.stat(c, "Time in bed", Ui.hm(r.night.inBedMin()), "", 0, Explain.WATCH_IN_BED)));
+            stats.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(r.fields.efficiency, 0), "%", 0, "Share of the night asleep, 85% or more is good"),
+                    Ui.stat(c, "Latency", Ui.fmt(r.fields.latencyMin, 0), "min", 0, Explain.WATCH_LATENCY)));
+            // the last tile keeps half the width, as every other tile
+            stats.addView(Ui.statRow(c, Ui.stat(c, "Wake ups", Double.isNaN(r.fields.sleepStart) ? Ui.fmt(Double.NaN, 0) : String.valueOf(r.fields.awakenings), "", 0, Explain.WATCH_WAKE_UPS),
+                    new View(c)));
             root.addView(stats);
         }
         double[] debt = h.debt(d.date);

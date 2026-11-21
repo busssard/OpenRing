@@ -239,6 +239,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
      * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252),
      * badges (boolean) opens the Badges page (issue #265),
+     * trends (int, the group: 0 Sleep, 1 Readiness, 2 Activity, 3 Body, 4 Screen) opens Trends (issue #374), with trends_measure (int,
+     * a measure of {@code core/analysis/Trends}), trends_period (int, 0 weeks, 1 months, 2 years) and day (the shown day),
      * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
      * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
      * rise it marks (phase 2),
@@ -298,6 +300,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("day_line_why", false) && Prefs.of(this).demo()) Pages.dayWhyOpen[0] = true;
         // the battery lines on Today folded open (owner's wish of 17 November), for the screen test
         if (i.getBooleanExtra("battery_open", false) && Prefs.of(this).demo()) BatteryViews.open[0] = true;
+        // the life factors row's More opened on Today (issue #292), for the screen test, demo mode only
+        if (i.getBooleanExtra("life_more", false) && Prefs.of(this).demo()) LifeCard.moreOpen[0] = true;
+        // Body's life factors month view with a past day read (issue #292): days before today, demo mode only
+        LifeCard.readPending = Prefs.of(this).demo() ? Math.max(-1, i.getIntExtra("life_read", -1)) : -1;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)
@@ -323,6 +329,14 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         // screen test: the Badges page (issue #265); it only reads, so it needs no demo mode
         if (i.getBooleanExtra("badges", false)) startActivity(new Intent(this, BadgesActivity.class));
+        // screen test: Trends (issue #374) at a group, with trends_measure and trends_period; it only reads, so no demo mode needed
+        if (i.hasExtra("trends")) {
+            Intent t = new Intent(this, TrendsActivity.class).putExtra(TrendsActivity.GROUP, i.getIntExtra("trends", 0))
+                    .putExtra(TrendsActivity.MEASURE, i.getIntExtra("trends_measure", -1))
+                    .putExtra(TrendsActivity.PERIOD, i.getIntExtra("trends_period", app.openring.core.analysis.Trends.MONTHS));
+            if (day != null) t.putExtra(TrendsActivity.DAY, day);
+            startActivity(t);
+        }
         // screen test: open Find my ring (issue #74)
         if (i.getBooleanExtra("finder", false)) {
             startActivity(new Intent(this, FinderActivity.class).putExtra("demo_turn", i.getBooleanExtra("finder_turn", false))
@@ -683,7 +697,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 content = Pages.sleep(this, data, this);
                 break;
             case Pages.READINESS:
-                content = Pages.readiness(this, data);
+                content = Pages.readiness(this, data, this);
                 break;
             case Pages.ACTIVITY:
                 content = Pages.activity(this, data);
@@ -697,6 +711,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             default:
                 content = Pages.today(this, data, this, syncLine());
         }
+        // Trends (issue #374): one card at the bottom of every tab but Today, so Today's first screen stays as it is
+        if (content instanceof LinearLayout) TrendsCard.add(this, (LinearLayout) content, data, tab);
         // no copy could be made before this update (issue #242): said once on Today, until OK
         final Prefs np = Prefs.of(this);
         if (tab == Pages.TODAY && !np.demo() && np.beforeUpdateUnseen() && content instanceof LinearLayout) {

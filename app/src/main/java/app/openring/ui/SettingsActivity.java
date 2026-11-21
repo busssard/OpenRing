@@ -555,9 +555,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
             file.addView(Ui.text(this, app.openring.core.KeyState.BACKUP_SETTINGS_ONLY, 12, Ui.TEXT_3, Ui.REGULAR));
         } else if (!p.hasKey() && p.withoutRing()) {
             // without a ring (issue #329): no key to keep, the history is what matters
-            file.addView(Ui.text(this, "You use Open Ring without a ring, so the backup holds no ring key. The full backup holds your steps from this phone and your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
+            file.addView(Ui.text(this, "You use Open Ring without a ring, so the backup holds no ring key. The full backup holds your steps from this phone, your period log and your life factors.", 12, Ui.TEXT_3, Ui.REGULAR));
         } else {
-            file.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself. The full backup also holds your period log.", 12, Ui.TEXT_3, Ui.REGULAR));
+            file.addView(Ui.text(this, "The backup holds your ring key in readable form. Keep it as private as the key itself. The full backup also holds your period log and your life factors.", 12, Ui.TEXT_3, Ui.REGULAR));
         }
         root.addView(fileFold.view);
 
@@ -565,9 +565,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
         addBackupsFold(p);
 
         // ---- data ----
-        Fold dataFold = fold(app.openring.core.SettingsBlocks.EXPORT, app.openring.core.SettingsBlocks.EXPORT_STATUS);
+        final Fold dataFold = fold(app.openring.core.SettingsBlocks.EXPORT, app.openring.core.SettingsBlocks.exportStatus(p.csvLife()));
         LinearLayout data = dataFold.body;
-        data.addView(Ui.body(this, "For spreadsheets or your own analysis. These files hold no key. The full database also holds your period log."));
+        data.addView(Ui.body(this, "For spreadsheets or your own analysis. These files hold no key. The full database also holds your period log and your life factors."));
+        addCsvChoices(data, dataFold, p);
         exportRow = pair(data, "Daily summaries (CSV)", Ui.TEXT_2, new Runnable() {
             @Override
             public void run() {
@@ -617,7 +618,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         small(danger, "Delete all local data", Ui.WARN, new Runnable() {
             @Override
             public void run() {
-                confirm("Delete everything?", "All synced events and results on this phone are erased, including your period log. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
+                confirm("Delete everything?", "All synced events and results on this phone are erased, including your period log and your life factors. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
                     @Override
                     public void run() {
                         deleteAll();
@@ -1573,6 +1574,48 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return f;
     }
 
+    /**
+     * The daily CSV's choices (issue #292): "Include life factors" (off by default) and under it "Include Intimacy too", which
+     * only counts with the first. Stored on this phone only, never in a backup.
+     */
+    void addCsvChoices(LinearLayout data, final Fold fold, Prefs p) {
+        final android.widget.CheckBox life = new android.widget.CheckBox(this), intimacy = new android.widget.CheckBox(this);
+        // tinted like Setup's tick box, so the box shows on the dark card
+        life.setButtonTintList(android.content.res.ColorStateList.valueOf(Ui.LIFE));
+        intimacy.setButtonTintList(android.content.res.ColorStateList.valueOf(Ui.LIFE));
+        life.setText(app.openring.core.LifeTags.CSV_CHOICE);
+        life.setTextColor(Ui.TEXT);
+        life.setChecked(p.csvLife());
+        intimacy.setText(app.openring.core.LifeTags.CSV_INTIMACY);
+        intimacy.setTextColor(Ui.TEXT);
+        intimacy.setChecked(p.csvIntimacy());
+        intimacy.setEnabled(p.csvLife());
+        intimacy.setAlpha(p.csvLife() ? 1f : 0.5f);
+        life.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                Prefs.of(SettingsActivity.this).setCsvLife(on);
+                intimacy.setEnabled(on);
+                intimacy.setAlpha(on ? 1f : 0.5f);
+                fold.setStatus(app.openring.core.SettingsBlocks.exportStatus(on));
+            }
+        });
+        intimacy.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                Prefs.of(SettingsActivity.this).setCsvIntimacy(on);
+            }
+        });
+        LinearLayout.LayoutParams ll = Ui.matchWrap();
+        ll.setMargins(0, Ui.dp(this, 10), 0, 0);
+        data.addView(life, ll);
+        LinearLayout.LayoutParams il = Ui.matchWrap();
+        il.setMargins(Ui.dp(this, 28), 0, 0, 0);
+        data.addView(intimacy, il);
+        data.addView(Ui.text(this, app.openring.core.LifeTags.CSV_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+        data.addView(Ui.gap(this, 6));
+    }
+
     /** The Period tracker section; hidden with the tracker (fillPeriodCard). */
     void addPeriodFold() {
         periodFold = fold(app.openring.core.SettingsBlocks.PERIOD, app.openring.core.SettingsBlocks.periodStatus(Prefs.of(this).periodRemindDays()));
@@ -2111,6 +2154,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             protected String doInBackground(Void... v) {
                 try {
                     Backup.Result r = AutoBackup.goBack(app, file, progress);
+                    LifeCard.forget();
                     RingManager.get(app).log("go back to " + file + ": " + r.message);
                     return r.message;
                 } catch (Exception e) {
@@ -2285,7 +2329,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")).zone(Json.zone(night, java.time.ZoneId.systemDefault())), Ui.sized(this, -1, 150));
             card.addView(Ui.gap(this, 4));
             // wake ups counted exactly as on the Sleep page (issue #70)
-            double stepS = st.length == 0 ? 30 : (Json.d(night, "end") - Json.d(night, "start")) / st.length;
+            double stepS = app.openring.core.analysis.WakeUps.step(st, Json.d(night, "start"), Json.d(night, "end"));
             int wakes = app.openring.core.analysis.WakeUps.count(st, stepS);
             int brief = app.openring.core.analysis.WakeUps.shortOnes(st, stepS);
             card.addView(Ui.text(this, Texts.count(StageFilter.changes(st), "stage change", "stage changes") + ", "
@@ -2651,6 +2695,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
                         @Override
                         public void run() {
                             Analyzer.deleteAll(app);
+                            // the last life factor change belongs to the deleted file (issue #292)
+                            LifeCard.forget();
                             // the copies before updates hold the same history; the folder's copies stay (issue #242)
                             BeforeUpdate.deleteAll(app);
                         }

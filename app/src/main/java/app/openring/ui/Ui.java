@@ -39,6 +39,8 @@ public final class Ui {
     public static final int GOOD = 0xFF6BD3B4;
     /** The period tracker (issue #252): the heart colour, so the card's red comes from the palette. */
     public static final int PERIOD = HEART;
+    /** Life factors (issue #292): a soft violet, apart from the four score colours and the period red. */
+    public static final int LIFE = 0xFFD3A6FF;
 
     public static final int STAGE_AWAKE = 0xFFE9ECF2;
     public static final int STAGE_REM = 0xFF9CC6FF;
@@ -360,9 +362,8 @@ public final class Ui {
         return String.format(Locale.getDefault(), "%." + dp + "f", v);
     }
 
+    /** "7h 12m", "--" when unknown ({@link app.openring.core.Texts#hm}, which the JVM tests check). */
     public static String hm(double minutes) {
-        if (Double.isNaN(minutes)) return "--";
-        long m = Math.round(minutes);
-        return (m / 60) + "h " + (m % 60) + "m";
+        return app.openring.core.Texts.hm(minutes);
     }
 }
