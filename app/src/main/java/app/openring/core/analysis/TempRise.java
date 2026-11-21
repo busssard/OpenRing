@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import app.openring.core.analysis.cycleforecast.Methods;
+
 /**
  * Ovulation from the temperature rise (issue #252, phase 2). After ovulation the temperature stays a little higher until
  * the next period; this finds that step in one cycle of one signal (the ring's nightly skin temperature, or the morning
@@ -369,8 +371,8 @@ public final class TempRise {
             int[] v = new int[use.size()];
             for (int i = 0; i < v.length; i++) v[i] = use.get(i);
             lutealN = v.length;
-            luteal = Cycles.median(v);
-            lutealSd = Cycles.sd(v);
+            luteal = Methods.median(v);
+            lutealSd = Methods.sd(v);
         }
 
         /** Enough cycles with a rise for the own luteal length. */

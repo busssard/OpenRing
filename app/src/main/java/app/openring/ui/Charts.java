@@ -1555,4 +1555,158 @@ public final class Charts {
             return super.performClick();
         }
     }
+
+    // ------------------------------------------------------------------ months (Trends, issue #374)
+
+    /**
+     * Trends' chart (issue #374): each period of a measure as a dot (hollow when it has few days) with the middle half of its days
+     * as a band, every day as a faint dot behind them, the whole history on one axis. Touch or slide to read a period: the bubble
+     * gives its name and value, {@link Pick} the full readout for the line under the chart. {@link #select} opens it touched.
+     */
+    public static final class Months extends Scrub {
+        /** Told the period touched, -1 when the touch is taken away. */
+        public interface Pick {
+            void picked(int index);
+        }
+
+        private final app.openring.core.analysis.Trends.View view;
+        private final int color;
+        private Pick pick;
+        private int selected = -1, pending = -1;
+        private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint(Paint.ANTI_ALIAS_FLAG), day = new Paint(Paint.ANTI_ALIAS_FLAG),
+                band = new Paint(Paint.ANTI_ALIAS_FLAG), dot = new Paint(Paint.ANTI_ALIAS_FLAG), ring = new Paint(Paint.ANTI_ALIAS_FLAG),
+                line = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+
+        public Months(Context c, app.openring.core.analysis.Trends.View view, int color) {
+            super(c);
+            this.view = view;
+            this.color = color;
+            txt.setColor(Ui.TEXT_3);
+            txt.setTextSize(Ui.dp(c, 10));
+            grid.setColor(Ui.LINE);
+            grid.setStrokeWidth(1);
+            grid.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 3), Ui.dp(c, 4)}, 0));
+            day.setColor(Ui.alpha(color, 0.28f));
+            band.setColor(Ui.alpha(color, 0.30f));
+            dot.setColor(color);
+            ring.setColor(color);
+            ring.setStyle(Paint.Style.STROKE);
+            ring.setStrokeWidth(Ui.dp(c, 1.6f));
+            line.setColor(Ui.alpha(color, 0.55f));
+            line.setStrokeWidth(Ui.dp(c, 1.2f));
+            line.setStyle(Paint.Style.STROKE);
+        }
+
+        public Months pick(Pick p) {
+            pick = p;
+            return this;
+        }
+
+        /** Opens with period {@code i} touched (the month of the day the tab showed); -1 for none. */
+        public Months select(int i) {
+            pending = i;
+            return this;
+        }
+
+        private String label(double v) {
+            return app.openring.core.analysis.Trends.value(view.measure, v, Locale.getDefault());
+        }
+
+        private float y(double v, double lo, double hi, float top, float bottom) {
+            return (float) (bottom - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (bottom - top));
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth(), h = getHeight();
+            double[] range = view.range();
+            if (view.buckets.isEmpty() || Double.isNaN(range[0])) {
+                txt.setTextAlign(Paint.Align.CENTER);
+                cv.drawText("No days with a value yet", w / 2, h / 2, txt);
+                return;
+            }
+            double lo = range[0], hi = range[1];
+            double pad = Math.max((hi - lo) * 0.12, view.measure == app.openring.core.analysis.Trends.TEMP ? 0.05 : 1);
+            lo -= pad;
+            hi += pad;
+            String[] ys = {label(lo + (hi - lo) * 0), label(lo + (hi - lo) * 0.5), label(hi)};
+            float left = 0;
+            for (String s : ys) left = Math.max(left, txt.measureText(s));
+            left += Ui.dp(getContext(), 6);
+            float top = Ui.dp(getContext(), 38), bottom = h - Ui.dp(getContext(), 18);
+            for (int i = 0; i <= 2; i++) {
+                double v = lo + (hi - lo) * i / 2;
+                float yy = y(v, lo, hi, top, bottom);
+                cv.drawLine(left, yy, w, yy, grid);
+                txt.setTextAlign(Paint.Align.LEFT);
+                cv.drawText(ys[i], 0, yy + Ui.dp(getContext(), 3), txt);
+            }
+            java.util.List<app.openring.core.analysis.Trends.Bucket> bs = view.buckets;
+            // one column of the same width per period, its dot in the middle and its days spread over it (Trends.View.dayOffset)
+            float slot = (w - left) / bs.size();
+            float small = Ui.dp(getContext(), 1.6f);
+            for (int i = 0; i < view.dayDates.size(); i++) {
+                float dx = left + slot * (view.dayBucket.get(i) + 0.5f) + (float) (view.dayOffset.get(i) * slot);
+                cv.drawCircle(dx, y(view.dayValues.get(i), lo, hi, top, bottom), small, day);
+            }
+            float half = Math.max(Ui.dp(getContext(), 1.5f), Math.min(Ui.dp(getContext(), 7), slot * 0.32f));
+            float[] xs = new float[bs.size()];
+            float px = Float.NaN, py = Float.NaN;
+            for (int i = 0; i < bs.size(); i++) {
+                app.openring.core.analysis.Trends.Bucket b = bs.get(i);
+                xs[i] = left + slot * (i + 0.5f);
+                if (Double.isNaN(b.value)) {
+                    px = Float.NaN;
+                    continue;
+                }
+                if (!Double.isNaN(b.lo) && !Double.isNaN(b.hi) && b.n > 1) {
+                    r.set(xs[i] - half, y(b.hi, lo, hi, top, bottom), xs[i] + half, y(b.lo, lo, hi, top, bottom));
+                    cv.drawRoundRect(r, half, half, band);
+                }
+                float yy = y(b.value, lo, hi, top, bottom);
+                if (!Float.isNaN(px)) cv.drawLine(px, py, xs[i], yy, line);
+                px = xs[i];
+                py = yy;
+            }
+            float rad = Math.max(Ui.dp(getContext(), 2), Math.min(Ui.dp(getContext(), 4), slot * 0.3f));
+            for (int i = 0; i < bs.size(); i++) {
+                app.openring.core.analysis.Trends.Bucket b = bs.get(i);
+                if (Double.isNaN(b.value)) continue;
+                cv.drawCircle(xs[i], y(b.value, lo, hi, top, bottom), rad, b.hollow ? ring : dot);
+            }
+            float base = h - Ui.dp(getContext(), 3);
+            txt.setTextAlign(Paint.Align.LEFT);
+            cv.drawText(app.openring.core.analysis.Trends.axisLabel(bs.get(0).start, view.period), left, base, txt);
+            txt.setTextAlign(Paint.Align.RIGHT);
+            cv.drawText(app.openring.core.analysis.Trends.axisLabel(bs.get(bs.size() - 1).start, view.period), w, base, txt);
+            if (bs.size() > 2) {
+                int m = bs.size() / 2;
+                txt.setTextAlign(Paint.Align.CENTER);
+                cv.drawText(app.openring.core.analysis.Trends.axisLabel(bs.get(m).start, view.period), xs[m], base, txt);
+            }
+            // the touch, or the period it opens at
+            if (Float.isNaN(scrubX) && pending >= 0 && pending < bs.size()) scrubX = xs[pending];
+            pending = -1;
+            int now = -1;
+            if (!Float.isNaN(scrubX)) {
+                now = 0;
+                for (int i = 1; i < xs.length; i++) if (Math.abs(xs[i] - scrubX) < Math.abs(xs[now] - scrubX)) now = i;
+                app.openring.core.analysis.Trends.Bucket b = bs.get(now);
+                if (!Double.isNaN(b.value)) cv.drawCircle(xs[now], y(b.value, lo, hi, top, bottom), rad + Ui.dp(getContext(), 2), b.hollow ? ring : dot);
+                drawTip(cv, xs[now], Ui.dp(getContext(), 34), bottom, app.openring.core.analysis.Trends.tip(view, now, Locale.getDefault()));
+            }
+            if (now != selected) {
+                selected = now;
+                final int told = now;
+                // not from inside the drawing: the line under the chart changes its text after this frame
+                if (pick != null) post(new Runnable() {
+                    @Override
+                    public void run() {
+                        pick.picked(told);
+                    }
+                });
+            }
+        }
+    }
 }
