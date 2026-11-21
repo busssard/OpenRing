@@ -137,12 +137,13 @@ Nothing leaves the phone: the app has no internet permission.
 | `battery`, `kv` | Battery history (one row per read: each sync and Find my ring; Settings' read stays in `Prefs` only), shown on Today under the scores with the watch's `watch_battery` (`core/DeviceBattery`); small key value state (cursor, analysis progress, errors) |
 | `watch_raw`, `watch_devices`, `watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery` | The Withings watch (version 9, issue #251): every message as it came, the watch, and the rows worked out from the messages; see Withings watch below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
 | `life_days`, `life_tags` | Life factors (version 12, issue #292): one row per calendar day and tag (`day` yyyy-mm-dd, `tag` a fixed key such as `meditation` or `own:<id>`, `time` empty in phase 1, `span` the id shared by the days of one several day entry, `made`, `gone` 1 a removal mark, never a delete), and one row per tag the person changed (`key`, `name` of an own tag, `shown` on Today's row 1 or 0, `ord` its place, `made`, `gone` 1 an own tag removed, its days kept). Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Life factors below |
+| `sound_nights`, `sound_clips`, `sound_gaps` | Sleep sounds (version 13, issue #380, phase 1a: the tables only, nothing records yet): the nights listened, one mark per sound with its clip file's name, and the times the phone was not listening; the sounds themselves are files in `no_backup`, never in the database. Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Sleep sounds below |
 | `phone_readings`, `phone_steps` | Steps from this phone (version 11, issue #329): every reading of the phone's step counter as it came (`boot` count and `elapsed` ms as the key, `counter`, `wall`), only ever added to, and the intervals worked out from them (`boot`, `elapsed` of the end reading, `start`, `stop`, `steps`); see Steps from this phone below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
 
 The period tables are the one part of the file the person types and no ring can send again. Pairing a different ring
 (`Db.resetRingData`, every table in `Db.RING_TABLES`) keeps them; Delete all local data (`Db.resetAll`) wipes them with the
 rest. Both lists come from `Db.SCHEMA` (issue #272): `Db.ALL_TABLES` is every table, `Db.RING_TABLES` every table except
-the keep list `Db.KEPT_TABLES` (`Periods.TABLES`, the watch's `WatchStore.TABLES`, issue #251, the phone's `PhoneStore.TABLES`, issue #329, and the life factors' `LifeLog.TABLES`, issue #292), so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
+the keep list `Db.KEPT_TABLES` (`Periods.TABLES`, the watch's `WatchStore.TABLES`, issue #251, the phone's `PhoneStore.TABLES`, issue #329, the life factors' `LifeLog.TABLES`, issue #292, and the sleep sounds' `Sounds.TABLES`, issue #380), so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
 test fills every table that really is in the file (`sqlite_master`, not `SCHEMA`) and checks Delete all empties each.
 After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(TRUNCATE)` (in WAL mode a checkpoint
 before VACUUM leaves the file at full size), so the file gives the history's space back; an error there never reaches
@@ -346,7 +347,7 @@ upgrade is safe twice and resumes after a stop). A tag is a calendar day, never 
 move it; a tag of day D belongs to the night that starts on the evening of D: Sleep of D + 1 shows "Before this night: ...",
 Readiness of D + 1 "Logged yesterday: ...". A tap on a chip writes one statement in the background (`LifeLog.set`), taking a
 tag off keeps a removal mark; Several days writes one row per date with one span id in one transaction (`LifeLog.setSpan`);
-Undo puts each row back as it was (a day that had none gets a removal mark). Logging starts no analysis and changes no score
+Undo puts each row back as it was (a day that had none gets a removal mark). **Same name, one factor (issue #422):** own tags whose cleaned names are equal in any case (two keys after Delete all and an older backup) are read as one factor under the older key (`LifeTags.Known`: `key`, `aliases`, `fold`); in force and removed tags are grouped apart. This is a reading rule only: no row is rewritten, a tap on writes the older key, a tap off marks the older key and every alias that has the day. Do not "simplify" `Known` back to one chip per key. Logging starts no analysis and changes no score
 (phase 1 does not touch `Analyzer` or readiness; the pipeline test analyses the demo with every tag on every day and gets the
 same nights and days). `DayData` reads every day in force (`LifeLog.all`, 11,000 rows of five years in about 0.04 s on the JVM)
 and the chips (`LifeLog.known`); an error there shows a sentence on the cards and logs the error's kind only. Today's row
@@ -361,6 +362,33 @@ and a row for a tagged day without a summary. Backups and the full database carr
 (`LifeLog.read`) and writes them into the restored file in one transaction after the period log, the watch and the phone's
 steps (`LifeLog.merge`, `INSERT OR REPLACE`: the phone wins on the same day and tag, removal marks included); any failure puts
 the old file back. Demo mode writes made up tags (`LifeTags.demo`, never Intimacy) into the demo file only.
+
+**Sleep sounds (issue #380), phase 1a.** Only the storage and the detector; there is no microphone permission, service or screen
+yet (1b brings the listening and the Sleep card, 1c the marks on the night's timeline). `core/analysis/SoundDetector` (pure Java,
+fed 16 kHz mono samples in any piece size, worked through in frames of 512 samples, 32 ms; times are unix seconds from the night's
+start) finds sounds 10 dB above a moving floor (the 20th percentile of the last 60 s, digital silence left out) for 3 frames, ending
+after 1 s below; labels them cough like (under 1.2 s, loudest frame among the first 5, more than 150 zero crossings per frame),
+snoring (3 or more sounds 2 to 7 s apart, lengths within half, peaks within 6 dB, one stretch; a sound of 7 s or longer is never a
+snore) or talking or other sound; gives each sound a clip window (5 s before, 3 s after, at most 20 s, never before the night's
+start), ready once it has passed, so the caller keeps only the last 20 s of audio; keeps at most 60 clips a night (a louder one
+replaces the quietest, a stretch keeps its loudest snore's) and reports clips it gives up so their audio can be deleted; and marks a
+gap for 2 s or more of exact zeros (another app holding the microphone). `data/Sounds` holds the three tables of version 13
+(`Sounds.create13`, each `CREATE TABLE IF NOT EXISTS` on its own, safe twice and resumable): `sound_nights` (`start` key, `stop`,
+`floor`, `clips`, `ended`: hand, time, 12 h or system), `sound_clips` (`start` key, `stop`, `kind` snore, cough or talk, `peak` dB
+of full scale, `file` a plain name ending .m4a or .wav, `kept`, `gone`) and `sound_gaps` (`start`, `stop`, `why`). Rules: the clip
+files live in `no_backup/sounds` for the real file and `no_backup/sounds-demo` for the demo file (`Sounds.folder(c, db)` follows the
+file, so the two never cross), never in a backup, export or the copies before an update; the times and kinds are in backups. A mark
+is never deleted except by Delete all: when its sound goes (retention, a missing file, the sweep) it keeps its row with `gone` 1.
+The sweep (`Sounds.sweep`) works both ways on one folder: a mark whose file is missing gets `gone` 1, a file no mark with sound
+names is deleted unless it changed in the last 10 minutes (a clip being written); a folder that cannot be listed changes nothing.
+The retention (`Sounds.retain`: 7 days by default, 30, or until deleted) deletes the files of clips older than that and not kept.
+Restore: `Db.replaceWith` reads the three tables before the swap and `Sounds.merge` writes them into the restored file after the life
+factors (the phone wins on the same start), then gives `gone` 1 to every mark whose file is not in the real folder or belongs to
+another of the phone's marks, all in one transaction; any failure puts the old file back. Delete all is one method,
+`data/DeleteAll.run` (the history in use, the copies before updates, the demo's clip folder, and the real one unless demo mode is
+on, since its history is not the one deleted). The Data check has one line of counts only: "Sleep sounds: N nights, M clips (K
+with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav files. Nothing calls the sweep or the retention yet;
+1b runs them with the service.
 
 ## Automatic backups (issue #242)
 
@@ -435,7 +463,9 @@ the old file back. Demo mode writes made up tags (`LifeTags.demo`, never Intimac
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep
    35/15/10/10/10/10/10); a period with no sleep at all has no Restfulness (issue #118), like REM and deep on a
    night without stages; contributor curves are transparent and based on sleep research. Baselines become
-   personal after about 14 nights.
+   personal after about 14 nights. Readiness's baselines (lowest heart rate over 14 main nights, HRV over 13 plus tonight
+   against 90, temperature against the median of 30, each needing 3 nights with a value) are worked out in
+   `core/analysis/Baselines` from plain arrays (issue #292, phase 1.5); `Baselines.usual` is that median of 30 for any measure.
 5. Time zones (issue #22): each night takes its zone from `zones` and stores it as `zone`; its day, sleep timing
    and clock change marker use it, and a day uses its main night's zone. Screens format each night's times
    with its own zone (`Json.zone`, falling back to the phone's zone for nights without one), so a trip does
