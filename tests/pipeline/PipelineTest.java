@@ -15254,6 +15254,26 @@ public class PipelineTest {
         return app.openring.data.LifeLog.on(db, day);
     }
 
+    static Db db422(Context c) {
+        return Db.get(c);
+    }
+
+    /**
+     * Runs {@code write} with {@code LifeLog.failRowsAfter} at 1 (a stop after the first row of a write over several rows);
+     * true when it stopped. The caller then checks every row is as before.
+     */
+    static boolean stopped422(Runnable write) throws Exception {
+        setField252(app.openring.data.LifeLog.class, "failRowsAfter", 1);
+        try {
+            write.run();
+            return false;
+        } catch (IllegalStateException e) {
+            return "test stop".equals(e.getMessage());
+        } finally {
+            setField252(app.openring.data.LifeLog.class, "failRowsAfter", -1);
+        }
+    }
+
     /** The own tags not removed (Remove one of your own) and their names, as "key=name" each. */
     static String own422(Db db) {
         return app.openring.data.LifeLog.known(db).own().toString();
@@ -15318,6 +15338,10 @@ public class PipelineTest {
         app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
         db = Db.get(c);
         check("#422 the same restore twice: the same rows, one Sauna", lifeRows292(db).equals(merged) && own422(db).equals("[" + older + "=Sauna chip]"), null);
+        // a tap off on a day both keys hold, stopped after its first row: nothing written
+        check("#422 a tap off on a day both hold, stopped after the first row: every row as it was, the day still there",
+                stopped422(() -> app.openring.data.LifeLog.set(Db.get(c), "2019-06-02", older, false, 2900)) && lifeRows292(db).equals(merged)
+                && on422(db, "2019-06-02").equals(Arrays.asList(older)), null);
         // a tap off on a day both keys hold: a removal mark for each, the day gone; Undo puts both rows back as they were
         List<app.openring.data.LifeLog.Row> before = app.openring.data.LifeLog.before(db, "2019-06-02", older, false);
         long rows = db.count("SELECT COUNT(*) FROM life_days");
@@ -15353,11 +15377,19 @@ public class PipelineTest {
         check("#422 a new own tag with the same name is still refused", app.openring.data.LifeLog.addOwn(db, "sauna", 1580000000000L) == null, null);
         // removing the factor removes every key of it; its days stay; bringing it back brings them all
         long days = db.count("SELECT COUNT(*) FROM life_days");
+        String three = lifeRows292(db);
+        check("#422 removing Sauna, stopped after the first key: every row as it was, Sauna still there",
+                stopped422(() -> app.openring.data.LifeLog.removeOwn(Db.get(c), older, 4900)) && lifeRows292(db).equals(three)
+                && own422(db).equals("[" + older + "=Sauna chip]"), own422(db));
         app.openring.data.LifeLog.removeOwn(db, older, 5000);
         check("#422 removing Sauna removes all three keys (removal marks), the days stay", app.openring.data.LifeLog.known(db).own().isEmpty()
                 && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "', '" + third + "') AND gone = 1 AND shown = 0") == 3
                 && db.count("SELECT COUNT(*) FROM life_days") == days && on422(db, "2019-06-15").equals(Arrays.asList(older))
                 && app.openring.data.LifeLog.known(db).name(newer).equals("Sauna"), null);
+        String removed = lifeRows292(db);
+        check("#422 bringing Sauna back, stopped after the first key: every row as it was, all three still removed",
+                stopped422(() -> app.openring.data.LifeLog.addOwn(Db.get(c), "SAUNA", 1585000000000L)) && lifeRows292(db).equals(removed)
+                && app.openring.data.LifeLog.known(db).own().isEmpty(), null);
         String back = app.openring.data.LifeLog.addOwn(db, "SAUNA", 1590000000000L);
         check("#422 the name again brings all three back as one, under the older key", older.equals(back) && own422(db).equals("[" + older + "=Sauna chip]")
                 && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "', '" + third + "') AND gone = 0 AND shown = 1") == 3, back);
