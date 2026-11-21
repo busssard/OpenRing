@@ -150,6 +150,15 @@ public class ExportPipelineTest {
         check("the file's left_out_min is the one day rule's on every row" + how, bad == 0 && rows == 42, rows + " rows, " + bad + " wrong " + firstBad);
         check("... with left out minutes on several days, some counted differently than in the phone's zone" + how, counted >= 3 && differs >= 2,
                 counted + " days with minutes, " + differs + " different in the phone's zone");
+
+        // a history it cannot read (here: no nights table): both give the phone's zone for every day, as before
+        db.getWritableDatabase().execSQL("ALTER TABLE nights RENAME TO nights_gone");
+        Object broken = newDayZones(db, phone);
+        int notPhone = 0;
+        for (String day : keys) if (!phone.equals(of(broken, day)) || !phone.equals(oneDay(db, day, phone))) notPhone++;
+        db.getWritableDatabase().execSQL("ALTER TABLE nights_gone RENAME TO nights");
+        check("a history it cannot read gives the phone's zone for every day, read at once and one day at a time" + how, notPhone == 0,
+                notPhone + " days in another zone");
     }
 
     /** Three years of nights and notes with one left out evening: the same zones and file, with far fewer reads. */
