@@ -2113,9 +2113,23 @@ public final class Db extends SQLiteOpenHelper {
      * {@link #inTransaction}, so the old results stay until the new ones are stored with them (issue #230).
      */
     public void clearResults() {
+        clearResults(null);
+    }
+
+    /**
+     * As {@link #clearResults()}, keeping the nights and days filed up to {@code keepUntil} (an ISO date) when it is not null:
+     * only the analysis of the demo file passes one, for its made up year before the five weeks, which has no raw events to be worked out from
+     * again (issue #374, {@code Demo.YEAR_UNTIL}).
+     */
+    public void clearResults(String keepUntil) {
         SQLiteDatabase db = getWritableDatabase();
-        db.execSQL("DELETE FROM nights");
-        db.execSQL("DELETE FROM days");
+        if (keepUntil == null) {
+            db.execSQL("DELETE FROM nights");
+            db.execSQL("DELETE FROM days");
+            return;
+        }
+        db.execSQL("DELETE FROM nights WHERE day > ?", new Object[] {keepUntil});
+        db.execSQL("DELETE FROM days WHERE day > ?", new Object[] {keepUntil});
     }
 
     /**

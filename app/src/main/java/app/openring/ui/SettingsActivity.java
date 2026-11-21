@@ -2329,7 +2329,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             card.addView(new Charts.Hypnogram(this, st, Json.d(night, "start"), Json.d(night, "end")).zone(Json.zone(night, java.time.ZoneId.systemDefault())), Ui.sized(this, -1, 150));
             card.addView(Ui.gap(this, 4));
             // wake ups counted exactly as on the Sleep page (issue #70)
-            double stepS = st.length == 0 ? 30 : (Json.d(night, "end") - Json.d(night, "start")) / st.length;
+            double stepS = app.openring.core.analysis.WakeUps.step(st, Json.d(night, "start"), Json.d(night, "end"));
             int wakes = app.openring.core.analysis.WakeUps.count(st, stepS);
             int brief = app.openring.core.analysis.WakeUps.shortOnes(st, stepS);
             card.addView(Ui.text(this, Texts.count(StageFilter.changes(st), "stage change", "stage changes") + ", "

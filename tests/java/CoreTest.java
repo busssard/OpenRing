@@ -348,6 +348,47 @@ public class CoreTest {
         eq("timeline: asleep from the first step has no minutes",
                 WakeUps.timeline(runs(L, 20), s, s + 600, Double.NaN, 0, new ArrayList<double[]>(), utc, Locale.US).get(1)[1], "Fell asleep");
 
+        // the locale reaches the heart rate number (issue #405): Egyptian Arabic writes its own digits
+        Locale ar = Locale.forLanguageTag("ar-EG");
+        String arHr = String.format(ar, "%.0f", 48.4);
+        eq("timeline: the locale writes the heart rate number",
+                WakeUps.timeline(st, s, e, s + 600, 48.4, new ArrayList<double[]>(), utc, ar).get(2)[1], "Lowest heart rate, " + arHr + " bpm");
+        check("timeline: the test locale really writes other digits than US", !arHr.equals("48"));
+
+        // a null zone means the phone's zone, also for left out times next to the night (issue #405; it threw before)
+        java.time.ZoneId phone = java.time.ZoneId.systemDefault();
+        List<String[]> nullZone = WakeUps.timeline(st, s, e, s + 600, 48.4, left, null, Locale.US);
+        List<String[]> phoneZone = WakeUps.timeline(st, s, e, s + 600, 48.4, left, phone, Locale.US);
+        boolean sameRows = nullZone.size() == phoneZone.size();
+        for (int i = 0; sameRows && i < nullZone.size(); i++) sameRows = Arrays.equals(nullZone.get(i), phoneZone.get(i));
+        check("timeline: a null zone gives the phone's zone rows, left out times too", sameRows && nullZone.size() == 9);
+
+        // one step rule for the timeline, its short ones note and the stage detail preview (issue #405)
+        eq("step: no stages, 30 s", WakeUps.step(new int[0], s, e), 30.0);
+        eq("step: no stages, any window, 30 s", WakeUps.step(new int[0], s, s), 30.0);
+        eq("step: one stage, the whole window", WakeUps.step(new int[1], s, s + 600), 600.0);
+        eq("step: many stages, the window split", WakeUps.step(st, s, e), 30.0);
+        eq("step: many stages, an uneven window", WakeUps.step(new int[7], s, s + 100), 100.0 / 7);
+        Random stepRnd = new Random(405);
+        int stepDiffers = 0;
+        for (int k = 0; k < 2000; k++) {
+            int[] g = new int[stepRnd.nextInt(4) == 0 ? stepRnd.nextInt(2) : stepRnd.nextInt(2000)];
+            double a = 1_700_000_000 + stepRnd.nextDouble() * 1e7, b = a + stepRnd.nextDouble() * 60000;
+            double before = g.length == 0 ? 30 : (b - a) / g.length; // the copies in Pages and SettingsActivity before
+            if (Double.compare(WakeUps.step(g, a, b), before) != 0) stepDiffers++;
+        }
+        eq("step: equals the old rule on random nights", stepDiffers, 0);
+        try {
+            String root = "app/src/main/java/app/openring/ui/";
+            for (String f : new String[] {"Pages.java", "SettingsActivity.java"}) {
+                String src = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + f).toPath()), "UTF-8");
+                check("step: " + f + " uses WakeUps.step, no copy of the rule", src.contains("WakeUps.step(")
+                        && !src.contains("st.length == 0 ? 30 :"));
+            }
+        } catch (java.io.IOException ex) {
+            check("step: read the ui sources " + ex, false);
+        }
+
         // random nights, zones and left out times: the same rows as the code in ui/Pages before the move
         Random rnd = new Random(257);
         java.time.ZoneId[] zones = {utc, java.time.ZoneId.of("Europe/Zurich"), java.time.ZoneId.of("America/Santiago"), null};

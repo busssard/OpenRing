@@ -239,6 +239,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
      * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252),
      * badges (boolean) opens the Badges page (issue #265),
+     * trends (int, the group: 0 Sleep, 1 Readiness, 2 Activity, 3 Body, 4 Screen) opens Trends (issue #374), with trends_measure (int,
+     * a measure of {@code core/analysis/Trends}), trends_period (int, 0 weeks, 1 months, 2 years) and day (the shown day),
      * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
      * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
      * rise it marks (phase 2),
@@ -328,6 +330,14 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         // screen test: the Badges page (issue #265); it only reads, so it needs no demo mode
         if (i.getBooleanExtra("badges", false)) startActivity(new Intent(this, BadgesActivity.class));
+        // screen test: Trends (issue #374) at a group, with trends_measure and trends_period; it only reads, so no demo mode needed
+        if (i.hasExtra("trends")) {
+            Intent t = new Intent(this, TrendsActivity.class).putExtra(TrendsActivity.GROUP, i.getIntExtra("trends", 0))
+                    .putExtra(TrendsActivity.MEASURE, i.getIntExtra("trends_measure", -1))
+                    .putExtra(TrendsActivity.PERIOD, i.getIntExtra("trends_period", app.openring.core.analysis.Trends.MONTHS));
+            if (day != null) t.putExtra(TrendsActivity.DAY, day);
+            startActivity(t);
+        }
         // screen test: open Find my ring (issue #74)
         if (i.getBooleanExtra("finder", false)) {
             startActivity(new Intent(this, FinderActivity.class).putExtra("demo_turn", i.getBooleanExtra("finder_turn", false))
@@ -702,6 +712,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             default:
                 content = Pages.today(this, data, this, syncLine());
         }
+        // Trends (issue #374): one card at the bottom of every tab but Today, so Today's first screen stays as it is
+        if (content instanceof LinearLayout) TrendsCard.add(this, (LinearLayout) content, data, tab);
         // no copy could be made before this update (issue #242): said once on Today, until OK
         final Prefs np = Prefs.of(this);
         if (tab == Pages.TODAY && !np.demo() && np.beforeUpdateUnseen() && content instanceof LinearLayout) {

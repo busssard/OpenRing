@@ -33,11 +33,6 @@ public final class Methods {
         return false;
     }
 
-    /** Whether the method uses this cycle's temperature rise on top: every one but drip style, which uses start days only. */
-    public static boolean usesTemperature(int id) {
-        return id != DRIP;
-    }
-
     /** The name on Settings and the card. */
     public static String name(int id) {
         switch (id) {
@@ -54,9 +49,9 @@ public final class Methods {
     /** One line under the name in Settings. */
     public static String line(int id) {
         switch (id) {
-            case BEST: return "The method that was closest on your own cycles";
+            case BEST: return "The method that was clearly closest on your own cycles, else Open Ring";
             case OPEN_RING: return "Typical of your newest 12 cycles, far ones left out";
-            case DRIP: return "Average of your newest 12 cycles, like drip, without temperature";
+            case DRIP: return "Average of your newest 12 cycles, like drip. Chosen here, it uses start days only, not your temperature";
             case SMOOTH: return "Newer cycles weigh more (exponential smoothing)";
             case TREND: return "A long cycle tends to follow a long one, if yours do (autoregressive)";
             case BAYES: return "Starts from a large study and moves to yours (Bayesian), notices a missed period";
@@ -76,7 +71,8 @@ public final class Methods {
                         + Cycles.TRIM_FROM + ", then their average without the shortest and the longest. Give or take 1.28 times how much they vary.";
             case DRIP:
                 return "drip style: the average of your newest " + Cycles.WINDOW + " cycles, none left out, give or take 1 day when they vary by "
-                        + "less than 1.5 days, else 2, as drip's FAQ describes it. Start days only, so it never uses your temperature.";
+                        + "less than 1.5 days, else 2, as drip's FAQ describes it. Chosen by hand it uses start days only, not your temperature, as drip does. "
+                        + "When Best for you picks it, your night temperature is still used on top.";
             case SMOOTH:
                 return "Recent cycles count more: each new cycle moves the estimate part of the way toward it (exponential smoothing). How "
                         + "far is fitted to your own history: the share that would have missed your past cycles least, so cycles that drift get "
@@ -107,15 +103,19 @@ public final class Methods {
     }
 
     // ------------------------------------------------------------------------- shared statistics
+    // The one copy of these for the period tracker (Cycles, TempRise and the methods). sd is the sample standard deviation
+    // (n minus 1), not core.Stats.sd (n): the period numbers have always used this one.
 
-    static double mean(int[] v) {
+    /** The mean, NaN without values. */
+    public static double mean(int[] v) {
         if (v.length == 0) return Double.NaN;
         double s = 0;
         for (int x : v) s += x;
         return s / v.length;
     }
 
-    static double median(int[] v) {
+    /** The middle value (the mean of the two middle ones for an even count), NaN without values. */
+    public static double median(int[] v) {
         if (v.length == 0) return Double.NaN;
         int[] s = v.clone();
         Arrays.sort(s);
@@ -124,7 +124,7 @@ public final class Methods {
     }
 
     /** The mean without one shortest and one longest value (at least 3 values). */
-    static double trimmedMean(int[] v) {
+    public static double trimmedMean(int[] v) {
         int[] s = v.clone();
         Arrays.sort(s);
         double sum = 0;
@@ -132,8 +132,8 @@ public final class Methods {
         return sum / (s.length - 2);
     }
 
-    /** The sample standard deviation, NaN with fewer than 2 values. */
-    static double sd(int[] v) {
+    /** The sample standard deviation (divided by n minus 1), NaN with fewer than 2 values. */
+    public static double sd(int[] v) {
         if (v.length < 2) return Double.NaN;
         double m = mean(v), q = 0;
         for (int x : v) q += (x - m) * (x - m);
