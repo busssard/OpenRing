@@ -347,7 +347,7 @@ upgrade is safe twice and resumes after a stop). A tag is a calendar day, never 
 move it; a tag of day D belongs to the night that starts on the evening of D: Sleep of D + 1 shows "Before this night: ...",
 Readiness of D + 1 "Logged yesterday: ...". A tap on a chip writes one statement in the background (`LifeLog.set`), taking a
 tag off keeps a removal mark; Several days writes one row per date with one span id in one transaction (`LifeLog.setSpan`);
-Undo puts each row back as it was (a day that had none gets a removal mark). Logging starts no analysis and changes no score
+Undo puts each row back as it was (a day that had none gets a removal mark). **Same name, one factor (issue #422):** own tags whose cleaned names are equal in any case (two keys after Delete all and an older backup) are read as one factor under the older key (`LifeTags.Known`: `key`, `aliases`, `fold`); in force and removed tags are grouped apart. This is a reading rule only: no row is rewritten, a tap on writes the older key, a tap off marks the older key and every alias that has the day. Do not "simplify" `Known` back to one chip per key. Logging starts no analysis and changes no score
 (phase 1 does not touch `Analyzer` or readiness; the pipeline test analyses the demo with every tag on every day and gets the
 same nights and days). `DayData` reads every day in force (`LifeLog.all`, 11,000 rows of five years in about 0.04 s on the JVM)
 and the chips (`LifeLog.known`); an error there shows a sentence on the cards and logs the error's kind only. Today's row
@@ -466,7 +466,9 @@ with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav 
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep
    35/15/10/10/10/10/10); a period with no sleep at all has no Restfulness (issue #118), like REM and deep on a
    night without stages; contributor curves are transparent and based on sleep research. Baselines become
-   personal after about 14 nights.
+   personal after about 14 nights. Readiness's baselines (lowest heart rate over 14 main nights, HRV over 13 plus tonight
+   against 90, temperature against the median of 30, each needing 3 nights with a value) are worked out in
+   `core/analysis/Baselines` from plain arrays (issue #292, phase 1.5); `Baselines.usual` is that median of 30 for any measure.
 5. Time zones (issue #22): each night takes its zone from `zones` and stores it as `zone`; its day, sleep timing
    and clock change marker use it, and a day uses its main night's zone. Screens format each night's times
    with its own zone (`Json.zone`, falling back to the phone's zone for nights without one), so a trip does

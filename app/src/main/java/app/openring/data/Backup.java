@@ -169,6 +169,18 @@ public final class Backup {
         Json.put(o, "watch_alarm_m", al.minute);
         Json.put(o, "watch_alarm_days", al.days);
         Json.put(o, "watch_alarm_smart", al.smart);
+        // the order and folds of each tab's tiles (owner's wish of 18 November): the person's own, never the demo's; a tab in the
+        // standard layout is left out, an empty object means every tab is standard
+        JSONObject layout = new JSONObject();
+        for (String tab : app.openring.core.Layout.TABS) {
+            String order = p.tileOrderReal(tab), folds = p.tileFoldsReal(tab);
+            if ((order == null || order.isEmpty()) && (folds == null || folds.isEmpty())) continue;
+            JSONObject t = new JSONObject();
+            if (order != null && !order.isEmpty()) Json.put(t, "order", order);
+            if (folds != null && !folds.isEmpty()) Json.put(t, "folds", folds);
+            Json.put(layout, tab, t);
+        }
+        Json.put(o, "layout", layout);
         ZipOutputStream z = new ZipOutputStream(os);
         // the fastest level (issue #222): packs about three times faster than the default for a file about a tenth larger;
         // any zip reader, also every older version, reads it the same
@@ -593,6 +605,17 @@ public final class Backup {
             al.days = o.optInt("watch_alarm_days", 0x1f);
             al.smart = o.optInt("watch_alarm_smart", 0);
             p.setWatchAlarm(al);
+        }
+        // the tiles' order and folds (owner's wish of 18 November): an older backup has none and keeps the phone's layout; a
+        // value that is not a key is left out (core/Layout), a tab the backup does not name is standard
+        JSONObject layout = o.optJSONObject("layout");
+        if (layout != null) {
+            for (String tab : app.openring.core.Layout.TABS) {
+                JSONObject t = layout.optJSONObject(tab);
+                String order = t == null ? null : app.openring.core.Layout.join(app.openring.core.Layout.parse(t.optString("order", null)));
+                String folds = t == null ? null : app.openring.core.Layout.joinFolds(app.openring.core.Layout.folds(t.optString("folds", null)));
+                p.setTilesReal(tab, order, folds);
+            }
         }
     }
 

@@ -535,21 +535,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
         super.onRequestPermissionsResult(code, perms, results);
         // refused again after an explicit refusal, Android no longer asks: only the app's settings can switch it
         // on. A dialog closed without choosing (or an interrupted request) still asks next time (issue #140).
-        PermissionAsk.Answer a = PermissionAsk.answer(Permissions.granted(this), perms, results, Permissions.needed(),
-                Permissions.rationale(this), Prefs.of(this).permissionDenied(), quietDenial);
+        PermissionAsk.Answer a = Permissions.answer(this, perms, results, quietDenial);
         if (askedPermission) {
             permissionBlocked = a.blocked;
             quietDenial = a.quiet;
         }
-        Permissions.store(this, a.denied);
         if (resumed) startScan();
-    }
-
-    boolean locationOn() {
-        android.location.LocationManager lm = (android.location.LocationManager) getSystemService(Context.LOCATION_SERVICE);
-        if (lm == null) return true;
-        if (android.os.Build.VERSION.SDK_INT >= 28) return lm.isLocationEnabled();
-        return lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
     }
 
     // ------------------------------------------------------------------ where was it last
@@ -889,8 +880,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
         }
         if (!demo && !Permissions.granted(this)) {
             setText(bandText, "Not listening");
-            String what = android.os.Build.VERSION.SDK_INT >= 31 ? "the Nearby devices permission"
-                    : "the Location permission (Android 11 and older ask for it to find Bluetooth devices; Open Ring has no internet and keeps no place)";
+            String what = PermissionAsk.neededText(android.os.Build.VERSION.SDK_INT);
             if (permissionBlocked) {
                 issue("To hear the ring, this app needs " + what + ". Android no longer asks, so switch it on in the app's settings.", "Open app settings", new Runnable() {
                     @Override
@@ -910,7 +900,7 @@ public final class FinderActivity extends Activity implements SensorEventListene
             }
             return;
         }
-        if (!demo && android.os.Build.VERSION.SDK_INT < 31 && !locationOn()) {
+        if (!demo && android.os.Build.VERSION.SDK_INT < 31 && !Permissions.locationOn(this)) {
             setText(bandText, "Not listening");
             issue("Location is off. Android 11 and older only find Bluetooth devices while Location is on.", "Open Location settings", new Runnable() {
                 @Override

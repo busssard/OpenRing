@@ -221,13 +221,11 @@ public final class WatchActivity extends Activity {
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
         // the same rule as Find my ring: after a second refusal only the app's settings can switch it on (issue #140)
-        PermissionAsk.Answer a = PermissionAsk.answer(Permissions.granted(this), perms, results, Permissions.needed(),
-                Permissions.rationale(this), Prefs.of(this).permissionDenied(), quietDenial);
+        PermissionAsk.Answer a = Permissions.answer(this, perms, results, quietDenial);
         if (askedPermission) {
             permissionBlocked = a.blocked;
             quietDenial = a.quiet;
         }
-        Permissions.store(this, a.denied);
         if (resumed && !demo) startScan();
     }
 
@@ -258,8 +256,7 @@ public final class WatchActivity extends Activity {
         if (demo || !resumed || scan != null || session != null) return;
         issueBox.setVisibility(View.GONE);
         if (!Permissions.granted(this)) {
-            String what = Build.VERSION.SDK_INT >= 31 ? "the Nearby devices permission"
-                    : "the Location permission (Android 11 and older ask for it to find Bluetooth devices; Open Ring has no internet and keeps no place)";
+            String what = PermissionAsk.neededText(Build.VERSION.SDK_INT);
             if (permissionBlocked) {
                 issue("To find the watch, this app needs " + what + ". Android no longer asks, so switch it on in the app's settings.", "Open app settings",
                         new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", getPackageName(), null)));
@@ -268,7 +265,7 @@ public final class WatchActivity extends Activity {
             }
             return;
         }
-        if (Build.VERSION.SDK_INT < 31 && !locationOn()) {
+        if (Build.VERSION.SDK_INT < 31 && !Permissions.locationOn(this)) {
             issue("Location is off. Android 11 and older only find Bluetooth devices while Location is on.", "Open Location settings",
                     new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));
             return;
@@ -322,14 +319,7 @@ public final class WatchActivity extends Activity {
     void heard(ScanResult r) {
         String addr = r.getDevice().getAddress();
         ScanRecord rec = r.getScanRecord();
-        String name = rec == null ? null : rec.getDeviceName();
-        if (name == null) {
-            try {
-                name = r.getDevice().getName();
-            } catch (SecurityException e) {
-                name = null;
-            }
-        }
+        String name = advertisedName(r);
         synchronized (found) {
             WatchCheck.Found f = found.get(addr);
             if (f == null) found.put(addr, f = new WatchCheck.Found(addr, name, r.getRssi()));
@@ -337,6 +327,21 @@ public final class WatchActivity extends Activity {
             if (name != null) f.name = name;
             List<ParcelUuid> uuids = rec == null ? null : rec.getServiceUuids();
             if (uuids != null) for (ParcelUuid u : uuids) f.service(u.getUuid().toString());
+        }
+    }
+
+    /**
+     * The name a device advertises, else the name Android knows for it (null when Android refuses it without the
+     * Bluetooth permission). Shared with Watch setup.
+     */
+    static String advertisedName(ScanResult r) {
+        ScanRecord rec = r.getScanRecord();
+        String name = rec == null ? null : rec.getDeviceName();
+        if (name != null) return name;
+        try {
+            return r.getDevice().getName();
+        } catch (SecurityException e) {
+            return null;
         }
     }
 
@@ -367,13 +372,6 @@ public final class WatchActivity extends Activity {
         listBox.removeAllViews();
         shownOrder.clear();
         rowTexts.clear();
-    }
-
-    boolean locationOn() {
-        android.location.LocationManager lm = (android.location.LocationManager) getSystemService(Context.LOCATION_SERVICE);
-        if (lm == null) return true;
-        if (Build.VERSION.SDK_INT >= 28) return lm.isLocationEnabled();
-        return lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
     }
 
     /**

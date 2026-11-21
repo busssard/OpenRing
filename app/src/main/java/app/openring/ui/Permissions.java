@@ -72,6 +72,14 @@ public final class Permissions {
         }
     }
 
+    /** Whether Location is on (Android 11 and older find Bluetooth devices only then); true when the phone has no location service. */
+    static boolean locationOn(Context c) {
+        android.location.LocationManager lm = (android.location.LocationManager) c.getSystemService(Context.LOCATION_SERVICE);
+        if (lm == null) return true;
+        if (Build.VERSION.SDK_INT >= 28) return lm.isLocationEnabled();
+        return lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
+    }
+
     public static void request(Activity a) {
         // a second request only comes after an answer to the first: a refusal then shows here
         remember(a);

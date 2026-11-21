@@ -230,6 +230,16 @@ public final class WatchCheck {
         return out;
     }
 
+    /**
+     * Watch setup's name rule (issue #251): a name starting with steel, withings, activit or scanwatch, in any case.
+     * It is stricter than {@link #likelyWatch} (a prefix, not anywhere in the name, and no "hwa0") and also takes
+     * "scanwatch"; both are kept as they were, Setup adds the exact Withings service on its own.
+     */
+    public static boolean setupName(String name) {
+        String low = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        return low.startsWith("steel") || low.startsWith("withings") || low.startsWith("activit") || low.startsWith("scanwatch");
+    }
+
     /** True when the name or the advertised services suggest a Withings watch. */
     public static boolean likelyWatch(Found f) {
         String n = f.name == null ? "" : f.name.toLowerCase(Locale.ROOT);

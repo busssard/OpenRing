@@ -679,6 +679,16 @@ public class CoreTest {
             check("#186: plain text without dashes: " + x, !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014") && x.length() < 100);
         }
         check("#186: the button says what it does", "Open app settings".equals(PermissionAsk.SETTINGS_BUTTON));
+        // the permission sentence Find my ring and the Watch check both show, word for word as both screens had it
+        check("scan screens: Android 12 and newer name Nearby devices", "the Nearby devices permission".equals(PermissionAsk.neededText(31))
+                && PermissionAsk.neededText(34).equals(PermissionAsk.neededText(31)));
+        check("scan screens: Android 11 and older name Location and say why", ("the Location permission (Android 11 and older ask for it to find"
+                + " Bluetooth devices; Open Ring has no internet and keeps no place)").equals(PermissionAsk.neededText(30))
+                && PermissionAsk.neededText(26).equals(PermissionAsk.neededText(30)));
+        for (int sdk : new int[] {30, 31}) {
+            String x = PermissionAsk.neededText(sdk);
+            check("scan screens: plain text without dashes: " + x, !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014"));
+        }
     }
 
     static void pattern() {
@@ -3378,6 +3388,19 @@ public class CoreTest {
         check("watch: the Withings service makes it likely a watch", WatchCheck.likelyWatch(w));
         check("watch: a Steel HR name makes it likely a watch", WatchCheck.likelyWatch(new WatchCheck.Found("y", "Steel HR", -60)));
         check("watch: headphones are not", !WatchCheck.likelyWatch(new WatchCheck.Found("z", "Headphones", -60)));
+        // Watch setup's own name rule, moved to core as it was (a prefix, any case); it differs from likelyWatch on purpose
+        String[][] setupNames = {
+            {"Steel HR", "1"}, {"steel hr sport", "1"}, {"Withings Move", "1"}, {"WITHINGS", "1"}, {"Activite Pop", "1"},
+            {"ScanWatch 2", "1"}, {"scanwatch", "1"}, {"My Steel HR", "0"}, {"HWA09", "0"}, {"Headphones", "0"}, {"", "0"}, {null, "0"},
+        };
+        for (String[] t : setupNames) {
+            check("watch setup: name rule for " + t[0], WatchCheck.setupName(t[0]) == "1".equals(t[1]));
+        }
+        check("watch setup: its scan runs 10 s, the Watch check's SCAN_MS", WatchCheck.SCAN_MS == 10000);
+        check("watch setup: the two rules stay as they were (ScanWatch only in setup, HWA0 and a name anywhere only in the check)",
+                !WatchCheck.likelyWatch(new WatchCheck.Found("a", "ScanWatch 2", -60))
+                        && WatchCheck.likelyWatch(new WatchCheck.Found("b", "HWA09", -60))
+                        && WatchCheck.likelyWatch(new WatchCheck.Found("c", "My Steel HR", -60)));
         eq("watch: scan row detail", WatchCheck.detail(new WatchCheck.Found("z", "Headphones", -61)), "Signal -61 dBm, no services advertised");
         check("watch: scan row with the watch's service", WatchCheck.detail(w).startsWith("Signal -55 dBm, services: " + WatchCheck.WITHINGS_SERVICE)
                 && WatchCheck.detail(w).endsWith("Looks like a Withings watch"));
@@ -3741,7 +3764,7 @@ public class CoreTest {
         eq("backups: an empty file", Backups.mb(0), "0 MB");
         eq("backups: going back asks, and says the whole history is kept and can be put back, and the phone's period log stays (#252)", Backups.goBackText(when, z),
             "Your history is replaced by this copy from 29 Oct. First your whole history as it is now is kept as \"Copy from before going back\", "
-            + "so you can put it back from this card. Period days you logged or removed on this phone stay as they are.");
+            + "so you can put it back from this card. Period days and life factors you logged or removed on this phone stay as they are.");
         check("backups: the going back question names the copy's line", Backups.goBackText(when, z).contains(Backups.backLine(when, 1, z).substring(0, 26)));
         eq("backups: status after a copy", Backups.status(when, 210 * mb, 5, null, z), "Last copy: 29 Oct 03:12, 210 MB, 5 kept");
         eq("backups: status before the first copy", Backups.status(0, 0, 0, null, z), "No copy yet. The first one is made the next time the phone charges.");
