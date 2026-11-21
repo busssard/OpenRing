@@ -7223,13 +7223,6 @@ public class CoreTest {
             check("texts: delete toast fits and says nothing was deleted: " + t, Texts.fitsToast(t) && t.startsWith("Nothing was deleted")
                     && !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014"));
         }
-        // issue #425: in demo mode the button says it deletes the demo data only, and that the real copies stay
-        for (String t : new String[] {Texts.DELETE_DEMO, Texts.DELETE_DEMO_TITLE, Texts.DELETE_DEMO_TEXT}) {
-            check("texts: demo delete text fits the rules: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014") && t.contains("demo"));
-        }
-        check("texts: demo delete says the own history and its copies from before updates stay", Texts.DELETE_DEMO_TITLE.equals(Texts.DELETE_DEMO + "?")
-                && Texts.DELETE_DEMO_TEXT.contains("Your own history") && Texts.DELETE_DEMO_TEXT.contains("copies from before updates")
-                && Texts.DELETE_DEMO_TEXT.contains("not touched"));
     }
 
     /**

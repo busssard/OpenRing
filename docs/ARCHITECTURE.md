@@ -414,10 +414,9 @@ with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav 
   with "Go back to this copy": `AutoBackup.goBack` checks a temp copy, then inside the restore's swap
   (`Backup.finish` with a step before `Db.replaceWith`, so no sync, ring task or analysis runs) the current history is
   snapshotted into `back-<time>.db` ("Copy from before going back", the newest one stays) and the copy replaces the history;
-  key and settings stay. "Delete all local data" deletes the phone copies too, but only on the real history: in demo mode
-  the button reads "Delete the demo data", empties only the demo file and keeps every copy (`DeleteAll.run` follows the file
-  it deletes, not the demo switch; issue #425). After it the demo stays empty until the main screen is opened anew
-  (`Demo.complete`) or demo mode is entered again (`Demo.enter`): both see no events and no build day and make it again.
+  key and settings stay. "Delete all local data" deletes the phone copies too, but only when the file it empties is the real
+  history (`DeleteAll.run` follows the file it deletes, not the demo switch; issue #425). Settings in demo mode offers no
+  Delete all (its page has no Careful section), so this is a guard for any later caller in demo mode.
 * **Folder.** The person picks a folder (`ACTION_OPEN_DOCUMENT_TREE`, the permission kept; no storage permission, no
   network). `BackupJob` (periodic, id 4712, every 24 hours with 6 hours flex, charging, battery not low, persisted, kept
   when equal like the sync job, #193) runs daily; `Backups.due` decides whether a copy is due for the chosen interval
