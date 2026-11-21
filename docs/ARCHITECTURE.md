@@ -463,7 +463,9 @@ with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav 
 4. `Scores` combines contributors with the weights open_health recovered from Oura's engine (Sleep
    35/15/10/10/10/10/10); a period with no sleep at all has no Restfulness (issue #118), like REM and deep on a
    night without stages; contributor curves are transparent and based on sleep research. Baselines become
-   personal after about 14 nights.
+   personal after about 14 nights. Readiness's baselines (lowest heart rate over 14 main nights, HRV over 13 plus tonight
+   against 90, temperature against the median of 30, each needing 3 nights with a value) are worked out in
+   `core/analysis/Baselines` from plain arrays (issue #292, phase 1.5); `Baselines.usual` is that median of 30 for any measure.
 5. Time zones (issue #22): each night takes its zone from `zones` and stores it as `zone`; its day, sleep timing
    and clock change marker use it, and a day uses its main night's zone. Screens format each night's times
    with its own zone (`Json.zone`, falling back to the phone's zone for nights without one), so a trip does

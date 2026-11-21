@@ -15,6 +15,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/java/SoundTest.java` | The sleep sound detector of `core/analysis/SoundDetector` (issue #380: made up audio, sounds, snoring, coughs, clips, gaps), run at the end of `tests/run_tests.sh` |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
+| `tests/java/BaselinesTest.java` | The readiness baselines of `core/analysis/Baselines` (issue #292, phase 1.5): bit for bit what the old inline code of `data/Analyzer` gave, on 2000 seeded made up histories, the windows and the minimum of 3, and `Baselines.usual` (the median of the 30 nights before, for phase 2); compiled on its own line and run after CoreTest by `tests/run_tests.sh` |
 | `build_apk.sh` | Builds and signs the APK without Gradle (used by CI) |
 | `build.gradle`, `settings.gradle`, `app/build.gradle`, `gradle.properties`, `gradle/` | Gradle files for Android Studio (no wrapper script committed; CI does not use Gradle) |
 | `.github/workflows/` | CI: `build.yml` (tests, APK, releases), `emulator.yml` (Android 14 screen test and screenshots), `codeql.yml` (security scan) |
