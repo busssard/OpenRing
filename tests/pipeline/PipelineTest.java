@@ -924,6 +924,7 @@ public class PipelineTest {
         phoneNoRingBackup329();
         watchHistory();
         watchReview389();
+        watchReaders();
         routes251();
         startDevices373();
         phoneMovedReview();
@@ -14430,6 +14431,121 @@ public class PipelineTest {
         }
         check("review #389: each day's zone is its dial's (the zone noted at its noon), a trip included", zonesOk && ny >= 6, ny);
         clean254();
+    }
+
+    /**
+     * Code health: what WatchStore's readers ({@code load}, {@code window}, {@code nightRows}, {@code sleepRows}) give, against
+     * the rows written, with times on every edge of a span (a heart rate at its start and end, a sleep piece that ends right at
+     * its start or starts right at its end, a span starting within a second). Pins the rows and their order before and after
+     * the readers were shared.
+     */
+    static void watchReaders() throws Exception {
+        Context c = phone254("openring-readers");
+        Db db = Db.get(c);
+        android.database.sqlite.SQLiteDatabase w = db.getWritableDatabase();
+        final long t0 = 1_760_000_000L;
+        Random r = new Random(4711);
+        java.util.TreeMap<Long, long[]> steps = new java.util.TreeMap<Long, long[]>(), heart = new java.util.TreeMap<Long, long[]>(),
+                sleep = new java.util.TreeMap<Long, long[]>(), work = new java.util.TreeMap<Long, long[]>();
+        String[] devs = {"watch a", "watch b"};
+        for (int i = 0; i < 400; i++) {
+            long t = t0 + r.nextInt(20 * 86400);
+            String dev = devs[r.nextInt(2)];
+            if (!steps.containsKey(t)) {
+                long[] v = {t, 60 + r.nextInt(3600), r.nextInt(2000), r.nextInt(1500), r.nextInt(90)};
+                steps.put(t, v);
+                w.execSQL("INSERT INTO watch_steps(device, start, dur, steps, metres, kcal) VALUES (?, ?, ?, ?, ?, ?)", new Object[] {dev, v[0], v[1], v[2], v[3], v[4]});
+            }
+            t = t0 + r.nextInt(20 * 86400);
+            if (!heart.containsKey(t)) {
+                long[] v = {t, 40 + r.nextInt(120)};
+                heart.put(t, v);
+                w.execSQL("INSERT INTO watch_hr(device, t, bpm) VALUES (?, ?, ?)", new Object[] {dev, v[0], v[1]});
+            }
+            t = t0 + r.nextInt(20 * 86400);
+            if (!sleep.containsKey(t)) {
+                long[] v = {t, r.nextInt(4) == 0 ? 0 : 60 + r.nextInt(3 * 3600), 1 + r.nextInt(4)};
+                sleep.put(t, v);
+                w.execSQL("INSERT INTO watch_sleep(device, start, dur, stage) VALUES (?, ?, ?, ?)", new Object[] {dev, v[0], v[1], v[2]});
+            }
+            t = t0 + r.nextInt(20 * 86400);
+            if (i % 8 == 0 && !work.containsKey(t)) {
+                long[] v = {t, 600 + r.nextInt(7200), r.nextInt(40), r.nextInt(9000), r.nextInt(8000), r.nextInt(700)};
+                work.put(t, v);
+                w.execSQL("INSERT INTO watch_workouts(device, start, dur, kind, steps, metres, kcal) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        new Object[] {dev, v[0], v[1], v[2], v[3], v[4], v[5]});
+            }
+        }
+        // the edges of the span from t0 + 5 days to t0 + 6 days
+        long from = t0 + 5 * 86400, to = from + 86400;
+        long[][] hEdge = {{from, 61}, {to, 62}, {from - 1, 63}, {to - 1, 64}};
+        for (long[] v : hEdge) {
+            heart.put(v[0], v);
+            w.execSQL("DELETE FROM watch_hr WHERE t = ?", new Object[] {v[0]});
+            w.execSQL("INSERT OR REPLACE INTO watch_hr(device, t, bpm) VALUES ('watch a', ?, ?)", new Object[] {v[0], v[1]});
+        }
+        long[][] sEdge = {{from - 3600, 3600, 1}, {from - 3601, 3602, 2}, {to, 600, 3}, {to - 1, 600, 1}};
+        for (long[] v : sEdge) {
+            sleep.put(v[0], v);
+            w.execSQL("DELETE FROM watch_sleep WHERE start = ?", new Object[] {v[0]});
+            w.execSQL("INSERT OR REPLACE INTO watch_sleep(device, start, dur, stage) VALUES ('watch b', ?, ?, ?)", new Object[] {v[0], v[1], v[2]});
+        }
+        app.openring.data.WatchStore.Data all = app.openring.data.WatchStore.load(db);
+        boolean ok = readersText(all.steps, all.heart, all.sleep, all.workouts)
+                .equals(readersWant(steps, heart, sleep, work, Long.MIN_VALUE, Long.MAX_VALUE));
+        check("code health: load gives every watch row, oldest first", ok, all.sleep.size());
+        double[][] spans = {{from, to}, {from + 0.4, to - 0.6}, {from - 0.5, to + 0.2}, {t0 - 86400, t0 + 30 * 86400}, {t0 + 3 * 86400 + 17, t0 + 9 * 86400 + 5}};
+        for (double[] s : spans) {
+            long a = (long) Math.floor(s[0]), b = (long) Math.ceil(s[1]);
+            String want = readersWant(steps, heart, sleep, work, a, b);
+            app.openring.core.MainDevice.Watch win = app.openring.data.WatchStore.window(db, s[0], s[1]);
+            app.openring.core.MainDevice.Watch nr = app.openring.data.WatchStore.nightRows(db, s[0], s[1]);
+            List<app.openring.core.withings.Records.Sleep> sr = app.openring.data.WatchStore.sleepRows(db, s[0], s[1]);
+            String wantNights = readersWant(new java.util.TreeMap<Long, long[]>(), heart, sleep, new java.util.TreeMap<Long, long[]>(), a, b);
+            String wantSleep = readersWant(new java.util.TreeMap<Long, long[]>(), new java.util.TreeMap<Long, long[]>(), sleep,
+                    new java.util.TreeMap<Long, long[]>(), a, b);
+            String got = readersText(win.steps, win.heart, win.sleep, win.workouts);
+            check("code health: window " + s[0] + " to " + s[1] + " gives the rows that start in it and the sleep that reaches into it",
+                    got.equals(want) && win.sleep.size() > 0 && win.heart.size() > 0, win.steps.size() + "/" + win.heart.size() + "/" + win.sleep.size());
+            check("code health: nightRows " + s[0] + " to " + s[1] + " gives the same heart rates and sleep, no steps",
+                    readersText(nr.steps, nr.heart, nr.sleep, nr.workouts).equals(wantNights), nr.heart.size());
+            check("code health: sleepRows " + s[0] + " to " + s[1] + " gives the same sleep pieces",
+                    readersText(new ArrayList<app.openring.core.withings.Records.Steps>(), new ArrayList<app.openring.core.withings.Records.Heart>(), sr,
+                            new ArrayList<app.openring.core.withings.Records.Workout>()).equals(wantSleep), sr.size());
+        }
+        String edge = readersText(new ArrayList<app.openring.core.withings.Records.Steps>(), app.openring.data.WatchStore.window(db, from, to).heart,
+                new ArrayList<app.openring.core.withings.Records.Sleep>(), new ArrayList<app.openring.core.withings.Records.Workout>());
+        check("code health: a heart rate at the span's start counts, one at its end does not",
+                edge.contains("h" + from + ":61") && !edge.contains("h" + to + ":62") && edge.contains("h" + (to - 1) + ":64") && !edge.contains("h" + (from - 1) + ":63"), null);
+        List<app.openring.core.withings.Records.Sleep> es = app.openring.data.WatchStore.sleepRows(db, from, to);
+        String se = readersText(new ArrayList<app.openring.core.withings.Records.Steps>(), new ArrayList<app.openring.core.withings.Records.Heart>(), es,
+                new ArrayList<app.openring.core.withings.Records.Workout>());
+        check("code health: a piece ending at the span's start is out, one ending a second later is in, one starting at its end is out",
+                !se.contains("s" + (from - 3600) + ":") && se.contains("s" + (from - 3601) + ":") && !se.contains("s" + to + ":") && se.contains("s" + (to - 1) + ":"), null);
+        clean254();
+    }
+
+    static String readersText(List<app.openring.core.withings.Records.Steps> st, List<app.openring.core.withings.Records.Heart> hr,
+            List<app.openring.core.withings.Records.Sleep> sl, List<app.openring.core.withings.Records.Workout> wo) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.withings.Records.Steps x : st) b.append('p').append(x.start).append(':').append(x.dur).append(',').append(x.steps).append(',').append(x.metres).append(',').append(x.kcal).append(' ');
+        for (app.openring.core.withings.Records.Heart x : hr) b.append('h').append(x.t).append(':').append(x.bpm).append(' ');
+        for (app.openring.core.withings.Records.Sleep x : sl) b.append('s').append(x.start).append(':').append(x.dur).append(',').append(x.stage).append(' ');
+        for (app.openring.core.withings.Records.Workout x : wo) b.append('w').append(x.start).append(':').append(x.dur).append(',').append(x.kind).append(',').append(x.steps)
+                .append(',').append(x.metres).append(',').append(x.kcal).append(' ');
+        return b.toString();
+    }
+
+    /** The rows a reader of [a, b) should give, by the rules written out: records that start in it, sleep pieces that reach into it. */
+    static String readersWant(java.util.TreeMap<Long, long[]> st, java.util.TreeMap<Long, long[]> hr, java.util.TreeMap<Long, long[]> sl,
+            java.util.TreeMap<Long, long[]> wo, long a, long b) {
+        StringBuilder o = new StringBuilder();
+        for (long[] x : st.values()) if (x[0] >= a && x[0] < b) o.append('p').append(x[0]).append(':').append(x[1]).append(',').append(x[2]).append(',').append(x[3]).append(',').append(x[4]).append(' ');
+        for (long[] x : hr.values()) if (x[0] >= a && x[0] < b) o.append('h').append(x[0]).append(':').append(x[1]).append(' ');
+        for (long[] x : sl.values()) if (x[0] + x[1] > a && x[0] < b) o.append('s').append(x[0]).append(':').append(x[1]).append(',').append(x[2]).append(' ');
+        for (long[] x : wo.values()) if (x[0] >= a && x[0] < b) o.append('w').append(x[0]).append(':').append(x[1]).append(',').append(x[2]).append(',').append(x[3])
+                .append(',').append(x[4]).append(',').append(x[5]).append(' ');
+        return o.toString();
     }
 
     static String leftKeys379(List<app.openring.core.DeviceScores.Left> l) {
