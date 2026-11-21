@@ -614,8 +614,12 @@ public class PipelineTest {
         app.openring.core.analysis.LastWorn.Result demoLast = app.openring.data.RightNow.lastWorn(demo, demoNow);
         check("ring finder: the demo ring reads as worn, confirmed by heart rate (#94)", demoLast.state == app.openring.core.analysis.LastWorn.WORN
                 && !Double.isNaN(demoLast.skinC) && !demoLast.justOn && !Double.isNaN(demoLast.lastHr), demoLast.state + " " + demoLast.skinC + " " + demoLast.lastHr);
-        long demoNights = demo.count("SELECT COUNT(*) FROM nights WHERE main = 1");
-        check("demo has about five weeks of nights", demoNights >= 28 && demoNights <= 36, demoNights + " nights in " + (System.currentTimeMillis() - t) + " ms");
+        // issue #374: the made up year before the five weeks is results only; the five weeks are analysed from raw events
+        String yearUntil = demo.kv(app.openring.data.Demo.YEAR_UNTIL, null);
+        check("#374 demo: its made up year is noted", yearUntil != null, null);
+        if (yearUntil == null) yearUntil = "0000-01-01";
+        long demoNights = demo.count("SELECT COUNT(*) FROM nights WHERE main = 1 AND day > '" + yearUntil + "'");
+        check("demo has about five weeks of nights after its made up year", demoNights >= 28 && demoNights <= 36, demoNights + " nights in " + (System.currentTimeMillis() - t) + " ms");
         app.openring.data.SleepHistory dh = app.openring.data.SleepHistory.load(demo, "2000-01-01", "2100-01-01", java.time.ZoneId.systemDefault());
         check("demo nights look like real nights", dh.asleepMin > 330 && dh.asleepMin < 560 && dh.awakeMin > 10 && dh.deepMin > 20 && dh.remMin > 20,
                 String.format(java.util.Locale.US, "asleep %.0f, awake %.0f, deep %.0f, rem %.0f, score %.0f", dh.asleepMin, dh.awakeMin, dh.deepMin, dh.remMin, dh.score));
@@ -628,7 +632,7 @@ public class PipelineTest {
         // issue #44: the first demo days count the worn days so far, later ones a full week as before
         int firstWorn = -1, fullWeek = 0, weekDays = 0;
         boolean weekTexts = true;
-        for (String[] r : demo.daysJson("2000-01-01", "2100-01-01")) {
+        for (String[] r : demo.daysJson(LocalDate.parse(yearUntil).plusDays(1).toString(), "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
             if (o == null || o.optJSONObject("activity_score") == null) continue;
             if (firstWorn < 0) firstWorn = o.optInt("activity_days", -1);
@@ -924,6 +928,7 @@ public class PipelineTest {
         phoneNoRingBackup329();
         watchHistory();
         watchReview389();
+        watchReaders();
         routes251();
         startDevices373();
         phoneMovedReview();
@@ -3400,24 +3405,29 @@ public class PipelineTest {
      * mean and highest point, with every stored point inside the day the chart draws, and the day's lowest stays near
      * the night's lowest (5 minute averages); the line also holds the next night from bedtime to midnight, so an early
      * bedtime before a calmer night (the story's best night, for example) may bring it down to that night's lowest, never
-     * lower. That holds for whole nights only: a night the demo cut short at its
-     * {@code now} falls and rises within minutes, so a quarter hour sits above its 5 minute low (issue #123). Such days
-     * are left out of the second check; {@code wantCut} is how many there must be.
+     * lower, and only when the day's lowest point lies in that next night (issue #406). That holds for whole nights only:
+     * a night the demo cut short at its {@code now} falls and rises within minutes, so a quarter hour sits above its
+     * 5 minute low (issue #123). Such days are left out of the second check; {@code wantCut} is how many there must be.
      */
     static void dayHeartChecks(Db db, long now, String label, int wantCut) {
         int days = 0, matched = 0, nearNight = 0, withNight = 0, cut = 0;
         String bad = "", bad72 = "";
         java.util.Map<String, Double> nightLow = new java.util.HashMap<String, Double>();
+        List<String> dayKeys = new ArrayList<String>();
+        List<JSONObject> dayRows = new ArrayList<JSONObject>();
         for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
             JSONObject o = Json.parse(r[1]);
             if (o != null) nightLow.put(r[0], Json.d(o, "rhr"));
+            dayKeys.add(r[0]);
+            dayRows.add(o);
         }
-        for (String[] r : db.daysJson("2000-01-01", "2100-01-01")) {
-            JSONObject o = Json.parse(r[1]);
+        for (int k = 0; k < dayKeys.size(); k++) {
+            String key = dayKeys.get(k);
+            JSONObject o = dayRows.get(k);
             if (o == null || o.optJSONArray("hr_day") == null) continue;
             days++;
             app.openring.core.analysis.TS line = Json.series(o.optJSONArray("hr_day"));
-            LocalDate day = LocalDate.parse(r[0]);
+            LocalDate day = LocalDate.parse(key);
             // what the Body tab shows: worked out from the stored line over the day the chart draws
             app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line,
                     day.atStartOfDay(ZoneId.systemDefault()).toEpochSecond(), day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toEpochSecond());
@@ -3426,24 +3436,32 @@ public class PipelineTest {
                     && Math.abs(avg - line.mean()) < 0.01;
             for (int i = 0; i < line.size(); i++) if (line.v(i) > high + 1e-9 || line.v(i) < low - 1e-9) ok = false;
             if (ok) matched++;
-            else bad += r[0] + " ";
+            else bad += key + " ";
             double night = Json.d(o, "rhr");
             if (Double.isNaN(night)) continue;
-            if (cutShort(db, r[0], now)) {
+            if (cutShort(db, key, now)) {
                 cut++;
                 continue;
             }
             withNight++;
             // the day's line also holds the start of the next night (from bedtime to midnight): an early bedtime before a
-            // calmer night can dip below this day's own night, never below the lower of the two nights
+            // calmer night can dip below this day's own night, never below the lower of the two nights. That is allowed only
+            // when the day's lowest point lies in the next night (issue #406): a lowest point earlier in the day must stay
+            // near the day's own night, so a line shifted by a night or missing its own morning still fails.
             Double next = nightLow.get(day.plusDays(1).toString());
-            double floor = next == null || Double.isNaN(next) ? night : Math.min(night, next);
+            double nextStart = nightStart(db, day.plusDays(1).toString());
+            double lowAt = Double.NaN;
+            for (int i = 0; i < line.size(); i++) if (line.v(i) <= line.min() + 1e-9) lowAt = line.t(i); // the latest lowest point
+            // a point stands for its quarter hour (time in the middle): it counts as in the next night when its quarter reaches it
+            boolean inNext = next != null && !Double.isNaN(next) && !Double.isNaN(nextStart) && lowAt + 450 > nextStart;
+            double floor = inNext ? Math.min(night, next) : night;
             if (low >= floor - 3 && low <= night + 3) nearNight++;
-            else bad72 += r[0] + " (lowest " + low + ", night " + night + ", next " + next + ") ";
+            else bad72 += key + " (lowest " + low + " at " + clockOf(lowAt) + ", night " + night + ", next "
+                    + (next == null || Double.isNaN(next) ? "none" : next + " from " + clockOf(nextStart)) + ") ";
         }
         check(label + ": Highest and Lowest are the drawn line's highest and lowest point, Average its mean (#72)",
                 days >= 28 && matched == days, matched + " of " + days + " " + bad);
-        check(label + ": the day's lowest within 3 bpm of the night's lowest, or of the next night's when that starts lower before midnight (#72)",
+        check(label + ": the day's lowest within 3 bpm of the night's lowest, or of the next night's when the lowest point lies in that lower night (#72, #406)",
                 withNight >= 28 && nearNight == withNight && cut == wantCut, nearNight + " of " + withNight + ", " + cut + " night cut short left out " + bad72);
     }
 
@@ -3466,6 +3484,18 @@ public class PipelineTest {
         }
         check(label + ": days with a night show the night as rest (#112)", nights >= 28 && restDays == nights && cut == wantCut,
                 restDays + " of " + nights + ", " + cut + " night cut short left out");
+    }
+
+    /** Start of the main night of {@code day} (unix seconds), NaN when there is none. */
+    static double nightStart(Db db, String day) {
+        List<String> ns = db.nightsJson(day, day, true);
+        return ns.isEmpty() ? Double.NaN : Json.d(Json.parse(ns.get(0)), "start");
+    }
+
+    /** "HH:mm" in the phone's zone for a failure message, "--" when unknown. */
+    static String clockOf(double t) {
+        return Double.isNaN(t) ? "--" : java.time.Instant.ofEpochSecond((long) t).atZone(ZoneId.systemDefault()).toLocalTime()
+                .withSecond(0).withNano(0).toString();
     }
 
     /** Whether the main night of {@code day} ended less than 2 hours before the demo's {@code now}: cut short by it (issue #123). */
@@ -12255,8 +12285,13 @@ public class PipelineTest {
                 && results252(db).equals(results) && db.count("SELECT COUNT(*) FROM kv") == kv, nexts);
         app.openring.core.analysis.Cycles best = app.openring.data.Periods.measured(db, base.withMethod(app.openring.core.analysis.cycleforecast.Methods.BEST), ZoneId.systemDefault());
         app.openring.core.analysis.Cycles ro = app.openring.data.Periods.readReal(c, today, null).withMethod(app.openring.core.analysis.cycleforecast.Methods.BEST);
+        // the demo's 3 years: Learns from every cycle is closest by less than the margin of #383's design round, so Best for you is Open Ring
         check("#383 the reminder's read only helper gives the screens' estimate with the method", ro.next.equals(best.next) && ro.range == best.range
-                && ro.methodId == best.methodId && best.methodId != app.openring.core.analysis.cycleforecast.Methods.OPEN_RING, ro.next + " / " + best.next);
+                && ro.methodId == best.methodId && best.methodId == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING, ro.next + " / " + best.next);
+        app.openring.core.analysis.Cycles bayes = app.openring.data.Periods.measured(db, base.withMethod(app.openring.core.analysis.cycleforecast.Methods.BAYES), ZoneId.systemDefault());
+        app.openring.core.analysis.Cycles rb = app.openring.data.Periods.readReal(c, today, null).withMethod(app.openring.core.analysis.cycleforecast.Methods.BAYES);
+        check("#383 and with a method other than Open Ring", rb.next.equals(bayes.next) && rb.range == bayes.range
+                && rb.methodId == app.openring.core.analysis.cycleforecast.Methods.BAYES && bayes.methodId == rb.methodId, rb.next + " / " + bayes.next);
 
         app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         boolean def = p.periodMethod() == app.openring.core.analysis.cycleforecast.Methods.BEST;
@@ -14420,6 +14455,121 @@ public class PipelineTest {
         }
         check("review #389: each day's zone is its dial's (the zone noted at its noon), a trip included", zonesOk && ny >= 6, ny);
         clean254();
+    }
+
+    /**
+     * Code health: what WatchStore's readers ({@code load}, {@code window}, {@code nightRows}, {@code sleepRows}) give, against
+     * the rows written, with times on every edge of a span (a heart rate at its start and end, a sleep piece that ends right at
+     * its start or starts right at its end, a span starting within a second). Pins the rows and their order before and after
+     * the readers were shared.
+     */
+    static void watchReaders() throws Exception {
+        Context c = phone254("openring-readers");
+        Db db = Db.get(c);
+        android.database.sqlite.SQLiteDatabase w = db.getWritableDatabase();
+        final long t0 = 1_760_000_000L;
+        Random r = new Random(4711);
+        java.util.TreeMap<Long, long[]> steps = new java.util.TreeMap<Long, long[]>(), heart = new java.util.TreeMap<Long, long[]>(),
+                sleep = new java.util.TreeMap<Long, long[]>(), work = new java.util.TreeMap<Long, long[]>();
+        String[] devs = {"watch a", "watch b"};
+        for (int i = 0; i < 400; i++) {
+            long t = t0 + r.nextInt(20 * 86400);
+            String dev = devs[r.nextInt(2)];
+            if (!steps.containsKey(t)) {
+                long[] v = {t, 60 + r.nextInt(3600), r.nextInt(2000), r.nextInt(1500), r.nextInt(90)};
+                steps.put(t, v);
+                w.execSQL("INSERT INTO watch_steps(device, start, dur, steps, metres, kcal) VALUES (?, ?, ?, ?, ?, ?)", new Object[] {dev, v[0], v[1], v[2], v[3], v[4]});
+            }
+            t = t0 + r.nextInt(20 * 86400);
+            if (!heart.containsKey(t)) {
+                long[] v = {t, 40 + r.nextInt(120)};
+                heart.put(t, v);
+                w.execSQL("INSERT INTO watch_hr(device, t, bpm) VALUES (?, ?, ?)", new Object[] {dev, v[0], v[1]});
+            }
+            t = t0 + r.nextInt(20 * 86400);
+            if (!sleep.containsKey(t)) {
+                long[] v = {t, r.nextInt(4) == 0 ? 0 : 60 + r.nextInt(3 * 3600), 1 + r.nextInt(4)};
+                sleep.put(t, v);
+                w.execSQL("INSERT INTO watch_sleep(device, start, dur, stage) VALUES (?, ?, ?, ?)", new Object[] {dev, v[0], v[1], v[2]});
+            }
+            t = t0 + r.nextInt(20 * 86400);
+            if (i % 8 == 0 && !work.containsKey(t)) {
+                long[] v = {t, 600 + r.nextInt(7200), r.nextInt(40), r.nextInt(9000), r.nextInt(8000), r.nextInt(700)};
+                work.put(t, v);
+                w.execSQL("INSERT INTO watch_workouts(device, start, dur, kind, steps, metres, kcal) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        new Object[] {dev, v[0], v[1], v[2], v[3], v[4], v[5]});
+            }
+        }
+        // the edges of the span from t0 + 5 days to t0 + 6 days
+        long from = t0 + 5 * 86400, to = from + 86400;
+        long[][] hEdge = {{from, 61}, {to, 62}, {from - 1, 63}, {to - 1, 64}};
+        for (long[] v : hEdge) {
+            heart.put(v[0], v);
+            w.execSQL("DELETE FROM watch_hr WHERE t = ?", new Object[] {v[0]});
+            w.execSQL("INSERT OR REPLACE INTO watch_hr(device, t, bpm) VALUES ('watch a', ?, ?)", new Object[] {v[0], v[1]});
+        }
+        long[][] sEdge = {{from - 3600, 3600, 1}, {from - 3601, 3602, 2}, {to, 600, 3}, {to - 1, 600, 1}};
+        for (long[] v : sEdge) {
+            sleep.put(v[0], v);
+            w.execSQL("DELETE FROM watch_sleep WHERE start = ?", new Object[] {v[0]});
+            w.execSQL("INSERT OR REPLACE INTO watch_sleep(device, start, dur, stage) VALUES ('watch b', ?, ?, ?)", new Object[] {v[0], v[1], v[2]});
+        }
+        app.openring.data.WatchStore.Data all = app.openring.data.WatchStore.load(db);
+        boolean ok = readersText(all.steps, all.heart, all.sleep, all.workouts)
+                .equals(readersWant(steps, heart, sleep, work, Long.MIN_VALUE, Long.MAX_VALUE));
+        check("code health: load gives every watch row, oldest first", ok, all.sleep.size());
+        double[][] spans = {{from, to}, {from + 0.4, to - 0.6}, {from - 0.5, to + 0.2}, {t0 - 86400, t0 + 30 * 86400}, {t0 + 3 * 86400 + 17, t0 + 9 * 86400 + 5}};
+        for (double[] s : spans) {
+            long a = (long) Math.floor(s[0]), b = (long) Math.ceil(s[1]);
+            String want = readersWant(steps, heart, sleep, work, a, b);
+            app.openring.core.MainDevice.Watch win = app.openring.data.WatchStore.window(db, s[0], s[1]);
+            app.openring.core.MainDevice.Watch nr = app.openring.data.WatchStore.nightRows(db, s[0], s[1]);
+            List<app.openring.core.withings.Records.Sleep> sr = app.openring.data.WatchStore.sleepRows(db, s[0], s[1]);
+            String wantNights = readersWant(new java.util.TreeMap<Long, long[]>(), heart, sleep, new java.util.TreeMap<Long, long[]>(), a, b);
+            String wantSleep = readersWant(new java.util.TreeMap<Long, long[]>(), new java.util.TreeMap<Long, long[]>(), sleep,
+                    new java.util.TreeMap<Long, long[]>(), a, b);
+            String got = readersText(win.steps, win.heart, win.sleep, win.workouts);
+            check("code health: window " + s[0] + " to " + s[1] + " gives the rows that start in it and the sleep that reaches into it",
+                    got.equals(want) && win.sleep.size() > 0 && win.heart.size() > 0, win.steps.size() + "/" + win.heart.size() + "/" + win.sleep.size());
+            check("code health: nightRows " + s[0] + " to " + s[1] + " gives the same heart rates and sleep, no steps",
+                    readersText(nr.steps, nr.heart, nr.sleep, nr.workouts).equals(wantNights), nr.heart.size());
+            check("code health: sleepRows " + s[0] + " to " + s[1] + " gives the same sleep pieces",
+                    readersText(new ArrayList<app.openring.core.withings.Records.Steps>(), new ArrayList<app.openring.core.withings.Records.Heart>(), sr,
+                            new ArrayList<app.openring.core.withings.Records.Workout>()).equals(wantSleep), sr.size());
+        }
+        String edge = readersText(new ArrayList<app.openring.core.withings.Records.Steps>(), app.openring.data.WatchStore.window(db, from, to).heart,
+                new ArrayList<app.openring.core.withings.Records.Sleep>(), new ArrayList<app.openring.core.withings.Records.Workout>());
+        check("code health: a heart rate at the span's start counts, one at its end does not",
+                edge.contains("h" + from + ":61") && !edge.contains("h" + to + ":62") && edge.contains("h" + (to - 1) + ":64") && !edge.contains("h" + (from - 1) + ":63"), null);
+        List<app.openring.core.withings.Records.Sleep> es = app.openring.data.WatchStore.sleepRows(db, from, to);
+        String se = readersText(new ArrayList<app.openring.core.withings.Records.Steps>(), new ArrayList<app.openring.core.withings.Records.Heart>(), es,
+                new ArrayList<app.openring.core.withings.Records.Workout>());
+        check("code health: a piece ending at the span's start is out, one ending a second later is in, one starting at its end is out",
+                !se.contains("s" + (from - 3600) + ":") && se.contains("s" + (from - 3601) + ":") && !se.contains("s" + to + ":") && se.contains("s" + (to - 1) + ":"), null);
+        clean254();
+    }
+
+    static String readersText(List<app.openring.core.withings.Records.Steps> st, List<app.openring.core.withings.Records.Heart> hr,
+            List<app.openring.core.withings.Records.Sleep> sl, List<app.openring.core.withings.Records.Workout> wo) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.withings.Records.Steps x : st) b.append('p').append(x.start).append(':').append(x.dur).append(',').append(x.steps).append(',').append(x.metres).append(',').append(x.kcal).append(' ');
+        for (app.openring.core.withings.Records.Heart x : hr) b.append('h').append(x.t).append(':').append(x.bpm).append(' ');
+        for (app.openring.core.withings.Records.Sleep x : sl) b.append('s').append(x.start).append(':').append(x.dur).append(',').append(x.stage).append(' ');
+        for (app.openring.core.withings.Records.Workout x : wo) b.append('w').append(x.start).append(':').append(x.dur).append(',').append(x.kind).append(',').append(x.steps)
+                .append(',').append(x.metres).append(',').append(x.kcal).append(' ');
+        return b.toString();
+    }
+
+    /** The rows a reader of [a, b) should give, by the rules written out: records that start in it, sleep pieces that reach into it. */
+    static String readersWant(java.util.TreeMap<Long, long[]> st, java.util.TreeMap<Long, long[]> hr, java.util.TreeMap<Long, long[]> sl,
+            java.util.TreeMap<Long, long[]> wo, long a, long b) {
+        StringBuilder o = new StringBuilder();
+        for (long[] x : st.values()) if (x[0] >= a && x[0] < b) o.append('p').append(x[0]).append(':').append(x[1]).append(',').append(x[2]).append(',').append(x[3]).append(',').append(x[4]).append(' ');
+        for (long[] x : hr.values()) if (x[0] >= a && x[0] < b) o.append('h').append(x[0]).append(':').append(x[1]).append(' ');
+        for (long[] x : sl.values()) if (x[0] + x[1] > a && x[0] < b) o.append('s').append(x[0]).append(':').append(x[1]).append(',').append(x[2]).append(' ');
+        for (long[] x : wo.values()) if (x[0] >= a && x[0] < b) o.append('w').append(x[0]).append(':').append(x[1]).append(',').append(x[2]).append(',').append(x[3])
+                .append(',').append(x[4]).append(',').append(x[5]).append(' ');
+        return o.toString();
     }
 
     static String leftKeys379(List<app.openring.core.DeviceScores.Left> l) {
