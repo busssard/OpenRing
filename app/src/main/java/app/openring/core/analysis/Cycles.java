@@ -4,7 +4,6 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -17,6 +16,7 @@ import app.openring.core.Texts;
 import app.openring.core.analysis.cycleforecast.Backtest;
 import app.openring.core.analysis.cycleforecast.Forecast;
 import app.openring.core.analysis.cycleforecast.Methods;
+import app.openring.core.analysis.cycleforecast.OpenRingMethod;
 
 /**
  * The period tracker's estimates from the logged days (issue #252, phase 1a1), the way "Design round: plan" and the
@@ -175,16 +175,22 @@ public final class Cycles {
     /** The cycle length the calendar counts with: the method's expected length in whole days ({@link #length} for Open Ring). */
     public final int step;
     /**
-     * Whether this cycle's temperature rise and the own time from ovulation to the period change the estimate: not for drip
-     * style (start days only), and not for Best for you when at least {@link RiseBacktest#MIN} cycles show the measured
-     * estimate was further off than the calendar ({@link RiseBacktest#helps}).
+     * Whether this cycle's temperature rise and the own time from ovulation to the period change the estimate ({@link #riseAllowed}):
+     * not for drip style chosen by hand (start days only, as drip), and not for Best for you when at least {@link RiseBacktest#MIN}
+     * cycles show the measured estimate was further off than the calendar ({@link RiseBacktest#helps}), whatever calendar method
+     * Best for you picked (design round of issue #383).
      */
     public final boolean riseUsed;
     /** The nights the rise was found in, kept for the backtest's replay; null for {@link #of} alone. */
     final TreeMap<LocalDate, Double> ring, mouth;
-    /** The backtests, worked out once when asked ({@link #backtest}, {@link #riseBacktest}), or for Best for you at once. */
+    /**
+     * The backtests, worked out once when asked ({@link #backtest}, {@link #riseBacktest}), or for Best for you at once; the
+     * calendar's is handed on to the Cycles {@link #measured} and {@link #withMethod} make of the same log.
+     */
     private Backtest backtest;
     private RiseBacktest riseTest;
+    /** Whether the temperature's own backtest decides {@link #riseUsed} (Best for you, temperatures in, not forced on). */
+    private final boolean riseAsks;
     /** Temperature: decided by the choice and the backtest, or always on (the replay of {@link RiseBacktest}). */
     static final int TEMP_AUTO = 0, TEMP_ON = 1;
     /** The days from ovulation to the next period the estimate uses: {@link #LUTEAL}, or the own middle value. */
@@ -206,7 +212,7 @@ public final class Cycles {
     public final boolean stopped;
 
     private Cycles(Map<LocalDate, Integer> logged, Collection<LocalDate> marks, LocalDate today, LocalDate stoppedSince, TempRise.Analysis rise,
-            TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, int choice, int temp) {
+            TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, int choice, int temp, Backtest known, RiseBacktest riseKnown) {
         this.today = today;
         this.ring = ring;
         this.mouth = mouth;
@@ -231,13 +237,15 @@ public final class Cycles {
         used = Collections.unmodifiableList(new ArrayList<Cycle>(kept.subList(Math.max(0, kept.size() - WINDOW), kept.size())));
         int[] u = new int[used.size()];
         for (int i = 0; i < u.length; i++) u[i] = used.get(i).length;
-        typical = u.length == 0 ? DEFAULT_LENGTH : u.length < TRIM_FROM ? median(u) : trimmedMean(u);
+        typical = OpenRingMethod.typical(u);
         length = (int) Math.round(typical);
-        sd = sd(u);
+        sd = OpenRingMethod.sd(u);
         // the prediction method (issue #383): Open Ring's own rule gives exactly the numbers above
         this.choice = Methods.valid(choice) ? choice : Methods.OPEN_RING;
         int[] lens = lengths();
-        if (this.choice == Methods.BEST) backtest = Backtest.run(lens);
+        // the same log gives the same backtest: measured() and withMethod() hand on one already worked out
+        backtest = known;
+        if (this.choice == Methods.BEST && backtest == null) backtest = Backtest.run(lens);
         methodId = this.choice == Methods.BEST ? backtest.best() : this.choice;
         forecast = Methods.get(methodId).predict(lens);
         step = forecast.days();
@@ -249,8 +257,11 @@ public final class Cycles {
         waiting = last != null && running == null && ChronoUnit.DAYS.between(last.start, today) > 2L * length;
         double s = forecast.spread;
         this.rise = rise;
-        boolean allowed = rise != null && (temp == TEMP_ON || Methods.usesTemperature(methodId));
-        if (allowed && temp == TEMP_AUTO && this.choice == Methods.BEST) riseTest = RiseBacktest.run(this);
+        boolean allowed = rise != null && riseAllowed(this.choice, temp);
+        // Best for you lets the temperature's own backtest decide: worked out by make() on a first Cycles of the same log, so
+        // this one never leaves the constructor half built
+        riseAsks = allowed && temp == TEMP_AUTO && this.choice == Methods.BEST;
+        riseTest = riseKnown;
         riseUsed = allowed && (riseTest == null || riseTest.helps());
         boolean own = riseUsed && rise.ownLuteal();
         luteal = own ? rise.lutealDays() : LUTEAL;
@@ -280,16 +291,38 @@ public final class Cycles {
     }
 
     /**
+     * The one rule for whether the temperature may change the estimate, from Settings' choice (design round of issue #383): always,
+     * unless drip style was chosen by hand (it uses start days only, as drip does); forced on for the replay of
+     * {@link RiseBacktest}. Under that, Best for you still lets the temperature's own backtest decide.
+     */
+    static boolean riseAllowed(int choice, int temp) {
+        return choice != Methods.DRIP || temp == TEMP_ON;
+    }
+
+    /**
+     * Builds the estimate; for Best for you with temperatures in two steps: a first Cycles without the temperature's backtest,
+     * {@link RiseBacktest#run} on it (it replays the log and the nights, which that first one already holds in full), then the
+     * Cycles that uses its answer. So {@code this} never leaves a constructor (Experiment view of issue #383).
+     */
+    private static Cycles make(Map<LocalDate, Integer> logged, Collection<LocalDate> marks, LocalDate today, LocalDate stoppedSince, TempRise.Analysis rise,
+            TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth, int choice, int temp, Backtest known) {
+        Cycles first = new Cycles(logged, marks, today, stoppedSince, rise, ring, mouth, choice, temp, known, null);
+        if (!first.riseAsks) return first;
+        RiseBacktest test = RiseBacktest.run(first);
+        return new Cycles(first.flows, first.ends, today, stoppedSince, rise, ring, mouth, choice, temp, first.knownBacktest(), test);
+    }
+
+    /**
      * The estimate on {@code today} from the logged days ({@code logged}: day to amount, {@link #REMOVED} to
      * {@link #HEAVY}; anything else is no entry) and the end marks.
      */
     public static Cycles of(Map<LocalDate, Integer> logged, Collection<LocalDate> ends, LocalDate today) {
-        return new Cycles(logged, ends, today, null, null, null, null, Methods.OPEN_RING, TEMP_AUTO);
+        return make(logged, ends, today, null, null, null, null, Methods.OPEN_RING, TEMP_AUTO, null);
     }
 
     /** As above, with the day the person said "My periods have stopped" ({@code stoppedSince}, null when not). */
     public static Cycles of(Map<LocalDate, Integer> logged, Collection<LocalDate> ends, LocalDate today, LocalDate stoppedSince) {
-        return new Cycles(logged, ends, today, stoppedSince, null, null, null, Methods.OPEN_RING, TEMP_AUTO);
+        return make(logged, ends, today, stoppedSince, null, null, null, Methods.OPEN_RING, TEMP_AUTO, null);
     }
 
     /**
@@ -297,7 +330,7 @@ public final class Cycles {
      * an unknown id (a backup from a newer version) is Open Ring. Display only: the log is the same.
      */
     public Cycles withMethod(int choice) {
-        return new Cycles(flows, ends, today, stoppedSince, rise, ring, mouth, choice, TEMP_AUTO);
+        return make(flows, ends, today, stoppedSince, rise, ring, mouth, choice, TEMP_AUTO, knownBacktest());
     }
 
     /**
@@ -309,8 +342,8 @@ public final class Cycles {
         TreeSet<LocalDate> e = new TreeSet<LocalDate>(full.ends.headSet(day, true));
         TreeMap<LocalDate, Double> r = full.ring == null ? null : new TreeMap<LocalDate, Double>(full.ring.headMap(day, true));
         TreeMap<LocalDate, Double> m = full.mouth == null ? null : new TreeMap<LocalDate, Double>(full.mouth.headMap(day, true));
-        Cycles base = new Cycles(f, e, day, null, null, null, null, method, TEMP_ON);
-        return new Cycles(f, e, day, null, TempRise.analyse(base, r, m, true), r, m, method, TEMP_ON);
+        Cycles base = make(f, e, day, null, null, null, null, method, TEMP_ON, null);
+        return make(f, e, day, null, TempRise.analyse(base, r, m, true), r, m, method, TEMP_ON, null);
     }
 
     /** Every cycle's length in days, oldest first (those left out too): what the prediction methods get. */
@@ -326,9 +359,14 @@ public final class Cycles {
         return backtest;
     }
 
+    /** The backtest if it was worked out already, else null: handed to a Cycles of the same log so it is not run again. */
+    private synchronized Backtest knownBacktest() {
+        return backtest;
+    }
+
     /**
-     * How close the measured estimate would have been, on top of the method in use (drip style: on top of Open Ring),
-     * worked out once; null without temperatures ({@link #measured} not called).
+     * How close the measured estimate would have been, on top of the calendar method in use ({@link #methodId}), worked out
+     * once; null without temperatures ({@link #measured} not called).
      */
     public synchronized RiseBacktest riseBacktest() {
         if (rise == null) return null;
@@ -342,7 +380,7 @@ public final class Cycles {
      * drip left out not in it). Either may be empty or null; with neither it is the calendar estimate.
      */
     public Cycles measured(TreeMap<LocalDate, Double> ring, TreeMap<LocalDate, Double> mouth) {
-        return new Cycles(flows, ends, today, stoppedSince, TempRise.analyse(this, ring, mouth), ring, mouth, choice, TEMP_AUTO);
+        return make(flows, ends, today, stoppedSince, TempRise.analyse(this, ring, mouth), ring, mouth, choice, TEMP_AUTO, knownBacktest());
     }
 
     /** {@code day} (yyyy-mm-dd) as a date, null when it is null or not a date (a setting from an older or damaged file). */
@@ -381,34 +419,6 @@ public final class Cycles {
     static LocalDate markIn(TreeSet<LocalDate> ends, LocalDate from, LocalDate to) {
         LocalDate m = ends.ceiling(from);
         return m != null && m.isBefore(to) ? m : null;
-    }
-
-    static double median(int[] v) {
-        if (v.length == 0) return Double.NaN;
-        int[] s = v.clone();
-        Arrays.sort(s);
-        int n = s.length;
-        return n % 2 == 1 ? s[n / 2] : (s[n / 2 - 1] + s[n / 2]) / 2.0;
-    }
-
-    /** The mean without one shortest and one longest value (at least 3 values). */
-    static double trimmedMean(int[] v) {
-        int[] s = v.clone();
-        Arrays.sort(s);
-        double sum = 0;
-        for (int i = 1; i < s.length - 1; i++) sum += s[i];
-        return sum / (s.length - 2);
-    }
-
-    /** The sample standard deviation, NaN with fewer than 2 values. */
-    static double sd(int[] v) {
-        if (v.length < 2) return Double.NaN;
-        double m = 0;
-        for (int x : v) m += x;
-        m /= v.length;
-        double q = 0;
-        for (int x : v) q += (x - m) * (x - m);
-        return Math.sqrt(q / (v.length - 1));
     }
 
     // ------------------------------------------------------------------ questions the screens ask
@@ -721,14 +731,14 @@ public final class Cycles {
 
     /**
      * What the range holds (code review of dev dadbb71): drip style's is drip's fixed 1 or 2 days, not a share of periods; the
-     * others aim at about 4 in 5. With {@link Backtest#MIN_SCORED} past periods checked, how often the start really fell in it.
+     * others aim at about 4 in 5. With {@link Backtest#SHOWN_FROM} past periods checked, how often the start really fell in it.
      */
     String coverage() {
         String s = methodId == Methods.DRIP && !forecast.fallback
                 ? "drip style shows " + Texts.count(calendarRange, "day", "days") + " each side of the most likely day, its fixed rule, not a share of periods."
                 : "About 4 in 5 periods start within such a range.";
         Backtest.Score sc = cycles.size() > Backtest.FROM ? backtest().of(methodId) : null;
-        if (sc != null && sc.n >= Backtest.MIN_SCORED) s += " On " + sc.n + " of your past periods the start fell in it " + (sc.hits == 1 ? "once." : sc.hits + " times.");
+        if (sc != null && sc.n >= Backtest.SHOWN_FROM) s += " On " + sc.n + " of your past periods the start fell in it " + (sc.hits == 1 ? "once." : sc.hits + " times.");
         return s;
     }
 
@@ -760,11 +770,11 @@ public final class Cycles {
     }
 
     /**
-     * Why the temperature does not change the estimate (issue #383): drip style uses start days only, or on the person's
-     * own cycles the measured estimate was further off than the calendar.
+     * Why the temperature does not change the estimate (issue #383): drip style chosen by hand uses start days only, or on the
+     * person's own cycles the measured estimate was further off than the calendar.
      */
     public String riseOff() {
-        if (!Methods.usesTemperature(methodId)) return "drip style uses start days only, not your temperature.";
+        if (!riseAllowed(choice, TEMP_AUTO)) return "drip style chosen by hand uses start days only, not your temperature.";
         RiseBacktest t = riseTest;
         if (t == null) return "Your temperature is not used for this estimate.";
         return "Your temperature is not used: on " + Texts.count(t.n(), "past cycle", "past cycles") + " the estimate from it was further off than the calendar.";
@@ -897,7 +907,7 @@ public final class Cycles {
                 hi = Math.max(hi, x);
             }
             mean = n == 0 ? Double.NaN : s / n;
-            sd = Cycles.sd(v);
+            sd = Methods.sd(v);
             min = n == 0 ? 0 : lo;
             max = n == 0 ? 0 : hi;
         }
