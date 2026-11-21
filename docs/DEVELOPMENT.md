@@ -10,10 +10,12 @@ Everything you need to build, test, change and release Open Ring. Read
 | `app/src/main/java/app/openring/` | The app (plain Java, no third party libraries). Packages explained in ARCHITECTURE.md |
 | `app/src/main/res/` | Icons (vector drawables), app name, theme. All screens are built in code, there are no layouts |
 | `app/src/main/AndroidManifest.xml` | Permissions, activities, services. Must never request `INTERNET` |
-| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383), `BatteryTest.java` (Today's battery rows, `core/DeviceBattery`), `DayLineTest.java` (Today's Your day line: its decision tree, the line bank's rules, no line again within 30 days) and `TodayTest.java` (the order of Today's cards, `core/TodayCards`; the equal badge grid, `core/Grid`; the status line of each Settings section) and `LifeTest.java` (the life factors of `core/LifeTags`, issue #292: keys, chips, own tags, several days, texts, CSV columns, demo tags) run after it |
-| `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh` |
+| `tests/java/CoreTest.java` | Unit tests for `core/` (protocol, decoders, analysis), run by `tests/run_tests.sh`; `FinderTest.java` (Find my ring), `WatchTest.java` (the Withings watch) and `ForecastTest.java` (the period prediction methods and their backtest, issue #383), `BatteryTest.java` (Today's battery rows, `core/DeviceBattery`), `DayLineTest.java` (Today's Your day line: its decision tree, the line bank's rules, no line again within 30 days) and `TodayTest.java` (the order of Today's cards, `core/TodayCards`; the equal badge grid, `core/Grid`; the status line of each Settings section) `LifeTest.java` (the life factors of `core/LifeTags`, issue #292: keys, chips, own tags, several days, texts, CSV columns, demo tags) and `LayoutTest.java` (the tiles of every tab, `core/Layout`: keys, the merge of a saved order with the standard one, folds, the drag's landing place, the edit session's draft in `core/LayoutDraft`) run after it |
+| `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh`; `TrendsPipelineTest.java` (Trends' values per day for the ring, the watch and the phone, screen time per day, the demo year, 3 years under 1.5 s) runs after `PipelineTest` |
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
+| `tests/java/SoundTest.java` | The sleep sound detector of `core/analysis/SoundDetector` (issue #380: made up audio, sounds, snoring, coughs, clips, gaps), run at the end of `tests/run_tests.sh` |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
+| `tests/java/BaselinesTest.java` | The readiness baselines of `core/analysis/Baselines` (issue #292, phase 1.5): bit for bit what the old inline code of `data/Analyzer` gave, on 2000 seeded made up histories, the windows and the minimum of 3, and `Baselines.usual` (the median of the 30 nights before, for phase 2); compiled on its own line and run after CoreTest by `tests/run_tests.sh` |
 | `build_apk.sh` | Builds and signs the APK without Gradle (used by CI) |
 | `build.gradle`, `settings.gradle`, `app/build.gradle`, `gradle.properties`, `gradle/` | Gradle files for Android Studio (no wrapper script committed; CI does not use Gradle) |
 | `.github/workflows/` | CI: `build.yml` (tests, APK, releases), `emulator.yml` (Android 14 screen test and screenshots), `codeql.yml` (security scan) |
@@ -97,14 +99,18 @@ says so instead of hanging. Look at the pictures before asking for a review. Whe
 add a screen or a state worth seeing, add it to `.github/scripts/screens.sh`. The main screen accepts
 these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
-(boolean, unfolds Further analysis), `period` (0 week, 1 month, 2 year, 3 all), `day` (yyyy-mm-dd),
-`settings` (opens Settings at a card: `top`, `blocks`, `ring` (the Ring block opened, where Today's ring battery row leads), `profile`, `period`, `stages`, `watch`, `phone`, `screen`, `games`, `backups` or `advanced`; `stages`, `watch` and `phone` open their Ring, Watch or Phone block first, `blocks` shows every section closed (as each time Settings opens), from the Ring block; every other card opens its own section first; with a card the page gets
+(boolean, unfolds Further analysis), `period` (0 week, 1 30 days, 2 year, 3 all), `day` (yyyy-mm-dd),
+`settings` (opens Settings at a card: `top`, `blocks`, `ring` (the Ring block opened, where Today's ring battery row leads), `profile`, `period`, `stages`, `watch`, `phone`, `screen`, `games`, `layout`, `backups` or `advanced`; `stages`, `watch` and `phone` open their Ring, Watch or Phone block first, `blocks` shows every section closed (as each time Settings opens), from the Ring block; every other card opens its own section first; with a card the page gets
 an empty space at its end, so even the last card reaches the top), `finder` (boolean, opens Find my ring; in demo it shows a finished search walk), `finder_turn` (boolean, with `finder`: the demo's turn on the spot instead), `finder_start` (boolean, with `finder`: the screen before any walk), `finder_details` (boolean, with `finder`: the full last worn text and How it works opened), `finder_blink` (boolean, with `finder`: the demo's Make it blink counting down), `live` (boolean, demo mode only: opens Live with its made up readings), `live_spo2` (boolean, with `live`: blood oxygen on), `left_out` (boolean, demo mode only: leaves out the day before yesterday 13:00 to 17:00 in the demo file, issue #254), `unworn` (boolean, demo mode only: leaves out the day before yesterday 00:00 to 21:30 the same way, before the night that ends yesterday morning, a day off the finger, issue #240), `watch` (boolean, demo mode only: opens the Watch check with its made up scan, issue #251), `watch_report` (boolean, with `watch`: picks the made up watch and shows its made up report), `key_unreadable` (boolean, demo mode only: the main screen's status line for a saved ring key this phone cannot read, issue #199), `period_edit` (boolean, demo mode only, with `tab` 4: opens the period tracker's day editor on Body for a day of the newest made up period; nothing is saved without a tap, issue #252), `badges` (boolean: opens the Badges page, issue #265), `period_ask` (boolean, demo mode only: the period cards show the question "Have your periods stopped?" with the demo's own numbers until it is answered; nothing is saved without a tap, issue #252), `period_rise` (boolean, demo mode only: Body's night temperature line opens touched on the first high night of the rise it marks, phase 2 of #252), `drip` (boolean, demo mode only: opens Import from drip with a made up drip file, `core/DripCsv.demo`, compared with the demo's log; the preview only, demo mode never imports, issue #252), `drip_correct` (boolean, with `drip`: opens Correct on the file's first short period), `watch_data` (boolean, demo mode only: opens the Watch page with the made up watch's data, issue #251 phase 1b), `main_device` (int, demo mode only: 0 ring, 1 watch, 2 phone, the main device as Settings picks it; it stays picked, issues #251 and #329), `devices` (int, demo mode only: 1 shows the tabs as for a person with only the watch, 2 only the phone; nothing stored, issue #373), `phone_ask` (boolean, demo mode only: Activity shows the card that asks for Physical activity instead of the demo's phone steps; demo mode never asks, issue #329), `watch_setup` (boolean, demo mode only: opens the Watch setup with every step done, issue #251), `watch_setup_part` (int, with `watch_setup`: 1 scrolls to the alarm, 2 to the hands), `watch_setup_hands` (boolean, with `watch_setup`: the hand calibration's controls, nothing sent), `card` (string, demo mode only, underscores for spaces: the main screen opens scrolled to the first text that starts with it, for shots of cards near the end of a long page, the watch statistics).
 
 Two more extras for the period tracker: `period_how` (boolean, demo mode only: How it works opened on the Period card, in
 Your cycles and on the night temperature card on Body; closed is the default, issues #252 and #363) and `period_month` (int,
 demo mode only: the Period card's calendar opens this many months after the shown day's month, with the expected cycles there;
 owner's feedback of 11 November on #252).
+
+Three for Trends (issue #374; it only reads, so no demo mode needed): `trends` (int, opens Trends at a group: 0 Sleep, 1 Readiness,
+2 Activity, 3 Body, 4 Screen; with `day` the shown day, whose week, month or year opens touched when it is an earlier one),
+`trends_measure` (int, a measure of `core/analysis/Trends`, for example 10 steps) and `trends_period` (int, 0 weeks, 1 months, 2 years).
 
 Two for Today: `battery_open` (boolean, demo mode only: the battery lines under the scores folded open, owner's wish of 17
 November) and `day_line_why` (boolean, demo mode only: Why this line opened on the Your day card, each check of
@@ -114,6 +120,10 @@ One for the life factors: `life_more` (boolean, demo mode only: Today's row "Wha
 All factors and the ways on; issue #292). With `card WHAT_WAS` the row is at the top (also for a past day, "What was this day like?"); `card LIFE_FACTORS` opens
 Sleep, Readiness or Body at their life factors card; `life_read` (int, demo mode only: Body's month view opens with the day
 this many days before today read, as a touch would read it, in that day's month).
+
+One for the tiles: `layout_reset` (boolean, demo mode only: every tab of the demo back in the standard layout before the
+screen opens; `screens.sh` sends it with every `launch`, `launch_kept` keeps the layout of the steps before). `analysis` opens
+Further analysis once without saving it.
 
 **With a ring:** Settings, Help, *Data check and log* shows each step from ring to screen and the
 Bluetooth log. The data check holds counts and dates only, so it is safe to share; raw events are not.
@@ -144,11 +154,27 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
   section of Settings (title, one line status with the most used setting, chevron; `SettingsActivity.fold` keeps it open
   through a rebuild), `Fold.inline` for a row inside a card (How it works, Why this line, the battery lines on Today).
   Closed by default; the explanations of the numbers go inside.
+* **Tiles (owner's wish of 18 November):** every card a page puts on a tab becomes a tile after the page is built
+  (`ui/Tiles.arrange`, called by `MainActivity.render` after the page and the Trends card are built, so that card is a tile too): its caption becomes the header of a shared `Fold`, a tap folds it.
+  Moving is an edit session (owner's wish of 20 November, extra `edit_layout` from Settings' Rearrange tiles): every tile gets a
+  frame and a handle (drag to move, tap for a menu, also for TalkBack), Reset and Save replace Sync and Settings in the header,
+  and changes stay in a `core/LayoutDraft` until Save (Back with unsaved changes asks). The order and folds are
+  saved per tab by a stable key (`core/Layout`: from the caption, or `Tiles.name` for a card without one or with a caption
+  that changes), so give a new card a caption or a name; it then appears at its standard place for people who moved tiles.
+  A card without a caption gets "note" and its first words up to the first number (`Layout.noteKey`); when those words can
+  change (a date, a name, a count in words), give it a `Tiles.name`, as Activity's note on the days that count has.
+  A tile in its standard state saves nothing (`Layout.fold`, `Layout.orderToSave`), so Settings' count agrees with the tabs.
+  `Tiles.summary` sets the line a folded tile shows (its key number, `Layout.parts` leaves out missing values, empty for no
+  line); without it the first big number of the card is used.
 * **Today's order:** `core/TodayCards` (the scores, then Your day, so its sentence and line are on the first screen; the
   screen test fails when they are not, from the line `today first screen` that demo mode logs).
 * **New game:** subclass `ui/games/Game.java`, add it to `GamesActivity.create` before the motion check (which stays last) and raise `COUNT`. Games live in Settings, card *Ring games* (issue #15).
 * **Demo data:** `data/Demo.java` generates five weeks in the ring's own format; keep it realistic,
-  it is what screenshots and visitors see. Keep its story too (a busy month, an easy last week, a short cold, a best
+  it is what screenshots and visitors see. Before them it adds about 11 months of made up results only (`Demo.olderYear`, issue
+  #374: copies of its own analysed nights and days at new dates, with a change built in), so Trends has a year; Re analyse all
+  keeps them (`Demo.YEAR_UNTIL`, only in the demo file), and checks of the five weeks start after them. The five weeks are analysed
+  before the year is added; after Re analyse all in demo mode their baselines include the year (readiness, temperature deviation,
+  sleep debt and the symptom radar of the day summaries change, the nights do not). Keep its story too (a busy month, an easy last week, a short cold, a best
   night, quiet days and phone free evenings; issue #265), so it earns every kind of badge on any day (the pipeline test
   checks that). The tests' own histories (`Demo.history` without the story) stay exactly as before #265.
 

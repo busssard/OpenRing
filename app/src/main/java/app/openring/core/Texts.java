@@ -119,6 +119,16 @@ public final class Texts {
         return signed ? signed(v, locale) : chartValue(v, locale);
     }
 
+    /**
+     * A length as hours and minutes, "7h 12m" (also under an hour, "0h 45m"), "--" when unknown: the Sleep page's lengths.
+     * {@code Ui.hm} is this, so the screens and the JVM tests format the same way (issue #409).
+     */
+    public static String hm(double minutes) {
+        if (Double.isNaN(minutes)) return "--";
+        long m = Math.round(minutes);
+        return (m / 60) + "h " + (m % 60) + "m";
+    }
+
     /** A duration: "30 min" under an hour, "1h 5m" from an hour on, "--" when unknown (issue #99). */
     public static String minutes(double min) {
         if (Double.isNaN(min) || Double.isInfinite(min)) return "--";

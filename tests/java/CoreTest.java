@@ -348,6 +348,47 @@ public class CoreTest {
         eq("timeline: asleep from the first step has no minutes",
                 WakeUps.timeline(runs(L, 20), s, s + 600, Double.NaN, 0, new ArrayList<double[]>(), utc, Locale.US).get(1)[1], "Fell asleep");
 
+        // the locale reaches the heart rate number (issue #405): Egyptian Arabic writes its own digits
+        Locale ar = Locale.forLanguageTag("ar-EG");
+        String arHr = String.format(ar, "%.0f", 48.4);
+        eq("timeline: the locale writes the heart rate number",
+                WakeUps.timeline(st, s, e, s + 600, 48.4, new ArrayList<double[]>(), utc, ar).get(2)[1], "Lowest heart rate, " + arHr + " bpm");
+        check("timeline: the test locale really writes other digits than US", !arHr.equals("48"));
+
+        // a null zone means the phone's zone, also for left out times next to the night (issue #405; it threw before)
+        java.time.ZoneId phone = java.time.ZoneId.systemDefault();
+        List<String[]> nullZone = WakeUps.timeline(st, s, e, s + 600, 48.4, left, null, Locale.US);
+        List<String[]> phoneZone = WakeUps.timeline(st, s, e, s + 600, 48.4, left, phone, Locale.US);
+        boolean sameRows = nullZone.size() == phoneZone.size();
+        for (int i = 0; sameRows && i < nullZone.size(); i++) sameRows = Arrays.equals(nullZone.get(i), phoneZone.get(i));
+        check("timeline: a null zone gives the phone's zone rows, left out times too", sameRows && nullZone.size() == 9);
+
+        // one step rule for the timeline, its short ones note and the stage detail preview (issue #405)
+        eq("step: no stages, 30 s", WakeUps.step(new int[0], s, e), 30.0);
+        eq("step: no stages, any window, 30 s", WakeUps.step(new int[0], s, s), 30.0);
+        eq("step: one stage, the whole window", WakeUps.step(new int[1], s, s + 600), 600.0);
+        eq("step: many stages, the window split", WakeUps.step(st, s, e), 30.0);
+        eq("step: many stages, an uneven window", WakeUps.step(new int[7], s, s + 100), 100.0 / 7);
+        Random stepRnd = new Random(405);
+        int stepDiffers = 0;
+        for (int k = 0; k < 2000; k++) {
+            int[] g = new int[stepRnd.nextInt(4) == 0 ? stepRnd.nextInt(2) : stepRnd.nextInt(2000)];
+            double a = 1_700_000_000 + stepRnd.nextDouble() * 1e7, b = a + stepRnd.nextDouble() * 60000;
+            double before = g.length == 0 ? 30 : (b - a) / g.length; // the copies in Pages and SettingsActivity before
+            if (Double.compare(WakeUps.step(g, a, b), before) != 0) stepDiffers++;
+        }
+        eq("step: equals the old rule on random nights", stepDiffers, 0);
+        try {
+            String root = "app/src/main/java/app/openring/ui/";
+            for (String f : new String[] {"Pages.java", "SettingsActivity.java"}) {
+                String src = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + f).toPath()), "UTF-8");
+                check("step: " + f + " uses WakeUps.step, no copy of the rule", src.contains("WakeUps.step(")
+                        && !src.contains("st.length == 0 ? 30 :"));
+            }
+        } catch (java.io.IOException ex) {
+            check("step: read the ui sources " + ex, false);
+        }
+
         // random nights, zones and left out times: the same rows as the code in ui/Pages before the move
         Random rnd = new Random(257);
         java.time.ZoneId[] zones = {utc, java.time.ZoneId.of("Europe/Zurich"), java.time.ZoneId.of("America/Santiago"), null};
@@ -638,6 +679,16 @@ public class CoreTest {
             check("#186: plain text without dashes: " + x, !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014") && x.length() < 100);
         }
         check("#186: the button says what it does", "Open app settings".equals(PermissionAsk.SETTINGS_BUTTON));
+        // the permission sentence Find my ring and the Watch check both show, word for word as both screens had it
+        check("scan screens: Android 12 and newer name Nearby devices", "the Nearby devices permission".equals(PermissionAsk.neededText(31))
+                && PermissionAsk.neededText(34).equals(PermissionAsk.neededText(31)));
+        check("scan screens: Android 11 and older name Location and say why", ("the Location permission (Android 11 and older ask for it to find"
+                + " Bluetooth devices; Open Ring has no internet and keeps no place)").equals(PermissionAsk.neededText(30))
+                && PermissionAsk.neededText(26).equals(PermissionAsk.neededText(30)));
+        for (int sdk : new int[] {30, 31}) {
+            String x = PermissionAsk.neededText(sdk);
+            check("scan screens: plain text without dashes: " + x, !x.contains(" - ") && !x.contains("\u2013") && !x.contains("\u2014"));
+        }
     }
 
     static void pattern() {
@@ -3337,6 +3388,19 @@ public class CoreTest {
         check("watch: the Withings service makes it likely a watch", WatchCheck.likelyWatch(w));
         check("watch: a Steel HR name makes it likely a watch", WatchCheck.likelyWatch(new WatchCheck.Found("y", "Steel HR", -60)));
         check("watch: headphones are not", !WatchCheck.likelyWatch(new WatchCheck.Found("z", "Headphones", -60)));
+        // Watch setup's own name rule, moved to core as it was (a prefix, any case); it differs from likelyWatch on purpose
+        String[][] setupNames = {
+            {"Steel HR", "1"}, {"steel hr sport", "1"}, {"Withings Move", "1"}, {"WITHINGS", "1"}, {"Activite Pop", "1"},
+            {"ScanWatch 2", "1"}, {"scanwatch", "1"}, {"My Steel HR", "0"}, {"HWA09", "0"}, {"Headphones", "0"}, {"", "0"}, {null, "0"},
+        };
+        for (String[] t : setupNames) {
+            check("watch setup: name rule for " + t[0], WatchCheck.setupName(t[0]) == "1".equals(t[1]));
+        }
+        check("watch setup: its scan runs 10 s, the Watch check's SCAN_MS", WatchCheck.SCAN_MS == 10000);
+        check("watch setup: the two rules stay as they were (ScanWatch only in setup, HWA0 and a name anywhere only in the check)",
+                !WatchCheck.likelyWatch(new WatchCheck.Found("a", "ScanWatch 2", -60))
+                        && WatchCheck.likelyWatch(new WatchCheck.Found("b", "HWA09", -60))
+                        && WatchCheck.likelyWatch(new WatchCheck.Found("c", "My Steel HR", -60)));
         eq("watch: scan row detail", WatchCheck.detail(new WatchCheck.Found("z", "Headphones", -61)), "Signal -61 dBm, no services advertised");
         check("watch: scan row with the watch's service", WatchCheck.detail(w).startsWith("Signal -55 dBm, services: " + WatchCheck.WITHINGS_SERVICE)
                 && WatchCheck.detail(w).endsWith("Looks like a Withings watch"));
@@ -3700,7 +3764,7 @@ public class CoreTest {
         eq("backups: an empty file", Backups.mb(0), "0 MB");
         eq("backups: going back asks, and says the whole history is kept and can be put back, and the phone's period log stays (#252)", Backups.goBackText(when, z),
             "Your history is replaced by this copy from 29 Oct. First your whole history as it is now is kept as \"Copy from before going back\", "
-            + "so you can put it back from this card. Period days you logged or removed on this phone stay as they are.");
+            + "so you can put it back from this card. Period days and life factors you logged or removed on this phone stay as they are.");
         check("backups: the going back question names the copy's line", Backups.goBackText(when, z).contains(Backups.backLine(when, 1, z).substring(0, 26)));
         eq("backups: status after a copy", Backups.status(when, 210 * mb, 5, null, z), "Last copy: 29 Oct 03:12, 210 MB, 5 kept");
         eq("backups: status before the first copy", Backups.status(0, 0, 0, null, z), "No copy yet. The first one is made the next time the phone charges.");

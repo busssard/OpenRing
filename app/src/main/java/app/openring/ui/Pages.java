@@ -59,6 +59,7 @@ public final class Pages {
         final boolean noRing = PhoneViews.noRing(c);
         View left = d.has.ring ? leftOutCard(c, d) : null;
         for (String k : app.openring.core.TodayCards.of(d.has, !d.badges.isEmpty(), left != null, d.periodShown)) {
+            int before = root.getChildCount();
             if (app.openring.core.TodayCards.SCORES.equals(k)) {
                 root.addView(d.has.ring ? ringScores(c, d, nav, noRing) : DeviceViews.scoresWithout(c, d, nav));
             } else if (app.openring.core.TodayCards.DAY.equals(k)) {
@@ -89,12 +90,37 @@ public final class Pages {
                 // the period tracker near the bottom (issue #252): a tap opens Body, the buttons log the day shown
                 root.addView(PeriodCard.today(c, d, nav));
             }
+            // the tiles (owner's wish of 18 November): Today's own keys, so a tile keeps its place whatever its caption says
+            if (root.getChildCount() == before + 1) todayTile(root.getChildAt(before), k, d);
         }
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
         root.addView(foot);
         return root;
+    }
+
+    /** Names a tile of Today by its {@code core/TodayCards} key, with a title where the card has no caption of its own. */
+    static void todayTile(View card, String k, DayData d) {
+        String key = app.openring.core.Layout.key(k);
+        if (app.openring.core.TodayCards.SCORES.equals(k)) Tiles.name(card, key, "Scores", scoresLine(d));
+        else if (app.openring.core.TodayCards.DEVICE_NOTE.equals(k)) Tiles.name(card, key, "About these scores", null);
+        else if (app.openring.core.TodayCards.FINISH_WATCH.equals(k)) Tiles.name(card, key, "Your watch", app.openring.core.Start.FINISH_TITLE);
+        else if (app.openring.core.TodayCards.LIVE.equals(k)) Tiles.name(card, key, "Live heart rate", null);
+        else Tiles.spec(card).key = key;
+    }
+
+    /** The folded Scores tile's line: "Readiness 94, sleep 89, activity 99, screen 87", the scores there are. */
+    static String scoresLine(DayData d) {
+        String[] keys = {"readiness", "sleep", "activity_score", "screen"}, names = {"Readiness", "Sleep", "Activity", "Screen"};
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < keys.length; i++) {
+            double v = d.score(keys[i]);
+            if (Double.isNaN(v)) continue;
+            if (b.length() > 0) b.append(", ");
+            b.append(b.length() == 0 ? names[i] : names[i].toLowerCase(Locale.getDefault())).append(' ').append(Math.round(v));
+        }
+        return b.length() == 0 ? null : b.toString();
     }
 
     /** The ring's four score dials, the battery in one folded line per device under them, and Find my ring as a small button. */
@@ -428,7 +454,7 @@ public final class Pages {
         card.addView(Ui.gap(c, 6));
         int[] st = Json.stages(n);
         double s = Json.d(n, "start"), e = Json.d(n, "end");
-        double ep = st.length == 0 ? 30 : (e - s) / st.length;
+        double ep = WakeUps.step(st, s, e);
         // the rows, with left out times next to the night (issue #254), in core so they are tested
         List<String[]> rows = WakeUps.timeline(st, s, e, Json.d(n, "lowest_hr_time"), Json.d(n, "lowest_hr"), leftOut, z,
                 Locale.getDefault());
@@ -516,9 +542,10 @@ public final class Pages {
         JSONObject n = d.night;
         // each night in the zone it was slept in (issue #22)
         java.time.ZoneId nz = d.zoneOf(n);
-        root.addView(hero(c, d.score("sleep"), "Sleep", Ui.SLEEP,
-                n == null ? "No main sleep recorded for this day" : "Total sleep " + Ui.hm(Json.d(n, "asleep_min"))
-                        + "  ·  " + minute(Json.d(n, "start"), nz) + " to " + minute(Json.d(n, "end"), nz), d.watchVersion("sleep")));
+        // the time asleep first and big, time in bed in the line under it (issue #409); the same values as Details
+        root.addView(n == null ? hero(c, d.score("sleep"), "Sleep", Ui.SLEEP, "No main sleep recorded for this day", d.watchVersion("sleep"))
+                : hero(c, d.score("sleep"), "Sleep", Ui.SLEEP, app.openring.core.SleepHero.asleep(Json.d(n, "asleep_min"), Json.stages(n)),
+                        app.openring.core.SleepHero.window(Json.d(n, "start"), Json.d(n, "end"), shownInBed(n), nz), d.watchVersion("sleep")));
         if (!d.recent.isEmpty()) root.addView(recentNights(c, d, nav));
         View left = leftOutCard(c, d);
         if (left != null) root.addView(left);
@@ -613,16 +640,20 @@ public final class Pages {
         LinearLayout stats = Ui.card(c);
         stats.addView(Ui.caption(c, "Details"));
         // a short line under every number (issue #47); ranges as in Explain
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Time in bed", Ui.hm(shownInBed(n) < 0 ? Double.NaN : shownInBed(n)), "", 0, "From start to end of the sleep window"),
-                Ui.stat(c, "Efficiency", Ui.fmt(nightEfficiency(n), 0), "%", 0, "Share of time in bed asleep, 85% or more is good")));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal"),
-                Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, wakeUpsLine(n))));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0, "Lowest heart rate while asleep"),
-                Ui.stat(c, "Average HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", 0, "Average while asleep, higher is calmer")));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0, "Breaths per minute while asleep"),
-                Ui.stat(c, "Blood oxygen", Ui.fmt(Json.d(n, "spo2"), 0), "%", 0, "Average while asleep")));
-        stats.addView(Ui.statRow(c, Ui.stat(c, "Cycles", String.valueOf(n.optInt("cycles")), "", 0, "Rounds of light, deep and REM, about 90 min each"),
-                Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0, "Steady level at night, lower than body temperature")));
+        // Total sleep first, next to Time in bed (issue #409); the other tiles keep their order, two per row
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Total sleep", Ui.hm(Json.d(n, "asleep_min")), "", Ui.SLEEP, TOTAL_SLEEP_NOTE),
+                Ui.stat(c, "Time in bed", Ui.hm(shownInBed(n) < 0 ? Double.NaN : shownInBed(n)), "", 0, "From start to end of the sleep window")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Efficiency", Ui.fmt(nightEfficiency(n), 0), "%", 0, "Share of time in bed asleep, 85% or more is good"),
+                Ui.stat(c, "Latency", Ui.fmt(Json.d(n, "latency_min"), 0), "min", 0, "Time to fall asleep, 10 to 20 min is ideal")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Wake ups", String.valueOf(n.optInt("awakenings")), "", 0, wakeUpsLine(n)),
+                Ui.stat(c, "Lowest HR", Ui.fmt(Json.d(n, "lowest_hr"), 0), "bpm", 0, "Lowest heart rate while asleep")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Average HRV", Ui.fmt(Json.d(n, "avg_hrv"), 0), "ms", 0, "Average while asleep, higher is calmer"),
+                Ui.stat(c, "Breathing", Ui.fmt(Json.d(n, "breath"), 1), "/min", 0, "Breaths per minute while asleep")));
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Blood oxygen", Ui.fmt(Json.d(n, "spo2"), 0), "%", 0, "Average while asleep"),
+                Ui.stat(c, "Cycles", String.valueOf(n.optInt("cycles")), "", 0, "Rounds of light, deep and REM, about 90 min each")));
+        // the last tile keeps half the width, as every other tile
+        stats.addView(Ui.statRow(c, Ui.stat(c, "Skin temp", Ui.fmt(Json.d(n, "temp"), 2), "°C", 0, "Steady level at night, lower than body temperature"),
+                new View(c)));
         root.addView(stats);
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
@@ -671,8 +702,9 @@ public final class Pages {
         java.time.ZoneId nz = d.zone;
         // without a ring the score from the watch's night (issue #379); with a ring its version as a line
         boolean scored = d.fromDevice("sleep");
-        root.addView(hero(c, scored ? d.score("sleep") : Double.NaN, "Sleep", Ui.SLEEP, "Total sleep " + Ui.hm(wn.asleepMin()) + "  \u00b7  "
-                + minute(wn.start, nz) + " to " + minute(wn.end, nz), scored ? app.openring.core.DeviceScores.FROM_WATCH : d.watchVersion("sleep")));
+        // the time asleep first and big, time in bed in the line under it (issue #409); the same values as Details
+        root.addView(hero(c, scored ? d.score("sleep") : Double.NaN, "Sleep", Ui.SLEEP, app.openring.core.SleepHero.asleep(wn.asleepMin(), wn.stages),
+                app.openring.core.SleepHero.window(wn.start, wn.end, wn.inBedMin(), nz), scored ? app.openring.core.DeviceScores.FROM_WATCH : d.watchVersion("sleep")));
         // without a ring the watch's own nights (owner's report of 13 November); with a ring the ring's, as before
         boolean watchOnly = HistoryViews.watch(d);
         if (watchOnly) {
@@ -806,31 +838,35 @@ public final class Pages {
 
     // ---- further analysis: averages over a period, folded away by default ----
     static boolean analysisOpen;
-    static int analysisPeriod = 1; // 0 week, 1 month, 2 year, 3 all time
+    static int analysisPeriod = 1; // 0 week, 1 30 days, 2 year, 3 all time
 
+    /** Further analysis' tile key on Sleep (its fold is the tile's, owner's wish of 18 November). */
+    static final String ANALYSIS_KEY = "further analysis";
+
+    /**
+     * Further analysis: averages over a period, folded by default. Its header is the tile's (ui/Tiles), so it folds, moves and
+     * stays open or folded as every other tile; it calculates only while open.
+     */
     static View furtherAnalysis(final Context c, final DayData d) {
         final LinearLayout card = Ui.card(c);
-        LinearLayout head = Ui.hbox(c);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout ht = Ui.vbox(c);
-        ht.addView(Ui.h2(c, "Further analysis"));
-        ht.addView(Ui.text(c, "Your average night and typical values over a week, month, year or all time", 12, Ui.TEXT_3, Ui.REGULAR));
-        head.addView(ht, Ui.weight(1));
-        final TextView arrow = Ui.text(c, analysisOpen ? "\u25B4" : "\u25BE", 20, Ui.TEXT_2, Ui.REGULAR);
-        head.addView(arrow);
-        card.addView(head);
         final LinearLayout body = Ui.vbox(c);
         card.addView(body);
-        head.setClickable(true);
-        head.setOnClickListener(new View.OnClickListener() {
+        analysisOpen = Tiles.open(c, SLEEP, ANALYSIS_KEY, false);
+        Tiles.Spec s = Tiles.spec(card);
+        s.key = ANALYSIS_KEY;
+        s.title = "Further analysis";
+        s.summary = "Your average night and typical values over the last week, 30 days, year or all time";
+        s.standardOpen = false;
+        s.listener = new Tiles.Listener() {
             @Override
-            public void onClick(View v) {
-                analysisOpen = !analysisOpen;
-                arrow.setText(analysisOpen ? "\u25B4" : "\u25BE");
+            public void folded(boolean open) {
+                analysisOpen = open;
                 fillAnalysis(c, d, body);
             }
-        });
+        };
         fillAnalysis(c, d, body, true);
+        // calendar months over the whole history are Trends' (issue #374); the chips here stay rolling windows
+        card.addView(TrendsCard.link(c, d));
         return card;
     }
 
@@ -864,7 +900,8 @@ public final class Pages {
         if (!analysisOpen) return;
         body.addView(Ui.gap(c, 12));
         LinearLayout chips = Ui.hbox(c);
-        final String[] names = {"Week", "Month", "Year", "All time"};
+        // "30 days", not "Month": Trends' months are calendar months (issue #374), one word never means two things
+        final String[] names = {"Week", "30 days", "Year", "All time"};
         final TextView[] chip = new TextView[names.length];
         final LinearLayout result = Ui.vbox(c);
         for (int i = 0; i < names.length; i++) {
@@ -1252,6 +1289,7 @@ public final class Pages {
                 String fill = stepsLine(d);
                 if (fill != null) sc.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
                 if (phoneCounted(d)) sc.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
+                Tiles.summary(sc, "Steps " + Ui.fmt(m.steps, 0));
                 root.addView(sc);
             }
             // the watch's steps per hour, touch readable (owner's report of 11 November)
@@ -1267,7 +1305,8 @@ public final class Pages {
                 if (dv.days7 < 7) {
                     LinearLayout note = Ui.card(c);
                     note.addView(Ui.body(c, Explain.activityDaysDevice(dv.days7, watch)));
-                    root.addView(note);
+                    // its text holds the count of days: a name of its own keeps its place and fold from day to day
+                    root.addView(Tiles.name(note, ACTIVITY_DAYS_KEY, null, null));
                 }
                 DeviceViews.deviceParts(c, root, d, "activity_score", Ui.ACTIVE);
                 root.addView(infoCard(c, "About the activity score", Explain.ACTIVITY_DEVICE));
@@ -1291,6 +1330,11 @@ public final class Pages {
         }
         // phone steps in the total are spread evenly over each interval between two readings (issue #329)
         if (phoneCounted(d)) goal.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
+        // folded (owner's wish of 18 November): the day's steps and active burn, as the tiles above show them
+        double steps = d.merged == null ? Json.d(day, "steps") : d.merged.steps;
+        // a missing value is left out, none at all gives no line (review of #415: never "Steps --")
+        Tiles.summary(goal, app.openring.core.Layout.parts(Double.isNaN(steps) ? null : "Steps " + Ui.fmt(steps, 0),
+                Double.isNaN(active) ? null : "active burn " + Ui.fmt(active, 0) + " kcal"));
         root.addView(goal);
         // the watch's steps per hour when its steps are the day's (owner's report of 11 November)
         View hours = PhoneViews.watchDayCard(c, d);
@@ -1371,7 +1415,8 @@ public final class Pages {
             if (worn < 7) {
                 LinearLayout note = Ui.card(c);
                 note.addView(Ui.body(c, Explain.activityDays(worn)));
-                root.addView(note);
+                // its text holds the count of days: a name of its own keeps its place and fold from day to day
+                root.addView(Tiles.name(note, ACTIVITY_DAYS_KEY, null, null));
             }
             root.addView(contributors(c, as, Ui.ACTIVE, "Contributors"));
             root.addView(infoCard(c, "About the activity score", Explain.ACTIVITY));
@@ -1611,6 +1656,8 @@ public final class Pages {
                 + "(the day itself says why). Tap a day to open it.", 12, Ui.TEXT_2, Ui.REGULAR));
         // where the sleep came from when the watch gave a night (owner's report of 14 November); nothing new with only the ring
         if (in.watchNights) card.addView(Ui.text(c, in.ringNights ? Explain.SCREEN_WATCH_SOME : Explain.SCREEN_WATCH_NIGHTS, 12, Ui.TEXT_3, Ui.REGULAR));
+        // one key whatever the number of days in the caption, so the tile keeps its place (owner's wish of 18 November)
+        Tiles.spec(card).key = "last days";
         return card;
     }
 
@@ -1916,14 +1963,7 @@ public final class Pages {
     }
 
     static TS daysSeries(DayData d, String field, int n) {
-        TS ts = new TS();
-        double[] v = d.series(field, n);
-        for (int i = 0; i < n; i++) {
-            if (Double.isNaN(v[i])) continue;
-            double t = d.date.minusDays(n - 1 - i).atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond() + 43200;
-            ts.add(t, v[i]);
-        }
-        return ts;
+        return app.openring.data.DaySeries.of(d.date, d.series(field, n));
     }
 
     static View hero(Context c, double score, String label, int color, String sub) {
@@ -1935,6 +1975,20 @@ public final class Pages {
      * ring's score (issue #379).
      */
     static View hero(Context c, double score, String label, int color, String sub, String note) {
+        return hero(c, score, label, color, null, sub, note);
+    }
+
+    /** The key of Activity's note on how many days count (its text changes with the count, so it needs a name). */
+    static final String ACTIVITY_DAYS_KEY = "activity days";
+
+    /** Under the time asleep (issue #409): what Details says about Total sleep. */
+    static final String TOTAL_SLEEP_NOTE = "Time asleep, without the time awake in bed";
+
+    /**
+     * As above with a big line under the verdict, null for none: the Sleep page's time asleep, "7h 12m asleep" (issue #409),
+     * as big as the tiles on Today and in the score's colour.
+     */
+    static View hero(Context c, double score, String label, int color, String big, String sub, String note) {
         LinearLayout card = Ui.card(c);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         Charts.ScoreRing ring = new Charts.ScoreRing(c, score, label, color, true);
@@ -1942,6 +1996,12 @@ public final class Pages {
         TextView v = Ui.text(c, Double.isNaN(score) ? "" : Scores.verdict((int) score), 18, Ui.scoreColor(score, color), Ui.MEDIUM);
         v.setGravity(Gravity.CENTER);
         card.addView(v);
+        if (big != null) {
+            TextView b = Ui.text(c, big, 24, color, Ui.MEDIUM);
+            b.setGravity(Gravity.CENTER);
+            b.setPadding(Ui.dp(c, 8), Ui.dp(c, 6), Ui.dp(c, 8), 0);
+            card.addView(b);
+        }
         TextView s = Ui.body(c, sub);
         s.setGravity(Gravity.CENTER);
         s.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
@@ -1952,7 +2012,9 @@ public final class Pages {
             n.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
             card.addView(n);
         }
-        return card;
+        // a tile like every other (owner's wish of 18 November): folded it says the score, its word and the big line ("96,
+        // Optimal, 7h 28m asleep", review of #415 with #411); without a score the big line, else the line under it
+        return Tiles.name(card, "score", label + " score", app.openring.core.Layout.dialSummary(score, big, sub));
     }
 
     static View contributors(Context c, JSONObject score, int color, String title) {
@@ -1992,6 +2054,13 @@ public final class Pages {
             String key = o.optString("key"), why = device ? Explain.ofDevice(key, watch) : null;
             card.addView(Ui.contributor(c, o.optString("label"), detail, o.optDouble("score"), color, why != null ? why : Explain.of(key)));
         }
+        // folded (owner's wish of 18 November): the contributor that pulls the score down most, as its row rates it
+        JSONObject low = null;
+        for (int i = 0; i < cs.length(); i++) {
+            JSONObject o = cs.optJSONObject(i);
+            if (o != null && !Double.isNaN(o.optDouble("score")) && (low == null || o.optDouble("score") < low.optDouble("score"))) low = o;
+        }
+        if (low != null) Tiles.summary(card, "Lowest: " + low.optString("label") + ", " + Scores.rating(low.optDouble("score")).toLowerCase(Locale.getDefault()));
         return card;
     }
 

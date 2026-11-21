@@ -928,7 +928,7 @@ public final class WatchSetupActivity extends Activity {
         if (scan == null) return;
         set(FIND, RUNNING, null);
         shownCount = -1;
-        scanUntil = SystemClock.elapsedRealtime() + 10000;
+        scanUntil = SystemClock.elapsedRealtime() + app.openring.core.WatchCheck.SCAN_MS; // the same 10 s as the Watch check
         h.post(tick);
     }
 
@@ -941,19 +941,11 @@ public final class WatchSetupActivity extends Activity {
     void heard(ScanResult r) {
         String addr = r.getDevice().getAddress();
         ScanRecord rec = r.getScanRecord();
-        String name = rec == null ? null : rec.getDeviceName();
-        if (name == null) {
-            try {
-                name = r.getDevice().getName();
-            } catch (SecurityException e) {
-                name = null;
-            }
-        }
+        String name = WatchActivity.advertisedName(r);
         boolean withings = false;
         List<ParcelUuid> uuids = rec == null ? null : rec.getServiceUuids();
         if (uuids != null) for (ParcelUuid u : uuids) withings |= WatchSync.SERVICE.equals(u.getUuid());
-        String low = name == null ? "" : name.toLowerCase(Locale.ROOT);
-        withings |= low.startsWith("steel") || low.startsWith("withings") || low.startsWith("activit") || low.startsWith("scanwatch");
+        withings |= app.openring.core.WatchCheck.setupName(name);
         synchronized (found) {
             Found f = found.get(addr);
             if (f == null) found.put(addr, f = new Found(addr));

@@ -6,8 +6,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import app.openring.core.analysis.cycleforecast.Methods;
-
 /**
  * How close the estimate from this cycle's temperature rise would have been (issue #383), against the calendar on the same
  * days. For each cycle that is over and has temperatures, the app is replayed ({@link Cycles#replay}) day by day from the
@@ -52,7 +50,7 @@ public final class RiseBacktest {
         }
     }
 
-    /** The calendar method the measured estimate sits on (drip style is replayed on Open Ring: it never uses temperature). */
+    /** The calendar method the measured estimate sits on: the one in use, also drip style when Best for you picked it. */
     public final int method;
     public final List<Case> cases;
     /** Mean errors in days (NaN without a case), and how many starts fell in each range. */
@@ -87,7 +85,7 @@ public final class RiseBacktest {
 
     /** Replays the cycles of {@code full} (its log, its nights) that are over and have a temperature in them. */
     static RiseBacktest run(Cycles full) {
-        int method = Methods.usesTemperature(full.methodId) ? full.methodId : Methods.OPEN_RING;
+        int method = full.methodId;
         List<Case> out = new ArrayList<Case>();
         if (full.rise == null) return new RiseBacktest(method, out);
         // the days only move forward, so each signal's noise up to the day is kept as a running middle value
