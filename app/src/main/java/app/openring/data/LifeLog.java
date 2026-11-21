@@ -376,10 +376,15 @@ public final class LifeLog {
      * #422), in one transaction.
      */
     public static String addOwn(Db db, String typed, long millis) {
-        String name = LifeTags.cleanName(typed);
-        if (name == null) return null;
         LifeTags.Known k = known(db);
-        String same = LifeTags.sameName(name);
+        // the name of a removed own tag brings it back even when a fixed tag has that name since (an own "Sauna" removed before
+        // issue #435 made Sauna a fixed tag, review of #444): checked before the fixed names refuse it
+        String typedSame = LifeTags.sameName(typed);
+        boolean removedOwn = false;
+        for (LifeTags.Tag t : k.all.values()) removedOwn |= t.removed && LifeTags.isOwn(t.key) && LifeTags.sameName(t.name).equals(typedSame);
+        String name = removedOwn ? typed : LifeTags.cleanName(typed);
+        if (name == null) return null;
+        String same = removedOwn ? typedSame : LifeTags.sameName(name);
         for (LifeTags.Tag t : k.own()) if (LifeTags.sameName(t.name).equals(same)) return null;
         // the name of a removed own tag brings that tag back (with its days), never a second key with the same name
         for (LifeTags.Tag t : k.all.values()) {

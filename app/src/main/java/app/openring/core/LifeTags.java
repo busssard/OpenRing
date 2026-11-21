@@ -200,9 +200,14 @@ public final class LifeTags {
             // not know (Sauna and Friends, new in issue #435) stays off the card; only a person who never chose gets the defaults
             boolean chose = false;
             for (String k : BUILT_IN) chose |= by.get(k) != null && by.get(k).shown != null;
+            // an own tag in force with a fixed tag's name (an own "Sauna" made before issue #435): that fixed tag is no default
+            // chip, so the card never shows two chips with one name (review of #444); All factors lists both
+            java.util.Set<String> ownNames = new java.util.HashSet<String>();
+            for (Choice c : own) if (!c.gone) ownNames.add(sameName(c.name));
             for (String k : BUILT_IN) {
                 Choice c = by.get(k);
-                boolean chip = c == null || c.shown == null ? !chose && DEFAULT_CHIPS.contains(k) : c.shown != 0;
+                boolean byDefault = !chose && DEFAULT_CHIPS.contains(k) && !ownNames.contains(sameName(builtInName(k)));
+                boolean chip = c == null || c.shown == null ? byDefault : c.shown != 0;
                 all.put(k, new Tag(k, builtInName(k), chip, false));
                 if (c != null && c.ord != null) ord.put(k, c.ord);
             }

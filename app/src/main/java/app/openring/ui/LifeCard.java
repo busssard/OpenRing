@@ -321,11 +321,14 @@ final class LifeCard {
         hour.setDisplayedValues(hours);
         hour.setValue(Math.max(0, start) / 60);
         hour.setContentDescription("Hour");
+        // wheels only: typed text would reach the picker only when it loses focus, after Save read the old value (review of #444)
+        hour.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         minute.setMinValue(0);
         minute.setMaxValue(11);
         minute.setDisplayedValues(minutes);
         minute.setValue(Math.max(0, start) % 60 / 5);
         minute.setContentDescription("Minutes");
+        minute.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         LinearLayout wheels = Ui.hbox(c);
         wheels.setGravity(Gravity.CENTER);
         wheels.addView(hour);

@@ -271,7 +271,7 @@ public class LifeTest {
         check("no aliases for a key alone with its name or a fixed tag", k.aliases("own:2000").isEmpty() && k.aliases("alcohol").isEmpty() && k.aliases("own:5000").isEmpty());
         eq("the name of an alias is its factor's", k.name("own:7000") + "|" + k.name("own:600"), "Sauna|sauna");
         eq("one chip, on the card when any key of it is, in the older key's place", keys(k.chips()),
-                Arrays.asList("own:1000", "meditation", "sauna", "friends", "alcohol", "stress", "hard_workout", "own:2000"));
+                Arrays.asList("own:1000", "meditation", "friends", "alcohol", "stress", "hard_workout", "own:2000")); // the own Sauna in force: no fixed Sauna chip (#435)
         eq("one entry in All factors and in Remove one of your own", keys(k.own()), Arrays.asList("own:1000", "own:2000"));
         eq("names: a day with both keys names it once", k.names(Arrays.asList("own:5000", "own:1000", "alcohol")), Arrays.asList("Alcohol", "Sauna"));
         Map<LocalDate, List<String>> days = new TreeMap<LocalDate, List<String>>();
@@ -373,8 +373,14 @@ public class LifeTest {
         check("#435 an own Sauna made before stays, next to the built in one: two keys, both named Sauna, both in All factors", k.all.containsKey("sauna")
                 && k.all.containsKey("own:1600000000000") && k.name("sauna").equals("Sauna") && k.name("own:1600000000000").equals("Sauna")
                 && keys(k.loggable()).contains("sauna") && keys(k.loggable()).contains("own:1600000000000") && k.key("own:1600000000000").equals("own:1600000000000"));
-        eq("#435 own tags never join a built in one: the chips", keys(k.chips()),
-                Arrays.asList("meditation", "sauna", "friends", "alcohol", "stress", "hard_workout", "own:1600000000000"));
+        eq("#435 an own Sauna and friends in force: the fixed Sauna and Friends are no default chips, never two chips with one name (review of #444)",
+                keys(k.chips()), Arrays.asList("meditation", "alcohol", "stress", "hard_workout", "own:1600000000000"));
+        List<LifeTags.Choice> gone = new ArrayList<LifeTags.Choice>();
+        gone.add(new LifeTags.Choice("own:1600000000000", "Sauna", null, null, true));
+        eq("#435 a removed own Sauna: the fixed Sauna is a default chip again", keys(new LifeTags.Known(gone).chips()), LifeTags.DEFAULT_CHIPS);
+        List<LifeTags.Choice> chosen = new ArrayList<LifeTags.Choice>(own);
+        chosen.add(new LifeTags.Choice("sauna", null, 1, 0, false));
+        check("#435 the fixed Sauna put on the card by the person shows next to the own one", keys(new LifeTags.Known(chosen).chips()).contains("sauna"));
         check("#435 a new own tag named Sauna or Friends (any case) is refused, the built in one is there", LifeTags.cleanName("Sauna") == null
                 && LifeTags.cleanName(" FRIENDS ") == null && LifeTags.cleanName("Sauna visit").equals("Sauna visit"));
     }

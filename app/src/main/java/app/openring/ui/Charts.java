@@ -42,6 +42,8 @@ public final class Charts {
      */
     static void drawLife(Canvas cv, Context c, java.util.List<app.openring.core.LifeTimes.Band> bands, float top, float bottom, float left, float right,
             Paint fill, Paint label, X x) {
+        // the end of the last name drawn: a name that would overlap it is left out (the touch readout names every band)
+        float lastEnd = Float.NEGATIVE_INFINITY;
         for (app.openring.core.LifeTimes.Band b : bands) {
             float x0 = Math.max(left, x.at(b.start)), x1 = Math.min(right, x.at(b.stop));
             if (x1 < left || x0 > right) continue;
@@ -55,7 +57,9 @@ public final class Charts {
             // the name inside the band when it fits, else from its start as far as the chart allows
             float tw = label.measureText(b.name);
             float lx = Math.max(left, Math.min(right - tw, x0 + Ui.dp(c, 2)));
+            if (lx < lastEnd + Ui.dp(c, 4)) continue;
             cv.drawText(b.name, lx, top + label.getTextSize(), label);
+            lastEnd = lx + tw;
         }
     }
 
@@ -982,6 +986,8 @@ public final class Charts {
             float slot = w / Math.max(1, n);
             float bw = Math.min(slot * 0.56f, Ui.dp(getContext(), 22));
             if (!lifeHours.isEmpty() && n == 24) {
+                // a name that would overlap the one before is left out (the touch readout names every band)
+                float lastEnd = Float.NEGATIVE_INFINITY;
                 for (int i = 0; i < lifeHours.size(); i++) {
                     double[] hb = lifeHours.get(i);
                     float x0 = (float) (hb[0] / 24 * w), x1 = (float) (hb[1] / 24 * w);
@@ -993,8 +999,11 @@ public final class Charts {
                         cv.drawRect(x0 - Ui.dp(getContext(), 0.75f), 0, x0 + Ui.dp(getContext(), 0.75f), bottom, lifeFill);
                     }
                     String name = lifeNames.get(i);
-                    float lx = Math.max(0, Math.min(w - lifeLabel.measureText(name), x0 + Ui.dp(getContext(), 2)));
+                    float tw = lifeLabel.measureText(name);
+                    float lx = Math.max(0, Math.min(w - tw, x0 + Ui.dp(getContext(), 2)));
+                    if (lx < lastEnd + Ui.dp(getContext(), 4)) continue;
                     cv.drawText(name, lx, lifeLabel.getTextSize(), lifeLabel);
+                    lastEnd = lx + tw;
                 }
             }
             for (int i = 0; i < n; i++) {

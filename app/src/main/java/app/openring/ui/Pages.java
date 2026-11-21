@@ -1436,7 +1436,7 @@ public final class Pages {
             // touch reads each hour, and the logged times of life factors show as bands over their hours (issue #435)
             String[] hourTips = new String[24];
             for (int h = 0; h < 24; h++) {
-                hourTips[h] = String.format(Locale.getDefault(), "%02d:00 to %02d:00  ", h, h + 1)
+                hourTips[h] = String.format(Locale.getDefault(), "%02d:00 to ", h) + (h == 23 ? "midnight  " : String.format(Locale.getDefault(), "%02d:00  ", h + 1))
                         + (Double.isNaN(hourly[h]) ? "no reading" : String.format(Locale.getDefault(), "%.1f MET", hourly[h]));
             }
             Charts.BarChart met = new Charts.BarChart(c, hourly, labels, Ui.ACTIVE).valueFormat("%.1f").highlight(peak).tips(hourTips);

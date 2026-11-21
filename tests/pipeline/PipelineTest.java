@@ -15955,6 +15955,14 @@ public class PipelineTest {
                 && app.openring.data.LifeLog.on(db, "2019-08-03").equals(Arrays.asList("sauna")) && time435(db, "2019-08-02", "own:1500000000000").equals("21:00 30"), null);
         check("#435 a new own tag named Sauna or Friends (any case) is refused", app.openring.data.LifeLog.addOwn(db, "SAUNA", 1600000000000L) == null
                 && app.openring.data.LifeLog.addOwn(db, "Friends", 1600000000001L) == null, null);
+        // a removed own Sauna comes back by its name (#422), also now that Sauna is a fixed tag (review of #444), with its days
+        app.openring.data.LifeLog.removeOwn(db, "own:1500000000000", 1004);
+        long tagRows = db.count("SELECT COUNT(*) FROM life_tags");
+        String back = app.openring.data.LifeLog.addOwn(db, " sauna ", 1600000000002L);
+        check("#435 a removed own Sauna brought back by its name: the same key, in force, its days kept, no new key",
+                "own:1500000000000".equals(back) && app.openring.data.LifeLog.known(db).own().toString().contains("own:1500000000000=Sauna")
+                && db.count("SELECT COUNT(*) FROM life_tags") == tagRows && time435(db, "2019-08-02", "own:1500000000000").equals("21:00 30"), back);
+        check("#435 the own Sauna in force again: a new one with the name is refused", app.openring.data.LifeLog.addOwn(db, "Sauna", 1600000000003L) == null, null);
         app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         p.setCsvLife(true);
         String head = csvText292(c).split("\n")[0];
