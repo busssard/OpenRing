@@ -64,6 +64,8 @@ public final class Exporter {
                 PhoneStore.any(db));
         java.util.TreeMap<String, String> extra = device < 0 ? new java.util.TreeMap<String, String>()
                 : deviceRows(db, device, p.watchGoal(), p.age(), java.time.LocalDate.now(), left, z);
+        // the zone of each day, read once for the whole file and only when something is left out (it counts only then)
+        DayZones zones = left.isEmpty() ? null : new DayZones(db, z);
         for (String[] d : days) {
             JSONObject o = Json.parse(d[1]);
             if (o == null) continue;
@@ -78,7 +80,7 @@ public final class Exporter {
             JSONObject r = o.optJSONObject("readiness"), a = o.optJSONObject("activity_score");
             row.append(r == null ? "" : String.valueOf(r.optInt("value"))).append(',');
             row.append(a == null ? "" : String.valueOf(a.optInt("value"))).append(',');
-            row.append(leftOutMin(left, d[0], left.isEmpty() ? z : dayZone(db, d[0], z))).append('\n');
+            row.append(leftOutMin(left, d[0], zones == null ? z : zones.of(d[0]))).append('\n');
             out.write(d[0], row.toString());
         }
         for (java.util.Map.Entry<String, String> e : extra.entrySet()) out.write(e.getKey(), e.getValue());
@@ -180,7 +182,8 @@ public final class Exporter {
 
     /**
      * The zone a day is counted in, as the analysis and the screens do (review of #263): its main night's, else the zone
-     * noted then, else the phone's.
+     * noted then, else the phone's. One day with its own queries; the export reads all days at once ({@link DayZones}),
+     * and the tests hold the two to the same answers.
      */
     static java.time.ZoneId dayZone(Db db, String day, java.time.ZoneId phone) {
         try {
@@ -189,6 +192,52 @@ public final class Exporter {
             return Json.dayZone(main.isEmpty() ? null : Json.parse(main.get(main.size() - 1)), db.zoneAt(Json.noon(d, phone)), phone);
         } catch (RuntimeException e) {
             return phone;
+        }
+    }
+
+    /**
+     * {@link #dayZone} for every day of the file from two queries in all: the main nights' zones and the noted zones, each
+     * read once (a file of three years with something left out asked for each day's night and noted zone, about 3,300
+     * queries). The same rule and the same answers: a day's newest main night by start, else the zone noted at its noon
+     * ({@link Db#zoneIn}, as {@link Db#zoneAt} reads it), else the phone's; a day it cannot read, or a database it cannot
+     * read, gives the phone's. Only each night's zone is kept, never the night.
+     */
+    static final class DayZones {
+        private final java.util.Map<String, String> nightZone = new java.util.HashMap<String, String>();
+        private final java.time.ZoneId phone;
+        private List<Object[]> noted;
+        private boolean unreadable;
+
+        DayZones(Db db, java.time.ZoneId phone) {
+            this.phone = phone;
+            try {
+                // ordered by start, so a day's newest main night is put last, as dayZone takes it
+                Cursor c = db.getReadableDatabase().rawQuery("SELECT day, json FROM nights WHERE main=1 ORDER BY start", null);
+                try {
+                    while (c.moveToNext()) {
+                        JSONObject night = Json.parse(c.getString(1));
+                        nightZone.put(c.getString(0), night == null ? null : night.optString("zone", null));
+                    }
+                } finally {
+                    c.close();
+                }
+                noted = db.zones();
+            } catch (RuntimeException e) {
+                // as dayZone, which falls back to the phone's zone when its reads fail
+                unreadable = true;
+            }
+        }
+
+        /** The zone {@code day} is counted in, {@link #dayZone} without a query. */
+        java.time.ZoneId of(String day) {
+            if (unreadable) return phone;
+            try {
+                java.time.LocalDate d = java.time.LocalDate.parse(day);
+                java.time.ZoneId night = app.openring.core.analysis.ClockChange.zone(nightZone.get(day));
+                return night != null ? night : Json.dayZone(null, Db.zoneIn(noted, Json.noon(d, phone)), phone);
+            } catch (RuntimeException e) {
+                return phone;
+            }
         }
     }
 
