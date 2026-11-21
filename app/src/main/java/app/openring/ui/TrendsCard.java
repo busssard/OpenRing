@@ -30,12 +30,13 @@ final class TrendsCard {
         if (tab == Pages.TODAY || d == null) return;
         if ((tab == Pages.SLEEP || tab == Pages.READINESS) && PhoneViews.needsDevice(c, d)) return;
         LinearLayout card = Ui.card(c);
+        // the title first, so it becomes the tile's header (ui/Tiles: a tap there folds, a hold moves the card); the rest opens Trends
+        // a caption as every other tile's header (small, grey, upper case); the key stays "your months"
+        card.addView(Ui.caption(c, Explain.TRENDS_CARD_TITLE));
+        card.addView(Ui.gap(c, 4));
         LinearLayout row = Ui.hbox(c);
-        LinearLayout text = Ui.vbox(c);
-        text.addView(Ui.h2(c, Explain.TRENDS_CARD_TITLE));
-        text.addView(Ui.gap(c, 2));
-        text.addView(Ui.text(c, Explain.TRENDS_CARD, 12, Ui.TEXT_3, Ui.REGULAR));
-        row.addView(text, Ui.weight(1));
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.addView(Ui.text(c, Explain.TRENDS_CARD, 12, Ui.TEXT_3, Ui.REGULAR), Ui.weight(1));
         ImageView go = new ImageView(c);
         go.setImageResource(app.openring.R.drawable.ic_chevron_right);
         go.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
@@ -50,6 +51,8 @@ final class TrendsCard {
                 open(c, d, tab);
             }
         });
+        // folded it still says what it holds (it has no number of its own); its key comes from the title, "your months"
+        Tiles.summary(card, Explain.TRENDS_CARD);
         root.addView(card);
     }
 

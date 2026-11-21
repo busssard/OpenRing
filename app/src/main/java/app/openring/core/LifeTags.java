@@ -95,16 +95,33 @@ public final class LifeTags {
      * (any case), which is already there.
      */
     public static String cleanName(String typed) {
+        String s = tidy(typed);
+        if (s == null || s.isEmpty() || s.length() > NAME_MAX) return null;
+        for (String n : NAMES) if (n.equalsIgnoreCase(s)) return null;
+        return s;
+    }
+
+    /** {@code typed} with spaces at the ends and runs of spaces made one, line breaks and control characters as spaces. */
+    static String tidy(String typed) {
         if (typed == null) return null;
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < typed.length(); i++) {
             char ch = typed.charAt(i);
             b.append(Character.isISOControl(ch) || Character.isWhitespace(ch) ? ' ' : ch);
         }
-        String s = b.toString().trim().replaceAll(" +", " ");
-        if (s.isEmpty() || s.length() > NAME_MAX) return null;
-        for (String n : NAMES) if (n.equalsIgnoreCase(s)) return null;
-        return s;
+        return b.toString().trim().replaceAll(" +", " ");
+    }
+
+    /**
+     * What makes two own tag names the same name (issue #422): cleaned as {@link #cleanName} cleans, then any case, as
+     * {@code equalsIgnoreCase} compares them ("Sauna", " sauna " and "SAUNA" give the same).
+     */
+    public static String sameName(String name) {
+        String s = tidy(name);
+        if (s == null) return null;
+        StringBuilder b = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) b.append(Character.toLowerCase(Character.toUpperCase(s.charAt(i))));
+        return b.toString();
     }
 
     // ------------------------------------------------------------------------------------------------ the known tags
@@ -145,11 +162,21 @@ public final class LifeTags {
         }
     }
 
-    /** Every tag the person can log or has logged, in the order All factors lists them, from the stored choices. */
+    /**
+     * Every tag the person can log or has logged, in the order All factors lists them, from the stored choices.
+     * <p>
+     * Own tags with the same name ({@link #sameName}) that are all in force, or all removed, are one factor (issue #422: after
+     * Delete all, "Sauna" made again and an older backup with its own "Sauna" restored give two keys with one name). The
+     * factor's key is the older one (made first); every newer key with that name is an alias of it: not listed in {@link #all},
+     * its days read as the older key's ({@link #fold}), and the writes of a tap reach it too ({@link #aliases}). A removed own
+     * tag never joins one in force. Only reading joins them: no stored row changes.
+     */
     public static final class Known {
         /** By key: the fixed tags first in their order, then own tags in the order they were made (removed ones too). */
         public final Map<String, Tag> all = new LinkedHashMap<String, Tag>();
         private final Map<String, Integer> ord = new java.util.HashMap<String, Integer>();
+        /** An alias key and the older key it is read as. */
+        private final Map<String, String> sameAs = new java.util.HashMap<String, String>();
 
         public Known(List<Choice> choices) {
             Map<String, Choice> by = new java.util.HashMap<String, Choice>();
@@ -173,17 +200,62 @@ public final class LifeTags {
                     return Long.compare(ownMillis(a.key), ownMillis(b.key));
                 }
             });
+            // the oldest key of each name (in force and removed apart) is the factor; the newer ones are its aliases
+            Map<String, String> first = new java.util.HashMap<String, String>();
+            Map<String, Boolean> chip = new java.util.HashMap<String, Boolean>();
             for (Choice c : own) {
-                // a new own tag is on the card until the person takes it off; a removed one never is
-                boolean chip = !c.gone && (c.shown == null || c.shown != 0);
-                all.put(c.key, new Tag(c.key, c.name, chip, c.gone));
-                if (c.ord != null) ord.put(c.key, c.ord);
+                String g = (c.gone ? "removed " : "in force ") + sameName(c.name);
+                String main = first.get(g);
+                if (main == null) first.put(g, main = c.key);
+                else sameAs.put(c.key, main);
+                // a new own tag is on the card until the person takes it off; a removed one never is; a factor of several keys
+                // is on the card when any of them is (the key made last may be the one the person just put there)
+                boolean on = !c.gone && (c.shown == null || c.shown != 0);
+                chip.put(main, on || Boolean.TRUE.equals(chip.get(main)));
+                if (c.ord != null && !ord.containsKey(main)) ord.put(main, c.ord);
             }
+            for (Choice c : own) {
+                if (!sameAs.containsKey(c.key)) all.put(c.key, new Tag(c.key, c.name, chip.get(c.key), c.gone));
+            }
+        }
+
+        /** The key {@code k} is read as: the older key of its name for an alias, else {@code k} itself. */
+        public String key(String k) {
+            String m = sameAs.get(k);
+            return m != null ? m : k;
+        }
+
+        /** The newer keys read as {@code key}, oldest first (empty for a fixed tag or an own tag alone with its name). */
+        public List<String> aliases(String key) {
+            List<String> out = new ArrayList<String>();
+            for (Map.Entry<String, String> e : sameAs.entrySet()) if (e.getValue().equals(key)) out.add(e.getKey());
+            Collections.sort(out, new java.util.Comparator<String>() {
+                @Override
+                public int compare(String a, String b) {
+                    return Long.compare(ownMillis(a), ownMillis(b));
+                }
+            });
+            return out;
+        }
+
+        /**
+         * The tags of each day as one factor each: an alias read as its older key, a day holding both listed once, each day's
+         * tags in key order. A new map; {@code days} is not changed.
+         */
+        public TreeMap<LocalDate, List<String>> fold(Map<LocalDate, List<String>> days) {
+            TreeMap<LocalDate, List<String>> out = new TreeMap<LocalDate, List<String>>();
+            if (days == null) return out;
+            for (Map.Entry<LocalDate, List<String>> e : days.entrySet()) {
+                java.util.TreeSet<String> keys = new java.util.TreeSet<String>();
+                for (String k : e.getValue()) keys.add(key(k));
+                out.put(e.getKey(), new ArrayList<String>(keys));
+            }
+            return out;
         }
 
         /** The name of {@code key}; an own tag nobody knows any more (a row of another phone) reads as "Own factor". */
         public String name(String key) {
-            Tag t = all.get(key);
+            Tag t = all.get(key(key));
             if (t != null) return t.name;
             String b = builtInName(key);
             return b != null ? b : "Own factor";
@@ -223,8 +295,10 @@ public final class LifeTags {
         public List<String> names(java.util.Collection<String> keys) {
             List<String> out = new ArrayList<String>();
             if (keys == null) return out;
-            for (String k : all.keySet()) if (keys.contains(k)) out.add(all.get(k).name);
-            for (String k : keys) if (!all.containsKey(k)) out.add(name(k));
+            java.util.Set<String> in = new java.util.LinkedHashSet<String>();
+            for (String k : keys) in.add(key(k));
+            for (String k : all.keySet()) if (in.contains(k)) out.add(all.get(k).name);
+            for (String k : in) if (!all.containsKey(k)) out.add(name(k));
             return out;
         }
     }
@@ -265,6 +339,14 @@ public final class LifeTags {
     public static String spanDone(String name, LocalDate from, LocalDate to, int thisYear, Locale loc) {
         int n = span(from, to).size();
         return name + " logged for " + n + (n == 1 ? " day, " : " days, ") + date(from, thisYear, loc) + " to " + date(to, thisYear, loc) + ".";
+    }
+
+    /**
+     * The question before several days are logged, under "Holiday from 3 Nov to 10 Nov": "One entry on each of the 8 days. To
+     * take a day away, open that day and tap its chip." ("One entry on 1 day." for one day).
+     */
+    public static String spanDone(int n) {
+        return (n == 1 ? "One entry on 1 day." : "One entry on each of the " + n + " days.") + " To take a day away, open that day and tap its chip.";
     }
 
     /** After a tap: "Meditation added to 8 Nov." or "Meditation taken away from 8 Nov." */

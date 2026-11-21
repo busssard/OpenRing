@@ -79,7 +79,10 @@ shot() {
   log "shot $1 ($(stat -c %s "$OUT/$1.png") bytes)"
 }
 swipe_up() { adb shell input swipe 30 1700 30 500 300; sleep 1; }  # along the left margin, never a tap on a night
-launch() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
+# Every step starts with every tab in the standard layout (owner's wish of 18 November: tiles move and fold, and stay so);
+# the extra is for demo mode only. launch_kept keeps the layout the steps before made (the tiles steps below).
+launch() { adb shell am start -S -W -n $MAIN --ez layout_reset true "$@" >/dev/null; }
+launch_kept() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
 
 log "first start: setup"
 launch
@@ -258,6 +261,84 @@ launch --ei tab 0 --ez battery_open true;   shot today-battery-open 2
 # Today's compact period card near the bottom (issue #252)
 launch --ei tab 0; sleep 3
 swipe_up; swipe_up; swipe_up; swipe_up;   shot today-period 1
+# The tiles of every tab (owner's wishes of 18 and 20 November): a tap on a tile's title folds it, and moving happens in an
+# edit session. Settings, Layout of the tabs, Rearrange tiles opens Today with a frame and a handle on every tile and Reset and
+# Save in the header. A real touch, step by step: down on Your day's handle, moved up in steps, the shot while it is still
+# held, then up above the scores and let go. A tap on the Scores handle opens the menu (Move up, Move down, Fold), then three
+# tiles folded with a tap on their titles, each with its key number in one line, then Save. The order and folds stay (checked
+# after a fresh start), and Settings' Reset layout with its question puts everything back.
+text_mid() {  # $1 the exact text: "x y" of its middle; fails when not on screen
+  local b
+  b=$(ui_dump | grep -o "text=\"$1\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  echo "$(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))"
+}
+text_y() { local m; m=$(text_mid "$1") || return 1; echo "${m#* }"; }
+desc_mid() {  # $1 the exact content description: "x y" of its middle; fails when not on screen
+  local b
+  b=$(ui_dump | grep -o "content-desc=\"$1\"[^>]*bounds=\"[^\"]*\"" | head -1 | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  set -- $b
+  [ $# -eq 4 ] || return 1
+  echo "$(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))"
+}
+launch --ei tab 0; sleep 3
+launch_kept --es settings layout; sleep 2
+if tap_text "Rearrange tiles"; then
+  shot today-edit 3
+  if xy=$(desc_mid "Move Your day"); then
+    set -- $xy
+    dx=$1; dy=$2
+    adb shell input motionevent DOWN $dx $dy >/dev/null
+    sleep 0.3
+    for step in 1 2 3 4; do dy=$(( dy - 110 )); adb shell input motionevent MOVE $dx $dy >/dev/null; done
+    sleep 0.5
+    adb exec-out screencap -p > "$OUT/today-tile-lifted.png"; log "shot today-tile-lifted (held mid drag)"
+    while [ "$dy" -gt 420 ]; do dy=$(( dy - 110 )); adb shell input motionevent MOVE $dx $dy >/dev/null; done
+    adb shell input motionevent UP $dx $dy >/dev/null
+    shot today-tile-moved 2
+    yd=$(text_y "YOUR DAY"); ys=$(text_y "SCORES")
+    if [ -n "$yd" ] && [ -n "$ys" ] && [ "$yd" -lt "$ys" ]; then log "Your day moved above the scores"
+    else echo "::warning::tiles step: Your day did not land above the scores (Your day at ${yd:-?}, Scores at ${ys:-?})"; fi
+  else echo "::warning::tiles step: the handle of Your day was not on the first screen of the edit session"; fi
+  # a tap on a handle: the menu
+  if xy=$(desc_mid "Move Scores"); then
+    adb shell input tap $xy; shot today-tile-menu 2
+    adb shell input keyevent KEYCODE_BACK; sleep 1
+  else echo "::warning::tiles step: the Scores handle was not on screen for the menu"; fi
+  # three tiles folded with a tap on their titles: they start folded once saved
+  for t in "SCORES" "YOUR DAY" "WHAT WAS TODAY LIKE?"; do
+    if xy=$(text_mid "$t"); then adb shell input tap 540 ${xy#* }; sleep 1
+    else echo "::warning::tiles step: the title $t was not on screen to fold it"; fi
+  done
+  shot today-tiles-folded 2
+  tap_text "Save" || tap_text "SAVE" || echo "::warning::tiles step: Save was not found in the edit header"
+  shot today-edit-saved 2
+  # a fresh start keeps the order and the folds
+  launch_kept --ei tab 0; sleep 3
+  if ui_dump | grep -q 'text="Readiness [0-9]'; then log "the folded Scores tile stays folded after a fresh start"
+  else echo "::warning::tiles step: after a fresh start the Scores tile was not folded with its line of scores"; fi
+  launch_kept --es settings layout;           shot settings-layout 2
+  if tap_text "Reset layout"; then
+    shot settings-layout-reset 2
+    tap_text "Reset" || tap_text "RESET" || echo "::warning::tiles step: the question's Reset button was not found"
+    sleep 1
+    launch_kept --ei tab 0; sleep 3
+    if ui_dump | grep -q 'text="Readiness [0-9]'; then echo "::warning::tiles step: Reset layout left the Scores tile folded"
+    else log "Reset layout put Today back to the standard layout"; fi
+  else echo "::warning::tiles step: Reset layout was not found in Settings"; fi
+else
+  echo "::warning::tiles step: Rearrange tiles was not found in Settings, Layout of the tabs"
+fi
+# the Sleep dial folded with a tap on its title (review of #415 with #411): its line keeps the time asleep, "96, Optimal,
+# 7h 28m asleep"; the next launch puts the standard layout back
+launch --ei tab 1; sleep 3
+if xy=$(text_mid "SLEEP SCORE"); then
+  adb shell input tap 540 ${xy#* }; sleep 1
+  shot sleep-dial-folded 1
+  if ui_dump | grep -q 'text="[0-9]*, [A-Za-z ]*, [0-9]*h [0-9]*m asleep"'; then log "the folded Sleep dial says the time asleep"
+  else echo "::warning::tiles step: the folded Sleep dial has no line with the time asleep"; fi
+else echo "::warning::tiles step: the Sleep score title was not on screen to fold it"; fi
 # Phase 1a2 of #252 at the end of Body: "Your cycles" (cycle day, next period, the cycle length dots next to the typical
 # length, then period length and amount), touched on the newest cycle dot, and the night temperature line next to the
 # cycles (the demo's nights are warmer after ovulation), touched on its newest night. Slow swipes until the caption is in
@@ -279,10 +360,11 @@ scroll_to() {  # $1 caption text, $2 the most swipes. Done once the caption is i
   done
   return 1
 }
+# a tile's header reads its title too ("Steps, last 7 days, ..., open, tap to close"): only the chart itself is touched
 touch_desc() {  # $1 the start of a content description, $2 where to tap in percent of its width from the left (default:
   # 10 px inside the right end), in the middle; fails when not on screen
   local b at=${2:-}
-  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -v -e 'tap to close"' -e 'tap to open"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b
   [ $# -eq 4 ] || return 1
   local y=$(( ($2 + $4) / 2 )) x=$(( $3 - 10 ))
@@ -403,11 +485,11 @@ swipe_up; swipe_up; swipe_up;             shot screen-apps 1
 # then each kind in its colour (frame, disc and name) with how often and its rule
 launch --ez badges true;                    shot badges 4
 swipe_up; swipe_up; swipe_up;               shot badges-kinds 1
-# Trends (issue #374) on the demo's made up year before its five weeks: the card at the bottom of Sleep ("Your months"), Sleep
+# Trends (issue #374) on the demo's made up year before its five weeks: the card at the bottom of Sleep ("YOUR MONTHS", its caption), Sleep
 # by month (time asleep, about 25 minutes more from four months ago), one month touched (the chart found by its content
 # description, touched at 45 % of its width: the bubble and the full readout under the chart), steps by year (extra trends is
 # the group, trends_measure 10 steps, trends_period 2 years), and with only the watch the line for under two months
-launch --ei tab 1 --es card Your_months;    shot sleep-trends-card
+launch --ei tab 1 --es card YOUR_MONTHS;    shot sleep-trends-card
 launch --ei trends 0;                       shot trends-sleep 4
 if touch_desc "Trends chart" 45; then shot trends-touch 1
 else echo "::warning::issue #374 step: the Trends chart was not on screen to touch it"; shot trends-touch 1; fi
@@ -527,13 +609,16 @@ launch --ei tab 0 --ei main_device 0;       sleep 3
 launch --ei tab 0 --ei devices 1;           shot today-watch-only
 first_screen watch
 launch --ei tab 2 --ei devices 1;           shot ready-watch-only
+launch --ei tab 2 --ei devices 1 --es card CONTRIBUTORS; sleep 3
 scroll_to "CONTRIBUTORS" 6 || echo "::warning::issue #379 step: Contributors was not found on Ready with only the watch"
 shot ready-watch-only-parts 1
 launch --ei tab 1 --ei devices 1;           shot sleep-watch-only
+launch --ei tab 1 --ei devices 1 --es card CONTRIBUTORS; sleep 3
 scroll_to "CONTRIBUTORS" 10 || echo "::warning::issue #379 step: Contributors was not found on Sleep with only the watch"
 shot sleep-watch-only-parts 1
 launch --ei tab 1 --ei devices 1 --es card DETAILS; shot sleep-watch-only-details 2   # Total sleep first (issue #409)
 launch --ei tab 3 --ei devices 1;           shot activity-watch-only
+launch --ei tab 3 --ei devices 1 --es card CONTRIBUTORS; sleep 3
 scroll_to "CONTRIBUTORS" 14 || echo "::warning::issue #379 step: Contributors was not found on Activity with only the watch"
 shot activity-watch-only-parts 1
 # Only the phone (extra devices 2): Today with the Activity and Screen dials, Activity with the score from the phone's steps
@@ -547,7 +632,7 @@ launch --ei tab 3 --ei devices 2;           shot activity-phone-only
 # Activity with the phone's own steps. Back to Ring after, so the shots below stay as they were
 tap_desc_at() {  # $1 the start of a content description, $2 percent of its width from the left: taps there, in the middle
   local b
-  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
+  b=$(ui_dump | grep -o "content-desc=\"$1[^\"]*\"[^>]*bounds=\"[^\"]*\"" | grep -v -e 'tap to close"' -e 'tap to open"' | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+' | tr '\n' ' ')
   set -- $b $2
   [ $# -eq 5 ] || return 1
   local y=$(( ($2 + $4) / 2 ))
