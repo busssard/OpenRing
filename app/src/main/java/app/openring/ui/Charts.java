@@ -33,6 +33,62 @@ public final class Charts {
         return String.format(Locale.getDefault(), "%02d:%02d", z.getHour(), z.getMinute());
     }
 
+    // ------------------------------------------------------------------- life factor bands (issue #435)
+
+    /**
+     * Draws the logged times of life factors on a chart with time on its x axis: a band in the life colour from start to end
+     * (a thin line for a time without a length) between {@code top} and {@code bottom}, its name at the top. {@code x} maps a
+     * moment to its x. Display only.
+     */
+    static void drawLife(Canvas cv, Context c, java.util.List<app.openring.core.LifeTimes.Band> bands, float top, float bottom, float left, float right,
+            Paint fill, Paint label, X x) {
+        // the end of the last name drawn: a name that would overlap it is left out (the touch readout names every band)
+        float lastEnd = Float.NEGATIVE_INFINITY;
+        for (app.openring.core.LifeTimes.Band b : bands) {
+            float x0 = Math.max(left, x.at(b.start)), x1 = Math.min(right, x.at(b.stop));
+            if (x1 < left || x0 > right) continue;
+            if (b.hasLength && x1 - x0 >= Ui.dp(c, 2)) {
+                fill.setAlpha(46);
+                cv.drawRect(x0, top, x1, bottom, fill);
+            } else {
+                fill.setAlpha(200);
+                cv.drawRect(x0 - Ui.dp(c, 0.75f), top, x0 + Ui.dp(c, 0.75f), bottom, fill);
+            }
+            // the name inside the band when it fits, else from its start as far as the chart allows
+            float tw = label.measureText(b.name);
+            float lx = Math.max(left, Math.min(right - tw, x0 + Ui.dp(c, 2)));
+            if (lx < lastEnd + Ui.dp(c, 4)) continue;
+            cv.drawText(b.name, lx, top + label.getTextSize(), label);
+            lastEnd = lx + tw;
+        }
+    }
+
+    /** "\nSauna 19:00 to 19:45" for each band at moment {@code t} (a time without a length within {@code near} s), or "". */
+    static String lifeAt(java.util.List<app.openring.core.LifeTimes.Band> bands, double t, double near, ZoneId zone) {
+        StringBuilder b = new StringBuilder();
+        for (app.openring.core.LifeTimes.Band band : bands) if (band.holds(t, near)) b.append('\n').append(app.openring.core.LifeTimes.tip(band, zone));
+        return b.toString();
+    }
+
+    /** A moment's x on a chart. */
+    interface X {
+        float at(double t);
+    }
+
+    static Paint lifeFill() {
+        Paint p = new Paint();
+        p.setColor(Ui.LIFE);
+        return p;
+    }
+
+    static Paint lifeLabel(Context c) {
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setColor(Ui.LIFE);
+        p.setTextSize(Ui.dp(c, 9.5f));
+        p.setTypeface(Ui.MEDIUM);
+        return p;
+    }
+
     // ------------------------------------------------------------------- score ring
 
     public static final class ScoreRing extends View {
@@ -224,6 +280,17 @@ public final class Charts {
             return best;
         }
 
+        /** Logged times of life factors that reach into the night (issue #435): bands with their names, read by touch. */
+        private java.util.List<app.openring.core.LifeTimes.Band> life = java.util.Collections.emptyList();
+        private Paint lifeFill, lifeLabel;
+
+        public Hypnogram life(java.util.List<app.openring.core.LifeTimes.Band> bands) {
+            if (bands != null) life = bands;
+            lifeFill = lifeFill();
+            lifeLabel = lifeLabel(getContext());
+            return this;
+        }
+
         /** A thin orange line where the clocks changed during the night (issue #22). */
         public Hypnogram clockChange(double at) {
             markAt = at;
@@ -335,6 +402,15 @@ public final class Charts {
             }
             int n = stages.length;
             if (n == 0) return;
+            if (!life.isEmpty() && end > start) {
+                final float lw = labelW, ww = w;
+                drawLife(cv, getContext(), life, 0, axisBottom, labelW, w, lifeFill, lifeLabel, new X() {
+                    @Override
+                    public float at(double t) {
+                        return lw + (float) ((t - start) / (end - start)) * (ww - lw);
+                    }
+                });
+            }
             float cw = (w - labelW) / n;
             float rad = Math.min(rowH * 0.25f, Ui.dp(getContext(), 3));
             // depth line: joins each stage to the next, so the night reads as one descent and climb
@@ -381,6 +457,7 @@ public final class Charts {
                     long[] near = nearest(heart, start + (k + 0.5) * ep);
                     label += near == null ? "\nNo heart rate reading near this time" : "\nHeart rate " + near[1] + " bpm at " + clock(near[0]);
                 }
+                if (!life.isEmpty()) label += lifeAt(life, start + (k + 0.5) * ep, Math.max(ep, (end - start) / Math.max(1, w - labelW) * Ui.dp(getContext(), 6)), zone);
                 drawTip(cv, labelW + (k + 0.5f) * cw, Ui.dp(getContext(), 20), axisBottom, label);
             }
             // time axis
@@ -572,6 +649,24 @@ public final class Charts {
             return this;
         }
 
+        /** Logged times of life factors (issue #435): bands with their names, read by touch ("Sauna 19:00 to 19:45"). */
+        private java.util.List<app.openring.core.LifeTimes.Band> life = java.util.Collections.emptyList();
+        private Paint lifeFill, lifeLabel;
+
+        public LineChart life(java.util.List<app.openring.core.LifeTimes.Band> bands) {
+            if (bands != null) life = bands;
+            lifeFill = lifeFill();
+            lifeLabel = lifeLabel(getContext());
+            return this;
+        }
+
+        /** "\nSauna 19:00 to 19:45" for the bands under {@code x}, or "". */
+        private String lifeAtX(float x, float left, float w) {
+            if (life.isEmpty() || daily || !(to > from) || w <= left) return "";
+            double t = from + (x - left) / (w - left) * (to - from);
+            return lifeAt(life, t, (to - from) / (w - left) * Ui.dp(getContext(), 6), zone);
+        }
+
         /** Times left out because someone else wore the ring (issue #254), each {start, stop}: grey bands, read by touch. */
         private java.util.List<double[]> bands = java.util.Collections.emptyList();
         private final Paint bandPaint = new Paint();
@@ -631,6 +726,15 @@ public final class Charts {
             float left = Ui.dp(getContext(), 30), bottom = h - Ui.dp(getContext(), 18), top = Ui.dp(getContext(), 8);
             boolean banded = !bands.isEmpty() && !daily && to > from;
             if (banded) drawBands(cv, left, w, top, bottom);
+            if (!life.isEmpty() && !daily && to > from) {
+                final float lw = left, ww = w;
+                drawLife(cv, getContext(), life, top, bottom, left, w, lifeFill, lifeLabel, new X() {
+                    @Override
+                    public float at(double t) {
+                        return (float) (lw + (t - from) / (to - from) * (ww - lw));
+                    }
+                });
+            }
             if (series.size() == 0) {
                 txt.setTextAlign(Paint.Align.CENTER);
                 if (!banded) {
@@ -773,7 +877,7 @@ public final class Charts {
                 String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t)
                         : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, nearestMinute ? app.openring.core.analysis.WakeUps.roundMin(t) : t);
                 cv.drawCircle(xs[best], ys[best], Ui.dp(getContext(), 4.5f), dot);
-                drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit);
+                drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit + lifeAtX(scrubX, left, w));
             }
         }
 
@@ -809,6 +913,26 @@ public final class Charts {
         private String format = "%.0f";
         /** The readout of each bar when touched; null: the chart does not answer touch (as before). */
         private String[] tips;
+
+        /** Logged times of life factors on a day by the hour (issue #435): {start, end} clock hours (0 to 24) and their tips. */
+        private java.util.List<double[]> lifeHours = java.util.Collections.emptyList();
+        private java.util.List<String> lifeNames = java.util.Collections.emptyList(), lifeTips = java.util.Collections.emptyList();
+        private Paint lifeFill, lifeLabel;
+
+        /**
+         * Bands over the bars of a day by the hour (24 bars): {@code hours} each {start, end} as clock hours, {@code names} drawn
+         * at the top, {@code tips} added to the touch readout of the bars they cover.
+         */
+        public BarChart life(java.util.List<double[]> hours, java.util.List<String> names, java.util.List<String> tips) {
+            if (hours != null && names != null && tips != null && hours.size() == names.size() && hours.size() == tips.size()) {
+                lifeHours = hours;
+                lifeNames = names;
+                lifeTips = tips;
+            }
+            lifeFill = lifeFill();
+            lifeLabel = lifeLabel(getContext());
+            return this;
+        }
 
         /** Touch or slide along the bars to read each one (the watch's 7 and 30 day charts). */
         public BarChart tips(String[] t) {
@@ -861,6 +985,27 @@ public final class Charts {
             int n = values.length;
             float slot = w / Math.max(1, n);
             float bw = Math.min(slot * 0.56f, Ui.dp(getContext(), 22));
+            if (!lifeHours.isEmpty() && n == 24) {
+                // a name that would overlap the one before is left out (the touch readout names every band)
+                float lastEnd = Float.NEGATIVE_INFINITY;
+                for (int i = 0; i < lifeHours.size(); i++) {
+                    double[] hb = lifeHours.get(i);
+                    float x0 = (float) (hb[0] / 24 * w), x1 = (float) (hb[1] / 24 * w);
+                    if (x1 - x0 >= Ui.dp(getContext(), 2)) {
+                        lifeFill.setAlpha(46);
+                        cv.drawRect(x0, 0, x1, bottom, lifeFill);
+                    } else {
+                        lifeFill.setAlpha(200);
+                        cv.drawRect(x0 - Ui.dp(getContext(), 0.75f), 0, x0 + Ui.dp(getContext(), 0.75f), bottom, lifeFill);
+                    }
+                    String name = lifeNames.get(i);
+                    float tw = lifeLabel.measureText(name);
+                    float lx = Math.max(0, Math.min(w - tw, x0 + Ui.dp(getContext(), 2)));
+                    if (lx < lastEnd + Ui.dp(getContext(), 4)) continue;
+                    cv.drawText(name, lx, lifeLabel.getTextSize(), lifeLabel);
+                    lastEnd = lx + tw;
+                }
+            }
             for (int i = 0; i < n; i++) {
                 float cx = slot * i + slot / 2;
                 double v = values[i];
@@ -883,7 +1028,16 @@ public final class Charts {
             }
             if (tips != null && !Float.isNaN(scrubX) && n > 0) {
                 int i = (int) Math.max(0, Math.min(n - 1, Math.floor(scrubX / slot)));
-                if (i < tips.length && tips[i] != null) drawTip(cv, slot * i + slot / 2, Ui.dp(getContext(), 22), bottom, tips[i]);
+                if (i < tips.length && tips[i] != null) {
+                    StringBuilder t = new StringBuilder(tips[i]);
+                    // a band over this hour: its name and times on the next line (issue #435)
+                    for (int k = 0; n == 24 && k < lifeHours.size(); k++) {
+                        double[] hb = lifeHours.get(k);
+                        boolean in = hb[1] > hb[0] ? hb[0] < i + 1 && hb[1] > i : hb[0] >= i && hb[0] < i + 1;
+                        if (in) t.append('\n').append(lifeTips.get(k));
+                    }
+                    drawTip(cv, slot * i + slot / 2, Ui.dp(getContext(), 22), bottom, t.toString());
+                }
             }
         }
     }

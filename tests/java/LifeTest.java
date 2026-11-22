@@ -41,15 +41,22 @@ public class LifeTest {
         demo();
         sameName();
         restoreText();
+        times435();
+        chips435();
+        bands435();
+        during435();
+        demoTimes435();
         System.out.println("life: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
 
     static void keys() {
-        eq("nine fixed tags, in the order of the plan", LifeTags.BUILT_IN, Arrays.asList("meditation", "alcohol", "caffeine_late", "stress",
-                "hard_workout", "intimacy", "holiday", "illness", "travel"));
-        eq("the default chips: Meditation, Alcohol, Caffeine late, Stress, Hard workout", LifeTags.DEFAULT_CHIPS,
-                Arrays.asList(LifeTags.MEDITATION, LifeTags.ALCOHOL, LifeTags.CAFFEINE, LifeTags.STRESS, LifeTags.WORKOUT));
+        eq("eleven fixed tags, in the order of the plan, Sauna and Friends after Hard workout (#435)", LifeTags.BUILT_IN, Arrays.asList("meditation",
+                "alcohol", "caffeine_late", "stress", "hard_workout", "sauna", "friends", "intimacy", "holiday", "illness", "travel"));
+        eq("the default chips (#435): Meditation, Sauna, Friends, Alcohol, Stress, Hard workout", LifeTags.DEFAULT_CHIPS,
+                Arrays.asList(LifeTags.MEDITATION, LifeTags.SAUNA, LifeTags.FRIENDS, LifeTags.ALCOHOL, LifeTags.STRESS, LifeTags.WORKOUT));
+        eq("the names of Sauna and Friends", LifeTags.builtInName(LifeTags.SAUNA) + "|" + LifeTags.builtInName(LifeTags.FRIENDS), "Sauna|Friends");
+        check("Holiday is not a default chip (it is days, not a moment)", !LifeTags.DEFAULT_CHIPS.contains(LifeTags.HOLIDAY));
         check("Intimacy is offered but not a default chip", LifeTags.isBuiltIn(LifeTags.INTIMACY) && !LifeTags.DEFAULT_CHIPS.contains(LifeTags.INTIMACY));
         eq("names", LifeTags.builtInName(LifeTags.CAFFEINE) + "|" + LifeTags.builtInName(LifeTags.WORKOUT) + "|" + LifeTags.builtInName("x"),
                 "Caffeine late|Hard workout|null");
@@ -75,7 +82,7 @@ public class LifeTest {
     static void known() {
         LifeTags.Known none = new LifeTags.Known(null);
         eq("without choices: the default chips in their order", keys(none.chips()), LifeTags.DEFAULT_CHIPS);
-        eq("All factors lists the nine fixed ones", keys(none.loggable()), LifeTags.BUILT_IN);
+        eq("All factors lists the eleven fixed ones", keys(none.loggable()), LifeTags.BUILT_IN);
         List<LifeTags.Choice> ch = new ArrayList<LifeTags.Choice>();
         ch.add(new LifeTags.Choice("intimacy", null, 1, null, false));
         ch.add(new LifeTags.Choice("stress", null, 0, null, false));
@@ -85,12 +92,12 @@ public class LifeTest {
         ch.add(new LifeTags.Choice("bogus", "x", 1, null, false));
         ch.add(new LifeTags.Choice("own:4000", null, 1, null, false));
         LifeTags.Known k = new LifeTags.Known(ch);
-        eq("chips: Intimacy added by the person, Stress taken off, own tags on by default, a removed one never",
-                keys(k.chips()), Arrays.asList("meditation", "alcohol", "caffeine_late", "hard_workout", "intimacy", "own:1000", "own:2000"));
-        eq("own tags in the order they were made, removed ones kept for their days", new ArrayList<String>(k.all.keySet()).subList(9, 12),
+        eq("chips after a choice (#435): Intimacy put on, Stress off, a fixed tag the choice did not store stays off, own tags on by default, a removed one never",
+                keys(k.chips()), Arrays.asList("intimacy", "own:1000", "own:2000"));
+        eq("own tags in the order they were made, removed ones kept for their days", new ArrayList<String>(k.all.keySet()).subList(11, 14),
                 Arrays.asList("own:1000", "own:2000", "own:3000"));
         eq("a removed own tag cannot be logged, nor removed again", keys(k.own()), Arrays.asList("own:1000", "own:2000"));
-        check("a removed own tag is not in All factors", !keys(k.loggable()).contains("own:3000") && k.loggable().size() == 11);
+        check("a removed own tag is not in All factors", !keys(k.loggable()).contains("own:3000") && k.loggable().size() == 13);
         eq("names in the list order", k.names(Arrays.asList("own:2000", "alcohol", "own:9")), Arrays.asList("Alcohol", "Sauna", "Own factor"));
         eq("the name of an own tag nobody knows", k.name("own:9"), "Own factor");
         // the stored order wins
@@ -192,8 +199,9 @@ public class LifeTest {
         check("without the choice: no column", LifeTags.csvColumns(k, false, true).isEmpty());
         Map<String, String> on = LifeTags.csvColumns(k, true, false);
         eq("with the choice: every fixed tag but Intimacy, then own ones (removed ones too)", new ArrayList<String>(on.values()),
-                Arrays.asList("life_meditation", "life_alcohol", "life_caffeine_late", "life_stress", "life_hard_workout", "life_holiday", "life_illness",
-                        "life_travel", "life_own_late_dinner_", "life_own_late_dinner", "life_own_late_dinner__2", "life_own_sauna_\u00e0_deux"));
+                Arrays.asList("life_meditation", "life_alcohol", "life_caffeine_late", "life_stress", "life_hard_workout", "life_sauna", "life_friends",
+                        "life_holiday", "life_illness", "life_travel", "life_own_late_dinner_", "life_own_late_dinner", "life_own_late_dinner__2",
+                        "life_own_sauna_\u00e0_deux"));
         Map<String, String> both = LifeTags.csvColumns(k, true, true);
         check("Intimacy only with its own tick", both.containsKey(LifeTags.INTIMACY) && !on.containsKey(LifeTags.INTIMACY) && both.size() == on.size() + 1);
         boolean safe = true;
@@ -226,7 +234,7 @@ public class LifeTest {
         }
         eq("illness on 2 days, holiday on 4", illness + " " + holiday, "2 4");
         eq("every fixed tag but Intimacy shows up", kinds, new HashSet<String>(Arrays.asList(LifeTags.MEDITATION, LifeTags.ALCOHOL, LifeTags.CAFFEINE,
-                LifeTags.STRESS, LifeTags.WORKOUT, LifeTags.HOLIDAY, LifeTags.ILLNESS, LifeTags.TRAVEL)));
+                LifeTags.STRESS, LifeTags.WORKOUT, LifeTags.SAUNA, LifeTags.FRIENDS, LifeTags.HOLIDAY, LifeTags.ILLNESS, LifeTags.TRAVEL)));
         int spanDays = 0;
         for (LocalDate[] s : LifeTags.demoSpans(TODAY, cold)) spanDays += LifeTags.span(s[0], s[1]).size();
         eq("the demo's two spans cover the illness and holiday days", spanDays, illness + holiday);
@@ -252,7 +260,7 @@ public class LifeTest {
         ch.add(new LifeTags.Choice("own:2000", "Sauna visit", null, null, false));
         ch.add(new LifeTags.Choice("own:8000", null, 1, null, false));
         LifeTags.Known k = new LifeTags.Known(ch);
-        eq("one factor per name: the older key, the removed ones apart, another spelling apart", new ArrayList<String>(k.all.keySet()).subList(9, k.all.size()),
+        eq("one factor per name: the older key, the removed ones apart, another spelling apart", new ArrayList<String>(k.all.keySet()).subList(11, k.all.size()),
                 Arrays.asList("own:500", "own:1000", "own:2000"));
         eq("the older key's name and its removal state", k.all.get("own:1000").toString() + " | " + k.all.get("own:500").toString(),
                 "own:1000=Sauna chip | own:500=sauna removed");
@@ -263,7 +271,7 @@ public class LifeTest {
         check("no aliases for a key alone with its name or a fixed tag", k.aliases("own:2000").isEmpty() && k.aliases("alcohol").isEmpty() && k.aliases("own:5000").isEmpty());
         eq("the name of an alias is its factor's", k.name("own:7000") + "|" + k.name("own:600"), "Sauna|sauna");
         eq("one chip, on the card when any key of it is, in the older key's place", keys(k.chips()),
-                Arrays.asList("own:1000", "meditation", "alcohol", "caffeine_late", "stress", "hard_workout", "own:2000"));
+                Arrays.asList("own:1000", "meditation", "friends", "alcohol", "stress", "hard_workout", "own:2000")); // the own Sauna in force: no fixed Sauna chip (#435)
         eq("one entry in All factors and in Remove one of your own", keys(k.own()), Arrays.asList("own:1000", "own:2000"));
         eq("names: a day with both keys names it once", k.names(Arrays.asList("own:5000", "own:1000", "alcohol")), Arrays.asList("Alcohol", "Sauna"));
         Map<LocalDate, List<String>> days = new TreeMap<LocalDate, List<String>>();
@@ -278,7 +286,7 @@ public class LifeTest {
         check("fold of nothing", k.fold(null).isEmpty());
         eq("the month's counts: the days of both keys, a day once", LifeTags.monthLine(f, YearMonth.of(2026, 11), k),
                 "This month: Sauna on 3 days, Alcohol on 1 day, Stress on 1 day, sauna on 1 day, Sauna visit on 1 day.");
-        eq("CSV: one column per factor", new ArrayList<String>(LifeTags.csvColumns(k, true, false).values()).subList(8, 11),
+        eq("CSV: one column per factor", new ArrayList<String>(LifeTags.csvColumns(k, true, false).values()).subList(10, 13),
                 Arrays.asList("life_own_sauna", "life_own_sauna_2", "life_own_sauna_visit"));
         // alone, each is its own factor as before
         List<LifeTags.Choice> one = new ArrayList<LifeTags.Choice>();
@@ -286,6 +294,206 @@ public class LifeTest {
         LifeTags.Known k1 = new LifeTags.Known(one);
         check("an own tag alone with its name: its own key, its own choice", k1.key("own:5000").equals("own:5000") && !k1.all.get("own:5000").chip
                 && k1.aliases("own:5000").isEmpty());
+    }
+
+    // ---------------------------------------------------------------- issue #435: when and how long
+
+    /** Which tags take a time, the lengths per tag, the start the sheet suggests, the stored "HH:MM", the texts. */
+    static void times435() {
+        for (String k : new String[] {LifeTags.SAUNA, LifeTags.MEDITATION, LifeTags.WORKOUT, LifeTags.INTIMACY, LifeTags.FRIENDS, LifeTags.ALCOHOL,
+            LifeTags.CAFFEINE, "own:1700000000000"}) {
+            check("#435 takes a time: " + k, app.openring.core.LifeTimes.timed(k));
+        }
+        for (String k : new String[] {LifeTags.STRESS, LifeTags.HOLIDAY, LifeTags.ILLNESS, LifeTags.TRAVEL, "wine", null}) {
+            check("#435 a day, no time: " + k, !app.openring.core.LifeTimes.timed(k));
+        }
+        eq("#435 the lengths per tag", Arrays.toString(app.openring.core.LifeTimes.lengths(LifeTags.SAUNA)) + Arrays.toString(app.openring.core.LifeTimes.lengths(LifeTags.MEDITATION))
+                + Arrays.toString(app.openring.core.LifeTimes.lengths(LifeTags.WORKOUT)) + Arrays.toString(app.openring.core.LifeTimes.lengths(LifeTags.INTIMACY))
+                + Arrays.toString(app.openring.core.LifeTimes.lengths(LifeTags.FRIENDS)) + Arrays.toString(app.openring.core.LifeTimes.lengths("own:5")),
+                "[15, 30, 45, 60][10, 20, 30][30, 60, 90][15, 30, 60][60, 120, 180, 300][15, 30, 60, 120]");
+        check("#435 Alcohol and Caffeine late: a time only, no length", app.openring.core.LifeTimes.lengths(LifeTags.ALCOHOL).length == 0
+                && app.openring.core.LifeTimes.lengths(LifeTags.CAFFEINE).length == 0 && app.openring.core.LifeTimes.usual(LifeTags.ALCOHOL) == 0);
+        boolean usualOffered = true;
+        for (String k : new String[] {LifeTags.SAUNA, LifeTags.MEDITATION, LifeTags.WORKOUT, LifeTags.INTIMACY, LifeTags.FRIENDS, "own:5"}) {
+            boolean in = false;
+            for (int m : app.openring.core.LifeTimes.lengths(k)) in |= m == app.openring.core.LifeTimes.usual(k);
+            usualOffered &= in;
+        }
+        check("#435 the usual length of each tag is one of its chips", usualOffered);
+        eq("#435 length labels", app.openring.core.LifeTimes.lengthLabel(15) + "|" + app.openring.core.LifeTimes.lengthLabel(60) + "|"
+                + app.openring.core.LifeTimes.lengthLabel(90) + "|" + app.openring.core.LifeTimes.lengthLabel(300), "15 min|1 h|90 min|5 h");
+        eq("#435 the sheet starts at now minus the usual length, down to 5 minutes", app.openring.core.LifeTimes.startFor(LifeTags.SAUNA, 19 * 60 + 47), 19 * 60 + 15);
+        eq("#435 Friends: two hours back", app.openring.core.LifeTimes.startFor(LifeTags.FRIENDS, 22 * 60 + 3), 20 * 60);
+        eq("#435 Alcohol: now", app.openring.core.LifeTimes.startFor(LifeTags.ALCOHOL, 21 * 60 + 34), 21 * 60 + 30);
+        eq("#435 just after midnight: never before 00:00 of the day", app.openring.core.LifeTimes.startFor(LifeTags.WORKOUT, 20), 0);
+        eq("#435 stored as HH:MM", app.openring.core.LifeTimes.clock(19 * 60 + 5) + " " + app.openring.core.LifeTimes.clock(0) + " " + app.openring.core.LifeTimes.clock(1439), "19:05 00:00 23:59");
+        eq("#435 read back", app.openring.core.LifeTimes.parse("19:05") + " " + app.openring.core.LifeTimes.parse("00:00") + " " + app.openring.core.LifeTimes.parse("23:59"), "1145 0 1439");
+        for (String bad : new String[] {null, "", "24:00", "7:05", "19:60", "19:05:00", "ab:cd", " 19:05"}) {
+            check("#435 not a time: " + bad, app.openring.core.LifeTimes.parse(bad) == -1);
+        }
+        check("#435 lengths that can be stored: none, 1 minute to a day", app.openring.core.LifeTimes.validLength(null) && app.openring.core.LifeTimes.validLength(1)
+                && app.openring.core.LifeTimes.validLength(1440) && !app.openring.core.LifeTimes.validLength(0) && !app.openring.core.LifeTimes.validLength(1441)
+                && !app.openring.core.LifeTimes.validLength(-30));
+        eq("#435 the chip's second line", app.openring.core.LifeTimes.chipLine("19:00", 45) + "|" + app.openring.core.LifeTimes.chipLine("20:30", null) + "|"
+                + app.openring.core.LifeTimes.chipLine(null, 45), "19:00, 45 min|20:30|null");
+        eq("#435 after Save", app.openring.core.LifeTimes.savedLine("Sauna", LocalDate.of(2026, 11, 21), "19:00", 45, 2026, EN), "Sauna on 21 Nov: from 19:00 for 45 min.");
+        eq("#435 after Save, a time only", app.openring.core.LifeTimes.savedLine("Alcohol", LocalDate.of(2026, 11, 21), "20:30", null, 2026, EN), "Alcohol on 21 Nov: at 20:30.");
+        eq("#435 after Without a time", app.openring.core.LifeTimes.savedLine("Sauna", LocalDate.of(2026, 11, 21), null, null, 2026, EN), "Sauna on 21 Nov: without a time.");
+        eq("#435 the sheet's texts", app.openring.core.LifeTimes.TITLE + "|" + app.openring.core.LifeTimes.FROM + "|" + app.openring.core.LifeTimes.HOW_LONG + "|"
+                + app.openring.core.LifeTimes.SAVE + "|" + app.openring.core.LifeTimes.WITHOUT, "When and how long?|From|How long|Save|Without a time");
+        eq("#435 the All factors hint", app.openring.core.LifeTimes.HOLD_HINT, "Hold a chip to add when and how long. That shows it on the day's charts.");
+        eq("#435 not worn", app.openring.core.LifeTimes.NOT_WORN, "Not worn during");
+        for (String t : new String[] {app.openring.core.LifeTimes.TITLE, app.openring.core.LifeTimes.HOLD_HINT, app.openring.core.LifeTimes.TIME_ONLY,
+            app.openring.core.LifeTimes.NOT_WORN, app.openring.core.LifeTimes.savedLine("Sauna", TODAY, "19:00", 45, 2026, EN)}) {
+            check("#435 plain, no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014") && !t.contains("--"));
+        }
+    }
+
+    /**
+     * The default chips for a new person; a person who chose keeps exactly the chosen chips (Sauna and Friends, which the choice
+     * did not know, stay off); an own "Sauna" made before stays next to the built in one, a new one with that name is refused.
+     */
+    static void chips435() {
+        eq("#435 a new person: Meditation, Sauna, Friends, Alcohol, Stress, Hard workout, in this order", keys(new LifeTags.Known(null).chips()),
+                Arrays.asList("meditation", "sauna", "friends", "alcohol", "stress", "hard_workout"));
+        // what Choose the chips on the card stored before #435: every fixed tag of then, the chosen ones with their place
+        List<LifeTags.Choice> chose = new ArrayList<LifeTags.Choice>();
+        String[] old = {"meditation", "alcohol", "caffeine_late", "stress", "hard_workout", "intimacy", "holiday", "illness", "travel"};
+        for (String k : old) {
+            Integer ord = k.equals("caffeine_late") ? (Integer) 0 : k.equals("travel") ? (Integer) 1 : null;
+            chose.add(new LifeTags.Choice(k, null, ord != null ? 1 : 0, ord, false));
+        }
+        eq("#435 a person who chose: exactly the chosen chips in their order, Sauna and Friends not added", keys(new LifeTags.Known(chose).chips()),
+                Arrays.asList("caffeine_late", "travel"));
+        // the old defaults kept as they were (never chosen): the new defaults
+        List<LifeTags.Choice> own = new ArrayList<LifeTags.Choice>();
+        own.add(new LifeTags.Choice("own:1600000000000", "Sauna", null, null, false));
+        own.add(new LifeTags.Choice("own:1600000000001", "friends", 0, null, false));
+        LifeTags.Known k = new LifeTags.Known(own);
+        check("#435 an own Sauna made before stays, next to the built in one: two keys, both named Sauna, both in All factors", k.all.containsKey("sauna")
+                && k.all.containsKey("own:1600000000000") && k.name("sauna").equals("Sauna") && k.name("own:1600000000000").equals("Sauna")
+                && keys(k.loggable()).contains("sauna") && keys(k.loggable()).contains("own:1600000000000") && k.key("own:1600000000000").equals("own:1600000000000"));
+        eq("#435 an own Sauna and friends in force: the fixed Sauna and Friends are no default chips, never two chips with one name (review of #444)",
+                keys(k.chips()), Arrays.asList("meditation", "alcohol", "stress", "hard_workout", "own:1600000000000"));
+        List<LifeTags.Choice> gone = new ArrayList<LifeTags.Choice>();
+        gone.add(new LifeTags.Choice("own:1600000000000", "Sauna", null, null, true));
+        eq("#435 a removed own Sauna: the fixed Sauna is a default chip again", keys(new LifeTags.Known(gone).chips()), LifeTags.DEFAULT_CHIPS);
+        List<LifeTags.Choice> chosen = new ArrayList<LifeTags.Choice>(own);
+        chosen.add(new LifeTags.Choice("sauna", null, 1, 0, false));
+        check("#435 the fixed Sauna put on the card by the person shows next to the own one", keys(new LifeTags.Known(chosen).chips()).contains("sauna"));
+        check("#435 a new own tag named Sauna or Friends (any case) is refused, the built in one is there", LifeTags.cleanName("Sauna") == null
+                && LifeTags.cleanName(" FRIENDS ") == null && LifeTags.cleanName("Sauna visit").equals("Sauna visit"));
+    }
+
+    static final ZoneId ZURICH = ZoneId.of("Europe/Zurich");
+
+    /** The band of a logged time: across midnight, across both clock changes, by the hour of a day, and what a touch reads. */
+    static void bands435() {
+        LocalDate d = LocalDate.of(2026, 11, 20);
+        app.openring.core.LifeTimes.Band b = app.openring.core.LifeTimes.band(d, LifeTags.SAUNA, "Sauna", "19:00", 45, ZURICH);
+        eq("#435 a sauna at 19:00 for 45 minutes: from 19:00 to 19:45 that day", (long) b.start + " " + (long) b.stop,
+                d.atTime(19, 0).atZone(ZURICH).toEpochSecond() + " " + d.atTime(19, 45).atZone(ZURICH).toEpochSecond());
+        eq("#435 the touch reads", app.openring.core.LifeTimes.tip(b, ZURICH), "Sauna 19:00 to 19:45");
+        app.openring.core.LifeTimes.Band late = app.openring.core.LifeTimes.band(d, LifeTags.SAUNA, "Sauna", "23:30", 90, ZURICH);
+        eq("#435 23:30 for 90 minutes reaches into the next day, to 01:00", app.openring.core.LifeTimes.tip(late, ZURICH) + " "
+                + ((long) late.stop == d.plusDays(1).atTime(1, 0).atZone(ZURICH).toEpochSecond()), "Sauna 23:30 to 01:00 true");
+        double ds = d.atStartOfDay(ZURICH).toEpochSecond(), de = d.plusDays(1).atStartOfDay(ZURICH).toEpochSecond(), de2 = d.plusDays(2).atStartOfDay(ZURICH).toEpochSecond();
+        List<app.openring.core.LifeTimes.Entry> es = new ArrayList<app.openring.core.LifeTimes.Entry>();
+        es.add(new app.openring.core.LifeTimes.Entry(d, LifeTags.SAUNA, "23:30", 90));
+        es.add(new app.openring.core.LifeTimes.Entry(d, LifeTags.ALCOHOL, "20:30", null));
+        es.add(new app.openring.core.LifeTimes.Entry(d.minusDays(1), LifeTags.MEDITATION, "07:00", 20));
+        eq("#435 the day's bands, by start", app.openring.core.LifeTimes.bands(es, ds, de, ZURICH, null).toString().replaceAll("[0-9]", ""), "[Alcohol  , Sauna  ]");
+        eq("#435 the next day: the sauna's last hour too", app.openring.core.LifeTimes.bands(es, de, de2, ZURICH, null).size(), 1);
+        eq("#435 by the hour: 23.5 to 24 that day, 0 to 1 the next", Arrays.toString(app.openring.core.LifeTimes.hours(late, d, ZURICH)) + " "
+                + Arrays.toString(app.openring.core.LifeTimes.hours(late, d.plusDays(1), ZURICH)) + " " + app.openring.core.LifeTimes.hours(late, d.plusDays(2), ZURICH),
+                "[23.5, 24.0] [0.0, 1.0] null");
+        app.openring.core.LifeTimes.Band mark = app.openring.core.LifeTimes.band(d, LifeTags.ALCOHOL, "Alcohol", "20:30", null, ZURICH);
+        eq("#435 a time without a length: a mark, read as at", app.openring.core.LifeTimes.tip(mark, ZURICH) + " " + (mark.start == mark.stop) + " "
+                + Arrays.toString(app.openring.core.LifeTimes.hours(mark, d, ZURICH)), "Alcohol at 20:30 true [20.5, 20.5]");
+        check("#435 a mark holds a moment near it, a band its own time", mark.holds(mark.start + 100, 120) && !mark.holds(mark.start + 200, 120)
+                && b.holds(b.start + 600, 0) && !b.holds(b.stop + 1, 0));
+        // an own tag with the same name as an older one: drawn and named as that one
+        List<LifeTags.Choice> ch = new ArrayList<LifeTags.Choice>();
+        ch.add(new LifeTags.Choice("own:1000", "Cold plunge", 1, null, false));
+        ch.add(new LifeTags.Choice("own:2000", "cold plunge", 1, null, false));
+        List<app.openring.core.LifeTimes.Entry> alias = new ArrayList<app.openring.core.LifeTimes.Entry>();
+        alias.add(new app.openring.core.LifeTimes.Entry(d, "own:2000", "07:10", 15));
+        LifeTags.Known k = new LifeTags.Known(ch);
+        app.openring.core.LifeTimes.Band ab = app.openring.core.LifeTimes.bands(alias, ds, de, ZURICH, k).get(0);
+        check("#435 an alias's time is drawn as its factor (the older key, its name)", ab.key.equals("own:1000") && ab.name.equals("Cold plunge")
+                && app.openring.core.LifeTimes.find(alias, d, "own:1000", k) != null && app.openring.core.LifeTimes.find(alias, d, "own:1000", null) == null);
+        // the clocks go back in Zurich on 25 Oct 2026 (03:00 becomes 02:00): 4 real hours from 23:30 end at 02:30
+        LocalDate back = LocalDate.of(2026, 10, 24);
+        app.openring.core.LifeTimes.Band over = app.openring.core.LifeTimes.band(back, LifeTags.FRIENDS, "Friends", "23:30", 240, ZURICH);
+        eq("#435 across the night the clocks go back: 4 real hours, 23:30 to 02:30", app.openring.core.LifeTimes.tip(over, ZURICH) + " " + (over.stop - over.start), "Friends 23:30 to 02:30 14400.0");
+        app.openring.core.LifeTimes.Band eve = app.openring.core.LifeTimes.band(back.plusDays(1), LifeTags.SAUNA, "Sauna", "19:00", 45, ZURICH);
+        eq("#435 on the 25 hour day the evening is drawn at its local time", (long) eve.start, LocalDate.of(2026, 10, 25).atTime(19, 0).atZone(ZURICH).toEpochSecond());
+        eq("#435 by the hour on the 25 hour day: the clock hours", Arrays.toString(app.openring.core.LifeTimes.hours(eve, back.plusDays(1), ZURICH)), "[19.0, 19.75]");
+        // the clocks go forward on 28 Mar 2027 (02:00 becomes 03:00): 60 real minutes from 01:30 end at 03:30; 02:30 does not exist
+        LocalDate fwd = LocalDate.of(2027, 3, 28);
+        app.openring.core.LifeTimes.Band spring = app.openring.core.LifeTimes.band(fwd, LifeTags.INTIMACY, "Intimacy", "01:30", 60, ZURICH);
+        eq("#435 across the night the clocks go forward: 60 real minutes, 01:30 to 03:30", app.openring.core.LifeTimes.tip(spring, ZURICH), "Intimacy 01:30 to 03:30");
+        app.openring.core.LifeTimes.Band skipped = app.openring.core.LifeTimes.band(fwd, LifeTags.SAUNA, "Sauna", "02:30", 30, ZURICH);
+        eq("#435 a clock time the clocks skip is read after the skip, as the clock shows it", app.openring.core.LifeTimes.tip(skipped, ZURICH), "Sauna 03:30 to 04:00");
+        app.openring.core.LifeTimes.Band twice = app.openring.core.LifeTimes.band(LocalDate.of(2026, 10, 25), LifeTags.SAUNA, "Sauna", "02:30", 30, ZURICH);
+        eq("#435 a clock time that happens twice is the first one", (long) twice.start, java.time.ZonedDateTime.of(2026, 10, 25, 2, 30, 0, 0, ZURICH).withEarlierOffsetAtOverlap().toEpochSecond());
+        check("#435 no band for a time that is not one", app.openring.core.LifeTimes.band(d, LifeTags.SAUNA, "Sauna", "25:00", 30, ZURICH) == null
+                && app.openring.core.LifeTimes.band(d, LifeTags.SAUNA, "Sauna", "19:00", 0, ZURICH) == null && app.openring.core.LifeTimes.band(null, LifeTags.SAUNA, "Sauna", "19:00", 30, ZURICH) == null);
+    }
+
+    /** What the heart rate line measured during a band, and the line under the chart. */
+    static void during435() {
+        LocalDate d = LocalDate.of(2026, 11, 20);
+        double ds = d.atStartOfDay(ZURICH).toEpochSecond();
+        app.openring.core.analysis.TS line = new app.openring.core.analysis.TS();
+        // quarter hour points in the middle of their quarter hour, 72 all day, 104 and 110 at 19:07:30 and 19:22:30
+        for (int q = 0; q < 96; q++) {
+            double t = ds + q * 900 + 450;
+            line.add(t, q == 76 ? 104 : q == 77 ? 110 : q == 78 ? 98 : 72);
+        }
+        app.openring.core.LifeTimes.Band b = app.openring.core.LifeTimes.band(d, LifeTags.SAUNA, "Sauna", "19:00", 45, ZURICH);
+        double v = app.openring.core.LifeTimes.during(line, b, 900);
+        eq("#435 the three quarter hours of 19:00 to 19:45", Math.round(v), 104L);
+        eq("#435 the line under the chart", app.openring.core.LifeTimes.duringLine(b, v, 72.4, ZURICH), "Sauna 19:00 to 19:45. Heart rate during: 104 on average (your day: 72).");
+        app.openring.core.LifeTimes.Band short15 = app.openring.core.LifeTimes.band(d, LifeTags.SAUNA, "Sauna", "19:20", 15, ZURICH);
+        eq("#435 a band shorter than the points: the points it reaches into (19:15 and 19:30)", Math.round(app.openring.core.LifeTimes.during(line, short15, 900)), 104L);
+        app.openring.core.LifeTimes.Band mark = app.openring.core.LifeTimes.band(d, LifeTags.ALCOHOL, "Alcohol", "19:20", null, ZURICH);
+        eq("#435 a time without a length: the point whose quarter hour holds it", app.openring.core.LifeTimes.during(line, mark, 900), 110.0);
+        app.openring.core.analysis.TS gap = new app.openring.core.analysis.TS();
+        gap.add(ds + 8 * 3600, 70);
+        gap.add(ds + 22 * 3600, 66);
+        double none = app.openring.core.LifeTimes.during(gap, b, 900);
+        check("#435 no point during the band: not worn", Double.isNaN(none) && Double.isNaN(app.openring.core.LifeTimes.during(null, b, 900)));
+        eq("#435 not worn during", app.openring.core.LifeTimes.duringLine(b, none, 68, ZURICH), "Sauna 19:00 to 19:45. Not worn during.");
+        eq("#435 without the day's average: no bracket", app.openring.core.LifeTimes.duringLine(b, 100.4, Double.NaN, ZURICH), "Sauna 19:00 to 19:45. Heart rate during: 100 on average.");
+        app.openring.core.analysis.TS withNaN = new app.openring.core.analysis.TS();
+        withNaN.add(ds + 19 * 3600 + 450, Double.NaN);
+        check("#435 a point without a value does not count", Double.isNaN(app.openring.core.LifeTimes.during(withNaN, b, 900)));
+        for (String t : new String[] {app.openring.core.LifeTimes.duringLine(b, v, 72, ZURICH), app.openring.core.LifeTimes.duringLine(b, none, 72, ZURICH),
+            app.openring.ui.Explain.LIFE_TIMES, app.openring.ui.Explain.LIFE_DURING}) {
+            check("#435 plain, no dash, no cause: " + t, !t.contains(" - ") && !t.contains("\u2013") && !t.contains("\u2014") && !t.contains("--")
+                    && !t.toLowerCase(Locale.ROOT).contains("caused") && !t.toLowerCase(Locale.ROOT).contains("because"));
+        }
+    }
+
+    /** The demo's times: each on a day the demo gives that tag, a time and a length the sheet offers, never Intimacy. */
+    static void demoTimes435() {
+        TreeMap<LocalDate, List<String>> days = LifeTags.demo(TODAY, 35, 15);
+        boolean ok = true;
+        for (app.openring.core.LifeTimes.Entry e : app.openring.core.LifeTimes.demo(TODAY)) {
+            ok &= days.containsKey(e.day) && days.get(e.day).contains(e.key) && app.openring.core.LifeTimes.timed(e.key)
+                    && app.openring.core.LifeTimes.parse(e.time) >= 0 && e.day.isBefore(TODAY) && !e.key.equals(LifeTags.INTIMACY);
+            if (e.minutes != null) {
+                boolean offered = false;
+                for (int m : app.openring.core.LifeTimes.lengths(e.key)) offered |= m == e.minutes;
+                ok &= offered;
+            } else {
+                ok &= app.openring.core.LifeTimes.lengths(e.key).length == 0;
+            }
+        }
+        check("#435 the demo's times lie on its own tagged days, past days only, with lengths the sheet offers", ok);
+        eq("#435 yesterday's sauna in the evening", app.openring.core.LifeTimes.find(app.openring.core.LifeTimes.demo(TODAY), TODAY.minusDays(1), LifeTags.SAUNA, null).toString(),
+                TODAY.minusDays(1) + " sauna 19:00 45");
     }
 
     static final String RESTORE_TEXT = "Period days and life factors you logged or removed on this phone stay as they are.";

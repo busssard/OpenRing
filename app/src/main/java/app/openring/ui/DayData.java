@@ -56,6 +56,8 @@ public final class DayData {
     public app.openring.core.LifeTags.Known life;
     /** Every day with a life factor in force, its tags by key. A few thousand rows even after years, read in the background. */
     public final java.util.TreeMap<LocalDate, List<String>> lifeDays = new java.util.TreeMap<LocalDate, List<String>>();
+    /** The logged times of the life factors (issue #435): each day in force with a time, for the bands on the day's charts. */
+    public final List<app.openring.core.LifeTimes.Entry> lifeTimes = new ArrayList<app.openring.core.LifeTimes.Entry>();
     /** False when the life factors could not be read (the cards say so; the screens' other numbers are unaffected). */
     public boolean lifeOk = true;
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
@@ -428,11 +430,13 @@ public final class DayData {
             // life factors (issue #292): the person's own tags, the same in every file; demo mode reads the demo's
             d.life = app.openring.data.LifeLog.known(db);
             d.lifeDays.putAll(app.openring.data.LifeLog.all(db));
+            d.lifeTimes.addAll(app.openring.data.LifeLog.times(db));
         } catch (RuntimeException e) {
             // the cards say they could not be read. Not through failed(): the Data check names nothing of the tags, and the log
             // gets the error's kind only, never a tag, a name or a date
             d.life = null;
             d.lifeDays.clear();
+            d.lifeTimes.clear();
             d.lifeOk = false;
             app.openring.ble.RingManager.get(c).log("day load: the life factors could not be read: " + e.getClass().getSimpleName());
         }

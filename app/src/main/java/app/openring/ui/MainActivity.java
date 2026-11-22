@@ -342,7 +342,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * (boolean, demo mode only) opens the entry of a night by hand for last night with two wake marks (issue #427),
      * sounds (string, demo mode only: consent, test or list) opens the sleep sounds' consent, the microphone test's made up
      * result or the clip list of the demo's night (issue #380; demo mode never records), sounds_start (boolean, the bedtime
-     * notification's Start) starts listening.
+     * notification's Start) starts listening,
+     * life_time (boolean, demo mode only) opens "When and how long?" for Sauna on Today's row (issue #435; nothing is saved).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -398,6 +399,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("battery_open", false) && Prefs.of(this).demo()) BatteryViews.open[0] = true;
         // the life factors row's More opened on Today (issue #292), for the screen test, demo mode only
         if (i.getBooleanExtra("life_more", false) && Prefs.of(this).demo()) LifeCard.moreOpen[0] = true;
+        // "When and how long?" opened on Today's row (issue #435), for the screen test, demo mode only; nothing saved without a tap
+        LifeCard.timePending = i.getBooleanExtra("life_time", false) && Prefs.of(this).demo();
         // Body's life factors month view with a past day read (issue #292): days before today, demo mode only
         LifeCard.readPending = Prefs.of(this).demo() ? Math.max(-1, i.getIntExtra("life_read", -1)) : -1;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
@@ -405,8 +408,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)
                     .putExtra("demo_correct", i.getBooleanExtra("drip_correct", false)));
         }
-        // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
-        // demo mode, which never touches Bluetooth
+        // screen test: the Device check with its made up scan, with watch_report the made up watch's report (issue #251) and
+        // with device_ring the made up ring's (issue #418); only in demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch_data", false) && Prefs.of(this).demo()) startActivity(new Intent(this, WatchPageActivity.class));
         // screen test: the main device (issue #251), demo mode only; the same choice as the chips in Settings
         if (i.hasExtra("main_device") && Prefs.of(this).demo()) Prefs.of(this).setMainDevice(i.getIntExtra("main_device", 0));
@@ -429,7 +432,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     .putExtra("demo_hands", i.getBooleanExtra("watch_setup_hands", false)));
         }
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
-            startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false)));
+            startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false))
+                    .putExtra("demo_ring", i.getBooleanExtra("device_ring", false))); // the made up QRing ring's result (issue #418)
         }
         // the bedtime notification's Start (issue #380): listening starts from here, a screen in front, as Android requires
         if (i.getBooleanExtra("sounds_start", false)) {

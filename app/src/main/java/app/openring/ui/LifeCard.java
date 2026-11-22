@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 
 import app.openring.core.LifeTags;
+import app.openring.core.LifeTimes;
 import app.openring.data.Db;
 import app.openring.data.LifeLog;
 import app.openring.data.Prefs;
@@ -49,6 +50,11 @@ final class LifeCard {
      * with tags whatever the weekday or month CI runs on. -1: none.
      */
     static int readPending = -1;
+    /**
+     * Screen test (extra {@code life_time}, demo mode only): "When and how long?" opens once Today's row is built, for Sauna (or
+     * the first chip that takes a time) on the day shown. Nothing is saved without a tap.
+     */
+    static boolean timePending;
 
     /**
      * What one change wrote, so Undo can put every row back in the same file. It names the database it wrote into: after a
@@ -109,7 +115,7 @@ final class LifeCard {
         List<String> on = d.lifeDays.get(day);
         if (on == null) on = new ArrayList<String>();
         EqualGrid grid = new EqualGrid(c, 3, 6);
-        for (LifeTags.Tag t : d.life.chips()) grid.addView(chip(c, nav, day, t, on.contains(t.key)));
+        for (LifeTags.Tag t : d.life.chips()) grid.addView(cell(c, nav, d, day, t, on.contains(t.key)));
         final TextView more = chipView(c, moreOpen[0] ? LifeTags.LESS : LifeTags.MORE, false);
         more.setContentDescription(moreOpen[0] ? "Fewer life factors" : "More life factors and choices");
         more.setOnClickListener(new View.OnClickListener() {
@@ -128,20 +134,101 @@ final class LifeCard {
         card.addView(note);
         undoRow(c, card, nav);
         if (moreOpen[0]) more(c, card, d, day, on, nav);
+        if (timePending) {
+            timePending = false;
+            LifeTags.Tag pick = null;
+            for (LifeTags.Tag t : d.life.chips()) {
+                if (LifeTags.SAUNA.equals(t.key)) pick = t;
+                else if (pick == null && LifeTimes.timed(t.key)) pick = t;
+            }
+            if (pick != null) {
+                final LifeTags.Tag t = pick;
+                card.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (c instanceof android.app.Activity && ((android.app.Activity) c).isFinishing()) return;
+                        sheet(c, nav, d, day, t);
+                    }
+                });
+            }
+        }
         return card;
     }
 
-    /** One chip: filled in the life colour when the day has the tag; a tap adds it or takes it away. */
-    static TextView chip(final Context c, final Pages.Nav nav, final LocalDate day, final LifeTags.Tag t, final boolean on) {
-        TextView b = chipView(c, t.name, on);
-        b.setContentDescription(t.name + (on ? ", logged, tap to take away" : ", tap to log"));
+    /**
+     * One chip: filled in the life colour when the day has the tag; a tap adds it or takes it away. A tag of a moment (issue
+     * #435) also opens "When and how long?" on a long press; a logged one shows its time on a second line.
+     */
+    static TextView chip(final Context c, final Pages.Nav nav, final DayData d, final LocalDate day, final LifeTags.Tag t, final boolean on) {
+        final boolean timed = LifeTimes.timed(t.key);
+        LifeTimes.Entry at = on && timed ? LifeTimes.find(d.lifeTimes, day, t.key, d.life) : null;
+        String when = at == null ? null : LifeTimes.chipLine(at.time, at.minutes);
+        TextView b = chipView(c, when == null ? t.name : t.name + "\n" + when, on);
+        b.setContentDescription(t.name + (when == null ? "" : ", " + when) + (on ? ", logged, tap to take away" : ", tap to log")
+                + (timed ? ", hold to add when and how long" : ""));
         b.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 tap(c, nav, day, t, !on);
             }
         });
+        if (timed) {
+            b.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+                    sheet(c, nav, d, day, t);
+                    return true;
+                }
+            });
+        }
         return b;
+    }
+
+    /**
+     * A chip in the grid: a logged tag of a moment gets the small clock in its corner (issue #435), a tap on it opens "When and
+     * how long?" (the long press does the same); every other chip as it was.
+     */
+    static View cell(final Context c, final Pages.Nav nav, final DayData d, final LocalDate day, final LifeTags.Tag t, boolean on) {
+        TextView b = chip(c, nav, d, day, t, on);
+        if (!on || !LifeTimes.timed(t.key)) return b;
+        // room for the clock on the right, so a long name never runs under it
+        b.setPadding(b.getPaddingLeft(), b.getPaddingTop(), b.getPaddingLeft() + Ui.dp(c, 14), b.getPaddingBottom());
+        android.widget.FrameLayout f = new android.widget.FrameLayout(c);
+        f.addView(b, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        Clock clock = new Clock(c);
+        clock.setContentDescription("When and how long for " + t.name);
+        clock.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                sheet(c, nav, d, day, t);
+            }
+        });
+        f.addView(clock, new android.widget.FrameLayout.LayoutParams(Ui.dp(c, 28), Ui.dp(c, 28), Gravity.TOP | Gravity.END));
+        return f;
+    }
+
+    /** The small clock in a logged chip's corner: a circle with two hands, in the chip's text colour. */
+    static final class Clock extends View {
+        private final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        Clock(Context c) {
+            super(c);
+            p.setStyle(android.graphics.Paint.Style.STROKE);
+            p.setStrokeWidth(Ui.dp(c, 1.3f));
+            p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            p.setColor(0xFF0A0E17);
+            setClickable(true);
+            setFocusable(true);
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas cv) {
+            float r = Ui.dp(getContext(), 6);
+            float cx = getWidth() - Ui.dp(getContext(), 11), cy = Ui.dp(getContext(), 11);
+            cv.drawCircle(cx, cy, r, p);
+            cv.drawLine(cx, cy, cx, cy - r * 0.65f, p);
+            cv.drawLine(cx, cy, cx + r * 0.5f, cy, p);
+        }
     }
 
     static TextView chipView(Context c, String label, boolean on) {
@@ -159,10 +246,13 @@ final class LifeCard {
         card.addView(Ui.divider(c));
         card.addView(Ui.text(c, LifeTags.ALL, 13, Ui.TEXT_2, Ui.MEDIUM));
         EqualGrid all = new EqualGrid(c, 3, 6);
-        for (LifeTags.Tag t : d.life.loggable()) all.addView(chip(c, nav, day, t, on.contains(t.key)));
+        for (LifeTags.Tag t : d.life.loggable()) all.addView(cell(c, nav, d, day, t, on.contains(t.key)));
         LinearLayout.LayoutParams al = Ui.matchWrap();
         al.setMargins(0, Ui.dp(c, 8), 0, 0);
         card.addView(all, al);
+        TextView hold = Ui.text(c, LifeTimes.HOLD_HINT, 12, Ui.TEXT_3, Ui.REGULAR);
+        hold.setPadding(0, Ui.dp(c, 6), 0, 0);
+        card.addView(hold);
         EqualGrid ways = new EqualGrid(c, 2, 6);
         ways.addView(way(c, LifeTags.SEVERAL, new Runnable() {
             @Override
@@ -196,9 +286,158 @@ final class LifeCard {
         List<String> how = new ArrayList<String>();
         how.add(Explain.LIFE_ROW);
         how.add(Explain.LIFE_MORE);
+        how.add(Explain.LIFE_TIMES);
         how.add(Explain.LIFE_PRIVATE);
         how.add(Explain.LIFE_NO_EFFECT);
         card.addView(Ui.howItWorks(c, howOpen, how), Ui.matchWrap());
+    }
+
+    // ------------------------------------------------------------------------------ when and how long (issue #435)
+
+    /**
+     * "When and how long?": From (an hour and a minute wheel, in 5 minutes, starting at the time stored, or now minus the tag's
+     * usual length) and How long (the tag's usual lengths; a second tap on the picked one leaves no length; Alcohol and Caffeine
+     * late have a time only). Save logs the day with them, Without a time keeps the day logged without either. Nothing is
+     * saved without a tap; Undo puts the row back as it was.
+     */
+    static void sheet(final Context c, final Pages.Nav nav, DayData d, final LocalDate day, final LifeTags.Tag t) {
+        LifeTimes.Entry at = LifeTimes.find(d.lifeTimes, day, t.key, d.life);
+        java.time.LocalTime now = java.time.LocalTime.now();
+        int start = at != null ? LifeTimes.parse(at.time) : LifeTimes.startFor(t.key, now.getHour() * 60 + now.getMinute());
+        final int[] lengths = LifeTimes.lengths(t.key);
+        final Integer[] picked = {at != null ? at.minutes : lengths.length > 0 ? (Integer) LifeTimes.usual(t.key) : null};
+        LinearLayout box = Ui.vbox(c);
+        int m = Ui.dp(c, 20);
+        box.setPadding(m, Ui.dp(c, 4), m, 0);
+        box.addView(Ui.text(c, LifeTags.spanLine(t.name, day, day, year(), Locale.getDefault()), 14, Ui.TEXT_2, Ui.REGULAR));
+        box.addView(Ui.gap(c, 10));
+        box.addView(Ui.text(c, LifeTimes.FROM, 13, Ui.TEXT_2, Ui.MEDIUM));
+        final android.widget.NumberPicker hour = new android.widget.NumberPicker(c), minute = new android.widget.NumberPicker(c);
+        String[] hours = new String[24], minutes = new String[12];
+        for (int i = 0; i < 24; i++) hours[i] = String.format(Locale.ROOT, "%02d", i);
+        for (int i = 0; i < 12; i++) minutes[i] = String.format(Locale.ROOT, "%02d", i * 5);
+        hour.setMinValue(0);
+        hour.setMaxValue(23);
+        hour.setDisplayedValues(hours);
+        hour.setValue(Math.max(0, start) / 60);
+        hour.setContentDescription("Hour");
+        // wheels only: typed text would reach the picker only when it loses focus, after Save read the old value (review of #444)
+        hour.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        minute.setMinValue(0);
+        minute.setMaxValue(11);
+        minute.setDisplayedValues(minutes);
+        minute.setValue(Math.max(0, start) % 60 / 5);
+        minute.setContentDescription("Minutes");
+        minute.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        LinearLayout wheels = Ui.hbox(c);
+        wheels.setGravity(Gravity.CENTER);
+        wheels.addView(hour);
+        TextView colon = Ui.text(c, ":", 20, Ui.TEXT, Ui.MEDIUM);
+        colon.setPadding(Ui.dp(c, 8), 0, Ui.dp(c, 8), 0);
+        wheels.addView(colon);
+        wheels.addView(minute);
+        box.addView(wheels, Ui.matchWrap());
+        box.addView(Ui.gap(c, 10));
+        box.addView(Ui.text(c, LifeTimes.HOW_LONG, 13, Ui.TEXT_2, Ui.MEDIUM));
+        if (lengths.length == 0) {
+            box.addView(Ui.text(c, LifeTimes.TIME_ONLY, 13, Ui.TEXT_3, Ui.REGULAR));
+        } else {
+            final EqualGrid grid = new EqualGrid(c, 4, 6);
+            final List<TextView> chips = new ArrayList<TextView>();
+            for (int i = 0; i < lengths.length; i++) {
+                final int len = lengths[i];
+                TextView ch = chipView(c, LifeTimes.lengthLabel(len), picked[0] != null && picked[0] == len);
+                ch.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        // a second tap on the picked length leaves the factor without one
+                        picked[0] = picked[0] != null && picked[0] == len ? null : (Integer) len;
+                        for (int k = 0; k < chips.size(); k++) {
+                            boolean sel = picked[0] != null && picked[0] == lengths[k];
+                            chips.get(k).setTextColor(sel ? 0xFF0A0E17 : Ui.TEXT_2);
+                            chips.get(k).setBackground(chipView(c, "", sel).getBackground());
+                        }
+                    }
+                });
+                chips.add(ch);
+                grid.addView(ch);
+            }
+            LinearLayout.LayoutParams gl = Ui.matchWrap();
+            gl.setMargins(0, Ui.dp(c, 6), 0, 0);
+            box.addView(grid, gl);
+        }
+        new android.app.AlertDialog.Builder(c).setTitle(LifeTimes.TITLE).setView(box)
+                .setPositiveButton(LifeTimes.SAVE, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dlg, int w) {
+                        String time = LifeTimes.clock(hour.getValue() * 60 + minute.getValue() * 5);
+                        saveTime(c, nav, day, t, time, lengths.length == 0 ? null : picked[0]);
+                    }
+                })
+                .setNeutralButton(LifeTimes.WITHOUT, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dlg, int w) {
+                        saveTime(c, nav, day, t, null, null);
+                    }
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    /** Stores the time and length of {@code t} on {@code day} (both null: without a time), the day logged too; with Undo. */
+    static void saveTime(final Context c, final Pages.Nav nav, final LocalDate day, final LifeTags.Tag t, final String time, final Integer minutes) {
+        run(c, nav, new Job() {
+            @Override
+            public String run(Db db, boolean demo) {
+                String key = day.toString();
+                List<LifeLog.Row> before = new ArrayList<LifeLog.Row>();
+                before.add(LifeLog.row(db, key, t.key));
+                LifeLog.setTime(db, key, t.key, time, minutes, System.currentTimeMillis() / 1000.0);
+                List<String> days = new ArrayList<String>();
+                days.add(key);
+                undo = new Undo(db, demo, t.key, days, before, LifeTimes.savedLine(t.name, day, time, minutes, year(), Locale.getDefault()));
+                return null;
+            }
+        });
+    }
+
+    /** The bands of the logged times that reach into {@code from} to {@code to} (issue #435); none when unreadable. */
+    static List<LifeTimes.Band> bands(DayData d, double from, double to) {
+        if (!d.lifeOk || d.life == null) return new ArrayList<LifeTimes.Band>();
+        return LifeTimes.bands(d.lifeTimes, from, to, d.zone, d.life);
+    }
+
+    /**
+     * Under the day's heart rate chart, one line per band with a length: what the line measured during it next to the day's
+     * average ({@code dayAvg}, the chart's Average), or "Not worn during"; then what the numbers are. Null without such a band.
+     */
+    static View during(Context c, DayData d, app.openring.core.analysis.TS line, List<LifeTimes.Band> bands, double dayAvg) {
+        LinearLayout box = null;
+        for (LifeTimes.Band b : bands) {
+            if (!b.hasLength) continue;
+            if (box == null) {
+                box = Ui.vbox(c);
+                box.addView(Ui.gap(c, 6));
+            }
+            double v = LifeTimes.during(line, b, app.openring.core.analysis.DayHeart.STEP_S);
+            box.addView(Ui.text(c, LifeTimes.duringLine(b, v, dayAvg, d.zone), 13, Ui.LIFE, Ui.REGULAR));
+        }
+        if (box != null) box.addView(Ui.text(c, Explain.LIFE_DURING, 12, Ui.TEXT_3, Ui.REGULAR));
+        return box;
+    }
+
+    /** The bands of the shown day over its bars by the hour (Activity's intensity, issue #435). */
+    static void onHours(Charts.BarChart chart, DayData d) {
+        List<double[]> hours = new ArrayList<double[]>();
+        List<String> names = new ArrayList<String>(), tips = new ArrayList<String>();
+        double ds = d.date.atStartOfDay(d.zone).toEpochSecond(), de = d.date.plusDays(1).atStartOfDay(d.zone).toEpochSecond();
+        for (LifeTimes.Band b : bands(d, ds, de)) {
+            double[] h = LifeTimes.hours(b, d.date, d.zone);
+            if (h == null) continue;
+            hours.add(h);
+            names.add(b.name);
+            tips.add(LifeTimes.tip(b, d.zone));
+        }
+        if (!hours.isEmpty()) chart.life(hours, names, tips);
     }
 
     static TextView way(Context c, String label, final Runnable r) {
