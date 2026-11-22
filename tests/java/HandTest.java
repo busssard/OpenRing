@@ -125,6 +125,23 @@ public class HandTest {
         odd.add(new double[] {at(DAY.minusDays(1), 3, 0), at(DAY.minusDays(1), 3, 10)});
         t = HandNight.defaults(DAY, Z, odd);
         eq("a history whose median is no night falls back to 23:00 to 07:00", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "23:00 07:00");
+        // code review of #429: today's night may not have ended; Up is at most now, snapped down to 5 minutes
+        t = HandNight.defaults(DAY, Z, new ArrayList<double[]>(), at(DAY, 5, 33) + 20);
+        eq("today at 05:33: Up capped at 05:30 (down, never later than now), In bed stays 23:00", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "23:00 05:30");
+        t = HandNight.defaults(DAY, Z, n, at(DAY, 6, 59));
+        eq("today at 06:59 with the usual 23:55 to 07:10: Up 06:55", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "23:55 06:55");
+        t = HandNight.defaults(DAY, Z, new ArrayList<double[]>(), at(DAY, 0, 12));
+        eq("today just after midnight: Up 00:10, In bed moved to keep the shortest night (30 min)", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z)
+                + " " + (t[1] - t[0]) / 60, "23:00 00:10 70.0");
+        t = HandNight.defaults(DAY, Z, new ArrayList<double[]>(), at(DAY.minusDays(1), 23, 14));
+        eq("still the evening before at 23:14: Up 23:10, In bed 22:40", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "22:40 23:10");
+        t = HandNight.defaults(DAY, Z, new ArrayList<double[]>(), at(DAY, 9, 0));
+        eq("after the usual Up (09:00): 23:00 to 07:00 unchanged", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "23:00 07:00");
+        t = HandNight.defaults(DAY, Z, new ArrayList<double[]>(), Double.NaN);
+        eq("without a time: unchanged", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "23:00 07:00");
+        double[] capped = HandNight.defaults(DAY, Z, n, at(DAY, 3, 1));
+        check("a capped night is never after now and on the 5 minute grid", capped[1] <= at(DAY, 3, 1) && capped[1] % HandNight.SNAP_S == 0
+                && capped[0] % HandNight.SNAP_S == 0 && capped[1] - capped[0] >= HandNight.MIN_NIGHT_S);
         LocalDate spring = LocalDate.of(2026, 3, 29);
         t = HandNight.defaults(spring, Z, new ArrayList<double[]>());
         eq("the spring night's defaults are 23:00 to 07:00 by the clock, 7 hours long", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z) + " "

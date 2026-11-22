@@ -121,7 +121,8 @@ public final class HandNightActivity extends Activity {
                             double s = Json.d(o, "start"), e = Json.d(o, "end");
                             if (!Double.isNaN(s) && e > s) nights.add(new double[] {s, e});
                         }
-                        double[] t = HandNight.defaults(d, l.zone, nights);
+                        // a night that has not ended yet (today) ends now at the latest
+                        double[] t = HandNight.defaults(d, l.zone, nights, System.currentTimeMillis() / 1000.0);
                         l.start = t[0];
                         l.stop = t[1];
                     }
@@ -329,13 +330,15 @@ public final class HandNightActivity extends Activity {
         final List<double[]> m = new ArrayList<double[]>(bar.marks);
         final boolean change = !Double.isNaN(made);
         final double replaces = made;
+        final LocalDate d = day;
         new AsyncTask<Void, Void, Boolean>() {
             @Override
             protected Boolean doInBackground(Void... v) {
                 try {
                     Db db = Db.get(ctx);
-                    HandNights.Saved saved = HandNights.save(db, s, e, m, System.currentTimeMillis() / 1000.0, replaces);
-                    HandViews.undo = new HandViews.Undo(db, Prefs.of(ctx).demo(), saved, Double.NaN, change ? HandNight.CHANGED : HandNight.SAVED);
+                    // the key in whole unix seconds (HandNights: the next free key of the same second is one more)
+                    HandNights.Saved saved = HandNights.save(db, s, e, m, Math.floor(System.currentTimeMillis() / 1000.0), replaces);
+                    HandViews.undo = new HandViews.Undo(db, Prefs.of(ctx).demo(), d, saved, Double.NaN, change ? HandNight.CHANGED : HandNight.SAVED);
                     return true;
                 } catch (RuntimeException x) {
                     app.openring.ble.RingManager.get(ctx).log("night by hand not saved: " + x.getClass().getSimpleName());

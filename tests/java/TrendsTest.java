@@ -233,6 +233,11 @@ public class TrendsTest {
         Trends.View v = Trends.of(d, Trends.ASLEEP, Trends.MONTHS, LocalDate.parse("2026-06-01"));
         eq("readout with devices", t(Trends.readout(v, 0, L)), "March 2026: 6h 55m asleep on average, middle half 6h 48m to 7h 2m, 29 nights: 20 ring, 9 watch");
         eq("tip", Trends.tip(v, 0, L), "March 2026\n6h 55m");
+        // a night entered by hand (issue #427) is named as such
+        List<Trends.Day> h = new ArrayList<Trends.Day>();
+        for (int i = 1; i <= 10; i++) h.add(new Trends.Day(LocalDate.parse("2026-03-01").plusDays(i - 1)).set(Trends.ASLEEP, 420, i <= 8 ? Trends.RING : Trends.HAND));
+        eq("readout with nights by hand", t(Trends.readout(Trends.of(h, Trends.ASLEEP, Trends.MONTHS, LocalDate.parse("2026-06-01")), 0, L)),
+                "March 2026: 7h 0m asleep on average, middle half 7h 0m to 7h 0m, 10 nights: 8 ring, 2 by hand");
         String[] want = {"6h 55m", "23:20", "07:00", "34 min", "2.3", "78", "74", "54 bpm", "42 ms", "+0.15 °C", "8,412", "420 kcal", "2h 10m"};
         double[] vals = {415, 1400, 420, 34.2, 2.33, 78.2, 74, 54.4, 41.6, 0.149, 8412.3, 420.4, 130};
         for (int m = 0; m < Trends.COUNT; m++) eq("value " + Trends.NAMES[m], Trends.value(m, vals[m], L), want[m]);

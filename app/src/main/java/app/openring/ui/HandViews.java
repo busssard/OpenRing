@@ -45,18 +45,21 @@ final class HandViews {
     /**
      * What one change wrote, so Undo can put it back in the same file: a save ({@code saved}) or a delete ({@code removed}, the
      * key). After a restore, going back to a copy or Delete all (a new {@code Db}, or {@link #forget}) Undo writes nothing.
+     * {@code day}: the day of the night, the only Sleep page that offers the Undo (code review of #429).
      */
     static final class Undo {
         final Db db;
         final boolean demo;
+        final LocalDate day;
         final HandNights.Saved saved;
         final double removed;
         final String text;
         final long at = System.currentTimeMillis();
 
-        Undo(Db db, boolean demo, HandNights.Saved saved, double removed, String text) {
+        Undo(Db db, boolean demo, LocalDate day, HandNights.Saved saved, double removed, String text) {
             this.db = db;
             this.demo = demo;
+            this.day = day;
             this.saved = saved;
             this.removed = removed;
             this.text = text;
@@ -124,7 +127,7 @@ final class HandViews {
             }
         });
         card.addView(b, Ui.matchWrap());
-        undoRow(c, card, nav);
+        undoRow(c, card, nav, d.date);
         return card;
     }
 
@@ -173,14 +176,14 @@ final class HandViews {
         del.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (!Double.isNaN(made)) remove(c, nav, made);
+                if (!Double.isNaN(made)) remove(c, nav, made, d.date);
             }
         });
         row.addView(change, Ui.weight(1));
         row.addView(Ui.gap(c, 8));
         row.addView(del, Ui.weight(1));
         card.addView(row, Ui.matchWrap());
-        undoRow(c, card, nav);
+        undoRow(c, card, nav, d.date);
         root.addView(card);
 
         root.addView(Pages.contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors", null, null));
@@ -202,7 +205,8 @@ final class HandViews {
         card.addView(Ui.caption(c, "Night by hand"));
         card.addView(Ui.gap(c, 4));
         card.addView(Ui.text(c, HandNight.replaced(d.handReplacedBy), 15, Ui.TEXT, Ui.MEDIUM));
-        ZoneId z = d.zone;
+        // the clock of the night shown (on a travel day it can differ from the day's zone)
+        ZoneId z = d.zoneOf(d.night);
         card.addView(Ui.text(c, HandNight.IN_BED + " " + HandNight.clock(d.hand.start, z) + ", " + HandNight.UP.toLowerCase(Locale.ROOT) + " "
                 + HandNight.clock(d.hand.stop, z) + ", " + HandNight.length(HandNight.asleepMin(d.hand.start, d.hand.stop, d.hand.wakes)) + " asleep",
                 13, Ui.TEXT_2, Ui.REGULAR));
@@ -214,18 +218,22 @@ final class HandViews {
         del.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                remove(c, nav, made);
+                remove(c, nav, made, d.date);
             }
         });
         card.addView(del, Ui.matchWrap());
-        undoRow(c, card, nav);
+        undoRow(c, card, nav, d.date);
         return card;
     }
 
-    /** "Night by hand deleted. Undo" under the card, while the last change is fresh and in this file's mode. */
-    static void undoRow(final Context c, LinearLayout card, final Pages.Nav nav) {
+    /**
+     * "Night by hand deleted. Undo" under the card of {@code day}, while the last change is fresh, in this file's mode and of
+     * this day's night.
+     */
+    static void undoRow(final Context c, LinearLayout card, final Pages.Nav nav, LocalDate day) {
         final Undo u = undo;
         if (u == null || u.demo != Prefs.of(c).demo() || System.currentTimeMillis() - u.at >= 10 * 60 * 1000L) return;
+        if (u.day != null && !u.day.equals(day)) return;
         LinearLayout ur = Ui.hbox(c);
         ur.setGravity(Gravity.CENTER_VERTICAL);
         ur.addView(Ui.text(c, u.text, 13, Ui.TEXT_2, Ui.REGULAR), Ui.weight(1));
@@ -243,7 +251,7 @@ final class HandViews {
     }
 
     /** Deletes the night {@code made} (a removal mark) in the background, then loads the page again; Undo puts it back. */
-    static void remove(Context c, final Pages.Nav nav, final double made) {
+    static void remove(Context c, final Pages.Nav nav, final double made, final LocalDate day) {
         final Context ctx = c.getApplicationContext();
         final Context screen = c;
         new AsyncTask<Void, Void, Boolean>() {
@@ -252,7 +260,7 @@ final class HandViews {
                 try {
                     Db db = Db.get(ctx);
                     HandNights.remove(db, made);
-                    undo = new Undo(db, Prefs.of(ctx).demo(), null, made, HandNight.DELETED);
+                    undo = new Undo(db, Prefs.of(ctx).demo(), day, null, made, HandNight.DELETED);
                     return true;
                 } catch (RuntimeException e) {
                     app.openring.ble.RingManager.get(ctx).log("night by hand not deleted: " + e.getClass().getSimpleName());

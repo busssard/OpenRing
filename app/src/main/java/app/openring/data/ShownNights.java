@@ -94,25 +94,35 @@ public final class ShownNights {
      */
     static List<JSONObject> withHand(Db db, List<JSONObject> shown, LocalDate first, LocalDate last, DeviceHistory.DayZones zones, double age) {
         if (!HandNights.any(db)) return shown;
-        TreeMap<LocalDate, JSONObject> hand = HandNights.days(db, first, last, zones, age);
-        if (hand.isEmpty()) return shown;
         Set<String> days = new HashSet<String>();
         List<double[]> spans = new ArrayList<double[]>();
         for (JSONObject o : shown) {
             days.add(o.optString("day"));
             spans.add(new double[] {Json.d(o, "start"), Json.d(o, "end")});
         }
+        TreeMap<LocalDate, JSONObject> hand = hand(db, first, last, zones, age, days, spans);
+        if (hand.isEmpty()) return shown;
         List<JSONObject> out = new ArrayList<JSONObject>(shown);
-        boolean added = false;
-        for (java.util.Map.Entry<LocalDate, JSONObject> e : hand.entrySet()) {
+        out.addAll(hand.values());
+        byStart(out);
+        return out;
+    }
+
+    /**
+     * The nights by hand of the days from {@code first} to {@code last} that are shown (by day, each in its day's zone): on a day
+     * not in {@code deviceDays} (ISO dates of the shown device nights) and overlapping none of {@code deviceSpans} (their {start,
+     * end}). The one rule of {@link #withHand} and Trends ({@code TrendDays}).
+     */
+    static TreeMap<LocalDate, JSONObject> hand(Db db, LocalDate first, LocalDate last, DeviceHistory.DayZones zones, double age,
+            Set<String> deviceDays, List<double[]> deviceSpans) {
+        TreeMap<LocalDate, JSONObject> out = new TreeMap<LocalDate, JSONObject>();
+        for (java.util.Map.Entry<LocalDate, JSONObject> e : HandNights.days(db, first, last, zones, age).entrySet()) {
             JSONObject o = e.getValue();
-            boolean device = days.contains(e.getKey().toString());
+            boolean device = deviceDays.contains(e.getKey().toString());
             if (MainDevice.nightFrom(MainDevice.RING, device, false, true) != MainDevice.HAND) continue;
-            if (app.openring.core.HandNight.overlaps(Json.d(o, "start"), Json.d(o, "end"), spans)) continue;
-            out.add(o);
-            added = true;
+            if (app.openring.core.HandNight.overlaps(Json.d(o, "start"), Json.d(o, "end"), deviceSpans)) continue;
+            out.put(e.getKey(), o);
         }
-        if (added) byStart(out);
         return out;
     }
 

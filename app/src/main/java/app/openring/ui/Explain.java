@@ -1065,7 +1065,8 @@ public final class Explain {
 
     /** How it works on the Trends page. */
     public static final String TRENDS = "Weeks run Monday to Sunday, months and years are calendar ones. A night counts in the period "
-            + "of the morning it ends, as on Sleep. The middle half leaves out the quarter of days with the lowest and the quarter with "
+            + "of the morning it ends, as on Sleep. A night you entered by hand counts on a day without a night from your ring or "
+            + "watch (sleep numbers only, no readiness). The middle half leaves out the quarter of days with the lowest and the quarter with "
             + "the highest values, so one odd night does not move the band. Steps and active calories count only days the device was "
             + "worn for an hour or more, screen time only days the phone recorded completely; days without are left out, not zero. "
             + "Today's steps, calories and screen time count once the day is over. Nothing here changes your stored numbers.";

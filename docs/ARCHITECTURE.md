@@ -433,7 +433,9 @@ that arrives later is shown and the one by hand stays stored, its Sleep tab says
 Readiness of a day with a ring and a night by hand (no stored readiness) is worked out on the load from its sleep score, sleep
 balance and the activity parts, without resting heart rate, HRV, temperature or recovery; shown only, never stored. Its sleep balance reads only the nights of the ±30 day strip, so it can differ slightly from a readiness the analysis would store. The Screen tab and the
 badges get it through `ShownNights.main`, Further analysis through `SleepHistory.load` (`HandNights.withoutRingNight`, leaving out days with a ring or a watch night, its
-efficiency left out) and the watch's `WatchHistory.load`. Today asks "No night for last night ..." when today has no night, a device
+efficiency left out), the watch's `WatchHistory.load`, and Trends through `TrendDays.read` (`ShownNights.hand`, the same rule as
+`withHand`; source `Trends.HAND`, "by hand" in the readout; sleep numbers only, no readiness; its stamp counts the table's rows,
+removal marks and keys in force, so a save, delete or Undo reads again). Today asks "No night for last night ..." when today has no night, a device
 synced today from 04:00 on (within 2 days), and Not now was not tapped for today (`HandNight.ask`, Prefs `hand_not_now`). Restore:
 `Db.replaceWith` reads the table before the swap and `HandNights.merge` writes it into the restored file (`INSERT OR REPLACE` by
 `made`, the phone wins, removal marks included); an older backup without the table gets it empty from the upgrade, so it keeps the
