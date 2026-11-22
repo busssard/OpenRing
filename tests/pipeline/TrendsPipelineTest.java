@@ -680,6 +680,20 @@ public class TrendsPipelineTest {
             "{\"temp\":35.39,\"asleep_min\":400,}",
             "{}",
             "[35.2]",
+            // numbers JSON does not write this way take the old way too (sign alone, plus, leading zero, hex, cut short)
+            "{\"temp\":-,\"asleep_min\":430}",
+            "{\"temp\":+35.2,\"asleep_min\":430}",
+            "{\"temp\":035.2,\"asleep_min\":430}",
+            "{\"temp\":0x23,\"asleep_min\":430}",
+            "{\"temp\":35.,\"asleep_min\":430}",
+            "{\"temp\":3.5e,\"asleep_min\":430}",
+            "{\"temp\":3.5e+,\"asleep_min\":430}",
+            "{\"temp\":35.2.1,\"asleep_min\":430}",
+            "{\"temp\":NaN,\"asleep_min\":430}",
+            "{\"temp\":35.41,\"asleep_min\":-0}",
+            "{\"temp\":0.5,\"asleep_min\":1e+3}",
+            "{\"temp\":0,\"asleep_min\":4.3e-0}",
+            "{\"temp\":-35.42,\"asleep_min\":43E1}",
         };
         LocalDate first = today.minusDays(odd.length - 1);
         for (int i = 0; i < odd.length; i++) db.putDay(first.plusDays(i).toString(), odd[i]);
