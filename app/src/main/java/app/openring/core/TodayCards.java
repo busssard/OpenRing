@@ -35,17 +35,28 @@ public final class TodayCards {
      * measured first screen (the scores and Your day) does not move; for every device, as the tags are the person's own.
      */
     public static final String LIFE = "life";
+    /**
+     * A night by hand (issue #427): "No night for last night ..." with Enter by hand and Not now, right after Your day (the
+     * first screen stays the scores and Your day), only when {@code core/HandNight.ask} says so.
+     */
+    public static final String HAND_ASK = "hand_ask";
 
     /**
      * Today's cards for {@code h}, top to bottom. {@code badges}: there are badges of the last 7 days; {@code leftOut}: part of
      * the day is left out; {@code period}: the tracker is shown.
      */
     public static List<String> of(Start.Has h, boolean badges, boolean leftOut, boolean period) {
+        return of(h, badges, leftOut, period, false);
+    }
+
+    /** As above; {@code handAsk}: Today asks for last night by hand (issue #427), right after Your day. */
+    public static List<String> of(Start.Has h, boolean badges, boolean leftOut, boolean period, boolean handAsk) {
         // the device dependent cards as before (issue #373); Find my ring stays a small button in the scores card
         List<String> dev = Start.cards(Start.TODAY, h);
         List<String> out = new ArrayList<String>();
         out.add(SCORES);
         out.add(DAY);
+        if (handAsk) out.add(HAND_ASK);
         out.add(LIFE);
         if (!h.ring) out.add(DEVICE_NOTE);
         if (leftOut) out.add(LEFT_OUT);

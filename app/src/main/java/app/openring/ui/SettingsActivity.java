@@ -2193,6 +2193,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 try {
                     Backup.Result r = AutoBackup.goBack(app, file, progress);
                     LifeCard.forget();
+                    HandViews.forget();
                     RingManager.get(app).log("go back to " + file + ": " + r.message);
                     return r.message;
                 } catch (Exception e) {
@@ -2736,6 +2737,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
                             DeleteAll.run(app);
                             // the last life factor change belongs to the deleted file (issue #292)
                             LifeCard.forget();
+                            HandViews.forget();
                         }
                     });
                 } catch (RuntimeException e) {
