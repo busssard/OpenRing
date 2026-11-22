@@ -199,17 +199,20 @@ public final class Exporter {
      * {@link #dayZone} for every day of the file from two queries in all: the main nights' zones and the noted zones, each
      * read once (a file of three years with something left out asked for each day's night and noted zone, about 3,300
      * queries). The same rule and the same answers: a day's newest main night by start, else the zone noted at its noon
-     * ({@link Db#zoneIn}, as {@link Db#zoneAt} reads it), else the phone's; a day it cannot read, or a database it cannot
-     * read, gives the phone's. Only each night's zone is kept, never the night.
+     * ({@link Db#zoneIn}, as {@link Db#zoneAt} reads it), else the phone's; a day it cannot read gives the phone's. When
+     * the read at once fails (a damaged page, even part way), every day is read on its own with {@link #dayZone}, so only
+     * the days whose own read fails get the phone's zone, as before. Only each night's zone is kept, never the night.
      */
     static final class DayZones {
         private final java.util.Map<String, String> nightZone = new java.util.HashMap<String, String>();
         private final java.time.ZoneId phone;
+        private final Db db;
         private List<Object[]> noted;
         private boolean unreadable;
 
         DayZones(Db db, java.time.ZoneId phone) {
             this.phone = phone;
+            this.db = db;
             try {
                 // ordered by start, so a day's newest main night is put last, as dayZone takes it
                 Cursor c = db.getReadableDatabase().rawQuery("SELECT day, json FROM nights WHERE main=1 ORDER BY start", null);
@@ -223,14 +226,14 @@ public final class Exporter {
                 }
                 noted = db.zones();
             } catch (RuntimeException e) {
-                // as dayZone, which falls back to the phone's zone when its reads fail
+                // a read that stops part way may have missed a day's newest night: every day is read on its own instead
                 unreadable = true;
             }
         }
 
-        /** The zone {@code day} is counted in, {@link #dayZone} without a query. */
+        /** The zone {@code day} is counted in, {@link #dayZone} without a query (with its queries after a failed read). */
         java.time.ZoneId of(String day) {
-            if (unreadable) return phone;
+            if (unreadable) return dayZone(db, day, phone);
             try {
                 java.time.LocalDate d = java.time.LocalDate.parse(day);
                 java.time.ZoneId night = app.openring.core.analysis.ClockChange.zone(nightZone.get(day));

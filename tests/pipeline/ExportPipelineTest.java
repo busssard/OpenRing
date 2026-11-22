@@ -15,7 +15,7 @@ import app.openring.data.Exporter;
  * The daily CSV's zone of each day (left_out_min counts a day midnight to midnight in it): {@code Exporter.DayZones}, which
  * reads every day's zone in two queries, gives the same zone as the one day rule {@code Exporter.dayZone} (its night's, else
  * the zone noted at its noon, else the phone's) for every day, and the file's left_out_min column is the one that rule
- * gives. Synthetic data only. Run by tests/run_pipeline.sh after TrendsPipelineTest.
+ * gives, also when the read at once fails. Synthetic data only. Run by tests/run_pipeline.sh after TrendsPipelineTest.
  */
 public class ExportPipelineTest {
     static int passed, failed;
@@ -159,6 +159,32 @@ public class ExportPipelineTest {
         db.getWritableDatabase().execSQL("ALTER TABLE nights_gone RENAME TO nights");
         check("a history it cannot read gives the phone's zone for every day, read at once and one day at a time" + how, notPhone == 0,
                 notPhone + " days in another zone");
+
+        // a read at once that fails (on a phone a damaged page can stop it part way; here every night from day 20 on cannot
+        // be read): each day is then read on its own, so the days before keep their zone, as one day at a time gave them
+        String cut = first.plusDays(20).toString();
+        db.getWritableDatabase().execSQL("ALTER TABLE nights RENAME TO nights_whole");
+        db.getWritableDatabase().execSQL("CREATE VIEW nights AS SELECT start, stop, day, main, score, CASE WHEN day >= '" + cut
+                + "' THEN abs(-9223372036854775808 + (main - 1)) ELSE json END AS json FROM nights_whole");
+        int damagedWrong = 0, kept = 0, readable = 0;
+        boolean failsAtOnce = false;
+        try {
+            db.getReadableDatabase().rawQuery("SELECT day, json FROM nights WHERE main=1 ORDER BY start", null).close();
+        } catch (RuntimeException e) {
+            failsAtOnce = true;
+        }
+        Object damaged = newDayZones(db, phone);
+        for (String day : keys) {
+            ZoneId want = oneDay(db, day, phone), got = of(damaged, day);
+            if (!want.equals(got)) damagedWrong++;
+            if (day.compareTo(cut) < 0 && !want.equals(phone)) kept++;
+            if (day.compareTo(cut) < 0 && day.compareTo(first.toString()) >= 0) readable++;
+        }
+        db.getWritableDatabase().execSQL("DROP VIEW nights");
+        db.getWritableDatabase().execSQL("ALTER TABLE nights_whole RENAME TO nights");
+        check("a read at once that fails gives every day the one day rule's zone, the days it can read keep theirs" + how,
+                failsAtOnce && damagedWrong == 0 && kept >= 5, (failsAtOnce ? "fails" : "does not fail") + ", " + damagedWrong + " wrong, "
+                + kept + " of " + readable + " readable days not in the phone's zone");
     }
 
     /** Three years of nights and notes with one left out evening: the same zones and file, with far fewer reads. */
