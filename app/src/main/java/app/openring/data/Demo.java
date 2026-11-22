@@ -153,7 +153,7 @@ public final class Demo {
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
         if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db) && PhoneStore.any(db)
                 && db.count("SELECT COUNT(*) FROM battery") > 0 && LifeLog.any(db)
-                && HandNights.any(db)) return false;
+                && HandNights.any(db) && Sounds.any(db)) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll(Db.DEMO_BUILD);
         ZoneId zone = ZoneId.systemDefault();
@@ -177,6 +177,12 @@ public final class Demo {
         // a made up night by hand (issue #427), the day before yesterday: shown as replaced by the demo ring's night, and as
         // the night of that day with the screen test's extra hand_night
         HandNights.demo(db, today, zone, now);
+        // made up sleep sounds of last night (issue #380, phase 1b): tones made in code, in the demo file and its own clip folder
+        try {
+            Sounds.demo(c, db, today, zone);
+        } catch (java.io.IOException e) {
+            // the demo shows its marks without sound; the rest of the demo is not held up by a clip file
+        }
         watch(db, today, now, zone);
         phone(db, today, now, zone);
         ringBattery(db, today, now, zone);

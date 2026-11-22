@@ -31,6 +31,11 @@ public final class DayData {
     public app.openring.data.ScreenDays.Info screen;
     /** The zone this day is shown in: its main night's, else the zone noted then, else the phone's (issue #22). */
     public java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+    /** Sleep sounds (issue #380, phase 1b): the night shown on this day's Sleep tab, null for none; its clip folder. */
+    public app.openring.data.Sounds.Night soundNight;
+    public java.io.File soundFolder;
+    /** False when the sleep sounds could not be read (the card says so). */
+    public boolean soundsOk = true;
     /**
      * The times left out because someone else wore the ring (issue #254) that reach this day or the day before (its night),
      * merged, oldest first, each {start, stop}. Empty for nearly everyone.
@@ -459,6 +464,16 @@ public final class DayData {
             d.handReplacedBy = -1;
             d.handOk = false;
             d.ok = failed(c, date, "nights by hand", e);
+        }
+        try {
+            // sleep sounds (issue #380): the night of this day in the file shown (the demo has its own), and its clip folder
+            d.soundNight = app.openring.data.Sounds.forDay(db, date, d.zone);
+            d.soundFolder = app.openring.data.Sounds.folder(c, db);
+        } catch (RuntimeException e) {
+            // the card says it could not be read; the log gets the error's kind only, never a time or a kind of sound
+            d.soundNight = null;
+            d.soundsOk = false;
+            app.openring.ble.RingManager.get(c).log("day load: sleep sounds could not be read: " + e.getClass().getSimpleName());
         }
         try {
             d.batteries(c, db, System.currentTimeMillis() / 1000);

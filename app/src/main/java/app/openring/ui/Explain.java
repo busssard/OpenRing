@@ -1073,4 +1073,14 @@ public final class Explain {
             + "days, with a change in it: about 25 minutes more sleep from four months ago, more steps in summer and one week of illness.";
 
     public static final String TRENDS_FAILED = "Your history could not be read this time. Your data is as before. Diagnostics, Log tab, shows why.";
+
+    /**
+     * Sleep sounds (issue #380, phase 1b): how each kind is found, that the labels can be wrong, and that the counts are no
+     * diagnosis (Design review).
+     */
+    public static final String SOUND_KINDS = "How the kinds are found: a sound is a moment clearly louder than the room (10 dB by default, "
+            + "or as set by the microphone test). Snoring: 3 or more similar sounds 2 to 7 seconds apart. Cough like: short, sudden and "
+            + "noisy. Everything else is talking or other sound (a door or a dog too). The labels are rough and can be wrong, and the phone "
+            + "cannot tell whose sound it was: listen to the clip. Snoring minutes are not a test for sleep apnea. If breathing pauses "
+            + "worry you, ask a doctor.";
 }
