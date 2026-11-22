@@ -262,6 +262,18 @@ public final class HandNight {
         return times(day, zone, s, e, false);
     }
 
+    /**
+     * As above, for a night that may not have ended yet (code review of #429: today asks from 04:00, the usual Up may be 07:00):
+     * Up is at most {@code now} (unix seconds) snapped down to 5 minutes, In bed then at least {@link #MIN_NIGHT_S} before it.
+     * A past day's night is not changed.
+     */
+    public static double[] defaults(LocalDate day, ZoneId zone, List<double[]> nights, double now) {
+        double[] t = defaults(day, zone, nights);
+        if (Double.isNaN(now) || now >= t[1]) return t;
+        double up = Math.floor(now / SNAP_S) * SNAP_S;
+        return times(day, zone, Math.min(t[0], up - MIN_NIGHT_S), up, true);
+    }
+
     /** Minutes after 18:00 by the clock in {@code zone} (0 to 1439): 23:00 is 300, 07:00 is 780. */
     public static double barMinute(double unix, ZoneId zone) {
         ZonedDateTime t = Instant.ofEpochSecond((long) Math.floor(unix)).atZone(zone);
