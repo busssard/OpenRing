@@ -230,8 +230,7 @@ public final class Periods {
         c = d.rawQuery("SELECT day, json FROM days WHERE day >= ? AND day <= ? ORDER BY day", new String[] {from.toString(), to.toString()});
         try {
             while (c.moveToNext()) {
-                org.json.JSONObject o = Json.parse(c.getString(1));
-                double t = app.openring.core.analysis.TempRise.ringNight(Json.d(o, "temp"), Json.d(o, "asleep_min"));
+                double t = nightTemp(c.getString(1));
                 if (Double.isNaN(t)) continue;
                 java.time.LocalDate day = java.time.LocalDate.parse(c.getString(0));
                 if (!left.isEmpty() && left.overlaps(day.minusDays(1).atTime(18, 0).atZone(zone).toEpochSecond(), day.atTime(12, 0).atZone(zone).toEpochSecond())) continue;
@@ -241,6 +240,51 @@ public final class Periods {
             c.close();
         }
         return out;
+    }
+
+    /**
+     * A day summary's nightly temperature for the rise ({@code TempRise.ringNight} of its {@code temp} and {@code asleep_min}),
+     * NaN for none. It reads the two fields from the stored text ({@code TrendDays.fields}) instead of building the whole
+     * JSON tree: a day summary is mostly its heart rate of the day and burn profile, so this is the bulk of every period
+     * load with years of log. Anything that is not plainly absent, {@code null} or a JSON number (as JSONObject writes it)
+     * takes the old way through {@code Json.parse}, so the result is the same as before for every row.
+     */
+    static double nightTemp(String json) {
+        java.util.Map<String, String> f = TrendDays.fields(json);
+        if (f != null) {
+            String t = f.get("temp"), a = f.get("asleep_min");
+            if (plain(t) && plain(a)) return app.openring.core.analysis.TempRise.ringNight(TrendDays.num(t), TrendDays.num(a));
+        }
+        org.json.JSONObject o = Json.parse(json);
+        return app.openring.core.analysis.TempRise.ringNight(Json.d(o, "temp"), Json.d(o, "asleep_min"));
+    }
+
+    /** Absent, {@code null} or a number in JSON's own form (no leading zero, no hex, no sign but minus): read the same by both ways. */
+    static boolean plain(String raw) {
+        if (raw == null || "null".equals(raw)) return true;
+        int n = raw.length(), i = 0;
+        if (i < n && raw.charAt(i) == '-') i++;
+        if (i >= n) return false;
+        if (raw.charAt(i) == '0') {
+            i++;
+        } else if (raw.charAt(i) >= '1' && raw.charAt(i) <= '9') {
+            while (i < n && raw.charAt(i) >= '0' && raw.charAt(i) <= '9') i++;
+        } else {
+            return false;
+        }
+        if (i < n && raw.charAt(i) == '.') {
+            int s = ++i;
+            while (i < n && raw.charAt(i) >= '0' && raw.charAt(i) <= '9') i++;
+            if (i == s) return false;
+        }
+        if (i < n && (raw.charAt(i) == 'e' || raw.charAt(i) == 'E')) {
+            i++;
+            if (i < n && (raw.charAt(i) == '+' || raw.charAt(i) == '-')) i++;
+            int s = i;
+            while (i < n && raw.charAt(i) >= '0' && raw.charAt(i) <= '9') i++;
+            if (i == s) return false;
+        }
+        return i == n;
     }
 
     /** The morning temperatures by mouth (°C) in force from {@code from} to {@code to}, without those drip left out. */
