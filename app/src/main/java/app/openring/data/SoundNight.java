@@ -29,7 +29,8 @@ import app.openring.core.analysis.SoundDetector;
  * steps); while an analysis runs or a restore swaps the file, the rows wait in memory and are written with the next piece.</li>
  * <li>The night's row is written at the start and again each minute (its {@code stop} is the last time it was known to listen,
  * its {@code ended} empty while it runs), so a night the phone ended without a word is closed as {@code system} next time.</li>
- * <li>Dropped audio (review of #420): when the samples fall behind the clock by more than {@link #DRIFT_S}, the detector is
+ * <li>Dropped audio (reviews of #420 and #450): when a piece comes more than {@link #JUMP_S} after the one before (pieces were
+ * lost), or the samples fall behind the clock by more than {@link #DRIFT_S} in all (the microphone's clock runs slow), the detector is
  * finished and started again at the clock's time, and the missing time is a gap ({@code system}). Marks never move.</li>
  * <li>One lock ({@link #LOCK}) guards every write of the night. {@link #stopRunning} (Delete all, "Delete all clips of this
  * night") takes it and closes the night, so nothing is written after it returns, not a row and not a file.</li>
@@ -64,6 +65,12 @@ public final class SoundNight {
 
     /** Seconds the samples may fall behind the clock before the detector starts again; seconds between the night row's updates. */
     public static final double DRIFT_S = 5, BEAT_S = 60;
+    /**
+     * A piece that starts this much after the end of the one before means lost audio (pieces come every 100 ms, a few tens of
+     * milliseconds late at most): the missing time becomes a gap. Small jumps are timing noise, the slow drift of the
+     * microphone's clock is caught by {@link #DRIFT_S}.
+     */
+    public static final double JUMP_S = 1;
     /** Seconds of audio kept: the longest clip and a few seconds for the pieces. */
     static final int RING_S = 24;
 
@@ -93,7 +100,7 @@ public final class SoundNight {
     private int gapsTaken;
     private boolean staleDone, nightDirty = true, wavOnly;
     private volatile boolean closed;
-    private double heard, lastBeat = Double.NEGATIVE_INFINITY;
+    private double heard, lastBeat = Double.NEGATIVE_INFINITY, lastPiece = Double.NaN;
     private String ended;
     /** Clips the encoder could not write (each then went to WAV), and clips not saved at all; for the log. */
     int encoderFailures, saveFailures, writeFailures;
@@ -158,16 +165,33 @@ public final class SoundNight {
     }
 
     /**
+     * Delete all of the real history (review of #450): runs {@code delete} under the lock every write of the night takes, so the
+     * night listening now writes nothing meanwhile, and closes it only once {@code delete} returned. When {@code delete} throws
+     * (nothing was deleted), the night is left as it was and goes on.
+     */
+    static void deleteHolding(Runnable delete) {
+        synchronized (LOCK) {
+            delete.run();
+            if (running != null) {
+                running.closed = true;
+                running = null;
+            }
+        }
+    }
+
+    /**
      * "Delete all clips of this night": stops the night first when it is the one listening (under the same lock, so nothing of
      * it is written afterwards), then deletes its rows and files ({@link Sounds#deleteNight}). Returns the marks deleted.
      */
     public static int deleteNight(Context c, Db db, double start) {
         synchronized (LOCK) {
+            // the night writes nothing while its rows go; closed only once they went, so a failed delete leaves it listening
+            int n = Sounds.deleteNight(db, Sounds.folder(c, db), start);
             if (running != null && running.start == start && !Db.DEMO.equals(db.fileName)) {
                 running.closed = true;
                 running = null;
             }
-            return Sounds.deleteNight(db, Sounds.folder(c, db), start);
+            return n;
         }
     }
 
@@ -209,7 +233,8 @@ public final class SoundNight {
         synchronized (LOCK) {
             if (closed) return false;
             double pieceStart = now - len / (double) SoundDetector.RATE;
-            if (fed > 0 && pieceStart - (origin + fed / (double) SoundDetector.RATE) > DRIFT_S) restart(pieceStart);
+            if (fed > 0 && (pieceStart - lastPiece > JUMP_S || pieceStart - (origin + fed / (double) SoundDetector.RATE) > DRIFT_S)) restart(pieceStart);
+            lastPiece = now;
             ring.add(s, off, len);
             det.feed(s, off, len);
             fed += len;

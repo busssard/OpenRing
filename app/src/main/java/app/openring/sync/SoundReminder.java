@@ -65,9 +65,10 @@ public final class SoundReminder extends BroadcastReceiver {
         }, "sounds-reminder").start();
     }
 
-    static boolean wanted(Context c) {
+    /** Planned only after the consent, with the microphone allowed (Start could not listen otherwise) and the switch on. */
+    public static boolean wanted(Context c) {
         Prefs p = Prefs.of(c);
-        return p.soundConsent() && p.soundRemind();
+        return p.soundConsent() && p.soundRemind() && SoundService.allowed(c);
     }
 
     /** Sets or cancels the one alarm. Blocks; not on the main thread. */

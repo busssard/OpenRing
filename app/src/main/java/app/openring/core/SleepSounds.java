@@ -258,6 +258,17 @@ public final class SleepSounds {
         return TOO_FAR;
     }
 
+    /** "Nothing was changed.": a test that did not work keeps the threshold before. */
+    public static final String NOT_CHANGED = "Nothing was changed.";
+
+    /**
+     * Whether a test with this verdict sets the threshold: only one that worked (Good or Works). Too far, a loud room or no
+     * sound keeps the threshold before (review of #450: the rule "half the margin, 6 to 15 dB" applies to a test that worked).
+     */
+    public static boolean saves(int verdict) {
+        return verdict == GOOD || verdict == WORKS;
+    }
+
     public static String verdictText(int verdict) {
         switch (verdict) {
             case GOOD: return "Good, quiet talking and snoring will be found.";

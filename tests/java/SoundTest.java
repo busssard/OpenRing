@@ -629,6 +629,13 @@ public class SoundTest {
         eq("10 dB: works", app.openring.core.SleepSounds.verdict(10), app.openring.core.SleepSounds.WORKS);
         eq("19.9 dB: works", app.openring.core.SleepSounds.verdict(19.9), app.openring.core.SleepSounds.WORKS);
         eq("20 dB: good", app.openring.core.SleepSounds.verdict(20), app.openring.core.SleepSounds.GOOD);
+        // review of #450: only a test that worked sets the threshold; too far or no sound keeps the one before
+        check("Good and Works set the threshold", app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.GOOD)
+                && app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.WORKS));
+        check("too far (9.9 dB) and no sound keep the threshold before", !app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.verdict(9.9))
+                && !app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.verdict(Double.NaN)));
+        check("a test at 10 dB sets 6 dB, one at 9.9 dB changes nothing", app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.verdict(10))
+                && app.openring.core.SleepSounds.threshold(10) == 6.0);
         eq("the good text (owner's wish)", app.openring.core.SleepSounds.verdictText(app.openring.core.SleepSounds.GOOD), "Good, quiet talking and snoring will be found.");
         eq("the works text", app.openring.core.SleepSounds.verdictText(app.openring.core.SleepSounds.WORKS),
                 "Works, but quiet sounds may be missed. Put the phone closer to your head.");

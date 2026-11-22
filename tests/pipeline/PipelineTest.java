@@ -16981,6 +16981,19 @@ public class PipelineTest {
                 + " AND start <= " + (T1B + 30.1) + " AND stop >= " + (T1B + 49.9) + " AND stop <= " + (T1B + 50.1)) == 1, soundRows380(db));
         File real = app.openring.data.Sounds.folder(c, false);
         check("#380 1b: both clips saved and named after a restart of the detector", consistent1b(db, real) == null && files380(real).size() == 2, files380(real));
+        // review of #450: a small loss (2 s of pieces dropped) is a gap too; timing noise of a few hundred ms is not
+        app.openring.data.SoundNight m = app.openring.data.SoundNight.start(c, T1B + 3600, 10, new Writer1b());
+        try {
+            feed1b(m, Arrays.copyOf(first, 10 * RATE1B), T1B + 3600);
+            feed1b(m, Arrays.copyOfRange(first, 10 * RATE1B, 20 * RATE1B), T1B + 3600 + 10.3);
+            feed1b(m, Arrays.copyOfRange(first, 20 * RATE1B, first.length), T1B + 3600 + 22.3);
+            m.finish(app.openring.data.Sounds.ENDED_HAND);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        check("#380 1b: 2 s of lost pieces are one gap of the system; 0.3 s late is no gap", db.count("SELECT COUNT(*) FROM sound_gaps WHERE why = 'system' AND start >= "
+                + (T1B + 3600)) == 1 && db.count("SELECT COUNT(*) FROM sound_gaps WHERE why = 'system' AND start >= " + (T1B + 3600 + 19.9)
+                + " AND start <= " + (T1B + 3600 + 20.1) + " AND stop >= " + (T1B + 3600 + 22.2) + " AND stop <= " + (T1B + 3600 + 22.4)) == 1, soundRows380(db));
         clean254();
     }
 
@@ -17053,6 +17066,31 @@ public class PipelineTest {
         } finally {
             app.openring.data.SoundNight.stopRunning();
             mic.join(60000);
+        }
+        // review of #450: Delete all fails while listening: nothing deleted, and the night goes on and ends as it should
+        app.openring.data.SoundNight k = app.openring.data.SoundNight.start(c, T1B + 14400, 10, new Writer1b());
+        try {
+            feed1b(k, Arrays.copyOf(s, 25 * RATE1B), T1B + 14400);
+            // a gap row, so the trigger below has a row to stop on
+            app.openring.data.Sounds.addGap(db, N380, N380 + 60, app.openring.data.Sounds.GAP_SILENCE);
+            String rows = soundRows380(db);
+            List<String> files = files380(real);
+            db.getWritableDatabase().execSQL("CREATE TRIGGER stop_sound BEFORE DELETE ON sound_gaps BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+            Throwable got = null;
+            try {
+                app.openring.data.DeleteAll.run(c);
+            } catch (RuntimeException e) {
+                got = e;
+            }
+            db.getWritableDatabase().execSQL("DROP TRIGGER stop_sound");
+            check("#380 1b: Delete all fails while listening: every row and file as before, the night still listening", got != null && soundRows380(db).equals(rows)
+                    && files380(real).equals(files) && app.openring.data.SoundNight.isRunning() && !k.closed(), got);
+            boolean goesOn = feed1b(k, Arrays.copyOfRange(s, 25 * RATE1B, s.length), T1B + 14400 + 25);
+            k.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: after the failed Delete all the night ends as it should: its 3 marks with their clips, ended by hand", goesOn
+                    && "60 3 hand".equals(night1b(db, T1B + 14400)) && consistent1b(db, real) == null, night1b(db, T1B + 14400) + " " + consistent1b(db, real));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
         }
         clean254();
     }

@@ -37,7 +37,8 @@ import app.openring.data.Sounds;
  * settings), then the microphone test.</li>
  * <li>{@link #TEST}: Test the microphone (the owner's wish of 21 November): 10 s of quiet for the room, then the sentence, then
  * the result with the evidence (a bar with both levels and the threshold), the sentence played back once from memory and
- * never stored. The threshold is saved at once ({@code Prefs.setSoundTest}); with no sound nothing changes.</li>
+ * never stored. The threshold is saved at once ({@code Prefs.setSoundTest}) when the test worked (Good or Works); too far, too
+ * loud or no sound keeps the threshold before.</li>
  * <li>{@link #LIST}: the marks of one night with Play, Keep and Delete sound, and "Delete all clips of this night".</li>
  * </ul>
  * Demo mode never records: the consent only shows, the test shows a made up result (nothing saved), the list is the demo's.
@@ -45,14 +46,24 @@ import app.openring.data.Sounds;
 public final class SoundsActivity extends Activity {
     static final String MODE = "mode", NIGHT = "night";
     static final String CONSENT = "consent", TEST = "test", LIST = "list";
-    static final int REQUEST = 380;
+    static final int REQUEST = 380, REQUEST_NOTIFY = 381;
 
     private LinearLayout body;
     private String mode;
     private boolean quietDenial;
-    /** The running microphone test: stopped when the screen goes. */
-    private volatile boolean testStop;
+    /**
+     * The microphone test running now: each test has its own number, and stopTest() moves it on, so an older test's thread
+     * ends at its next piece and never shows or saves anything (review of #450). Stopped when the screen goes.
+     */
+    private volatile int testGen;
     private Thread testThread;
+    /** Ends the played back sentence; only the playback, never a test (review of #450). */
+    private final Runnable trackEnd = new Runnable() {
+        @Override
+        public void run() {
+            stopTrack();
+        }
+    };
     private AudioTrack track;
     /** The test's result is on screen (kept when the screen comes back). */
     private boolean resultShown;
@@ -92,7 +103,7 @@ public final class SoundsActivity extends Activity {
         setContentView(scroll);
         mode = getIntent().getStringExtra(MODE);
         if (mode == null) mode = CONSENT;
-        show();
+        // shown by onResume, once per open (review of #450)
     }
 
     @Override
@@ -150,6 +161,8 @@ public final class SoundsActivity extends Activity {
                 p.setSoundConsent(true);
                 app.openring.sync.SoundReminder.planLater(SoundsActivity.this);
                 if (app.openring.sync.SoundService.allowed(SoundsActivity.this)) {
+                    // the microphone was allowed before: Notifications on their own (Android 13 and newer), for the bedtime one
+                    askNotifications();
                     mode = TEST;
                     testStart();
                 } else {
@@ -169,6 +182,14 @@ public final class SoundsActivity extends Activity {
         });
         card.addView(no);
         body.addView(card);
+    }
+
+    /** Notifications alone (Android 13 and newer, when not allowed): never required, the answer only matters for the bedtime one. */
+    void askNotifications() {
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[] {android.Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFY);
+        }
     }
 
     void ask() {
@@ -216,6 +237,8 @@ public final class SoundsActivity extends Activity {
         PermissionAsk.Answer a = PermissionAsk.answer(granted, perms, results, needed, rationale, p.soundMicDenied(), quietDenial);
         p.setSoundMicDenied(a.denied);
         quietDenial = a.quiet;
+        // the bedtime notification follows the microphone (SoundReminder.wanted)
+        app.openring.sync.SoundReminder.planLater(this);
         if (granted) {
             mode = TEST;
             testStart();
@@ -292,10 +315,10 @@ public final class SoundsActivity extends Activity {
     }
 
     /** Reads {@code out} full from {@code rec}, a line each second; false when stopped or the microphone failed. */
-    private boolean readAll(AudioRecord rec, short[] out, String title, String what, boolean sentence) {
+    private boolean readAll(int gen, AudioRecord rec, short[] out, String title, String what, boolean sentence) {
         int at = 0, shown = -1;
         while (at < out.length) {
-            if (testStop) return false;
+            if (gen != testGen) return false;
             int left = (out.length - at) / SoundDetector.RATE + ((out.length - at) % SoundDetector.RATE > 0 ? 1 : 0);
             if (left != shown) {
                 shown = left;
@@ -310,7 +333,16 @@ public final class SoundsActivity extends Activity {
 
     void runTest() {
         stopTest();
-        testStop = false;
+        // the older test's thread ends at its next piece (100 ms): never two microphones at once
+        Thread old = testThread;
+        if (old != null) {
+            try {
+                old.join(1500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        final int gen = testGen;
         final Context ctx = getApplicationContext();
         testThread = new Thread(new Runnable() {
             @Override
@@ -322,8 +354,8 @@ public final class SoundsActivity extends Activity {
                 try {
                     if (rec != null) {
                         rec.startRecording();
-                        ok = readAll(rec, room, SleepSounds.TEST_ROOM, "Listening to the room, stay quiet", false)
-                                && readAll(rec, voice, SleepSounds.TEST_SAY, "Listening", true);
+                        ok = readAll(gen, rec, room, SleepSounds.TEST_ROOM, "Listening to the room, stay quiet", false)
+                                && readAll(gen, rec, voice, SleepSounds.TEST_SAY, "Listening", true);
                     }
                 } catch (RuntimeException e) {
                     ok = false;
@@ -337,17 +369,17 @@ public final class SoundsActivity extends Activity {
                         rec.release();
                     }
                 }
-                if (testStop) return;
+                if (gen != testGen) return;
                 final double rl = ok ? SleepSounds.roomLevel(SleepSounds.frameLevels(room, room.length)) : Double.NaN;
                 final double vl = ok ? SleepSounds.voiceLevel(SleepSounds.frameLevels(voice, voice.length)) : Double.NaN;
                 final boolean heard = ok;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        if (isFinishing() || isDestroyed()) return;
+                        if (isFinishing() || isDestroyed() || gen != testGen) return;
                         double margin = SleepSounds.margin(rl, vl);
-                        // saved at once; with no sound nothing changes
-                        if (!Double.isNaN(margin)) Prefs.of(SoundsActivity.this).setSoundTest(System.currentTimeMillis() / 1000, margin);
+                        // saved at once when the test worked (Good or Works); too far, too loud or no sound keeps the threshold before
+                        if (SleepSounds.saves(SleepSounds.verdict(margin))) Prefs.of(SoundsActivity.this).setSoundTest(System.currentTimeMillis() / 1000, margin);
                         showResult(rl, vl, false);
                         if (heard && !Double.isNaN(margin)) playOnce(voice);
                     }
@@ -358,7 +390,13 @@ public final class SoundsActivity extends Activity {
     }
 
     void stopTest() {
-        testStop = true;
+        testGen++;
+        stopTrack();
+    }
+
+    /** Stops the played back sentence, if any. */
+    void stopTrack() {
+        if (body != null) body.removeCallbacks(trackEnd);
         AudioTrack t = track;
         track = null;
         if (t != null) {
@@ -379,12 +417,7 @@ public final class SoundsActivity extends Activity {
             t.write(voice, 0, voice.length);
             t.play();
             track = t;
-            body.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    stopTest();
-                }
-            }, SleepSounds.VOICE_S * 1000L + 500);
+            body.postDelayed(trackEnd, SleepSounds.VOICE_S * 1000L + 500);
         } catch (RuntimeException e) {
             // the result stays; only the playback is missing
         }
@@ -400,8 +433,10 @@ public final class SoundsActivity extends Activity {
         card.addView(Ui.caption(this, SleepSounds.TEST));
         card.addView(Ui.gap(this, 6));
         if (demo) card.addView(Ui.text(this, "Demo mode: a made up result, nothing was recorded or saved.", 12, Ui.ACTIVE, Ui.REGULAR));
+        boolean saves = SleepSounds.saves(verdict);
         if (!Double.isNaN(margin)) {
-            double th = demo ? SleepSounds.threshold(margin) : Prefs.of(this).soundThreshold();
+            // the threshold in use: the new one after a test that worked, the one before otherwise (demo: as it would be)
+            double th = demo && saves ? SleepSounds.threshold(margin) : Prefs.of(this).soundThreshold();
             card.addView(new LevelBar(this, room, voice, th), Ui.sized(this, -1, 64));
             card.addView(Ui.gap(this, 6));
             card.addView(Ui.text(this, SleepSounds.marginLine(margin), 18, Ui.TEXT, Ui.REGULAR));
@@ -410,11 +445,12 @@ public final class SoundsActivity extends Activity {
             card.addView(Ui.body(this, SleepSounds.verdictText(verdict)));
             card.addView(Ui.gap(this, 6));
             card.addView(Ui.text(this, SleepSounds.thresholdLine(th), 14, Ui.TEXT_2, Ui.REGULAR));
-            card.addView(Ui.text(this, SleepSounds.THRESHOLD_NOTE + " Half the difference, kept between 6 and 15 dB.", 11, Ui.TEXT_3, Ui.REGULAR));
+            card.addView(Ui.text(this, SleepSounds.THRESHOLD_NOTE + (saves ? " Half the difference, kept between 6 and 15 dB." : " " + SleepSounds.NOT_CHANGED),
+                    11, Ui.TEXT_3, Ui.REGULAR));
             if (!demo) card.addView(Ui.text(this, SleepSounds.TEST_PLAYED, 12, Ui.TEXT_3, Ui.REGULAR));
         } else {
             card.addView(Ui.body(this, SleepSounds.verdictText(verdict)));
-            card.addView(Ui.text(this, "Nothing was changed.", 12, Ui.TEXT_3, Ui.REGULAR));
+            card.addView(Ui.text(this, SleepSounds.NOT_CHANGED, 12, Ui.TEXT_3, Ui.REGULAR));
         }
         if (!demo && !app.openring.sync.SoundService.unprocessed(this)) {
             card.addView(Ui.gap(this, 6));
@@ -557,6 +593,8 @@ public final class SoundsActivity extends Activity {
             card.addView(Ui.divider(this));
             card.addView(SoundViews.row(this, k, folder, zone));
             if (!k.sound()) continue;
+            // the night still listening: Delete sound waits until it ended, so a later write of its mark cannot bring the sound back
+            boolean listening = !Prefs.of(this).demo() && SoundNight.isRunning() && SoundNight.runningStart() == n.start;
             LinearLayout actions = Ui.hbox(this);
             TextView keep = Ui.smallButton(this, k.kept ? SleepSounds.KEPT : SleepSounds.KEEP, k.kept ? Ui.GOOD : Ui.TEXT_2);
             keep.setOnClickListener(new View.OnClickListener() {
@@ -587,7 +625,7 @@ public final class SoundsActivity extends Activity {
             LinearLayout.LayoutParams lb = new LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1);
             lb.setMargins(Ui.dp(this, 4), 0, 0, Ui.dp(this, 6));
             actions.addView(keep, la);
-            actions.addView(del, lb);
+            if (!listening) actions.addView(del, lb);
             card.addView(actions);
         }
         TextView all = Ui.smallButton(this, SleepSounds.DELETE_NIGHT, Ui.WARN);

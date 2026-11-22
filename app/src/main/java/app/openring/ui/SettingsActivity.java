@@ -1429,7 +1429,9 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     public void run() {
                         if (isFinishing() || isDestroyed()) return;
                         later.removeAllViews();
-                        if (r != null) later.addView(Ui.text(SettingsActivity.this, r + ". It comes once you set up sleep sounds; Start opens the app and listens.",
+                        // the next time only while it is planned (set up, microphone allowed, switch on), else Off (review of #450)
+                        if (r != null) later.addView(Ui.text(SettingsActivity.this, app.openring.sync.SoundReminder.wanted(SettingsActivity.this)
+                                ? r + ". Start opens the app and listens." : "Bedtime notification: Off.",
                                 12, Ui.TEXT_3, Ui.REGULAR));
                         later.addView(line("Space used", sp == null ? "--" : sp));
                         later.addView(Ui.text(SettingsActivity.this, "The clip files on this phone. They are never in a backup.", 12, Ui.TEXT_3, Ui.REGULAR));

@@ -133,7 +133,13 @@ final class SoundViews {
                 @Override
                 public void onClick(View v) {
                     if (c instanceof Activity) listen((Activity) c);
-                    if (nav != null) nav.reload();
+                    // the service needs a moment before the card can say it listens (as Stop listening)
+                    v.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (nav != null) nav.reload();
+                        }
+                    }, 1500);
                 }
             });
         }
