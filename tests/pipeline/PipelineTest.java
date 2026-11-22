@@ -980,6 +980,9 @@ public class PipelineTest {
         soundSettings1b380();
         soundRetention1b380();
         soundDemoClips1b380();
+        soundUsual1b380();
+        soundEdges1b380();
+        soundFailures1b380();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -16848,13 +16851,21 @@ public class PipelineTest {
         Db db = Db.get(c);
         short[] s = audio1b(90, 1, new double[] {20, 3, 0, 3000}, new double[] {40, 0.5, 1, 9000},
                 new double[] {55, 1.2, 2, 2500}, new double[] {59, 1.2, 2, 2500}, new double[] {63, 1.2, 2, 2500});
+        // 3 s of digital silence at 80 s: another app held the microphone
+        Arrays.fill(s, 80 * RATE1B, 83 * RATE1B, (short) 0);
+        check("#380 1b: nothing listens before the start", !app.openring.data.SoundNight.isRunning() && Double.isNaN(app.openring.data.SoundNight.runningStart())
+                && app.openring.data.SoundNight.runningSounds() == 0, null);
         Writer1b w = new Writer1b();
         app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, w);
         try {
             check("#380 1b: a night listening is known to the screens", app.openring.data.SoundNight.isRunning() && app.openring.data.SoundNight.runningStart() == T1B, null);
             check("#380 1b: its row is written at the start, still open", "0 0 null".equals(night1b(db, T1B)), night1b(db, T1B));
             boolean fed = feed1b(n, s, T1B);
+            check("#380 1b: while listening the card counts the night's 3 sounds so far", app.openring.data.SoundNight.runningSounds() == 3,
+                    app.openring.data.SoundNight.runningSounds());
             n.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: the 3 s of digital silence are a gap of silence", db.count("SELECT COUNT(*) FROM sound_gaps WHERE why = 'silence' AND start >= " + (T1B + 79.9)
+                    + " AND stop <= " + (T1B + 83.1)) == 1, soundRows380(db));
             app.openring.core.analysis.SoundDetector d = new app.openring.core.analysis.SoundDetector(T1B, 10);
             d.feed(s);
             d.finish();
@@ -17109,6 +17120,9 @@ public class PipelineTest {
         app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         check("#380 1b: the defaults: 7 days, 10 dB, not tested, the notification on, no consent", p.soundKeepDays() == 7 && p.soundThreshold() == 10
                 && p.soundTested() == 0 && Double.isNaN(p.soundMargin()) && p.soundRemind() && !p.soundConsent(), null);
+        p.setSoundMicDenied(true);
+        p.setSoundRemindSent("2026-11-22");
+        check("#380 1b: the microphone's refusal and the day of the last notification are remembered", p.soundMicDenied() && "2026-11-22".equals(p.soundRemindSent()), null);
         p.setSoundKeepDays(14);
         check("#380 1b: 14 days is not a choice and is not stored", p.soundKeepDays() == 7, p.soundKeepDays());
         p.setSoundKeepDays(30);
@@ -17123,7 +17137,8 @@ public class PipelineTest {
         app.openring.data.Prefs q = app.openring.data.Prefs.of(phone2);
         check("#380 1b: a restore brings back 30 days, the test (22.4 dB, 11.2 dB threshold) and the notification off", r.ok && q.soundKeepDays() == 30
                 && q.soundThreshold() == 11.2 && q.soundMargin() == 22.4 && q.soundTested() == 1_790_000_000L && !q.soundRemind(), r.message);
-        check("#380 1b: the consent is never in a backup (a new phone asks again)", !q.soundConsent(), null);
+        check("#380 1b: the consent and the microphone's refusal are never in a backup (a new phone asks again)", !q.soundConsent() && !q.soundMicDenied()
+                && q.soundRemindSent() == null, null);
         String json = new String(zipEntry(full, "openring-backup.json"), "UTF-8");
         check("#380 1b: the backup's settings hold no consent and no sound", !json.contains("sound_consent") && !json.contains(".m4a") && !json.contains(".wav"), null);
         // an older backup without the keys: the phone keeps its own
@@ -17191,6 +17206,149 @@ public class PipelineTest {
         }
         app.openring.data.SoundNight.tidyReal(c, app.openring.core.SleepSounds.KEEP_WEEK);
         check("#380 1b: after the night the sweep removes a file no mark names", !new File(real, "s1.m4a").exists() && new File(real, "kept.wav").isFile(), files380(real));
+        clean254();
+    }
+
+    /**
+     * The usual bedtime and wake up for the bedtime notification and the stop time, from the person's own main nights (the
+     * real file, also in demo mode): 30 min before the usual bedtime, an hour after the usual wake up; the defaults without nights.
+     */
+    static void soundUsual1b380() throws Exception {
+        Context c = phone254("openring380-1b-usual");
+        Db db = Db.get(c);
+        LocalDate today = LocalDate.now(Z58);
+        app.openring.core.SleepSounds.Usual none = app.openring.data.SoundNight.usual(c, today, Z58);
+        check("#380 1b: without nights: the notification at 22:30, the stop at 9:00", !none.known() && none.remindMinute() == 22 * 60 + 30 && none.stopMinute() == 9 * 60, none.nights);
+        for (int i = 20; i >= 1; i--) {
+            LocalDate d = today.minusDays(i);
+            double start = d.minusDays(1).atTime(23, 10).atZone(Z58).toEpochSecond(), end = d.atTime(7, 5).atZone(Z58).toEpochSecond();
+            db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                    new Object[] {start, end, d.toString(), "{\"start\":" + start + ",\"end\":" + end + "}"});
+        }
+        // a nap (not main) and a night without times do not count
+        double nap = today.minusDays(3).atTime(14, 0).atZone(Z58).toEpochSecond();
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 0, NULL, ?)",
+                new Object[] {nap, nap + 3600, today.minusDays(3).toString(), "{\"start\":" + nap + ",\"end\":" + (nap + 3600) + "}"});
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                new Object[] {nap + 7200, nap + 9000, today.minusDays(2).toString(), "{}"});
+        List<double[]> used = app.openring.data.Sounds.usualNights(db, today);
+        check("#380 1b: the last 14 main nights with times count", used.size() == 14, used.size());
+        app.openring.core.SleepSounds.Usual u = app.openring.data.SoundNight.usual(c, today, Z58);
+        check("#380 1b: nights at 23:10 to 07:05: the notification at 22:40, the stop at 08:05", u.known() && u.remindMinute() == 22 * 60 + 40
+                && u.stopMinute() == 8 * 60 + 5, u.remindMinute() + " " + u.stopMinute());
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db.get(c);
+            app.openring.core.SleepSounds.Usual demo = app.openring.data.SoundNight.usual(c, today, Z58);
+            check("#380 1b: in demo mode the person's own nights count, not the demo's", demo.remindMinute() == 22 * 60 + 40, demo.remindMinute());
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        java.lang.reflect.Method any = app.openring.data.Sounds.class.getDeclaredMethod("any", Db.class);
+        any.setAccessible(true);
+        db = Db.get(c);
+        boolean before = (Boolean) any.invoke(null, db);
+        app.openring.data.Sounds.addNight(db, N380, N380 + 60, null, 0, app.openring.data.Sounds.ENDED_HAND);
+        check("#380 1b: a history with a night listened has sounds (the demo is built again without)", !before && (Boolean) any.invoke(null, db), null);
+        clean254();
+    }
+
+    /**
+     * Failures while listening: the database refuses the rows for a while (they wait in memory and are written once it takes
+     * them again, nothing lost); the clip folder cannot be written (the mark stays without sound, the night goes on).
+     */
+    static void soundFailures1b380() throws Exception {
+        Context c = phone254("openring380-1b-fail");
+        Db db = Db.get(c);
+        File real = app.openring.data.Sounds.folder(c, false);
+        short[] s = audio1b(40, 11, new double[] {10, 2, 0, 3000});
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop_clip BEFORE INSERT ON sound_clips BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        try {
+            feed1b(n, Arrays.copyOf(s, 20 * RATE1B), T1B);
+            check("#380 1b: while the database refuses the mark, it waits and its clip file is kept", db.count("SELECT COUNT(*) FROM sound_clips") == 0
+                    && files380(real).size() == 1 && app.openring.data.SoundNight.runningSounds() == 1, soundRows380(db) + files380(real));
+            db.getWritableDatabase().execSQL("DROP TRIGGER stop_clip");
+            feed1b(n, Arrays.copyOfRange(s, 20 * RATE1B, s.length), T1B + 20);
+            n.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: once the database takes it again the mark is written with its clip, nothing lost", db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 1
+                    && consistent1b(db, real) == null && "40 1 hand".equals(night1b(db, T1B)), soundRows380(db) + " " + night1b(db, T1B));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        // the clip folder cannot be made (a file is in its place): no clip, the mark stays without sound, the night goes on
+        rmTree(real);
+        Files.write(real.toPath(), new byte[1]);
+        app.openring.data.SoundNight m = app.openring.data.SoundNight.start(c, T1B + 3600, 10, new Writer1b());
+        try {
+            boolean fed = feed1b(m, s, T1B + 3600);
+            m.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: no folder to write into: the night goes on, its mark is stored without sound", fed && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 1 AND start >= "
+                    + (T1B + 3600)) == 1 && "40 0 hand".equals(night1b(db, T1B + 3600)), soundRows380(db));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+            real.delete();
+        }
+        clean254();
+    }
+
+    /** The reads and deletes of the screens at their edges: open nights, nights after one another, files that cannot go, stored odd values. */
+    static void soundEdges1b380() throws Exception {
+        Context c = phone254("openring380-1b-edges");
+        Db db = Db.get(c);
+        File real = app.openring.data.Sounds.folder(c, false);
+        check("#380 1b: no night, no night to read", app.openring.data.Sounds.night(db, N380) == null
+                && app.openring.data.Sounds.forDay(db, LocalDate.of(2019, 3, 4), Z58) == null, null);
+        // a night never written beyond its start (no stop, no reason): its marks are those of the next 13 hours, before the next night
+        app.openring.data.Sounds.addNight(db, N380, null, null, 0, null);
+        clip380(c, db, N380 + 100, app.openring.core.analysis.SoundDetector.TALK, "a1.m4a", true);
+        app.openring.data.Sounds.addNight(db, N380 + 3600, N380 + 7200, null, 1, app.openring.data.Sounds.ENDED_HAND);
+        clip380(c, db, N380 + 4000, app.openring.core.analysis.SoundDetector.TALK, "b1.m4a", true);
+        app.openring.data.Sounds.addMark(db, N380 + 5000, N380 + 5003, app.openring.core.analysis.SoundDetector.COUGH, null);
+        app.openring.data.Sounds.Night first = app.openring.data.Sounds.night(db, N380);
+        check("#380 1b: an open night has no stop and no reason, and ends where the next night starts", first != null && Double.isNaN(first.stop)
+                && first.ended == null && first.clips.size() == 1, first == null ? null : first.clips.size());
+        check("#380 1b: the Sleep tab of 4 March shows the newer of the two nights", app.openring.data.Sounds.forDay(db, LocalDate.of(2019, 3, 4), Z58).start == N380 + 3600, null);
+        check("#380 1b: deleting a night with a mark without sound deletes both marks and the one file", app.openring.data.Sounds.deleteNight(db, real, N380 + 3600) == 2
+                && files380(real).equals(Arrays.asList("a1.m4a")), files380(real));
+        // Delete sound: a clip whose file cannot be deleted keeps its sound; a mark that is not there changes nothing
+        File stuck = new File(real, "c1.m4a");
+        stuck.mkdirs();
+        Files.write(new File(stuck, "inside").toPath(), new byte[1]);
+        app.openring.data.Sounds.addClip(db, N380 + 200, N380 + 206, app.openring.core.analysis.SoundDetector.TALK, -30.0, "c1.m4a");
+        check("#380 1b: Delete sound that cannot delete the file keeps the mark's sound", !app.openring.data.Sounds.deleteSound(db, real, N380 + 200)
+                && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0 AND start = " + (N380 + 200)) == 1, null);
+        String rows = soundRows380(db);
+        check("#380 1b: Delete sound of a mark that is not there changes nothing", app.openring.data.Sounds.deleteSound(db, real, N380 + 999) && soundRows380(db).equals(rows), null);
+        // the tidy of the demo file runs the sweep on the demo folder, also while a real night listens
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            File demo = app.openring.data.Sounds.folder(c, d);
+            clipFile380(demo, "lost.wav", 10);
+            new File(demo, "lost.wav").setLastModified(System.currentTimeMillis() - 3600 * 1000L);
+            app.openring.data.Sounds.tidy(c, d, app.openring.core.SleepSounds.KEEP_WEEK);
+            check("#380 1b: the demo's tidy sweeps the demo folder while a real night listens", files380(demo).isEmpty(), files380(demo));
+            app.openring.data.Sounds.addNight(d, T1B, T1B + 60, null, 0, app.openring.data.Sounds.ENDED_HAND);
+            app.openring.data.SoundNight.deleteNight(c, d, T1B);
+            check("#380 1b: deleting the demo's night of the same start never stops the real night", app.openring.data.SoundNight.isRunning() && !n.closed(), null);
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+            app.openring.data.SoundNight.stopRunning();
+        }
+        db = Db.get(c);
+        // stored values that are not choices read as the defaults
+        c.getSharedPreferences("openring", Context.MODE_PRIVATE).edit().putInt("sound_keep", 14).putInt("sound_threshold", 400).apply();
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        check("#380 1b: a stored 14 days or 40 dB read as 7 days and 10 dB", p.soundKeepDays() == 7 && p.soundThreshold() == 10, p.soundThreshold());
+        // the usual nights leave out a night that is not JSON or ends before it starts
+        LocalDate today = LocalDate.now(Z58);
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                new Object[] {T1B, T1B + 60, today.minusDays(1).toString(), "not json"});
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                new Object[] {T1B + 100, T1B + 50, today.minusDays(2).toString(), "{\"start\":" + (T1B + 100) + ",\"end\":" + (T1B + 50) + "}"});
+        check("#380 1b: a night that is not JSON or ends before it starts does not count", app.openring.data.Sounds.usualNights(db, today).isEmpty(), null);
         clean254();
     }
 

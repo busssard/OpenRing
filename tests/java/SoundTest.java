@@ -874,6 +874,7 @@ public class SoundTest {
         r.add(s, 0, 7);
         r.add(s, 7, 18);
         eq("25 samples added", r.total(), 25L);
+        eq("it holds 10", r.capacity(), 10);
         eq("the oldest held is 15", r.oldest(), 15L);
         eq("a copy from 12 to 20 gives 15 to 19", Arrays.toString(r.copy(12, 20)), "[15, 16, 17, 18, 19]");
         eq("a copy past the newest stops at it", Arrays.toString(r.copy(22, 30)), "[22, 23, 24]");

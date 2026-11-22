@@ -547,7 +547,7 @@ public final class SoundsActivity extends Activity {
         ZoneId zone = ZoneId.systemDefault();
         LinearLayout card = Ui.card(this);
         java.time.LocalDate day = SleepSounds.nightDay(n.start, zone);
-        card.addView(Ui.caption(this, "Night to " + day.getDayOfMonth() + " " + day.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH)));
+        card.addView(Ui.caption(this, "Night before " + day.getDayOfMonth() + " " + day.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH)));
         card.addView(Ui.gap(this, 6));
         card.addView(Ui.body(this, SleepSounds.summary(n.marks())));
         if (!n.clips.isEmpty()) card.addView(Ui.text(this, SleepSounds.COUNTS_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));

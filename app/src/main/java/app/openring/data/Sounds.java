@@ -479,22 +479,10 @@ public final class Sounds {
 
     /**
      * Nights never closed (the phone ended the app while it listened) get {@link #ENDED_SYSTEM}; their stop stays the last
-     * minute they were known to listen. {@code running}: the start of the night listening now (left alone), NaN for none.
+     * minute they were known to listen. {@code running}: the start of the night listening now, left alone.
      */
-    static int closeStale(Db db, double running) {
-        String[] arg = Double.isNaN(running) ? null : new String[] {String.valueOf(running)};
-        String where = Double.isNaN(running) ? "ended IS NULL" : "ended IS NULL AND start != ?";
-        int n = 0;
-        Cursor c = db.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM sound_nights WHERE " + where, arg);
-        try {
-            if (c.moveToFirst()) n = c.getInt(0);
-        } finally {
-            c.close();
-        }
-        if (n == 0) return 0;
-        if (arg == null) db.getWritableDatabase().execSQL("UPDATE sound_nights SET ended = ? WHERE " + where, new Object[] {ENDED_SYSTEM});
-        else db.getWritableDatabase().execSQL("UPDATE sound_nights SET ended = ? WHERE " + where, new Object[] {ENDED_SYSTEM, running});
-        return n;
+    static void closeStale(Db db, double running) {
+        db.getWritableDatabase().execSQL("UPDATE sound_nights SET ended = ? WHERE ended IS NULL AND start != ?", new Object[] {ENDED_SYSTEM, running});
     }
 
     /**
