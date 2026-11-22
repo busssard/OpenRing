@@ -405,8 +405,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)
                     .putExtra("demo_correct", i.getBooleanExtra("drip_correct", false)));
         }
-        // screen test: the Watch check with its made up scan, and with watch_report its made up report (issue #251); only in
-        // demo mode, which never touches Bluetooth
+        // screen test: the Device check with its made up scan, with watch_report the made up watch's report (issue #251) and
+        // with device_ring the made up ring's (issue #418); only in demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch_data", false) && Prefs.of(this).demo()) startActivity(new Intent(this, WatchPageActivity.class));
         // screen test: the main device (issue #251), demo mode only; the same choice as the chips in Settings
         if (i.hasExtra("main_device") && Prefs.of(this).demo()) Prefs.of(this).setMainDevice(i.getIntExtra("main_device", 0));
@@ -429,7 +429,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     .putExtra("demo_hands", i.getBooleanExtra("watch_setup_hands", false)));
         }
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
-            startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false)));
+            startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false))
+                    .putExtra("demo_ring", i.getBooleanExtra("device_ring", false))); // the made up QRing ring's result (issue #418)
         }
         // screen test: the Badges page (issue #265); it only reads, so it needs no demo mode
         if (i.getBooleanExtra("badges", false)) startActivity(new Intent(this, BadgesActivity.class));

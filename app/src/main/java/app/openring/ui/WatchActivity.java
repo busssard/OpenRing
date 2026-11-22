@@ -32,10 +32,13 @@ import app.openring.ble.WatchLink;
 import app.openring.core.PermissionAsk;
 import app.openring.core.RingGate;
 import app.openring.core.WatchCheck;
+import app.openring.core.rings.RingFamily;
 import app.openring.data.Prefs;
 
 /**
- * The Watch check (issue #251, phase 1a): scan, pick a watch, one short look at its Bluetooth layout, a report to copy.
+ * The Device check (issue #251, phase 1a, once the Watch check; issue #418, phase 1): scan, pick a ring or watch, one short
+ * look at its Bluetooth layout, a report to copy. A Withings watch is listened to as before; any other device is only
+ * looked at and gets the one line of its family ({@link RingFamily}), which only names it and never picks it.
  * No pairing, nothing stored; the report lives in this screen only. The ring always wins: the check runs only when it
  * can take the ring lock at once ({@link RingGate#takeIfFree} through {@link RingManager#whileRingFree(Runnable, String)}) and holds it for the session (at most 30 s), so the
  * phone never keeps two links. The scan stops in {@link #onPause}, the session in {@link #onStop} (a pairing dialog pauses the screen). Demo mode never touches Bluetooth: it shows
@@ -46,6 +49,8 @@ public final class WatchActivity extends Activity {
     private boolean demo, resumed, askedPermission, permissionBlocked, quietDenial;
     private LinearLayout listBox, reportCard, issueBox;
     private TextView scanStatus, issueText, issueButton, scanButton, reportStatus, reportText;
+    /** What the report holds, the copy with bytes and its warning (a Withings watch only), what to do with it (issue #418). */
+    private TextView reportNote, copyButton, copyBytes, privateNote, sendBack;
     private RingScanner.Watch scan;
     private long scanUntil;
     /** What the scan heard, by address; written on a Bluetooth thread. */
@@ -88,7 +93,7 @@ public final class WatchActivity extends Activity {
             }
         });
         top.addView(back, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 40)));
-        top.addView(Ui.h1(this, "Watch check"));
+        top.addView(Ui.h1(this, WatchCheck.TITLE));
         root.addView(top);
         root.addView(Ui.gap(this, 8));
 
@@ -141,8 +146,9 @@ public final class WatchActivity extends Activity {
         reportText.setTextIsSelectable(true);
         reportCard.addView(reportText);
         reportCard.addView(Ui.gap(this, 8));
-        reportCard.addView(Ui.text(this, WatchCheck.REPORT_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
-        TextView copy = Ui.button(this, "Copy the report", Ui.SLEEP, true);
+        reportNote = Ui.text(this, WatchCheck.REPORT_NOTE, 12, Ui.TEXT_3, Ui.REGULAR);
+        reportCard.addView(reportNote);
+        TextView copy = copyButton = Ui.button(this, "Copy the report", Ui.SLEEP, true);
         copy.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -152,7 +158,7 @@ public final class WatchActivity extends Activity {
         LinearLayout.LayoutParams cl = Ui.matchWrap();
         cl.setMargins(0, Ui.dp(this, 10), 0, 0);
         reportCard.addView(copy, cl);
-        TextView copyBytes = Ui.smallButton(this, "Copy with message bytes", Ui.WARN);
+        copyBytes = Ui.smallButton(this, "Copy with message bytes", Ui.WARN);
         copyBytes.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -162,9 +168,12 @@ public final class WatchActivity extends Activity {
         LinearLayout.LayoutParams bl = Ui.matchWrap();
         bl.setMargins(0, Ui.dp(this, 8), 0, 0);
         reportCard.addView(copyBytes, bl);
-        reportCard.addView(Ui.text(this, WatchCheck.PRIVATE, 12, Ui.WARN, Ui.REGULAR));
+        privateNote = Ui.text(this, WatchCheck.PRIVATE, 12, Ui.WARN, Ui.REGULAR);
+        reportCard.addView(privateNote);
         reportCard.addView(Ui.gap(this, 10));
-        reportCard.addView(Ui.text(this, WatchCheck.SEND_BACK, 13, Ui.TEXT_2, Ui.REGULAR));
+        // the watch's lines of #251, or for a ring the one line of its family (issue #418)
+        sendBack = Ui.text(this, WatchCheck.SEND_BACK, 13, Ui.TEXT_2, Ui.REGULAR);
+        reportCard.addView(sendBack);
         // phase 1b: a checked Withings watch can be the one this app syncs
         useButton = Ui.button(this, "Use this watch for syncing", Ui.OXY, true);
         useButton.setOnClickListener(new View.OnClickListener() {
@@ -258,10 +267,10 @@ public final class WatchActivity extends Activity {
         if (!Permissions.granted(this)) {
             String what = PermissionAsk.neededText(Build.VERSION.SDK_INT);
             if (permissionBlocked) {
-                issue("To find the watch, this app needs " + what + ". Android no longer asks, so switch it on in the app's settings.", "Open app settings",
+                issue("To find the device, this app needs " + what + ". Android no longer asks, so switch it on in the app's settings.", "Open app settings",
                         new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", getPackageName(), null)));
             } else {
-                issue("To find the watch, this app needs " + what + ".", "Allow", null);
+                issue("To find the device, this app needs " + what + ".", "Allow", null);
             }
             return;
         }
@@ -272,7 +281,7 @@ public final class WatchActivity extends Activity {
         }
         BluetoothAdapter a = RingScanner.adapter(this);
         if (a == null || !a.isEnabled()) {
-            issue("Bluetooth is off. Switch it on to find the watch.", "Open Bluetooth settings", new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));
+            issue("Bluetooth is off. Switch it on to find the device.", "Open Bluetooth settings", new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));
             return;
         }
         long wait = RingScanner.startWaitMs();
@@ -327,6 +336,8 @@ public final class WatchActivity extends Activity {
             if (name != null) f.name = name;
             List<ParcelUuid> uuids = rec == null ? null : rec.getServiceUuids();
             if (uuids != null) for (ParcelUuid u : uuids) f.service(u.getUuid().toString());
+            // Oura's maker data, as RingScanner.isOura reads it: the person's own ring is named, never connected to
+            if (rec != null && rec.getManufacturerSpecificData(app.openring.core.Protocol.COMPANY_ID) != null) f.ouraMaker = true;
         }
     }
 
@@ -386,14 +397,15 @@ public final class WatchActivity extends Activity {
             for (WatchCheck.Found f : found.values()) {
                 WatchCheck.Found c = new WatchCheck.Found(f.address, f.name, f.rssi);
                 for (String s : f.services) c.service(s);
+                c.ouraMaker = f.ouraMaker;
                 all.add(c);
             }
         }
         boolean running = scan != null;
-        all = WatchCheck.shown(all); // devices without a name are left out unless they look like a Withings watch
+        all = WatchCheck.shown(all); // devices without a name are left out unless of a known family (a Withings watch, a ring)
         all = running ? WatchCheck.stableOrder(shownOrder, all) : WatchCheck.strongestFirst(all);
-        if (all.isEmpty()) scanStatus.setText(running ? "Scanning. Keep the watch next to the phone." : WatchCheck.NOTHING_FOUND);
-        else scanStatus.setText(running ? "Scanning, tap your watch to check it." : demo ? "Made up watches nearby. Tap one to see an example report." : "Tap your watch to check it.");
+        if (all.isEmpty()) scanStatus.setText(running ? "Scanning. Keep the ring or watch next to the phone." : WatchCheck.NOTHING_FOUND);
+        else scanStatus.setText(running ? "Scanning, tap your ring or watch to check it." : demo ? "Made up devices nearby. Tap one to see an example report." : "Tap your ring or watch to check it.");
         scanButton.setVisibility(running || demo || session != null ? View.GONE : View.VISIBLE);
         latest.clear();
         for (WatchCheck.Found f : all) latest.put(f.address, f);
@@ -403,7 +415,8 @@ public final class WatchActivity extends Activity {
         if (!keep) clearRows();
         for (int i = 0; i < all.size(); i++) {
             WatchCheck.Found f = all.get(i);
-            int color = WatchCheck.likelyWatch(f) ? Ui.OXY : Ui.TEXT;
+            // a Withings watch or a ring of a known family stands out (issue #418)
+            int color = WatchCheck.family(f) != RingFamily.UNKNOWN ? Ui.OXY : Ui.TEXT;
             if (i < shownOrder.size()) {
                 TextView[] t = rowTexts.get(f.address);
                 t[0].setText(WatchCheck.title(f));
@@ -447,6 +460,7 @@ public final class WatchActivity extends Activity {
         }
         showList();
         if (report != null) showReport(report);
+        else if (getIntent().getBooleanExtra("demo_ring", false)) pick(WatchCheck.demoFound().get(3)); // the made up QRing ring (issue #418)
         else if (getIntent().getBooleanExtra("demo_report", false)) pick(WatchCheck.demoFound().get(1));
     }
 
@@ -455,8 +469,14 @@ public final class WatchActivity extends Activity {
         if (session != null) return;
         checkedAddress = f.address;
         checkedName = WatchCheck.title(f);
+        if (WatchCheck.family(f) == RingFamily.OURA) {
+            // the person's own Oura ring (review of #430): named from the scan alone, never connected to, so the ring
+            // lock is not taken and a sync is never kept waiting or disturbed
+            showReport(report = WatchCheck.ouraReport(f));
+            return;
+        }
         if (demo) {
-            showReport(report = WatchCheck.demoReport());
+            showReport(report = WatchCheck.demoReport(f));
             return;
         }
         stopScan();
@@ -483,7 +503,7 @@ public final class WatchActivity extends Activity {
                 ring.whileRingFree(new Runnable() {
                     @Override
                     public void run() {
-                        r[0] = WatchLink.check(app, device, WatchCheck.title(f), f.rssi, new app.openring.ble.GattLink.Log() {
+                        r[0] = WatchLink.check(app, device, WatchCheck.title(f), f.rssi, WatchCheck.family(f), new app.openring.ble.GattLink.Log() {
                             @Override
                             public void log(String msg) {
                                 ring.log(msg);
@@ -506,6 +526,7 @@ public final class WatchActivity extends Activity {
                             reportStatus.setText(WatchCheck.BUSY);
                             reportText.setText("");
                         } else {
+                            WatchCheck.settle(f, done); // names its family from the scan, the layout and the maker
                             showReport(report = done);
                         }
                         showList();
@@ -535,8 +556,18 @@ public final class WatchActivity extends Activity {
         reportCard.setVisibility(View.VISIBLE);
         showReportCard();
         reportStatus.setText(WatchCheck.outcome(r));
-        if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.PAIRED_NOW);
-        reportText.setText(WatchCheck.text(r, false));
+        if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.pairedNow(r));
+        // the person's own Oura ring was never connected to: no report, note or Copy, only the outcome and its line
+        boolean shows = WatchCheck.showsReport(r);
+        reportText.setText(shows ? WatchCheck.text(r, false) : "");
+        reportText.setVisibility(shows ? View.VISIBLE : View.GONE);
+        reportNote.setText(WatchCheck.reportNote(r));
+        reportNote.setVisibility(shows ? View.VISIBLE : View.GONE);
+        copyButton.setVisibility(shows ? View.VISIBLE : View.GONE);
+        sendBack.setText(WatchCheck.sendBack(r));
+        // nothing was listened to on a ring: no message bytes to copy, nothing private to warn about
+        copyBytes.setVisibility(shows && r.listen ? View.VISIBLE : View.GONE);
+        privateNote.setVisibility(shows && r.listen ? View.VISIBLE : View.GONE);
         boolean withings = false;
         for (WatchCheck.Service s : r.services) withings |= WatchCheck.withings(s.uuid);
         useButton.setVisibility(withings && checkedAddress != null ? View.VISIBLE : View.GONE);
@@ -557,10 +588,10 @@ public final class WatchActivity extends Activity {
     }
 
     void copy(boolean bytes) {
-        if (report == null) return;
+        if (!WatchCheck.showsReport(report)) return;
         ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         if (cm == null) return;
-        ClipData clip = ClipData.newPlainText(bytes ? "Open Ring watch check, private" : "Open Ring watch check", WatchCheck.text(report, bytes));
+        ClipData clip = ClipData.newPlainText(bytes ? "Open Ring device check, private" : "Open Ring device check", WatchCheck.text(report, bytes));
         if (bytes && Build.VERSION.SDK_INT >= 33) {
             // Android 13 and newer then hide the copied text in their clipboard preview
             android.os.PersistableBundle extras = new android.os.PersistableBundle();

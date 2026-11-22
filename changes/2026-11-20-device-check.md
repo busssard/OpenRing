@@ -1,0 +1,2 @@
+* The Watch check is now the Device check (Settings, Watch, Check a ring or watch). It names the rings it recognises, such as Colmi and other QRing rings, RingConn, Ultrahuman and the Samsung Galaxy Ring.
+* Open Ring cannot read those rings yet: the check only looks at how they talk and never listens to their messages, so its report holds no health values. Adding it to issue 418 on GitHub helps to build them.
