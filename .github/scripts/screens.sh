@@ -336,13 +336,14 @@ if xy=$(text_mid "READINESS SCORE"); then
   adb shell input tap 540 ${xy#* }; shot ready-score-folded 2
   adb shell input tap 540 ${xy#* }; sleep 1
 else echo "::warning::score dial step: the title READINESS SCORE was not on screen"; fi
-# the Sleep dial folded with a tap on its title (review of #415 with #411): its line keeps the time asleep, "96, Optimal,
-# 7h 28m asleep"; the next launch puts the standard layout back
+# the Sleep dial folded with a tap on its title (review of #415 with #411): a small dial with the score, and its line keeps
+# the word and the time asleep, "Optimal, 7h 28m asleep" (owner's wish of 21 November); the next launch puts the standard
+# layout back
 launch --ei tab 1; sleep 3
 if xy=$(text_mid "SLEEP SCORE"); then
   adb shell input tap 540 ${xy#* }; sleep 1
   shot sleep-dial-folded 1
-  if ui_dump | grep -q 'text="[0-9]*, [A-Za-z ]*, [0-9]*h [0-9]*m asleep"'; then log "the folded Sleep dial says the time asleep"
+  if ui_dump | grep -q 'text="[A-Za-z ]*, [0-9]*h [0-9]*m asleep"'; then log "the folded Sleep dial says the time asleep"
   else echo "::warning::tiles step: the folded Sleep dial has no line with the time asleep"; fi
 else echo "::warning::tiles step: the Sleep score title was not on screen to fold it"; fi
 # Phase 1a2 of #252 at the end of Body: "Your cycles" (cycle day, next period, the cycle length dots next to the typical

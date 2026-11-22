@@ -50,10 +50,8 @@ final class Tiles {
     /** What a page says about one of its cards; a card without it gets key and title from its caption. */
     static final class Spec {
         String key, title, summary;
-        /** Small score dials shown while folded (owner's wish of 21 November), null for none: values, colours, names. */
-        double[] dials;
-        int[] dialColors;
-        String[] dialNames;
+        /** Small score dials shown while folded (owner's wish of 21 November), null for none. */
+        Layout.Dials dials;
         boolean standardOpen = true;
         Listener listener;
     }
@@ -91,53 +89,39 @@ final class Tiles {
      * go in a row under it in place of the line (Today's scores). Scores that are missing are left out; none left, no dials.
      */
     static <T extends View> T dials(T card, double[] values, int[] colors, String[] names) {
-        int n = 0;
-        for (double v : values) if (!Double.isNaN(v)) n++;
-        Spec s = spec(card);
-        if (n == 0) {
-            s.dials = null;
-            return card;
-        }
-        s.dials = new double[n];
-        s.dialColors = new int[n];
-        s.dialNames = new String[n];
-        for (int i = 0, j = 0; i < values.length; i++) {
-            if (Double.isNaN(values[i])) continue;
-            s.dials[j] = values[i];
-            s.dialColors[j] = colors[i];
-            s.dialNames[j++] = names[i];
-        }
+        spec(card).dials = Layout.dials(values, colors, names);
         return card;
     }
 
-    /** The folded tile's dials: one small dial, or a row of them with their names under each. */
-    static View dialsView(Context c, Spec s) {
-        if (s.dials.length == 1) {
-            Charts.ScoreRing r = new Charts.ScoreRing(c, s.dials[0], null, s.dialColors[0], false);
-            r.setContentDescription(s.dialNames[0] + " " + Math.round(s.dials[0]));
+    /**
+     * The folded tile's dials: one small dial, or a row of them with their names under each. TalkBack reads the fold's header as
+     * one piece (its name holds {@link Layout.Dials#spoken}), so the dials themselves are not read.
+     */
+    static View dialsView(Context c, Layout.Dials d) {
+        View v;
+        if (d.values.length == 1) {
+            Charts.ScoreRing r = new Charts.ScoreRing(c, d.values[0], null, d.colors[0], false);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(c, DIAL_DP), Ui.dp(c, DIAL_DP));
             lp.setMargins(0, 0, Ui.dp(c, 12), 0);
             r.setLayoutParams(lp);
-            return r;
+            v = r;
+        } else {
+            LinearLayout row = Ui.hbox(c);
+            row.setPadding(0, Ui.dp(c, 8), 0, 0);
+            for (int i = 0; i < d.values.length; i++) {
+                LinearLayout one = Ui.vbox(c);
+                one.setGravity(Gravity.CENTER_HORIZONTAL);
+                one.addView(new Charts.ScoreRing(c, d.values[i], null, d.colors[i], false),
+                        new LinearLayout.LayoutParams(Ui.dp(c, DIAL_DP), Ui.dp(c, DIAL_DP)));
+                TextView name = Ui.text(c, d.names[i], 11, Ui.TEXT_2, Ui.REGULAR);
+                name.setGravity(Gravity.CENTER);
+                one.addView(name);
+                row.addView(one, Ui.weight(1));
+            }
+            v = row;
         }
-        LinearLayout row = Ui.hbox(c);
-        row.setPadding(0, Ui.dp(c, 8), 0, 0);
-        StringBuilder say = new StringBuilder();
-        for (int i = 0; i < s.dials.length; i++) {
-            LinearLayout one = Ui.vbox(c);
-            one.setGravity(Gravity.CENTER_HORIZONTAL);
-            one.addView(new Charts.ScoreRing(c, s.dials[i], null, s.dialColors[i], false),
-                    new LinearLayout.LayoutParams(Ui.dp(c, DIAL_DP), Ui.dp(c, DIAL_DP)));
-            TextView name = Ui.text(c, s.dialNames[i], 11, Ui.TEXT_2, Ui.REGULAR);
-            name.setGravity(Gravity.CENTER);
-            one.addView(name);
-            row.addView(one, Ui.weight(1));
-            if (say.length() > 0) say.append(", ");
-            say.append(s.dialNames[i]).append(' ').append(Math.round(s.dials[i]));
-        }
-        row.setContentDescription(say.toString());
-        row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-        return row;
+        v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        return v;
     }
 
     /** The size of a folded tile's dial: big enough for a two digit score, small enough to keep the tile one row. */
@@ -364,8 +348,8 @@ final class Tiles {
             View inner = words;
             if (s != null && s.dials != null) {
                 // the small score dials while folded (owner's wish of 21 November)
-                t.dials = dialsView(c, s);
-                if (s.dials.length == 1) {
+                t.dials = dialsView(c, s.dials);
+                if (s.dials.values.length == 1) {
                     LinearLayout withDial = Ui.hbox(c);
                     withDial.setGravity(Gravity.CENTER_VERTICAL);
                     withDial.addView(t.dials);
@@ -420,7 +404,10 @@ final class Tiles {
             card.setLayoutParams(Ui.matchWrap());
 
             final boolean[] open = {true};
-            t.fold = Fold.inline(c, headContent, t.title + (sum == null ? "" : ", " + sum), open, false);
+            // TalkBack reads the header as one piece: its name says the dials' numbers too ("Readiness score, 95, Optimal",
+            // "Scores, Readiness 95, sleep 96, ...")
+            String spoken = s != null && s.dials != null ? s.dials.spoken() : null;
+            t.fold = Fold.inline(c, headContent, Layout.parts(t.title, spoken, sum), open, false);
             t.fold.head.setMinimumHeight(Ui.dp(c, 40));
             t.fold.body.addView(card, Ui.matchWrap());
             outer.addView(t.fold.view, Ui.matchWrap());

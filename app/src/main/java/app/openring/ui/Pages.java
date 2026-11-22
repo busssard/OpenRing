@@ -106,9 +106,8 @@ public final class Pages {
         if (app.openring.core.TodayCards.SCORES.equals(k)) {
             // folded: the four scores as small dials in a row (owner's wish of 21 November); the line when there is none
             Tiles.name(card, key, "Scores", scoresLine(d));
-            if (Tiles.dials(card, new double[] {d.score("readiness"), d.score("sleep"), d.score("activity_score"), d.score("screen")},
-                    new int[] {Ui.READY, Ui.SLEEP, Ui.ACTIVE, Ui.OXY}, new String[] {"Readiness", "Sleep", "Activity", "Screen"}) != null
-                    && Tiles.spec(card).dials != null) Tiles.summary(card, "");
+            Tiles.dials(card, todayScores(d), new int[] {Ui.READY, Ui.SLEEP, Ui.ACTIVE, Ui.OXY}, SCORE_NAMES);
+            if (Tiles.spec(card).dials != null) Tiles.summary(card, "");
         }
         else if (app.openring.core.TodayCards.DEVICE_NOTE.equals(k)) Tiles.name(card, key, "About these scores", null);
         else if (app.openring.core.TodayCards.FINISH_WATCH.equals(k)) Tiles.name(card, key, "Your watch", app.openring.core.Start.FINISH_TITLE);
@@ -118,15 +117,15 @@ public final class Pages {
 
     /** The folded Scores tile's line: "Readiness 94, sleep 89, activity 99, screen 87", the scores there are. */
     static String scoresLine(DayData d) {
-        String[] keys = {"readiness", "sleep", "activity_score", "screen"}, names = {"Readiness", "Sleep", "Activity", "Screen"};
-        StringBuilder b = new StringBuilder();
-        for (int i = 0; i < keys.length; i++) {
-            double v = d.score(keys[i]);
-            if (Double.isNaN(v)) continue;
-            if (b.length() > 0) b.append(", ");
-            b.append(b.length() == 0 ? names[i] : names[i].toLowerCase(Locale.getDefault())).append(' ').append(Math.round(v));
-        }
-        return b.length() == 0 ? null : b.toString();
+        return app.openring.core.Layout.scoresLine(todayScores(d), SCORE_NAMES);
+    }
+
+    /** The names of Today's four scores, in the order of {@link #todayScores}. */
+    static final String[] SCORE_NAMES = {"Readiness", "Sleep", "Activity", "Screen"};
+
+    /** Today's four scores (readiness, sleep, activity, screen), NaN where one is missing. */
+    static double[] todayScores(DayData d) {
+        return new double[] {d.score("readiness"), d.score("sleep"), d.score("activity_score"), d.score("screen")};
     }
 
     /** The ring's four score dials, the battery in one folded line per device under them, and Find my ring as a small button. */
@@ -2018,11 +2017,10 @@ public final class Pages {
             n.setPadding(Ui.dp(c, 8), Ui.dp(c, 4), Ui.dp(c, 8), 0);
             card.addView(n);
         }
-        // a tile like every other (owner's wish of 18 November): folded it says the score, its word and the big line ("96,
-        // Optimal, 7h 28m asleep", review of #415 with #411); without a score the big line, else the line under it
-        // folded: a small dial with the score, and the word and the big line next to it (owner's wish of 21 November)
-        Tiles.name(card, "score", label + " score", Double.isNaN(score) ? app.openring.core.Layout.dialSummary(score, big, sub)
-                : app.openring.core.Layout.dialWords(score, big));
+        // a tile like every other (owner's wish of 18 November): folded it shows a small dial with the score and next to it the
+        // word and the big line ("Optimal, 7h 28m asleep", owner's wish of 21 November, #411's time asleep); without a score no
+        // dial, the big line, else the line under it
+        Tiles.name(card, "score", label + " score", app.openring.core.Layout.dialSummary(score, big, sub));
         return Tiles.dials(card, new double[] {score}, new int[] {color}, new String[] {label});
     }
 
