@@ -315,6 +315,10 @@ check "ci: a pull request branch is built once (push only for dev and main)" 'gr
 check "ci: the emulator skips pull requests that change nothing the app is built from" 'grep -q "steps.scope.outputs.run == .true." .github/workflows/emulator.yml && [ "$(grep -c "steps.scope.outputs.run == .true." .github/workflows/emulator.yml)" -ge 6 ]'
 rm -rf "$rn"
 # owner, 20 November: the emulator runs only for releases. The scope step's own script, run with a pretend event.
+# It reads the workflow with PyYAML (GitHub's runners have it); without it these checks are skipped with a note.
+if ! python3 -c "import yaml" 2>/dev/null; then
+  echo "skip  the emulator scope checks: python3 has no PyYAML here (install it with: pip install pyyaml)"
+else
 scope_dir=$(mktemp -d)
 python3 -c "
 import yaml,sys
@@ -331,6 +335,7 @@ check "ci: a release changing only docs skips it" '[ "$(scope pull_request main 
 check "ci: a push to main runs it" '[ "$(scope push "" README.md)" = run=true ]'
 check "ci: a run by hand runs it" '[ "$(scope workflow_dispatch "" README.md)" = run=true ]'
 rm -rf "$scope_dir"
+fi
 
 echo "CI scripts: $passes passed, $fails failed"
 [ "$fails" = 0 ]
