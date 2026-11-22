@@ -28,9 +28,9 @@ public final class Trends {
     /** A period with fewer days than this is a hollow dot (a rough average): a week 2, a month 7, a year 60. */
     public static final int[] FEW = {2, 7, 60};
 
-    /** Where a day's value comes from (0: none). */
-    public static final int NONE = 0, RING = 1, WATCH = 2, PHONE = 3;
-    static final String[] SOURCE_NAMES = {"", "ring", "watch", "phone"};
+    /** Where a day's value comes from (0: none; {@link #HAND}: a night entered by hand, issue #427). */
+    public static final int NONE = 0, RING = 1, WATCH = 2, PHONE = 3, HAND = 4;
+    static final String[] SOURCE_NAMES = {"", "ring", "watch", "phone", "by hand"};
 
     public static final int ASLEEP = 0, BEDTIME = 1, WAKE = 2, REGULARITY = 3, WAKE_UPS = 4, SLEEP_SCORE = 5, READINESS = 6, RHR = 7,
             HRV = 8, TEMP = 9, STEPS = 10, KCAL = 11, SCREEN = 12, COUNT = 13;
@@ -77,7 +77,7 @@ public final class Trends {
 
     /**
      * One day's values ({@link #COUNT} measures, NaN for none; bedtime and wake time as clock minutes after midnight, 0 to 1440)
-     * and where each comes from ({@link #RING}, {@link #WATCH}, {@link #PHONE}). {@code detail}: the stage detail level its night
+     * and where each comes from ({@link #RING}, {@link #WATCH}, {@link #PHONE}, {@link #HAND}). {@code detail}: the stage detail level its night
      * was analysed with (-1 unknown), for the note under wake ups.
      */
     public static final class Day {
@@ -143,7 +143,7 @@ public final class Trends {
         public final LocalDate start, end;
         /** Days with a value, and of them from each source. */
         public int n;
-        public final int[] bySource = new int[4];
+        public final int[] bySource = new int[SOURCE_NAMES.length];
         /** The dot (mean, median, clock average or spread) and the band (25th to 75th percentile), NaN for none. */
         public double value = Double.NaN, lo = Double.NaN, hi = Double.NaN;
         /** Fewer days than {@link #FEW}: drawn hollow, "only 4 nights". */
@@ -248,7 +248,7 @@ public final class Trends {
                 if (d.date.isBefore(s) || d.date.isAfter(e)) continue;
                 vals.add(d.v[col]);
                 b.n++;
-                b.bySource[Math.max(0, Math.min(3, d.src[col]))]++;
+                b.bySource[Math.max(0, Math.min(SOURCE_NAMES.length - 1, d.src[col]))]++;
                 if (measure == WAKE_UPS) {
                     int lv = d.detail < 0 ? StageFilter.DETAILED : StageFilter.clampLevel(d.detail);
                     if (firstDetail) out.detail = lv;
@@ -406,11 +406,11 @@ public final class Trends {
         String unit = NIGHT[measure] ? (b.n == 1 ? "night" : "nights") : (b.n == 1 ? "day" : "days");
         String s = (b.hollow ? "only " : "") + b.n + " " + unit;
         int kinds = 0;
-        for (int i = 1; i < 4; i++) if (b.bySource[i] > 0) kinds++;
+        for (int i = 1; i < SOURCE_NAMES.length; i++) if (b.bySource[i] > 0) kinds++;
         if (kinds < 2) return s;
         StringBuilder sb = new StringBuilder(s).append(":");
         boolean first = true;
-        for (int i = 1; i < 4; i++) {
+        for (int i = 1; i < SOURCE_NAMES.length; i++) {
             if (b.bySource[i] == 0) continue;
             sb.append(first ? " " : ", ").append(b.bySource[i]).append(' ').append(SOURCE_NAMES[i]);
             first = false;
