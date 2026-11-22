@@ -122,6 +122,8 @@ public class RingsTest {
                 && or.services.isEmpty() && or.connectMs < 0);
         eq("Oura: the screen says it was left alone", WatchCheck.outcome(or), WatchCheck.OURA_LEFT);
         eq("Oura: the line under the report", WatchCheck.sendBack(or), RingFamily.OURA_LINE);
+        check("Oura: no report, note or Copy on the screen, only the outcome and its line (review of #430)", !WatchCheck.showsReport(or)
+                && !WatchCheck.showsReport(null));
         check("Oura: the report text names it", WatchCheck.text(or, false).startsWith("Open Ring device check\nName: Oura Ring 4\nLooks like: Oura\n")
                 && WatchCheck.text(or, false).contains("Connected: no"));
         WatchCheck.Report ol = new WatchCheck.Report();
@@ -202,6 +204,7 @@ public class RingsTest {
         eq("the screen's title", WatchCheck.TITLE, "Device check");
         eq("the Settings row", WatchCheck.ROW, "Check a ring or watch");
         check("the intro names rings and watches", WatchCheck.INTRO.startsWith("Open Ring can look at a ring or watch"));
+        check("the intro says it looks (rings) and listens (watches)", WatchCheck.INTRO.contains("This check only looks and listens: it does not pair"));
         check("the ring's status line names the Device check", WatchCheck.RUNNING.startsWith("Device check running"));
     }
 
@@ -239,6 +242,8 @@ public class RingsTest {
         check("report privacy: no message, no count, no byte of it", !t.contains("lengths") && !t.contains("1 message") && !t.contains("1548") && !t.contains("483c") && !t.contains("first bytes"), t);
         eq("report privacy: the copy with bytes is the same for a ring", WatchCheck.text(r, true), t);
         eq("report: the note says no health values", WatchCheck.reportNote(r), WatchCheck.DEVICE_NOTE);
+        check("report: a ring's report is shown and can be copied", WatchCheck.showsReport(r));
+        check("report: the note only speaks for a device that answered", WatchCheck.DEVICE_NOTE.startsWith("When the device answered, the report holds"));
         eq("report: the family's line under it", WatchCheck.sendBack(r), RingFamily.QRING.line());
         eq("report: the outcome names the device", WatchCheck.outcome(r), "Done. The device was let go again.");
         eq("report: a bond left on a device is named as a device", WatchCheck.pairedNow(r), WatchCheck.PAIRED_NOW_DEVICE);
@@ -257,6 +262,7 @@ public class RingsTest {
         eq("watch report: family Withings", w.family, RingFamily.WITHINGS);
         check("watch report: as before", WatchCheck.text(w, false).startsWith("Open Ring watch check\nName: Steel HR (example)\n")
                 && !WatchCheck.text(w, false).contains("Looks like:") && WatchCheck.text(w, true).startsWith("Open Ring watch check (with message bytes, private)"));
+        check("watch report: shown and copied as before", WatchCheck.showsReport(w));
         check("watch report: its notes as before", WatchCheck.reportNote(w).equals(WatchCheck.REPORT_NOTE) && WatchCheck.sendBack(w).equals(WatchCheck.SEND_BACK)
                 && WatchCheck.outcome(w).equals("Done. The watch was let go again.") && WatchCheck.pairedNow(w).equals(WatchCheck.PAIRED_NOW));
     }

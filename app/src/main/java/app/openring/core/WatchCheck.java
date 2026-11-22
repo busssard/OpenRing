@@ -55,7 +55,7 @@ public final class WatchCheck {
     /** The screen's title and the Settings row that opens it (issue #418). */
     public static final String TITLE = "Device check";
     public static final String ROW = "Check a ring or watch";
-    public static final String INTRO = "Open Ring can look at a ring or watch to learn how it talks. This check only listens: it does not pair, "
+    public static final String INTRO = "Open Ring can look at a ring or watch to learn how it talks. This check only looks and listens: it does not pair, "
             + "changes nothing on the device and stores nothing.";
     public static final String SIGNAL = "Signal: closer to 0 means nearer. Your device is usually the strongest.";
     /** Said under the report when the phone was not paired with the watch before the check and is now (review of #270). */
@@ -109,12 +109,20 @@ public final class WatchCheck {
             + "device next to the phone and scan again.";
 
     /** The report note for a device that was not listened to (every one but a Withings watch, issue #418). */
-    public static final String DEVICE_NOTE = "The report holds the device's name, maker, battery level and Bluetooth layout. The check did not "
-            + "listen to its messages, so the report holds no health values.";
+    public static final String DEVICE_NOTE = "When the device answered, the report holds its name, maker, battery level and Bluetooth layout. "
+            + "The check did not listen to its messages, so the report holds no health values.";
 
     /** True for a report of a device that is not a Withings watch (its family is known and not Withings). */
     static boolean other(Report r) {
         return r.family != null && r.family != RingFamily.WITHINGS;
+    }
+
+    /**
+     * False for the person's own Oura ring (review of #430): the check never connects to it, so there is no report to show
+     * or copy, only {@link #OURA_LEFT} and the family's line ({@link RingFamily#OURA_LINE}).
+     */
+    public static boolean showsReport(Report r) {
+        return r != null && r.family != RingFamily.OURA;
     }
 
     /** The note under the report: what it holds. */

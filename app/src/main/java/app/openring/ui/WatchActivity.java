@@ -50,7 +50,7 @@ public final class WatchActivity extends Activity {
     private LinearLayout listBox, reportCard, issueBox;
     private TextView scanStatus, issueText, issueButton, scanButton, reportStatus, reportText;
     /** What the report holds, the copy with bytes and its warning (a Withings watch only), what to do with it (issue #418). */
-    private TextView reportNote, copyBytes, privateNote, sendBack;
+    private TextView reportNote, copyButton, copyBytes, privateNote, sendBack;
     private RingScanner.Watch scan;
     private long scanUntil;
     /** What the scan heard, by address; written on a Bluetooth thread. */
@@ -148,7 +148,7 @@ public final class WatchActivity extends Activity {
         reportCard.addView(Ui.gap(this, 8));
         reportNote = Ui.text(this, WatchCheck.REPORT_NOTE, 12, Ui.TEXT_3, Ui.REGULAR);
         reportCard.addView(reportNote);
-        TextView copy = Ui.button(this, "Copy the report", Ui.SLEEP, true);
+        TextView copy = copyButton = Ui.button(this, "Copy the report", Ui.SLEEP, true);
         copy.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -557,12 +557,17 @@ public final class WatchActivity extends Activity {
         showReportCard();
         reportStatus.setText(WatchCheck.outcome(r));
         if (WatchCheck.pairedDuring(r)) reportStatus.append("\n" + WatchCheck.pairedNow(r));
-        reportText.setText(WatchCheck.text(r, false));
+        // the person's own Oura ring was never connected to: no report, note or Copy, only the outcome and its line
+        boolean shows = WatchCheck.showsReport(r);
+        reportText.setText(shows ? WatchCheck.text(r, false) : "");
+        reportText.setVisibility(shows ? View.VISIBLE : View.GONE);
         reportNote.setText(WatchCheck.reportNote(r));
+        reportNote.setVisibility(shows ? View.VISIBLE : View.GONE);
+        copyButton.setVisibility(shows ? View.VISIBLE : View.GONE);
         sendBack.setText(WatchCheck.sendBack(r));
         // nothing was listened to on a ring: no message bytes to copy, nothing private to warn about
-        copyBytes.setVisibility(r.listen ? View.VISIBLE : View.GONE);
-        privateNote.setVisibility(r.listen ? View.VISIBLE : View.GONE);
+        copyBytes.setVisibility(shows && r.listen ? View.VISIBLE : View.GONE);
+        privateNote.setVisibility(shows && r.listen ? View.VISIBLE : View.GONE);
         boolean withings = false;
         for (WatchCheck.Service s : r.services) withings |= WatchCheck.withings(s.uuid);
         useButton.setVisibility(withings && checkedAddress != null ? View.VISIBLE : View.GONE);
@@ -583,7 +588,7 @@ public final class WatchActivity extends Activity {
     }
 
     void copy(boolean bytes) {
-        if (report == null) return;
+        if (!WatchCheck.showsReport(report)) return;
         ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         if (cm == null) return;
         ClipData clip = ClipData.newPlainText(bytes ? "Open Ring device check, private" : "Open Ring device check", WatchCheck.text(report, bytes));

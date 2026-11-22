@@ -61,7 +61,10 @@ public enum RingFamily {
     /** The maker name RingConn rings give. */
     static final String RINGCONN_MAKER = "jz_tech";
 
-    /** Colmi's names: R, two digits and an underscore ("R02_341C"). */
+    /**
+     * Colmi's names: R, two digits and an underscore ("R02_341C"). The weakest sign of all: other devices (some tags) are
+     * named this way too, so it only names the family when no service or maker said otherwise.
+     */
     private static final Pattern QRING_NAME = Pattern.compile("^R\\d\\d_.*");
 
     /** True when the name means a Withings watch: one of the words anywhere in it, in any case. */
