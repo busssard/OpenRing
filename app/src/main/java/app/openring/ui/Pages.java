@@ -706,7 +706,7 @@ public final class Pages {
         week.addView(Ui.gap(c, 8));
         double[] asleep = d.series("asleep_min", 7);
         for (int i = 0; i < asleep.length; i++) asleep[i] /= 60.0;
-        week.addView(new Charts.BarChart(c, asleep, d.weekdayLabels(7), Ui.SLEEP).valueFormat("%.1f h").target(8), Ui.sized(c, -1, 130));
+        week.addView(new Charts.BarChart(c, asleep, d.weekdayLabels(7), Ui.SLEEP).valueFormat("%.1f h").target(8).highlight(d.pickedIndex(7)), Ui.sized(c, -1, 130));
         root.addView(week);
         addNaps(c, root, d);
         root.addView(furtherAnalysis(c, d));
@@ -997,9 +997,10 @@ public final class Pages {
 
     /** Loads the averages for the selected period in the background and shows them in {@code result}. */
     static void loadAnalysis(final Context c, final DayData d, final LinearLayout result) {
-        final java.time.LocalDate to = d.date;
-        final java.time.LocalDate from = analysisPeriod == 0 ? to.minusDays(6) : analysisPeriod == 1 ? to.minusDays(29)
-                : analysisPeriod == 2 ? to.minusDays(364) : java.time.LocalDate.of(2000, 1, 1);
+        // the period keeps ending today while the shown day is in it, as the charts (owner, 23 November)
+        final int days = analysisPeriod == 0 ? 7 : analysisPeriod == 1 ? 30 : analysisPeriod == 2 ? 365 : 1;
+        final java.time.LocalDate to = analysisPeriod == 3 ? (d.today.isAfter(d.date) ? d.today : d.date) : d.end(days);
+        final java.time.LocalDate from = analysisPeriod == 3 ? java.time.LocalDate.of(2000, 1, 1) : to.minusDays(days - 1);
         final int period = analysisPeriod;
         final int load = analysisLoad.incrementAndGet();
         // without a ring the watch's nights (owner's report of 13 November), worked out from its rows
@@ -1229,17 +1230,17 @@ public final class Pages {
         t.addView(Ui.text(c, signed(Json.d(d.day, "temp_dev")) + " \u00b0C", 26, Ui.TEXT, Ui.LIGHT));
         t.addView(Ui.body(c, "Deviation from your usual nightly skin temperature. Within about half a degree is normal."));
         t.addView(Ui.gap(c, 8));
-        t.addView(new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), Ui.sized(c, -1, 120));
+        t.addView(new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.end(30), 30).pick(d.date).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), Ui.sized(c, -1, 120));
         root.addView(t);
 
-        root.addView(chartCard(c, "HRV, last 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"),
+        root.addView(chartCard(c, "HRV, last 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.end(30), 30).pick(d.date).unit(" ms"),
                 "Average " + Ui.fmt(Stats.mean(d.series("hrv", 30)), 0) + " ms. Compare with yourself, not with others: HRV differs a lot between people."));
-        root.addView(chartCard(c, "Resting heart rate, last 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.date, 30).unit(" bpm"),
+        root.addView(chartCard(c, "Resting heart rate, last 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.end(30), 30).pick(d.date).unit(" bpm"),
                 "Average " + Ui.fmt(Stats.mean(d.series("rhr", 30)), 0) + " bpm. A downward trend usually means improving fitness and recovery."));
         LinearLayout week = Ui.card(c);
         week.addView(Ui.caption(c, "Readiness, last 7 days"));
         week.addView(Ui.gap(c, 8));
-        week.addView(new Charts.BarChart(c, d.scoreSeries("readiness", 7), d.weekdayLabels(7), Ui.READY), Ui.sized(c, -1, 130));
+        week.addView(new Charts.BarChart(c, d.scoreSeries("readiness", 7), d.weekdayLabels(7), Ui.READY).highlight(d.pickedIndex(7)), Ui.sized(c, -1, 130));
         root.addView(week);
         return root;
     }
@@ -1468,7 +1469,7 @@ public final class Pages {
         LinearLayout week = Ui.card(c);
         week.addView(Ui.caption(c, "Active burn, last 7 days"));
         week.addView(Ui.gap(c, 8));
-        week.addView(new Charts.BarChart(c, d.series("active_kcal", 7), d.weekdayLabels(7), Ui.ACTIVE).target(target), Ui.sized(c, -1, 130));
+        week.addView(new Charts.BarChart(c, d.series("active_kcal", 7), d.weekdayLabels(7), Ui.ACTIVE).target(target).highlight(d.pickedIndex(7)), Ui.sized(c, -1, 130));
         root.addView(week);
         return root;
     }
@@ -1949,14 +1950,14 @@ public final class Pages {
         root.addView(vo);
 
         root.addView(infoCard(c, "Night time measurements", Explain.NIGHT_SIGNALS));
-        root.addView(chartCard(c, "Resting heart rate, 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.date, 30).unit(" bpm"), null));
-        root.addView(chartCard(c, "HRV, 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"), null));
-        root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).unit("/min"), null));
-        root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).range(88, 100).unit("%"), null));
+        root.addView(chartCard(c, "Resting heart rate, 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.end(30), 30).pick(d.date).unit(" bpm"), null));
+        root.addView(chartCard(c, "HRV, 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.end(30), 30).pick(d.date).unit(" ms"), null));
+        root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.end(30), 30).pick(d.date).unit("/min"), null));
+        root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.end(30), 30).pick(d.date).range(88, 100).unit("%"), null));
         // with the period tracker and a logged period, the one temperature chart carries the cycle (owner's feedback of
         // 11 November: no second temperature chart at the end of Body); without it the chart stays as it was
         if (d.periodShown && d.periods != null && !d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
-        else root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
+        else root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.end(30), 30).pick(d.date).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
         // the period tracker's analysis at the end (issue #252, phase 1a2): the cycles over time
         if (d.periodShown && d.periods != null) {
             root.addView(PeriodAnalysis.cycles(c, d));
@@ -2001,7 +2002,7 @@ public final class Pages {
     }
 
     static TS daysSeries(DayData d, String field, int n) {
-        return app.openring.data.DaySeries.of(d.date, d.series(field, n));
+        return app.openring.data.DaySeries.of(d.end(n), d.series(field, n));
     }
 
     static View hero(Context c, double score, String label, int color, String sub) {

@@ -44,7 +44,7 @@ final class HistoryViews {
     static String[] tips(DayData d, double[] v, Fmt f) {
         String[] out = new String[v.length];
         for (int i = 0; i < v.length; i++) {
-            LocalDate day = d.date.minusDays(v.length - 1 - i);
+            LocalDate day = d.end(v.length).minusDays(v.length - 1 - i);
             out[i] = DeviceHistory.tip(day, Double.isNaN(v[i]) ? Explain.NO_VALUE : f.of(v[i]), Locale.getDefault());
         }
         return out;
@@ -52,7 +52,7 @@ final class HistoryViews {
 
     /** One value per day at noon, for the 30 day line charts ({@code LineChart.daily}), as the ring's {@code Pages.daysSeries}. */
     static TS series(DayData d, double[] v) {
-        return app.openring.data.DaySeries.of(d.date, v);
+        return app.openring.data.DaySeries.of(d.end(v.length), v);
     }
 
     /** A 7 day bar chart card as the ring's ("Total sleep, last 7 days"), readable by touch, with a line under it. */
@@ -60,7 +60,7 @@ final class HistoryViews {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, caption));
         card.addView(Ui.gap(c, 8));
-        Charts.BarChart chart = new Charts.BarChart(c, v, d.weekdayLabels(v.length), color).valueFormat(format).tips(tips(d, v, tip));
+        Charts.BarChart chart = new Charts.BarChart(c, v, d.weekdayLabels(v.length), color).valueFormat(format).tips(tips(d, v, tip)).highlight(d.pickedIndex(v.length));
         if (!Double.isNaN(target)) chart.target(target);
         chart.setContentDescription(caption);
         card.addView(chart, Ui.sized(c, -1, 130));
@@ -71,7 +71,7 @@ final class HistoryViews {
 
     /** A 30 day line chart card with dots (one value per day), readable by touch, with a line under it. */
     static View month(Context c, DayData d, String caption, double[] v, int color, String unit, String empty, String foot) {
-        Charts.LineChart chart = new Charts.LineChart(c, series(d, v), Double.NaN, Double.NaN, color).daily(d.date, DeviceHistory.MONTH).unit(unit).empty(empty);
+        Charts.LineChart chart = new Charts.LineChart(c, series(d, v), Double.NaN, Double.NaN, color).daily(d.end(DeviceHistory.MONTH), DeviceHistory.MONTH).pick(d.date).unit(unit).empty(empty);
         chart.setContentDescription(caption);
         return Pages.chartCard(c, caption, chart, foot);
     }
@@ -125,7 +125,7 @@ final class HistoryViews {
         dc.addView(Ui.text(c, Explain.WATCH_DEBT, 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(dc);
 
-        double[] asleep = h.last(h.asleepMin, d.date, DeviceHistory.WEEK);
+        double[] asleep = h.last(h.asleepMin, d.end(DeviceHistory.WEEK), DeviceHistory.WEEK);
         for (int i = 0; i < asleep.length; i++) asleep[i] /= 60.0;
         root.addView(week(c, d, "Total sleep, last 7 days", asleep, Ui.SLEEP, "%.1f h", 8, new Fmt() {
             @Override
@@ -140,7 +140,7 @@ final class HistoryViews {
         String[] tips = new String[k], dates = new String[k];
         int nights = 0;
         for (int i = 0; i < k; i++) {
-            LocalDate day = d.date.minusDays(k - 1 - i);
+            LocalDate day = d.end(k).minusDays(k - 1 - i);
             DeviceHistory.NightRow n = h.night(day);
             bed[i] = n == null ? Double.NaN : n.fields.sleepStart;
             wake[i] = n == null ? Double.NaN : n.fields.sleepEnd;
@@ -158,7 +158,7 @@ final class HistoryViews {
         times.addView(Ui.text(c, Explain.WATCH_SLEEP_TIMES + (nights > 0 ? " " + nights + (nights == 1 ? " night." : " nights.") : ""), 12, Ui.TEXT_2, Ui.REGULAR));
         root.addView(times);
 
-        double[] score = h.last(h.sleep, d.date, DeviceHistory.MONTH);
+        double[] score = h.last(h.sleep, d.end(DeviceHistory.MONTH), DeviceHistory.MONTH);
         root.addView(month(c, d, "Sleep score, last 30 days", score, Ui.SLEEP, "", Explain.WATCH_NO_NIGHTS,
                 average(score, "", 0) + Explain.WATCH_SCORE_MONTH));
         root.addView(DeviceViews.needCard(c, Explain.NEEDS_RING_TITLE, Explain.SLEEP_NEEDS_RING, false));
@@ -183,10 +183,10 @@ final class HistoryViews {
         }
         card.addView(Ui.text(c, Explain.WATCH_RHR, 12, Ui.TEXT_3, Ui.REGULAR));
         root.addView(card);
-        double[] rhr = h.last(h.rhr, d.date, DeviceHistory.MONTH);
+        double[] rhr = h.last(h.rhr, d.end(DeviceHistory.MONTH), DeviceHistory.MONTH);
         root.addView(month(c, d, "Resting heart rate, last 30 days", rhr, Ui.HEART, " bpm", Explain.WATCH_NO_NIGHTS,
                 average(rhr, " bpm", 0) + "A downward trend usually means improving fitness and recovery."));
-        double[] ready = h.last(h.readiness, d.date, DeviceHistory.WEEK);
+        double[] ready = h.last(h.readiness, d.end(DeviceHistory.WEEK), DeviceHistory.WEEK);
         root.addView(week(c, d, "Readiness, last 7 days", ready, Ui.READY, "%.0f", Double.NaN, new Fmt() {
             @Override
             public String of(double v) {
@@ -202,17 +202,17 @@ final class HistoryViews {
         if (!on(d)) return;
         DeviceHistory h = d.deviceHistory;
         boolean w = h.device == MainDevice.WATCH;
-        double[] steps7 = h.last(h.steps, d.date, DeviceHistory.WEEK);
+        double[] steps7 = h.last(h.steps, d.end(DeviceHistory.WEEK), DeviceHistory.WEEK);
         root.addView(week(c, d, "Steps, last 7 days", steps7, Ui.ACTIVE, "%,.0f", h.goal, new Fmt() {
             @Override
             public String of(double v) {
                 return DeviceHistory.stepsText(v, Locale.getDefault());
             }
         }, average(steps7, " steps", 0) + "The line is your goal of " + whole(h.goal) + " steps (Settings, Watch). " + from(d) + "."));
-        double[] steps30 = h.last(h.steps, d.date, DeviceHistory.MONTH);
+        double[] steps30 = h.last(h.steps, d.end(DeviceHistory.MONTH), DeviceHistory.MONTH);
         root.addView(month(c, d, "Steps, last 30 days", steps30, Ui.ACTIVE, " steps", Explain.NO_STEPS_YET,
                 average(steps30, " steps", 0) + from(d) + "."));
-        double[] score = h.last(h.activity, d.date, DeviceHistory.WEEK);
+        double[] score = h.last(h.activity, d.end(DeviceHistory.WEEK), DeviceHistory.WEEK);
         root.addView(week(c, d, "Activity score, last 7 days", score, Ui.ACTIVE, "%.0f", Double.NaN, new Fmt() {
             @Override
             public String of(double v) {
@@ -220,24 +220,24 @@ final class HistoryViews {
             }
         }, average(score, "", 0) + Explain.ACTIVITY_WEEK_DEVICE));
         if (w) {
-            double[] kcal = h.last(h.kcal, d.date, DeviceHistory.WEEK);
+            double[] kcal = h.last(h.kcal, d.end(DeviceHistory.WEEK), DeviceHistory.WEEK);
             root.addView(week(c, d, "Calories from movement, last 7 days", kcal, Ui.ACTIVE, "%.0f", Double.NaN, new Fmt() {
                 @Override
                 public String of(double v) {
                     return whole(v) + " kcal";
                 }
             }, average(kcal, " kcal", 0) + Explain.WATCH_KCAL));
-            final double[] min = h.last(h.workoutMin, d.date, DeviceHistory.MONTH);
+            final double[] min = h.last(h.workoutMin, d.end(DeviceHistory.MONTH), DeviceHistory.MONTH);
             final int[] count = new int[min.length];
             int total = 0;
             for (int i = 0; i < min.length; i++) {
-                int j = h.index(d.date.minusDays(min.length - 1 - i));
+                int j = h.index(d.end(min.length).minusDays(min.length - 1 - i));
                 count[i] = j < 0 ? 0 : h.workouts[j];
                 total += count[i];
             }
             String[] tips = new String[min.length], labels = new String[min.length];
             for (int i = 0; i < min.length; i++) {
-                LocalDate day = d.date.minusDays(min.length - 1 - i);
+                LocalDate day = d.end(min.length).minusDays(min.length - 1 - i);
                 tips[i] = DeviceHistory.tip(day, Double.isNaN(min[i]) ? Explain.NO_VALUE : count[i] == 0 ? "No workout"
                         : app.openring.core.Start.workouts(count[i]) + ", " + Math.round(min[i]) + " min", Locale.getDefault());
                 // a date every week, the newest 3 days in from the right end so no label is cut off
@@ -263,9 +263,9 @@ final class HistoryViews {
     static void body(Context c, LinearLayout root, DayData d, double age) {
         if (!watch(d)) return;
         DeviceHistory h = d.deviceHistory;
-        double[] rhr = h.last(h.rhr, d.date, DeviceHistory.MONTH);
+        double[] rhr = h.last(h.rhr, d.end(DeviceHistory.MONTH), DeviceHistory.MONTH);
         root.addView(month(c, d, "Resting heart rate, 30 days", rhr, Ui.HEART, " bpm", Explain.WATCH_NO_NIGHTS, average(rhr, " bpm", 0) + Explain.WATCH_RHR));
-        double[] day = h.last(h.dayHr, d.date, DeviceHistory.MONTH);
+        double[] day = h.last(h.dayHr, d.end(DeviceHistory.MONTH), DeviceHistory.MONTH);
         root.addView(month(c, d, "Heart rate through the day, 30 days", day, Ui.HEART, " bpm", Explain.WATCH_NO_HEART, average(day, " bpm", 0) + Explain.WATCH_DAY_HR));
         LinearLayout vo = Ui.card(c);
         vo.addView(Ui.caption(c, "Cardio capacity (estimate)"));

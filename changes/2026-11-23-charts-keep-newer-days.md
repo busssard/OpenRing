@@ -1,0 +1,1 @@
+* Going back to an older day no longer hides the newer days in the 7 and 30 day charts: they keep ending today, and the day you picked is highlighted (its bar, or a line and a bigger dot). Only when you go back further than the chart reaches does it move along with you, one day at a time.

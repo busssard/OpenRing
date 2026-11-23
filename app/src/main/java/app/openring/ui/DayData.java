@@ -444,7 +444,8 @@ public final class DayData {
             d.badges.clear();
             d.ok = failed(c, date, "badges", e);
         }
-        for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
+        // the 30 days before the shown day and, for the charts' windows, up to 29 after it (at most today, owner 23 November)
+        for (String[] r : db.daysJson(date.minusDays(29).toString(), d.end(30).toString())) {
             JSONObject o = Json.parse(r[1]);
             if (o != null && !hideRing) d.history.put(r[0], o);
         }
@@ -648,10 +649,24 @@ public final class DayData {
     }
 
     /** Values of a day field for the {@code n} days ending at the selected date (NaN if missing). */
+    /** Today when this day was loaded: the charts' windows end here while the shown day is inside them (owner, 23 November). */
+    public LocalDate today = LocalDate.now();
+
+    /** The last day of a chart of {@code n} days: today while the shown day is within them, else moved back ({@link app.openring.core.DayWindow}). */
+    public LocalDate end(int n) {
+        return app.openring.core.DayWindow.end(date, today, n);
+    }
+
+    /** The shown day's place in a chart of {@code n} days ending {@link #end}: its bar or dot is highlighted. */
+    public int pickedIndex(int n) {
+        return app.openring.core.DayWindow.index(date, end(n), n);
+    }
+
     public double[] series(String field, int n) {
         double[] out = new double[n];
+        LocalDate end = end(n);
         for (int i = 0; i < n; i++) {
-            JSONObject o = history.get(date.minusDays(n - 1 - i).toString());
+            JSONObject o = history.get(end.minusDays(n - 1 - i).toString());
             out[i] = Json.d(o, field);
         }
         return out;
@@ -660,8 +675,9 @@ public final class DayData {
     /** Score value from a nested score object of a day summary, or NaN. */
     public double[] scoreSeries(String field, int n) {
         double[] out = new double[n];
+        LocalDate end = end(n);
         for (int i = 0; i < n; i++) {
-            JSONObject o = history.get(date.minusDays(n - 1 - i).toString());
+            JSONObject o = history.get(end.minusDays(n - 1 - i).toString());
             JSONObject s = o == null ? null : o.optJSONObject(field);
             out[i] = s == null || !s.has("value") ? Double.NaN : s.optDouble("value");
         }
@@ -670,8 +686,9 @@ public final class DayData {
 
     public String[] weekdayLabels(int n) {
         String[] l = new String[n];
+        LocalDate end = end(n);
         for (int i = 0; i < n; i++) {
-            String s = date.minusDays(n - 1 - i).getDayOfWeek().getDisplayName(java.time.format.TextStyle.NARROW, java.util.Locale.getDefault());
+            String s = end.minusDays(n - 1 - i).getDayOfWeek().getDisplayName(java.time.format.TextStyle.NARROW, java.util.Locale.getDefault());
             l[i] = s;
         }
         return l;

@@ -1241,6 +1241,33 @@ public class CoreTest {
         check("#329 job due: by default nothing is due", !BackgroundJob.due(fresh).run() && fresh.keyState == KeyState.NONE && fresh.zone != null);
     }
 
+    /** Owner's report of 23 November: an older day keeps the newer values in the charts, the window moves only past them. */
+    static void dayWindow() {
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 23);
+        eq("window: today ends today", app.openring.core.DayWindow.end(today, today, 7), today);
+        eq("window: yesterday still ends today (newer value stays)", app.openring.core.DayWindow.end(today.minusDays(1), today, 7), today);
+        eq("window: 6 days back still ends today", app.openring.core.DayWindow.end(today.minusDays(6), today, 7), today);
+        eq("window: 7 days back moves by one day", app.openring.core.DayWindow.end(today.minusDays(7), today, 7), today.minusDays(1));
+        eq("window: 40 days back in a 30 day chart ends 11 days back", app.openring.core.DayWindow.end(today.minusDays(40), today, 30), today.minusDays(11));
+        eq("window: a day after today (clock moved) ends on it", app.openring.core.DayWindow.end(today.plusDays(1), today, 7), today.plusDays(1));
+        eq("window: no today known ends on the picked day", app.openring.core.DayWindow.end(today.minusDays(3), null, 7), today.minusDays(3));
+        // stepping back one day at a time never jumps by more than a day
+        java.time.LocalDate prev = app.openring.core.DayWindow.end(today, today, 30);
+        boolean smooth = true, shown = true;
+        for (int k = 1; k <= 400; k++) {
+            java.time.LocalDate p = today.minusDays(k), e = app.openring.core.DayWindow.end(p, today, 30);
+            if (java.time.temporal.ChronoUnit.DAYS.between(e, prev) > 1) smooth = false;
+            if (app.openring.core.DayWindow.index(p, e, 30) < 0) shown = false;
+            prev = e;
+        }
+        check("window: stepping back 400 days moves at most a day per step", smooth);
+        check("window: the picked day is always in the window", shown);
+        eq("window: the picked day's place (yesterday in 7 days ending today)", app.openring.core.DayWindow.index(today.minusDays(1), today, 7), 5);
+        eq("window: today is the last place", app.openring.core.DayWindow.index(today, today, 7), 6);
+        eq("window: moved window, the picked day is the oldest", app.openring.core.DayWindow.index(today.minusDays(7), today.minusDays(1), 7), 0);
+        eq("window: outside is -1", app.openring.core.DayWindow.index(today.minusDays(9), today, 7), -1);
+    }
+
     public static void main(String[] args) throws Exception {
         permissionSettings();
         keyState199();
@@ -1337,6 +1364,7 @@ public class CoreTest {
         start373();
         syncPlan();
         periodSettingsHidden();
+        dayWindow();
         startCards373();
         startScreens373();
         System.out.println(passed + " passed, " + failed + " failed");

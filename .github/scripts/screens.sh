@@ -197,6 +197,10 @@ swipe_up; swipe_up;                       shot sleep-details 1
 launch --ei tab 1 --es card DETAILS;        shot sleep-details-card 2
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
+# An older day keeps the newer days in the charts (owner, 23 November): 3 days back, the 7 day bars still end today with the
+# picked day's bar highlighted, and Ready's 30 day HRV still ends today with a line on the picked day
+launch --ei tab 1 --es day "$(date -d '3 days ago' +%F)" --es card TOTAL_SLEEP;   shot sleep-week-picked 2
+launch --ei tab 2 --es day "$(date -d '3 days ago' +%F)" --es card HRV;           shot ready-month-picked 2
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness

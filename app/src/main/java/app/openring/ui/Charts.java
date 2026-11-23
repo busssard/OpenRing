@@ -556,6 +556,14 @@ public final class Charts {
             return this;
         }
 
+        /** The shown day in a chart of days (owner, 23 November): a faint line and a bigger dot, while newer days stay in view. */
+        private java.time.LocalDate pickDay;
+
+        public LineChart pick(java.time.LocalDate day) {
+            pickDay = day;
+            return this;
+        }
+
         public LineChart empty(String text) {
             emptyText = text;
             return this;
@@ -744,6 +752,19 @@ public final class Charts {
                 boolean alone = (k == 0 || series.t(idx[k]) - series.t(idx[k - 1]) > gap)
                         && (k == shown - 1 || series.t(idx[k + 1]) - series.t(idx[k]) > gap);
                 if (daily || alone) cv.drawCircle(xs[k], ys[k], Ui.dp(getContext(), daily ? 3 : 2.5f), dot);
+            }
+            if (daily && pickDay != null) {
+                double pt = pickDay.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + 43200;
+                if (pt >= from && pt <= to) {
+                    float px = (float) (left + (pt - from) / (to - from) * (w - left));
+                    Paint mark = new Paint(grid);
+                    mark.setColor(Ui.alpha(color, 0.45f));
+                    mark.setStrokeWidth(Ui.dp(getContext(), 1));
+                    cv.drawLine(px, top, px, bottom, mark);
+                    for (int k = 0; k < shown; k++) {
+                        if (Math.abs(series.t(idx[k]) - pt) < 43200) cv.drawCircle(xs[k], ys[k], Ui.dp(getContext(), 5), dot);
+                    }
+                }
             }
             if (markMin && minX >= 0) {
                 cv.drawCircle(minX, minY, Ui.dp(getContext(), 4), dot);
