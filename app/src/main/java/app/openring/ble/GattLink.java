@@ -206,7 +206,6 @@ public final class GattLink implements RingClient.Link {
      * Also listen on every other notify or indicate channel the ring exposes. A Ring 4 has
      * 98ed0004..6 (BrightOura's GATT dump); live streams may arrive there instead of on 0003.
      */
-    @SuppressWarnings("deprecation")
     private void subscribeOthers(BluetoothGattService svc) throws InterruptedException {
         StringBuilder found = new StringBuilder();
         for (BluetoothGattService s : gatt.getServices()) {
@@ -225,13 +224,7 @@ public final class GattLink implements RingClient.Link {
                 if (d != null) {
                     byte[] val = notify ? BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE : BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
                     descAcks.clear();
-                    boolean started;
-                    if (Build.VERSION.SDK_INT >= 33) {
-                        started = gatt.writeDescriptor(d, val) == 0;
-                    } else {
-                        d.setValue(val);
-                        started = gatt.writeDescriptor(d);
-                    }
+                    boolean started = Gatt.startDescriptorWrite(gatt, d, val);
                     Integer st = started ? descAcks.poll(5, TimeUnit.SECONDS) : null;
                     ok = st != null && st == BluetoothGatt.GATT_SUCCESS;
                 }
@@ -248,19 +241,12 @@ public final class GattLink implements RingClient.Link {
         if (st < 0) throw new IOException("connection failed (GATT status " + (-st) + ")");
     }
 
-    @SuppressWarnings("deprecation")
     private boolean subscribe() throws InterruptedException {
         gatt.setCharacteristicNotification(notifyChar, true);
         BluetoothGattDescriptor cccd = notifyChar.getDescriptor(Protocol.CCCD);
         if (cccd == null) return true;
         descAcks.clear();
-        boolean started;
-        if (Build.VERSION.SDK_INT >= 33) {
-            started = gatt.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == 0;
-        } else {
-            cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            started = gatt.writeDescriptor(cccd);
-        }
+        boolean started = Gatt.startDescriptorWrite(gatt, cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
         if (!started) return false;
         // the system pairing consent can appear here, so give the user time to accept it
         Integer st = descAcks.poll(45, TimeUnit.SECONDS);
@@ -302,19 +288,12 @@ public final class GattLink implements RingClient.Link {
     }
 
     @Override
-    @SuppressWarnings("deprecation")
     public synchronized void write(byte[] data) throws IOException {
         if (!connected) throw new IOException("ring disconnected");
         writeAcks.clear();
         boolean started = false;
         for (int attempt = 0; attempt < 5 && !started; attempt++) {
-            if (Build.VERSION.SDK_INT >= 33) {
-                started = gatt.writeCharacteristic(writeChar, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == 0;
-            } else {
-                writeChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-                writeChar.setValue(data);
-                started = gatt.writeCharacteristic(writeChar);
-            }
+            started = Gatt.startWrite(gatt, writeChar, data);
             if (!started) SystemClock.sleep(60);
         }
         if (!started) throw new IOException("Bluetooth stack refused the write");
@@ -345,14 +324,7 @@ public final class GattLink implements RingClient.Link {
     }
 
     public void close() {
-        try {
-            if (gatt != null) {
-                gatt.disconnect();
-                SystemClock.sleep(200);
-                gatt.close();
-            }
-        } catch (RuntimeException ignored) {
-        }
+        Gatt.close(gatt);
         connected = false;
         gatt = null;
     }
