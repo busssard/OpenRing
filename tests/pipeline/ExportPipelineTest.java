@@ -169,7 +169,12 @@ public class ExportPipelineTest {
         int damagedWrong = 0, kept = 0, readable = 0;
         boolean failsAtOnce = false;
         try {
-            db.getReadableDatabase().rawQuery("SELECT day, json FROM nights WHERE main=1 ORDER BY start", null).close();
+            // the read DayZones makes (issue #460: Db.eachMainNight), which must fail here
+            db.eachMainNight(new java.util.function.BiConsumer<String, String>() {
+                @Override
+                public void accept(String day, String json) {
+                }
+            });
         } catch (RuntimeException e) {
             failsAtOnce = true;
         }
