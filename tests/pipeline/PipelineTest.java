@@ -15529,8 +15529,9 @@ public class PipelineTest {
         p.setCsvLife(true);
         String[] lines = csvText292(c).split("\n");
         String head = lines[0];
+        // Sauna and Friends (#435) after every column of before, so a sheet read by place keeps working (code review of #444)
         String want = "readiness_score,activity_score,left_out_min,life_meditation,life_alcohol,life_caffeine_late,life_stress,life_hard_workout,"
-                + "life_sauna,life_friends,life_holiday,life_illness,life_travel,life_own_zebra_secret";
+                + "life_holiday,life_illness,life_travel,life_own_zebra_secret,life_sauna,life_friends";
         check("#292 the CSV with the choice: the columns of exactly the ticked tags, Intimacy not among them", head.endsWith(want)
                 && !csvText292(c).toLowerCase(java.util.Locale.ROOT).contains("intima"), head);
         int cols = head.split(",", -1).length;
@@ -15544,7 +15545,7 @@ public class PipelineTest {
             if (l.startsWith(ringDay + ",")) ring = l;
         }
         check("#292 a tagged day without a summary gets a row: only its date and its own tag", march5 != null
-                && march5.equals("2019-03-05" + repeat292(",", 21) + ",,,,,,,,,,,1"), march5);
+                && march5.equals("2019-03-05" + repeat292(",", 21) + ",,,,,,,,,1,,"), march5);
         check("#292 a tag taken off is no 1 (and a day with only that gives no row)", march2 == null, march2);
         check("#292 a day with only Intimacy, not ticked: no row with its date (review of #292)", !csvText292(c).contains("\n2019-03-04,"), null);
         check("#292 a ring day with Meditation: its numbers and a 1 under life_meditation", ring != null && ring.split(",", -1)[22].equals("1")
@@ -15561,8 +15562,8 @@ public class PipelineTest {
         check("#292 a summary whose key is not a date: its row as before, no tag", odd != null && odd.endsWith(",0,,,,,,,,,,,"), odd);
         p.setCsvIntimacy(true);
         String withI = csvText292(c);
-        check("#292 with Intimacy ticked too: its column after Friends, 1 on its days", withI.split("\n")[0].contains("life_hard_workout,life_sauna,life_friends,life_intimacy,life_holiday")
-                && withI.contains("\n2019-03-04" + repeat292(",", 21) + ",,,,,,,,1,,,,"), withI.split("\n")[0]);
+        check("#292 with Intimacy ticked too: its column after Hard workout as before, 1 on its days", withI.split("\n")[0].contains("life_hard_workout,life_intimacy,life_holiday")
+                && withI.split("\n")[0].endsWith(",life_sauna,life_friends") && withI.contains("\n2019-03-04" + repeat292(",", 21) + ",,,,,,1,,,,,,"), withI.split("\n")[0]);
         p.setCsvIntimacy(false);
         p.setCsvLife(false);
         // the sources: the life factor screens log an error's kind only, sync/ (notifications, jobs) never reads a tag
@@ -15794,6 +15795,20 @@ public class PipelineTest {
         app.openring.data.LifeLog.setTime(db, "2019-04-02", app.openring.core.LifeTags.WORKOUT, "18:00", 60, 1201);
         check("#435 a day of a several day entry keeps its span with a time", app.openring.data.LifeLog.row(db, "2019-04-02", "hard_workout").span == 4242L
                 && time435(db, "2019-04-02", "hard_workout").equals("18:00 60"), app.openring.data.LifeLog.row(db, "2019-04-02", "hard_workout"));
+        // the other way round (code review of #444): a several day entry over a day that has a time keeps that time and length,
+        // the days without a row are written as before (no time), a removal mark is taken back without a time
+        app.openring.data.LifeLog.setTime(db, "2019-07-02", app.openring.core.LifeTags.SAUNA, "19:00", 45, 1210);
+        db.getWritableDatabase().execSQL("INSERT INTO life_days(day, tag, time, minutes, span, made, gone) VALUES ('2019-07-03', 'sauna', '08:00', 20, NULL, 1211, 1)");
+        int spanDays = app.openring.data.LifeLog.setSpan(db, LocalDate.parse("2019-07-01"), LocalDate.parse("2019-07-03"), app.openring.core.LifeTags.SAUNA, 4343L, 1212);
+        app.openring.data.LifeLog.Row timed = app.openring.data.LifeLog.row(db, "2019-07-02", "sauna"), first = app.openring.data.LifeLog.row(db, "2019-07-01", "sauna"),
+                back = app.openring.data.LifeLog.row(db, "2019-07-03", "sauna");
+        check("#435 a several day entry over a day with a time: time and length kept, span set, in force; the other days as before, without a time", spanDays == 3
+                && time435(db, "2019-07-02", "sauna").equals("19:00 45") && timed.span == 4343L && !timed.gone && timed.made == 1212
+                && time435(db, "2019-07-01", "sauna").equals("null null") && first.span == 4343L && first.made == 1212
+                && time435(db, "2019-07-03", "sauna").equals("null null") && back.span == 4343L
+                && app.openring.data.LifeLog.on(db, "2019-07-01").contains("sauna") && app.openring.data.LifeLog.on(db, "2019-07-03").contains("sauna")
+                && app.openring.data.LifeLog.times(db).toString().contains("2019-07-02 sauna 19:00 45"), timed + " " + first + " " + back);
+        db.getWritableDatabase().execSQL("DELETE FROM life_days WHERE day >= '2019-07-01' AND day <= '2019-07-03'");
         app.openring.data.LifeLog.Row was = app.openring.data.LifeLog.row(db, "2019-03-20", "sauna");
         app.openring.data.LifeLog.setTime(db, "2019-03-20", app.openring.core.LifeTags.SAUNA, null, null, 1202);
         check("#435 Without a time: time and length cleared, the day still logged", time435(db, "2019-03-20", "sauna").equals("null null")

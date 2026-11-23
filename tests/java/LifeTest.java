@@ -198,12 +198,18 @@ public class LifeTest {
         LifeTags.Known k = new LifeTags.Known(ch);
         check("without the choice: no column", LifeTags.csvColumns(k, false, true).isEmpty());
         Map<String, String> on = LifeTags.csvColumns(k, true, false);
-        eq("with the choice: every fixed tag but Intimacy, then own ones (removed ones too)", new ArrayList<String>(on.values()),
-                Arrays.asList("life_meditation", "life_alcohol", "life_caffeine_late", "life_stress", "life_hard_workout", "life_sauna", "life_friends",
+        // Sauna and Friends (#435) last, so the columns of before keep their places (code review of #444)
+        eq("with the choice: every fixed tag but Intimacy, then own ones (removed ones too), then Sauna and Friends", new ArrayList<String>(on.values()),
+                Arrays.asList("life_meditation", "life_alcohol", "life_caffeine_late", "life_stress", "life_hard_workout",
                         "life_holiday", "life_illness", "life_travel", "life_own_late_dinner_", "life_own_late_dinner", "life_own_late_dinner__2",
-                        "life_own_sauna_\u00e0_deux"));
+                        "life_own_sauna_\u00e0_deux", "life_sauna", "life_friends"));
         Map<String, String> both = LifeTags.csvColumns(k, true, true);
         check("Intimacy only with its own tick", both.containsKey(LifeTags.INTIMACY) && !on.containsKey(LifeTags.INTIMACY) && both.size() == on.size() + 1);
+        eq("with Intimacy: the columns of before #435 in their places, Sauna and Friends after them", new ArrayList<String>(both.values()).subList(0, 9),
+                Arrays.asList("life_meditation", "life_alcohol", "life_caffeine_late", "life_stress", "life_hard_workout", "life_intimacy",
+                        "life_holiday", "life_illness", "life_travel"));
+        List<String> tail = new ArrayList<String>(both.values());
+        eq("with Intimacy: Sauna and Friends the last two", tail.subList(tail.size() - 2, tail.size()), Arrays.asList("life_sauna", "life_friends"));
         boolean safe = true;
         for (String h : both.values()) safe &= h.matches("[\\p{L}\\p{N}_]+");
         check("every header is letters, digits and _ only (no comma, quote or line break)", safe);
@@ -286,7 +292,7 @@ public class LifeTest {
         check("fold of nothing", k.fold(null).isEmpty());
         eq("the month's counts: the days of both keys, a day once", LifeTags.monthLine(f, YearMonth.of(2026, 11), k),
                 "This month: Sauna on 3 days, Alcohol on 1 day, Stress on 1 day, sauna on 1 day, Sauna visit on 1 day.");
-        eq("CSV: one column per factor", new ArrayList<String>(LifeTags.csvColumns(k, true, false).values()).subList(10, 13),
+        eq("CSV: one column per factor", new ArrayList<String>(LifeTags.csvColumns(k, true, false).values()).subList(8, 11),
                 Arrays.asList("life_own_sauna", "life_own_sauna_2", "life_own_sauna_visit"));
         // alone, each is its own factor as before
         List<LifeTags.Choice> one = new ArrayList<LifeTags.Choice>();

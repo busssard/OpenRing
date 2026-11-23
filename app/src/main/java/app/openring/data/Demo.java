@@ -442,16 +442,16 @@ public final class Demo {
     }
 
     /**
-     * Heart beats of a sauna (issue #435, demo mode only): for each made up Sauna with a time and a length in {@code times}, one
-     * heart beat reading every 2 minutes at about 106 to 115 bpm (a person sitting in the heat), on top of the day's own; no
-     * movement, so the activity stays as it was. The events in time order again.
-     */
-    /**
      * Tests only: false builds the demo without the saunas' heart beats, so the analysis pin of issue #292 phase 1.5 (made before
      * #435) still holds; the pipeline test checks the beats change only the day summaries of the sauna days.
      */
     static volatile boolean saunaBeats = true;
 
+    /**
+     * Heart beats of a sauna (issue #435, demo mode only): for each made up Sauna with a time and a length in {@code times}, one
+     * heart beat reading every 2 minutes at about 106 to 115 bpm (a person sitting in the heat), on top of the day's own; no
+     * movement, so the activity stays as it was. The events in time order again.
+     */
     static List<RingEvent> sauna(List<RingEvent> ev, long t0, ZoneId zone, List<app.openring.core.LifeTimes.Entry> times) {
         List<RingEvent> out = new ArrayList<RingEvent>(ev);
         Random r = new Random(435);

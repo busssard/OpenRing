@@ -660,10 +660,13 @@ public final class Charts {
             return this;
         }
 
-        /** "\nSauna 19:00 to 19:45" for the bands under {@code x}, or "". */
-        private String lifeAtX(float x, float left, float w) {
+        /**
+         * "\nSauna 19:00 to 19:45" for the bands that hold {@code t}, the time of the value the readout shows, or "": only the
+         * value's own time names a band, so a value from before or after it never reads as measured during it (code review of
+         * #444, a ring off during the sauna).
+         */
+        private String lifeAtT(double t, float left, float w) {
             if (life.isEmpty() || daily || !(to > from) || w <= left) return "";
-            double t = from + (x - left) / (w - left) * (to - from);
             return lifeAt(life, t, (to - from) / (w - left) * Ui.dp(getContext(), 6), zone);
         }
 
@@ -877,7 +880,7 @@ public final class Charts {
                 String when = daily ? dayLabel(t) : ago ? app.openring.core.analysis.Proximity.ago(to - t)
                         : clock(t) + app.openring.core.analysis.ClockChange.repeatNote(zone, nearestMinute ? app.openring.core.analysis.WakeUps.roundMin(t) : t);
                 cv.drawCircle(xs[best], ys[best], Ui.dp(getContext(), 4.5f), dot);
-                drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit + lifeAtX(scrubX, left, w));
+                drawTip(cv, xs[best], Ui.dp(getContext(), 22), bottom, when + "  " + format(series.v(idx[best])) + unit + lifeAtT(t, left, w));
             }
         }
 

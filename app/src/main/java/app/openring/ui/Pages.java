@@ -592,7 +592,7 @@ public final class Pages {
         hyp.addView(Ui.gap(c, 10));
         double clockAt = Json.d(n, "clock_change_at");
         // logged times of life factors that reach into the night (issue #435): bands, read by touch
-        List<app.openring.core.LifeTimes.Band> nightLife = LifeCard.bands(d, Json.d(n, "start"), Json.d(n, "end"));
+        List<app.openring.core.LifeTimes.Band> nightLife = LifeCard.bands(d, Json.d(n, "start"), Json.d(n, "end"), nz);
         hyp.addView(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz).life(nightLife), Ui.sized(c, -1, 170));
         JSONArray mv = n.optJSONArray("motion_series");
         if (mv != null && mv.length() > 0) {
@@ -692,7 +692,8 @@ public final class Pages {
                 "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
         JSONArray sp = n.optJSONArray("spo2_series");
         if (sp != null && sp.length() > 0) {
-            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz).nearestMinute(),
+            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz).nearestMinute()
+                            .life(nightLife),
                     "Average " + Ui.fmt(Json.d(n, "spo2"), 1) + "%"));
         }
 
@@ -754,7 +755,7 @@ public final class Pages {
         // a watch that does not tell REM from light sleep shows them as one stage (owner's report of 13 November)
         boolean lightRem = !d.watchRem.tells(wn);
         hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem)
-                        .life(LifeCard.bands(d, wn.start, wn.end)),
+                        .life(LifeCard.bands(d, wn.start, wn.end, nz)),
                 Ui.sized(c, -1, withHr ? 250 : 170));
         hyp.addView(Ui.gap(c, 4));
         hyp.addView(Ui.text(c, withHr ? "Touch or slide along the chart to see the time, the stage and the nearest heart rate."
