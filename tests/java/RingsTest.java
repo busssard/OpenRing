@@ -292,6 +292,9 @@ public class RingsTest {
         WatchCheck.Report ora = WatchCheck.ouraReport(oura);
         check("demo: the Oura ring is left alone, two lines, no report", !ora.connected && !ora.listen && !WatchCheck.showsReport(ora)
                 && WatchCheck.outcome(ora).equals(WatchCheck.OURA_LEFT) && WatchCheck.sendBack(ora).equals(RingFamily.OURA_LINE));
+        check("demo: the screen finds the made up rings by address", WatchCheck.demoDevice(WatchCheck.DEMO_RING).address.equals(ring.address)
+                && WatchCheck.family(WatchCheck.demoDevice(WatchCheck.DEMO_RING)) == RingFamily.QRING
+                && WatchCheck.family(WatchCheck.demoDevice(WatchCheck.DEMO_OURA)) == RingFamily.OURA && WatchCheck.demoDevice("x") == null);
         check("demo: the made up devices have different addresses", new java.util.HashSet<String>(java.util.Arrays.asList(found.get(0).address,
                 found.get(1).address, found.get(2).address, found.get(3).address, oura.address)).size() == 5);
         WatchCheck.Report wr = WatchCheck.demoReport(found.get(1));

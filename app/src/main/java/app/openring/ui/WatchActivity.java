@@ -460,8 +460,8 @@ public final class WatchActivity extends Activity {
         }
         showList();
         if (report != null) showReport(report);
-        else if (getIntent().getBooleanExtra("demo_ring", false)) pick(WatchCheck.demoFound().get(3)); // the made up QRing ring (issue #418)
-        else if (getIntent().getBooleanExtra("demo_oura", false)) pick(WatchCheck.demoFound().get(4)); // the made up Oura ring (issue #458)
+        else if (getIntent().getBooleanExtra("demo_ring", false)) pick(WatchCheck.demoDevice(WatchCheck.DEMO_RING)); // the made up QRing ring (issue #418)
+        else if (getIntent().getBooleanExtra("demo_oura", false)) pick(WatchCheck.demoDevice(WatchCheck.DEMO_OURA)); // the made up Oura ring (issue #458)
         else if (getIntent().getBooleanExtra("demo_report", false)) pick(WatchCheck.demoFound().get(1));
     }
 

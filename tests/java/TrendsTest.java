@@ -452,10 +452,16 @@ public class TrendsTest {
         check("wake ups at two detail levels: no numbers", !mixed.enough && Double.isNaN(mixed.diff));
         for (Trends.Day y : w) y.detail = StageFilter.CALM;
         check("wake ups at one level: compared", Trends.compare(w, Trends.WAKE_UPS, today, L).enough);
-        // issue #459: a few nights by hand (no detail level) among the Calm ring nights do not stop the comparison
-        for (Trends.Day y : w) if (y.date.getDayOfMonth() % 9 == 0) y.set(Trends.WAKE_UPS, 2, Trends.HAND).detail = -1;
-        check("#459 wake ups at one level with nights by hand: compared", Trends.compare(w, Trends.WAKE_UPS, today, L).enough);
-        for (Trends.Day y : w) if (y.src[Trends.WAKE_UPS] == Trends.HAND) y.set(Trends.WAKE_UPS, 2, Trends.RING).detail = StageFilter.CALM;
+        // issue #459: a few nights by hand (no detail level) among the Calm ring nights do not stop the comparison (a copy, w
+        // stays as it is for the checks below)
+        List<Trends.Day> wHand = new ArrayList<Trends.Day>();
+        for (Trends.Day y : w) {
+            boolean hand = y.date.getDayOfMonth() % 9 == 0;
+            Trends.Day c = new Trends.Day(y.date).set(Trends.WAKE_UPS, hand ? 2 : y.v[Trends.WAKE_UPS], hand ? Trends.HAND : Trends.RING);
+            c.detail = hand ? -1 : y.detail;
+            wHand.add(c);
+        }
+        check("#459 wake ups at one level with nights by hand: compared", Trends.compare(wHand, Trends.WAKE_UPS, today, L).enough);
         for (Trends.Day y : w) y.detail = -1;
         check("wake ups without a level (as Detailed): compared", Trends.compare(w, Trends.WAKE_UPS, today, L).enough);
     }

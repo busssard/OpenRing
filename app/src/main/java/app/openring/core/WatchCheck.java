@@ -558,6 +558,12 @@ public final class WatchCheck {
         return l;
     }
 
+    /** The device of {@link #demoFound} with {@code address} ({@link #DEMO_RING}, {@link #DEMO_OURA}), null for another address. */
+    public static Found demoDevice(String address) {
+        for (Found f : demoFound()) if (f.address.equals(address)) return f;
+        return null;
+    }
+
     /** The made up report of demo mode for the device {@code f}: the watch's, the ring's, or one of its advertised layout only. */
     public static Report demoReport(Found f) {
         Report r;
