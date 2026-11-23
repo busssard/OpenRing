@@ -64,6 +64,7 @@ public class TrendsPipelineTest {
         clockChangeAndTrip();
         realReanalyse();
         stamp();
+        handNights();
         threeYears();
         periodRingNights();
         System.out.println(passed + " passed, " + failed + " failed");
@@ -540,6 +541,128 @@ public class TrendsPipelineTest {
         String f = TrendDays.stamp(db);
         System.out.println("    #374 stamp " + f);
         check("#374 stamp: unchanged without a change, new after a day, a screen session and an analysis", a.equals(b) && !a.equals(d) && !d.equals(e) && !e.equals(f), a + " / " + f);
+    }
+
+    /** {@code date} at {@code h}:{@code m} in {@code z}, unix seconds. */
+    static double at(LocalDate date, int h, int m, ZoneId z) {
+        return date.atTime(h, m).atZone(z).toEpochSecond();
+    }
+
+    /** The day {@code d} of a Trends read, null when it is not there. */
+    static Trends.Day day(List<Trends.Day> days, LocalDate d) {
+        for (Trends.Day x : days) if (x.date.equals(d)) return x;
+        return null;
+    }
+
+    /** How many values (all measures of all days) come from {@code src}. */
+    static int from(List<Trends.Day> days, int src) {
+        int n = 0;
+        for (int k : counts(days, src)) n += k;
+        return n;
+    }
+
+    /**
+     * Code review of #429: Trends counts a night by hand on a day without a device night, by the rule of Sleep
+     * ({@code ShownNights.withHand}): a ring or watch night of the day, or one it overlaps, wins; with only the phone none. A save,
+     * delete or Undo changes the stamp, so the page reads again.
+     */
+    static void handNights() throws Exception {
+        ZoneId z = ZoneId.of("Europe/Zurich");
+        long t0 = LocalDate.parse("2026-09-01").atStartOfDay(z).toEpochSecond(), end = t0 + 11 * 86400L + 12 * 3600;
+        Context c = freshDb("trends-hand");
+        Db db = Db.get(c);
+        putBoot(db, Demo.history(t0, 10, end, z, new Random(21)), 1, t0, end);
+        Analyzer.runAll(c, null);
+        List<String> ringJs = db.nightsJson("2000-01-01", "2100-01-01", true);
+        JSONObject firstNight = Json.parse(ringJs.get(0));
+        LocalDate firstDay = LocalDate.parse(firstNight.optString("day")), lastDay = LocalDate.parse(Json.parse(ringJs.get(ringJs.size() - 1)).optString("day"));
+        LocalDate free = lastDay.plusDays(2), today = free.plusDays(1);
+        double now = at(today, 12, 0, z);
+        Set<String> none = new TreeSet<String>();
+        List<Trends.Day> before = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
+        String s0 = TrendDays.stamp(db);
+        // one under the ring's first night (stored, never counted), one on a day without any device night (one wake up of 20 min)
+        app.openring.data.HandNights.save(db, app.openring.core.HandNight.snap(Json.d(firstNight, "start") + 900),
+                app.openring.core.HandNight.snap(Json.d(firstNight, "end") - 900), new ArrayList<double[]>(), 1000);
+        List<double[]> marks = new ArrayList<double[]>();
+        marks.add(new double[] {at(free, 3, 0, z), at(free, 3, 20, z)});
+        app.openring.data.HandNights.save(db, at(free.minusDays(1), 23, 0, z), at(free, 6, 45, z), marks, 1001);
+        String s1 = TrendDays.stamp(db);
+        List<Trends.Day> after = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
+        Trends.Day h = day(after, free);
+        JSONObject shown = null;
+        for (JSONObject o : ShownNights.main(db, free, free, ShownNights.Devices.RING, app.openring.data.WatchHistory.dayZones(db, z))) shown = o;
+        check("#427 Trends: a night by hand counts on a day without a device night (7 h 25 min asleep, 23:00 to 06:45, 1 wake up)", h != null
+                && h.v[Trends.ASLEEP] == 445 && h.src[Trends.ASLEEP] == Trends.HAND && h.v[Trends.BEDTIME] == 23 * 60 && h.v[Trends.WAKE] == 6 * 60 + 45
+                && h.v[Trends.WAKE_UPS] == 1 && h.src[Trends.BEDTIME] == Trends.HAND && h.src[Trends.WAKE_UPS] == Trends.HAND,
+                h == null ? null : java.util.Arrays.toString(h.v));
+        check("#427 Trends: its sleep score is the one Sleep shows for that night", shown != null && app.openring.data.HandNights.isHand(shown)
+                && h.v[Trends.SLEEP_SCORE] == shown.optJSONObject("score").optInt("value") && h.src[Trends.SLEEP_SCORE] == Trends.HAND, shown);
+        check("#427 Trends: no readiness, heart rate, HRV or temperature made up for it", h != null && Double.isNaN(h.v[Trends.READINESS]) && Double.isNaN(h.v[Trends.RHR])
+                && Double.isNaN(h.v[Trends.HRV]) && Double.isNaN(h.v[Trends.TEMP]), null);
+        boolean same = before.size() == after.size();
+        for (int i = 0; same && i < before.size(); i++) {
+            if (before.get(i).date.equals(free)) continue;
+            same = java.util.Arrays.equals(before.get(i).v, after.get(i).v) && java.util.Arrays.equals(before.get(i).src, after.get(i).src);
+        }
+        check("#427 Trends: a ring night on the same day wins over the night by hand under it, every other day exactly as without them",
+                same && day(after, firstDay).src[Trends.ASLEEP] == Trends.RING && from(after, Trends.HAND) == 5, from(after, Trends.HAND));
+        app.openring.data.SleepHistory fa = app.openring.data.SleepHistory.load(db, "0000-01-01", today.toString(), z);
+        int nights = counts(after, Trends.RING)[Trends.BEDTIME] + counts(after, Trends.HAND)[Trends.BEDTIME];
+        check("#427 Trends counts the same nights as Further analysis", nights == fa.nights, nights + " " + fa.nights);
+        Trends.View month = Trends.of(after, Trends.ASLEEP, Trends.MONTHS, today);
+        String ro = Trends.readout(month, month.indexOf(free), Locale.US);
+        System.out.println("    #427 " + ro);
+        check("#427 Trends: the readout names the night by hand", ro.endsWith(", 1 by hand"), ro);
+        // only the phone: no night at all, as on Sleep
+        ShownNights.Devices phoneOnly = new ShownNights.Devices(MainDevice.PHONE, false, false, MainDevice.PHONE, 8000, 40);
+        check("#427 Trends with only the phone: no night by hand", from(TrendDays.read(db, today, now, none, phoneOnly, z), Trends.HAND) == 0, null);
+        // only the watch (no ring shown, no watch night): both nights by hand, as Sleep shows them then
+        ShownNights.Devices watchOnly = new ShownNights.Devices(MainDevice.WATCH, false, true, MainDevice.WATCH, 8000, 40);
+        List<Trends.Day> wo = TrendDays.read(db, today, now, none, watchOnly, z);
+        check("#427 Trends with only the watch and no watch night: both nights by hand", counts(wo, Trends.HAND)[Trends.ASLEEP] == 2
+                && day(wo, firstDay).src[Trends.ASLEEP] == Trends.HAND, counts(wo, Trends.HAND)[Trends.ASLEEP]);
+        // a watch night over it wins (ring and watch)
+        double wEnd = at(free, 7, 0, z);
+        // a watch is there (a raw message, as WatchStore.any reads it) with one night of sleep pieces
+        db.getWritableDatabase().execSQL("INSERT INTO watch_raw(session, seq, device, type, body, captured) VALUES (1, 1, 'w', 0, X'00', ?)", new Object[] {wEnd});
+        int[][] pieces = {{app.openring.core.withings.Records.LIGHT, 3}, {app.openring.core.withings.Records.DEEP, 2}, {app.openring.core.withings.Records.REM, 2}};
+        long pt = (long) wEnd - 7 * 3600;
+        for (int[] x : pieces) {
+            db.getWritableDatabase().execSQL("INSERT INTO watch_sleep(device, start, dur, stage) VALUES (?, ?, ?, ?)", new Object[] {"w", pt, x[1] * 3600, x[0]});
+            pt += x[1] * 3600L;
+        }
+        ShownNights.Devices both = new ShownNights.Devices(MainDevice.RING, true, true, -1, 8000, 40);
+        Trends.Day bw = day(TrendDays.read(db, today, now, none, both, z), free);
+        check("#427 Trends: a watch night of the same night wins over the night by hand", bw != null && bw.src[Trends.ASLEEP] == Trends.WATCH
+                && bw.src[Trends.BEDTIME] == Trends.WATCH, bw == null ? null : bw.src[Trends.ASLEEP]);
+        db.getWritableDatabase().execSQL("DELETE FROM watch_sleep");
+        db.getWritableDatabase().execSQL("DELETE FROM watch_raw");
+        // delete and Undo: the stamp changes each time, the night goes and comes back
+        String s1b = TrendDays.stamp(db);
+        app.openring.data.HandNights.remove(db, 1001);
+        String s2 = TrendDays.stamp(db);
+        Trends.Day gone = day(TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z), free);
+        app.openring.data.HandNights.undoRemove(db, 1001);
+        String s3 = TrendDays.stamp(db);
+        Trends.Day back = day(TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z), free);
+        check("#427 Trends stamp: changes after a save, a delete and an Undo", !s0.equals(s1) && !s1b.equals(s2) && !s2.equals(s3), s0 + " / " + s1 + " / " + s2 + " / " + s3);
+        check("#427 Trends: a deleted night by hand is not counted, after Undo it is again", gone != null && Double.isNaN(gone.v[Trends.ASLEEP])
+                && back != null && back.v[Trends.ASLEEP] == 445 && back.src[Trends.ASLEEP] == Trends.HAND, null);
+        // a change (a new row, the old one marked gone) and its Undo change the stamp too
+        app.openring.data.HandNights.Saved ch = app.openring.data.HandNights.save(db, at(free.minusDays(1), 23, 30, z), at(free, 6, 45, z), marks, 1002, 1001);
+        String s4 = TrendDays.stamp(db);
+        double changed = day(TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z), free).v[Trends.ASLEEP];
+        app.openring.data.HandNights.undo(db, ch);
+        String s5 = TrendDays.stamp(db);
+        check("#427 Trends: a change counts the new times, its Undo the old ones, the stamp changes each time", changed == 415 && !s3.equals(s4) && !s4.equals(s5)
+                && day(TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z), free).v[Trends.ASLEEP] == 445, changed);
+        // a night by hand before any device's data: Trends starts with it
+        LocalDate early = firstDay.minusDays(20);
+        app.openring.data.HandNights.save(db, at(early.minusDays(1), 22, 0, z), at(early, 6, 0, z), new ArrayList<double[]>(), 1003);
+        List<Trends.Day> longer = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
+        check("#427 Trends starts with a night by hand older than the ring's data", longer.get(0).date.equals(early) && longer.get(0).v[Trends.ASLEEP] == 480
+                && longer.get(0).src[Trends.ASLEEP] == Trends.HAND, longer.get(0).date);
     }
 
     /** Three years of nights and days (copies of the demo's) and of screen sessions: read and grouped under 1.5 s. */

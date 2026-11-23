@@ -256,6 +256,7 @@ public final class SetupActivity extends Activity {
                     app.openring.data.Backup.Result done = app.openring.data.Backup.finish(appCtx, p, replaceHistory, new Line());
                     // the last life factor change belongs to the file before the restore (issue #292)
                     LifeCard.forget();
+                    HandViews.forget();
                     return done;
                 } catch (Exception e) {
                     android.util.Log.w("OpenRing", "restore: applying the backup failed", e);

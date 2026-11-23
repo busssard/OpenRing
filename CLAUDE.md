@@ -40,20 +40,21 @@ completely, then read the two guides it points to before changing anything:
    #x"). Pull requests go into `dev` (every merge there publishes the nightly pre-release); `main` only
    takes releases from `dev`, which the owner merges (that merge publishes the stable release). Never
    merge yourself, never push to `dev` or `main`.
-5. **Look at the result.** The emulator test runs for pull requests (not for plain branch pushes).
-   When it has passed, open the PNGs in the folder `pr-<number>/` of the branch `screenshots-preview`
-   with the Read tool (each pull request has its own folder; the root only holds the latest run of
-   any PR). `pr-<number>/HEAD.txt` must name your PR head commit, otherwise wait or rerun by pushing
-   again. A failed preview push only warns, so when the folder is missing, read the run's log. Check
-   the change really looks right and fix it if not. New screens or states: extend
-   `.github/scripts/screens.sh`.
+5. **Look at the result.** The emulator test runs only for releases (owner, 20 November): the pull
+   request from `dev` into `main` and the push to `main`; pull requests into `dev` skip it (the "screens"
+   check passes at once). So for a user visible change, extend `.github/scripts/screens.sh` for new screens
+   or states and say in the PR that the screenshots come with the release. Once the release pull request
+   has run, open the PNGs in its folder `pr-<number>/` of the branch `screenshots-preview` with the Read
+   tool (`HEAD.txt` names the commit) and fix what looks wrong in a follow up PR; a failed screen run blocks
+   the release, so fix that first. The owner can run the emulator on any branch by hand (pictures in
+   `branch-<name>/`).
 6. Do not send APK files in chat; GitHub builds them.
 7. **Save CI minutes (owner, 17 November: the checks ran out of GitHub's budget).** Every push to a pull request
-   costs a 20 minute emulator run plus a build. So: bundle what belongs together into one pull request (one per
-   owner request or issue, review fixes as extra commits on the open PR, not a new PR each); test everything locally
-   first and push once when done, not after every step; at most one empty commit to retry a stuck emulator; never
-   push in a loop. A pull request that changes only docs, tests, change notes or workflows skips the emulator run
-   by itself (`emulator.yml`), and pull request branches are built once (`build.yml` pushes only build `dev` and `main`).
+   costs a build (the 20 minute emulator run only comes with releases into `main`, step 5). So: bundle what
+   belongs together into one pull request (one per owner request or issue, review fixes as extra commits on
+   the open PR, not a new PR each); test everything locally first and push once when done, not after every
+   step; at most one empty commit to retry a stuck emulator; never push in a loop. Pull request branches
+   are built once (`build.yml` pushes only build `dev` and `main`).
 
 ## Design instincts (what the owner kept pushing for; do it without being asked)
 Check every plan and PR against these before showing it:
