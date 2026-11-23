@@ -612,6 +612,24 @@ public class TrendsPipelineTest {
         String ro = Trends.readout(month, month.indexOf(free), Locale.US);
         System.out.println("    #427 " + ro);
         check("#427 Trends: the readout names the night by hand", ro.endsWith(", 1 by hand"), ro);
+        // issue #459: the ring's nights at Calm detail with the night by hand in the same month: no "mixed" wake ups note
+        List<Trends.Day> calm = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
+        for (Trends.Day x : calm) if (x.src[Trends.WAKE_UPS] == Trends.RING) x.detail = app.openring.core.analysis.StageFilter.CALM;
+        Trends.Day hb = day(calm, free);
+        check("#459 Trends: Calm ring nights and a night by hand in one month, no mixed wake ups note", hb != null && hb.src[Trends.WAKE_UPS] == Trends.HAND
+                && Trends.of(calm, Trends.WAKE_UPS, Trends.MONTHS, today).detail == app.openring.core.analysis.StageFilter.CALM,
+                Trends.of(calm, Trends.WAKE_UPS, Trends.MONTHS, today).detail);
+        // issue #459: the page's stamp follows every field of the devices, the age (a night by hand's score) and the goal too
+        ShownNights.Devices a40 = new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 40);
+        check("#459 Trends stamp: the devices' key changes with the age and the goal, not without a change",
+                a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 40).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 41).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 9000, 40).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.WATCH, true, false, -1, 8000, 40).key()), a40.key());
+        double s40 = day(TrendDays.read(db, today, now, none, a40, z), free).v[Trends.SLEEP_SCORE];
+        double s80 = day(TrendDays.read(db, today, now, none, new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 80), z), free).v[Trends.SLEEP_SCORE];
+        check("#459 Trends: the age changes a night by hand's sleep score (so the stamp needs it)", !Double.isNaN(s40) && !Double.isNaN(s80) && s40 != s80,
+                s40 + " " + s80);
         // only the phone: no night at all, as on Sleep
         ShownNights.Devices phoneOnly = new ShownNights.Devices(MainDevice.PHONE, false, false, MainDevice.PHONE, 8000, 40);
         check("#427 Trends with only the phone: no night by hand", from(TrendDays.read(db, today, now, none, phoneOnly, z), Trends.HAND) == 0, null);

@@ -140,7 +140,8 @@ public final class TrendsActivity extends Activity {
                     Db db = Db.get(ctx);
                     // the devices as the tabs show them: the ring, the watch's nights, without a ring the watch's or the phone's days
                     app.openring.data.ShownNights.Devices dev = DayData.shownNow(ctx);
-                    l.stamp = TrendDays.stamp(db) + "|" + l.today + "|" + p.screenExcluded() + "|" + dev.main + dev.ring + dev.watch + dev.history
+                    // every field of the devices, the profile's age too (the score of a night by hand, issue #459)
+                    l.stamp = TrendDays.stamp(db) + "|" + l.today + "|" + p.screenExcluded() + "|" + dev.key()
                             + "|" + ZoneId.systemDefault().getId();
                     if (l.stamp.equals(before)) {
                         l.same = true;

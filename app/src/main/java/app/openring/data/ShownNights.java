@@ -60,6 +60,14 @@ public final class ShownNights {
             this.age = age;
         }
 
+        /**
+         * Every field in one text, for a page's stamp (Trends): the values it reads change with each of them, the age too (the
+         * score of a night by hand and of the watch's nights, issue #459) and the goal (the device's days' readiness).
+         */
+        public String key() {
+            return main + "," + ring + "," + watch + "," + history + "," + goal + "," + age;
+        }
+
         /** Only the ring's results, as before the watch: callers without a choice (and the tests of the ring's own numbers). */
         public static final Devices RING = new Devices(MainDevice.RING, true, false, -1, 0, Double.NaN);
     }

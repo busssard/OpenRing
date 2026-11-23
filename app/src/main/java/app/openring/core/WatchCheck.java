@@ -541,13 +541,20 @@ public final class WatchCheck {
     /** The address of the made up QRing ring in {@link #demoFound} (issue #418). */
     public static final String DEMO_RING = "00:00:00:00:00:04";
 
-    /** The made up scan of demo mode: a watch, headphones, a device without a name and a QRing ring (issue #418). */
+    /** The address of the made up Oura ring in {@link #demoFound} (issue #458). */
+    public static final String DEMO_OURA = "00:00:00:00:00:05";
+
+    /**
+     * The made up scan of demo mode: headphones, a watch, a device without a name, a QRing ring (issue #418) and an Oura ring,
+     * the one Open Ring reads, which the check leaves alone (issue #458). The watch stays the strongest.
+     */
     public static List<Found> demoFound() {
         List<Found> l = new ArrayList<Found>();
         l.add(new Found("00:00:00:00:00:01", "Headphones (example)", -71).service("0000110b" + BASE));
         l.add(new Found("00:00:00:00:00:02", "Steel HR (example)", -52).service(WITHINGS_SERVICE));
         l.add(new Found("00:00:00:00:00:03", null, -88));
         l.add(new Found(DEMO_RING, "R09_ABCD (example)", -63).service(RingFamily.QRING_SERVICE));
+        l.add(new Found(DEMO_OURA, "Oura Ring 4 (example)", -58).service(RingFamily.OURA_SERVICE));
         return l;
     }
 

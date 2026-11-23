@@ -403,7 +403,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     .putExtra("demo_correct", i.getBooleanExtra("drip_correct", false)));
         }
         // screen test: the Device check with its made up scan, with watch_report the made up watch's report (issue #251) and
-        // with device_ring the made up ring's (issue #418); only in demo mode, which never touches Bluetooth
+        // with device_ring the made up ring's (issue #418), with device_oura the made up Oura ring's two lines (issue #458); only in
+        // demo mode, which never touches Bluetooth
         if (i.getBooleanExtra("watch_data", false) && Prefs.of(this).demo()) startActivity(new Intent(this, WatchPageActivity.class));
         // screen test: the main device (issue #251), demo mode only; the same choice as the chips in Settings
         if (i.hasExtra("main_device") && Prefs.of(this).demo()) Prefs.of(this).setMainDevice(i.getIntExtra("main_device", 0));
@@ -413,9 +414,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
         // Today asks for last night, and the demo's night by hand shows on its day
         DayData.previewNoNight = i.getBooleanExtra("hand_night", false) && Prefs.of(this).demo();
         // screen test: the entry of a night by hand for last night with two wake marks (issue #427), demo mode only; nothing is
-        // saved without a tap on Save
+        // saved without a tap on Save; its times as at 09:00 of today, whatever the hour the test runs (issue #458)
         if (i.getBooleanExtra("hand_entry", false) && Prefs.of(this).demo()) {
-            startActivity(new Intent(this, HandNightActivity.class).putExtra("day", LocalDate.now().toString()).putExtra("demo_marks", 2));
+            startActivity(new Intent(this, HandNightActivity.class).putExtra("day", LocalDate.now().toString()).putExtra("demo_marks", 2)
+                    .putExtra("demo_clock", true));
         }
         // screen test: Activity's card that asks for Physical activity (issue #329), demo mode only; demo mode never asks
         PhoneViews.previewAsk = i.getBooleanExtra("phone_ask", false) && Prefs.of(this).demo();
@@ -427,7 +429,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
         if (i.getBooleanExtra("watch", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false))
-                    .putExtra("demo_ring", i.getBooleanExtra("device_ring", false))); // the made up QRing ring's result (issue #418)
+                    .putExtra("demo_ring", i.getBooleanExtra("device_ring", false)) // the made up QRing ring's result (issue #418)
+                    .putExtra("demo_oura", i.getBooleanExtra("device_oura", false))); // the made up Oura ring, left alone (issue #458)
         }
         // screen test: the Badges page (issue #265); it only reads, so it needs no demo mode
         if (i.getBooleanExtra("badges", false)) startActivity(new Intent(this, BadgesActivity.class));
