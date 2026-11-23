@@ -17,7 +17,7 @@ public final class Tour {
     public static final String SYNC = "sync", SCORES = "scores", TABS = "tabs", CHART = "chart", TILE = "tile", LIFE = "life",
             SETTINGS = "settings";
 
-    /** A step's tab: any (the part is in the header or the tab bar), Today or Sleep (the numbers of {@code ui/Pages}). */
+    /** A step's tab: any (the part is in the header or the tab bar), Today or Sleep (the numbers of {@code ui/Pages.TODAY, SLEEP}). */
     public static final int ANY = -1, TODAY = 0, SLEEP = 1;
 
     /** One step: the part it points at, the tab it needs, its text and how a tap on the part counts. */
@@ -25,7 +25,10 @@ public final class Tour {
         public final String key;
         public final int tab;
         public final String text;
-        /** A tap on the part also moves the tour on (false where trying it is the point: the chart, a tile's title). */
+        /**
+         * A tap on the part also moves the tour on (false where trying it is the point: the chart, a tile's title, and the tabs,
+         * where a tap opens the tab tapped and the tour stays there until Next).
+         */
         public final boolean tapMovesOn;
         /** A part inside a folded tile is shown by its tile; false: the step is skipped then (the chart needs to be open). */
         public final boolean foldedOk;
@@ -41,7 +44,7 @@ public final class Tour {
 
     public static final String SYNC_TEXT = "Sync reads your ring or watch over Bluetooth. Nothing leaves your phone.";
     /** Step 1 when the tour starts after the first sync with a real device. */
-    public static final String SYNC_FIRST = "Your first sync worked. Sync reads your ring or watch over Bluetooth, nothing leaves your phone.";
+    public static final String SYNC_FIRST = "Your first sync worked: Sync reads your ring or watch over Bluetooth. Nothing leaves your phone.";
 
     /** The steps in their order. */
     public static final List<Step> STEPS;
@@ -50,11 +53,11 @@ public final class Tour {
         List<Step> s = new ArrayList<Step>();
         s.add(new Step(SYNC, ANY, SYNC_TEXT, true, true));
         s.add(new Step(SCORES, TODAY, "Your scores for the day. Tap one to see why.", true, true));
-        s.add(new Step(TABS, ANY, "Sleep, Ready, Activity, Body and Screen show the details. Tap one to open it.", true, true));
+        s.add(new Step(TABS, ANY, "Sleep, Ready, Activity, Body and Screen show the details. Tap one to open it.", false, true));
         s.add(new Step(CHART, SLEEP, "Touch and slide on any chart to read the exact time and value. Try it here.", false, false));
-        s.add(new Step(TILE, SLEEP, "Tap a title to fold a tile. Settings, Rearrange tiles puts them in your order.", false, true));
+        s.add(new Step(TILE, SLEEP, "Tap a title to fold a tile. In Settings, Rearrange tiles puts them in your order.", false, true));
         s.add(new Step(LIFE, TODAY, "Log what shaped your day, like Meditation or Stress. Sleep, Ready and Body show it next to your nights.", true, true));
-        s.add(new Step(SETTINGS, ANY, "Your devices, backups and what the app may use are here.", true, true));
+        s.add(new Step(SETTINGS, ANY, "Your devices, backups and what the app is allowed to use are here.", true, true));
         STEPS = Collections.unmodifiableList(s);
     }
 
@@ -69,7 +72,12 @@ public final class Tour {
     public static final String NEXT = "Next", DONE = "Done", SKIP = "Skip the tour", AGAIN = "Show the tour again";
     /** The demo's ending. */
     public static final String END_TEXT = "That was the demo. Add your own ring or watch to see your own data, or keep looking around.",
-            ADD_DEVICE = "Add my device", BACK_TO_MINE = "Back to my data", KEEP_LOOKING = "Keep looking";
+            END_BACK = "That was the demo. Go back to your own data, or keep looking around.", ADD_DEVICE = "Add my device", BACK_TO_MINE = "Back to my data", KEEP_LOOKING = "Keep looking";
+
+    /** The ending's text: add a device when none is set up, else back to the person's own data (as {@link #endButton}). */
+    public static String endText(boolean hasDevice) {
+        return hasDevice ? END_BACK : END_TEXT;
+    }
 
     /** The text of step {@code i} (0 based); {@code firstSync}: the tour started after the first sync with a real device. */
     public static String text(int i, boolean firstSync) {
@@ -96,13 +104,12 @@ public final class Tour {
     }
 
     /**
-     * The step shown after {@code from} when {@code found[i]} says which parts are on screen: {@link #step} repeated past the
-     * missing ones. The overlay finds the parts one at a time (a step may need another tab), this is the same walk at once.
+     * The step to try when the part of {@code missing} is not on screen (no night, a folded chart, only the phone): the next one
+     * the same way ({@link #step}), never a hole on nothing. {@code misses} counts the parts missed in a row; past two rounds
+     * of the steps the tour closes (a page that keeps changing under it must not keep it walking).
      */
-    public static int skip(int from, int dir, boolean[] found, boolean demo) {
-        int s = step(from, dir, demo);
-        while (s >= 0 && s < COUNT && !found[s]) s = step(s, dir, demo);
-        return s;
+    public static int afterMissing(int missing, int dir, boolean demo, int misses) {
+        return misses > 2 * COUNT ? CLOSED : step(missing, dir, demo);
     }
 
     /** The label of the bubble's forward button on step {@code i}: Done on the last step with a real device. */
@@ -136,6 +143,7 @@ public final class Tour {
         for (Step s : STEPS) out.add(s.text);
         out.add(SYNC_FIRST);
         out.add(END_TEXT);
+        out.add(END_BACK);
         out.add(NEXT);
         out.add(DONE);
         out.add(SKIP);

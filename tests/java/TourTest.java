@@ -47,7 +47,8 @@ public class TourTest {
         eq("the chart and its tile's title on Sleep", Tour.STEPS.get(3).tab + " " + Tour.STEPS.get(4).tab, Tour.SLEEP + " " + Tour.SLEEP);
         eq("Today and Sleep are the tabs of ui/Pages", Tour.TODAY + " " + Tour.SLEEP, "0 1");
         for (Tour.Step s : Tour.STEPS) {
-            boolean trying = Tour.CHART.equals(s.key) || Tour.TILE.equals(s.key);
+            // the tabs: a tap opens the tab tapped, the tour stays on the tab bar until Next (else the next step would open Sleep)
+            boolean trying = Tour.CHART.equals(s.key) || Tour.TILE.equals(s.key) || Tour.TABS.equals(s.key);
             check("a tap moves on except where trying it is the point: " + s.key, s.tapMovesOn != trying);
         }
         check("the chart is skipped when its tile is folded", !Tour.STEPS.get(3).foldedOk);
@@ -83,29 +84,50 @@ public class TourTest {
         return f;
     }
 
+    /**
+     * The overlay's walk ({@code TourOverlay.show} and {@code locate}): it shows {@code first}, and each step whose part is not on
+     * screen sends it on by {@link Tour#afterMissing}, counting the misses in a row as the overlay does.
+     */
+    static int walk(int first, int dir, boolean[] found, boolean demo) {
+        int s = first, misses = 0;
+        while (s >= 0 && s < Tour.COUNT && !found[s]) s = Tour.afterMissing(s, dir, demo, ++misses);
+        return s;
+    }
+
+    /** Next ({@code dir} 1) or Back (-1) from {@code from} as the overlay does it: {@link Tour#step}, then the walk. */
+    static int move(int from, int dir, boolean[] found, boolean demo) {
+        return walk(Tour.step(from, dir, demo), dir, found, demo);
+    }
+
     static void skipping() {
         boolean[] f = all(true);
         f[3] = false; // no night: no chart
-        eq("Next past a missing chart", Tour.skip(2, 1, f, true), 4);
-        eq("Back past a missing chart", Tour.skip(4, -1, f, true), 2);
+        eq("Next past a missing chart", move(2, 1, f, true), 4);
+        eq("Back past a missing chart", move(4, -1, f, true), 2);
         f = all(true);
         f[3] = f[4] = f[5] = false;
-        eq("Next past three missing steps in a row", Tour.skip(2, 1, f, false), 6);
+        eq("Next past three missing steps in a row", move(2, 1, f, false), 6);
         f = all(true);
         f[6] = false;
-        eq("a missing last step: the demo's ending", Tour.skip(5, 1, f, true), Tour.END);
-        eq("a missing last step with a real device: done", Tour.skip(5, 1, f, false), Tour.CLOSED);
+        eq("a missing last step: the demo's ending", move(5, 1, f, true), Tour.END);
+        eq("a missing last step with a real device: done", move(5, 1, f, false), Tour.CLOSED);
         f = all(true);
         f[0] = false;
-        eq("a missing first step: the tour begins at the second", Tour.skip(-1, 1, f, true), 1);
-        eq("Back to a missing first step closes", Tour.skip(1, -1, f, true), Tour.CLOSED);
+        eq("a missing first step: the tour begins at the second", walk(0, 1, f, true), 1);
+        eq("Back to a missing first step closes", move(1, -1, f, true), Tour.CLOSED);
         f = all(false);
-        eq("nothing on screen in demo mode: only the ending", Tour.skip(-1, 1, f, true), Tour.END);
-        eq("nothing on screen with a real device: closed at once", Tour.skip(-1, 1, f, false), Tour.CLOSED);
-        eq("Back from the ending past missing steps closes", Tour.skip(Tour.END, -1, f, true), Tour.CLOSED);
+        eq("nothing on screen in demo mode: only the ending", walk(0, 1, f, true), Tour.END);
+        eq("nothing on screen with a real device: closed at once", walk(0, 1, f, false), Tour.CLOSED);
+        eq("Back from the ending past missing steps closes", move(Tour.END, -1, f, true), Tour.CLOSED);
         f = all(true);
         f[6] = f[5] = false;
-        eq("Back from the ending past missing last steps", Tour.skip(Tour.END, -1, f, true), 4);
+        eq("Back from the ending past missing last steps", move(Tour.END, -1, f, true), 4);
+        f = all(true);
+        f[2] = false;
+        eq("the extra tour 2 with the tab bar missing: the chart", walk(2, 1, f, true), 3);
+        eq("a missing part: the next step the same way", Tour.afterMissing(3, 1, true, 1) + " " + Tour.afterMissing(3, -1, true, 1), "4 2");
+        eq("a missing part past two rounds of misses closes", Tour.afterMissing(3, 1, true, 2 * Tour.COUNT + 1), Tour.CLOSED);
+        eq("two rounds of misses are still walked", Tour.afterMissing(3, 1, true, 2 * Tour.COUNT), 4);
         eq("the count keeps the fixed numbers", Tour.count(0) + ", " + Tour.count(4) + ", " + Tour.count(6), "1 of 7, 5 of 7, 7 of 7");
         eq("no count on the ending or when closed", Tour.count(Tour.END) + Tour.count(Tour.CLOSED), "");
     }
@@ -131,6 +153,10 @@ public class TourTest {
         eq("step 1 otherwise", Tour.text(0, false), Tour.SYNC_TEXT);
         eq("the first sync changes only step 1", Tour.text(1, true), Tour.STEPS.get(1).text);
         eq("the ending's text", Tour.text(Tour.END, false), Tour.END_TEXT);
+        eq("the ending's text without a device: add one", Tour.endText(false), "That was the demo. Add your own ring or watch to see your own data, or keep looking around.");
+        eq("the ending's text with a device: back to it", Tour.endText(true), "That was the demo. Go back to your own data, or keep looking around.");
+        check("both ending texts are in the list the text checks read", Tour.texts().contains(Tour.END_TEXT) && Tour.texts().contains(Tour.END_BACK));
+        eq("the first sync's step 1, two sentences", Tour.SYNC_FIRST, "Your first sync worked: Sync reads your ring or watch over Bluetooth. Nothing leaves your phone.");
         eq("closed has no text", Tour.text(Tour.CLOSED, false), "");
     }
 
@@ -143,6 +169,7 @@ public class TourTest {
             check("at most two sentences: " + t, sentences <= 2);
         }
         check("the issue's step texts", Tour.STEPS.get(1).text.equals("Your scores for the day. Tap one to see why.")
-                && Tour.STEPS.get(6).text.equals("Your devices, backups and what the app may use are here."));
+                && Tour.STEPS.get(6).text.equals("Your devices, backups and what the app is allowed to use are here.")
+                && Tour.STEPS.get(4).text.equals("Tap a title to fold a tile. In Settings, Rearrange tiles puts them in your order."));
     }
 }

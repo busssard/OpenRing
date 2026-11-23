@@ -52,8 +52,14 @@ final class TourOverlay extends FrameLayout {
         /** Done or skipped once: the tour never starts by itself again. */
         void seen();
 
-        /** The ending's first button: leaves the demo (Getting started opens when nothing is set up). */
-        void leaveDemo();
+        /**
+         * The ending's first button: leaves the demo (Getting started opens when nothing is set up). False when it was refused
+         * (a re analysis runs); {@link #leaveRefused} is the sentence then.
+         */
+        boolean leaveDemo();
+
+        /** Why leaving the demo was refused, the sentence Settings shows. */
+        String leaveRefused();
 
         /** The overlay is gone. */
         void closed();
@@ -157,8 +163,12 @@ final class TourOverlay extends FrameLayout {
         endMain.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
-                close();
-                TourOverlay.this.host.leaveDemo();
+                // refused while a re analysis runs: the bubble says why (as Settings) and keeps its buttons
+                if (TourOverlay.this.host.leaveDemo()) close();
+                else {
+                    text.setText(TourOverlay.this.host.leaveRefused());
+                    bubble.announceForAccessibility(TourOverlay.this.host.leaveRefused());
+                }
             }
         });
         endRow.addView(endMain, Ui.matchWrap());
@@ -251,11 +261,7 @@ final class TourOverlay extends FrameLayout {
         if (t == null) {
             // not on screen (no night, a folded chart, only the phone): the next step the same way, never a hole on nothing
             android.util.Log.i("OpenRing", "tour: step " + (step + 1) + " (" + st.key + ") not on screen, skipped");
-            if (++misses > 2 * Tour.COUNT) {
-                close();
-                return;
-            }
-            show(Tour.step(step, dir, host.demo()), dir);
+            show(Tour.afterMissing(step, dir, host.demo(), ++misses), dir);
             return;
         }
         misses = 0;
@@ -283,8 +289,9 @@ final class TourOverlay extends FrameLayout {
         target = null;
         hasHole = false;
         count.setVisibility(GONE);
-        text.setText(Tour.END_TEXT);
-        endMain.setText(Tour.endButton(host.hasDevice()));
+        boolean mine = host.hasDevice();
+        text.setText(Tour.endText(mine));
+        endMain.setText(Tour.endButton(mine));
         stepRow.setVisibility(GONE);
         endRow.setVisibility(VISIBLE);
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) bubble.getLayoutParams();
@@ -293,7 +300,7 @@ final class TourOverlay extends FrameLayout {
         bubble.setLayoutParams(lp);
         bubble.setVisibility(VISIBLE);
         android.util.Log.i("OpenRing", "tour: the demo's ending");
-        bubble.announceForAccessibility(Tour.END_TEXT);
+        bubble.announceForAccessibility(Tour.endText(mine));
         invalidate();
     }
 

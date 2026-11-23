@@ -44,6 +44,7 @@ public final class Pages {
         void reload();
     }
 
+    // core/Tour.TODAY and SLEEP use these numbers (issue #453, TourTest checks 0 and 1): change them together
     public static final int TODAY = 0, SLEEP = 1, READINESS = 2, ACTIVITY = 3, BODY = 4, SCREEN = 5;
 
     // ======================================================================== TODAY

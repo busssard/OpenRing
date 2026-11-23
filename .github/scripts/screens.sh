@@ -82,10 +82,10 @@ shot() {
 swipe_up() { adb shell input swipe 30 1700 30 500 300; sleep 1; }  # along the left margin, never a tap on a night
 # Every step starts with every tab in the standard layout (owner's wish of 18 November: tiles move and fold, and stay so);
 # the extra is for demo mode only. launch_kept keeps the layout the steps before made (the tiles steps below).
-# tour -1 (issue #453): the short tour does not start by itself on these starts, so it covers no other shot; a later
-# --ei tour on the same line wins (the tour steps below)
+# tour -1 (issue #453), with both: the short tour does not start by itself on these starts, so it covers no other shot; a
+# later --ei tour on the same line wins (the tour steps below)
 launch() { adb shell am start -S -W -n $MAIN --ez layout_reset true --ei tour -1 "$@" >/dev/null; }
-launch_kept() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
+launch_kept() { adb shell am start -S -W -n $MAIN --ei tour -1 "$@" >/dev/null; }
 
 log "first start: setup"
 launch
@@ -101,6 +101,21 @@ tap_text() {  # $1 the exact text of a view: taps its middle; fails when not on 
 }
 if tap_text "Get started"; then shot setup-choice 2
 else echo "::warning::issue #373 step: Get started was not on the first screen"; fi
+
+# The short tour (issue #453): until its bubble shows the text $1 (a step's count, or Keep looking on the demo's ending), up
+# to 8 s, since the bubble is placed a moment after the page; tour_shot takes the shot once it is there, else fails the run
+tour_wait() {
+  for i in 1 2 3 4 5 6 7 8; do
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+    adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "$1" && return 0
+    sleep 1
+  done
+  return 1
+}
+tour_shot() {
+  tour_wait "$2" || { echo "::error::issue #453 step: the tour's bubble ($2) did not show for $1"; TOUR_FAIL=1; }
+  shot "$1" 1
+}
 
 log "demo data, turning the phone twice while it is prepared (issue #29)"
 adb shell settings put system accelerometer_rotation 0
@@ -120,7 +135,7 @@ adb logcat -d 2>/dev/null | grep -E "has leaked window" > "$OUT/leaked.txt"
 wait_demo() {  # until the demo is generated and analysed (up to 3 minutes)
   for i in $(seq 1 90); do
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-    # the short tour (issue #453) hides the page from the screen reader while it runs: its bubble counts as ready too
+    # the page, or the short tour's bubble over it (issue #453)
     if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q -e "made up person" -e "Skip the tour"; then return 0; fi
     sleep 2
   done
@@ -144,10 +159,11 @@ wait_demo
 # The short tour (issue #453) starts by itself the first time the demo opens: this start from the launcher has no extras and
 # the app was cleared above. Next twice (Sync, the scores, then the tab bar), then Skip the tour (remembered, so no later
 # start shows it by itself) and a fresh look at the page for the check below; Show the tour again below shows step 1
-if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "Skip the tour"; then
+# (the page may show a moment before the bubble is placed, so the bubble is waited for)
+if tour_wait "Skip the tour"; then
   adb logcat -d -s OpenRing:I 2>/dev/null | grep -q "tour: started by itself (demo)" || echo "::warning::issue #453 step: the tour shows, but its line in the log is missing"
-  tap_text "Next" && sleep 1 && tap_text "Next" || echo "::warning::issue #453 step: Next could not be tapped twice"
-  shot tour-tabs 2
+  tap_text "Next" && tour_wait "2 of 7" && tap_text "Next" || echo "::warning::issue #453 step: Next could not be tapped twice"
+  tour_shot tour-tabs "3 of 7"
   tap_text "Skip the tour" || echo "::warning::issue #453 step: Skip the tour could not be tapped"
   sleep 2
   wait_demo
@@ -531,14 +547,14 @@ launch --es settings top;                   shot settings
 # The short tour (issue #453): Show the tour again on the demo's card in Settings opens it at its first step (Sync); then
 # the steps by the extra tour: the scores, the chart on Sleep (the tour opens the tab), its tile's title, the life factors on
 # Today (scrolled to), the gear, and the demo's ending with Add my device and Keep looking
-if tap_text "Show the tour again"; then shot tour-again 3
+if tap_text "Show the tour again"; then tour_shot tour-again "1 of 7"
 else echo "::error::issue #453 step: Show the tour again was not on the demo's Settings page"; TOUR_FAIL=1; fi
-launch --ei tour 1;                         shot tour-scores 3
-launch --ei tour 3;                         shot tour-chart 3
-launch --ei tour 4;                         shot tour-tile 3
-launch --ei tour 5;                         shot tour-life 3
-launch --ei tour 6;                         shot tour-settings 3
-launch --ei tour 7;                         shot tour-end 3
+launch --ei tour 1;                         tour_shot tour-scores "2 of 7"
+launch --ei tour 3;                         tour_shot tour-chart "4 of 7"
+launch --ei tour 4;                         tour_shot tour-tile "5 of 7"
+launch --ei tour 5;                         tour_shot tour-life "6 of 7"
+launch --ei tour 6;                         tour_shot tour-settings "7 of 7"
+launch --ei tour 7;                         tour_shot tour-end "Keep looking"
 # every section folded, as every time Settings opens (owner's wishes of 3 and 17 November: a title, one status line and a
 # chevron each); stages, watch, period and the others below open their own section first
 launch --es settings blocks;                shot settings-blocks

@@ -359,7 +359,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.hasExtra("tour")) {
             int t = i.getIntExtra("tour", -1);
             if (t < 0) tourQuiet = true;
-            else tourPending = Math.min(t, app.openring.core.Tour.END);
+            else {
+                tourPending = Math.min(t, app.openring.core.Tour.END);
+                tourFirst = false; // asked for: step 1 never says "Your first sync worked" again
+            }
         }
         // Settings, Rearrange tiles (owner's wish of 20 November): the tabs open in the edit session
         if (i.getBooleanExtra("edit_layout", false) && !Tiles.editing()) Tiles.startEditing(this);
@@ -944,6 +947,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
     /** After each build of the page: the tour follows it, or opens as asked, or starts by itself ({@code core/Tour.autoStart}). */
     void tourCheck() {
         if (isFinishing() || isDestroyed()) return;
+        // Rearrange tiles opened while the tour shows (the gear, then Settings, from its last step or the demo's ending): the tour
+        // closes and counts as seen, so it never sits over the edit session
+        if (tour != null && Tiles.editing()) tour.close();
         if (tour != null && tourPending < 0) {
             tour.pageChanged();
             return;
@@ -1003,14 +1009,16 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
 
         @Override
-        public void leaveDemo() {
+        public boolean leaveDemo() {
             // as Settings' Leave the demo: the main screen again, which opens Getting started when nothing is set up
-            if (!app.openring.data.Demo.leave(MainActivity.this)) {
-                android.widget.Toast.makeText(MainActivity.this, app.openring.core.SyncError.plain(app.openring.core.SyncError.REANALYSING,
-                        app.openring.core.SyncError.Task.ACTION), android.widget.Toast.LENGTH_LONG).show();
-                return;
-            }
+            if (!app.openring.data.Demo.leave(MainActivity.this)) return false;
             startActivity(new Intent(MainActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            return true;
+        }
+
+        @Override
+        public String leaveRefused() {
+            return app.openring.core.SyncError.plain(app.openring.core.SyncError.REANALYSING, app.openring.core.SyncError.Task.ACTION);
         }
 
         @Override

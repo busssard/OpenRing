@@ -126,7 +126,7 @@ without Save).
 
 One for the short tour (issue #453): `tour` (int: 0 to 6 opens the tour at that step, 7 the demo's ending, the same as
 Settings' Show the tour again with 0; -1 keeps the tour from starting by itself on this start, also in demo mode). `screens.sh`
-sends `tour -1` with every `launch`, so no other shot is covered; a later `--ei tour` on the same line wins.
+sends `tour -1` with every `launch` and `launch_kept`, so no other shot is covered, and waits for the bubble before each tour shot; a later `--ei tour` on the same line wins.
 
 One for the life factors: `life_more` (boolean, demo mode only: Today's row "What was today like?" opens with its More,
 All factors and the ways on; issue #292). With `card WHAT_WAS` the row is at the top (also for a past day, "What was this day like?"); `card LIFE_FACTORS` opens
