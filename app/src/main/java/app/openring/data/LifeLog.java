@@ -107,12 +107,18 @@ public final class LifeLog {
             write(db.getWritableDatabase(), d, tag, made, false);
             return;
         }
-        List<String> also = holding(db, d, known(db).aliases(tag));
         SQLiteDatabase w = db.getWritableDatabase();
         w.beginTransaction();
         try {
+            // the aliases holding the day are read inside the transaction, so they are the rows this write marks
+            List<String> also = holding(db, d, known(db).aliases(tag));
+            int n = 0;
             write(w, d, tag, made, true);
-            for (String a : also) write(w, d, a, made, true);
+            stop(++n);
+            for (String a : also) {
+                write(w, d, a, made, true);
+                stop(++n);
+            }
             w.setTransactionSuccessful();
         } finally {
             w.endTransaction();
@@ -142,8 +148,16 @@ public final class LifeLog {
     public static List<Row> before(Db db, String day, String tag, boolean on) {
         String d = date(day);
         List<Row> out = new ArrayList<Row>();
-        out.add(row(db, d, tag));
-        if (!on) for (String a : holding(db, d, known(db).aliases(tag))) out.add(row(db, d, a));
+        // one transaction, so the tag's row and its aliases' rows are read as one state of the file
+        SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            out.add(row(db, d, tag));
+            if (!on) for (String a : holding(db, d, known(db).aliases(tag))) out.add(row(db, d, a));
+            w.setTransactionSuccessful();
+        } finally {
+            w.endTransaction();
+        }
         return out;
     }
 
@@ -159,6 +173,16 @@ public final class LifeLog {
 
     /** Tests only: a several day entry throws after this many rows, as a stop half way would. */
     static volatile int failSpanAfter = -1;
+
+    /**
+     * Tests only: the other writes over several rows (a tap off reaching aliases, {@link #removeOwn}, {@link #addOwn} bringing
+     * keys back) throw after this many rows, as a stop half way would.
+     */
+    static volatile int failRowsAfter = -1;
+
+    private static void stop(int rows) {
+        if (rows == failRowsAfter) throw new IllegalStateException("test stop");
+    }
 
     /**
      * {@code tag} on every day from {@code from} to {@code to} (both included), one row per day sharing the span id
@@ -283,8 +307,10 @@ public final class LifeLog {
                 SQLiteDatabase w = db.getWritableDatabase();
                 w.beginTransaction();
                 try {
+                    int n = 0;
                     for (String key : keys) {
                         w.execSQL("UPDATE life_tags SET gone = 0, shown = 1, ord = NULL, made = ? WHERE key = ?", new Object[] {millis / 1000.0, key});
+                        stop(++n);
                     }
                     w.setTransactionSuccessful();
                 } finally {
@@ -323,7 +349,11 @@ public final class LifeLog {
         SQLiteDatabase w = db.getWritableDatabase();
         w.beginTransaction();
         try {
-            for (String x : keys) w.execSQL("UPDATE life_tags SET gone = 1, shown = 0, made = ? WHERE key = ?", new Object[] {made, x});
+            int n = 0;
+            for (String x : keys) {
+                w.execSQL("UPDATE life_tags SET gone = 1, shown = 0, made = ? WHERE key = ?", new Object[] {made, x});
+                stop(++n);
+            }
             w.setTransactionSuccessful();
         } finally {
             w.endTransaction();

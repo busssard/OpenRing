@@ -368,12 +368,15 @@ the old file back. Demo mode writes made up tags (`LifeTags.demo`, never Intimac
 **Sleep sounds (issue #380), phase 1a.** Only the storage and the detector; there is no microphone permission, service or screen
 yet (1b brings the listening and the Sleep card, 1c the marks on the night's timeline). `core/analysis/SoundDetector` (pure Java,
 fed 16 kHz mono samples in any piece size, worked through in frames of 512 samples, 32 ms; times are unix seconds from the night's
-start) finds sounds 10 dB above a moving floor (the 20th percentile of the last 60 s, digital silence left out) for 3 frames, ending
+start) finds sounds 10 dB (the default start threshold, a constructor parameter that 1b sets from the microphone test) above a moving floor (the 20th percentile of the last 60 s, digital silence left out) for 3 frames, ending
 after 1 s below; labels them cough like (under 1.2 s, loudest frame among the first 5, more than 150 zero crossings per frame),
 snoring (3 or more sounds 2 to 7 s apart, lengths within half, peaks within 6 dB, one stretch; a sound of 7 s or longer is never a
 snore) or talking or other sound; gives each sound a clip window (5 s before, 3 s after, at most 20 s, never before the night's
 start), ready once it has passed, so the caller keeps only the last 20 s of audio; keeps at most 60 clips a night (a louder one
-replaces the quietest, a stretch keeps its loudest snore's) and reports clips it gives up so their audio can be deleted; and marks a
+replaces the quietest, a stretch keeps its loudest snore's; the clips of the first two sounds of a row of possible snores push
+out nobody until the row is decided, so a stretch never leaves a slot empty) and reports clips it gives up so their audio can
+be deleted (a clip belongs to the mark whose `clip()` it is; `Clip.sound` is its own sound's start, for a stretch its loudest
+snore's, and time alone does not find the mark, since a cough can lie inside a stretch); and marks a
 gap for 2 s or more of exact zeros (another app holding the microphone). `data/Sounds` holds the three tables of version 13
 (`Sounds.create13`, each `CREATE TABLE IF NOT EXISTS` on its own, safe twice and resumable): `sound_nights` (`start` key, `stop`,
 `floor`, `clips`, `ended`: hand, time, 12 h or system), `sound_clips` (`start` key, `stop`, `kind` snore, cough or talk, `peak` dB
@@ -387,8 +390,8 @@ The retention (`Sounds.retain`: 7 days by default, 30, or until deleted) deletes
 Restore: `Db.replaceWith` reads the three tables before the swap and `Sounds.merge` writes them into the restored file after the life
 factors (the phone wins on the same start), then gives `gone` 1 to every mark whose file is not in the real folder or belongs to
 another of the phone's marks, all in one transaction; any failure puts the old file back. Delete all is one method,
-`data/DeleteAll.run` (the history in use, the copies before updates, the demo's clip folder, and the real one unless demo mode is
-on, since its history is not the one deleted). The Data check has one line of counts only: "Sleep sounds: N nights, M clips (K
+`data/DeleteAll.run` (the history in use, the copies before updates, and the clip folder of the history deleted: the demo's in
+demo mode, the real one otherwise; the other history and its clips stay, so its marks never lose their files). The Data check has one line of counts only: "Sleep sounds: N nights, M clips (K
 with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav files. Nothing calls the sweep or the retention yet;
 1b runs them with the service.
 

@@ -9,8 +9,10 @@ import java.util.*;
  * Sleep sounds (issue #380, phase 1a, {@code core/analysis/SoundDetector}) on made up audio, every sound made in code from a
  * seeded random generator (no recording): a quiet room and a steady fan find nothing; 14 known sounds are found within 0.1 s
  * with their kinds; snoring is grouped into one stretch; a cough and a talk like sound of the same length are told apart by
- * their zero crossings; the 60 clip limit keeps the loudest; the 5 s before a sound also at the very start of the night;
- * digital silence gives a gap; the same audio in other piece sizes gives the same result. Run with tests/run_tests.sh.
+ * their zero crossings; the 60 clip limit keeps the loudest (and a night with a snoring stretch ends with exactly 60); each
+ * clip belongs to the mark whose clip() it is; a lower start threshold finds a quieter sound; the 5 s before a sound also at
+ * the very start of the night; digital silence gives a gap; the same audio in other piece sizes gives the same result. Run
+ * with tests/run_tests.sh.
  */
 public class SoundTest {
     static int passed, failed;
@@ -45,6 +47,9 @@ public class SoundTest {
         coughOrTalk();
         clipLimit();
         stretchClips();
+        stretchAtLimit();
+        clipMarks();
+        threshold();
         equalPeaks();
         clipWindows();
         gaps();
@@ -345,6 +350,146 @@ public class SoundTest {
         List<Mark> qs = e.stretches();
         check("a quiet stretch when 60 louder clips are kept: the stretch is marked, without a clip; the 60 stay", qs.size() == 1 && qs.get(0).clip() == null
                 && e.clips().size() == 60 && e.marks().size() == 61, qs);
+    }
+
+    /**
+     * A full night with a snoring stretch ends with exactly 60 clips (code review of ee03389 on #420): the first two snores of
+     * a row are not yet a stretch, and their clips must not push out kept clips that the stretch then leaves empty; a louder
+     * snore replacing the stretch's clip at exactly 60 gives up the old one, not an unrelated clip.
+     */
+    static void stretchAtLimit() {
+        for (int talks : new int[] {59, 70}) {
+            Random r = new Random(30 + talks);
+            double[] a = room(12 * talks + 80, 30, r);
+            for (int i = 0; i < talks; i++) talk(a, 10 + 12 * i, 1.5, 1500 + 60 * i, r);
+            double amp = 3000;
+            for (int i = 0; i < 8; i++) {
+                snore(a, 12 * talks + 20 + 4 * i, 1.5, amp, r);
+                amp *= 1.12; // about 1 dB louder each time, so the stretch's clip moves on
+            }
+            short[] s = pcm(a);
+            SoundDetector d = new SoundDetector(T0);
+            Set<Double> saved = new HashSet<Double>();
+            boolean neverBoth = true;
+            for (int i = 0; i < s.length; i += 512) {
+                d.feed(s, i, Math.min(512, s.length - i));
+                for (Clip c : d.takeReady()) neverBoth &= saved.add(c.sound);
+                for (Clip c : d.takeDropped()) neverBoth &= saved.remove(c.sound);
+            }
+            d.finish();
+            for (Clip c : d.takeReady()) neverBoth &= saved.add(c.sound);
+            for (Clip c : d.takeDropped()) neverBoth &= saved.remove(c.sound);
+            List<Mark> st = d.stretches();
+            check(talks + " talking sounds and a stretch of 8 snores: one stretch, " + (talks + 1) + " marks", st.size() == 1 && st.get(0).sounds == 8
+                    && d.marks().size() == talks + 1, d.marks().size() + " " + st);
+            eq(talks + " talking sounds and a stretch of 8 snores: exactly 60 clips at the end of the night", d.clips().size(), SoundDetector.MAX_CLIPS);
+            check(talks + " talking sounds and a stretch: the stretch keeps its loudest snore's clip", st.size() == 1 && st.get(0).clip() != null
+                    && Math.abs(st.get(0).clip().peak - st.get(0).peak) < 1e-9, st);
+            Set<Double> kept = new HashSet<Double>();
+            for (Clip c : d.clips()) kept.add(c.sound);
+            check(talks + " talking sounds and a stretch: saved minus deleted is exactly the kept clips", neverBoth && saved.equals(kept), saved.size() + " " + kept.size());
+            int withClip = 0;
+            for (Mark m : d.marks()) if (m.clip() != null) withClip++;
+            eq(talks + " talking sounds and a stretch: 60 marks have a clip", withClip, SoundDetector.MAX_CLIPS);
+        }
+        // two loud sounds in the snoring rhythm after 60 quieter ones: the row stays two single sounds, and only then do their
+        // clips push out the two quietest
+        Random r = new Random(40);
+        double[] b = room(12 * 60 + 60, 30, r);
+        for (int i = 0; i < 60; i++) talk(b, 10 + 12 * i, 1.5, 1500 + 60 * i, r);
+        snore(b, 12 * 60 + 20, 1.5, 9000, r);
+        snore(b, 12 * 60 + 24, 1.5, 9000, r);
+        SoundDetector e = new SoundDetector(T0);
+        short[] s = pcm(b);
+        Set<Double> saved = new HashSet<Double>();
+        int most = 0;
+        for (int i = 0; i < s.length; i += 512) {
+            e.feed(s, i, Math.min(512, s.length - i));
+            for (Clip c : e.takeReady()) saved.add(c.sound);
+            for (Clip c : e.takeDropped()) saved.remove(c.sound);
+            most = Math.max(most, e.clips().size());
+        }
+        e.finish();
+        for (Clip c : e.takeReady()) saved.add(c.sound);
+        for (Clip c : e.takeDropped()) saved.remove(c.sound);
+        List<Mark> m = e.marks();
+        boolean twoLoudKept = m.size() == 62 && m.get(60).clip() != null && m.get(61).clip() != null;
+        boolean quietestGone = m.size() == 62 && m.get(0).clip() == null && m.get(1).clip() == null;
+        check("60 sounds and then two louder ones in the snoring rhythm: 62 marks, 60 clips, the two louder kept, the two quietest given up",
+                e.clips().size() == SoundDetector.MAX_CLIPS && twoLoudKept && quietestGone && e.stretches().isEmpty(), e.clips().size() + " " + m.size());
+        check("while the row was undecided there were never more than 62 clips, and saved minus deleted is the kept clips", most <= SoundDetector.MAX_CLIPS + 2
+                && saved.size() == SoundDetector.MAX_CLIPS, most + " " + saved.size());
+    }
+
+    /**
+     * Which mark a clip belongs to (code review of ee03389 on #420): the mark whose clip() it is. Clip.sound lies between that
+     * mark's start and stop; for a stretch it is the loudest snore's start, not the stretch's. A cough between two snores is
+     * its own mark inside the stretch's start and stop, so time alone would not find the mark.
+     */
+    static void clipMarks() {
+        Random r = new Random(41);
+        double[] a = room(80, 30, r);
+        double amp = 2500;
+        for (int i = 0; i < 5; i++) {
+            snore(a, 10 + 6 * i, 1.5, amp, r);
+            amp *= 1.15; // the loudest is the last
+        }
+        cough(a, 13, 0.4, 6000, r); // between the snores at 10 and 16
+        talk(a, 55, 2, 4000, r);
+        SoundDetector d = run(a);
+        List<Mark> m = d.marks();
+        List<Mark> st = d.stretches();
+        check("5 snores with a cough among them: one stretch of 5, the cough and the talking are their own marks", st.size() == 1 && st.get(0).sounds == 5
+                && m.size() == 3 && m.get(1).kind.equals(SoundDetector.COUGH) && m.get(2).kind.equals(SoundDetector.TALK), m);
+        if (st.size() != 1 || m.size() != 3) return;
+        Mark stretch = st.get(0), coughMark = m.get(1);
+        check("the cough lies inside the stretch's start and stop", coughMark.start > stretch.start && coughMark.stop < stretch.stop, coughMark + " " + stretch);
+        Clip sc = stretch.clip();
+        check("the stretch's clip is its loudest (last) snore's: clip.sound is that snore's start, inside the stretch, not its start", sc != null
+                && Math.abs(sc.sound - (T0 + 34)) < 0.1 && sc.sound > stretch.start + 1 && sc.sound <= stretch.stop, sc + " " + stretch);
+        boolean each = true;
+        for (Clip c : d.clips()) {
+            int owners = 0;
+            for (Mark x : m) if (x.clip() == c) {
+                owners++;
+                each &= c.sound >= x.start - 1e-9 && c.sound <= x.stop + 1e-9;
+            }
+            each &= owners == 1;
+        }
+        check("each kept clip is the clip of exactly one mark, and its sound lies between that mark's start and stop", each && d.clips().size() == 3, d.clips());
+        check("the cough's clip is the cough mark's, though the stretch's start and stop also hold its sound", coughMark.clip() != null
+                && coughMark.clip().sound == coughMark.start && coughMark.clip() != sc, coughMark.clip());
+    }
+
+    /** The start threshold is a constructor parameter (owner's wish on #380): 10 dB by default, lower finds quieter sounds. */
+    static void threshold() {
+        Random r = new Random(42);
+        double[] a = room(60, 30, r);
+        // a steady 300 Hz tone about 8 dB above the room: (30² + A²/2) / 30² = 10^0.8 gives A about 98
+        for (int i = 30 * R; i < 32 * R; i++) a[i] += 98 * Math.sin(2 * Math.PI * 300 * (i - 30 * R) / (double) R);
+        short[] s = pcm(a);
+        SoundDetector def = run(s, 512);
+        SoundDetector low = new SoundDetector(T0, 6);
+        low.feed(s);
+        low.finish();
+        eq("the default start threshold is 10 dB", def.threshold(), 10.0);
+        check("a sound about 8 dB above the room: missed with the default 10 dB", def.marks().isEmpty(), def.marks());
+        check("the same sound with a threshold of 6 dB: found, at its start, with a clip", low.marks().size() == 1 && Math.abs(low.marks().get(0).start - (T0 + 30)) < 0.1
+                && Math.abs(low.marks().get(0).stop - (T0 + 32)) < 0.1 && low.clips().size() == 1, low.marks());
+        SoundDetector ten = new SoundDetector(T0, SoundDetector.ABOVE_DB);
+        ten.feed(s);
+        ten.finish();
+        check("a threshold of 10 given is the same as the default", describe(ten).equals(describe(def)));
+        boolean refused = true;
+        for (double bad : new double[] {0, -3, Double.NaN, Double.POSITIVE_INFINITY}) {
+            try {
+                new SoundDetector(T0, bad);
+                refused = false;
+            } catch (IllegalArgumentException expected) {
+                // fine
+            }
+        }
+        check("a threshold of 0, below 0, not a number or infinite is refused", refused);
     }
 
     /** Clips of exactly the same loudness at the limit: the newest is the one given up. */
