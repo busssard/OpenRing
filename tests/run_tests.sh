@@ -39,3 +39,8 @@ java $JAVA_OPTS -cp "$OUT" SoundTest
 # nights entered by hand (issue #427), compiled on its own line so other new suites never touch the same line
 javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/HandTest.java
 java $JAVA_OPTS -cp "$OUT" HandTest
+# ble/Gatt, the Bluetooth write and close calls the ring and watch links share, with stand ins for Android's classes
+# (tests/ble/shim); its own output folder, so the stand ins never reach the other suites
+mkdir -p "$OUT/ble"
+javac -source 8 -target 8 -Xlint:-options -d "$OUT/ble" $(find tests/ble/shim -name '*.java') app/src/main/java/app/openring/ble/Gatt.java tests/ble/GattTest.java
+java $JAVA_OPTS -cp "$OUT/ble" app.openring.ble.GattTest
