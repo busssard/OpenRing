@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -29,6 +30,9 @@ import app.openring.core.analysis.Trends;
  * those few numbers (no stage pattern). Each day takes the night the screens show ({@link ShownNights}'s rule,
  * {@link MainDevice#nightFrom}): the watch's when it is the main device or the ring has none, then its time asleep and score
  * too.</li>
+ * <li>A day without a device night takes the night entered by hand (issue #427, {@link ShownNights#withHand}'s rule: not
+ * overlapping a shown device night, never with only the phone): its bedtime, wake time, wake ups, time asleep and score,
+ * from {@link Trends#HAND}. Readiness stays the ring's stored one (a night by hand's readiness is only worked out on Sleep).</li>
  * <li>Without a ring the watch's or the phone's days as the tabs show them ({@link DeviceHistory}): readiness, steps and
  * active calories on worn days, the lowest heart rate of the watch's nights.</li>
  * <li>Screen time per day as the Screen tab counts it ({@link ScreenDays#perDay}), each day in the zone the Screen tab
@@ -67,6 +71,8 @@ public final class TrendDays {
         // the ring's main nights, one at a time, as bedtime, wake time and wake ups (the same day: the last one by start)
         final Map<LocalDate, double[]> ring = new HashMap<LocalDate, double[]>();
         final Map<LocalDate, String> ringZone = new HashMap<LocalDate, String>();
+        // every main night's {start, end} per day: a night by hand they overlap is not counted (ShownNights.withHand)
+        final Map<LocalDate, List<double[]>> ringSpans = new HashMap<LocalDate, List<double[]>>();
         final ZoneId fallback = phone;
         if (dev.ring) {
             db.eachNightJson(from, to, true, new java.util.function.Consumer<String>() {
@@ -81,17 +87,31 @@ public final class TrendDays {
                     LocalDate d = BadgeDays.parse(text(o.get("day")));
                     ring.put(d, night(o, fallback));
                     if (o.containsKey("zone")) ringZone.put(d, text(o.get("zone")));
+                    List<double[]> sp = ringSpans.get(d);
+                    if (sp == null) ringSpans.put(d, sp = new ArrayList<double[]>());
+                    sp.add(new double[] {num(o.get("start")), num(o.get("end"))});
                 }
             });
         }
         List<Object[]> zones = db.zones();
         DeviceHistory.DayZones noted = BadgeDays.dayZones(zones, phone);
         TreeMap<LocalDate, JSONObject> watch = new TreeMap<LocalDate, JSONObject>();
-        if (dev.watch && WatchStore.any(db)) watch = ShownNights.watch(db, first, today, WatchHistory.dayZones(db, phone), dev.age);
+        DeviceHistory.DayZones watchZones = WatchHistory.dayZones(db, phone);
+        if (dev.watch && WatchStore.any(db)) watch = ShownNights.watch(db, first, today, watchZones, dev.age);
+        // the shown device nights' days and {start, end}, for the nights by hand below
+        Set<String> deviceDays = new HashSet<String>();
+        List<double[]> deviceSpans = new ArrayList<double[]>();
         for (Trends.Day x : out) {
             double[] r = ring.get(x.date);
             JSONObject w = watch.get(x.date);
             boolean useWatch = w != null && MainDevice.nightFrom(dev.main, r != null, true) == MainDevice.WATCH;
+            if (useWatch) {
+                deviceDays.add(x.date.toString());
+                deviceSpans.add(new double[] {Json.d(w, "start"), Json.d(w, "end")});
+            } else if (r != null) {
+                deviceDays.add(x.date.toString());
+                deviceSpans.addAll(ringSpans.get(x.date));
+            }
             if (useWatch) {
                 double[] n = night(w, noted.of(x.date));
                 setNight(x, n, Trends.WATCH);
@@ -107,6 +127,22 @@ public final class TrendDays {
                 // a night without its day summary (the day was left out): its own time asleep and score
                 if (Double.isNaN(x.v[Trends.ASLEEP])) x.set(Trends.ASLEEP, r[N_ASLEEP], Trends.RING);
                 if (Double.isNaN(x.v[Trends.SLEEP_SCORE])) x.set(Trends.SLEEP_SCORE, r[N_SCORE], Trends.RING);
+            }
+        }
+        // the nights entered by hand (issue #427) of the days without a device night, as Sleep shows them; with only the phone
+        // none, as there (sleep needs a ring or a watch)
+        if (dev.history != MainDevice.PHONE && HandNights.any(db)) {
+            for (Map.Entry<LocalDate, JSONObject> e : ShownNights.hand(db, first, today, watchZones, dev.age, deviceDays, deviceSpans).entrySet()) {
+                Trends.Day x = by.get(e.getKey());
+                if (x == null) continue;
+                JSONObject h = e.getValue();
+                setNight(x, night(h, watchZones.of(e.getKey())), Trends.HAND);
+                // the night by hand is the day's night, as on Sleep: its time asleep and score
+                x.v[Trends.ASLEEP] = Double.NaN;
+                x.v[Trends.SLEEP_SCORE] = Double.NaN;
+                x.set(Trends.ASLEEP, Json.d(h, "asleep_min"), Trends.HAND);
+                JSONObject sc = h.optJSONObject("score");
+                if (sc != null && sc.has("value") && sc.optInt("value", -1) >= 0) x.set(Trends.SLEEP_SCORE, sc.optInt("value"), Trends.HAND);
             }
         }
         if (dev.history >= 0) {
@@ -143,7 +179,7 @@ public final class TrendDays {
 
     /**
      * A short text that changes whenever what {@link #read} reads may have changed: the last analysis, the stored nights and days,
-     * the screen sessions and reads, the apps, the zones, the watch's and the phone's rows. Trends reads the history again only
+     * the screen sessions and reads, the apps, the zones, the watch's and the phone's rows, the nights by hand. Trends reads the history again only
      * when it differs from the last read (code review of #413), so coming back to the page keeps the period touched. A table
      * that cannot be counted gives "?".
      */
@@ -151,7 +187,10 @@ public final class TrendDays {
         StringBuilder b = new StringBuilder(db.fileName).append('|').append(db.kv("last_analysis", "")).append('|').append(db.kv("analyzed_until", ""));
         String[] q = {"SELECT COUNT(*) FROM nights", "SELECT COUNT(*) FROM days", "SELECT COALESCE(MAX(stop), 0) FROM screen", "SELECT COUNT(*) FROM screen",
             "SELECT COALESCE(MAX(stop), 0) FROM screen_reads", "SELECT COUNT(*) FROM apps", "SELECT COUNT(*) FROM zones",
-            "SELECT COUNT(*) FROM watch_sleep", "SELECT COUNT(*) FROM watch_steps", "SELECT COUNT(*) FROM watch_hr", "SELECT COUNT(*) FROM phone_steps"};
+            "SELECT COUNT(*) FROM watch_sleep", "SELECT COUNT(*) FROM watch_steps", "SELECT COUNT(*) FROM watch_hr", "SELECT COUNT(*) FROM phone_steps",
+            // the nights by hand: a save adds a row, a delete or Undo moves a removal mark, and the keys in force tell which
+            "SELECT COUNT(*) FROM sleep_manual", "SELECT COUNT(*) FROM sleep_manual WHERE COALESCE(gone, 0) <> 0",
+            "SELECT COALESCE(SUM(made), 0) FROM sleep_manual WHERE COALESCE(gone, 0) = 0"};
         for (String x : q) {
             try {
                 b.append('|').append(db.count(x));
@@ -349,7 +388,7 @@ public final class TrendDays {
 
     /**
      * The first day with any data: the first day summary, the first record of the watch (when its rows are read) or of the
-     * phone (without a ring), the first read of the usage log; {@code today} without any. No limit: Trends covers the whole
+     * phone (without a ring), the first night by hand (not with only the phone), the first read of the usage log; {@code today} without any. No limit: Trends covers the whole
      * history.
      */
     static LocalDate first(Db db, LocalDate today, ShownNights.Devices dev, ZoneId phone) {
@@ -362,6 +401,11 @@ public final class TrendDays {
         }
         LocalDate dd = ShownNights.firstDay(db, dev.history, phone);
         if (dd != null) f = BadgeDays.min(f, dd);
+        if (dev.history != MainDevice.PHONE) {
+            // a night by hand before any device's data (none with only the phone, as Sleep)
+            long h = db.count("SELECT COALESCE(MIN(start), -1) FROM sleep_manual WHERE COALESCE(gone, 0) = 0");
+            if (h > 0) f = BadgeDays.min(f, app.openring.core.HandNight.dayOf(h, phone));
+        }
         List<double[]> reads = ScreenDays.reads(db);
         if (!reads.isEmpty() && reads.get(0)[0] > 0) {
             f = BadgeDays.min(f, java.time.Instant.ofEpochSecond((long) Math.floor(reads.get(0)[0])).atZone(phone).toLocalDate());

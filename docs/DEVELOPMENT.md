@@ -14,6 +14,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `tests/pipeline/` | End to end test of `data/` on the JVM, with small stand ins for Android classes (`shim/`), run by `tests/run_pipeline.sh`; `TrendsPipelineTest.java` (Trends' values per day for the ring, the watch and the phone, screen time per day, the demo year, 3 years under 1.5 s) runs after `PipelineTest` |
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/java/SoundTest.java` | The sleep sound detector of `core/analysis/SoundDetector` (issue #380: made up audio, sounds, snoring, coughs, clips, gaps), run at the end of `tests/run_tests.sh` |
+| `tests/java/HandTest.java` | Nights entered by hand, `core/HandNight` (issue #427: the bar's times, snap, midnight, the clock change nights, wake marks, default times, the night and its partial score, readiness, when Today asks, the device against by hand choice), run at the end of `tests/run_tests.sh` |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
 | `tests/java/BaselinesTest.java` | The readiness baselines of `core/analysis/Baselines` (issue #292, phase 1.5): bit for bit what the old inline code of `data/Analyzer` gave, on 2000 seeded made up histories, the windows and the minimum of 3, and `Baselines.usual` (the median of the 30 nights before, for phase 2); compiled on its own line and run after CoreTest by `tests/run_tests.sh` |
 | `build_apk.sh` | Builds and signs the APK without Gradle (used by CI) |
@@ -115,6 +116,11 @@ Three for Trends (issue #374; it only reads, so no demo mode needed): `trends` (
 Two for Today: `battery_open` (boolean, demo mode only: the battery lines under the scores folded open, owner's wish of 17
 November) and `day_line_why` (boolean, demo mode only: Why this line opened on the Your day card, each check of
 `core/DayLine`'s tree; owner's wish of 16 November).
+
+Two for the nights by hand (issue #427): `hand_night` (boolean, demo mode only: today and the day before yesterday show as without a
+device night, nothing stored; Today asks for last night, and the demo's made up night by hand shows on the day before yesterday) and
+`hand_entry` (boolean, demo mode only: opens the entry of a night by hand for last night with two wake marks; nothing is saved
+without Save).
 
 One for the life factors: `life_more` (boolean, demo mode only: Today's row "What was today like?" opens with its More,
 All factors and the ways on; issue #292). With `card WHAT_WAS` the row is at the top (also for a past day, "What was this day like?"); `card LIFE_FACTORS` opens

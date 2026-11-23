@@ -138,12 +138,13 @@ Nothing leaves the phone: the app has no internet permission.
 | `watch_raw`, `watch_devices`, `watch_steps`, `watch_hr`, `watch_sleep`, `watch_workouts`, `watch_battery` | The Withings watch (version 9, issue #251): every message as it came, the watch, and the rows worked out from the messages; see Withings watch below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
 | `life_days`, `life_tags` | Life factors (version 12, issue #292): one row per calendar day and tag (`day` yyyy-mm-dd, `tag` a fixed key such as `meditation` or `own:<id>`, `time` empty in phase 1, `span` the id shared by the days of one several day entry, `made`, `gone` 1 a removal mark, never a delete), and one row per tag the person changed (`key`, `name` of an own tag, `shown` on Today's row 1 or 0, `ord` its place, `made`, `gone` 1 an own tag removed, its days kept). Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Life factors below |
 | `sound_nights`, `sound_clips`, `sound_gaps` | Sleep sounds (version 13, issue #380, phase 1a: the tables only, nothing records yet): the nights listened, one mark per sound with its clip file's name, and the times the phone was not listening; the sounds themselves are files in `no_backup`, never in the database. Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Sleep sounds below |
+| `sleep_manual` | Nights entered by hand (version 14, issue #427): one row per saved night (`made` key, unix seconds of the save; `start` In bed, `stop` Up, `wakes` the wake marks as a small JSON list of start and stop times, `gone` 1 when deleted or changed, never a delete). Kept when another ring is paired, carried through a restore (the phone's rows win), emptied by Delete all; see Nights by hand below |
 | `phone_readings`, `phone_steps` | Steps from this phone (version 11, issue #329): every reading of the phone's step counter as it came (`boot` count and `elapsed` ms as the key, `counter`, `wall`), only ever added to, and the intervals worked out from them (`boot`, `elapsed` of the end reading, `start`, `stop`, `steps`); see Steps from this phone below. Kept when another ring is paired, carried through a restore, emptied by Delete all |
 
 The period tables are the one part of the file the person types and no ring can send again. Pairing a different ring
 (`Db.resetRingData`, every table in `Db.RING_TABLES`) keeps them; Delete all local data (`Db.resetAll`) wipes them with the
 rest. Both lists come from `Db.SCHEMA` (issue #272): `Db.ALL_TABLES` is every table, `Db.RING_TABLES` every table except
-the keep list `Db.KEPT_TABLES` (`Periods.TABLES`, the watch's `WatchStore.TABLES`, issue #251, the phone's `PhoneStore.TABLES`, issue #329, the life factors' `LifeLog.TABLES`, issue #292, and the sleep sounds' `Sounds.TABLES`, issue #380), so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
+the keep list `Db.KEPT_TABLES` (`Periods.TABLES`, the watch's `WatchStore.TABLES`, issue #251, the phone's `PhoneStore.TABLES`, issue #329, the life factors' `LifeLog.TABLES`, issue #292, the sleep sounds' `Sounds.TABLES`, issue #380, and the nights by hand's `HandNights.TABLES`, issue #427), so a new table is wiped by default and keeping one takes an entry in that list. The pipeline
 test fills every table that really is in the file (`sqlite_master`, not `SCHEMA`) and checks Delete all empties each.
 After either delete commits, `Db.shrink` runs `VACUUM` and then `wal_checkpoint(TRUNCATE)` (in WAL mode a checkpoint
 before VACUUM leaves the file at full size), so the file gives the history's space back; an error there never reaches
@@ -389,6 +390,31 @@ another of the phone's marks, all in one transaction; any failure puts the old f
 on, since its history is not the one deleted). The Data check has one line of counts only: "Sleep sounds: N nights, M clips (K
 with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav files. Nothing calls the sweep or the retention yet;
 1b runs them with the service.
+
+**Nights by hand (issue #427).** A night slept without the ring and the watch, entered on one screen (`ui/HandNightActivity`): a bar
+from 18:00 the evening before to 14:00 on the day, in the day's zone (19 or 21 hours on a clock change night), with In bed and Up
+handles, every time snapped to 5 minutes, the night at least 30 minutes; the default times are the median clock times of the last
+14 shown nights (23:00 to 07:00 without). Wake marks are 15 minutes, added in the middle of the longest sleep stretch, kept inside
+the night with sleep on both sides, stopped at their neighbours while dragged and merged when they touch once the finger is lifted; a touch on a mark takes it before the handles (its outer thirds stretch it), In bed and Up stop at the first and last mark, and each mark has 5 minute buttons (`core/HandNight`, pure Java, `tests/java/HandTest`). A night belongs to
+the day whose bar holds its start. `data/HandNights` holds `sleep_manual` (version 14, `CREATE TABLE IF NOT EXISTS`, safe twice):
+Save writes one transaction that adds the new row and marks gone the night it changes and any night in force it overlaps; Delete
+only marks gone; Undo clears or sets those marks. No row is overwritten. The night as shown is `Json.night` of `HandNight.night`:
+In bed to Up, asleep without the marks, each mark an awakening, wake time the marks, the midpoint, stage source `hand`, no stages,
+efficiency, latency, heart rate and HRV left out; its score is `Scores.sleep`, which then has only total sleep, restfulness (wake
+ups) and timing. Which night a day shows: `MainDevice.nightFrom(main, ring, watch, hand)`, the device night first, the one by hand
+only when neither device has a night for the day and none overlaps it (`data/ShownNights.withHand`, `DayData.hands`); a device night
+that arrives later is shown and the one by hand stays stored, its Sleep tab says "Replaced by your ring's night" with Delete.
+Readiness of a day with a ring and a night by hand (no stored readiness) is worked out on the load from its sleep score, sleep
+balance and the activity parts, without resting heart rate, HRV, temperature or recovery; shown only, never stored. Its sleep balance reads only the nights of the ±30 day strip, so it can differ slightly from a readiness the analysis would store. The Screen tab and the
+badges get it through `ShownNights.main`, Further analysis through `SleepHistory.load` (`HandNights.withoutRingNight`, leaving out days with a ring or a watch night, its
+efficiency left out), the watch's `WatchHistory.load`, and Trends through `TrendDays.read` (`ShownNights.hand`, the same rule as
+`withHand`; source `Trends.HAND`, "by hand" in the readout; sleep numbers only, no readiness; its stamp counts the table's rows,
+removal marks and keys in force, so a save, delete or Undo reads again). Today asks "No night for last night ..." when today has no night, a device
+synced today from 04:00 on (within 2 days), and Not now was not tapped for today (`HandNight.ask`, Prefs `hand_not_now`). Restore:
+`Db.replaceWith` reads the table before the swap and `HandNights.merge` writes it into the restored file (`INSERT OR REPLACE` by
+`made`, the phone wins, removal marks included); an older backup without the table gets it empty from the upgrade, so it keeps the
+phone's. The Data check has one line of counts only ("Nights by hand: N nights kept, M deleted or changed"); nothing of it
+reaches the log or a notification. The demo file has one made up night (the day before yesterday, under the demo ring's night).
 
 ## Automatic backups (issue #242)
 
