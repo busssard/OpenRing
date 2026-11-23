@@ -152,7 +152,8 @@ public final class Demo {
         // built completely today: nothing to do. Not "the newest day is today", which is still
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
         if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db) && PhoneStore.any(db)
-                && db.count("SELECT COUNT(*) FROM battery") > 0 && LifeLog.any(db)) return false;
+                && db.count("SELECT COUNT(*) FROM battery") > 0 && LifeLog.any(db)
+                && HandNights.any(db)) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll(Db.DEMO_BUILD);
         ZoneId zone = ZoneId.systemDefault();
@@ -173,6 +174,9 @@ public final class Demo {
         periods(db, today, now);
         // made up life factors (issue #292): never Intimacy, only in this file
         LifeLog.demo(db, today, now, days, COLD_BACK);
+        // a made up night by hand (issue #427), the day before yesterday: shown as replaced by the demo ring's night, and as
+        // the night of that day with the screen test's extra hand_night
+        HandNights.demo(db, today, zone, now);
         watch(db, today, now, zone);
         phone(db, today, now, zone);
         ringBattery(db, today, now, zone);

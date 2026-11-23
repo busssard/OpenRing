@@ -21,12 +21,13 @@ import java.util.concurrent.TimeUnit;
 
 import app.openring.core.Protocol;
 import app.openring.core.WatchCheck;
+import app.openring.core.rings.RingFamily;
 
 /**
- * One short look at a watch for the Watch check (issue #251, phase 1a). Unlike {@link GattLink} it never asks for a
- * bond, keeps Android's balanced link speed and knows nothing about the ring. It connects, lists every service and
- * characteristic, reads the standard Device Information and Battery, switches notifications on for the watch's own
- * characteristics and listens; the only writes are those notification switches. Everything ends within
+ * One short look at a device for the Device check (issue #251, phase 1a; issue #418, phase 1). Unlike {@link GattLink} it
+ * never asks for a bond, keeps Android's balanced link speed and knows nothing about the ring. It connects, lists every
+ * service and characteristic, reads the standard Device Information and Battery, and for a Withings watch only switches
+ * notifications on for the watch's own characteristics and listens; the only writes are those notification switches. Everything ends within
  * {@link WatchCheck#SESSION_MS}, and the link is always closed. The caller holds the ring lock meanwhile.
  */
 @SuppressLint("MissingPermission")
@@ -102,12 +103,15 @@ public final class WatchLink {
 
     /**
      * Runs one check on {@code device} and returns what it found; never throws for a watch that does not answer, the
-     * report's {@code problem} says what happened. Logs only step names, never message bytes.
+     * report's {@code problem} says what happened. Logs only step names, never message bytes. Only a Withings watch
+     * ({@code family} from the scan, or the Withings service in its layout, {@link WatchCheck#listens}) is listened to; any
+     * other device (a ring, issue #418) is only looked at: nothing is written to it and its report holds no messages.
      */
-    public static WatchCheck.Report check(Context ctx, BluetoothDevice device, String name, int rssi, GattLink.Log log, Stop stop) {
+    public static WatchCheck.Report check(Context ctx, BluetoothDevice device, String name, int rssi, RingFamily family, GattLink.Log log, Stop stop) {
         WatchCheck.Report r = new WatchCheck.Report();
         r.name = name;
         r.rssi = rssi;
+        r.listen = family == RingFamily.WITHINGS;
         WatchLink l = new WatchLink();
         long start = SystemClock.elapsedRealtime();
         long end = start + WatchCheck.SESSION_MS;
@@ -143,6 +147,12 @@ public final class WatchLink {
             }
             l.readInfo(r, end, stop);
             if (stop.stopped()) return ended(r, WatchCheck.ENDED_STOPPED);
+            r.listen = WatchCheck.listens(family, r);
+            if (!r.listen) {
+                // not a Withings watch: the layout and the standard reads are all, no notification is switched on
+                log.log("watch check: not a Withings watch, not listened to");
+                return r;
+            }
             int on = l.listenAll(r, end, stop);
             log.log("watch check: listening on " + on + " characteristics");
             long t0 = SystemClock.elapsedRealtime();

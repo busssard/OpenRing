@@ -314,6 +314,28 @@ check "notes: the stable and the nightly notes both use it" '[ "$(grep -c "relea
 check "ci: a pull request branch is built once (push only for dev and main)" 'grep -q "branches: \[dev, main\]" .github/workflows/build.yml'
 check "ci: the emulator skips pull requests that change nothing the app is built from" 'grep -q "steps.scope.outputs.run == .true." .github/workflows/emulator.yml && [ "$(grep -c "steps.scope.outputs.run == .true." .github/workflows/emulator.yml)" -ge 6 ]'
 rm -rf "$rn"
+# owner, 20 November: the emulator runs only for releases. The scope step's own script, run with a pretend event.
+# It reads the workflow with PyYAML (GitHub's runners have it); without it these checks are skipped with a note.
+if ! python3 -c "import yaml" 2>/dev/null; then
+  echo "skip  the emulator scope checks: python3 has no PyYAML here (install it with: pip install pyyaml)"
+else
+scope_dir=$(mktemp -d)
+python3 -c "
+import yaml,sys
+w=yaml.safe_load(open('.github/workflows/emulator.yml'))
+step=[x for x in w['jobs']['screens']['steps'] if x.get('id')=='scope'][0]
+open(sys.argv[1],'w').write(step['run'])" "$scope_dir/scope.sh"
+scope() {  # $1 event, $2 base branch, $3 changed files: prints run=true or run=false
+  ( cd "$scope_dir" && mkdir -p bin && printf '#!/bin/sh\nprintf "%%s\\n" %s\n' "$3" > bin/git && chmod +x bin/git
+    : > out; PATH="$scope_dir/bin:$PATH" GITHUB_EVENT_NAME="$1" BASE_REF="$2" BASE=abc GITHUB_OUTPUT=out bash scope.sh >/dev/null; cat out )
+}
+check "ci: a pull request into dev skips the emulator" '[ "$(scope pull_request dev app/src/X.java)" = run=false ]'
+check "ci: the release pull request into main runs it" '[ "$(scope pull_request main app/src/X.java)" = run=true ]'
+check "ci: a release changing only docs skips it" '[ "$(scope pull_request main README.md)" = run=false ]'
+check "ci: a push to main runs it" '[ "$(scope push "" README.md)" = run=true ]'
+check "ci: a run by hand runs it" '[ "$(scope workflow_dispatch "" README.md)" = run=true ]'
+rm -rf "$scope_dir"
+fi
 
 echo "CI scripts: $passes passed, $fails failed"
 [ "$fails" = 0 ]

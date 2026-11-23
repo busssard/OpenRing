@@ -157,10 +157,31 @@ public class LayoutTest {
         eq("a tile not on the page keeps its saved place", Layout.orderToSave(l("workouts", "a", "b", "c"), l("a", "b", "c"), page), "workouts|a|b|c");
         check("fold then open, move and move back: Settings counts no tab", Layout.standard(Layout.orderToSave(null, page, page), f));
         // the folded line of a score dial (review of #415, with #411's big line)
-        eq("dial: score, word and the big line", Layout.dialSummary(96, "7h 28m asleep", "23:10 to 07:05, 7h 55m in bed"), "96, Optimal, 7h 28m asleep");
-        eq("dial without a big line", Layout.dialSummary(72, null, "Lowest heart rate 52"), "72, Good");
+        // owner's wish of 21 November: the folded score card shows a small dial with the number, the line keeps the rest
+        eq("next to the dial: the word and the big line", Layout.dialSummary(96, "7h 28m asleep", "23:10 to 07:05, 7h 55m in bed"), "Optimal, 7h 28m asleep");
+        eq("next to the dial without a big line: the word alone", Layout.dialSummary(72, null, "Lowest heart rate 52"), "Good");
         eq("a watch night without a score: the big line first", Layout.dialSummary(Double.NaN, "6h 2m asleep", "23:40 to 06:30, 6h 50m in bed"), "6h 2m asleep");
         eq("no score, no big line: the line under it", Layout.dialSummary(Double.NaN, null, "No main sleep recorded for this day"), "No main sleep recorded for this day");
+        // the folded tile's small dials: only the scores that are there, in order, with their colours and names
+        String[] four = {"Readiness", "Sleep", "Activity", "Screen"};
+        int[] colours = {1, 2, 3, 4};
+        double nan = Double.NaN;
+        check("all scores missing: no dials", Layout.dials(new double[] {nan, nan, nan, nan}, colours, four) == null);
+        eq("all scores missing: no line", Layout.scoresLine(new double[] {nan, nan, nan, nan}, four), null);
+        Layout.Dials some = Layout.dials(new double[] {95, nan, 88, nan}, colours, four);
+        check("some missing: only the ones there", some != null && some.values.length == 2 && some.values[0] == 95 && some.values[1] == 88);
+        check("some missing: names and colours follow their scores", some != null && "Activity".equals(some.names[1]) && some.colors[1] == 3 && some.colors[0] == 1);
+        eq("some missing: TalkBack says each with its name", some == null ? null : some.spoken(), "Readiness 95, activity 88");
+        Layout.Dials all = Layout.dials(new double[] {95, 96, 89.5, 87.2}, colours, four);
+        check("89.5 shows as 90, as on the big dial", all != null && all.shown(2) == 90 && all.shown(3) == 87);
+        eq("all four: TalkBack says them all", all == null ? null : all.spoken(), "Readiness 95, sleep 96, activity 90, screen 87");
+        eq("Today's folded line without dials is the same text", Layout.scoresLine(new double[] {95, 96, 89.5, 87.2}, four), "Readiness 95, sleep 96, activity 90, screen 87");
+        eq("a missing first score: the next one starts the line", Layout.scoresLine(new double[] {nan, 96, nan, nan}, four), "Sleep 96");
+        Layout.Dials one = Layout.dials(new double[] {89.5}, new int[] {7}, new String[] {"Readiness"});
+        check("one score: one dial", one != null && one.values.length == 1 && one.colors[0] == 7);
+        eq("one score: TalkBack says the number after the title", one == null ? null : one.spoken(), "90");
+        eq("a folded score card is read with its number", Layout.parts("Readiness score", one == null ? null : one.spoken(), Layout.dialSummary(89.5, null, "sub")),
+                "Readiness score, 90, Optimal");
         // a folded line leaves out values that are missing (review of #415: no "Steps --")
         eq("summary parts: both", Layout.parts("Steps 7432", "active burn 412 kcal"), "Steps 7432, active burn 412 kcal");
         eq("summary parts: the first missing", Layout.parts(null, "active burn 412 kcal"), "Active burn 412 kcal");
