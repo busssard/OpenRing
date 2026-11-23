@@ -670,8 +670,8 @@ public final class Explain {
     public static final String LIFE_MONTH = "Each dot under a day is one factor you logged for it. The count under the calendar is the number "
             + "of days in that month with each factor.";
     /** What phase 1 does not do. */
-    public static final String LIFE_NO_EFFECT = "Nothing here changes a score. Open Ring does not yet work out what a factor goes with: a "
-            + "pattern needs many days with and without it, and would show what goes together, not what caused it.";
+    public static final String LIFE_NO_EFFECT = "Nothing here changes a score. How your nights went after each factor is in the card Life "
+            + "factors and your nights: a pattern needs many days with and without a factor, and shows what goes together, not what caused it.";
 
     /** When and how long (issue #435), How it works on Today's row. */
     public static final String LIFE_TIMES = "Hold a chip, or tap the small clock on a logged one, to say when it started and how long it "
@@ -682,9 +682,52 @@ public final class Explain {
             + "you logged; your day is the Average above. Not worn during: the ring had no reading then. Measured values only, they "
             + "do not say what the factor did.";
 
+    // ------------------------------------------------------------------ life factors and your nights (issue #292, phase 2)
+
+    /** Your usual. */
+    public static final String EFFECT_USUAL = "Each night is compared with your usual: the middle value of up to 30 nights before it (it "
+            + "needs 3).";
+    /** Which nights belong to a factor. */
+    public static final String EFFECT_PAIRS = "A factor logged on a day belongs to the night that starts that evening; every day of several "
+            + "days counts. Nights in a time you left out and days without a ring night are skipped.";
+    /** What is compared. */
+    public static final String EFFECT_COMPARE = "The nights after days with the factor are compared with the nights after days without it, "
+            + "over the last 12 months, from the first day you logged anything (an own factor from the day you made it).";
+    /** The range and clear. */
+    public static final String EFFECT_RANGE = "The range: Open Ring draws your weeks again at random 2000 times, whole weeks at a time, "
+            + "because nights affect each other and a holiday is one stretch, not many separate chances. The range is wide enough to hold "
+            + "the real difference 99 times in 100. Clear means the whole range is on one side of zero.";
+    /** The minimum. */
+    public static final String EFFECT_MIN = "A number shows from 10 nights with the factor and 30 without it. Below that the row counts the "
+            + "days you logged.";
+    /** Many checks. */
+    public static final String EFFECT_CHANCE = "With many factors and four measures, about 1 check in 100 can look clear by chance alone, so "
+            + "a clear result is worth watching, not a proof.";
+    /** Days not logged. */
+    public static final String EFFECT_NOT_LOGGED = "Days you did not log count as without the factor; the app cannot tell them from days you "
+            + "forgot.";
+    /** The units. */
+    public static final String EFFECT_UNITS = "HRV in % of your usual: 10 % lower means 45 ms where your usual is 50 ms. Lowest heart rate in "
+            + "bpm, temperature in \u00b0C, sleep score in points, each against your usual.";
+    /** The period tracker's two factors. */
+    public static final String EFFECT_CYCLE = "Period days and After ovulation come from your period tracker, not from the chips. After "
+            + "ovulation is the measured rise when there is one, else the estimate; a running cycle without a measured rise is left out.";
+    /** Nothing is stored or scored. */
+    public static final String EFFECT_NOTHING_CHANGES = "Worked out each time from your nights and the days you logged. Nothing is stored and "
+            + "no score changes.";
+
+    /** Every text of the card Life factors and your nights, in How it works order. */
+    public static String[] effectTexts() {
+        return new String[] {EFFECT_USUAL, EFFECT_PAIRS, EFFECT_COMPARE, EFFECT_UNITS, EFFECT_RANGE, EFFECT_MIN, EFFECT_CHANCE, EFFECT_NOT_LOGGED,
+            EFFECT_CYCLE, EFFECT_NOTHING_CHANGES};
+    }
+
     /** Every life factor text, for the tests (plain, no dashes). */
     public static String[] lifeTexts() {
-        return new String[] {LIFE_ROW, LIFE_MORE, LIFE_PRIVATE, LIFE_MONTH, LIFE_NO_EFFECT, LIFE_TIMES, LIFE_DURING};
+        java.util.List<String> all = new java.util.ArrayList<String>(java.util.Arrays.asList(LIFE_ROW, LIFE_MORE, LIFE_PRIVATE, LIFE_MONTH, LIFE_NO_EFFECT,
+                LIFE_TIMES, LIFE_DURING));
+        all.addAll(java.util.Arrays.asList(effectTexts()));
+        return all.toArray(new String[0]);
     }
 
     public static final String SHOW_BADGES = "Show badges";

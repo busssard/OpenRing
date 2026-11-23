@@ -28,7 +28,7 @@ import app.openring.data.Prefs;
 /**
  * Life factors (issue #292, phase 1): Today's row "What was today like?" with one tap chips for the day shown and its More
  * (All factors, Several days, Add your own, Choose the chips on the card), the line beside the night on Sleep and on the
- * Readiness morning, and Body's card with the month view. Every write is one statement or one transaction in the background,
+ * Readiness morning, and Body's card with the month view; since phase 2 Body's card Life factors and your nights ({@link #effects}). Every write is one statement or one transaction in the background,
  * then the page loads again; nothing starts an analysis or changes a score. The log gets an error's kind only, never a tag,
  * a name or a date; nothing here ever reaches a notification.
  */
@@ -55,6 +55,17 @@ final class LifeCard {
      * the first chip that takes a time) on the day shown. Nothing is saved without a tap.
      */
     static boolean timePending;
+    /** Each factor's row on Life factors and your nights is open (by factor key), kept while the page is rebuilt. */
+    static final java.util.Map<String, boolean[]> effectOpen = new java.util.HashMap<String, boolean[]>();
+    /** The measure each factor's evidence chart shows (by factor key), HRV by default. */
+    static final java.util.Map<String, Integer> effectMeasure = new java.util.HashMap<String, Integer>();
+    /** How it works on Life factors and your nights. */
+    static final boolean[] effectHowOpen = {false};
+    /**
+     * Screen test (extra {@code life_effect}, demo mode only): the row of the factor with this key (for example {@code alcohol})
+     * opens once, its chart touched on its newest night after a day with the factor. Null: none.
+     */
+    static String effectPending;
 
     /**
      * What one change wrote, so Undo can put every row back in the same file. It names the database it wrote into: after a
@@ -870,5 +881,101 @@ final class LifeCard {
         title.setText(m.atDay(1).format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())));
         readout.setText(LifeTags.MONTH_HINT);
         counts.setText(LifeTags.monthLine(d.lifeDays, m, d.life));
+    }
+
+    // ------------------------------------------------------------------------------ Body: the effect for you (phase 2)
+
+    /**
+     * Body's card "Life factors and your nights" (issue #292, phase 2): one row per factor with a night in the last 12 months
+     * ({@code core/analysis/FactorEffect}, worked out by {@code DayData.load} in the background), folded with its short answer as
+     * status; open, the sentence, the range as a bar, the evidence chart (touch reads a night) with a chip per measure, the other
+     * measures and the overlap. Null without a ring (nothing to compare).
+     */
+    static View effects(final Context c, final DayData d) {
+        if (!d.has.ring) return null;
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, app.openring.core.analysis.FactorEffect.TITLE));
+        card.addView(Ui.gap(c, 4));
+        if (!d.lifeOk || d.lifeEffects == null) {
+            card.addView(Ui.body(c, d.lifeOk ? app.openring.core.analysis.FactorEffect.UNREADABLE : LifeTags.UNREADABLE));
+            return card;
+        }
+        Locale l = Locale.getDefault();
+        if (d.lifeEffects.isEmpty()) {
+            card.addView(Ui.body(c, app.openring.core.analysis.FactorEffect.NOTHING));
+        } else {
+            card.addView(Ui.text(c, app.openring.core.analysis.FactorEffect.INTRO, 13, Ui.TEXT_2, Ui.REGULAR));
+            for (app.openring.core.analysis.FactorEffect.Result r : d.lifeEffects) {
+                boolean[] open = effectOpen.get(r.factor.key);
+                if (open == null) effectOpen.put(r.factor.key, open = new boolean[] {false});
+                boolean touch = r.factor.key.equals(effectPending);
+                if (touch) open[0] = true;
+                Fold f = Fold.inline(c, r.factor.name, app.openring.core.analysis.FactorEffect.status(r, l), open, true);
+                LinearLayout body = Ui.vbox(c);
+                fillEffect(c, body, r, touch);
+                f.add(body);
+                card.addView(f.view, Ui.matchWrap());
+            }
+            effectPending = null;
+        }
+        card.addView(Ui.gap(c, 8));
+        card.addView(Ui.text(c, app.openring.core.analysis.FactorEffect.NOT_ADVICE, 12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.howItWorks(c, effectHowOpen, java.util.Arrays.asList(Explain.effectTexts())), Ui.matchWrap());
+        return card;
+    }
+
+    /** The open row of one factor: its sentence, and with a number the bar, the chips, the chart and the other measures. */
+    static void fillEffect(final Context c, final LinearLayout body, final app.openring.core.analysis.FactorEffect.Result r, final boolean touch) {
+        body.removeAllViews();
+        Locale l = Locale.getDefault();
+        body.addView(Ui.text(c, app.openring.core.analysis.FactorEffect.headline(r, l), 14, Ui.TEXT, Ui.REGULAR));
+        if (r.state != app.openring.core.analysis.FactorEffect.NUMBER) return;
+        Integer chosen = effectMeasure.get(r.factor.key);
+        final int k = chosen != null && r.m[chosen].enough() ? chosen : r.headline;
+        app.openring.core.analysis.FactorEffect.Measure m = r.m[k];
+        body.addView(Ui.gap(c, 10));
+        // the chips: which measure the bar and the chart show
+        LinearLayout chips = Ui.hbox(c);
+        for (int i = 0; i < app.openring.core.analysis.FactorEffect.MEASURES; i++) {
+            if (!r.m[i].enough()) continue;
+            final int measure = i;
+            TextView chip = chipView(c, app.openring.core.analysis.FactorEffect.CHIP[i], i == k);
+            chip.setTextSize(12);
+            chip.setContentDescription(app.openring.core.analysis.FactorEffect.CHIP[i] + (i == k ? ", shown" : ", tap to show"));
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    effectMeasure.put(r.factor.key, measure);
+                    fillEffect(c, body, r, false);
+                }
+            });
+            LinearLayout.LayoutParams cl = Ui.weight(1);
+            cl.setMargins(0, 0, Ui.dp(c, 4), 0);
+            chips.addView(chip, cl);
+        }
+        body.addView(chips, Ui.matchWrap());
+        body.addView(Ui.gap(c, 8));
+        body.addView(new Charts.EffectBar(c, m.diff, m.lo, m.hi, k, Ui.LIFE), Ui.sized(c, -1, 34));
+        body.addView(Ui.text(c, app.openring.core.analysis.FactorEffect.BAR_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+        body.addView(Ui.gap(c, 8));
+        Charts.EffectDots dots = new Charts.EffectDots(c, r, k, Ui.LIFE, LocalDate.now());
+        if (touch) dots.touchNewest();
+        body.addView(dots, Ui.sized(c, -1, 190));
+        body.addView(Ui.text(c, app.openring.core.analysis.FactorEffect.CHART_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+        body.addView(Ui.gap(c, 8));
+        for (int i = 0; i < app.openring.core.analysis.FactorEffect.MEASURES; i++) {
+            if (i == r.headline) continue;
+            body.addView(Ui.text(c, app.openring.core.analysis.FactorEffect.detail(r, i, l), 13, Ui.TEXT_2, Ui.REGULAR));
+        }
+        String overlap = app.openring.core.analysis.FactorEffect.overlapLine(r);
+        if (overlap != null) {
+            body.addView(Ui.gap(c, 6));
+            body.addView(Ui.text(c, overlap, 13, Ui.WARN, Ui.REGULAR));
+        }
+        if (r.factor.kind == app.openring.core.analysis.FactorEffect.AFTER_OVULATION) {
+            body.addView(Ui.gap(c, 6));
+            body.addView(Ui.text(c, app.openring.core.analysis.FactorEffect.CYCLE_TEMP, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
+        body.addView(Ui.gap(c, 6));
     }
 }

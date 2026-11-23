@@ -340,7 +340,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * (issue #329; nothing is asked without a tap, and demo mode never asks),
      * hand_night (boolean, demo mode only) shows today and the day before yesterday as without a device night, hand_entry
      * (boolean, demo mode only) opens the entry of a night by hand for last night with two wake marks (issue #427),
-     * life_time (boolean, demo mode only) opens "When and how long?" for Sauna on Today's row (issue #435; nothing is saved).
+     * life_time (boolean, demo mode only) opens "When and how long?" for Sauna on Today's row (issue #435; nothing is saved),
+     * life_effect (string, demo mode only, a factor's key such as alcohol) opens its row of Body's Life factors and your nights, its chart touched
+     * (issue #292, phase 2).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -400,6 +402,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         LifeCard.timePending = i.getBooleanExtra("life_time", false) && Prefs.of(this).demo();
         // Body's life factors month view with a past day read (issue #292): days before today, demo mode only
         LifeCard.readPending = Prefs.of(this).demo() ? Math.max(-1, i.getIntExtra("life_read", -1)) : -1;
+        // Body's Life factors and your nights with the row of this factor opened and its chart touched (issue #292, phase 2), demo
+        // mode only
+        LifeCard.effectPending = Prefs.of(this).demo() ? i.getStringExtra("life_effect") : null;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)

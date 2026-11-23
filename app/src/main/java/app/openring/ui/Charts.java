@@ -1875,4 +1875,185 @@ public final class Charts {
             }
         }
     }
+
+    // ------------------------------------------------------------- life factors and your nights (issue #292, phase 2)
+
+    /**
+     * The evidence of one factor (issue #292, phase 2): every night of the last 12 months on a time axis, its difference from
+     * your usual as a dot, filled in {@code color} after a day with the factor, small and grey without it; zero as a line. Touch
+     * reads the nearest night ({@code FactorEffect.pointText}).
+     */
+    public static final class EffectDots extends Scrub {
+        private final app.openring.core.analysis.FactorEffect.Result r;
+        private final int measure, color;
+        private final java.time.LocalDate today, first;
+        private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint(Paint.ANTI_ALIAS_FLAG), zero = new Paint(Paint.ANTI_ALIAS_FLAG),
+                with = new Paint(Paint.ANTI_ALIAS_FLAG), without = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private int pending = -1;
+
+        public EffectDots(Context c, app.openring.core.analysis.FactorEffect.Result r, int measure, int color, java.time.LocalDate today) {
+            super(c);
+            this.r = r;
+            this.measure = measure;
+            this.color = color;
+            this.today = today;
+            this.first = today.minusDays(app.openring.core.analysis.FactorEffect.DAYS);
+            txt.setColor(Ui.TEXT_3);
+            txt.setTextSize(Ui.dp(c, 10));
+            grid.setColor(Ui.LINE);
+            grid.setStrokeWidth(1);
+            grid.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 3), Ui.dp(c, 4)}, 0));
+            zero.setColor(Ui.alpha(Ui.TEXT_2, 0.7f));
+            zero.setStrokeWidth(Ui.dp(c, 1));
+            with.setColor(color);
+            without.setColor(Ui.alpha(Ui.TEXT_3, 0.9f));
+            setContentDescription("Your nights after " + r.factor.name + " and without it, touch to read them");
+        }
+
+        /** Opens with the newest night after a day with the factor touched (the screen test); nothing when there is none. */
+        public EffectDots touchNewest() {
+            for (int i = r.points.size() - 1; i >= 0; i--) {
+                if (r.with.get(i) && !Double.isNaN(r.points.get(i).diff[measure])) {
+                    pending = i;
+                    break;
+                }
+            }
+            return this;
+        }
+
+        private float x(java.time.LocalDate d, float left, float w) {
+            double span = app.openring.core.analysis.FactorEffect.daysBetween(first, today);
+            return (float) (left + app.openring.core.analysis.FactorEffect.daysBetween(first, d) / span * (w - left));
+        }
+
+        private float y(double v, double lo, double hi, float top, float bottom) {
+            return (float) (bottom - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (bottom - top));
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth(), h = getHeight();
+            double lo = 0, hi = 0;
+            int n = 0;
+            for (app.openring.core.analysis.FactorEffect.Point p : r.points) {
+                double v = p.diff[measure];
+                if (Double.isNaN(v)) continue;
+                lo = Math.min(lo, v);
+                hi = Math.max(hi, v);
+                n++;
+            }
+            if (n == 0) {
+                txt.setTextAlign(Paint.Align.CENTER);
+                cv.drawText("No nights with a value yet", w / 2, h / 2, txt);
+                return;
+            }
+            double pad = Math.max((hi - lo) * 0.08, measure == app.openring.core.analysis.FactorEffect.TEMP ? 0.05 : 1);
+            lo -= pad;
+            hi += pad;
+            Locale l = Locale.getDefault();
+            String top1 = app.openring.core.analysis.FactorEffect.axis(measure, hi, l), bot1 = app.openring.core.analysis.FactorEffect.axis(measure, lo, l);
+            float left = Math.max(txt.measureText(top1), txt.measureText(bot1)) + Ui.dp(getContext(), 6);
+            float top = Ui.dp(getContext(), 38), bottom = h - Ui.dp(getContext(), 18);
+            txt.setTextAlign(Paint.Align.LEFT);
+            float yt = y(hi, lo, hi, top, bottom), yb = y(lo, lo, hi, top, bottom), y0 = y(0, lo, hi, top, bottom);
+            cv.drawLine(left, yt, w, yt, grid);
+            cv.drawLine(left, yb, w, yb, grid);
+            cv.drawText(top1, 0, yt + Ui.dp(getContext(), 3), txt);
+            cv.drawText(bot1, 0, yb + Ui.dp(getContext(), 3), txt);
+            cv.drawLine(left, y0, w, y0, zero);
+            cv.drawText("usual", 0, y0 + Ui.dp(getContext(), 3), txt);
+            float small = Ui.dp(getContext(), 1.8f), big = Ui.dp(getContext(), 3.2f);
+            // the nights without first, so the nights with the factor stay on top
+            for (int pass = 0; pass < 2; pass++) {
+                for (int i = 0; i < r.points.size(); i++) {
+                    boolean w1 = r.with.get(i);
+                    if (w1 != (pass == 1)) continue;
+                    double v = r.points.get(i).diff[measure];
+                    if (Double.isNaN(v)) continue;
+                    cv.drawCircle(x(r.points.get(i).tagDay, left, w), y(v, lo, hi, top, bottom), w1 ? big : small, w1 ? with : without);
+                }
+            }
+            float base = h - Ui.dp(getContext(), 3);
+            java.time.format.DateTimeFormatter f = java.time.format.DateTimeFormatter.ofPattern("MMM yyyy", l);
+            txt.setTextAlign(Paint.Align.LEFT);
+            cv.drawText(first.format(f), left, base, txt);
+            txt.setTextAlign(Paint.Align.RIGHT);
+            cv.drawText(today.format(f), w, base, txt);
+            if (Float.isNaN(scrubX) && pending >= 0) scrubX = x(r.points.get(pending).tagDay, left, w);
+            pending = -1;
+            if (!Float.isNaN(scrubX)) {
+                int best = -1;
+                float bestD = Float.MAX_VALUE;
+                for (int i = 0; i < r.points.size(); i++) {
+                    if (Double.isNaN(r.points.get(i).diff[measure])) continue;
+                    float d = Math.abs(x(r.points.get(i).tagDay, left, w) - scrubX);
+                    // on the same spot a night with the factor wins over one without
+                    if (d < bestD - 0.01f || (Math.abs(d - bestD) <= 0.01f && r.with.get(i) && best >= 0 && !r.with.get(best))) {
+                        bestD = d;
+                        best = i;
+                    }
+                }
+                if (best >= 0) {
+                    float bx = x(r.points.get(best).tagDay, left, w), by = y(r.points.get(best).diff[measure], lo, hi, top, bottom);
+                    cv.drawCircle(bx, by, big + Ui.dp(getContext(), 2), r.with.get(best) ? with : without);
+                    drawTip(cv, bx, Ui.dp(getContext(), 34), bottom, app.openring.core.analysis.FactorEffect.pointText(r, best, measure, today, l));
+                }
+            }
+        }
+    }
+
+    /**
+     * The difference of one factor and its range on one line (issue #292, phase 2): the band from the low to the high end, the
+     * difference as a dot, zero as a short upright line, the ends' values under it.
+     */
+    public static final class EffectBar extends View {
+        private final double diff, lo, hi;
+        private final int measure, color;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF rr = new RectF();
+
+        public EffectBar(Context c, double diff, double lo, double hi, int measure, int color) {
+            super(c);
+            this.diff = diff;
+            this.lo = lo;
+            this.hi = hi;
+            this.measure = measure;
+            this.color = color;
+            txt.setColor(Ui.TEXT_3);
+            txt.setTextSize(Ui.dp(c, 10));
+            Locale l = Locale.getDefault();
+            setContentDescription("Difference " + app.openring.core.analysis.FactorEffect.axis(measure, diff, l) + ", range "
+                    + app.openring.core.analysis.FactorEffect.axis(measure, lo, l) + " to " + app.openring.core.analysis.FactorEffect.axis(measure, hi, l));
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth(), h = getHeight();
+            double min = Math.min(0, lo), max = Math.max(0, hi), span = Math.max(1e-6, max - min);
+            min -= span * 0.15;
+            max += span * 0.15;
+            float pad = Ui.dp(getContext(), 6), y = Ui.dp(getContext(), 12);
+            float x0 = (float) (pad + (lo - min) / (max - min) * (w - 2 * pad)), x1 = (float) (pad + (hi - min) / (max - min) * (w - 2 * pad));
+            float xz = (float) (pad + (0 - min) / (max - min) * (w - 2 * pad)), xv = (float) (pad + (diff - min) / (max - min) * (w - 2 * pad));
+            p.setColor(Ui.LINE);
+            rr.set(pad, y - Ui.dp(getContext(), 1.5f), w - pad, y + Ui.dp(getContext(), 1.5f));
+            cv.drawRoundRect(rr, 4, 4, p);
+            p.setColor(Ui.alpha(color, 0.4f));
+            rr.set(x0, y - Ui.dp(getContext(), 5), x1, y + Ui.dp(getContext(), 5));
+            cv.drawRoundRect(rr, Ui.dp(getContext(), 5), Ui.dp(getContext(), 5), p);
+            p.setColor(Ui.TEXT_2);
+            p.setStrokeWidth(Ui.dp(getContext(), 1.5f));
+            cv.drawLine(xz, y - Ui.dp(getContext(), 9), xz, y + Ui.dp(getContext(), 9), p);
+            p.setColor(color);
+            cv.drawCircle(xv, y, Ui.dp(getContext(), 5), p);
+            Locale l = Locale.getDefault();
+            float ty = h - Ui.dp(getContext(), 2);
+            txt.setTextAlign(Paint.Align.CENTER);
+            cv.drawText("0", xz, ty, txt);
+            // the ends' values, kept apart from the 0 under the line
+            float gap = Ui.dp(getContext(), 14);
+            if (Math.abs(x0 - xz) > gap) cv.drawText(app.openring.core.analysis.FactorEffect.axis(measure, lo, l), Math.max(txt.measureText("+00 %") / 2, x0), ty, txt);
+            if (Math.abs(x1 - xz) > gap) cv.drawText(app.openring.core.analysis.FactorEffect.axis(measure, hi, l), Math.min(w - txt.measureText("+00 %") / 2, x1), ty, txt);
+        }
+    }
 }

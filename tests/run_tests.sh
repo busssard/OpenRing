@@ -39,3 +39,6 @@ java $JAVA_OPTS -cp "$OUT" SoundTest
 # nights entered by hand (issue #427), compiled on its own line so other new suites never touch the same line
 javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/HandTest.java
 java $JAVA_OPTS -cp "$OUT" HandTest
+# life factors phase 2, the effect for you (issue #292), compiled on its own line so other new suites never touch the same line
+javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/EffectTest.java
+java $JAVA_OPTS -cp "$OUT" EffectTest

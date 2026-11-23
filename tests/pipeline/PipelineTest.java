@@ -15597,7 +15597,8 @@ public class PipelineTest {
             check("#292 demo: made up tags in the demo file, today Meditation, never Intimacy", Db.DEMO.equals(demo.fileName) && demo.count("SELECT COUNT(*) FROM life_days") > 40
                     && app.openring.data.LifeLog.on(demo, today.toString()).contains(app.openring.core.LifeTags.MEDITATION)
                     && demo.count("SELECT COUNT(*) FROM life_days WHERE tag = 'intimacy'") == 0
-                    && demo.count("SELECT COUNT(DISTINCT span) FROM life_days WHERE span IS NOT NULL") == 2, demo.count("SELECT COUNT(*) FROM life_days"));
+                    // the five weeks' illness and holiday, and (issue #292, phase 2) the made up year's week of illness
+                    && demo.count("SELECT COUNT(DISTINCT span) FROM life_days WHERE span IS NOT NULL") == 3, demo.count("SELECT COUNT(*) FROM life_days"));
             File realFile = c.getDatabasePath(Db.REAL);
             long inReal;
             try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + realFile.getPath());

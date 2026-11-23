@@ -404,6 +404,18 @@ shot body-life 1
 launch --ei tab 4 --es card LIFE_FACTORS --ei life_read 1; sleep 3
 scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body for the read day"
 shot body-life-touch 1
+# how the nights went after each factor (issue #292, phase 2): the card with every row folded, then Alcohol's row opened (the
+# demo's made up clear effect: the sentence, the range bar, the chart of the nights touched on its newest night after Alcohol)
+# and Meditation's (a number that is not clear yet); extra life_effect is a factor's key, demo mode only
+launch --ei tab 4 --es card LIFE_FACTORS_AND; sleep 3
+scroll_to "LIFE FACTORS AND YOUR NIGHTS" 3 || echo "::warning::issue #292 step: the card Life factors and your nights was not found on Body"
+shot body-life-effect 1
+launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect alcohol; sleep 3
+scroll_to "After alcohol" 4 || echo "::warning::issue #292 step: Alcohol's row was not open on Body"
+shot body-life-effect-clear 1
+launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect meditation; sleep 3
+scroll_to "After meditation" 4 || echo "::warning::issue #292 step: Meditation's row was not open on Body"
+shot body-life-effect-unclear 1
 # the demo's sauna yesterday at 19:00 for 45 minutes as a band on yesterday's heart rate (issue #435), touched in the band (82 % of
 # the chart's width is about 19:20), and the line under the chart: what the ring measured during it next to the day's average
 launch --ei tab 4 --es day "$(date -d '1 day ago' +%F)" --es card HEART_RATE_TODAY; sleep 3

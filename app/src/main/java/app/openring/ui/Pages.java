@@ -1984,8 +1984,11 @@ public final class Pages {
             // how close each prediction method was on these cycles (issue #383)
             if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
         }
-        // the life factors logged on Today, as a month (issue #292): the evidence itself, no effect worked out yet
+        // the life factors logged on Today, as a month (issue #292): the evidence itself
         root.addView(LifeCard.body(c, d));
+        // how the nights went after each factor, for you (issue #292, phase 2); only with a ring
+        View effects = LifeCard.effects(c, d);
+        if (effects != null) root.addView(effects);
         return root;
     }
 

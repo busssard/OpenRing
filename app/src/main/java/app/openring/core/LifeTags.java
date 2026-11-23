@@ -63,8 +63,8 @@ public final class LifeTags {
     public static final String BODY_TITLE = "Life factors";
     public static final String MONTH_HINT = "Touch and slide across the days to read what you logged. The arrows page through the months.";
     public static final String NONE_YET = "Nothing logged yet. Tap the chips on Today to log what a day was like.";
-    /** Why phase 1 shows no effect: said once on the Body card. */
-    public static final String NO_EFFECT_YET = "Open Ring only shows what you logged for now. Later versions will compare your nights with and without each factor.";
+    /** Where the effect is (issue #292, phase 2): said once on the Body card's month view. */
+    public static final String NO_EFFECT_YET = "How your nights went after each factor is in the card below.";
     public static final String NOT_SAVED = "Could not save. Please try again.", NOT_UNDONE = "Could not undo. Please try again.";
     public static final String UNREADABLE = "Your life factors could not be read just now. Your logged days are kept; try again later.";
     /** The CSV export's choices (Settings, Export). */
@@ -507,6 +507,32 @@ public final class LifeTags {
             if (back == coldBack + 1 || back == coldBack) t.add(ILLNESS);
             if (back >= 23 && back <= 26) t.add(HOLIDAY);
             if (back == 26 || back == 23) t.add(TRAVEL);
+            if (!t.isEmpty()) out.put(d, t);
+        }
+        return out;
+    }
+
+    /**
+     * Made up tags over the demo's made up year (issue #292, phase 2; only in {@code Demo.enter}, only into the demo file), so the
+     * card "Life factors and your nights" has enough days to show: Meditation on every third day whatever the night (made up as
+     * no effect, "not clear yet"), Alcohol on Friday and Saturday evenings before a night whose HRV was more than 4 % under its
+     * usual and on some others (made up as a clear effect), a hard workout on Tuesdays and Saturdays, Stress now and then, and
+     * Illness on the year's week of illness ({@code ill}). {@code hrvVsUsual}: each day's next night HRV in % of its usual
+     * ({@code FactorEffect.points}), missing where there is none. Never Intimacy.
+     */
+    public static TreeMap<LocalDate, List<String>> demoYear(LocalDate from, LocalDate to, Map<LocalDate, Double> hrvVsUsual, java.util.Set<LocalDate> ill) {
+        TreeMap<LocalDate, List<String>> out = new TreeMap<LocalDate, List<String>>();
+        for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
+            List<String> t = new ArrayList<String>();
+            long e = d.toEpochDay();
+            int dow = d.getDayOfWeek().getValue();
+            boolean sick = ill != null && ill.contains(d);
+            Double h = hrvVsUsual == null ? null : hrvVsUsual.get(d);
+            if (e % 3 == 0) t.add(MEDITATION);
+            if (!sick && (dow == 5 || dow == 6) && (h != null && h < -4 || e % 10 == 0)) t.add(ALCOHOL);
+            if (!sick && e % 9 == 4) t.add(STRESS);
+            if (!sick && (dow == 2 || dow == 6)) t.add(WORKOUT);
+            if (sick) t.add(ILLNESS);
             if (!t.isEmpty()) out.put(d, t);
         }
         return out;
