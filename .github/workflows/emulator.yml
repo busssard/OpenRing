@@ -1,7 +1,8 @@
 name: Android emulator test
 # Installs the app on a real Android 14 emulator, opens every screen with demo data, fails on any
 # crash, and keeps the screenshots: on main they become the README pictures (branch "screenshots"),
-# for pull requests they go to "screenshots-preview" (folder pr-<number>) so changes can be looked at before merging.
+# for the release pull request into main they go to "screenshots-preview" (folder pr-<number>), for a run by hand on a
+# branch to its folder branch-<name>. Pull requests into dev skip it (owner, 20 November), see the scope step.
 on:
   push:
     branches: [main]
@@ -26,15 +27,20 @@ jobs:
         with:
           fetch-depth: 0   # tools/version.sh reads the release tags v2.<y>
       - name: Does this change reach the screens?
-        # owner, 17 November: the checks ran out of GitHub's minutes. A pull request that changes nothing the app is built
-        # from (only docs, tests, change notes or other workflows) skips the 20 minute emulator run; the check still
-        # passes, so it can be merged. Pushes to main and runs by hand always run.
+        # owner, 17 and 20 November: the checks ran out of GitHub's minutes. The 20 minute emulator run is only for
+        # releases: pull requests into main (the release from dev) and pushes to main. A pull request into dev skips it
+        # (the check still passes, so the required "screens" check does not block it), and so does a release pull
+        # request that changes nothing the app is built from. Runs by hand (Actions, Run workflow, any branch) always run.
         id: scope
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           run=true
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -n "$BASE" ]; then
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$BASE_REF" != main ]; then
+            run=false
+            echo "::notice::Pull request into $BASE_REF: the emulator runs only for releases into main (or by hand)"
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -n "$BASE" ]; then
             files=$(git diff --name-only "$BASE...HEAD")
             echo "$files"
             if ! echo "$files" | grep -qE '^(app/|tools/|build_apk\.sh$|\.github/scripts/screens\.sh$|\.github/workflows/emulator\.yml$)'; then
