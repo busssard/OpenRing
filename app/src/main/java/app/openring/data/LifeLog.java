@@ -268,7 +268,8 @@ public final class LifeLog {
 
     /**
      * {@code tag} on every day from {@code from} to {@code to} (both included), one row per day sharing the span id
-     * {@code span}, in one transaction: a stop half way writes none of them. Returns the days written; none when {@code to} is
+     * {@code span}, in one transaction: a stop half way writes none of them. A day that has the tag already keeps its time and
+     * length (issue #435); a removal mark is taken back without one. Returns the days written; none when {@code to} is
      * before {@code from}.
      */
     public static int setSpan(Db db, LocalDate from, LocalDate to, String tag, long span, double made) {
@@ -280,7 +281,11 @@ public final class LifeLog {
         try {
             int n = 0;
             for (LocalDate d : days) {
-                w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, NULL, NULL, ?, ?, 0)",
+                // a day that already has the tag keeps its time and length (a Sauna at 19:00 stays when Sauna becomes several
+                // days); UPDATE then INSERT OR IGNORE, as SQLite's upsert needs Android 11 and the app runs from Android 8
+                w.execSQL("UPDATE life_days SET span = ?, made = ?, time = CASE WHEN gone = 0 THEN time END, minutes = CASE WHEN gone = 0 THEN minutes END, gone = 0"
+                        + " WHERE day = ? AND tag = ?", new Object[] {span, made, d.toString(), tag});
+                w.execSQL("INSERT OR IGNORE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, NULL, NULL, ?, ?, 0)",
                         new Object[] {d.toString(), tag, span, made});
                 if (++n == failSpanAfter) throw new IllegalStateException("test stop");
             }

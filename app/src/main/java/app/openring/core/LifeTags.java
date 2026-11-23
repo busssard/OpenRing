@@ -449,15 +449,20 @@ public final class LifeTags {
 
     /**
      * The CSV columns for the tags (Settings, Export, "Include life factors"): every fixed tag but Intimacy, Intimacy only with
-     * {@code intimacy}, then every own tag (removed ones too, their days are kept); none without {@code life}. Header names
-     * are {@code life_} and the key, own tags {@code life_own_} and their name in small letters with anything but letters and
-     * digits as {@code _}, a number added when two would be the same.
+     * {@code intimacy}, then every own tag (removed ones too, their days are kept), then Sauna and Friends; none without
+     * {@code life}. Sauna and Friends came with issue #435 and go last, so a sheet that reads the earlier columns by their
+     * place keeps working (code review of #444); on screen they stay after Hard workout. Header names are {@code life_} and
+     * the key, own tags {@code life_own_} and their name in small letters with anything but letters and digits as {@code _},
+     * a number added when two would be the same.
      */
     public static Map<String, String> csvColumns(Known known, boolean life, boolean intimacy) {
         Map<String, String> out = new LinkedHashMap<String, String>();
         if (!life) return out;
+        List<Tag> order = new ArrayList<Tag>(), last = new ArrayList<Tag>();
+        for (Tag t : known.all.values()) (SAUNA.equals(t.key) || FRIENDS.equals(t.key) ? last : order).add(t);
+        order.addAll(last);
         java.util.Set<String> used = new java.util.HashSet<String>();
-        for (Tag t : known.all.values()) {
+        for (Tag t : order) {
             if (INTIMACY.equals(t.key) && !intimacy) continue;
             String head;
             if (isBuiltIn(t.key)) {

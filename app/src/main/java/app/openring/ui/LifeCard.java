@@ -400,10 +400,18 @@ final class LifeCard {
         });
     }
 
-    /** The bands of the logged times that reach into {@code from} to {@code to} (issue #435); none when unreadable. */
+    /** The bands of the logged times that reach into {@code from} to {@code to} (issue #435), in the day's zone; none when unreadable. */
     static List<LifeTimes.Band> bands(DayData d, double from, double to) {
+        return bands(d, from, to, d.zone);
+    }
+
+    /**
+     * As {@link #bands(DayData, double, double)}, placed in {@code zone}: give the zone the chart reads its times in (a night's
+     * zone on the night's charts), so the band and its readout tell the same clock time (code review of #444).
+     */
+    static List<LifeTimes.Band> bands(DayData d, double from, double to, java.time.ZoneId zone) {
         if (!d.lifeOk || d.life == null) return new ArrayList<LifeTimes.Band>();
-        return LifeTimes.bands(d.lifeTimes, from, to, d.zone, d.life);
+        return LifeTimes.bands(d.lifeTimes, from, to, zone, d.life);
     }
 
     /**
