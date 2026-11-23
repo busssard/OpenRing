@@ -71,6 +71,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
             syncAsked = b.getBoolean("syncAsked", false);
             permissionBlocked = b.getBoolean("permissionBlocked", false);
             quietDenial = b.getBoolean("quietDenial", false);
+            // the tour's step through a turn of the phone (issue #453)
+            tourPending = b.getInt("tour_step", -1);
+            tourFirst = b.getBoolean("tour_first", false);
+            tourQuiet = b.getBoolean("tour_quiet", false);
         } else {
             // only on a fresh start: a turned screen keeps its tab and date and does not start
             // the demo or open Settings again (issue #29)
@@ -110,18 +114,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 stepDay(date.plusDays(1));
             }
         }));
-        header.addView(iconButton(R.drawable.ic_sync, new View.OnClickListener() {
+        header.addView(TourOverlay.mark(iconButton(R.drawable.ic_sync, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 sync();
             }
-        }));
-        header.addView(iconButton(R.drawable.ic_settings, new View.OnClickListener() {
+        }), app.openring.core.Tour.SYNC));
+        header.addView(TourOverlay.mark(iconButton(R.drawable.ic_settings, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 startActivity(new Intent(MainActivity.this, SettingsActivity.class));
             }
-        }));
+        }), app.openring.core.Tour.SETTINGS));
         root.addView(header);
         // the edit session's header (owner's wish of 20 November): Reset and Save where Sync and Settings are
         editBar = editBar();
@@ -150,8 +154,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         nav.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 6));
         navPx = -1;
         for (int i = 0; i < ICONS.length; i++) nav.addView(navItem(i), Ui.weight(1));
-        root.addView(nav);
+        root.addView(TourOverlay.mark(nav, app.openring.core.Tour.TABS));
         setContentView(root);
+        syncedBefore = synced(Prefs.of(this));
         showEditing();
         if (demoRun.running) {
             // a preparation started before the phone was turned: show its progress again
@@ -249,6 +254,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
     /** Back in the edit session leaves it; with changes not saved it asks first. */
     @Override
     public void onBackPressed() {
+        // the tour (issue #453): Back goes a step back, on its first step it closes
+        if (tour != null) {
+            tour.back();
+            return;
+        }
         if (!Tiles.editing()) {
             super.onBackPressed();
             return;
@@ -344,6 +354,13 @@ public final class MainActivity extends Activity implements RingManager.Listener
     void handleExtras(Intent i) {
         if (i == null) return;
         if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
+        // the short tour (issue #453): tour (int) opens it at a step (0 to 6, 7 the demo's ending; Settings' Show the tour again
+        // sends 0), -1 keeps it from starting by itself on this start (the screen test sends it with every launch)
+        if (i.hasExtra("tour")) {
+            int t = i.getIntExtra("tour", -1);
+            if (t < 0) tourQuiet = true;
+            else tourPending = Math.min(t, app.openring.core.Tour.END);
+        }
         // Settings, Rearrange tiles (owner's wish of 20 November): the tabs open in the edit session
         if (i.getBooleanExtra("edit_layout", false) && !Tiles.editing()) Tiles.startEditing(this);
         // screen test, demo mode only: every tab in the standard layout (owner's wish of 18 November), before anything below
@@ -631,6 +648,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         out.putBoolean("syncAsked", syncAsked);
         out.putBoolean("permissionBlocked", permissionBlocked);
         out.putBoolean("quietDenial", quietDenial);
+        out.putInt("tour_step", tour != null ? tour.step : tourPending);
+        out.putBoolean("tour_first", tour != null ? tour.firstSync : tourFirst);
+        out.putBoolean("tour_quiet", tourQuiet);
     }
 
     @Override
@@ -882,6 +902,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     cardPending = null;
                 }
                 if (tab == Pages.TODAY && np.demo()) firstScreen(shown);
+                tourCheck();
             }
         });
         for (int i = 0; i < nav.getChildCount(); i++) {
@@ -905,6 +926,98 @@ public final class MainActivity extends Activity implements RingManager.Listener
         android.util.Log.i("OpenRing", "today first screen (" + preview + "): the line ends at " + bottom + " of " + scroll.getHeight() + " px, "
                 + (bottom <= scroll.getHeight() ? "fits" : "cut"));
     }
+
+    // ---- the short tour (issue #453) ----
+    /** The tour on screen, null when none. */
+    private TourOverlay tour;
+    /** A step to open after the next build of the page (a turned phone, the extra tour, Show the tour again), -1 for none. */
+    private int tourPending = -1;
+    /** The tour started after the first sync; the tour does not start by itself on this start (screen test, extra tour -1). */
+    private boolean tourFirst, tourQuiet;
+    /** The newest good sync (ring or watch) this screen knew at its last look, 0 for none: the first sync starts the tour. */
+    private long syncedBefore;
+
+    static long synced(Prefs p) {
+        return Math.max(p.lastSync(), p.watchLastOk());
+    }
+
+    /** After each build of the page: the tour follows it, or opens as asked, or starts by itself ({@code core/Tour.autoStart}). */
+    void tourCheck() {
+        if (isFinishing() || isDestroyed()) return;
+        if (tour != null && tourPending < 0) {
+            tour.pageChanged();
+            return;
+        }
+        // Show the tour again while the demo's ending still waits (the gear opened Settings): the new tour replaces it
+        if (tour != null) tour.close();
+        Prefs p = Prefs.of(this);
+        long now = synced(p);
+        int pending = tourPending;
+        tourPending = -1;
+        int why = pending >= 0 ? app.openring.core.Tour.NONE
+                : app.openring.core.Tour.autoStart(p.demo(), p.tourSeen(), Tiles.editing() || tourQuiet, syncedBefore, now);
+        boolean first = pending >= 0 ? tourFirst : why == app.openring.core.Tour.FIRST_SYNC;
+        syncedBefore = now;
+        if (pending < 0 && why == app.openring.core.Tour.NONE) return;
+        if (Tiles.editing()) {
+            android.widget.Toast.makeText(this, "Save or leave Rearrange tiles first.", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (why != app.openring.core.Tour.NONE) {
+            android.util.Log.i("OpenRing", "tour: started by itself (" + (why == app.openring.core.Tour.DEMO ? "demo" : "first sync") + ")");
+        }
+        tourFirst = first;
+        tour = TourOverlay.start(this, tourHost, pending >= 0 ? pending : 0, first);
+    }
+
+    private final TourOverlay.Host tourHost = new TourOverlay.Host() {
+        @Override
+        public int tab() {
+            return MainActivity.this.tab;
+        }
+
+        @Override
+        public void goTab(int t) {
+            go(t);
+        }
+
+        @Override
+        public ScrollView scroll() {
+            return scroll;
+        }
+
+        @Override
+        public boolean demo() {
+            return Prefs.of(MainActivity.this).demo();
+        }
+
+        @Override
+        public boolean hasDevice() {
+            Prefs p = Prefs.of(MainActivity.this);
+            return p.hasKey() || p.withoutRing();
+        }
+
+        @Override
+        public void seen() {
+            Prefs.of(MainActivity.this).setTourSeen();
+        }
+
+        @Override
+        public void leaveDemo() {
+            // as Settings' Leave the demo: the main screen again, which opens Getting started when nothing is set up
+            if (!app.openring.data.Demo.leave(MainActivity.this)) {
+                android.widget.Toast.makeText(MainActivity.this, app.openring.core.SyncError.plain(app.openring.core.SyncError.REANALYSING,
+                        app.openring.core.SyncError.Task.ACTION), android.widget.Toast.LENGTH_LONG).show();
+                return;
+            }
+            startActivity(new Intent(MainActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+        }
+
+        @Override
+        public void closed() {
+            tour = null;
+        }
+    };
 
     String syncLine() {
         Prefs p = Prefs.of(this);

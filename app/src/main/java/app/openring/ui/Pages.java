@@ -95,12 +95,19 @@ public final class Pages {
             }
             // the tiles (owner's wish of 18 November): Today's own keys, so a tile keeps its place whatever its caption says
             if (root.getChildCount() == before + 1) todayTile(root.getChildAt(before), k, d);
+            // the parts the short tour points at (issue #453)
+            if (root.getChildCount() == before + 1) TourOverlay.mark(root.getChildAt(before), tourKey(k));
         }
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
         root.addView(foot);
         return root;
+    }
+
+    /** The short tour's part for a card of Today (issue #453): the scores and the life factors, null for the others. */
+    static String tourKey(String k) {
+        return app.openring.core.TodayCards.SCORES.equals(k) ? app.openring.core.Tour.SCORES : app.openring.core.TodayCards.LIFE.equals(k) ? app.openring.core.Tour.LIFE : null;
     }
 
     /** Names a tile of Today by its {@code core/TodayCards} key, with a title where the card has no caption of its own. */
@@ -589,7 +596,7 @@ public final class Pages {
         hyp.addView(Ui.caption(c, "Sleep depth through the night"));
         hyp.addView(Ui.gap(c, 10));
         double clockAt = Json.d(n, "clock_change_at");
-        hyp.addView(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz), Ui.sized(c, -1, 170));
+        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz), app.openring.core.Tour.CHART), Ui.sized(c, -1, 170));
         JSONArray mv = n.optJSONArray("motion_series");
         if (mv != null && mv.length() > 0) {
             hyp.addView(Ui.gap(c, 6));
@@ -745,7 +752,7 @@ public final class Pages {
         boolean withHr = hr != null && !hr.points.isEmpty();
         // a watch that does not tell REM from light sleep shows them as one stage (owner's report of 13 November)
         boolean lightRem = !d.watchRem.tells(wn);
-        hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem),
+        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end), app.openring.core.Tour.CHART).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem),
                 Ui.sized(c, -1, withHr ? 250 : 170));
         hyp.addView(Ui.gap(c, 4));
         hyp.addView(Ui.text(c, withHr ? "Touch or slide along the chart to see the time, the stage and the nearest heart rate."

@@ -14196,6 +14196,7 @@ public class PipelineTest {
         check("#373 the watch path past About you: the app", !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
         p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
         // a backup of a watch only phone carries the choice and no key; a restore elsewhere goes on with the watch
+        p.setTourSeen(); // the short tour's flag (issue #453) is a hint, never in a backup
         byte[] full = backup252(c);
         org.json.JSONObject o = new org.json.JSONObject(new String(zipEntry(full, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
         check("#373 the backup holds the choice and the watch, no key", o.optInt("start_choice") == app.openring.core.Start.WATCH && !o.has("key")
@@ -14205,6 +14206,7 @@ public class PipelineTest {
         app.openring.data.Prefs q = app.openring.data.Prefs.of(other);
         q.clearKey();
         app.openring.data.Backup.Result r = app.openring.data.Backup.read(other, new java.io.ByteArrayInputStream(full));
+        check("#453 the tour's flag is not in the backup, the restore leaves the phone's as it was", !o.toString().contains("tour") && !q.tourSeen(), o.keySet());
         check("#373 restored: the watch, the choice, no ring, never Setup", r.ok && q.startChoice() == app.openring.core.Start.WATCH
                 && q.watchAddress() != null && q.keyState() == app.openring.core.KeyState.NO_RING
                 && !app.openring.core.Start.opensSetup(false, false, q.keyState(), false, true), r.message);

@@ -48,7 +48,7 @@ Not affiliated with Oura, not a medical device.
 * Touch the night timeline, the heart rate and trend lines or the screen time clock to see the exact
   time and value.
 * Backups of the key and all history, checked before they are saved, and a CSV export, all as files on your phone
-* A demo mode, so you can look around without a ring
+* A demo mode, so you can look around without a ring, with a short tour of the main parts (Settings, Help, Show the tour again)
 
 ### Find my ring
 

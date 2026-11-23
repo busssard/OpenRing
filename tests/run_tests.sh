@@ -39,3 +39,6 @@ java $JAVA_OPTS -cp "$OUT" SoundTest
 # nights entered by hand (issue #427), compiled on its own line so other new suites never touch the same line
 javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/HandTest.java
 java $JAVA_OPTS -cp "$OUT" HandTest
+# the short tour (issue #453), compiled on its own line so other new suites never touch the same line
+javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/TourTest.java
+java $JAVA_OPTS -cp "$OUT" TourTest

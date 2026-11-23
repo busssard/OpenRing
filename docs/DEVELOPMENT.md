@@ -15,6 +15,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `tests/check_privacy.sh`, `tests/check_version.sh` | Fail if the app gains network access or tracking code, or if the version is typed instead of counted or a change note is malformed |
 | `tests/java/SoundTest.java` | The sleep sound detector of `core/analysis/SoundDetector` (issue #380: made up audio, sounds, snoring, coughs, clips, gaps), run at the end of `tests/run_tests.sh` |
 | `tests/java/HandTest.java` | Nights entered by hand, `core/HandNight` (issue #427: the bar's times, snap, midnight, the clock change nights, wake marks, default times, the night and its partial score, readiness, when Today asks, the device against by hand choice), run at the end of `tests/run_tests.sh` |
+| `tests/java/TourTest.java` | The short tour, `core/Tour` (issue #453: the steps, their parts and tabs, Next and Back past parts not on screen, the demo's ending, when it starts by itself, plain texts), run at the end of `tests/run_tests.sh` |
 | `tests/coverage.sh` | Runs the JVM suites with JaCoCo and writes the coverage report and badge files |
 | `tests/java/BaselinesTest.java` | The readiness baselines of `core/analysis/Baselines` (issue #292, phase 1.5): bit for bit what the old inline code of `data/Analyzer` gave, on 2000 seeded made up histories, the windows and the minimum of 3, and `Baselines.usual` (the median of the 30 nights before, for phase 2); compiled on its own line and run after CoreTest by `tests/run_tests.sh` |
 | `build_apk.sh` | Builds and signs the APK without Gradle (used by CI) |
@@ -122,6 +123,10 @@ Two for the nights by hand (issue #427): `hand_night` (boolean, demo mode only: 
 device night, nothing stored; Today asks for last night, and the demo's made up night by hand shows on the day before yesterday) and
 `hand_entry` (boolean, demo mode only: opens the entry of a night by hand for last night with two wake marks; nothing is saved
 without Save).
+
+One for the short tour (issue #453): `tour` (int: 0 to 6 opens the tour at that step, 7 the demo's ending, the same as
+Settings' Show the tour again with 0; -1 keeps the tour from starting by itself on this start, also in demo mode). `screens.sh`
+sends `tour -1` with every `launch`, so no other shot is covered; a later `--ei tour` on the same line wins.
 
 One for the life factors: `life_more` (boolean, demo mode only: Today's row "What was today like?" opens with its More,
 All factors and the ways on; issue #292). With `card WHAT_WAS` the row is at the top (also for a past day, "What was this day like?"); `card LIFE_FACTORS` opens

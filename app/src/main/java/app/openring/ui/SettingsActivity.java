@@ -290,6 +290,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
                     finish();
                 }
             });
+            // the short tour (issue #453): the demo has no Help section, so here
+            action(demo, app.openring.core.Tour.AGAIN, Ui.TEXT_2, new Runnable() {
+                @Override
+                public void run() {
+                    showTour();
+                }
+            });
             root.addView(demo);
             root.addView(updatesCard().view);
             // the ring's block: the demo has no ring to sync or switch, only the stage detail (its preview is the demo's night)
@@ -610,6 +617,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
         reanalyseNote = Ui.text(this, Texts.REANALYSING, 13, Ui.OXY, Ui.MEDIUM);
         reanalyseNote.setPadding(0, Ui.dp(this, 6), 0, 0);
         help.addView(reanalyseNote);
+        // the short tour over the main screen (issue #453)
+        small(help, app.openring.core.Tour.AGAIN, Ui.TEXT_2, new Runnable() {
+            @Override
+            public void run() {
+                showTour();
+            }
+        });
         root.addView(helpFold.view);
         showJobState();
 
@@ -2595,6 +2609,12 @@ public final class SettingsActivity extends Activity implements RingManager.List
         LinearLayout.LayoutParams lp = Ui.matchWrap();
         lp.setMargins(0, Ui.dp(this, 10), 0, 0);
         parent.addView(b, lp);
+    }
+
+    /** Show the tour again (issue #453): the main screen opens it at its first step. */
+    void showTour() {
+        startActivity(new Intent(this, MainActivity.class).putExtra("tour", 0).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+        finish();
     }
 
     /** A small full width button for secondary actions. */
