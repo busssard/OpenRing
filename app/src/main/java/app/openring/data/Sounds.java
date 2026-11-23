@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import app.openring.core.SleepSounds;
 import app.openring.core.Texts;
 import app.openring.core.analysis.SoundDetector;
 
@@ -51,9 +52,10 @@ public final class Sounds {
     /** The clip folders inside the app's {@code no_backup} folder (never in Android's cloud backup, never in ours). */
     static final String REAL_FOLDER = "sounds", DEMO_FOLDER = "sounds-demo";
     /** How long clips keep their sound (days; {@link #KEEP_ALWAYS}: until deleted). 7 by default (decided on #380). */
-    public static final int KEEP_WEEK = 7, KEEP_MONTH = 30, KEEP_ALWAYS = 0;
-    /** Why a night stopped ({@code sound_nights.ended}). */
-    public static final String ENDED_HAND = "hand", ENDED_TIME = "time", ENDED_LIMIT = "12 h", ENDED_SYSTEM = "system";
+    public static final int KEEP_WEEK = SleepSounds.KEEP_WEEK, KEEP_MONTH = SleepSounds.KEEP_MONTH, KEEP_ALWAYS = SleepSounds.KEEP_ALWAYS;
+    /** Why a night stopped ({@code sound_nights.ended}); the same values as {@code core/SleepSounds}, which words them. */
+    public static final String ENDED_HAND = SleepSounds.ENDED_HAND, ENDED_TIME = SleepSounds.ENDED_TIME, ENDED_LIMIT = SleepSounds.ENDED_LIMIT,
+            ENDED_SYSTEM = SleepSounds.ENDED_SYSTEM;
     /** Why the phone was not listening ({@code sound_gaps.why}). */
     public static final String GAP_SILENCE = "silence", GAP_SYSTEM = "system";
     /** The sweep leaves files younger than this alone: a clip being written has no row yet. */
@@ -363,5 +365,227 @@ public final class Sounds {
         } finally {
             d.endTransaction();
         }
+    }
+
+    // ------------------------------------------------------------------------------------- phase 1b: the screens and the night
+
+    /** A mark as the screens read it. */
+    public static final class Clip {
+        public final double start, stop;
+        public final String kind, file;
+        public final boolean kept, gone;
+
+        Clip(double start, double stop, String kind, String file, boolean kept, boolean gone) {
+            this.start = start;
+            this.stop = stop;
+            this.kind = kind;
+            this.file = file;
+            this.kept = kept;
+            this.gone = gone;
+        }
+
+        /** Whether it has a sound to play (not gone, a clip file name). */
+        public boolean sound() {
+            return !gone && clipName(file);
+        }
+
+        /** The mark as {@code core/SleepSounds} words it. */
+        public SleepSounds.Mark mark() {
+            return new SleepSounds.Mark(start, stop, kind, sound(), kept);
+        }
+    }
+
+    /** One night listened, with its marks by start. */
+    public static final class Night {
+        public final double start;
+        /** The last time it was known to listen (NaN when never written); while {@link #ended} is null it runs or was killed. */
+        public final double stop;
+        public final String ended;
+        public final List<Clip> clips = new ArrayList<Clip>();
+        /** Seconds the microphone gave only silence (another app held it). */
+        public double silent;
+
+        Night(double start, double stop, String ended) {
+            this.start = start;
+            this.stop = stop;
+            this.ended = ended;
+        }
+
+        public List<SleepSounds.Mark> marks() {
+            List<SleepSounds.Mark> out = new ArrayList<SleepSounds.Mark>();
+            for (Clip c : clips) out.add(c.mark());
+            return out;
+        }
+    }
+
+    /** Where a night's marks and gaps end: before the next night, and a minute after its last known time (13 hours when unknown). */
+    private static double nightEnd(Db db, double start, double stop) {
+        double end = Double.isNaN(stop) ? start + 13 * 3600 : stop + 60;
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT MIN(start) FROM sound_nights WHERE start > ?", new String[] {String.valueOf(start)});
+        try {
+            if (c.moveToFirst() && !c.isNull(0)) end = Math.min(end, c.getDouble(0));
+        } finally {
+            c.close();
+        }
+        return end;
+    }
+
+    /** The night that started at {@code start}, with its marks and silence; null when there is none. */
+    public static Night night(Db db, double start) {
+        Night n = null;
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT start, stop, ended FROM sound_nights WHERE start = ?", new String[] {String.valueOf(start)});
+        try {
+            if (c.moveToFirst()) n = new Night(c.getDouble(0), c.isNull(1) ? Double.NaN : c.getDouble(1), c.isNull(2) ? null : c.getString(2));
+        } finally {
+            c.close();
+        }
+        if (n == null) return null;
+        double end = nightEnd(db, n.start, n.stop);
+        String[] range = {String.valueOf(n.start), String.valueOf(end)};
+        c = db.getReadableDatabase().rawQuery("SELECT start, stop, kind, file, kept, gone FROM sound_clips WHERE start >= ? AND start < ? ORDER BY start", range);
+        try {
+            while (c.moveToNext()) n.clips.add(new Clip(c.getDouble(0), c.getDouble(1), c.getString(2), c.getString(3), c.getLong(4) != 0, c.getLong(5) != 0));
+        } finally {
+            c.close();
+        }
+        c = db.getReadableDatabase().rawQuery("SELECT SUM(stop - start) FROM sound_gaps WHERE start >= ? AND start < ? AND why = ?",
+                new String[] {range[0], range[1], GAP_SILENCE});
+        try {
+            if (c.moveToFirst() && !c.isNull(0)) n.silent = c.getDouble(0);
+        } finally {
+            c.close();
+        }
+        return n;
+    }
+
+    /** The newest night shown on {@code day}'s Sleep tab (started from 12:00 the day before to 12:00 that day), null for none. */
+    public static Night forDay(Db db, java.time.LocalDate day, java.time.ZoneId zone) {
+        double from = day.minusDays(1).atTime(12, 0).atZone(zone).toEpochSecond(), to = day.atTime(12, 0).atZone(zone).toEpochSecond();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT MAX(start) FROM sound_nights WHERE start >= ? AND start < ?",
+                new String[] {String.valueOf(from), String.valueOf(to)});
+        double start = Double.NaN;
+        try {
+            if (c.moveToFirst() && !c.isNull(0)) start = c.getDouble(0);
+        } finally {
+            c.close();
+        }
+        return Double.isNaN(start) ? null : night(db, start);
+    }
+
+    /** Whether any night was listened (the demo is built again when it has none). */
+    static boolean any(Db db) {
+        return db.count("SELECT COUNT(*) FROM sound_nights") > 0;
+    }
+
+    /**
+     * Nights never closed (the phone ended the app while it listened) get {@link #ENDED_SYSTEM}; their stop stays the last
+     * minute they were known to listen. {@code running}: the start of the night listening now, left alone.
+     */
+    static void closeStale(Db db, double running) {
+        db.getWritableDatabase().execSQL("UPDATE sound_nights SET ended = ? WHERE ended IS NULL AND start != ?", new Object[] {ENDED_SYSTEM, running});
+    }
+
+    /**
+     * "Delete all clips of this night" (removes rows, as Delete all does): the night's row, its marks and gaps in one transaction,
+     * then their files. A file that cannot be deleted is removed by the next sweep, since no row names it any more. A night
+     * listening now must be stopped first ({@code SoundNight.deleteNight} does). Returns the marks deleted.
+     */
+    public static int deleteNight(final Db db, File folder, final double start) {
+        Night n = night(db, start);
+        if (n == null) return 0;
+        final double end = nightEnd(db, n.start, n.stop);
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                SQLiteDatabase w = db.getWritableDatabase();
+                w.execSQL("DELETE FROM sound_clips WHERE start >= ? AND start < ?", new Object[] {start, end});
+                w.execSQL("DELETE FROM sound_gaps WHERE start >= ? AND start < ?", new Object[] {start, end});
+                w.execSQL("DELETE FROM sound_nights WHERE start = ?", new Object[] {start});
+            }
+        });
+        for (Clip c : n.clips) if (clipName(c.file)) new File(folder, c.file).delete();
+        return n.clips.size();
+    }
+
+    /**
+     * Delete sound (the clip list): the clip's file goes, its mark stays with {@code gone} 1, as the retention does. False when
+     * the file is there and could not be deleted (the mark then keeps its sound).
+     */
+    public static boolean deleteSound(Db db, File folder, double start) {
+        String file = null;
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT file FROM sound_clips WHERE start = ?", new String[] {String.valueOf(start)});
+        try {
+            if (c.moveToFirst()) file = c.getString(0);
+        } finally {
+            c.close();
+        }
+        File f = clipName(file) ? new File(folder, file) : null;
+        if (f != null && f.exists() && !f.delete()) return false;
+        List<Double> one = new ArrayList<Double>();
+        one.add(start);
+        markGone(db, one);
+        return true;
+    }
+
+    /**
+     * The retention with the person's choice, then the sweep, on {@code db}'s own folder. The sweep is left out while a night
+     * listens into that folder: a snoring stretch's clip waits for its mark until the stretch ends, which can be longer than the
+     * sweep's grace. Returns the marks that lost their sound.
+     */
+    public static int tidy(Context c, Db db, int keepDays) throws java.io.IOException {
+        int n = retain(c, db, keepDays);
+        boolean real = !Db.DEMO.equals(db.fileName);
+        if (!(real && SoundNight.isRunning())) n += sweep(c, db).rows;
+        return n;
+    }
+
+    /** The last {@code SleepSounds.HISTORY} main nights up to {@code today} (each {start, end}, oldest first), for the usual times. */
+    public static List<double[]> usualNights(Db db, java.time.LocalDate today) {
+        List<double[]> out = new ArrayList<double[]>();
+        for (String s : db.nightsJson(today.minusDays(SleepSounds.HISTORY + 7).toString(), today.toString(), true)) {
+            org.json.JSONObject o = Json.parse(s);
+            if (o == null) continue;
+            double a = Json.d(o, "start"), b = Json.d(o, "end");
+            if (!Double.isNaN(a) && !Double.isNaN(b) && b > a) out.add(new double[] {a, b});
+        }
+        return out.size() > SleepSounds.HISTORY ? new ArrayList<double[]>(out.subList(out.size() - SleepSounds.HISTORY, out.size())) : out;
+    }
+
+    /**
+     * The demo's night of sounds, only into the demo file and its folder (Design review of #380): last night from 23:05 to 06:55,
+     * talking at 00:41, a snoring stretch from 02:12 to 02:26, a cough like sound at 03:37 (each with a clip of tones made in
+     * code, {@code SleepSounds.demoTone}, never a voice), a mark at 05:03 whose sound was deleted, and 12 minutes at 04:10 when
+     * another app held the microphone. Old demo clip files are removed first.
+     */
+    static void demo(Context c, Db db, java.time.LocalDate today, java.time.ZoneId zone) throws java.io.IOException {
+        if (!Db.DEMO.equals(db.fileName)) throw new IllegalStateException("demo clips only go into the demo file");
+        File folder = folder(c, db);
+        deleteTree(folder);
+        if (!folder.mkdirs() && !folder.isDirectory()) throw new java.io.IOException("the demo clip folder could not be made");
+        double start = today.minusDays(1).atTime(23, 5).atZone(zone).toEpochSecond(), stop = today.atTime(6, 55).atZone(zone).toEpochSecond();
+        double talk = at(today, 0, 41, zone), snore = at(today, 2, 12, zone), snoreEnd = at(today, 2, 26, zone), loudest = at(today, 2, 19, zone);
+        double cough = at(today, 3, 37, zone), gone = at(today, 5, 3, zone), gap = at(today, 4, 10, zone);
+        demoClip(db, folder, talk, talk + 3.2, SoundDetector.TALK, -31, talk, 9);
+        demoClip(db, folder, snore, snoreEnd, SoundDetector.SNORE, -27, loudest, 8);
+        demoClip(db, folder, cough, cough + 0.6, SoundDetector.COUGH, -24, cough, 6);
+        addMark(db, gone, gone + 4, SoundDetector.TALK, -35.0);
+        addGap(db, gap, gap + 12 * 60, GAP_SILENCE);
+        addNight(db, start, stop, -62.0, 3, ENDED_TIME);
+    }
+
+    private static double at(java.time.LocalDate day, int h, int m, java.time.ZoneId zone) {
+        return day.atTime(h, m).atZone(zone).toEpochSecond();
+    }
+
+    private static void demoClip(Db db, File folder, double start, double stop, String kind, double peak, double sound, double seconds) throws java.io.IOException {
+        String name = "s" + Math.round(sound * 1000) + ".wav";
+        short[] pcm = SleepSounds.demoTone(kind, seconds);
+        java.io.FileOutputStream o = new java.io.FileOutputStream(new File(folder, name));
+        try {
+            o.write(SleepSounds.wav(pcm, 0, pcm.length, SoundDetector.RATE));
+        } finally {
+            o.close();
+        }
+        addClip(db, start, stop, kind, peak, name);
     }
 }

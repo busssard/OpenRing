@@ -244,6 +244,23 @@ public final class SoundDetector {
         return above;
     }
 
+    /**
+     * The loudness of {@code len} samples of {@code s} from {@code off} in dB of full scale, the way {@link #feed} measures a
+     * frame: the RMS against 32768, between {@link #MIN_DB} and 0, and {@link #MIN_DB} for digital silence (or no samples).
+     * Phase 1b's microphone test measures the room and the voice with it, so its margin is in the detector's own units.
+     */
+    public static double level(short[] s, int off, int len) {
+        long sum = 0;
+        boolean zero = true;
+        for (int i = off; i < off + len; i++) {
+            int v = s[i];
+            sum += (long) v * v;
+            if (v != 0) zero = false;
+        }
+        if (zero || len <= 0) return MIN_DB;
+        return Math.max(MIN_DB, Math.min(0, 10 * Math.log10(sum / (double) len / (32768.0 * 32768.0))));
+    }
+
     /** Feeds {@code s} (all of it). */
     public void feed(short[] s) {
         feed(s, 0, s.length);
