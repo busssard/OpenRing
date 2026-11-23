@@ -181,6 +181,13 @@ launch --ei tab 0 --es card WHAT_WAS;                                 shot today
 launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
 launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
 launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
+# A night by hand (issue #427), before the left out examples below change the demo file: hand_night (demo mode only, nothing
+# stored) shows today and the day before yesterday as without a device night, so Today asks for last night and the demo's
+# made up night by hand shows on its day; hand_entry opens the entry for last night with two wake marks (nothing is saved)
+launch --ei tab 0 --ez hand_night true --es card No_night_for_last;  shot today-hand-ask 2
+launch --ez hand_entry true;                                         shot hand-entry 3
+launch --ei tab 1 --ez hand_night true --es day "$(date -d '2 days ago' +%F)"; shot sleep-hand 3
+launch --ei tab 1 --ez hand_night true --es day "$(date -d '2 days ago' +%F)" --es card YOUR_NIGHT; shot sleep-hand-night 2
 
 launch --ei tab 1;                          shot sleep
 swipe_up;                                 shot sleep-phone 1
@@ -330,13 +337,20 @@ if tap_text "Rearrange tiles"; then
 else
   echo "::warning::tiles step: Rearrange tiles was not found in Settings, Layout of the tabs"
 fi
-# the Sleep dial folded with a tap on its title (review of #415 with #411): its line keeps the time asleep, "96, Optimal,
-# 7h 28m asleep"; the next launch puts the standard layout back
+# A folded score card shows a small dial with its score (owner's wish of 21 November): Ready's score folded, then opened again
+launch_kept --ei tab 2; sleep 3
+if xy=$(text_mid "READINESS SCORE"); then
+  adb shell input tap 540 ${xy#* }; shot ready-score-folded 2
+  adb shell input tap 540 ${xy#* }; sleep 1
+else echo "::warning::score dial step: the title READINESS SCORE was not on screen"; fi
+# the Sleep dial folded with a tap on its title (review of #415 with #411): a small dial with the score, and its line keeps
+# the word and the time asleep, "Optimal, 7h 28m asleep" (owner's wish of 21 November); the next launch puts the standard
+# layout back
 launch --ei tab 1; sleep 3
 if xy=$(text_mid "SLEEP SCORE"); then
   adb shell input tap 540 ${xy#* }; sleep 1
   shot sleep-dial-folded 1
-  if ui_dump | grep -q 'text="[0-9]*, [A-Za-z ]*, [0-9]*h [0-9]*m asleep"'; then log "the folded Sleep dial says the time asleep"
+  if ui_dump | grep -q 'text="[A-Za-z ]*, [0-9]*h [0-9]*m asleep"'; then log "the folded Sleep dial says the time asleep"
   else echo "::warning::tiles step: the folded Sleep dial has no line with the time asleep"; fi
 else echo "::warning::tiles step: the Sleep score title was not on screen to fold it"; fi
 # Phase 1a2 of #252 at the end of Body: "Your cycles" (cycle day, next period, the cycle length dots next to the typical
@@ -551,11 +565,14 @@ scroll_to "Remind me before my period" 8 || echo "::warning::issue #383 step: th
 shot settings-period-remind 1
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
-# The Watch check (issue #251, phase 1a): the Settings card, then in demo mode the made up scan (never Bluetooth) and
-# the made up report, built by the same code as a real one (the screen scrolls to it, copy buttons included)
+# The Device check (issue #251, phase 1a, once the Watch check; issue #418): the Settings card with its row Check a ring or
+# watch, then in demo mode the made up scan (never Bluetooth, a watch and a QRing ring among it) and the made up report,
+# built by the same code as a real one (the screen scrolls to it, copy buttons included)
 launch --es settings watch;                 shot settings-watch
 launch --ez watch true;                     shot watch 3
 launch --ez watch true --ez watch_report true; shot watch-report 3   # scrolls to the report itself: copy buttons, Use this watch for syncing (phase 1b)
+# the made up QRing ring checked (issue #418, phase 1): its report without messages and the line of its family
+launch --ez watch true --ez device_ring true; shot device-ring 3
 # The Watch page (issue #251, phase 1b): the demo's made up watch, decoded by the same code as a real one: steps per
 # day, workouts, heart rate, Withings' own sleep and the battery
 # The watch setup (issue #251): every step with its state, what is sent from the profile, then the alarm, then the hand

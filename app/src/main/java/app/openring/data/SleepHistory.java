@@ -60,13 +60,20 @@ public final class SleepHistory {
      */
     public static SleepHistory load(Db db, String fromDay, String toDay, ZoneId zone) {
         final Fold f = new Fold(zone);
+        // the nights entered by hand of days without a ring night (issue #427), folded in at their place by start
+        final List<JSONObject> hand = HandNights.withoutRingNight(db, fromDay, toDay, zone);
+        final int[] k = {0};
         db.eachNightJson(fromDay, toDay, true, new java.util.function.Consumer<String>() {
             @Override
             public void accept(String s) {
                 JSONObject o = Json.parse(s);
-                if (o != null) f.add(o);
+                if (o == null) return;
+                double start = Json.d(o, "start");
+                while (k[0] < hand.size() && Json.d(hand.get(k[0]), "start") < start) f.add(hand.get(k[0]++));
+                f.add(o);
             }
         });
+        while (k[0] < hand.size()) f.add(hand.get(k[0]++));
         return f.finish();
     }
 
@@ -109,7 +116,9 @@ public final class SleepHistory {
             col[LIGHT][i] = Json.d(o, "light_min");
             col[AWAKE][i] = Json.d(o, "awake_min");
             // from the stored minutes, so nights analysed before issue #107 average the same way (StageShare.efficiency)
-            col[EFF][i] = app.openring.core.analysis.StageShare.efficiency(col[ASLEEP][i], col[IN_BED][i], Json.d(o, "efficiency"));
+            // a night by hand has no efficiency (issue #427): it is not measured, never worked out from the typed times
+            col[EFF][i] = HandNights.isHand(o) ? Double.NaN
+                    : app.openring.core.analysis.StageShare.efficiency(col[ASLEEP][i], col[IN_BED][i], Json.d(o, "efficiency"));
             JSONObject sc = o.optJSONObject("score");
             col[SCORE][i] = sc != null && sc.has("value") && sc.optInt("value", -1) >= 0 ? sc.optInt("value") : Double.NaN;
             col[LOW][i] = Json.d(o, "lowest_hr");

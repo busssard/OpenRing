@@ -25,6 +25,8 @@ import app.openring.core.withings.WatchDays;
  * before bed, the night and the score's night part) and the badges. Each day takes the night {@link MainDevice#nightFrom}
  * picks, the rule of the Sleep tab: the watch's when it is the main device or the ring has none.
  *
+ * <p>A day without a device night takes the night entered by hand, if any (issue #427, {@link #withHand}).
+ *
  * <p>A watch night is Withings' own night in the ring's night fields ({@link WatchHistory#nightJson}), worked out on each read
  * from the stored rows; nothing is stored. With only the ring (no watch row) the list is exactly {@link Db#nightsJson} of the
  * main nights, parsed, so every ring number stays as it was.
@@ -79,6 +81,63 @@ public final class ShownNights {
      * {@code dev.watch} false) exactly the ring's main nights of {@link Db#nightsJson}, parsed, unreadable ones left out.
      */
     public static List<JSONObject> main(Db db, LocalDate first, LocalDate last, Devices dev, DeviceHistory.DayZones zones) {
+        List<JSONObject> devices = devices(db, first, last, dev, zones);
+        // only the phone (no ring, no watch): no night at all, as its Sleep tab (sleep needs a ring or a watch)
+        if (dev.history == MainDevice.PHONE) return devices;
+        return withHand(db, devices, first, last, zones, dev.age);
+    }
+
+    /**
+     * {@code shown} (the devices' nights, ordered by start) with the nights entered by hand (issue #427) of the days that have no
+     * device night, and whose times overlap none of them: the third source of {@link MainDevice#nightFrom}, after the ring and
+     * the watch. Without a night by hand in the range, {@code shown} itself, unchanged.
+     */
+    static List<JSONObject> withHand(Db db, List<JSONObject> shown, LocalDate first, LocalDate last, DeviceHistory.DayZones zones, double age) {
+        if (!HandNights.any(db)) return shown;
+        Set<String> days = new HashSet<String>();
+        List<double[]> spans = new ArrayList<double[]>();
+        for (JSONObject o : shown) {
+            days.add(o.optString("day"));
+            spans.add(new double[] {Json.d(o, "start"), Json.d(o, "end")});
+        }
+        TreeMap<LocalDate, JSONObject> hand = hand(db, first, last, zones, age, days, spans);
+        if (hand.isEmpty()) return shown;
+        List<JSONObject> out = new ArrayList<JSONObject>(shown);
+        out.addAll(hand.values());
+        byStart(out);
+        return out;
+    }
+
+    /**
+     * The nights by hand of the days from {@code first} to {@code last} that are shown (by day, each in its day's zone): on a day
+     * not in {@code deviceDays} (ISO dates of the shown device nights) and overlapping none of {@code deviceSpans} (their {start,
+     * end}). The one rule of {@link #withHand} and Trends ({@code TrendDays}).
+     */
+    static TreeMap<LocalDate, JSONObject> hand(Db db, LocalDate first, LocalDate last, DeviceHistory.DayZones zones, double age,
+            Set<String> deviceDays, List<double[]> deviceSpans) {
+        TreeMap<LocalDate, JSONObject> out = new TreeMap<LocalDate, JSONObject>();
+        for (java.util.Map.Entry<LocalDate, JSONObject> e : HandNights.days(db, first, last, zones, age).entrySet()) {
+            JSONObject o = e.getValue();
+            boolean device = deviceDays.contains(e.getKey().toString());
+            if (MainDevice.nightFrom(MainDevice.RING, device, false, true) != MainDevice.HAND) continue;
+            if (app.openring.core.HandNight.overlaps(Json.d(o, "start"), Json.d(o, "end"), deviceSpans)) continue;
+            out.put(e.getKey(), o);
+        }
+        return out;
+    }
+
+    private static void byStart(List<JSONObject> out) {
+        // the sort is stable, so the ring's own order stays
+        Collections.sort(out, new Comparator<JSONObject>() {
+            @Override
+            public int compare(JSONObject a, JSONObject b) {
+                return Double.compare(Json.d(a, "start"), Json.d(b, "start"));
+            }
+        });
+    }
+
+    /** The devices' nights of {@link #main}, without the nights by hand. */
+    static List<JSONObject> devices(Db db, LocalDate first, LocalDate last, Devices dev, DeviceHistory.DayZones zones) {
         List<JSONObject> ring = new ArrayList<JSONObject>();
         if (dev.ring) {
             for (String js : db.nightsJson(first.toString(), last.toString(), true)) {
@@ -103,13 +162,8 @@ public final class ShownNights {
             added = true;
         }
         if (!added) return out;
-        // by start, as the ring's list; the sort is stable, so the ring's own order stays
-        Collections.sort(out, new Comparator<JSONObject>() {
-            @Override
-            public int compare(JSONObject a, JSONObject b) {
-                return Double.compare(Json.d(a, "start"), Json.d(b, "start"));
-            }
-        });
+        // by start, as the ring's list
+        byStart(out);
         return out;
     }
 

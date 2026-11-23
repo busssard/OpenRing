@@ -117,6 +117,164 @@ public final class DayData {
      */
     static volatile int preview = app.openring.core.Start.PREVIEW_NONE;
 
+    /** The night entered by hand on this date's bar (issue #427), shown or replaced; null for none. */
+    public app.openring.data.HandNights.Row hand;
+    /** {@link #hand} is the night shown ({@link #night} is its night JSON): neither device has a night for the day. */
+    public boolean handShown;
+    /** The device whose night replaced {@link #hand} ({@code MainDevice.RING} or {@code WATCH}), -1 when shown or none. */
+    public int handReplacedBy = -1;
+    /** Today asks for last night by hand ({@code core/HandNight.ask}). */
+    public boolean handAsk;
+    /** False when the nights by hand could not be read (the Sleep tab offers nothing then). */
+    public boolean handOk = true;
+    /**
+     * Screen test (extra {@code hand_night}, demo mode only, issue #427): today and the day before yesterday show as without a
+     * device night, so Today asks for last night and the demo's night by hand shows on its day. Nothing stored changes.
+     */
+    static volatile boolean previewNoNight;
+
+    /**
+     * Works out the night by hand of this date (issue #427): shown when neither device has a night for the day nor one that
+     * overlaps it ({@code MainDevice.nightFrom}), then {@link #night} is its night JSON and, with a ring, readiness from its sleep
+     * part; otherwise only noted as replaced. Adds the nights by hand around the date to the recent nights strip, and decides
+     * Today's question. Reads only.
+     */
+    void hands(Context c, Db db) {
+        // only the phone: no night at all (sleep needs a ring or a watch), as on every other route
+        if (!has.ring && !has.watch) return;
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        LocalDate today = LocalDate.now();
+        boolean demo = p.demo();
+        String back = today.minusDays(app.openring.core.HandNight.DEMO_BACK).toString();
+        if (demo && previewNoNight) {
+            if (date.equals(today) || date.toString().equals(back)) {
+                night = null;
+                if (merged != null) {
+                    merged.watchNight = null;
+                    merged.watchNightHeart = null;
+                    merged.ringNight = false;
+                }
+            }
+            for (int i = recent.size() - 1; i >= 0; i--) {
+                String dd = recent.get(i).optString("day");
+                if (dd.equals(today.toString()) || dd.equals(back)) recent.remove(i);
+            }
+        }
+        boolean watchNight = merged != null && merged.watchNight != null;
+        // the device nights around the date, each {start, end}: a night by hand they overlap is replaced
+        List<double[]> ringSpans = new ArrayList<double[]>(), watchSpans = new ArrayList<double[]>();
+        java.util.Set<String> deviceDays = new java.util.HashSet<String>();
+        for (JSONObject o : recent) {
+            ringSpans.add(new double[] {Json.d(o, "start"), Json.d(o, "end")});
+            deviceDays.add(o.optString("day"));
+        }
+        for (JSONObject o : watchRecent) {
+            watchSpans.add(new double[] {Json.d(o, "start"), Json.d(o, "end")});
+            deviceDays.add(o.optString("day"));
+        }
+        if (night != null) ringSpans.add(new double[] {Json.d(night, "start"), Json.d(night, "end")});
+        if (watchNight) watchSpans.add(new double[] {merged.watchNight.start, merged.watchNight.end});
+        double age = p.age();
+        hand = app.openring.data.HandNights.forDay(db, date, zone);
+        if (hand != null) {
+            int from = app.openring.core.MainDevice.nightFrom(shown.main, night != null, watchNight, true);
+            if (from == app.openring.core.MainDevice.HAND) {
+                if (app.openring.core.HandNight.overlaps(hand.start, hand.stop, ringSpans)) from = app.openring.core.MainDevice.RING;
+                else if (app.openring.core.HandNight.overlaps(hand.start, hand.stop, watchSpans)) from = app.openring.core.MainDevice.WATCH;
+            }
+            if (from == app.openring.core.MainDevice.HAND) {
+                night = app.openring.data.HandNights.nightJson(hand, date, zone, age);
+                handShown = true;
+                anyNight = true;
+            } else {
+                handReplacedBy = from;
+            }
+        }
+        // the recent nights strip: the nights by hand of the days around the date that have no device night
+        LocalDate last = date.plusDays(Db.RECENT_DAYS);
+        if (last.isAfter(today)) last = today.isBefore(date) ? date : today;
+        app.openring.core.DeviceHistory.DayZones zones = app.openring.data.ShownNights.with(
+                app.openring.data.WatchHistory.dayZones(db, java.time.ZoneId.systemDefault()), date, zone);
+        boolean added = false;
+        for (Map.Entry<LocalDate, JSONObject> e : app.openring.data.HandNights.days(db, date.minusDays(Db.RECENT_DAYS), last, zones, age).entrySet()) {
+            JSONObject o = e.getKey().equals(date) ? (handShown ? night : null) : e.getValue();
+            if (o == null || deviceDays.contains(e.getKey().toString())) continue;
+            double s = Json.d(o, "start"), en = Json.d(o, "end");
+            if (app.openring.core.HandNight.overlaps(s, en, ringSpans) || app.openring.core.HandNight.overlaps(s, en, watchSpans)) continue;
+            recent.add(o);
+            if (!has.ring) watchRecent.add(o);
+            added = true;
+        }
+        if (added) {
+            byStart(recent);
+            byStart(watchRecent);
+        }
+        if (handShown && has.ring && (day == null || !day.has("readiness"))) handReadiness();
+        long now = System.currentTimeMillis() / 1000;
+        long synced = demo ? now : Math.max(p.lastSync(), p.watchLastOk());
+        handAsk = app.openring.core.HandNight.ask(date, today, night != null || watchNight, has.ring || has.watch, synced, now, zone, p.handNotNow());
+    }
+
+    private static void byStart(List<JSONObject> l) {
+        java.util.Collections.sort(l, new java.util.Comparator<JSONObject>() {
+            @Override
+            public int compare(JSONObject a, JSONObject b) {
+                return Double.compare(Json.d(a, "start"), Json.d(b, "start"));
+            }
+        });
+    }
+
+    /**
+     * Readiness of a day whose night is by hand (issue #427), with a ring and no stored readiness: its sleep score and sleep
+     * balance and the activity parts from the stored days before; heart rate, HRV and temperature left out, as for a day without
+     * the ring (#341). Shown only, never stored: {@link #day} becomes a copy with it. Sleep balance and the sleep need read only the
+     * nights of the recent strip (30 days around the date, not the 104 the analysis reads), so this readiness can differ slightly
+     * from one the analysis would store.
+     */
+    void handReadiness() {
+        JSONObject sc = night.optJSONObject("score");
+        double sleepScore = sc == null || !sc.has("value") ? Double.NaN : sc.optDouble("value");
+        List<JSONObject> prev = new ArrayList<JSONObject>();
+        for (int i = 28; i >= 1; i--) {
+            JSONObject o = history.get(date.minusDays(i).toString());
+            if (o != null) prev.add(o);
+        }
+        int np = prev.size();
+        double[] active = new double[np], target = new double[np], covered = new double[np];
+        for (int i = 0; i < np; i++) {
+            active[i] = Json.d(prev.get(i), "active_kcal");
+            target[i] = Json.d(prev.get(i), "target_kcal");
+            covered[i] = prev.get(i).optDouble("covered_min", 0);
+        }
+        boolean lastIsYesterday = history.get(date.minusDays(1).toString()) != null;
+        Map<String, Double> asleep = new HashMap<String, Double>();
+        for (JSONObject o : recent) {
+            String dd = o.optString("day");
+            Double v = asleep.get(dd);
+            asleep.put(dd, (v == null ? 0 : v) + o.optDouble("asleep_min", 0) * 60);
+        }
+        if (!recent.contains(night)) asleep.put(date.toString(), Json.d(night, "asleep_min") * 60);
+        double[] a14 = new double[14], prior = new double[90];
+        for (int i = 0; i < 14; i++) {
+            Double v = asleep.get(date.minusDays(i).toString());
+            a14[i] = v == null ? Double.NaN : v;
+        }
+        for (int k = 0; k < 90; k++) {
+            Double v = asleep.get(date.minusDays(k + 1).toString());
+            prior[k] = v == null ? Double.NaN : v;
+        }
+        app.openring.core.HandNight.Ready r = app.openring.core.HandNight.readiness(sleepScore, active, target, covered, lastIsYesterday, a14,
+                app.openring.core.HandNight.need(prior));
+        JSONObject copy = day == null ? new JSONObject() : Json.parse(day.toString());
+        if (copy == null) return;
+        JSONObject rs = Json.score(r.score);
+        Json.put(rs, "hand", true);
+        Json.put(copy, "readiness", rs);
+        if (r.prevUnworn && np > 0) Json.put(copy, "prev_day_unworn", true);
+        day = copy;
+        history.put(date.toString(), copy);
+    }
+
     /**
      * Notes a part of loading {@code date} that failed and kept its fallback (issue #235): a warning in Android's log
      * with the stack trace, a line with the full error in the app's Log tab, and for the data check
@@ -291,6 +449,17 @@ public final class DayData {
             if (o != null && !hideRing) d.history.put(r[0], o);
         }
         d.merge(c, db);
+        try {
+            d.hands(c, db);
+        } catch (RuntimeException e) {
+            // the day shows as without a night by hand; the stored rows are not touched
+            if (app.openring.data.HandNights.isHand(d.night)) d.night = null;
+            d.hand = null;
+            d.handShown = false;
+            d.handReplacedBy = -1;
+            d.handOk = false;
+            d.ok = failed(c, date, "nights by hand", e);
+        }
         try {
             d.batteries(c, db, System.currentTimeMillis() / 1000);
         } catch (RuntimeException e) {

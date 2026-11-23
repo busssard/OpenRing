@@ -164,6 +164,8 @@ public final class DataCheck {
         t.append(PhoneStore.checkLines(db, p, today, ZoneId.systemDefault()));
         // the sleep sounds (issue #380): counts only, never a time, kind, file name or sound
         t.append(Sounds.checkLine(db));
+        // the nights entered by hand (issue #427): counts only, never a time or a day
+        t.append(HandNights.checkLine(db));
         // the nights themselves, counts and dates only (issue #40): which day each sleep period was given
         // to is what the screens go by; times, minutes and scores are health values and stay out
         t.append(nightSummary(db.nightsJson(today.minusDays(NIGHT_DAYS - 1).toString(), "9999-12-31", false), today, NIGHT_DAYS));

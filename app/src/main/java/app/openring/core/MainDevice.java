@@ -126,6 +126,22 @@ public final class MainDevice {
         return ringNight ? RING : -1;
     }
 
+    /**
+     * A night entered by hand (issue #427): a night source, never a main device (not one of {@link #choices}, never stored as
+     * the main device).
+     */
+    public static final int HAND = 3;
+
+    /**
+     * As above with a night by hand as the third source, after the ring and the watch: {@link #HAND} only when neither device
+     * has a night for the day ({@code handNight}: the day has one by hand). A device's night always wins; the one by hand stays
+     * stored.
+     */
+    public static int nightFrom(int main, boolean ringNight, boolean watchNight, boolean handNight) {
+        int device = nightFrom(main, ringNight, watchNight);
+        return device >= 0 ? device : handNight ? HAND : -1;
+    }
+
     /** A device's name in a sentence ("your watch"). */
     public static String name(int device) {
         return device == WATCH ? "your watch" : device == PHONE ? "your phone" : "your ring";

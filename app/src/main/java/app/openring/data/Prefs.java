@@ -248,6 +248,9 @@ public final class Prefs {
     public long lastHeard() { return sp.getLong("last_heard", 0); }
     public void setLastHeard(long t) { sp.edit().putLong("last_heard", t).apply(); }
     public long lastSync() { return sp.getLong("last_sync", 0); }
+    /** The day (yyyy-mm-dd) Not now was tapped on Today's question for a night by hand (issue #427): hidden for that night only. */
+    public String handNotNow() { return sp.getString("hand_not_now", null); }
+    public void setHandNotNow(String day) { sp.edit().putString("hand_not_now", day).apply(); }
     public long lastAttempt() { return sp.getLong("last_attempt", 0); }
     public void setLastAttempt(long t) { sp.edit().putLong("last_attempt", t).apply(); }
     public void setLastSync(long t) { sp.edit().putLong("last_sync", t).apply(); }

@@ -241,13 +241,74 @@ public final class Layout {
     // ------------------------------------------------------------------------------------------------ folded lines
 
     /**
-     * The line of a folded score dial: "96, Optimal, 7h 28m asleep" (the score, its word and the dial's big line, #411's time
-     * asleep on Sleep); without a score the big line, else {@code sub}, the line under the dial (a watch night without a score).
+     * The line of a folded score card next to its small dial (owner's wish of 21 November): the score's word and the dial's big
+     * line, "Optimal, 7h 28m asleep" (#411's time asleep on Sleep), as the number is in the dial; without a score (no dial) the
+     * big line, else {@code sub}, the line under the dial (a watch night without a score).
      */
     public static String dialSummary(double score, String big, String sub) {
         if (Double.isNaN(score)) return big != null ? big : sub;
-        String s = Math.round(score) + ", " + app.openring.core.analysis.Scores.verdict((int) score);
+        String s = app.openring.core.analysis.Scores.verdict((int) score);
         return big != null ? s + ", " + big : s;
+    }
+
+    /**
+     * The small score dials of a folded tile (owner's wish of 21 November): the scores that are there, in their order, with
+     * their colours and names. One dial goes left of a score card's title, several go in a row (Today's Scores tile).
+     */
+    public static final class Dials {
+        public final double[] values;
+        public final int[] colors;
+        public final String[] names;
+
+        Dials(double[] values, int[] colors, String[] names) {
+            this.values = values;
+            this.colors = colors;
+            this.names = names;
+        }
+
+        /** The number dial {@code i} shows, rounded as the big dials round it. */
+        public long shown(int i) {
+            return Math.round(values[i]);
+        }
+
+        /**
+         * What TalkBack says for the dials as part of the tile's name: the number alone for one dial (the title names it,
+         * "Readiness score, 95, Optimal"), else the names with their numbers ("Scores, Readiness 95, sleep 96").
+         */
+        public String spoken() {
+            return values.length == 1 ? String.valueOf(shown(0)) : scoresLine(values, names);
+        }
+    }
+
+    /** The dials for these scores, leaving out the missing ones (NaN); null when none is left (the tile keeps its line). */
+    public static Dials dials(double[] values, int[] colors, String[] names) {
+        int n = 0;
+        for (double v : values) if (!Double.isNaN(v)) n++;
+        if (n == 0) return null;
+        double[] vs = new double[n];
+        int[] cs = new int[n];
+        String[] ns = new String[n];
+        for (int i = 0, j = 0; i < values.length; i++) {
+            if (Double.isNaN(values[i])) continue;
+            vs[j] = values[i];
+            cs[j] = colors[i];
+            ns[j++] = names[i];
+        }
+        return new Dials(vs, cs, ns);
+    }
+
+    /**
+     * Scores with their names in one line, "Readiness 94, sleep 89, activity 99, screen 87", leaving out the missing ones (NaN);
+     * null when none is there. Today's folded Scores tile without dials, and what TalkBack says for its row of dials.
+     */
+    public static String scoresLine(double[] values, String[] names) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < values.length; i++) {
+            if (Double.isNaN(values[i])) continue;
+            if (b.length() > 0) b.append(", ");
+            b.append(b.length() == 0 ? names[i] : names[i].toLowerCase(Locale.ROOT)).append(' ').append(Math.round(values[i]));
+        }
+        return b.length() == 0 ? null : b.toString();
     }
 
     /**

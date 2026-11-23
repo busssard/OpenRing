@@ -48,7 +48,7 @@ public final class RingScanner {
             if (uuids != null) for (ParcelUuid u : uuids) if (Protocol.SERVICE.equals(u.getUuid())) return true;
             if (name == null) name = rec.getDeviceName();
         }
-        return name != null && name.toLowerCase().contains("oura");
+        return app.openring.core.rings.RingFamily.ouraName(name); // one name rule with the Device check (review of #430)
     }
 
     /**

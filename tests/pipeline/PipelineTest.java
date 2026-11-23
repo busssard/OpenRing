@@ -29,7 +29,7 @@ import app.openring.data.Json;
 public class PipelineTest {
     static int passed, failed;
     /** The schema version of this app (issue #251 made it 9). */
-    static final int CUR = 13;
+    static final int CUR = 14;
 
     static void check(String name, boolean ok, Object info) {
         if (ok) passed++;
@@ -961,6 +961,12 @@ public class PipelineTest {
         soundDataCheck380();
         soundLarge380();
         soundReview420();
+        handUpgrade427();
+        handDeviceWins427();
+        handEdits427();
+        handRestore427();
+        handResets427();
+        handLarge427();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -15254,6 +15260,26 @@ public class PipelineTest {
         return app.openring.data.LifeLog.on(db, day);
     }
 
+    static Db db422(Context c) {
+        return Db.get(c);
+    }
+
+    /**
+     * Runs {@code write} with {@code LifeLog.failRowsAfter} at 1 (a stop after the first row of a write over several rows);
+     * true when it stopped. The caller then checks every row is as before.
+     */
+    static boolean stopped422(Runnable write) throws Exception {
+        setField252(app.openring.data.LifeLog.class, "failRowsAfter", 1);
+        try {
+            write.run();
+            return false;
+        } catch (IllegalStateException e) {
+            return "test stop".equals(e.getMessage());
+        } finally {
+            setField252(app.openring.data.LifeLog.class, "failRowsAfter", -1);
+        }
+    }
+
     /** The own tags not removed (Remove one of your own) and their names, as "key=name" each. */
     static String own422(Db db) {
         return app.openring.data.LifeLog.known(db).own().toString();
@@ -15318,6 +15344,10 @@ public class PipelineTest {
         app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
         db = Db.get(c);
         check("#422 the same restore twice: the same rows, one Sauna", lifeRows292(db).equals(merged) && own422(db).equals("[" + older + "=Sauna chip]"), null);
+        // a tap off on a day both keys hold, stopped after its first row: nothing written
+        check("#422 a tap off on a day both hold, stopped after the first row: every row as it was, the day still there",
+                stopped422(() -> app.openring.data.LifeLog.set(Db.get(c), "2019-06-02", older, false, 2900)) && lifeRows292(db).equals(merged)
+                && on422(db, "2019-06-02").equals(Arrays.asList(older)), null);
         // a tap off on a day both keys hold: a removal mark for each, the day gone; Undo puts both rows back as they were
         List<app.openring.data.LifeLog.Row> before = app.openring.data.LifeLog.before(db, "2019-06-02", older, false);
         long rows = db.count("SELECT COUNT(*) FROM life_days");
@@ -15353,11 +15383,19 @@ public class PipelineTest {
         check("#422 a new own tag with the same name is still refused", app.openring.data.LifeLog.addOwn(db, "sauna", 1580000000000L) == null, null);
         // removing the factor removes every key of it; its days stay; bringing it back brings them all
         long days = db.count("SELECT COUNT(*) FROM life_days");
+        String three = lifeRows292(db);
+        check("#422 removing Sauna, stopped after the first key: every row as it was, Sauna still there",
+                stopped422(() -> app.openring.data.LifeLog.removeOwn(Db.get(c), older, 4900)) && lifeRows292(db).equals(three)
+                && own422(db).equals("[" + older + "=Sauna chip]"), own422(db));
         app.openring.data.LifeLog.removeOwn(db, older, 5000);
         check("#422 removing Sauna removes all three keys (removal marks), the days stay", app.openring.data.LifeLog.known(db).own().isEmpty()
                 && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "', '" + third + "') AND gone = 1 AND shown = 0") == 3
                 && db.count("SELECT COUNT(*) FROM life_days") == days && on422(db, "2019-06-15").equals(Arrays.asList(older))
                 && app.openring.data.LifeLog.known(db).name(newer).equals("Sauna"), null);
+        String removed = lifeRows292(db);
+        check("#422 bringing Sauna back, stopped after the first key: every row as it was, all three still removed",
+                stopped422(() -> app.openring.data.LifeLog.addOwn(Db.get(c), "SAUNA", 1585000000000L)) && lifeRows292(db).equals(removed)
+                && app.openring.data.LifeLog.known(db).own().isEmpty(), null);
         String back = app.openring.data.LifeLog.addOwn(db, "SAUNA", 1590000000000L);
         check("#422 the name again brings all three back as one, under the older key", older.equals(back) && own422(db).equals("[" + older + "=Sauna chip]")
                 && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "', '" + third + "') AND gone = 0 AND shown = 1") == 3, back);
@@ -15556,6 +15594,25 @@ public class PipelineTest {
                 inReal = rs.getLong(1);
             }
             check("#292 demo: the real file holds no demo tag", inReal == 0, inReal);
+            // issue #427: the demo's made up night by hand, in the demo file only, on the day before yesterday, where the demo ring's
+            // night is shown and the one by hand stays stored
+            app.openring.data.HandNights.Row hn = app.openring.data.HandNights.forDay(demo, today.minusDays(app.openring.core.HandNight.DEMO_BACK), ZoneId.systemDefault());
+            long handInReal;
+            try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + realFile.getPath());
+                 java.sql.ResultSet rs = cn.createStatement().executeQuery("SELECT COUNT(*) FROM sleep_manual")) {
+                rs.next();
+                handInReal = rs.getLong(1);
+            }
+            check("#427 demo: a made up night by hand with two wake marks in the demo file, none in the real file", hn != null && hn.marks().size() == 2
+                    && handCount427(demo) == 1 && handInReal == 0, hn);
+            LocalDate hd = today.minusDays(app.openring.core.HandNight.DEMO_BACK);
+            boolean handShown = false, ringShown = false;
+            for (JSONObject o : app.openring.data.ShownNights.main(demo, hd, hd, app.openring.data.ShownNights.Devices.RING,
+                    app.openring.data.WatchHistory.dayZones(demo, ZoneId.systemDefault()))) {
+                handShown |= app.openring.data.HandNights.isHand(o);
+                ringShown |= !app.openring.data.HandNights.isHand(o);
+            }
+            check("#427 demo: on that day the demo ring's night is shown, the one by hand only stored", ringShown && !handShown, null);
             Analyzer.runAll(c, null);
             List<String> without = results139(demo);
             demo.getWritableDatabase().execSQL("DELETE FROM life_days");
@@ -15684,6 +15741,8 @@ public class PipelineTest {
         session251(db, 1000, made251(T251, 80), T251 + 86400);
         app.openring.data.PhoneStore.addAll(db, readings329(5, LocalDate.of(2019, 3, 1).atStartOfDay(Z58).toEpochSecond(), 30, 0, 380));
         someLife292(db);
+        // the nights by hand (issue #427), so the kept tables test fills sleep_manual too
+        someHand427(db);
     }
 
     static void version380(Context c, int v, String... sql) throws Exception {
@@ -15896,8 +15955,10 @@ public class PipelineTest {
 
     /**
      * Issue #380: the three tables are kept when another ring is paired (rows and files), emptied by Delete all with every clip
-     * file of both folders and the copies before updates (one method, {@code DeleteAll.run}); Delete all failing part way keeps
-     * rows and files; in demo mode it empties the demo file and the demo's folder and never touches the real ones.
+     * file of the history's own folder and the copies before updates (one method, {@code DeleteAll.run}); Delete all failing
+     * part way keeps rows and files; on the real history it leaves the demo file's marks and the demo's folder alone (code
+     * review of ee03389 on #420: before, it emptied the demo folder and left demo marks without their files); in demo mode it
+     * empties the demo file and the demo's folder and never touches the real ones.
      */
     static void soundResets380() throws Exception {
         List<String> keep = Arrays.asList((String[]) field252(Db.class, "KEPT_TABLES"));
@@ -15929,13 +15990,34 @@ public class PipelineTest {
         db.getWritableDatabase().execSQL("DROP TRIGGER stop_sound");
         check("#380 Delete all failing part way: the sounds, their files and the demo's as they were", got != null && soundRows380(db).equals(rows)
                 && files380(real).equals(files) && files380(demo).equals(Arrays.asList("tone.wav")), got);
-        // Delete all: no row, no clip file in either folder, no copy before an update
+        // a demo mark with its file, to show Delete all on the real history leaves them alone
+        app.openring.data.Prefs.of(c).setDemo(true);
+        String demoRows;
+        try {
+            Db d = Db.get(c);
+            app.openring.data.Sounds.addClip(d, N380, N380 + 5, app.openring.core.analysis.SoundDetector.SNORE, -30.0, "tone.wav");
+            demoRows = soundRows380(d);
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        db = Db.get(c);
+        // Delete all: no row, no clip file of the real history, no copy before an update
         File copies = new File(c.getFilesDir(), "before-update");
         copies.mkdirs();
         java.nio.file.Files.write(new File(copies, "openring-1.42.db").toPath(), new byte[10]);
         app.openring.data.DeleteAll.run(c);
-        check("#380 Delete all: every table empty, no clip file in either folder, no copy before an update", notEmpty272(db).isEmpty() && !real.exists()
-                && !demo.exists() && files380(copies).isEmpty(), notEmpty272(db) + " " + files380(real) + " " + files380(demo));
+        check("#380 Delete all: every table empty, no clip file in the real folder, no copy before an update", Db.REAL.equals(db.fileName) && notEmpty272(db).isEmpty()
+                && !real.exists() && files380(copies).isEmpty(), notEmpty272(db) + " " + files380(real));
+        check("#380 Delete all on the real history: the demo's folder keeps its file", files380(demo).equals(Arrays.asList("tone.wav")), files380(demo));
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            check("#380 Delete all on the real history: the demo file's mark is as it was and still names a file that is there", demoRows.contains("tone.wav")
+                    && soundRows380(d).equals(demoRows) && new File(app.openring.data.Sounds.folder(c, d), "tone.wav").isFile(), soundRows380(d));
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        db = Db.get(c);
         // demo mode: Delete all empties the demo file and its folder; the real file and folder stay
         someSounds380(c, db);
         rows = soundRows380(db);
@@ -16212,6 +16294,405 @@ public class PipelineTest {
                 && db.count("SELECT COUNT(*) FROM sound_clips WHERE start = " + (N380 + 300) + " AND gone = 0 AND file = 'late.m4a'") == 1, soundRows380(db));
         String text = DataCheck.run(c).text;
         check("#420 the Data check counts marks without sound as clips without sound", text.contains("\nSleep sounds: 0 nights, 4 clips (2 with sound)\n"), text);
+        clean254();
+    }
+
+    // ---------------------------------------------------------------- issue #427: nights entered by hand
+
+    static final String[] DROP14 = {"DROP TABLE sleep_manual"};
+
+    /** Unix seconds of {@code date} at {@code h:m} in the test zone (Europe/Zurich). */
+    static double at427(String date, int h, int m) {
+        return LocalDate.parse(date).atTime(h, m).atZone(Z58).toEpochSecond();
+    }
+
+    /** Every row of {@code sleep_manual}, sorted, one per line: what upgrades, restores and pairing must keep exactly. */
+    static String handRows427(Db db) {
+        List<String> l = tableRows380(db, "sleep_manual");
+        java.util.Collections.sort(l);
+        StringBuilder b = new StringBuilder();
+        for (String s : l) b.append(s).append('\n');
+        return b.toString();
+    }
+
+    static long handCount427(Db db) {
+        return db.count("SELECT COUNT(*) FROM sleep_manual");
+    }
+
+    /** Made up nights by hand in March 2019 (far from the ring history): one with a wake mark, one without, one deleted. */
+    static void someHand427(Db db) {
+        List<double[]> m = new ArrayList<double[]>();
+        m.add(new double[] {at427("2019-03-05", 2, 0), at427("2019-03-05", 2, 15)});
+        app.openring.data.HandNights.save(db, at427("2019-03-04", 23, 0), at427("2019-03-05", 7, 0), m, 1000);
+        app.openring.data.HandNights.save(db, at427("2019-03-06", 22, 30), at427("2019-03-07", 6, 30), new ArrayList<double[]>(), 1001);
+        app.openring.data.HandNights.save(db, at427("2019-03-08", 23, 10), at427("2019-03-09", 7, 20), new ArrayList<double[]>(), 1002);
+        app.openring.data.HandNights.remove(db, 1002);
+    }
+
+    /**
+     * Issue #427, data safety: a schema 13 history (ring, period log, watch, phone steps, life factors, sleep sounds) upgrades to
+     * 14 with every row as before and an empty {@code sleep_manual}; run twice it keeps the nights by hand; an upgrade stopped
+     * after the table was made (the version still 13) goes on and keeps them; a schema 12 history upgrades the same way.
+     */
+    static void handUpgrade427() throws Exception {
+        Context c = phone254("openring427-up");
+        Db db = Db.get(c);
+        otherKept380(db);
+        someSounds380(c, db);
+        db.getWritableDatabase().execSQL("DELETE FROM sleep_manual");
+        List<String> before = results139(db), ev = events58(db);
+        String periods = periodRows252(db), watch = watchRows251(db), phone = phoneRows329(db), life = lifeRows292(db), sounds = soundRows380(db),
+                state = results252(db);
+        version380(c, 13, DROP14);
+        db = Db.get(c);
+        check("#427 upgrade from schema 13: version " + CUR + ", an empty sleep_manual, every event, night, day, period, watch, phone, life and sound row the same",
+                db.getReadableDatabase().getVersion() == CUR && handCount427(db) == 0 && events58(db).equals(ev) && results139(db).equals(before)
+                        && periodRows252(db).equals(periods) && watchRows251(db).equals(watch) && phoneRows329(db).equals(phone)
+                        && lifeRows292(db).equals(life) && soundRows380(db).equals(sounds), db.getReadableDatabase().getVersion());
+        check("#427 upgrade from schema 13: the schema check of this version passes, nothing to analyse again, the analysis state as before",
+                schemaProblem251(db) == null && Analyzer.upToDate(c) && results252(db).equals(state), schemaProblem251(db));
+        someHand427(db);
+        String hand = handRows427(db);
+        check("#427 the made up nights by hand are stored (3 rows, 1 deleted)", handCount427(db) == 3
+                && db.count("SELECT COUNT(*) FROM sleep_manual WHERE gone = 1") == 1, hand);
+        check("#427 writing nights by hand starts no analysis: nights, days and the analysis state as before", results139(db).equals(before)
+                && results252(db).equals(state) && Analyzer.upToDate(c), null);
+        version380(c, 13);
+        db = Db.get(c);
+        check("#427 the upgrade run twice (or stopped after the table was made, the version still 13) keeps every night by hand and the whole history",
+                db.getReadableDatabase().getVersion() == CUR && handRows427(db).equals(hand) && events58(db).equals(ev) && results139(db).equals(before)
+                        && periodRows252(db).equals(periods) && watchRows251(db).equals(watch) && phoneRows329(db).equals(phone)
+                        && lifeRows292(db).equals(life) && soundRows380(db).equals(sounds), null);
+        // stopped part way through an upgrade from 12: the sound tables not made yet, sleep_manual already there
+        version380(c, 12, DROP13);
+        db = Db.get(c);
+        check("#427 an upgrade from 12 stopped part way goes on: the sound tables made, the nights by hand kept", db.getReadableDatabase().getVersion() == CUR
+                && schemaProblem251(db) == null && handRows427(db).equals(hand) && soundCount380(db) == 0 && events58(db).equals(ev)
+                && results139(db).equals(before), schemaProblem251(db));
+        List<String> sql = new ArrayList<String>(Arrays.asList(DROP14));
+        sql.addAll(Arrays.asList(DROP13));
+        version380(c, 12, sql.toArray(new String[0]));
+        db = Db.get(c);
+        check("#427 upgrade from schema 12 with history: version " + CUR + ", every event, night, day, period, watch, phone and life row the same, sound and hand tables empty",
+                db.getReadableDatabase().getVersion() == CUR && schemaProblem251(db) == null && handCount427(db) == 0 && soundCount380(db) == 0
+                        && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods) && watchRows251(db).equals(watch)
+                        && phoneRows329(db).equals(phone) && lifeRows292(db).equals(life) && Analyzer.upToDate(c), schemaProblem251(db));
+        // Re analyse all keeps them
+        someHand427(db);
+        hand = handRows427(db);
+        Analyzer.runAll(c, null);
+        check("#427 Re analyse all keeps every night by hand", handRows427(Db.get(c)).equals(hand), null);
+        clean254();
+    }
+
+    /**
+     * Issue #427: a device night always wins. A night by hand on a day the ring has a night stays stored and is not shown; one on a
+     * day without a device night is shown (Screen tab, badges and Further analysis read it); a device night that arrives later for
+     * the same night wins and the one by hand stays stored. The ring's own nights never change.
+     */
+    static void handDeviceWins427() throws Exception {
+        Context c = phone254("openring427-wins");
+        Db db = Db.get(c);
+        List<String> ringJs = db.nightsJson("2000-01-01", "2100-01-01", true);
+        check("#427 (test setup) the ring history has main nights", ringJs.size() >= 2, ringJs.size());
+        JSONObject first = Json.parse(ringJs.get(0)), lastN = Json.parse(ringJs.get(ringJs.size() - 1));
+        LocalDate d0 = LocalDate.parse(first.optString("day")), d1 = LocalDate.parse(lastN.optString("day"));
+        app.openring.core.DeviceHistory.DayZones zones = app.openring.data.WatchHistory.dayZones(db, Z58);
+        List<JSONObject> ringOnly = app.openring.data.ShownNights.main(db, d0.minusDays(2), d1.plusDays(6), app.openring.data.ShownNights.Devices.RING, zones);
+        List<String> results = results139(db);
+        // a night by hand over the ring's first night: stored, never shown
+        double s = Json.d(first, "start"), e = Json.d(first, "end");
+        app.openring.data.HandNights.save(db, app.openring.core.HandNight.snap(s + 900), app.openring.core.HandNight.snap(e - 900), new ArrayList<double[]>(), 3000);
+        List<JSONObject> shown = app.openring.data.ShownNights.main(db, d0.minusDays(2), d1.plusDays(6), app.openring.data.ShownNights.Devices.RING, zones);
+        check("#427 a night by hand under a ring night: the ring's night is shown, the list exactly as without it", shown.toString().equals(ringOnly.toString()), shown.size());
+        check("#427 ... and the night by hand stays stored, in force", handCount427(db) == 1 && app.openring.data.HandNights.row(db, 3000) != null
+                && !app.openring.data.HandNights.row(db, 3000).gone, null);
+        // a day without a device night: shown, in its place by start
+        LocalDate free = d1.plusDays(3);
+        double fs = at427(free.minusDays(1).toString(), 23, 0), fe = at427(free.toString(), 6, 45);
+        List<double[]> marks = new ArrayList<double[]>();
+        marks.add(new double[] {at427(free.toString(), 3, 0), at427(free.toString(), 3, 20)});
+        app.openring.data.HandNights.save(db, fs, fe, marks, 3001);
+        shown = app.openring.data.ShownNights.main(db, d0.minusDays(2), d1.plusDays(6), app.openring.data.ShownNights.Devices.RING, zones);
+        JSONObject hand = shown.get(shown.size() - 1);
+        check("#427 a day without a device night shows its night by hand, after the ring's nights, the ring's unchanged", shown.size() == ringOnly.size() + 1
+                && app.openring.data.HandNights.isHand(hand) && free.toString().equals(hand.optString("day"))
+                && shown.subList(0, ringOnly.size()).toString().equals(ringOnly.toString()), shown.size());
+        List<double[]> back = app.openring.data.HandNights.marks(hand);
+        check("#427 the night JSON keeps its wake mark and key, a ring night has none", back.size() == 1 && back.get(0)[0] == marks.get(0)[0]
+                && back.get(0)[1] == marks.get(0)[1] && Json.d(hand, "made") == 3001 && app.openring.data.HandNights.marks(first).isEmpty()
+                && app.openring.data.HandNights.marks(null).isEmpty() && !app.openring.data.HandNights.isHand(first) && !app.openring.data.HandNights.isHand(null), back.size());
+        check("#427 the night by hand in the ring's night fields: 7 h 25 min asleep, 1 wake up of 20 min, no stages, no heart rate",
+                Json.d(hand, "asleep_min") == 445 && hand.optInt("awakenings") == 1 && Json.d(hand, "waso_min") == 20 && Json.d(hand, "in_bed_min") == 465
+                        && "".equals(hand.optString("stages")) && !hand.has("lowest_hr") && !hand.has("avg_hrv") && !hand.has("efficiency")
+                        && !hand.has("latency_min") && !hand.has("deep_min") && hand.optJSONObject("score").optBoolean("hand"), hand);
+        // Further analysis counts it (the ring's nights and the one by hand)
+        app.openring.data.SleepHistory h = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", Z58);
+        app.openring.data.SleepHistory hr = app.openring.data.SleepHistory.of(ringOnlyParsed(db), Z58);
+        check("#427 Further analysis counts the night by hand of a day without a ring night, not the one under a ring night", h.nights == hr.nights + 1, h.nights + " vs " + hr.nights);
+        check("#427 Further analysis: the efficiency stays the ring's (a night by hand has none)", Math.abs(h.efficiency - hr.efficiency) < 1e-9, h.efficiency + " vs " + hr.efficiency);
+        // review of #429: a night by hand a WATCH night replaced is not counted either (its Sleep tab says it was replaced)
+        LocalDate wday = d1.plusDays(5);
+        app.openring.data.HandNights.save(db, at427(wday.minusDays(1).toString(), 23, 30), at427(wday.toString(), 6, 30), new ArrayList<double[]>(), 3002);
+        int withHand = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", Z58).nights;
+        sleep389(db, "w427", wday, true, Z58);
+        int withWatch = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", Z58).nights;
+        boolean listed = false;
+        for (JSONObject o : app.openring.data.HandNights.withoutRingNight(db, "2000-01-01", "2100-01-01", Z58)) listed |= wday.toString().equals(o.optString("day"));
+        check("#427 Further analysis: a night by hand is counted until a watch night replaces it, then left out (stored still)", withHand == hr.nights + 2
+                && withWatch == hr.nights + 1 && !listed && app.openring.data.HandNights.row(db, 3002) != null && !app.openring.data.HandNights.row(db, 3002).gone,
+                withHand + " " + withWatch);
+        db.getWritableDatabase().execSQL("DELETE FROM watch_sleep");
+        db.getWritableDatabase().execSQL("DELETE FROM sleep_manual WHERE made = 3002");
+        // a device night that arrives later for the same night wins; the one by hand stays stored
+        JSONObject later = Json.parse(ringJs.get(0));
+        later.put("day", free.toString());
+        later.put("start", fs - 600);
+        later.put("end", fe + 300);
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                new Object[] {fs - 600, fe + 300, free.toString(), later.toString()});
+        shown = app.openring.data.ShownNights.main(db, d0.minusDays(2), d1.plusDays(6), app.openring.data.ShownNights.Devices.RING, zones);
+        boolean anyHand = false;
+        for (JSONObject o : shown) anyHand |= app.openring.data.HandNights.isHand(o);
+        check("#427 a later device night on the same date wins: the night by hand is no longer shown, both are stored", !anyHand && shown.size() == ringOnly.size() + 1
+                && handCount427(db) == 2 && app.openring.data.HandNights.forDay(db, free, Z58) != null, shown.size());
+        db.getWritableDatabase().execSQL("DELETE FROM nights WHERE day = ?", new Object[] {free.toString()});
+        check("#427 nights by hand never change the ring's results", results139(db).equals(results), firstDiff(results139(db), results));
+        check("#427 Further analysis of a range that is no date (or ends before it starts) adds no night by hand", app.openring.data.HandNights.withoutRingNight(db, "all", "time", Z58).isEmpty()
+                && app.openring.data.HandNights.withoutRingNight(db, "2030-01-02", "2030-01-01", Z58).isEmpty(), null);
+        app.openring.data.Prefs pr = app.openring.data.Prefs.of(c);
+        check("#427 Not now is noted for one day (nothing yet on a new phone)", pr.handNotNow() == null, pr.handNotNow());
+        pr.setHandNotNow(free.toString());
+        check("#427 Not now: the day it was tapped", free.toString().equals(pr.handNotNow()), pr.handNotNow());
+        clean254();
+    }
+
+    static List<JSONObject> ringOnlyParsed(Db db) {
+        List<JSONObject> out = new ArrayList<JSONObject>();
+        for (String s : db.nightsJson("2000-01-01", "2100-01-01", true)) out.add(Json.parse(s));
+        return out;
+    }
+
+    /**
+     * Issue #427, data safety: Change writes a new row and marks the old one gone (nothing overwritten), Delete marks gone, Undo
+     * of either puts it back; a new entry over a night in force replaces it; a stop half way writes nothing; what is not a night
+     * is refused; a damaged row is kept and not shown.
+     */
+    static void handEdits427() throws Exception {
+        Context c = freshDb("openring427-edits");
+        MADE_254.add(c);
+        Db db = Db.get(c);
+        double s = at427("2019-05-01", 23, 0), e = at427("2019-05-02", 7, 0);
+        List<double[]> m = new ArrayList<double[]>();
+        m.add(new double[] {at427("2019-05-02", 2, 0), at427("2019-05-02", 2, 15)});
+        app.openring.data.HandNights.Saved a = app.openring.data.HandNights.save(db, s, e, m, 100);
+        app.openring.data.HandNights.Row ra = app.openring.data.HandNights.row(db, 100);
+        check("#427 save: one row in force with its wake mark", a.made == 100 && a.replaced.isEmpty() && handCount427(db) == 1 && !ra.gone && ra.start == s
+                && ra.stop == e && ra.marks().size() == 1, ra);
+        app.openring.data.HandNights.Saved b = app.openring.data.HandNights.save(db, s + 1800, e, new ArrayList<double[]>(), 200, 100);
+        check("#427 change: a new row, the old one marked gone and otherwise as it was", handCount427(db) == 2 && b.replaced.equals(Arrays.asList(100.0))
+                && app.openring.data.HandNights.row(db, 100).gone && app.openring.data.HandNights.row(db, 100).toString().equals(ra.toString().replace(" gone", "") + " gone")
+                && !app.openring.data.HandNights.row(db, 200).gone && app.openring.data.HandNights.forDay(db, LocalDate.of(2019, 5, 2), Z58).made == 200, handRows427(db));
+        app.openring.data.HandNights.undo(db, b);
+        check("#427 Undo of the change: the old night in force again, the new one gone, both stored", handCount427(db) == 2
+                && !app.openring.data.HandNights.row(db, 100).gone && app.openring.data.HandNights.row(db, 200).gone
+                && app.openring.data.HandNights.forDay(db, LocalDate.of(2019, 5, 2), Z58).made == 100, handRows427(db));
+        app.openring.data.HandNights.remove(db, 100);
+        check("#427 delete: only a removal mark, the row stays", handCount427(db) == 2 && app.openring.data.HandNights.row(db, 100).gone
+                && app.openring.data.HandNights.forDay(db, LocalDate.of(2019, 5, 2), Z58) == null, handRows427(db));
+        app.openring.data.HandNights.undoRemove(db, 100);
+        check("#427 Undo of the delete: the night in force again, exactly as before", app.openring.data.HandNights.row(db, 100).toString().equals(ra.toString())
+                && app.openring.data.HandNights.forDay(db, LocalDate.of(2019, 5, 2), Z58).made == 100, handRows427(db));
+        app.openring.data.HandNights.Saved c2 = app.openring.data.HandNights.save(db, s + 600, e - 600, new ArrayList<double[]>(), 300);
+        check("#427 a new entry over a night in force replaces it (one night in force per night)", c2.replaced.equals(Arrays.asList(100.0))
+                && app.openring.data.HandNights.row(db, 100).gone && app.openring.data.HandNights.between(db, s - 86400, e + 86400).size() == 1, handRows427(db));
+        app.openring.data.HandNights.Saved twin = app.openring.data.HandNights.save(db, at427("2019-06-01", 23, 0), at427("2019-06-02", 7, 0), new ArrayList<double[]>(), 300);
+        check("#427 two saves in the same second get their own keys", twin.made == 301 && handCount427(db) == 4, twin.made);
+        String rows = handRows427(db);
+        setField252(app.openring.data.HandNights.class, "failSave", true);
+        Throwable got = null;
+        try {
+            app.openring.data.HandNights.save(db, s + 1200, e, new ArrayList<double[]>(), 400);
+        } catch (RuntimeException x) {
+            got = x;
+        } finally {
+            setField252(app.openring.data.HandNights.class, "failSave", false);
+        }
+        check("#427 a save stopped half way writes nothing (the night it would replace stays in force)", got != null && handRows427(db).equals(rows), got);
+        int refused = 0;
+        double[][] bad = {{e, s}, {s, s + 600}, {Double.NaN, e}, {s, Double.POSITIVE_INFINITY}};
+        for (double[] x : bad) {
+            try {
+                app.openring.data.HandNights.save(db, x[0], x[1], new ArrayList<double[]>(), 500);
+            } catch (IllegalArgumentException x2) {
+                refused++;
+            }
+        }
+        check("#427 not a night (Up before In bed, under 30 minutes, no time) is refused, nothing written", refused == bad.length && handRows427(db).equals(rows), refused);
+        db.getWritableDatabase().execSQL("INSERT INTO sleep_manual(made, start, stop, wakes) VALUES (600, NULL, 5, 'x')");
+        db.getWritableDatabase().execSQL("INSERT INTO sleep_manual(made, start, stop, wakes) VALUES (601, ?, ?, '[[1, oops')",
+                new Object[] {at427("2019-07-01", 23, 0), at427("2019-07-02", 7, 0)});
+        app.openring.data.HandNights.Row dmg = app.openring.data.HandNights.forDay(db, LocalDate.of(2019, 7, 2), Z58);
+        check("#427 a damaged row is kept: one without times is not shown, unreadable wake marks show the night without marks",
+                handCount427(db) == 6 && dmg != null && dmg.made == 601 && dmg.marks().isEmpty() && app.openring.data.HandNights.row(db, 600) == null, dmg);
+        clean254();
+    }
+
+    /**
+     * Issue #427, data safety: a restore keeps the phone's nights by hand. The phone's row wins on the same key (a delete or a
+     * change after the backup stays); a row only the backup has comes back; twice gives the same; a backup of schema 13 or 12
+     * (no table) restores with the phone's rows; onto a new phone the backup's rows; a stop at the merge restores nothing; a
+     * table that cannot be read refuses before anything moves.
+     */
+    static void handRestore427() throws Exception {
+        Context c = phone254("openring427-restore");
+        Db db = Db.get(c);
+        someHand427(db);
+        byte[] full = backup252(c);
+        String backupRows = handRows427(db);
+        app.openring.data.HandNights.remove(db, 1000);
+        app.openring.data.HandNights.save(db, at427("2019-03-06", 23, 0), at427("2019-03-07", 6, 30), new ArrayList<double[]>(), 2000, 1001);
+        app.openring.data.HandNights.save(db, at427("2019-04-01", 23, 0), at427("2019-04-02", 7, 0), new ArrayList<double[]>(), 2001);
+        db.getWritableDatabase().execSQL("DELETE FROM sleep_manual WHERE made = 1002");
+        long events = db.eventCount();
+        List<String> results = results139(db);
+        String phone = handRows427(db);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        String merged = handRows427(db);
+        check("#427 restore of this version: the history is the backup's", r.ok && r.history && db.eventCount() == events && results139(db).equals(results), r.message);
+        check("#427 restore: every row of the phone as it was (the delete and the change after the backup stay)", containsRows252(merged, phone)
+                && app.openring.data.HandNights.row(db, 1000).gone && app.openring.data.HandNights.row(db, 1001).gone
+                && !app.openring.data.HandNights.row(db, 2000).gone && !app.openring.data.HandNights.row(db, 2001).gone, merged);
+        check("#427 restore: a row only the backup has comes back as it was (deleted there)", handCount427(db) == 5 && app.openring.data.HandNights.row(db, 1002) != null
+                && app.openring.data.HandNights.row(db, 1002).gone, merged);
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#427 the same restore twice gives the same nights by hand and history", r.ok && handRows427(db).equals(merged) && db.eventCount() == events, r.message);
+        for (int v : new int[] {13, 12}) {
+            List<String> sql = new ArrayList<String>(Arrays.asList(DROP14));
+            if (v <= 12) sql.addAll(Arrays.asList(DROP13));
+            byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), v, sql.toArray(new String[0])));
+            r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
+            db = Db.get(c);
+            check("#427 a backup of schema " + v + " (no sleep_manual) restores at version " + CUR + " with the phone's nights by hand, row for row", r.ok && r.history
+                    && db.getReadableDatabase().getVersion() == CUR && handRows427(db).equals(merged) && db.eventCount() == events, r.message);
+        }
+        Context fresh = freshDb("openring427-fresh");
+        MADE_254.add(fresh);
+        r = app.openring.data.Backup.read(fresh, new java.io.ByteArrayInputStream(full));
+        check("#427 the backup restored onto a new phone: its nights by hand row for row", r.ok && r.history && handRows427(Db.get(fresh)).equals(backupRows), handRows427(Db.get(fresh)));
+        restart242();
+        db = Db.get(c);
+        for (String step : new String[] {"read", "hand", "done"}) {
+            failMerge252(step);
+            try {
+                r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+            } finally {
+                failMerge252(null);
+            }
+            db = Db.get(c);
+            check("#427 a stop at the merge step " + step + ": nothing restored, the phone's nights by hand row for row", !r.ok && handRows427(db).equals(merged)
+                    && db.eventCount() == events && results139(db).equals(results), r.message);
+        }
+        db.getWritableDatabase().execSQL("ALTER TABLE sleep_manual RENAME TO sleep_manual_x");
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        db.getWritableDatabase().execSQL("ALTER TABLE sleep_manual_x RENAME TO sleep_manual");
+        check("#427 nights by hand on the phone that cannot be read: refused, nothing changed", !r.ok && app.openring.data.Backup.PERIODS_UNREADABLE.equals(r.message)
+                && handRows427(db).equals(merged) && db.eventCount() == events, r.message);
+        noTemp(c, "after the #427 restores");
+        clean254();
+    }
+
+    /**
+     * Issue #427: sleep_manual is kept when another ring is paired, emptied by Delete all (a failure part way keeps it); demo mode
+     * writes and deletes only in the demo file; the Data check lists counts only; nothing in sync/ or the log reads it.
+     */
+    static void handResets427() throws Exception {
+        List<String> keep = Arrays.asList((String[]) field252(Db.class, "KEPT_TABLES"));
+        List<String> all = Arrays.asList((String[]) field252(Db.class, "ALL_TABLES"));
+        List<String> ring = Arrays.asList((String[]) field252(Db.class, "RING_TABLES"));
+        check("#427 sleep_manual is kept when another ring is paired, emptied by Delete all", keep.contains("sleep_manual") && all.contains("sleep_manual")
+                && !ring.contains("sleep_manual"), keep);
+        Context c = phone254("openring427-resets");
+        Db db = Db.get(c);
+        String none = DataCheck.run(c).text;
+        check("#427 Data check without nights by hand: 0 kept, 0 deleted or changed", none.contains("\nNights by hand: 0 nights kept, 0 deleted or changed\n"), null);
+        someHand427(db);
+        String text = DataCheck.run(c).text;
+        check("#427 Data check: 2 nights kept, 1 deleted or changed", text.contains("\nNights by hand: 2 nights kept, 1 deleted or changed\n"), null);
+        check("#427 Data check: nothing else changed (no time or day of a night by hand)", text.replaceAll("(?m)^Nights by hand: .*$", "")
+                .equals(none.replaceAll("(?m)^Nights by hand: .*$", "")) && !text.contains("2019-03"), null);
+        String rows = handRows427(db);
+        db.resetRingData();
+        check("#427 pairing another ring: every night by hand stays, the ring's history is gone", handRows427(db).equals(rows) && db.eventCount() == 0, null);
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop_hand BEFORE DELETE ON sleep_manual BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        Throwable got = null;
+        try {
+            app.openring.data.DeleteAll.run(c);
+        } catch (RuntimeException e) {
+            got = e;
+        }
+        db.getWritableDatabase().execSQL("DROP TRIGGER stop_hand");
+        check("#427 Delete all failing part way: the nights by hand as they were", got != null && handRows427(db).equals(rows), got);
+        app.openring.data.DeleteAll.run(c);
+        check("#427 Delete all: every table empty, no night by hand", notEmpty272(db).isEmpty() && handCount427(db) == 0, notEmpty272(db));
+        someHand427(db);
+        rows = handRows427(db);
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            check("#427 (test setup) the demo file is open", Db.DEMO.equals(d.fileName), d.fileName);
+            long before = handCount427(d);
+            app.openring.data.HandNights.save(d, at427("2019-08-01", 23, 0), at427("2019-08-02", 7, 0), new ArrayList<double[]>(), 7000);
+            check("#427 demo mode: a night by hand goes into the demo file", handCount427(d) == before + 1, null);
+            app.openring.data.DeleteAll.run(c);
+            check("#427 Delete all in demo mode: the demo file empty", handCount427(d) == 0, null);
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        db = Db.get(c);
+        check("#427 demo mode never touches the real nights by hand", Db.REAL.equals(db.fileName) && handRows427(db).equals(rows), null);
+        StringBuilder sync = new StringBuilder();
+        for (File f : new File("app/src/main/java/app/openring/sync").listFiles()) sync.append(new String(Files.readAllBytes(f.toPath()), "UTF-8"));
+        String hn = new String(Files.readAllBytes(new File("app/src/main/java/app/openring/data/HandNights.java").toPath()), "UTF-8");
+        check("#427 nothing in sync/ (notifications, background jobs) reads a night by hand, and HandNights writes nothing to the log",
+                !sync.toString().contains("HandNights") && !sync.toString().contains("sleep_manual") && !hn.contains(".log("), null);
+        clean254();
+    }
+
+    /** Issue #427: five years of nights by hand (1,826 rows) are read, counted by Further analysis and carried through a restore in seconds. */
+    static void handLarge427() throws Exception {
+        Context c = phone254("openring427-large");
+        final Db db = Db.get(c);
+        byte[] older = backup252(c);
+        final LocalDate first = LocalDate.of(2012, 1, 1);
+        long t = System.nanoTime();
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                for (int i = 0; i < 1826; i++) {
+                    LocalDate d = first.plusDays(i);
+                    List<double[]> m = new ArrayList<double[]>();
+                    if (i % 3 == 0) m.add(new double[] {at427(d.toString(), 3, 0), at427(d.toString(), 3, 15)});
+                    app.openring.data.HandNights.save(db, at427(d.minusDays(1).toString(), 23, i % 12 * 5), at427(d.toString(), 7, 0), m, 1e9 + i);
+                }
+            }
+        });
+        double write = (System.nanoTime() - t) / 1e9;
+        String rows = handRows427(db);
+        t = System.nanoTime();
+        app.openring.data.SleepHistory h = app.openring.data.SleepHistory.load(db, "2000-01-01", "2100-01-01", Z58);
+        double read = (System.nanoTime() - t) / 1e9;
+        int ringNights = db.nightsJson("2000-01-01", "2100-01-01", true).size();
+        t = System.nanoTime();
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(older));
+        double restore = (System.nanoTime() - t) / 1e9;
+        System.out.printf("    #427 five years of nights by hand: written in %.2f s, Further analysis all time in %.2f s, a restore of an older backup in %.2f s%n", write, read, restore);
+        check("#427 five years of nights by hand: every one counted by Further analysis, with the ring's", h.nights == ringNights + 1826 && read < 30, h.nights + " " + read);
+        check("#427 five years of nights by hand go through a restore of an older backup row for row, in seconds", r.ok && r.history && handRows427(Db.get(c)).equals(rows)
+                && handCount427(Db.get(c)) == 1826 && restore < 60, restore);
         clean254();
     }
 }
