@@ -53,10 +53,26 @@ public final class LifeEffects {
         StringBuilder b = new StringBuilder(db.fileName).append('|').append(today).append('|').append(db.kv("last_analysis", "")).append('|')
                 .append(db.kv("analyzed_until", "")).append('|').append(db.count("SELECT COUNT(*) FROM days")).append('|').append(left.key());
         for (FactorEffect.Factor f : factors) {
-            b.append('|').append(f.key).append('=').append(f.name).append(',').append(f.days.hashCode()).append(',').append(f.days.size()).append(',')
-                    .append(f.from).append(',').append(f.unknown.hashCode());
+            b.append('|').append(f.key).append('=').append(f.name).append(',').append(f.from).append(',').append(days(f.days)).append(',')
+                    .append(days(f.unknown));
         }
         return b.toString();
+    }
+
+    /**
+     * A short text for a set of days: how many, the first and last, and the sums of their day numbers and of the squares
+     * (code review of 418df41: the set's hash alone is the same for 3 and 6 as for 4 and 5 of one month).
+     */
+    public static String days(java.util.Set<LocalDate> s) {
+        long sum = 0, sq = 0, min = Long.MAX_VALUE, max = Long.MIN_VALUE;
+        for (LocalDate d : s) {
+            long e = d.toEpochDay();
+            sum += e;
+            sq += e * e;
+            min = Math.min(min, e);
+            max = Math.max(max, e);
+        }
+        return s.size() + ":" + (s.isEmpty() ? "" : min + "-" + max) + ":" + sum + ":" + sq + ":" + s.hashCode();
     }
 
     /**
@@ -102,7 +118,7 @@ public final class LifeEffects {
                 }
             }
         }
-        List<FactorEffect.Factor> out = FactorEffect.tags(lifeDays == null ? new TreeMap<LocalDate, List<String>>() : lifeDays, names, made, LifeTags.BUILT_IN);
+        List<FactorEffect.Factor> out = FactorEffect.tags(lifeDays == null ? new TreeMap<LocalDate, List<String>>() : lifeDays, names, made);
         out.addAll(FactorEffect.cycle(cycles, today));
         return out;
     }

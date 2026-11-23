@@ -393,7 +393,7 @@ Meditation at 21:00) and, in `Demo.enter` only, heart beats of about 110 bpm dur
 (`LifeCard.effects`). Nothing is stored: no table, no kv, no analysis on a tag change, no score changes. `data/LifeEffects` reads the
 day summaries of the 365 days up to today and the 90 before them (top level fields only, `TrendDays.fields`: `hrv`, `rhr`, `temp`,
 `sleep_score` of the main night; about 455 rows for any length of history), the left out times and the factors: each tag in force with a
-logged day (read as one factor per name, removed own tags not listed) and, with the period tracker shown and a period logged, Period days
+logged day in the 365 days (read as one factor per name, removed own tags not listed) and, with the period tracker shown and a period logged, Period days
 and After ovulation (`FactorEffect.cycle`, from `Cycles.phase`: the measured rise, else the estimate; a running cycle without a measured
 rise is unknown). The result is kept in memory while the file, the last analysis, the stored days, the left out times, every factor's
 days and the date stay the same. `core/analysis/FactorEffect`: a factor on day D belongs to the night whose morning is D + 1; each night
@@ -404,10 +404,14 @@ points but stay in the usual of later nights. A factor counts from the first day
 says it was made, never after one of its logged days); days before are unknown, not without. The difference is the mean of the nights
 with minus the mean of the nights without; a number needs 10 with and 30 without (below that the row counts the days). The range is 99 %
 (decisions of 17 November): the calendar weeks of the days logged are drawn again 2000 times, seeded from the values, the factor and the
-measure, the spread widened by k / (k - 1) and Student's t for the weeks with the factor less one, as `Trends.compare`. Clear means the
+measure, the spread widened by k / (k - 1) and Student's t for k - 1, k the weeks of the side with fewer of them (with the factor or
+without it), as `Trends.compare` (code review of 418df41: from the weeks with the factor alone, a factor on almost every day was wrongly
+clear 3 to 5 times in 100). Clear means the
 whole range on one side of zero. The headline is HRV (or the next measure with a number). The overlap line names a tag on more than half
 of the factor's nights (tags only; the cycle factors cover about half of all days). On 60 made up histories with ten factors and no
-effect about 1 headline check in 200 came out clear (`EffectTest`). The demo (`Demo.enter` only) gets made up tags over its made up year
+effect 3 of 597 headline checks came out clear, and a factor on almost every day without an effect 2 of 300 (`EffectTest`). A
+factor shows a row only with a logged day in the 365 days (today included); the period tracker's days are worked out only from the day
+before the 365 days on. The demo (`Demo.enter` only) gets made up tags over its made up year
 (`LifeTags.demoYear`, written by `LifeLog.demoYear` after `Demo.olderYear`): Alcohol on Friday and Saturday evenings before nights with
 HRV more than 4 % under their usual (a made up clear effect), Meditation on every third day (not clear), Stress, a hard workout twice a
 week, Illness on the year's ill week. `Demo.history` and the year's nights are unchanged.

@@ -905,15 +905,22 @@ final class LifeCard {
             card.addView(Ui.body(c, app.openring.core.analysis.FactorEffect.NOTHING));
         } else {
             card.addView(Ui.text(c, app.openring.core.analysis.FactorEffect.INTRO, 13, Ui.TEXT_2, Ui.REGULAR));
-            for (app.openring.core.analysis.FactorEffect.Result r : d.lifeEffects) {
+            for (final app.openring.core.analysis.FactorEffect.Result r : d.lifeEffects) {
                 boolean[] open = effectOpen.get(r.factor.key);
                 if (open == null) effectOpen.put(r.factor.key, open = new boolean[] {false});
                 boolean touch = r.factor.key.equals(effectPending);
                 if (touch) open[0] = true;
-                Fold f = Fold.inline(c, r.factor.name, app.openring.core.analysis.FactorEffect.status(r, l), open, true);
-                LinearLayout body = Ui.vbox(c);
-                fillEffect(c, body, r, touch);
+                final Fold f = Fold.inline(c, r.factor.name, app.openring.core.analysis.FactorEffect.status(r, l), open, true);
+                final LinearLayout body = Ui.vbox(c);
                 f.add(body);
+                // a folded row builds its sentence, bar and chart only when it is first opened (code review of 418df41)
+                if (open[0]) fillEffect(c, body, r, touch);
+                f.onChange(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (f.isOpen() && body.getChildCount() == 0) fillEffect(c, body, r, false);
+                    }
+                });
                 card.addView(f.view, Ui.matchWrap());
             }
             effectPending = null;

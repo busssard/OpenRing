@@ -44,6 +44,7 @@ public class EffectPipelineTest {
         System.out.println("Life factors and your nights (issue #292, phase 2)");
         demo();
         threeYears();
+        cacheKey();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -170,6 +171,16 @@ public class EffectPipelineTest {
         check("#292 3 years: reading changes nothing stored", stored(db).equals(before), null);
         int clear = 0;
         for (FactorEffect.Result x : l) if (x.clear()) clear++;
-        check("#292 3 years: random values, no factor clear", clear == 0, clear);
+        // random values and 5 factors at 99 %: one clear by chance can happen (about 1 time in 20), two hardly (1 in 1000)
+        check("#292 3 years: random values, at most one factor clear by chance", clear <= 1, clear);
+    }
+
+    /** Code review of 418df41: the kept result's key tells sets of days apart whose hash is the same (3 and 6 against 4 and 5). */
+    static void cacheKey() {
+        java.util.Set<LocalDate> a = new java.util.HashSet<LocalDate>(java.util.Arrays.asList(LocalDate.parse("2026-11-03"), LocalDate.parse("2026-11-06"))),
+                b = new java.util.HashSet<LocalDate>(java.util.Arrays.asList(LocalDate.parse("2026-11-04"), LocalDate.parse("2026-11-05")));
+        check("#292 cache key: two sets with the same hash give different keys", a.hashCode() == b.hashCode() && !LifeEffects.days(a).equals(LifeEffects.days(b)),
+                LifeEffects.days(a) + " " + LifeEffects.days(b));
+        check("#292 cache key: the same days give the same key", LifeEffects.days(a).equals(LifeEffects.days(new java.util.TreeSet<LocalDate>(a))), null);
     }
 }

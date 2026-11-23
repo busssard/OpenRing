@@ -5,7 +5,6 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -35,8 +34,8 @@ import java.util.TreeMap;
  * calendar weeks.</li>
  * <li><b>Range:</b> 99 % (decisions of 17 November: clear only at 99 % per factor and measure). The weeks (Monday to Sunday
  * of the day logged) are drawn again with replacement {@link #DRAWS} times, seeded from the values, so the same history always
- * gives the same text; the spread of the draws gets the small sample correction k / (k - 1) and Student's t for the weeks with
- * the factor less one, as {@code Trends.compare} does. Clear when the whole range is on one side of zero.</li>
+ * gives the same text; the spread of the draws gets the small sample correction k / (k - 1) and Student's t for k - 1, k the
+ * weeks of the side with fewer of them (with the factor or without it), as {@code Trends.compare} does. Clear when the whole range is on one side of zero.</li>
  * </ul>
  */
 public final class FactorEffect {
@@ -46,8 +45,9 @@ public final class FactorEffect {
     /** Nights with the factor and without it a number needs. */
     public static final int MIN_WITH = 10, MIN_WITHOUT = 30;
     /**
-     * Calendar weeks the nights with the factor must fall in (a range needs at least two). A week has 7 nights, so the
-     * {@link #MIN_WITH} of 10 always meets it; it stays as a guard of the range itself.
+     * Calendar weeks each side (the nights with the factor and the nights without) must fall in for a range: the side with fewer
+     * weeks gives Student's t and the small sample correction. With {@link #MIN_WITH} and {@link #MIN_WITHOUT} nights each side
+     * always has at least two; this guards the range itself.
      */
     public static final int MIN_WEEKS = 2;
     public static final int DRAWS = 2000;
@@ -86,17 +86,14 @@ public final class FactorEffect {
     public static final class Factor {
         public final String key, name;
         public final int kind;
-        /** For a fixed tag the name is written in small letters inside a sentence ("After alcohol"). */
-        public final boolean fixedName;
         public final Set<LocalDate> days;
         public final LocalDate from;
         public final Set<LocalDate> unknown;
 
-        public Factor(String key, String name, int kind, boolean fixedName, Set<LocalDate> days, LocalDate from, Set<LocalDate> unknown) {
+        public Factor(String key, String name, int kind, Set<LocalDate> days, LocalDate from, Set<LocalDate> unknown) {
             this.key = key;
             this.name = name;
             this.kind = kind;
-            this.fixedName = fixedName;
             this.days = days == null ? Collections.<LocalDate>emptySet() : days;
             this.from = from;
             this.unknown = unknown == null ? Collections.<LocalDate>emptySet() : unknown;
@@ -231,11 +228,20 @@ public final class FactorEffect {
         return value - usual;
     }
 
-    /** Each factor's result, in the order the card lists them (clear, then not clear yet, then too few; more nights first). */
+    /**
+     * Each factor with a logged day in the {@link #DAYS} days up to today, in the order the card lists them (clear, then not clear
+     * yet, then too few; more nights first).
+     */
     public static List<Result> of(List<Night> nights, List<Factor> factors, LocalDate today) {
         List<Point> pts = points(nights, today);
         List<Result> out = new ArrayList<Result>();
-        for (Factor f : factors) out.add(one(pts, f, factors));
+        LocalDate from = today.minusDays(DAYS);
+        for (Factor f : factors) {
+            // one row per factor logged in the 365 days (today included, its night is still to come): an old one shows no row
+            boolean recent = false;
+            for (LocalDate d : f.days) recent |= !d.isBefore(from) && !d.isAfter(today);
+            if (recent) out.add(one(pts, f, factors));
+        }
         sort(out);
         return out;
     }
@@ -318,12 +324,19 @@ public final class FactorEffect {
             seed = seed * 31 + (w ? 1 : 0);
             seed = seed * 31 + Double.doubleToLongBits(x);
         }
-        int weeksWith = 0;
-        for (double[] s : byWeek.values()) if (s[1] > 0) weeksWith++;
+        int weeksWith = 0, weeksWithout = 0;
+        for (double[] s : byWeek.values()) {
+            if (s[1] > 0) weeksWith++;
+            if (s[3] > 0) weeksWithout++;
+        }
+        // the side with fewer weeks sets how sure the range can be, as in Trends.compare (code review of 418df41: with t and the
+        // correction from the weeks with the factor alone, a factor on almost every day was called clear 3 to 5 times in 100
+        // without any effect)
+        int fewer = Math.min(weeksWith, weeksWithout);
         if (nw == 0 || no == 0) return new Measure(k, nw, no, weeksWith, Double.NaN, Double.NaN, Double.NaN);
         double[][] w = byWeek.values().toArray(new double[0][]);
         double diff = ratio(w, null);
-        if (nw < MIN_WITH || no < MIN_WITHOUT || weeksWith < MIN_WEEKS) return new Measure(k, nw, no, weeksWith, diff, Double.NaN, Double.NaN);
+        if (nw < MIN_WITH || no < MIN_WITHOUT || fewer < MIN_WEEKS) return new Measure(k, nw, no, weeksWith, diff, Double.NaN, Double.NaN);
         int kk = w.length;
         Random r = new Random(seed);
         double[] draws = new double[DRAWS];
@@ -338,7 +351,7 @@ public final class FactorEffect {
         if (got < 2) return new Measure(k, nw, no, weeksWith, diff, Double.NaN, Double.NaN);
         if (got < DRAWS) draws = java.util.Arrays.copyOf(draws, got);
         double sd = Stats.sd(draws);
-        double half = t99(weeksWith - 1) * Math.sqrt(sd * sd * kk / (kk - 1.0));
+        double half = t99(fewer - 1) * Math.sqrt(sd * sd * fewer / (fewer - 1.0));
         return new Measure(k, nw, no, weeksWith, diff, diff - half, diff + half);
     }
 
@@ -396,8 +409,7 @@ public final class FactorEffect {
      * one per key in {@code names} (key to name, in the order listed) that has a logged day. They count from the first day
      * anything was logged; an own tag ({@code made} its day, null for a fixed one) not before the day it was made.
      */
-    public static List<Factor> tags(Map<LocalDate, List<String>> days, Map<String, String> names, Map<String, LocalDate> made,
-            Collection<String> fixed) {
+    public static List<Factor> tags(Map<LocalDate, List<String>> days, Map<String, String> names, Map<String, LocalDate> made) {
         List<Factor> out = new ArrayList<Factor>();
         if (days == null || days.isEmpty()) return out;
         LocalDate first = null;
@@ -419,7 +431,7 @@ public final class FactorEffect {
             if (m != null && m.isAfter(from)) from = m;
             // a day logged before the own tag's key says it was made (a clock set wrong) still counts
             for (LocalDate d : s) if (d.isBefore(from)) from = d;
-            out.add(new Factor(n.getKey(), n.getValue(), TAG, fixed != null && fixed.contains(n.getKey()), s, from, null));
+            out.add(new Factor(n.getKey(), n.getValue(), TAG, s, from, null));
         }
         return out;
     }
@@ -427,12 +439,15 @@ public final class FactorEffect {
     /**
      * The period tracker's two factors from {@code cycles} (for people who use it, with a logged period): Period days (the logged
      * ones) and After ovulation (the measured rise of a cycle, else the estimate from the next start; a running cycle without a
-     * measured rise is unknown). Both count from the first logged period up to {@code today}. Empty without a period.
+     * measured rise is unknown). Both count from the first logged period (at the earliest the day before the 365 days) up to
+     * {@code today}. Empty without a period.
      */
     public static List<Factor> cycle(Cycles cycles, LocalDate today) {
         List<Factor> out = new ArrayList<Factor>();
         if (cycles == null || cycles.periods.isEmpty()) return out;
-        LocalDate from = cycles.periods.get(0).start;
+        // only the days the comparison can reach (the 365 days and the day before them); earlier days cost time on every load
+        LocalDate first = cycles.periods.get(0).start, window = today.minusDays(DAYS + 1);
+        LocalDate from = first.isBefore(window) ? window : first;
         Set<LocalDate> period = new java.util.HashSet<LocalDate>(), after = new java.util.HashSet<LocalDate>(),
                 unsure = new java.util.HashSet<LocalDate>();
         for (LocalDate d = from; !d.isAfter(today); d = d.plusDays(1)) {
@@ -455,8 +470,8 @@ public final class FactorEffect {
                 unsure.add(d);
             }
         }
-        out.add(new Factor(KEY_PERIOD, PERIOD_NAME, PERIOD, false, period, from, null));
-        out.add(new Factor(KEY_OVULATION, OVULATION_NAME, AFTER_OVULATION, false, after, from, unsure));
+        out.add(new Factor(KEY_PERIOD, PERIOD_NAME, PERIOD, period, from, null));
+        out.add(new Factor(KEY_OVULATION, OVULATION_NAME, AFTER_OVULATION, after, from, unsure));
         return out;
     }
 
@@ -524,15 +539,30 @@ public final class FactorEffect {
         return none(measure, x, l) ? "no change" : amount(measure, x, l) + " " + word(measure, x);
     }
 
-    /** "After alcohol", "After Late dinner", "In the nights after ovulation", "On period days". */
+    /** "After a day with Alcohol", "In the nights after ovulation", "On period days": the start of the sentence. */
     public static String lead(Factor f) {
         if (f.kind == AFTER_OVULATION) return "In the nights after ovulation";
         if (f.kind == PERIOD) return "On period days";
-        return "After " + (f.fixedName ? f.name.toLowerCase(Locale.ROOT) : f.name);
+        return "After a day with " + f.name;
     }
 
-    static String nextNight(Factor f) {
-        return f.kind == TAG ? " the next night" : "";
+    /** " that night" for a tag (the night that starts that evening), nothing for the cycle factors. */
+    static String thatNight(Factor f) {
+        return f.kind == TAG ? " that night" : "";
+    }
+
+    /** "(26 nights after Alcohol, 337 without)", "(165 nights after ovulation, 198 other nights)", "(63 period days, 300 other days)". */
+    static String counts(Factor f, int with, int without) {
+        if (f.kind == AFTER_OVULATION) return "(" + with + " nights after ovulation, " + without + " other nights)";
+        if (f.kind == PERIOD) return "(" + with + " period days, " + without + " other days)";
+        return "(" + with + " nights after " + f.name + ", " + without + " without)";
+    }
+
+    /** The touch readout's side: "after a day with Alcohol" or "after a day without Alcohol", "after ovulation" ... */
+    static String side(Factor f, boolean with) {
+        if (f.kind == AFTER_OVULATION) return with ? "after ovulation" : "before ovulation or a period day";
+        if (f.kind == PERIOD) return with ? "a period day" : "not a period day";
+        return (with ? "after a day with " : "after a day without ") + f.name;
     }
 
     /** The headline sentence of a factor, or its count when there is no number. */
@@ -551,9 +581,9 @@ public final class FactorEffect {
         }
         Measure m = r.m[r.headline];
         int k = r.headline;
-        StringBuilder b = new StringBuilder(lead(f)).append(' ').append(SUBJECT[k]).append(" was ");
-        b.append(none(k, m.diff, l) ? "about the same" : amount(k, m.diff, l) + " " + word(k, m.diff)).append(nextNight(f));
-        b.append(" (").append(m.nWith).append(" nights with, ").append(m.nWithout).append(" without)");
+        StringBuilder b = new StringBuilder(lead(f)).append(", ").append(SUBJECT[k]).append(" was ");
+        b.append(none(k, m.diff, l) ? "about the same" : amount(k, m.diff, l) + " " + word(k, m.diff)).append(thatNight(f));
+        b.append(' ').append(counts(f, m.nWith, m.nWithout));
         if (m.clear()) {
             double near = m.lo > 0 ? m.lo : m.hi, far = m.lo > 0 ? m.hi : m.lo;
             // a near end that shows as 0 reads "up to": "somewhere between 0 % and 4 % lower" would read as no change
@@ -614,7 +644,7 @@ public final class FactorEffect {
         Point p = r.points.get(i);
         boolean w = r.with.get(i);
         String day = p.tagDay.format(DateTimeFormatter.ofPattern(p.tagDay.getYear() == today.getYear() ? "EEE d MMM" : "EEE d MMM yyyy", l));
-        String head = "Night after " + day + ", " + (w ? "after " : "without ") + r.factor.name;
+        String head = "Night after " + day + ", " + side(r.factor, w);
         if (Double.isNaN(p.value[k])) return head + "\n" + LABEL[k] + ": no value";
         if (Double.isNaN(p.usual[k])) return head + "\n" + LABEL[k] + " " + value(k, p.value[k], l) + ", no usual yet";
         double d = p.diff[k];

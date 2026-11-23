@@ -66,7 +66,7 @@ public class EffectTest {
     }
 
     static FactorEffect.Factor tag(String key, Set<LocalDate> days, LocalDate from) {
-        return new FactorEffect.Factor(key, key.substring(0, 1).toUpperCase(L) + key.substring(1), FactorEffect.TAG, true, days, from, null);
+        return new FactorEffect.Factor(key, key.substring(0, 1).toUpperCase(L) + key.substring(1), FactorEffect.TAG, days, from, null);
     }
 
     static FactorEffect.Result one(List<FactorEffect.Night> nights, FactorEffect.Factor f) {
@@ -92,7 +92,8 @@ public class EffectTest {
         check("strong: temperature and sleep score not clear (no effect made up there)",
                 !r.m[FactorEffect.TEMP].clear() && !r.m[FactorEffect.SCORE].clear(), null);
         String h = FactorEffect.headline(r, L);
-        check("strong: the clear sentence", h.startsWith("After alcohol your HRV was ") && h.contains("% lower the next night (") && h.contains(", somewhere between ")
+        check("strong: the clear sentence", h.startsWith("After a day with Alcohol, your HRV was ") && h.contains("% lower that night (") && h.contains(" nights after Alcohol, ")
+                && h.contains(" without), somewhere between ")
                 && h.endsWith("This is a pattern in your own data, not a general rule."), h);
         check("strong: the status", FactorEffect.status(r, L).startsWith("HRV ") && FactorEffect.status(r, L).contains("lower, clear ("), FactorEffect.status(r, L));
         check("strong: the detail line", FactorEffect.detail(r, FactorEffect.RHR, L).startsWith("Lowest heart rate: ")
@@ -129,8 +130,27 @@ public class EffectTest {
             if (any) historiesWithOne++;
         }
         System.out.println("  no effect: " + clear + " of " + checks + " headline checks clear, " + historiesWithOne + " of 60 histories with one");
-        check("ten factors without an effect: at most about 3 in 100 headline checks clear", clear <= Math.max(2, checks * 0.03), clear + " of " + checks);
-        check("ten factors without an effect: most histories have none clear", historiesWithOne <= 15, historiesWithOne);
+        // at 99 % about 6 of some 600 checks; 2 in 100 leaves room for chance (12 or more happens about 1 time in 100 then)
+        check("ten factors without an effect: at most 2 in 100 headline checks clear", clear <= Math.max(2, checks * 0.02), clear + " of " + checks);
+        check("ten factors without an effect: most histories have none clear", historiesWithOne <= 12, historiesWithOne);
+        // code review of 418df41: a factor on almost every day, its 40 nights without in 4 stretches of 10 days, no effect. The
+        // range must take its t and correction from the side with fewer weeks (here the nights without), or it is too narrow
+        int n = 300, almost = 0;
+        for (int h = 0; h < n; h++) {
+            List<FactorEffect.Night> nights = history(455, new HashSet<LocalDate>(), 0, 20000 + h);
+            Set<LocalDate> on = new HashSet<LocalDate>();
+            for (int i = 1; i <= 365; i++) on.add(TODAY.minusDays(i));
+            Random r = new Random(30000 + h);
+            for (int st = 0; st < 4; st++) {
+                int start = 5 + st * 85 + r.nextInt(70);
+                for (int i = 0; i < 10; i++) on.remove(TODAY.minusDays(start + i));
+            }
+            FactorEffect.Result res = one(nights, tag("daily", on, TODAY.minusDays(365)));
+            if (res.state == FactorEffect.NUMBER && res.clear()) almost++;
+        }
+        System.out.println("  almost every day, no effect: " + almost + " of " + n + " clear");
+        // at 99 % about 3 of 300; 8 or more would happen about 1 time in 100 by chance (before the fix it was 9 to 14)
+        check("a factor on almost every day without an effect: at most 7 of 300 clear", almost <= 7, almost);
     }
 
     /** A 10 % effect with about 60 tagged nights is found most of the time (the Experiment view: 86 % at 95 %). */
@@ -182,18 +202,6 @@ public class EffectTest {
         check("min: one week counted", ow.weeksWith == 1, ow.weeksWith);
     }
 
-    /** A week has 7 nights, so 10 with always lie in 2 weeks; the range itself still needs 2 (one week of 7 gives none). */
-    static void oneWeekRule() {
-        List<FactorEffect.Night> nights = history(455, new HashSet<LocalDate>(), 0, 19);
-        LocalDate monday = TODAY.minusDays(40);
-        while (monday.getDayOfWeek() != java.time.DayOfWeek.MONDAY) monday = monday.minusDays(1);
-        Set<LocalDate> w = new HashSet<LocalDate>();
-        for (int i = 0; i < 7; i++) w.add(monday.plusDays(i));
-        FactorEffect.Result r = one(nights, tag("d", w, START));
-        check("one week: no range from one week, the difference only", !r.m[0].enough() && !Double.isNaN(r.m[0].diff), r.m[0].lo);
-        check("one week: 10 nights with always lie in at least 2 weeks", FactorEffect.MIN_WITH > 7 && FactorEffect.MIN_WEEKS == 2, null);
-    }
-
     static void seed() {
         Set<LocalDate> t = random(455, 0.2, 11);
         List<FactorEffect.Night> nights = history(455, t, -0.05, 12);
@@ -242,7 +250,7 @@ public class EffectTest {
         r = find(FactorEffect.of(nights, fs, TODAY), "alcohol");
         check("overlap: on exactly half, none", r.overlap == null && FactorEffect.overlapLine(r) == null, r.overlap);
         // the period tracker's factors are not part of the check
-        fs.set(1, new FactorEffect.Factor(FactorEffect.KEY_OVULATION, FactorEffect.OVULATION_NAME, FactorEffect.AFTER_OVULATION, false, a, START, null));
+        fs.set(1, new FactorEffect.Factor(FactorEffect.KEY_OVULATION, FactorEffect.OVULATION_NAME, FactorEffect.AFTER_OVULATION, a, START, null));
         r = find(FactorEffect.of(nights, fs, TODAY), "alcohol");
         check("overlap: a cycle factor on every one of its nights is not named", r.overlap == null, r.overlap);
     }
@@ -285,7 +293,7 @@ public class EffectTest {
         FactorEffect.Result r = one(noHrv, tag("x", t, START));
         check("missing: without HRV the lowest heart rate is the headline", r.headline == FactorEffect.RHR, r.headline);
         check("missing: its detail line", FactorEffect.detail(r, FactorEffect.HRV, L).equals("HRV: too few nights with a value."), FactorEffect.detail(r, FactorEffect.HRV, L));
-        check("missing: its sentence", FactorEffect.headline(r, L).startsWith("After x your lowest heart rate was "), FactorEffect.headline(r, L));
+        check("missing: its sentence", FactorEffect.headline(r, L).startsWith("After a day with X, your lowest heart rate was "), FactorEffect.headline(r, L));
         // nothing at all: too few values
         List<FactorEffect.Night> none = new ArrayList<FactorEffect.Night>();
         for (FactorEffect.Night n : nights) none.add(new FactorEffect.Night(n.day, Double.NaN, Double.NaN, Double.NaN, Double.NaN, false));
@@ -323,20 +331,20 @@ public class EffectTest {
         names.put("own:1", "Late dinner");
         Map<String, LocalDate> made = new java.util.HashMap<String, LocalDate>();
         made.put("own:1", TODAY.minusDays(50));
-        List<FactorEffect.Factor> fs = FactorEffect.tags(days, names, made, Arrays.asList("meditation", "alcohol"));
+        List<FactorEffect.Factor> fs = FactorEffect.tags(days, names, made);
         check("first day: only factors with a logged day", fs.size() == 2 && fs.get(0).key.equals("meditation") && fs.get(1).key.equals("own:1"), fs.size());
         check("first day: a fixed tag counts from the first day anything was logged", fs.get(0).from.equals(first), fs.get(0).from);
         check("first day: an own tag from the day it was made", fs.get(1).from.equals(TODAY.minusDays(50)), fs.get(1).from);
-        check("first day: fixed names in small letters in a sentence, own names as typed",
-                FactorEffect.lead(fs.get(0)).equals("After meditation") && FactorEffect.lead(fs.get(1)).equals("After Late dinner"), null);
+        check("first day: one pattern for every tag, the name as shown",
+                FactorEffect.lead(fs.get(0)).equals("After a day with Meditation") && FactorEffect.lead(fs.get(1)).equals("After a day with Late dinner"), null);
         List<FactorEffect.Night> nights = history(455, new HashSet<LocalDate>(), 0, 51);
         FactorEffect.Result r = one(nights, fs.get(0));
         check("first day: nights before the first logged day are not without", r.nWithout <= 100, r.nWithout);
         // an own tag whose key says it was made after a logged day (a clock set wrong): that day still counts
         made.put("own:1", TODAY.minusDays(10));
-        fs = FactorEffect.tags(days, names, made, Arrays.asList("meditation"));
+        fs = FactorEffect.tags(days, names, made);
         check("first day: never after a logged day of the tag", fs.get(1).from.equals(TODAY.minusDays(40)), fs.get(1).from);
-        check("first day: no factor without a logged day", FactorEffect.tags(new TreeMap<LocalDate, List<String>>(), names, made, null).isEmpty(), null);
+        check("first day: no factor without a logged day", FactorEffect.tags(new TreeMap<LocalDate, List<String>>(), names, made).isEmpty(), null);
     }
 
     static void cycle() {
@@ -349,15 +357,24 @@ public class EffectTest {
         boolean apart = true;
         for (LocalDate d : ov.days) apart &= !per.days.contains(d);
         check("cycle: no day both a period day and after ovulation", apart, null);
-        check("cycle: about 14 days after ovulation in each cycle that is over", ov.days.size() >= 10 * (c.periods.size() - 1) && ov.days.size() <= 16 * c.periods.size(),
-                ov.days.size() + " in " + c.periods.size());
+        LocalDate window = today.minusDays(FactorEffect.DAYS + 1);
+        int inWindow = 0;
+        for (Cycles.Period p : c.periods) if (!p.start.isBefore(window)) inWindow++;
+        check("cycle: about 14 days after ovulation in each cycle that is over, in the 365 days", ov.days.size() >= 10 * (inWindow - 1)
+                && ov.days.size() <= 16 * (inWindow + 1), ov.days.size() + " in " + inWindow);
+        boolean early = false;
+        for (LocalDate d : ov.days) early |= d.isBefore(window);
+        for (LocalDate d : per.days) early |= d.isBefore(window);
+        check("cycle: no day worked out before the 365 days and the day before them (code review of 418df41)", !early, null);
         LocalDate lastStart = c.periods.get(c.periods.size() - 1).start;
         boolean runningUnsure = true;
         for (LocalDate d = lastStart; !d.isAfter(today); d = d.plusDays(1)) {
             if (c.periodOn(d) == null && !c.phase(d).endsWith("(measured)")) runningUnsure &= ov.unknown.contains(d);
         }
         check("cycle: the running cycle without a measured rise is unknown", runningUnsure, null);
-        check("cycle: both count from the first period", per.from.equals(c.periods.get(0).start) && ov.from.equals(per.from), null);
+        LocalDate first = c.periods.get(0).start;
+        check("cycle: both count from the first period, at the earliest the day before the 365 days",
+                per.from.equals(first.isBefore(window) ? window : first) && ov.from.equals(per.from), per.from);
         check("cycle: none without a period", FactorEffect.cycle(null, today).isEmpty(), null);
         check("cycle: leads", FactorEffect.lead(ov).equals("In the nights after ovulation") && FactorEffect.lead(per).equals("On period days"), null);
         // a warmer second half (made up) shows on the temperature
@@ -371,7 +388,20 @@ public class EffectTest {
         FactorEffect.Result res = find(FactorEffect.of(nights, fs, today), FactorEffect.KEY_OVULATION);
         check("cycle: the warmer nights after ovulation are clear on the temperature", res.m[FactorEffect.TEMP].clear() && res.m[FactorEffect.TEMP].diff > 0.15,
                 res.m[FactorEffect.TEMP].diff + " " + res.m[FactorEffect.TEMP].lo);
-        check("cycle: its sentence has no next night", res.state != FactorEffect.NUMBER || !FactorEffect.headline(res, L).contains("next night"), FactorEffect.headline(res, L));
+        check("cycle: its sentence has no that night", res.state != FactorEffect.NUMBER || !FactorEffect.headline(res, L).contains("that night"), FactorEffect.headline(res, L));
+    }
+
+    /** Code review of 418df41: a factor whose days all lie before the 365 days shows no row ("0 of 10 days so far" said nothing). */
+    static void oldFactors() {
+        List<FactorEffect.Night> nights = history(455, new HashSet<LocalDate>(), 0, 95);
+        List<FactorEffect.Factor> fs = new ArrayList<FactorEffect.Factor>();
+        fs.add(tag("old", every(3, 10, 370), START));
+        fs.add(tag("edge", every(3, 1, 365), START));
+        fs.add(tag("today", every(1, 1, 0), START));
+        List<FactorEffect.Result> l = FactorEffect.of(nights, fs, TODAY);
+        check("old factors: only logged before the 365 days, no row", find(l, "old") == null, l.size());
+        check("old factors: a day 365 days ago still counts as in the window", find(l, "edge") != null, null);
+        check("old factors: logged only today has its row (its night is still to come)", find(l, "today") != null && find(l, "today").nWith == 0, null);
     }
 
     static void order() {
@@ -395,6 +425,7 @@ public class EffectTest {
         fs.add(tag("alcohol", t, START));
         fs.add(tag("meditation", random(455, 0.2, 83), START));
         fs.add(tag("rare", every(40, 3, 3), START));
+        fs.addAll(FactorEffect.cycle(Cycles.of(Cycles.demoHistory(TODAY), null, TODAY), TODAY));
         for (FactorEffect.Result r : FactorEffect.of(nights, fs, TODAY)) {
             all.add(FactorEffect.headline(r, L));
             all.add(FactorEffect.status(r, L));
@@ -408,7 +439,23 @@ public class EffectTest {
         check("texts: no dashes as punctuation in " + all.size() + " texts", plain, null);
         FactorEffect.Result r = find(FactorEffect.of(nights, fs, TODAY), "alcohol");
         String p = FactorEffect.pointText(r, r.points.size() - 1, FactorEffect.HRV, TODAY, L);
-        check("texts: the touch readout", p.startsWith("Night after ") && p.contains("\nHRV ") && p.contains(" ms, your usual "), p);
+        check("texts: the touch readout", p.startsWith("Night after ") && (p.contains(", after a day with Alcohol\nHRV ") || p.contains(", after a day without Alcohol\nHRV ")) && p.contains(" ms, your usual "), p);
+        List<FactorEffect.Result> all2 = FactorEffect.of(nights, fs, TODAY);
+        FactorEffect.Result ov = find(all2, FactorEffect.KEY_OVULATION), per = find(all2, FactorEffect.KEY_PERIOD);
+        boolean ovOk = true, perOk = true;
+        for (int i = 0; i < ov.points.size(); i++) {
+            String pt = FactorEffect.pointText(ov, i, FactorEffect.TEMP, TODAY, L);
+            ovOk &= pt.contains(ov.with.get(i) ? ", after ovulation\n" : ", before ovulation or a period day\n") && !pt.contains("After ovulation");
+        }
+        for (int i = 0; i < per.points.size(); i++) {
+            String pt = FactorEffect.pointText(per, i, FactorEffect.HRV, TODAY, L);
+            perOk &= pt.contains(per.with.get(i) ? ", a period day\n" : ", not a period day\n") && !pt.contains("Period days");
+        }
+        check("texts: the touch readout of the cycle factors in words of their own", ovOk && perOk, null);
+        String hp = FactorEffect.headline(per, L), ho = FactorEffect.headline(ov, L);
+        check("texts: the cycle factors' counts", per.state != FactorEffect.NUMBER || hp.startsWith("On period days, your ") && hp.contains(" period days, ") && hp.contains(" other days)"), hp);
+        check("texts: after ovulation's counts", ov.state != FactorEffect.NUMBER || ho.startsWith("In the nights after ovulation, your ") && ho.contains(" nights after ovulation, ")
+                && ho.contains(" other nights)") && !ho.contains("that night"), ho);
         check("texts: amounts", FactorEffect.amount(FactorEffect.HRV, -12.4, L).equals("12 %") && FactorEffect.amount(FactorEffect.RHR, 2.06, L).equals("2.1 bpm")
                 && FactorEffect.amount(FactorEffect.TEMP, 0.051, L).equals("0.05 °C") && FactorEffect.amount(FactorEffect.SCORE, 1, L).equals("1 point"), null);
         check("texts: the axis is signed", FactorEffect.axis(FactorEffect.HRV, 12, L).equals("+12 %") && FactorEffect.axis(FactorEffect.SCORE, -3, L).equals("−3"),
@@ -461,7 +508,6 @@ public class EffectTest {
         falseAlarms();
         power();
         minimums();
-        oneWeekRule();
         seed();
         weeks();
         overlap();
@@ -470,6 +516,7 @@ public class EffectTest {
         usual();
         firstDay();
         cycle();
+        oldFactors();
         order();
         texts();
         demoYear();

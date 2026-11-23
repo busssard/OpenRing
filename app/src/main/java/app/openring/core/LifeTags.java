@@ -517,7 +517,7 @@ public final class LifeTags {
      * card "Life factors and your nights" has enough days to show: Meditation on every third day whatever the night (made up as
      * no effect, "not clear yet"), Alcohol on Friday and Saturday evenings before a night whose HRV was more than 4 % under its
      * usual and on some others (made up as a clear effect), a hard workout on Tuesdays and Saturdays, Stress now and then, and
-     * Illness on the year's week of illness ({@code ill}). {@code hrvVsUsual}: each day's next night HRV in % of its usual
+     * Illness on the year's week of illness ({@code ill}). {@code hrvVsUsual}: the HRV of each day's night (the one starting that evening) in % of its usual
      * ({@code FactorEffect.points}), missing where there is none. Never Intimacy.
      */
     public static TreeMap<LocalDate, List<String>> demoYear(LocalDate from, LocalDate to, Map<LocalDate, Double> hrvVsUsual, java.util.Set<LocalDate> ill) {

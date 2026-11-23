@@ -685,8 +685,8 @@ public final class Explain {
     // ------------------------------------------------------------------ life factors and your nights (issue #292, phase 2)
 
     /** Your usual. */
-    public static final String EFFECT_USUAL = "Each night is compared with your usual: the middle value of up to 30 nights before it (it "
-            + "needs 3).";
+    public static final String EFFECT_USUAL = "Each night is compared with your usual: the middle value of up to 30 nights from the 90 days "
+            + "before it (it needs 3).";
     /** Which nights belong to a factor. */
     public static final String EFFECT_PAIRS = "A factor logged on a day belongs to the night that starts that evening; every day of several "
             + "days counts. Nights in a time you left out and days without a ring night are skipped.";
@@ -698,8 +698,8 @@ public final class Explain {
             + "because nights affect each other and a holiday is one stretch, not many separate chances. The range is wide enough to hold "
             + "the real difference 99 times in 100. Clear means the whole range is on one side of zero.";
     /** The minimum. */
-    public static final String EFFECT_MIN = "A number shows from 10 nights with the factor and 30 without it. Below that the row counts the "
-            + "days you logged.";
+    public static final String EFFECT_MIN = "A number shows from 10 nights with the factor and 30 without it. Below that the row counts how "
+            + "many there are so far.";
     /** Many checks. */
     public static final String EFFECT_CHANCE = "With many factors and four measures, about 1 check in 100 can look clear by chance alone, so "
             + "a clear result is worth watching, not a proof.";
