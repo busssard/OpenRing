@@ -76,10 +76,10 @@ the pipeline test creates goes into one run folder under `$TMPDIR` (or `/tmp`) t
 end, also after a failure; run with `KEEP_TEST_DIRS=1` to keep it for debugging. It compiles a
 fixed list of `data/` files; when you add a file there that the pipeline needs, add it to the list.
 
-**On Android:** `emulator.yml` runs for pull requests and pushes to `main`. It installs the APK on an
+**On Android:** `emulator.yml` runs for the release pull request into `main`, pushes to `main` and runs by hand (owner, 20 November: pull requests into `dev` skip it, the check passes at once). It installs the APK on an
 Android 14 emulator, opens every screen with demo data and fails on any crash. Its screenshots are
 pushed to the branch `screenshots` (from `main`, used by the README) or `screenshots-preview` (from
-pull requests in this repository). Pull requests from forks get the screenshots as the `screenshots`
+the release pull request and runs by hand). Pull requests from forks get the screenshots as the `screenshots`
 artifact of the run.
 
 On `screenshots-preview` each pull request has its own folder `pr-<number>/`, with `HEAD.txt` naming
@@ -95,9 +95,10 @@ shots are the same picture (`.github/scripts/same_shots.sh`); `tests/test_ci_scr
 The emulator uses the plain Android image (no Google apps) with 4 GB of memory; if a system "isn't
 responding" dialog appears, the script taps *Wait*, and it fails if the dialog stays, so the README
 pictures are never replaced by spoiled ones. Every adb call in `screens.sh` has a time limit (6 minutes for the boot, 3 for the install, 1 for
-every other call, issue #278) and the emulator step stops after 30 minutes (the job after 40, publishing the pictures has 5 and only warns, #324). A pull request that changes nothing under `app/`, `tools/`, `build_apk.sh`, `screens.sh` or `emulator.yml` skips the emulator run (the check still passes), and `build.yml` builds pull request branches only once (its push trigger is `dev` and `main`); release notes have one line per change note (`.github/scripts/release_notes.py`), the full notes linked, so a stuck emulator fails with a line that
-says so instead of hanging. Look at the pictures before asking for a review. When you
-add a screen or a state worth seeing, add it to `.github/scripts/screens.sh`. The main screen accepts
+every other call, issue #278) and the emulator step stops after 30 minutes (the job after 40, publishing the pictures has 5 and only warns, #324). The emulator run is skipped for a pull request into `dev` and for a release pull request that changes nothing under `app/`, `tools/`, `build_apk.sh`, `screens.sh` or `emulator.yml` (the check still passes), and `build.yml` builds pull request branches only once (its push trigger is `dev` and `main`); release notes have one line per change note (`.github/scripts/release_notes.py`), the full notes linked, so a stuck emulator fails with a line that
+says so instead of hanging. A pull request into `dev` gets no pictures: when you add a screen or a
+state worth seeing, add it to `.github/scripts/screens.sh`, and the pictures come with the release
+pull request (or a run by hand on your branch); look at them then. The main screen accepts
 these extras for automation:
 `demo` (boolean), `tab` (0 Today, 1 Sleep, 2 Ready, 3 Activity, 4 Body, 5 Screen), `analysis`
 (boolean, unfolds Further analysis), `period` (0 week, 1 30 days, 2 year, 3 all), `day` (yyyy-mm-dd),
@@ -148,7 +149,8 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
    brackets instead).
 5. Add tests for logic. Keep `core/` free of Android imports.
 6. Open a pull request with what changed, why, how it was tested, and `Fixes #N`. Check that the checks
-   pass (Build APK, Android emulator test, CodeQL) and look at the preview screenshots.
+   pass (Build APK, CodeQL; the emulator test runs only for the release into `main`, its preview
+   screenshots are then in `screenshots-preview`, folder `pr-<number>`).
 
 ### Common tasks
 
@@ -165,7 +167,7 @@ Bluetooth log. The data check holds counts and dates only, so it is safe to shar
   (`ui/Tiles.arrange`, called by `MainActivity.render` after the page and the Trends card are built, so that card is a tile too): its caption becomes the header of a shared `Fold`, a tap folds it.
   Moving is an edit session (owner's wish of 20 November, extra `edit_layout` from Settings' Rearrange tiles): every tile gets a
   frame and a handle (drag to move, tap for a menu, also for TalkBack), Reset and Save replace Sync and Settings in the header,
-  and changes stay in a `core/LayoutDraft` until Save (Back with unsaved changes asks). The order and folds are
+  and changes stay in a `core/LayoutDraft` until Save (Back with unsaved changes asks). Folded score cards show a small dial (`Tiles.dials`, owner's wish of 21 November). The order and folds are
   saved per tab by a stable key (`core/Layout`: from the caption, or `Tiles.name` for a card without one or with a caption
   that changes), so give a new card a caption or a name; it then appears at its standard place for people who moved tiles.
   A card without a caption gets "note" and its first words up to the first number (`Layout.noteKey`); when those words can
